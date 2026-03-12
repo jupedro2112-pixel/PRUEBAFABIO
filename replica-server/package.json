@@ -1,0 +1,28 @@
+{
+  "name": "replica-chat-server",
+  "version": "1.0.0",
+  "description": "Backend para aplicación de chat con autenticación y WebSockets",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "chat",
+    "websocket",
+    "socket.io",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "cors": "^2.8.5",
+    "bcryptjs": "^2.4.3",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
