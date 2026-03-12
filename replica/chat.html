@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sala de Juegos - Chat</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Header con Marquee -->
+    <header class="chat-header">
+        <div class="marquee-container">
+            <div class="marquee-content">
+                <span class="marquee-item">🎁 ¡RETIRA HASTA $1.000.000 AL DÍA! 🎁</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">🔥 ATENCIÓN 24 HORAS 🔥</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">💎 VIP 💎</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">🎰 ¡JUEGA Y GANA! 🎰</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">🎁 ¡RETIRA HASTA $1.000.000 AL DÍA! 🎁</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">🔥 ATENCIÓN 24 HORAS 🔥</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">💎 VIP 💎</span>
+                <span class="marquee-separator">•</span>
+                <span class="marquee-item">🎰 ¡JUEGA Y GANA! 🎰</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Barra Superior -->
+    <nav class="top-bar">
+        <div class="top-bar-left">
+            <button class="btn btn-support" onclick="contactSupport()">
+                📞 SOPORTE
+            </button>
+        </div>
+        <div class="top-bar-center">
+            <span class="user-name" id="currentUser">Usuario123</span>
+        </div>
+        <div class="top-bar-right">
+            <button class="btn btn-logout" onclick="logout()">
+                🚪 Salir
+            </button>
+        </div>
+    </nav>
+
+    <!-- Sección de Plataformas -->
+    <section class="platforms-section">
+        <h3 class="platforms-title">Ingreso a Plataformas ➤</h3>
+        <div class="platforms-buttons">
+            <a href="#" class="platform-btn platform-ganamos" target="_blank">
+                🎯 Link Ganamos
+            </a>
+            <a href="#" class="platform-btn platform-picantes" target="_blank">
+                🌶️ Link Picantes
+            </a>
+        </div>
+    </section>
+
+    <!-- Área de Mensajes -->
+    <main class="chat-area" id="chatArea">
+        <!-- Mensaje de bienvenida -->
+        <div class="message system-message">
+            <div class="message-content">
+                <p>🎮 ¡Bienvenido a la Sala de Juegos! 🎮</p>
+                <p class="message-time">Sistema - justo ahora</p>
+            </div>
+        </div>
+
+        <!-- Mensajes de ejemplo -->
+        <div class="message received-message">
+            <div class="message-avatar">👤</div>
+            <div class="message-content">
+                <p class="message-author">Admin</p>
+                <p>¡Hola! ¿En qué puedo ayudarte hoy?</p>
+                <p class="message-time">10:30 AM</p>
+            </div>
+            <button class="copy-btn" onclick="copyMessage(this)" title="Copiar mensaje">
+                📋 Copiar
+            </button>
+        </div>
+
+        <div class="message sent-message">
+            <div class="message-content">
+                <p>Hola, quiero información sobre los juegos disponibles</p>
+                <p class="message-time">10:32 AM</p>
+            </div>
+            <button class="copy-btn" onclick="copyMessage(this)" title="Copiar mensaje">
+                📋 Copiar
+            </button>
+        </div>
+
+        <div class="message received-message">
+            <div class="message-avatar">👤</div>
+            <div class="message-content">
+                <p class="message-author">Admin</p>
+                <p>Claro, tenemos una gran variedad de juegos: tragamonedas, ruleta, blackjack, póker y más. ¿Te gustaría que te envíe los enlaces?</p>
+                <p class="message-time">10:33 AM</p>
+            </div>
+            <button class="copy-btn" onclick="copyMessage(this)" title="Copiar mensaje">
+                📋 Copiar
+            </button>
+        </div>
+    </main>
+
+    <!-- Input Area -->
+    <footer class="input-area">
+        <div class="input-container">
+            <button class="btn-image" onclick="selectImage()" title="Enviar imagen">
+                📸
+            </button>
+            <input type="file" id="imageInput" accept="image/*" style="display: none;">
+            <input type="text" id="messageInput" class="message-input" placeholder="Escribe un mensaje..." maxlength="500">
+            <button class="btn-send" onclick="sendMessage()" title="Enviar mensaje">
+                Enviar
+            </button>
+        </div>
+    </footer>
+
+    <!-- Botón Flotante Instalar App -->
+    <button class="btn-float-install" onclick="installApp()" title="Instalar App">
+        📱 Instalar App
+    </button>
+
+    <!-- Modal de Soporte -->
+    <div id="supportModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('supportModal')">&times;</span>
+            <h2>📞 Soporte Técnico</h2>
+            <p>Estamos aquí para ayudarte 24/7:</p>
+            <ul>
+                <li>📧 Email: soporte@saladejuegos.com</li>
+                <li>📞 Teléfono: +1 800-GAMING</li>
+                <li>💬 Chat en vivo disponible</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

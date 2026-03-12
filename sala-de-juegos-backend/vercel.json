@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "name": "sala-de-juegos-backend",
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
+    }
+  ],
+  "env": {
+    "JWT_SECRET": "sala-de-juegos-secret-key-2024"
+  }
+}

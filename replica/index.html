@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sala de Juegos - Login</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <!-- Icono y Título -->
+            <div class="login-header">
+                <div class="joystick-icon">🎮</div>
+                <h1 class="login-title">Sala de Juegos</h1>
+            </div>
+
+            <!-- Formulario de Login -->
+            <form class="login-form" id="loginForm">
+                <div class="input-group">
+                    <label for="username">Usuario</label>
+                    <input type="text" id="username" name="username" placeholder="Ingresa tu usuario" required>
+                </div>
+
+                <div class="input-group">
+                    <label for="password">Contraseña</label>
+                    <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-full">
+                    Ingresar a la Sala
+                </button>
+            </form>
+
+            <!-- Botones adicionales -->
+            <div class="login-actions">
+                <button class="btn btn-secondary btn-full" onclick="createUser()">
+                    👤 Crear Usuario
+                </button>
+                <button class="btn btn-secondary btn-full" onclick="showHelp()">
+                    📞 Ayuda
+                </button>
+                <button class="btn btn-accent btn-full" onclick="installApp()">
+                    📱 Instalar App
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Ayuda -->
+    <div id="helpModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('helpModal')">&times;</span>
+            <h2>📞 Centro de Ayuda</h2>
+            <p>¿Necesitas asistencia? Contáctanos:</p>
+            <ul>
+                <li>📧 Email: soporte@saladejuegos.com</li>
+                <li>📞 Teléfono: +1 800-GAMING</li>
+                <li>💬 Chat en vivo 24/7</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Modal de Crear Usuario -->
+    <div id="createUserModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('createUserModal')">&times;</span>
+            <h2>👤 Crear Nuevo Usuario</h2>
+            <form id="createUserForm">
+                <div class="input-group">
+                    <label for="newUsername">Usuario</label>
+                    <input type="text" id="newUsername" placeholder="Elige un usuario" required>
+                </div>
+                <div class="input-group">
+                    <label for="newEmail">Email</label>
+                    <input type="email" id="newEmail" placeholder="tu@email.com" required>
+                </div>
+                <div class="input-group">
+                    <label for="newPassword">Contraseña</label>
+                    <input type="password" id="newPassword" placeholder="Crea una contraseña" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-full">Crear Cuenta</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
