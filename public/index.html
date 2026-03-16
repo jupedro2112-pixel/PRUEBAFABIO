@@ -1,0 +1,3325 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Sala de Juegos</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Sala Juegos">
+    <meta name="application-name" content="Sala de Juegos">
+    <meta name="msapplication-TileColor" content="#00ff88">
+    <meta name="theme-color" content="#00ff88">
+    
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180x180.png">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0015 0%, #1a0033 50%, #0a0015 100%);
+            background-attachment: fixed;
+            color: #ffffff;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* Login Screen */
+        .login-screen {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .login-box {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid #d4af37;
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+        }
+        
+        .login-logo {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+        
+        .login-box h1 {
+            color: #d4af37;
+            font-size: 1.8em;
+            margin-bottom: 10px;
+        }
+        
+        .login-box p {
+            color: #b0b0b0;
+            margin-bottom: 30px;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #d4af37;
+            font-weight: 600;
+        }
+        
+        .input-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid rgba(212, 175, 55, 0.3);
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #ffffff;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        
+        .input-group input:focus {
+            outline: none;
+            border-color: #d4af37;
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #d4af37 0%, #00cc6a 100%);
+            color: #000;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 255, 136, 0.4);
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #9d4edd 0%, #6603a8 100%);
+            color: #fff;
+        }
+        
+        .btn-secondary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(157, 78, 221, 0.4);
+        }
+        
+        .error-message {
+            color: #ff4444;
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(255, 68, 68, 0.1);
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .error-message.show {
+            display: block;
+        }
+        
+        /* Chat Screen */
+        .chat-screen {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Header - Estructura con 3 columnas */
+        .header {
+            background: linear-gradient(135deg, #d4af37 0%, #ffd700 50%, #d4af37 100%);
+            background-size: 200% 200%;
+            animation: golden-shimmer 3s ease infinite;
+            color: #000;
+            padding: 12px 15px;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 15px;
+            box-shadow: 0 2px 10px rgba(212, 175, 55, 0.5);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            min-height: 80px;
+        }
+        
+        .header-left {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+        }
+        
+        .header-center {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        
+        @keyframes golden-shimmer {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+        
+        /* Plataforma a la izquierda - DISEÑO ELEGANTE CON FONDO NEGRO */
+        .platform-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            z-index: 3;
+            background: linear-gradient(135deg, #000000 0%, #1a1a1a 50%, #000000 100%);
+            padding: 8px 16px;
+            border-radius: 15px;
+            border: 2px solid #d4af37;
+            box-shadow: 
+                0 0 20px rgba(212, 175, 55, 0.8),
+                0 4px 15px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .platform-section::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.2), transparent);
+            animation: platform-shine 3s infinite;
+        }
+        
+        @keyframes platform-shine {
+            0% { left: -100%; }
+            50% { left: 100%; }
+            100% { left: 100%; }
+        }
+        
+        .platform-label {
+            color: #d4af37;
+            font-weight: bold;
+            font-size: 8px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(212, 175, 55, 0.8);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .jugaygana-btn {
+            background: linear-gradient(135deg, #d4af37 0%, #ffd700 30%, #d4af37 60%, #b8941f 100%);
+            background-size: 200% 200%;
+            animation: golden-shimmer 2s ease infinite;
+            color: #000;
+            font-size: 13px;
+            padding: 8px 18px;
+            border-radius: 25px;
+            text-decoration: none;
+            font-weight: 900;
+            box-shadow: 
+                0 4px 20px rgba(212, 175, 55, 0.7),
+                0 0 15px rgba(255, 215, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.3);
+            white-space: nowrap;
+            border: 2px solid #ffd700;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            z-index: 1;
+            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+        }
+        
+        .jugaygana-btn:hover {
+            transform: scale(1.08) translateY(-2px);
+            box-shadow: 
+                0 8px 30px rgba(212, 175, 55, 0.9),
+                0 0 25px rgba(255, 215, 0, 0.7),
+                inset 0 1px 0 rgba(255, 255, 255, 0.4);
+            border-color: #fff;
+        }
+        
+        .jugaygana-btn:active {
+            transform: scale(1.02) translateY(0);
+        }
+        
+        /* Reembolsos en el centro */
+        .refund-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 6px 10px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 9px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            min-width: 70px;
+        }
+        
+        .refund-btn.daily {
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #000;
+        }
+        
+        .refund-btn.weekly {
+            background: linear-gradient(135deg, #9d4edd 0%, #6603a8 100%);
+            color: #fff;
+        }
+        
+        .refund-btn.monthly {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+            color: #fff;
+        }
+        
+        .refund-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .refund-amount {
+            font-size: 12px;
+            font-weight: bold;
+            margin-top: 2px;
+        }
+        
+        .refund-timer {
+            font-size: 8px;
+            margin-top: 1px;
+        }
+        
+        /* Fueguito - Más visible, a la izquierda */
+        .fire-btn {
+            background: linear-gradient(135deg, #ff4500 0%, #ff6347 50%, #ff8c00 100%);
+            border: 3px solid #ffd700;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            cursor: pointer;
+            font-size: 22px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px rgba(255, 69, 0, 0.8), 0 0 40px rgba(255, 140, 0, 0.4);
+            transition: all 0.3s ease;
+            animation: fire-pulse 1s ease infinite;
+        }
+        
+        @keyframes fire-pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(255, 69, 0, 0.8), 0 0 40px rgba(255, 140, 0, 0.4); }
+            50% { transform: scale(1.15); box-shadow: 0 0 30px rgba(255, 69, 0, 1), 0 0 60px rgba(255, 140, 0, 0.6); }
+        }
+        
+        .fire-btn:hover:not(:disabled) {
+            transform: scale(1.2);
+            box-shadow: 0 0 30px rgba(255, 69, 0, 1), 0 0 60px rgba(255, 140, 0, 0.8);
+        }
+        
+        .fire-btn:disabled {
+            animation: none;
+            opacity: 0.6;
+            border-color: #999;
+            cursor: pointer !important;
+            pointer-events: auto !important;
+        }
+        
+        .fire-streak {
+            font-size: 11px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 5px #ff4500, 0 0 10px #ff0000;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 1px 4px;
+            margin-top: 2px;
+        }
+        
+        /* Botones del header derecho */
+        .header-right .jugaygana-btn {
+            font-size: 11px;
+            padding: 6px 12px;
+        }
+        
+        .header-right .support-btn {
+            font-size: 10px;
+            padding: 5px 10px;
+        }
+        
+        .header-right .info-btn {
+            font-size: 12px;
+            padding: 5px 8px;
+        }
+        
+        .header-right .user-name {
+            font-size: 11px;
+            padding: 4px 8px;
+            max-width: 150px;
+            overflow: visible;
+            white-space: nowrap;
+            color: #d4af37;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+        }
+        
+        .header-right .settings-btn,
+        .header-right .logout-btn {
+            font-size: 12px;
+            padding: 5px 8px;
+        }
+        
+        .support-btn {
+            background: linear-gradient(135deg, #9d4edd 0%, #6603a8 100%);
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+            font-size: 10px;
+            text-decoration: none;
+        }
+        
+        .user-name {
+            background: rgba(0, 0, 0, 0.3);
+            color: #000;
+            padding: 5px 10px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 11px;
+        }
+        
+        .logout-btn {
+            background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+            color: #fff;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 12px;
+            font-size: 10px;
+            cursor: pointer;
+            font-weight: 700;
+        }
+        
+        .settings-btn {
+            background: rgba(0, 0, 0, 0.3);
+            border: none;
+            padding: 5px 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .info-btn {
+            background: linear-gradient(135deg, #00a8ff 0%, #0066cc 100%);
+            border: none;
+            padding: 5px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #fff;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .info-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(0, 168, 255, 0.5);
+        }
+        
+        .cbu-user-btn {
+            background: linear-gradient(135deg, #9d4edd 0%, #6603a8 100%);
+            border: none;
+            padding: 5px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            color: #fff;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .cbu-user-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(157, 78, 221, 0.5);
+        }
+        
+        .info-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(0, 168, 255, 0.5);
+        }
+        
+        /* Modal de información */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .info-card {
+            background: linear-gradient(135deg, rgba(0,255,136,0.1) 0%, rgba(0,204,106,0.1) 100%);
+            border: 1px solid #00ff88;
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        
+        .info-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 255, 136, 0.2);
+        }
+        
+        .info-card-icon {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .info-card-title {
+            color: #00ff88;
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        
+        .info-card-desc {
+            color: #b0b0b0;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        
+        /* Promo Banner */
+        .promo-banner {
+            position: fixed;
+            top: 80px;
+            left: 0;
+            right: 0;
+            height: 40px;
+            background: linear-gradient(135deg, #1a0033 0%, #2d0052 100%);
+            border-top: 2px solid rgba(212, 175, 55, 0.5);
+            border-bottom: 2px solid rgba(212, 175, 55, 0.5);
+            overflow: hidden;
+            z-index: 999;
+        }
+        
+        .promo-track {
+            display: flex;
+            align-items: center;
+            height: 100%;
+            white-space: nowrap;
+            animation: scroll-left 40s linear infinite;
+        }
+        
+        .promo-item {
+            display: inline-block;
+            color: #ffd700;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 0 30px;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+        
+        .promo-separator {
+            display: inline-block;
+            color: #d4af37;
+            font-size: 18px;
+            margin: 0 20px;
+        }
+        
+        @keyframes scroll-left {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+        
+        /* Chat Section */
+        .chat-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            margin-top: 125px;
+            margin-bottom: 80px;
+            overflow: hidden;
+        }
+        
+        .chat-container {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid #d4af37;
+            border-radius: 15px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            margin: 8px;
+        }
+        
+        .chat-messages {
+            flex: 1;
+            padding: 15px 10px 20px 10px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+        
+        .message-wrapper {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            position: relative;
+        }
+        
+        .message {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            word-wrap: break-word;
+        }
+        
+        .message.usuario {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+            align-self: flex-start;
+        }
+        
+        .message.agente {
+            background: linear-gradient(135deg, #d4af37 0%, #00cc6a 100%);
+            color: #000;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+        
+        .message img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        
+        .message-time {
+            font-size: 0.75em;
+            opacity: 0.7;
+            margin-top: 5px;
+            display: block;
+        }
+        
+        .copy-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+        
+        .message-wrapper:hover .copy-btn {
+            opacity: 1;
+        }
+        
+        .copy-btn:hover {
+            background: #d4af37;
+            transform: scale(1.1);
+        }
+        
+        /* Chat Input - MÁS COMPACTO */
+        .chat-input-container {
+            padding: 8px 15px;
+            border-top: 1px solid #d4af37;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
+            z-index: 999;
+        }
+        
+        /* Vista notebook - aún más compacto */
+        @media (max-height: 800px) {
+            .chat-input-container {
+                padding: 6px 12px;
+            }
+            
+            .chat-input {
+                gap: 6px;
+            }
+            
+            .action-btn {
+                width: 38px;
+                height: 38px;
+                font-size: 16px;
+            }
+            
+            #messageInput {
+                padding: 8px 12px;
+                min-height: 38px;
+                font-size: 14px;
+            }
+            
+            .send-btn {
+                padding: 8px 16px;
+                font-size: 13px;
+            }
+        }
+        
+        .chat-input {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .action-btn {
+            width: 45px;
+            height: 45px;
+            border: none;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+        
+        .deposit-btn {
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #000;
+        }
+        
+        .deposit-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+        
+        .withdraw-btn {
+            background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+            color: #fff;
+        }
+        
+        .withdraw-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px rgba(255, 68, 68, 0.5);
+        }
+        
+        .attach-btn {
+            background: linear-gradient(135deg, #d4af37 0%, #ffd700 100%);
+            color: #000;
+        }
+        
+        .attach-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .cbu-chat-btn {
+            background: linear-gradient(135deg, #9d4edd 0%, #6603a8 100%);
+            color: #fff;
+            font-size: 11px;
+            font-weight: bold;
+            width: auto;
+            padding: 0 12px;
+            border-radius: 20px;
+        }
+        
+        .cbu-chat-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(157, 78, 221, 0.5);
+        }
+        
+        #messageInput {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #d4af37;
+            border-radius: 25px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #ffffff;
+            font-size: 14px;
+            resize: none;
+            min-height: 45px;
+            max-height: 100px;
+            font-family: inherit;
+        }
+        
+        #messageInput:focus {
+            outline: none;
+            border-color: #ffd700;
+        }
+        
+        .send-btn {
+            background: linear-gradient(135deg, #d4af37 0%, #5d8d76 100%);
+            color: #000;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .send-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 255, 136, 0.4);
+        }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 136, 0.5);
+            border-radius: 3px;
+        }
+        
+        /* Toast */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #000;
+            padding: 15px 20px;
+            border-radius: 10px;
+            font-weight: bold;
+            z-index: 10000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .toast.error {
+            background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
+            color: #fff;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        /* Modals */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            backdrop-filter: blur(5px);
+        }
+        
+        .modal-content {
+            background: linear-gradient(135deg, #1a0033 0%, #0a0015 100%);
+            border: 2px solid #d4af37;
+            border-radius: 20px;
+            padding: 25px;
+            width: 90%;
+            max-width: 400px;
+            animation: modalSlide 0.3s ease;
+        }
+        
+        @keyframes modalSlide {
+            from { opacity: 0; transform: translateY(-50px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .modal-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-header h2 {
+            color: #d4af37;
+            margin-bottom: 10px;
+        }
+        
+        .modal-header p {
+            color: #b0b0b0;
+            font-size: 14px;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .modal-actions .btn {
+            flex: 1;
+        }
+        
+        .refund-details, .fire-details {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+        
+        .refund-info-row, .fire-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+        }
+        
+        .refund-info-row:last-child, .fire-info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .refund-info-row.highlight {
+            background: rgba(212, 175, 55, 0.1);
+            margin: 10px -15px -15px -15px;
+            padding: 15px;
+            border-radius: 0 0 12px 12px;
+        }
+        
+        .refund-info-row.highlight span:last-child {
+            color: #00ff88;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        
+        .fire-info-row.highlight span:last-child {
+            color: #ff4500;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* Responsive - Tablets */
+        @media (max-width: 1024px) {
+            .header {
+                padding: 10px;
+                min-height: 70px;
+            }
+            
+            .fire-btn {
+                width: 50px;
+                height: 50px;
+                font-size: 22px;
+            }
+            
+            .refund-btn {
+                padding: 5px 8px;
+                min-width: 65px;
+                font-size: 9px;
+            }
+            
+            .chat-section {
+                margin-top: 115px;
+            }
+        }
+        
+        /* Responsive - Móviles */
+        @media (max-width: 768px) {
+            .login-box {
+                padding: 30px 20px;
+                margin: 10px;
+            }
+            
+            .login-logo {
+                font-size: 3em;
+            }
+            
+            .login-box h1 {
+                font-size: 1.5em;
+            }
+            
+            .header {
+                padding: 8px 10px;
+                min-height: 65px;
+                flex-wrap: nowrap;
+            }
+            
+            .fire-section {
+                margin-right: 5px;
+            }
+            
+            .fire-btn {
+                width: 45px;
+                height: 45px;
+                font-size: 20px;
+            }
+            
+            .fire-streak {
+                font-size: 9px;
+            }
+            
+            .refunds-section {
+                gap: 3px;
+                position: static;
+                transform: none;
+                margin: 0 5px;
+            }
+            
+            .refund-btn {
+                padding: 4px 5px;
+                min-width: 50px;
+                font-size: 7px;
+                border-radius: 8px;
+            }
+            
+            .refund-amount {
+                font-size: 9px;
+            }
+            
+            .refund-timer {
+                font-size: 7px;
+            }
+            
+            .platform-section {
+                padding: 3px 6px;
+                margin-right: 5px;
+            }
+            
+            .platform-label {
+                font-size: 6px;
+            }
+            
+            .jugaygana-btn {
+                font-size: 9px;
+                padding: 3px 6px;
+            }
+            
+            .user-section {
+                gap: 4px;
+            }
+            
+            .support-btn {
+                padding: 4px 8px;
+                font-size: 9px;
+            }
+            
+            .user-name {
+                font-size: 9px;
+                padding: 3px 6px;
+            }
+            
+            .logout-btn, .settings-btn {
+                padding: 3px 6px;
+                font-size: 12px;
+            }
+            
+            .promo-banner {
+                top: 65px;
+                height: 35px;
+            }
+            
+            .promo-item {
+                font-size: 12px;
+                padding: 0 15px;
+            }
+            
+            .chat-section {
+                margin-top: 105px;
+                margin-bottom: 70px;
+            }
+            
+            .chat-container {
+                margin: 5px;
+                border-radius: 10px;
+            }
+            
+            .message {
+                max-width: 85%;
+                padding: 10px 12px;
+                font-size: 14px;
+            }
+            
+            .chat-input-container {
+                padding: 8px 10px;
+            }
+            
+            .action-btn {
+                width: 40px;
+                height: 40px;
+                font-size: 16px;
+            }
+            
+            #messageInput {
+                padding: 10px 12px;
+                font-size: 16px; /* Previene zoom en iOS */
+            }
+            
+            .send-btn {
+                padding: 10px 15px;
+                font-size: 12px;
+            }
+            
+            .modal-content {
+                width: 95%;
+                padding: 20px;
+                margin: 10px;
+            }
+            
+            .modal-header h2 {
+                font-size: 1.3em;
+            }
+            
+            .refund-info-row {
+                font-size: 13px;
+            }
+        }
+        
+        /* Responsive - Móviles pequeños */
+        @media (max-width: 480px) {
+            .header {
+                min-height: 60px;
+                padding: 6px 8px;
+            }
+            
+            .fire-btn {
+                width: 40px;
+                height: 40px;
+                font-size: 18px;
+            }
+            
+            .refunds-section {
+                gap: 2px;
+            }
+            
+            .refund-btn {
+                padding: 3px 4px;
+                min-width: 45px;
+                font-size: 6px;
+            }
+            
+            .refund-amount {
+                font-size: 8px;
+            }
+            
+            .platform-section {
+                display: none; /* Ocultar en pantallas muy pequeñas */
+            }
+            
+            .support-btn {
+                font-size: 8px;
+                padding: 3px 6px;
+            }
+            
+            .user-name {
+                display: none; /* Ocultar nombre en pantallas muy pequeñas */
+            }
+            
+            .promo-banner {
+                top: 60px;
+                height: 30px;
+            }
+            
+            .promo-item {
+                font-size: 10px;
+            }
+            
+            .chat-section {
+                margin-top: 95px;
+            }
+            
+            .message {
+                max-width: 90%;
+                padding: 8px 10px;
+                font-size: 13px;
+            }
+        }
+        
+        /* Prevenir zoom en inputs en iOS */
+        @supports (-webkit-touch-callout: none) {
+            input, textarea, select {
+                font-size: 16px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-box">
+            <div class="login-logo">🎮</div>
+            <h1>Sala de Juegos</h1>
+            <p>Inicia sesión para continuar</p>
+            
+            <form id="loginForm" autocomplete="on">
+                <div class="input-group">
+                    <label>Usuario</label>
+                    <input type="text" id="username" name="username" placeholder="Ingresa tu usuario" required autocomplete="username">
+                </div>
+                <div class="input-group">
+                    <label>Contraseña</label>
+                    <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn btn-primary">Ingresar a la Sala</button>
+            </form>
+            
+            <div style="margin: 15px 0; text-align: center;">
+                <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
+                <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
+            </div>
+            
+            <div style="margin: 10px 0; display: flex; gap: 8px;">
+                <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;">🔍 Buscar Usuario</button>
+                <button id="resetPassBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;">🔑 Cambiar Contraseña</button>
+            </div>
+            
+            <button id="helpBtn" class="btn btn-secondary">📞 Ayuda</button>
+            <button id="installBtn" class="btn btn-secondary">📱 Instalar App</button>
+            
+            <div id="errorMessage" class="error-message"></div>
+        </div>
+    </div>
+
+    <!-- Chat Screen -->
+    <div id="chatScreen" class="chat-screen hidden">
+        <!-- Header -->
+        <header class="header">
+            <!-- Sección izquierda: Fueguito -->
+            <div class="header-left">
+                <button id="fireBtn" class="fire-btn" title="Racha diaria - Reclama cada día!">
+                    🔥
+                    <span class="fire-streak" id="fireStreak">0</span>
+                </button>
+            </div>
+            
+            <!-- Sección centro: Reembolsos -->
+            <div class="header-center">
+                <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 20%">
+                    📅 REEMBOLSO<br>DIARIO
+                    <span class="refund-amount" id="dailyRefundAmount">$0</span>
+                    <span class="refund-timer" id="dailyRefundTimer"></span>
+                </button>
+                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (Lun-Mar)">
+                    📆 REEMBOLSO<br>SEMANAL
+                    <span class="refund-amount" id="weeklyRefundAmount">$0</span>
+                    <span class="refund-timer" id="weeklyRefundTimer"></span>
+                </button>
+                <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
+                    🗓️ REEMBOLSO<br>MENSUAL
+                    <span class="refund-amount" id="monthlyRefundAmount">$0</span>
+                    <span class="refund-timer" id="monthlyRefundTimer"></span>
+                </button>
+            </div>
+            
+            <!-- Sección derecha: Usuario y acciones -->
+            <div class="header-right">
+                <a href="https://www.jugaygana.bet/" target="_blank" class="jugaygana-btn">www.jugaygana.bet</a>
+                <button class="cbu-user-btn" id="cbuUserBtn" title="Ver datos CBU">💳 CBU</button>
+                <a href="https://wa.link/metawin2026" target="_blank" class="support-btn" style="display: flex; align-items: center; gap: 5px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink: 0;">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                    </svg>
+                    SOPORTE
+                </a>
+                <button class="info-btn" id="infoBtn" title="Información del servicio">ℹ️</button>
+                <span class="user-name" id="currentUser">Usuario</span>
+                <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
+                <button class="logout-btn" id="logoutBtn">🚪</button>
+            </div>
+        </header>
+
+        <!-- Promo Banner -->
+        <div class="promo-banner">
+            <div class="promo-track">
+                <span class="promo-item">🎁 ¡RETIROS SIN LIMITE! 🎁</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 ATENCIÓN 24 HORAS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 REEMBOLSOS DIARIOS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">💎 VIP 💎</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🎁 ¡RETIROS SIN LIMITE! 🎁</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 ATENCIÓN 24 HORAS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">🔥 REEMBOLSOS DIARIOS 🔥</span>
+                <span class="promo-separator">★</span>
+                <span class="promo-item">💎 VIP 💎</span>
+                <span class="promo-separator">★</span>
+            </div>
+        </div>
+
+        <!-- Chat Section -->
+        <section class="chat-section">
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    <!-- Messages will be loaded here -->
+                </div>
+                <!-- Indicador "Escribiendo..." -->
+                <div id="typingIndicator" style="display: none; padding: 8px 15px; color: #00ff88; font-size: 12px; font-style: italic; text-align: left;"></div>
+            </div>
+        </section>
+
+        <!-- Chat Input -->
+        <div class="chat-input-container">
+            <div class="chat-input">
+                <button class="action-btn attach-btn" id="attachBtn" title="Adjuntar imagen">📸</button>
+                <button class="action-btn cbu-chat-btn" id="cbuChatBtn" title="Ver datos CBU para transferir">💳 CBU</button>
+                <input type="file" id="fileInput" accept="image/*" style="display: none;">
+                <textarea id="messageInput" placeholder="Escribe un mensaje..." rows="1"></textarea>
+                <button class="send-btn" id="sendBtn">📤</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Registro -->
+    <div id="registerModal" class="modal hidden">
+        <div class="modal-content" style="position: relative;">
+            <button onclick="hideModal('registerModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>📝 Crear Cuenta</h2>
+                <p>Regístrate para acceder a la Sala de Juegos</p>
+            </div>
+            <form id="registerForm" autocomplete="on">
+                <div class="input-group">
+                    <label>Usuario *</label>
+                    <input type="text" id="registerUsername" name="username" placeholder="Elige un usuario" required autocomplete="username" minlength="3" maxlength="20">
+                    <span id="usernameCheckResult" style="font-size: 11px; margin-top: 4px; display: block;"></span>
+                </div>
+                <div class="input-group">
+                    <label>Contraseña *</label>
+                    <input type="password" id="registerPassword" name="new-password" placeholder="Mínimo 6 caracteres" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Repetir Contraseña *</label>
+                    <input type="password" id="registerPasswordConfirm" name="confirm-password" placeholder="Repite tu contraseña" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Teléfono *</label>
+                    <input type="tel" id="registerPhone" name="phone" placeholder="+54 9 11 1234-5678" required autocomplete="tel" minlength="8">
+                    <span style="font-size: 11px; color: #888;">Mínimo 8 dígitos</span>
+                </div>
+                <div class="input-group">
+                    <label>Email (opcional)</label>
+                    <input type="email" id="registerEmail" name="email" placeholder="tu@email.com" autocomplete="email">
+                </div>
+                <div id="registerError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeRegisterModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">📝 Crear Cuenta</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Cambio de Contraseña Obligatorio -->
+    <div id="changePasswordModal" class="modal hidden">
+        <div class="modal-content" style="position: relative;">
+            <button onclick="hideModal('changePasswordModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>🔐 Cambio de Contraseña</h2>
+                <p>Por seguridad, debes cambiar tu contraseña y verificar tu WhatsApp.</p>
+            </div>
+            <form id="changePasswordForm" autocomplete="on">
+                <div class="input-group">
+                    <label>Contraseña Actual</label>
+                    <input type="password" id="currentPasswordInput" name="current-password" placeholder="Contraseña actual" required autocomplete="current-password">
+                </div>
+                <div class="input-group">
+                    <label>Nueva Contraseña</label>
+                    <input type="password" id="newPasswordInput" name="new-password" placeholder="Mínimo 6 caracteres" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Repetir Contraseña</label>
+                    <input type="password" id="confirmPasswordInput" name="confirm-password" placeholder="Repite tu contraseña" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="input-group">
+                    <label>Número de WhatsApp *</label>
+                    <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="+54 9 11 1234-5678" required minlength="8" autocomplete="tel">
+                    <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta</span>
+                </div>
+                <div class="input-group" style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="closeAllSessions" style="width: auto;">
+                    <label for="closeAllSessions" style="margin: 0; font-size: 14px;">Cerrar todas las sesiones activas</label>
+                </div>
+                <div id="passwordError" class="error-message"></div>
+                <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Depositar -->
+    <div id="depositModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>💰 Depositar</h2>
+                <p>Ingresa el monto a depositar en tu cuenta</p>
+            </div>
+            <form id="depositForm">
+                <div class="input-group">
+                    <label>Monto ($)</label>
+                    <input type="number" id="depositAmount" placeholder="Ej: 10000" required min="100">
+                </div>
+                <div id="depositError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeDepositModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">💰 Depositar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Retirar -->
+    <div id="withdrawModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>💸 Retirar</h2>
+                <p>Ingresa el monto a retirar de tu cuenta</p>
+            </div>
+            <form id="withdrawForm">
+                <div class="input-group">
+                    <label>Monto ($)</label>
+                    <input type="number" id="withdrawAmount" placeholder="Ej: 5000" required min="100">
+                </div>
+                <div id="withdrawError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeWithdrawModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);">💸 Retirar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal CBU -->
+    <div id="cbuModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 450px; position: relative;">
+            <button onclick="hideModal('cbuModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>💳 Datos para Transferir</h2>
+                <p>Usa estos datos para realizar tu depósito</p>
+            </div>
+            <div id="cbuContent" style="padding: 20px;">
+                <div style="background: linear-gradient(135deg, rgba(157,78,221,0.1) 0%, rgba(102,3,168,0.1) 100%); border: 1px solid #9d4edd; border-radius: 12px; padding: 20px; margin-bottom: 15px;">
+                    <div style="margin-bottom: 15px;">
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">🏦 Banco</span>
+                        <span id="cbuBankDisplay" style="color: #fff; font-size: 16px; font-weight: bold;">-</span>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">👤 Titular</span>
+                        <span id="cbuTitularDisplay" style="color: #fff; font-size: 16px; font-weight: bold;">-</span>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">🔢 CBU</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="cbuNumberDisplay" style="color: #ffd700; font-size: 18px; font-weight: bold; font-family: monospace;">-</span>
+                            <button onclick="copyToClipboard('cbuNumberDisplay')" style="background: rgba(255,215,0,0.2); border: 1px solid #ffd700; color: #ffd700; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">📋 Copiar</button>
+                        </div>
+                    </div>
+                    <div>
+                        <span style="color: #888; font-size: 12px; display: block; margin-bottom: 5px;">📱 Alias</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="cbuAliasDisplay" style="color: #00ff88; font-size: 16px; font-weight: bold; font-family: monospace;">-</span>
+                            <button onclick="copyToClipboard('cbuAliasDisplay')" style="background: rgba(0,255,136,0.2); border: 1px solid #00ff88; color: #00ff88; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">📋 Copiar</button>
+                        </div>
+                    </div>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; text-align: center;">
+                    <p style="color: #888; font-size: 12px; margin: 0;">✅ Una vez realizada la transferencia, envianos el comprobante por aquí</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Reembolso -->
+    <div id="refundModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2 id="refundModalTitle">🎁 Reembolso</h2>
+            </div>
+            <div class="refund-details">
+                <!-- Balance actual -->
+                <div class="refund-info-row" style="background: rgba(0,255,136,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                    <span style="font-weight: bold; color: #00ff88;">💰 Tu Balance Actual:</span>
+                    <span id="refundCurrentBalance" style="font-weight: bold; color: #00ff88; font-size: 18px;">$0</span>
+                </div>
+                
+                <!-- Período del reembolso -->
+                <div style="background: rgba(100,149,237,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid rgba(100,149,237,0.3);">
+                    <span style="color: #6495ed; font-size: 12px;">📅 Período: </span>
+                    <span id="refundPeriod" style="color: #fff; font-size: 12px;">-</span>
+                </div>
+                
+                <!-- Movimientos del período -->
+                <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+                    <p id="refundMovementsTitle" style="color: #aaa; font-size: 11px; margin-bottom: 8px; text-align: center;">📊 MOVIMIENTOS</p>
+                    <div class="refund-info-row">
+                        <span>Depósitos:</span>
+                        <span id="refundDeposits" style="color: #00ff88;">$0</span>
+                    </div>
+                    <div class="refund-info-row">
+                        <span>Retiros:</span>
+                        <span id="refundWithdrawals" style="color: #ff4444;">$0</span>
+                    </div>
+                    <div class="refund-info-row">
+                        <span>Saldo neto:</span>
+                        <span id="refundNetAmount">$0</span>
+                    </div>
+                </div>
+                
+                <!-- Reembolso -->
+                <div class="refund-info-row highlight" style="background: linear-gradient(135deg, rgba(212,175,55,0.2), rgba(255,215,0,0.2)); padding: 15px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.5);">
+                    <span style="color: #ffd700; font-weight: bold;">🎁 Reembolso a recibir:</span>
+                    <span id="refundAmount" style="color: #ffd700; font-size: 20px; font-weight: bold;">$0</span>
+                </div>
+                
+                <!-- Info de disponibilidad (solo para semanal y mensual) -->
+                <div id="refundAvailabilityInfo" style="margin-top: 10px; padding: 10px; border-radius: 8px; display: none;"></div>
+                
+                <!-- Info adicional -->
+                <div id="refundExtraInfo" style="margin-top: 10px; font-size: 11px; color: #888; text-align: center;"></div>
+            </div>
+            <div class="refund-timer-modal" id="refundTimerModal"></div>
+            <div class="modal-actions">
+                <button id="claimRefundBtn" class="btn btn-primary">🎁 Reclamar Reembolso</button>
+                <button id="closeRefundModal" class="btn btn-secondary">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Fueguito -->
+    <div id="fireModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔥 Racha Diaria</h2>
+                <p>Reclama tu fueguito cada día para ganar recompensas!</p>
+            </div>
+            <div class="fire-details">
+                <div class="fire-info-row">
+                    <span>Días consecutivos:</span>
+                    <span id="fireStreakModal" style="font-size: 24px; color: #ff4500; font-weight: bold;">0</span>
+                </div>
+                <div class="fire-info-row">
+                    <span>Último reclamo:</span>
+                    <span id="fireLastClaim">Nunca</span>
+                </div>
+                <!-- Barra de progreso hacia día 10 -->
+                <div class="fire-progress-container" style="margin: 20px 0; padding: 15px; background: rgba(255, 69, 0, 0.1); border-radius: 12px; border: 1px solid rgba(255, 69, 0, 0.3);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color: #ff4500; font-weight: bold;">Progreso hacia $10.000</span>
+                        <span id="fireProgressText" style="color: #ff4500;">0/10 días</span>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.3); border-radius: 10px; height: 25px; overflow: hidden;">
+                        <div id="fireProgressBar" style="background: linear-gradient(90deg, #ff4500, #ff8c00); height: 100%; width: 0%; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; font-size: 12px;">
+                            0%
+                        </div>
+                    </div>
+                    <p style="text-align: center; margin-top: 10px; color: #ffd700; font-weight: bold; font-size: 16px;">
+                        🎁 Al día 10: $10.000 GRATIS automáticos! 🎁
+                    </p>
+                </div>
+            </div>
+            <div id="fireCondition" style="color: #00ff88; text-align: center; margin-bottom: 15px; font-size: 12px;">
+                ✅ Reclama tu fueguito gratis una vez por día!
+            </div>
+            <div class="modal-actions">
+                <button id="claimFireBtn" class="btn btn-primary" style="background: linear-gradient(135deg, #ff4500 0%, #ff6347 100%);">🔥 Reclamar Fueguito</button>
+                <button id="closeFireModal" class="btn btn-secondary">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Información del Servicio -->
+    <div id="infoModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 600px; position: relative;">
+            <button onclick="hideModal('infoModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>🎮 Información del Servicio</h2>
+                <p>Descubre todos los beneficios de nuestra Sala de Juegos</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-card-icon">💰</div>
+                    <div class="info-card-title">Reembolso Diario 20%</div>
+                    <div class="info-card-desc">Recibe el 20% de tus pérdidas del día anterior directamente en tu cuenta</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">📅</div>
+                    <div class="info-card-title">Reembolso Semanal 10%</div>
+                    <div class="info-card-desc">Reclama el 10% de tus pérdidas semanales los lunes y martes</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🗓️</div>
+                    <div class="info-card-title">Reembolso Mensual 5%</div>
+                    <div class="info-card-desc">Obtén el 5% de tus pérdidas del mes pasado después del día 7</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🔥</div>
+                    <div class="info-card-title">Fueguito Diario</div>
+                    <div class="info-card-desc">Reclama tu fueguito cada día y acumula racha. ¡Al día 10 gana $10.000!</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🎁</div>
+                    <div class="info-card-title">Bonificaciones</div>
+                    <div class="info-card-desc">Recibe bonificaciones especiales en tus depósitos con porcentajes desde 10% hasta 100%</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">💬</div>
+                    <div class="info-card-title">Atención 24/7</div>
+                    <div class="info-card-desc">Chat en vivo con nuestros agentes las 24 horas del día, los 7 días de la semana</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">⚡</div>
+                    <div class="info-card-title">Retiros Sin Límite</div>
+                    <div class="info-card-desc">Retira tu dinero cuando quieras sin restricciones ni límites</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-icon">🔒</div>
+                    <div class="info-card-title">Seguridad Total</div>
+                    <div class="info-card-desc">Tus datos y transacciones están protegidos con la máxima seguridad</div>
+                </div>
+            </div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button id="closeInfoModal" class="btn btn-primary" style="width: 100%;">Entendido</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Configuración -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ Configuración</h2>
+            </div>
+            <div class="modal-actions" style="flex-direction: column;">
+                <button id="changePasswordSettingsBtn" class="btn btn-secondary" style="width: 100%;">🔐 Cambiar Contraseña</button>
+                <button id="closeSettingsModal" class="btn btn-secondary" style="width: 100%;">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Buscar Usuario por Teléfono -->
+    <div id="findUserModal" class="modal hidden">
+        <div class="modal-content">
+            <button onclick="hideModal('findUserModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer;">✕</button>
+            <div class="modal-header">
+                <h2>🔍 Buscar Usuario</h2>
+                <p>Ingresa tu número de teléfono para encontrar tu usuario</p>
+            </div>
+            <form id="findUserForm">
+                <div class="input-group">
+                    <label>Número de Teléfono</label>
+                    <input type="tel" id="findUserPhone" placeholder="+54 9 11 1234-5678" required minlength="8">
+                </div>
+                <div id="findUserResult" style="margin: 15px 0; padding: 15px; border-radius: 10px; display: none;"></div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">🔍 Buscar</button>
+                    <button type="button" onclick="hideModal('findUserModal')" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal Cambiar Contraseña por Teléfono -->
+    <div id="resetPassModal" class="modal hidden">
+        <div class="modal-content">
+            <button onclick="hideModal('resetPassModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer;">✕</button>
+            <div class="modal-header">
+                <h2>🔑 Cambiar Contraseña</h2>
+                <p>Ingresa tu número de teléfono y nueva contraseña</p>
+            </div>
+            <form id="resetPassForm">
+                <div class="input-group">
+                    <label>Número de Teléfono</label>
+                    <input type="tel" id="resetPassPhone" placeholder="+54 9 11 1234-5678" required minlength="8">
+                </div>
+                <div class="input-group">
+                    <label>Nueva Contraseña</label>
+                    <input type="password" id="resetPassNew" placeholder="Mínimo 6 caracteres" required minlength="6">
+                </div>
+                <div class="input-group">
+                    <label>Confirmar Contraseña</label>
+                    <input type="password" id="resetPassConfirm" placeholder="Repite la contraseña" required minlength="6">
+                </div>
+                <div id="resetPassResult" style="margin: 15px 0; padding: 15px; border-radius: 10px; display: none;"></div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">🔑 Cambiar Contraseña</button>
+                    <button type="button" onclick="hideModal('resetPassModal')" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // ========================================
+        // CONFIGURACIÓN
+        // ========================================
+        
+        const API_URL = '';
+        let currentToken = localStorage.getItem('userToken');
+        let currentUser = null;
+        let refundStatus = null;
+        let refundTimers = {};
+        let lastMessageId = null;
+        let messageCheckInterval = null;
+        let balanceCheckInterval = null;
+        
+        // Función para obtener fecha en hora Argentina
+        function getArgentinaDate(date = new Date()) {
+            return new Date(date.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
+        }
+        
+        // Función para obtener timestamp de medianoche en Argentina
+        function getArgentinaMidnight() {
+            const argentinaNow = getArgentinaDate();
+            const midnight = new Date(argentinaNow);
+            midnight.setHours(24, 0, 0, 0);
+            return midnight.getTime();
+        }
+        
+        // ========================================
+        // INICIALIZACIÓN
+        // ========================================
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            if (currentToken) {
+                verifyToken();
+            }
+            setupEventListeners();
+        });
+        
+        function setupEventListeners() {
+            // Login
+            document.getElementById('loginForm').addEventListener('submit', handleLogin);
+            document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+            document.getElementById('helpBtn').addEventListener('click', () => {
+                window.open('https://wa.link/metawin2026', '_blank');
+            });
+            document.getElementById('installBtn').addEventListener('click', installApp);
+            
+            // Registro
+            document.getElementById('registerBtn').addEventListener('click', () => showModal('registerModal'));
+            document.getElementById('closeRegisterModal').addEventListener('click', () => hideModal('registerModal'));
+            document.getElementById('registerForm').addEventListener('submit', handleRegister);
+            
+            // Chat
+            document.getElementById('sendBtn').addEventListener('click', sendMessage);
+            
+            const messageInput = document.getElementById('messageInput');
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+            
+            // Indicador "Escribiendo..."
+            let typingTimeout;
+            messageInput.addEventListener('input', function() {
+                if (socket) {
+                    socket.emit('typing', { isTyping: true });
+                    clearTimeout(typingTimeout);
+                    typingTimeout = setTimeout(() => {
+                        socket.emit('stop_typing', {});
+                    }, 2000);
+                }
+            });
+            
+            // Adjuntar imagen
+            document.getElementById('attachBtn').addEventListener('click', () => {
+                document.getElementById('fileInput').click();
+            });
+            document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+            
+            // Reembolsos
+            document.getElementById('dailyRefundBtn').addEventListener('click', () => showRefundModal('daily'));
+            document.getElementById('weeklyRefundBtn').addEventListener('click', () => showRefundModal('weekly'));
+            document.getElementById('monthlyRefundBtn').addEventListener('click', () => showRefundModal('monthly'));
+            document.getElementById('closeRefundModal').addEventListener('click', () => hideModal('refundModal'));
+            
+            // Fueguito
+            const fireBtn = document.getElementById('fireBtn');
+            if (fireBtn) {
+                fireBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('🔥 Fueguito clickeado');
+                    showFireModal();
+                });
+            }
+            document.getElementById('closeFireModal').addEventListener('click', () => hideModal('fireModal'));
+            document.getElementById('claimFireBtn').addEventListener('click', claimFire);
+            
+            // Información del servicio
+            document.getElementById('infoBtn').addEventListener('click', () => showModal('infoModal'));
+            document.getElementById('closeInfoModal').addEventListener('click', () => hideModal('infoModal'));
+            
+            // CBU - botón en header
+            document.getElementById('cbuUserBtn').addEventListener('click', loadAndShowCBU);
+            
+            // CBU - botón en chat input
+            document.getElementById('cbuChatBtn').addEventListener('click', loadAndShowCBU);
+            
+            // Configuración
+            document.getElementById('settingsBtn').addEventListener('click', () => showModal('settingsModal'));
+            document.getElementById('closeSettingsModal').addEventListener('click', () => hideModal('settingsModal'));
+            document.getElementById('changePasswordSettingsBtn').addEventListener('click', () => {
+                hideModal('settingsModal');
+                showModal('changePasswordModal');
+            });
+            
+            // Buscar usuario por teléfono
+            document.getElementById('findUserBtn').addEventListener('click', () => showModal('findUserModal'));
+            document.getElementById('findUserForm').addEventListener('submit', handleFindUserByPhone);
+            
+            // Cambiar contraseña por teléfono
+            document.getElementById('resetPassBtn').addEventListener('click', () => showModal('resetPassModal'));
+            document.getElementById('resetPassForm').addEventListener('submit', handleResetPasswordByPhone);
+            
+            // Cambio de contraseña
+            document.getElementById('changePasswordForm').addEventListener('submit', handleChangePassword);
+            
+            // Auto-resize textarea
+            const textarea = document.getElementById('messageInput');
+            textarea.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+            });
+        }
+        
+        // ========================================
+        // AUTENTICACIÓN
+        // ========================================
+        
+        // Verificar disponibilidad de username
+        async function checkUsernameAvailability(username) {
+            const resultSpan = document.getElementById('usernameCheckResult');
+            
+            try {
+                const response = await fetch(`${API_URL}/api/auth/check-username?username=${encodeURIComponent(username)}`);
+                const data = await response.json();
+                
+                if (data.available) {
+                    resultSpan.textContent = '✅ Usuario disponible';
+                    resultSpan.style.color = '#00ff88';
+                } else {
+                    resultSpan.textContent = '❌ ' + (data.message || 'Usuario no disponible');
+                    resultSpan.style.color = '#ff4444';
+                }
+            } catch (error) {
+                resultSpan.textContent = '';
+            }
+        }
+        
+        // Manejar registro
+        async function handleRegister(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('registerUsername').value.trim();
+            const password = document.getElementById('registerPassword').value;
+            const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
+            const email = document.getElementById('registerEmail').value.trim();
+            const phone = document.getElementById('registerPhone').value.trim();
+            const errorDiv = document.getElementById('registerError');
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            
+            // Validaciones
+            if (password !== passwordConfirm) {
+                errorDiv.textContent = 'Las contraseñas no coinciden';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            if (password.length < 6) {
+                errorDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            if (username.length < 3) {
+                errorDiv.textContent = 'El usuario debe tener al menos 3 caracteres';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            // Mostrar estado de carga
+            if (submitBtn) {
+                submitBtn.textContent = 'Creando cuenta...';
+                submitBtn.disabled = true;
+            }
+            errorDiv.classList.remove('show');
+            
+            try {
+                const response = await fetch(`${API_URL}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        username, 
+                        password, 
+                        email: email || null, 
+                        phone: phone || null 
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Registro exitoso, iniciar sesión automáticamente
+                    currentToken = data.token;
+                    currentUser = {
+                        ...data.user,
+                        id: data.user.id,
+                        userId: data.user.id
+                    };
+                    localStorage.setItem('userToken', currentToken);
+                    
+                    hideModal('registerModal');
+                    document.getElementById('registerForm').reset();
+                    document.getElementById('usernameCheckResult').textContent = '';
+                    
+                    showChatScreen();
+                    startMessagePolling();
+                    loadRefundStatus();
+                    loadFireStatus();
+                    
+                    showToast('✅ ¡Cuenta creada exitosamente!', 'success');
+                } else {
+                    errorDiv.textContent = data.error || 'Error al crear cuenta';
+                    errorDiv.classList.add('show');
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error de conexión';
+                errorDiv.classList.add('show');
+            } finally {
+                // Restaurar botón
+                if (submitBtn) {
+                    submitBtn.textContent = '📝 Crear Cuenta';
+                    submitBtn.disabled = false;
+                }
+            }
+        }
+        
+        async function handleLogin(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorDiv = document.getElementById('errorMessage');
+            const loginBtn = document.querySelector('#loginForm button[type="submit"]');
+            
+            // Mostrar estado de carga
+            if (loginBtn) {
+                loginBtn.textContent = 'Ingresando...';
+                loginBtn.disabled = true;
+            }
+            errorDiv.classList.remove('show');
+            
+            try {
+                const response = await fetch(`${API_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentToken = data.token;
+                    // Asegurar que tenemos id y userId
+                    currentUser = {
+                        ...data.user,
+                        id: data.user.id,
+                        userId: data.user.id
+                    };
+                    localStorage.setItem('userToken', currentToken);
+                    
+                    showChatScreen();
+                    startMessagePolling();
+                    loadRefundStatus();
+                    loadFireStatus();
+                    
+                    if (data.user.needsPasswordChange) {
+                        showModal('changePasswordModal');
+                    }
+                } else {
+                    errorDiv.textContent = data.error || 'Error de autenticación';
+                    errorDiv.classList.add('show');
+                    // Restaurar botón
+                    if (loginBtn) {
+                        loginBtn.textContent = 'Ingresar a la Sala';
+                        loginBtn.disabled = false;
+                    }
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error de conexión';
+                errorDiv.classList.add('show');
+                // Restaurar botón
+                if (loginBtn) {
+                    loginBtn.textContent = 'Ingresar a la Sala';
+                    loginBtn.disabled = false;
+                }
+            }
+        }
+        
+        async function verifyToken() {
+            try {
+                const response = await fetch(`${API_URL}/api/auth/verify`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Si falta información crítica del usuario, recargar desde el servidor
+                    if (!data.user || !data.user.username) {
+                        console.log('Token válido pero falta información de usuario, recargando...');
+                        // Intentar obtener información completa del usuario
+                        const userResponse = await fetch(`${API_URL}/api/users/me`, {
+                            headers: { 'Authorization': `Bearer ${currentToken}` }
+                        });
+                        
+                        if (userResponse.ok) {
+                            const userData = await userResponse.json();
+                            currentUser = {
+                                ...userData,
+                                id: userData.id || userData.userId,
+                                userId: userData.userId || userData.id
+                            };
+                        } else {
+                            // Si no se puede obtener el usuario, usar lo que tenemos
+                            currentUser = {
+                                ...data.user,
+                                id: data.user.id || data.user.userId,
+                                userId: data.user.userId || data.user.id
+                            };
+                        }
+                    } else {
+                        // Normalizar: el verify devuelve userId, el login devuelve id
+                        currentUser = {
+                            ...data.user,
+                            id: data.user.id || data.user.userId,
+                            userId: data.user.userId || data.user.id
+                        };
+                    }
+                    
+                    showChatScreen();
+                    startMessagePolling();
+                    loadRefundStatus();
+                    loadFireStatus();
+                } else {
+                    localStorage.removeItem('userToken');
+                }
+            } catch (error) {
+                console.error('Error verificando token:', error);
+                localStorage.removeItem('userToken');
+            }
+        }
+        
+        function handleLogout() {
+            stopMessagePolling();
+            stopBalancePolling();
+            currentToken = null;
+            currentUser = null;
+            localStorage.removeItem('userToken');
+            showLoginScreen();
+        }
+        
+        // ========================================
+        // CBU - DATOS PARA TRANSFERIR
+        // ========================================
+        
+        async function loadAndShowCBU() {
+            try {
+                // Enviar solicitud de CBU que guarda mensaje en el chat
+                const response = await fetch(`${API_URL}/api/cbu/request`, {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': `Bearer ${currentToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Mostrar datos en el modal
+                    document.getElementById('cbuBankDisplay').textContent = data.cbu.bank || '-';
+                    document.getElementById('cbuTitularDisplay').textContent = data.cbu.titular || '-';
+                    document.getElementById('cbuNumberDisplay').textContent = data.cbu.number || '-';
+                    document.getElementById('cbuAliasDisplay').textContent = data.cbu.alias || '-';
+                    
+                    showModal('cbuModal');
+                    
+                    // Recargar mensajes para mostrar el mensaje de CBU en el chat
+                    setTimeout(() => loadMessages(), 500);
+                    
+                    showToast('💳 Datos CBU enviados al chat', 'success');
+                } else {
+                    showToast('Error solicitando CBU', 'error');
+                }
+            } catch (error) {
+                console.error('Error solicitando CBU:', error);
+                showToast('Error de conexión', 'error');
+            }
+        }
+        
+        function copyToClipboard(elementId) {
+            const element = document.getElementById(elementId);
+            const text = element.textContent;
+            
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showToast('📋 Copiado al portapapeles', 'success');
+                }).catch(() => {
+                    // Fallback
+                    fallbackCopy(text);
+                });
+            } else {
+                fallbackCopy(text);
+            }
+        }
+        
+        function fallbackCopy(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                document.execCommand('copy');
+                showToast('📋 Copiado al portapapeles', 'success');
+            } catch (err) {
+                showToast('Error al copiar', 'error');
+            }
+            
+            document.body.removeChild(textarea);
+        }
+        
+        // ========================================
+        // SONIDO DE NOTIFICACIÓN
+        // ========================================
+        
+        let notificationAudioContext = null;
+        
+        function initNotificationSound() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (AudioContext) {
+                    notificationAudioContext = new AudioContext();
+                }
+            } catch (e) {
+                console.log('AudioContext no soportado');
+            }
+        }
+        
+        function playNotificationSound() {
+            if (!notificationAudioContext) {
+                initNotificationSound();
+            }
+            
+            try {
+                if (notificationAudioContext) {
+                    const oscillator = notificationAudioContext.createOscillator();
+                    const gainNode = notificationAudioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(notificationAudioContext.destination);
+                    
+                    oscillator.frequency.value = 600;
+                    oscillator.type = 'sine';
+                    
+                    gainNode.gain.setValueAtTime(0.3, notificationAudioContext.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, notificationAudioContext.currentTime + 0.4);
+                    
+                    oscillator.start(notificationAudioContext.currentTime);
+                    oscillator.stop(notificationAudioContext.currentTime + 0.4);
+                }
+            } catch (e) {
+                console.log('Error reproduciendo sonido:', e);
+            }
+        }
+        
+        // ========================================
+        // CAMBIO DE CONTRASEÑA
+        // ========================================
+        
+        async function handleChangePassword(e) {
+            e.preventDefault();
+            
+            const currentPassword = document.getElementById('currentPasswordInput').value;
+            const newPassword = document.getElementById('newPasswordInput').value;
+            const confirmPassword = document.getElementById('confirmPasswordInput').value;
+            const whatsapp = document.getElementById('changePasswordWhatsApp').value.trim();
+            const errorDiv = document.getElementById('passwordError');
+            
+            if (newPassword !== confirmPassword) {
+                errorDiv.textContent = 'Las contraseñas no coinciden';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            if (newPassword.length < 6) {
+                errorDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            if (!whatsapp || whatsapp.length < 8) {
+                errorDiv.textContent = 'El número de WhatsApp es obligatorio (mínimo 8 dígitos)';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            const closeAllSessions = document.getElementById('closeAllSessions').checked;
+            
+            try {
+                const response = await fetch(`${API_URL}/api/auth/change-password`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ currentPassword, newPassword, whatsapp, closeAllSessions })
+                });
+                
+                if (response.ok) {
+                    hideModal('changePasswordModal');
+                    showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
+                    // Limpiar campos
+                    document.getElementById('currentPasswordInput').value = '';
+                    document.getElementById('newPasswordInput').value = '';
+                    document.getElementById('confirmPasswordInput').value = '';
+                    document.getElementById('changePasswordWhatsApp').value = '';
+                    document.getElementById('closeAllSessions').checked = false;
+                    
+                    // Si se cerraron todas las sesiones, hacer logout
+                    if (closeAllSessions) {
+                        showToast('🔒 Todas las sesiones han sido cerradas. Por favor, vuelve a iniciar sesión.', 'info');
+                        setTimeout(() => {
+                            localStorage.removeItem('userToken');
+                            location.reload();
+                        }, 2000);
+                    }
+                } else {
+                    const data = await response.json();
+                    errorDiv.textContent = data.error || 'Error al cambiar contraseña';
+                    errorDiv.classList.add('show');
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error de conexión';
+                errorDiv.classList.add('show');
+            }
+        }
+        
+        // ========================================
+        // BUSCAR USUARIO POR TELÉFONO
+        // ========================================
+        
+        async function handleFindUserByPhone(e) {
+            e.preventDefault();
+            
+            const phone = document.getElementById('findUserPhone').value.trim();
+            const resultDiv = document.getElementById('findUserResult');
+            
+            if (!phone || phone.length < 8) {
+                resultDiv.textContent = 'Ingresa un número de teléfono válido (mínimo 8 dígitos)';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/auth/find-user-by-phone`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                
+                const data = await response.json();
+                
+                if (data.found) {
+                    resultDiv.innerHTML = `
+                        <div style="text-align: center;">
+                            <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Usuario encontrado!</p>
+                            <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${data.username}</p>
+                            <p style="color: #888; font-size: 12px;">Teléfono: ${data.phone || 'No registrado'}</p>
+                        </div>
+                    `;
+                    resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
+                    resultDiv.style.color = '#00ff88';
+                } else {
+                    resultDiv.innerHTML = `
+                        <div style="text-align: center;">
+                            <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${data.message}</p>
+                            <p style="color: #888; font-size: 12px; margin-top: 10px;">Verifica que el número sea correcto</p>
+                        </div>
+                    `;
+                    resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                    resultDiv.style.color = '#ff4444';
+                }
+                resultDiv.style.display = 'block';
+            } catch (error) {
+                resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+            }
+        }
+        
+        // ========================================
+        // CAMBIAR CONTRASEÑA POR TELÉFONO
+        // ========================================
+        
+        async function handleResetPasswordByPhone(e) {
+            e.preventDefault();
+            
+            const phone = document.getElementById('resetPassPhone').value.trim();
+            const newPassword = document.getElementById('resetPassNew').value;
+            const confirmPassword = document.getElementById('resetPassConfirm').value;
+            const resultDiv = document.getElementById('resetPassResult');
+            
+            if (!phone || phone.length < 8) {
+                resultDiv.textContent = 'Ingresa un número de teléfono válido';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            if (newPassword.length < 6) {
+                resultDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            if (newPassword !== confirmPassword) {
+                resultDiv.textContent = 'Las contraseñas no coinciden';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/auth/reset-password-by-phone`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, newPassword })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div style="text-align: center;">
+                            <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Contraseña cambiada!</p>
+                            <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${data.username}</p>
+                            <p style="color: #888; font-size: 12px;">Ya puedes iniciar sesión con tu nueva contraseña</p>
+                        </div>
+                    `;
+                    resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
+                    resultDiv.style.color = '#00ff88';
+                    // Limpiar campos
+                    document.getElementById('resetPassPhone').value = '';
+                    document.getElementById('resetPassNew').value = '';
+                    document.getElementById('resetPassConfirm').value = '';
+                } else {
+                    resultDiv.innerHTML = `
+                        <div style="text-align: center;">
+                            <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${data.error}</p>
+                        </div>
+                    `;
+                    resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                    resultDiv.style.color = '#ff4444';
+                }
+                resultDiv.style.display = 'block';
+            } catch (error) {
+                resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+            }
+        }
+        
+        // ========================================
+        // DEPÓSITO Y RETIRO
+        // ========================================
+        
+        async function handleDeposit(e) {
+            e.preventDefault();
+            
+            const amount = parseFloat(document.getElementById('depositAmount').value);
+            const errorDiv = document.getElementById('depositError');
+            
+            if (!amount || amount < 100) {
+                errorDiv.textContent = 'El monto mínimo es $100';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/movements/deposit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ amount })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    hideModal('depositModal');
+                    showToast(`✅ Depósito de $${amount.toLocaleString()} realizado`, 'success');
+                    document.getElementById('depositAmount').value = '';
+                    // Enviar mensaje automático
+                    await sendSystemMessage(`💰 Depósito realizado: $${amount.toLocaleString()}`);
+                } else {
+                    errorDiv.textContent = data.error || 'Error al realizar depósito';
+                    errorDiv.classList.add('show');
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error de conexión';
+                errorDiv.classList.add('show');
+            }
+        }
+        
+        async function handleWithdraw(e) {
+            e.preventDefault();
+            
+            const amount = parseFloat(document.getElementById('withdrawAmount').value);
+            const errorDiv = document.getElementById('withdrawError');
+            
+            if (!amount || amount < 100) {
+                errorDiv.textContent = 'El monto mínimo es $100';
+                errorDiv.classList.add('show');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/movements/withdraw`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ amount })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    hideModal('withdrawModal');
+                    showToast(`✅ Retiro de $${amount.toLocaleString()} realizado`, 'success');
+                    document.getElementById('withdrawAmount').value = '';
+                    // Enviar mensaje automático
+                    await sendSystemMessage(`💸 Retiro realizado: $${amount.toLocaleString()}`);
+                } else {
+                    errorDiv.textContent = data.error || 'Error al realizar retiro';
+                    errorDiv.classList.add('show');
+                }
+            } catch (error) {
+                errorDiv.textContent = 'Error de conexión';
+                errorDiv.classList.add('show');
+            }
+        }
+        
+        async function sendSystemMessage(content) {
+            try {
+                await fetch(`${API_URL}/api/messages/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ content, type: 'text' })
+                });
+                loadMessages();
+            } catch (error) {
+                console.error('Error enviando mensaje de sistema:', error);
+            }
+        }
+        
+        // ========================================
+        // SOCKET.IO - Conexión en tiempo real
+        // ========================================
+        
+        let socket = null;
+        
+        function initSocket() {
+            if (socket) return;
+            
+            socket = io();
+            
+            // Autenticar socket
+            socket.emit('authenticate', currentToken);
+            
+            socket.on('authenticated', function(data) {
+                if (data.success) {
+                    console.log('✅ Socket autenticado');
+                }
+            });
+            
+            // Escuchar cuando un admin está escribiendo
+            socket.on('admin_typing', function(data) {
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (typingIndicator) {
+                    typingIndicator.style.display = 'inline';
+                    typingIndicator.textContent = '✍️ ' + (data.adminName || 'Agente') + ' está escribiendo...';
+                }
+            });
+            
+            // Escuchar cuando un admin deja de escribir
+            socket.on('admin_stop_typing', function(data) {
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (typingIndicator) {
+                    typingIndicator.style.display = 'none';
+                }
+            });
+            
+            // Escuchar nuevos mensajes
+            socket.on('new_message', function(data) {
+                loadMessages();
+                playNotificationSound();
+            });
+        }
+        
+        // ========================================
+        // CHAT - POLLING RÁPIDO
+        // ========================================
+        
+        function startMessagePolling() {
+            loadMessages();
+            messageCheckInterval = setInterval(loadMessages, 2000); // Cada 2 segundos
+            initSocket(); // Inicializar socket también
+        }
+        
+        function stopMessagePolling() {
+            if (messageCheckInterval) {
+                clearInterval(messageCheckInterval);
+                messageCheckInterval = null;
+            }
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+        
+        async function loadMessages() {
+            try {
+                const response = await fetch(`${API_URL}/api/messages/${currentUser.userId}?limit=10`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    const messages = await response.json();
+                    renderMessages(messages);
+                }
+            } catch (error) {
+                console.error('Error cargando mensajes:', error);
+            }
+        }
+        
+        function renderMessages(messages) {
+            const container = document.getElementById('chatMessages');
+            
+            // Detectar mensajes nuevos del admin para reproducir sonido
+            const adminRoles = ['admin', 'depositor', 'withdrawer'];
+            let hasNewAdminMessage = false;
+            if (messages.length > 0) {
+                const lastMsg = messages[messages.length - 1];
+                if (lastMessageId && lastMessageId !== lastMsg.id && adminRoles.includes(lastMsg.senderRole)) {
+                    hasNewAdminMessage = true;
+                }
+                lastMessageId = lastMsg.id;
+            }
+            
+            container.innerHTML = '';
+            
+            messages.forEach(msg => {
+                addMessageToChat(msg);
+            });
+            
+            scrollToBottom();
+            
+            // Reproducir sonido si hay mensaje nuevo del admin
+            if (hasNewAdminMessage) {
+                playNotificationSound();
+            }
+        }
+        
+        function addMessageToChat(message) {
+            const container = document.getElementById('chatMessages');
+            // Los roles de admin incluyen: admin, depositor, withdrawer
+            const adminRoles = ['admin', 'depositor', 'withdrawer'];
+            const isFromUser = message.senderRole === 'user';
+            const isFromAdmin = adminRoles.includes(message.senderRole);
+            
+            // Debug: mostrar info del mensaje
+            console.log('📨 Mensaje - senderRole:', message.senderRole, 'senderUsername:', message.senderUsername, 'isFromUser:', isFromUser, 'isFromAdmin:', isFromAdmin);
+            
+            const wrapper = document.createElement('div');
+            wrapper.className = 'message-wrapper';
+            
+            const msgDiv = document.createElement('div');
+            // Si es del usuario actual, clase 'usuario' (derecha, verde)
+            // Si es del admin, clase 'agente' (izquierda, gris)
+            msgDiv.className = `message ${isFromUser ? 'usuario' : 'agente'}`;
+            
+            const time = new Date(message.timestamp).toLocaleTimeString('es-AR', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            
+            let contentHtml = '';
+            if (message.type === 'image') {
+                contentHtml = `<img src="${message.content}" onclick="window.open('${message.content}', '_blank')">`;
+            } else {
+                contentHtml = `<div>${escapeHtml(message.content)}</div>`;
+            }
+            
+            // NO mostrar nombre del admin en el frontend del usuario
+            // El nombre del admin solo se muestra en el panel de admin
+            
+            msgDiv.innerHTML = `
+                ${contentHtml}
+                <span class="message-time">${time}</span>
+            `;
+            
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-btn';
+            copyBtn.innerHTML = '📋';
+            copyBtn.onclick = () => copyText(message.type === 'image' ? '[Imagen]' : message.content);
+            
+            wrapper.appendChild(msgDiv);
+            wrapper.appendChild(copyBtn);
+            container.appendChild(wrapper);
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            
+            if (!content) return;
+            
+            // Mostrar mensaje inmediatamente (optimistic UI)
+            const tempMessage = {
+                id: 'temp-' + Date.now(),
+                senderId: currentUser.userId,
+                senderUsername: currentUser.username,
+                senderRole: 'user',
+                content: content,
+                type: 'text',
+                timestamp: new Date().toISOString()
+            };
+            addMessageToChat(tempMessage);
+            scrollToBottom();
+            
+            try {
+                const response = await fetch(`${API_URL}/api/messages/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ content, type: 'text' })
+                });
+                
+                if (response.ok) {
+                    input.value = '';
+                    input.style.height = 'auto';
+                    // Recargar mensajes para confirmar
+                    setTimeout(() => loadMessages(), 500);
+                } else {
+                    // Si falla, remover el mensaje temporal
+                    showToast('Error al enviar mensaje', 'error');
+                }
+            } catch (error) {
+                showToast('Error al enviar mensaje', 'error');
+            }
+        }
+        
+        async function handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            if (!file.type.startsWith('image/')) {
+                showToast('Solo se permiten imágenes', 'error');
+                return;
+            }
+            
+            if (file.size > 5 * 1024 * 1024) {
+                showToast('La imagen es muy grande. Máximo 5MB', 'error');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const response = await fetch(`${API_URL}/api/messages/send`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${currentToken}`
+                        },
+                        body: JSON.stringify({
+                            content: event.target.result,
+                            type: 'image'
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        loadMessages();
+                        showToast('📸 Imagen enviada', 'success');
+                    }
+                } catch (error) {
+                    showToast('Error al enviar imagen', 'error');
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function scrollToBottom() {
+            const container = document.getElementById('chatMessages');
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        // ========================================
+        // REEMBOLSOS
+        // ========================================
+        
+        async function loadRefundStatus() {
+            try {
+                const response = await fetch(`${API_URL}/api/refunds/status`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    refundStatus = await response.json();
+                    updateRefundButtons();
+                }
+            } catch (error) {
+                console.error('Error cargando reembolsos:', error);
+            }
+        }
+        
+        function updateRefundButtons() {
+            if (!refundStatus) return;
+            
+            updateRefundButton('daily', refundStatus.daily);
+            updateRefundButton('weekly', refundStatus.weekly);
+            updateRefundButton('monthly', refundStatus.monthly);
+        }
+        
+        function updateRefundButton(type, data) {
+            const btn = document.getElementById(`${type}RefundBtn`);
+            const amount = document.getElementById(`${type}RefundAmount`);
+            const timer = document.getElementById(`${type}RefundTimer`);
+            
+            amount.textContent = `$${data.potentialAmount.toLocaleString()}`;
+            
+            // Botones siempre habilitados - clickeables siempre
+            btn.disabled = false;
+            btn.classList.remove('claimed');
+            
+            if (data.canClaim && data.potentialAmount > 0) {
+                timer.textContent = '¡Listo!';
+                btn.style.opacity = '1';
+            } else {
+                btn.style.opacity = '0.7';
+                if (data.nextClaim) {
+                    startCountdown(type, data.nextClaim);
+                } else {
+                    timer.textContent = 'Ver info';
+                }
+            }
+        }
+        
+        function startCountdown(type, targetDate) {
+            const timerElement = document.getElementById(`${type}RefundTimer`);
+            
+            function update() {
+                const now = getArgentinaDate();
+                const target = new Date(targetDate);
+                const diff = target - now;
+                
+                if (diff <= 0) {
+                    timerElement.textContent = '¡Listo!';
+                    loadRefundStatus();
+                    return;
+                }
+                
+                const hours = Math.floor(diff / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                
+                if (hours > 24) {
+                    timerElement.textContent = `${Math.floor(hours/24)}d`;
+                } else {
+                    timerElement.textContent = `${hours}h ${minutes}m`;
+                }
+            }
+            
+            update();
+            if (refundTimers[type]) clearInterval(refundTimers[type]);
+            refundTimers[type] = setInterval(update, 60000);
+        }
+        
+        function showRefundModal(type) {
+            console.log('🎁 Abriendo modal de reembolso:', type);
+            console.log('📊 refundStatus:', refundStatus);
+            
+            if (!refundStatus) {
+                console.error('❌ refundStatus es null o undefined');
+                showToast('Error: No se pudo cargar la información de reembolsos', 'error');
+                return;
+            }
+            
+            const typeData = refundStatus[type];
+            const titles = {
+                daily: '📅 Reembolso Diario (20%)',
+                weekly: '📆 Reembolso Semanal (10%)',
+                monthly: '🗓️ Reembolso Mensual (5%)'
+            };
+            
+            const periodLabels = {
+                daily: '📊 MOVIMIENTOS DE AYER',
+                weekly: '📊 MOVIMIENTOS DE LA SEMANA PASADA (Lun-Dom)',
+                monthly: '📊 MOVIMIENTOS DEL MES PASADO'
+            };
+            
+            document.getElementById('refundModalTitle').textContent = titles[type];
+            document.getElementById('refundMovementsTitle').textContent = periodLabels[type];
+            
+            // Balance actual del usuario
+            const currentBalance = refundStatus.user?.currentBalance || 0;
+            document.getElementById('refundCurrentBalance').textContent = `$${currentBalance.toLocaleString()}`;
+            
+            // Período específico
+            document.getElementById('refundPeriod').textContent = typeData.period || '-';
+            
+            // Movimientos del período correspondiente
+            document.getElementById('refundDeposits').textContent = `$${(typeData.deposits || 0).toLocaleString()}`;
+            document.getElementById('refundWithdrawals').textContent = `$${(typeData.withdrawals || 0).toLocaleString()}`;
+            document.getElementById('refundNetAmount').textContent = `$${(typeData.netAmount || 0).toLocaleString()}`;
+            document.getElementById('refundAmount').textContent = `$${(typeData.potentialAmount || 0).toLocaleString()}`;
+            
+            // Info de disponibilidad para semanal y mensual
+            const availabilityInfo = document.getElementById('refundAvailabilityInfo');
+            availabilityInfo.style.display = 'none';
+            availabilityInfo.innerHTML = '';
+            
+            if (type === 'weekly') {
+                const today = new Date().getDay(); // 0 = domingo, 1 = lunes, 2 = martes
+                const isClaimableDay = today === 1 || today === 2; // Lunes o martes
+                
+                if (!isClaimableDay) {
+                    availabilityInfo.style.display = 'block';
+                    availabilityInfo.style.background = 'rgba(255,165,0,0.1)';
+                    availabilityInfo.style.border = '1px solid rgba(255,165,0,0.3)';
+                    availabilityInfo.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 20px;">ℹ️</span>
+                            <div>
+                                <p style="color: #ffa500; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Semanal</p>
+                                <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable los días <strong>LUNES y MARTES</strong></p>
+                                <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde a la semana anterior (Lunes a Domingo)</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            } else if (type === 'monthly') {
+                const today = new Date().getDate();
+                const isClaimableDay = today >= 7; // Después del día 7
+                
+                if (!isClaimableDay) {
+                    availabilityInfo.style.display = 'block';
+                    availabilityInfo.style.background = 'rgba(255,165,0,0.1)';
+                    availabilityInfo.style.border = '1px solid rgba(255,165,0,0.3)';
+                    availabilityInfo.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 20px;">ℹ️</span>
+                            <div>
+                                <p style="color: #ffa500; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Mensual</p>
+                                <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable <strong>después del día 7</strong> de cada mes</p>
+                                <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde al mes anterior completo</p>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+            
+            // Info adicional
+            const extraInfo = document.getElementById('refundExtraInfo');
+            
+            // Verificar si ya fue reclamado y calcular tiempo restante
+            const claimBtn = document.getElementById('claimRefundBtn');
+            let isClaimed = false;
+            let timeRemaining = '';
+            
+            if (typeData.lastClaim) {
+                const lastClaim = new Date(typeData.lastClaim);
+                const now = new Date();
+                
+                if (type === 'daily') {
+                    const tomorrow = new Date(lastClaim);
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    tomorrow.setHours(0, 0, 0, 0);
+                    if (now < tomorrow) {
+                        isClaimed = true;
+                        const diff = tomorrow - now;
+                        const hours = Math.floor(diff / (1000 * 60 * 60));
+                        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                        timeRemaining = `${hours}h ${minutes}m`;
+                    }
+                } else if (type === 'weekly') {
+                    const nextMonday = new Date(lastClaim);
+                    const daysUntilMonday = (8 - lastClaim.getDay()) % 7 || 7;
+                    nextMonday.setDate(nextMonday.getDate() + daysUntilMonday);
+                    nextMonday.setHours(0, 0, 0, 0);
+                    if (now < nextMonday) {
+                        isClaimed = true;
+                        const diff = nextMonday - now;
+                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                        timeRemaining = `${days}d ${hours}h`;
+                    }
+                } else if (type === 'monthly') {
+                    const nextMonth = new Date(lastClaim.getFullYear(), lastClaim.getMonth() + 1, 7);
+                    nextMonth.setHours(0, 0, 0, 0);
+                    if (now < nextMonth) {
+                        isClaimed = true;
+                        const diff = nextMonth - now;
+                        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+                        timeRemaining = `${days}d`;
+                    }
+                }
+            }
+            
+            if (typeData.potentialAmount <= 0) {
+                extraInfo.innerHTML = '<span style="color: #ff8888;">⚠️ No tienes saldo neto positivo para reclamar reembolso</span>';
+                claimBtn.disabled = true;
+                claimBtn.textContent = '❌ Sin saldo para reembolso';
+                claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            } else if (isClaimed) {
+                extraInfo.innerHTML = `<span style="color: #ffaa44;">⏳ Ya reclamaste este reembolso. Disponible en: <strong>${timeRemaining}</strong></span>`;
+                claimBtn.disabled = true;
+                claimBtn.textContent = `⏳ Disponible en ${timeRemaining}`;
+                claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            } else if (!typeData.canClaim) {
+                extraInfo.innerHTML = '<span style="color: #ffaa44;">⏳ No puedes reclamar este reembolso en este momento.</span>';
+                claimBtn.disabled = true;
+                claimBtn.textContent = '⏳ No disponible';
+                claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            } else {
+                extraInfo.innerHTML = '<span style="color: #00ff88;">✅ ¡Puedes reclamar este reembolso!</span>';
+                claimBtn.disabled = false;
+                claimBtn.textContent = '🎁 Reclamar Reembolso';
+                claimBtn.style.background = '';
+            }
+            
+            claimBtn.onclick = () => claimRefund(type);
+            
+            showModal('refundModal');
+        }
+        
+        async function claimRefund(type) {
+            try {
+                const response = await fetch(`${API_URL}/api/refunds/claim/${type}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showToast(`✅ ${data.message}`, 'success');
+                    hideModal('refundModal');
+                    loadRefundStatus();
+                    sendSystemMessage(`🎁 Reembolso ${type} reclamado: $${data.amount.toLocaleString()}`);
+                } else {
+                    // Mostrar mensaje informativo (no error)
+                    showToast(`ℹ️ ${data.message}`, 'info');
+                    hideModal('refundModal');
+                    loadRefundStatus();
+                }
+            } catch (error) {
+                showToast('Error de conexión', 'error');
+            }
+        }
+        
+        // ========================================
+        // FUEGUITO (RACHA DIARIA)
+        // ========================================
+        
+        let fireStatus = null;
+        
+        async function loadFireStatus() {
+            try {
+                const response = await fetch(`${API_URL}/api/fire/status`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    fireStatus = await response.json();
+                    updateFireButton();
+                }
+            } catch (error) {
+                console.error('Error cargando fueguito:', error);
+            }
+        }
+        
+        function updateFireButton() {
+            if (!fireStatus) return;
+            
+            const btn = document.getElementById('fireBtn');
+            const streak = document.getElementById('fireStreak');
+            
+            streak.textContent = fireStatus.streak || 0;
+            
+            // El botón nunca se deshabilita, solo cambia la animación
+            if (fireStatus.canClaim) {
+                btn.style.animation = 'fire-pulse 1s ease infinite';
+                btn.style.opacity = '1';
+            } else {
+                btn.style.animation = 'none';
+                btn.style.opacity = '0.7';
+            }
+        }
+        
+        async function showFireModal() {
+            // Si no hay datos del fueguito, cargarlos primero
+            if (!fireStatus) {
+                await loadFireStatus();
+            }
+            
+            if (!fireStatus) {
+                showToast('Error cargando datos del fueguito', 'error');
+                return;
+            }
+            
+            const streak = fireStatus.streak || 0;
+            document.getElementById('fireStreakModal').textContent = streak;
+            document.getElementById('fireLastClaim').textContent = fireStatus.lastClaim 
+                ? new Date(fireStatus.lastClaim).toLocaleString('es-AR')
+                : 'Nunca';
+            
+            // Actualizar barra de progreso
+            const progressPercent = Math.min((streak / 10) * 100, 100);
+            document.getElementById('fireProgressBar').style.width = progressPercent + '%';
+            document.getElementById('fireProgressBar').textContent = progressPercent + '%';
+            document.getElementById('fireProgressText').textContent = `${streak}/10 días`;
+            
+            const claimBtn = document.getElementById('claimFireBtn');
+            const condition = document.getElementById('fireCondition');
+            
+            // Limpiar interval anterior
+            if (fireCountdownInterval) {
+                clearInterval(fireCountdownInterval);
+            }
+            
+            // Sin requisitos de actividad - todos pueden reclamar
+            if (fireStatus.canClaim) {
+                claimBtn.disabled = false;
+                claimBtn.textContent = '🔥 Reclamar Fueguito';
+                claimBtn.style.background = 'linear-gradient(135deg, #ff4500 0%, #ff6347 100%)';
+                condition.innerHTML = '✅ <strong style="color: #00ff88;">Puedes reclamar tu fueguito hoy!</strong>';
+            } else {
+                claimBtn.disabled = true;
+                claimBtn.textContent = '⏳ Ya reclamado';
+                claimBtn.style.background = '#666';
+                // Iniciar cuenta regresiva
+                startFireCountdown();
+            }
+            
+            showModal('fireModal');
+        }
+        
+        // Cuenta regresiva del fueguito
+        let fireCountdownInterval = null;
+        
+        function startFireCountdown() {
+            if (fireCountdownInterval) {
+                clearInterval(fireCountdownInterval);
+            }
+            
+            // Calcular tiempo hasta la medianoche en Argentina
+            const argentinaMidnight = getArgentinaMidnight();
+            
+            function updateCountdown() {
+                const current = getArgentinaDate();
+                const diff = argentinaMidnight - current.getTime();
+                
+                if (diff <= 0) {
+                    // Ya es medianoche en Argentina, recargar estado
+                    loadFireStatus();
+                    if (fireCountdownInterval) {
+                        clearInterval(fireCountdownInterval);
+                    }
+                    return;
+                }
+                
+                const hours = Math.floor(diff / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+                
+                // Actualizar en el modal si está abierto
+                const condition = document.getElementById('fireCondition');
+                if (condition && fireStatus && !fireStatus.canClaim) {
+                    condition.innerHTML = '⏳ Próximo fueguito disponible en: <strong style="color: #ff4500;">' + 
+                        String(hours).padStart(2, '0') + ':' + 
+                        String(minutes).padStart(2, '0') + ':' + 
+                        String(seconds).padStart(2, '0') + '</strong>';
+                }
+            }
+            
+            updateCountdown();
+            fireCountdownInterval = setInterval(updateCountdown, 1000);
+        }
+        
+        async function claimFire() {
+            const claimBtn = document.getElementById('claimFireBtn');
+            
+            // Deshabilitar botón mientras se procesa
+            if (claimBtn) {
+                claimBtn.disabled = true;
+                claimBtn.textContent = 'Procesando...';
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/fire/claim`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    showToast(`🔥 ${data.message}`, 'success');
+                    
+                    // Actualizar estado local
+                    fireStatus.canClaim = false;
+                    fireStatus.lastClaim = new Date().toISOString();
+                    fireStatus.streak = data.streak;
+                    
+                    // Iniciar cuenta regresiva
+                    startFireCountdown();
+                    
+                    // Actualizar UI
+                    updateFireButton();
+                    
+                    if (data.reward > 0) {
+                        sendSystemMessage(`🔥🔥🔥 Racha de 10 días! Recompensa: $${data.reward.toLocaleString()}`);
+                    } else {
+                        sendSystemMessage(`🔥 Día ${data.streak} de racha!`);
+                    }
+                    
+                    // Cerrar modal después de un momento
+                    setTimeout(() => {
+                        hideModal('fireModal');
+                    }, 1500);
+                } else {
+                    showToast(data.error || data.message || 'Error', 'error');
+                    if (claimBtn) {
+                        claimBtn.disabled = false;
+                        claimBtn.textContent = '🔥 Reclamar Fueguito';
+                    }
+                }
+            } catch (error) {
+                console.error('Error reclamando fueguito:', error);
+                showToast('Error de conexión', 'error');
+                if (claimBtn) {
+                    claimBtn.disabled = false;
+                    claimBtn.textContent = '🔥 Reclamar Fueguito';
+                }
+            }
+        }
+        
+        // ========================================
+        // UTILIDADES
+        // ========================================
+        
+        function showLoginScreen() {
+            document.getElementById('loginScreen').classList.remove('hidden');
+            document.getElementById('chatScreen').classList.add('hidden');
+        }
+        
+        function showChatScreen() {
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('chatScreen').classList.remove('hidden');
+            document.getElementById('currentUser').textContent = currentUser?.username || 'Usuario';
+            
+            // Iniciar sincronización de saldo
+            syncBalance();
+            startBalancePolling();
+        }
+        
+        // Sincronizar saldo con el servidor
+        async function syncBalance() {
+            if (!currentToken || !currentUser) return;
+            
+            try {
+                const response = await fetch(`${API_URL}/api/balance/live`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.balance !== undefined) {
+                        currentUser.balance = data.balance;
+                        updateBalanceDisplay(data.balance);
+                        
+                        // Mostrar notificación si el saldo cambió significativamente
+                        const previousBalance = parseFloat(localStorage.getItem('lastBalance') || '0');
+                        const newBalance = parseFloat(data.balance);
+                        if (Math.abs(newBalance - previousBalance) > 0.01) {
+                            localStorage.setItem('lastBalance', newBalance);
+                            // Mostrar saldo en algún lugar visible
+                            showBalanceToast(newBalance);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error sincronizando saldo:', error);
+            }
+        }
+        
+        // Mostrar notificación de saldo actualizado
+        function showBalanceToast(balance) {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed;
+                top: 100px;
+                right: 20px;
+                background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+                color: #000;
+                padding: 15px 25px;
+                border-radius: 12px;
+                font-weight: bold;
+                font-size: 16px;
+                z-index: 10000;
+                animation: slideIn 0.3s ease;
+                box-shadow: 0 5px 20px rgba(0, 255, 136, 0.4);
+            `;
+            toast.innerHTML = `💰 Saldo actualizado: <span style="font-size: 20px;">$${balance.toLocaleString()}</span>`;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+        
+        // Actualizar visualización del saldo
+        function updateBalanceDisplay(balance) {
+            // Actualizar en el header si existe un elemento de saldo
+            const balanceElement = document.getElementById('userBalance');
+            if (balanceElement) {
+                balanceElement.textContent = `$${balance.toLocaleString()}`;
+            }
+            console.log('Saldo actualizado:', balance);
+        }
+        
+        // Iniciar polling de saldo cada 10 segundos (más frecuente para ver cambios)
+        function startBalancePolling() {
+            if (balanceCheckInterval) {
+                clearInterval(balanceCheckInterval);
+            }
+            balanceCheckInterval = setInterval(syncBalance, 10000);
+        }
+        
+        // Detener polling de saldo
+        function stopBalancePolling() {
+            if (balanceCheckInterval) {
+                clearInterval(balanceCheckInterval);
+                balanceCheckInterval = null;
+            }
+        }
+        
+        function showModal(modalId) {
+            document.getElementById(modalId).classList.remove('hidden');
+        }
+        
+        function hideModal(modalId) {
+            document.getElementById(modalId).classList.add('hidden');
+        }
+        
+        async function copyText(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast('✅ Copiado');
+            } catch (error) {
+                showToast('Error al copiar', 'error');
+            }
+        }
+        
+        function showToast(message, type = 'success') {
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.remove(), 3000);
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function installApp() {
+            showToast('Para instalar: Menú > Agregar a inicio', 'success');
+        }
+        
+        // Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js').catch(() => {});
+        }
+    </script>
+</body>
+</html>
