@@ -1,0 +1,1251 @@
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
+const fs = require('fs');
+const path = require('path');
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+// ============================================
+// CONEXIÓN A MONGODB
+// ============================================
+
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/saladejuegos';
+
+// Conectar a MongoDB
+mongoose.connect(MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+})
+.then(() => console.log('✅ Conectado a MongoDB'))
+.catch(err => {
+  console.error('❌ Error conectando a MongoDB:', err.message);
+  console.log('⚠️  Continuando con modo fallback...');
+});
+
+// Manejar eventos de conexión
+mongoose.connection.on('connected', () => console.log('🟢 MongoDB conectado'));
+mongoose.connection.on('error', (err) => console.error('🔴 MongoDB error:', err));
+mongoose.connection.on('disconnected', () => console.log('🟡 MongoDB desconectado'));
+
+// ============================================
+// MODELOS DE MONGOOSE
+// ============================================
+
+// Modelo de Usuario
+const userSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  email: { type: String, default: null },
+  phone: { type: String, default: null },
+  whatsapp: { type: String, default: null },
+  role: { type: String, enum: ['user', 'admin', 'depositor', 'withdrawer'], default: 'user' },
+  accountNumber: { type: String, required: true, unique: true },
+  balance: { type: Number, default: 0 },
+  bonusBalance: { type: Number, default: 0 },
+  createdAt: { type: String, default: () => new Date().toISOString() },
+  lastLogin: { type: String, default: null },
+  isActive: { type: Boolean, default: true },
+  tokenVersion: { type: Number, default: 0 },
+  passwordChangedAt: { type: String, default: null },
+  jugayganaUserId: { type: String, default: null },
+  jugayganaUsername: { type: String, default: null },
+  jugayganaSyncStatus: { type: String, default: null },
+  source: { type: String, default: null },
+  lastBonusDate: { type: String, default: null },
+  bonusDay: { type: Number, default: 0 },
+  dailyWager: { type: Number, default: 0 },
+  weeklyWager: { type: Number, default: 0 },
+  monthlyWager: { type: Number, default: 0 },
+  lastDailyRefund: { type: String, default: null },
+  lastWeeklyRefund: { type: String, default: null },
+  lastMonthlyRefund: { type: String, default: null }
+}, { timestamps: true });
+
+const User = mongoose.model('User', userSchema);
+
+// Modelo de Mensaje
+const messageSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  senderId: { type: String, required: true },
+  senderUsername: { type: String, required: true },
+  senderRole: { type: String, enum: ['user', 'admin', 'depositor', 'withdrawer', 'system'], required: true },
+  receiverId: { type: String, required: true },
+  receiverRole: { type: String, enum: ['user', 'admin', 'depositor', 'withdrawer'], required: true },
+  content: { type: String, required: true },
+  type: { type: String, enum: ['text', 'image'], default: 'text' },
+  timestamp: { type: String, default: () => new Date().toISOString() },
+  read: { type: Boolean, default: false }
+}, { timestamps: true });
+
+const Message = mongoose.model('Message', messageSchema);
+
+// Modelo de Transacción
+const transactionSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  userId: { type: String, required: true },
+  username: { type: String, required: true },
+  type: { type: String, enum: ['deposit', 'withdrawal', 'bonus', 'refund', 'adjustment'], required: true },
+  amount: { type: Number, required: true },
+  status: { type: String, enum: ['pending', 'completed', 'rejected', 'cancelled'], default: 'pending' },
+  method: { type: String, default: null },
+  reference: { type: String, default: null },
+  notes: { type: String, default: null },
+  processedBy: { type: String, default: null },
+  processedAt: { type: String, default: null },
+  createdAt: { type: String, default: () => new Date().toISOString() },
+  jugayganaTransactionId: { type: String, default: null }
+}, { timestamps: true });
+
+const Transaction = mongoose.model('Transaction', transactionSchema);
+
+// Modelo de Configuración
+const configSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  cbu: {
+    number: { type: String, default: '0000000000000000000000' },
+    alias: { type: String, default: 'mi.alias.cbu' },
+    bank: { type: String, default: 'Banco Ejemplo' },
+    titular: { type: String, default: 'Sala de Juegos' }
+  },
+  welcomeMessage: { type: String, default: '🎉 ¡Bienvenido a la Sala de Juegos!' },
+  depositMessage: { type: String, default: '💰 ¡Fichas cargadas! ${amount}. ¡Ya tenés tu carga en la plataforma! 🍀\n\n👤 Tu usuario: {username}\n🌐 Plataforma: www.jugaygana.bet\n\n¡Mucha suerte! 🎰✨' },
+  maintenanceMode: { type: Boolean, default: false },
+  allowRegistration: { type: Boolean, default: true }
+}, { timestamps: true });
+
+const Config = mongoose.model('Config', configSchema);
+
+// Modelo de Usuario Externo
+const externalUserSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  phone: { type: String, default: null },
+  whatsapp: { type: String, default: null },
+  firstSeen: { type: String, default: () => new Date().toISOString() },
+  lastSeen: { type: String, default: () => new Date().toISOString() },
+  messageCount: { type: Number, default: 0 }
+}, { timestamps: true });
+
+const ExternalUser = mongoose.model('ExternalUser', externalUserSchema);
+
+// ============================================
+// FUNCIONES DE BASE DE DATOS (MONGODB)
+// ============================================
+
+// Funciones de Usuarios
+const loadUsers = async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      // Fallback a archivo si MongoDB no está conectado
+      return loadUsersFromFile();
+    }
+    const users = await User.find().lean();
+    return users.map(u => ({ ...u, _id: undefined, __v: undefined }));
+  } catch (error) {
+    console.error('Error cargando usuarios de MongoDB:', error);
+    return loadUsersFromFile();
+  }
+};
+
+const saveUsers = async (users) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return saveUsersToFile(users);
+    }
+    // MongoDB maneja los usuarios individualmente, no necesitamos reemplazar todo
+    return true;
+  } catch (error) {
+    console.error('Error guardando usuarios en MongoDB:', error);
+    return saveUsersToFile(users);
+  }
+};
+
+// Funciones de Mensajes
+const loadMessages = async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return loadMessagesFromFile();
+    }
+    const messages = await Message.find().lean();
+    return messages.map(m => ({ ...m, _id: undefined, __v: undefined }));
+  } catch (error) {
+    console.error('Error cargando mensajes de MongoDB:', error);
+    return loadMessagesFromFile();
+  }
+};
+
+const saveMessages = async (messages) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return saveMessagesToFile(messages);
+    }
+    return true;
+  } catch (error) {
+    console.error('Error guardando mensajes en MongoDB:', error);
+    return saveMessagesToFile(messages);
+  }
+};
+
+// Funciones de Configuración
+const loadConfig = async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return loadConfigFromFile();
+    }
+    let config = await Config.findOne({ key: 'main' }).lean();
+    if (!config) {
+      config = await Config.create({
+        key: 'main',
+        cbu: {
+          number: '0000000000000000000000',
+          alias: 'mi.alias.cbu',
+          bank: 'Banco Ejemplo',
+          titular: 'Sala de Juegos'
+        },
+        welcomeMessage: '🎉 ¡Bienvenido a la Sala de Juegos!',
+        depositMessage: '💰 ¡Fichas cargadas! ${amount}. ¡Ya tenés tu carga en la plataforma! 🍀\n\n👤 Tu usuario: {username}\n🌐 Plataforma: www.jugaygana.bet\n\n¡Mucha suerte! 🎰✨'
+      });
+    }
+    return { ...config, _id: undefined, __v: undefined };
+  } catch (error) {
+    console.error('Error cargando config de MongoDB:', error);
+    return loadConfigFromFile();
+  }
+};
+
+const saveConfig = async (configData) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return saveConfigToFile(configData);
+    }
+    await Config.findOneAndUpdate(
+      { key: 'main' },
+      { ...configData, key: 'main' },
+      { upsert: true, new: true }
+    );
+    return true;
+  } catch (error) {
+    console.error('Error guardando config en MongoDB:', error);
+    return saveConfigToFile(configData);
+  }
+};
+
+// Funciones de Usuarios Externos
+const loadExternalUsers = async () => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return loadExternalUsersFromFile();
+    }
+    const users = await ExternalUser.find().lean();
+    return users.map(u => ({ ...u, _id: undefined, __v: undefined }));
+  } catch (error) {
+    console.error('Error cargando usuarios externos de MongoDB:', error);
+    return loadExternalUsersFromFile();
+  }
+};
+
+const saveExternalUsers = async (users) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return saveExternalUsersToFile(users);
+    }
+    return true;
+  } catch (error) {
+    console.error('Error guardando usuarios externos en MongoDB:', error);
+    return saveExternalUsersToFile(users);
+  }
+};
+
+// ============================================
+// FALLBACK A ARCHIVOS (SI MONGODB NO ESTÁ DISPONIBLE)
+// ============================================
+
+const DATA_DIR = process.env.VERCEL ? '/tmp/data' : path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const EXTERNAL_DB_FILE = path.join(DATA_DIR, 'external-users.json');
+
+// Crear directorio de datos si no existe
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (error) {
+  console.error('Error creando directorio de datos:', error);
+}
+
+// Crear archivos JSON si no existen
+try {
+  if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify([], null, 2));
+  }
+  if (!fs.existsSync(MESSAGES_FILE)) {
+    fs.writeFileSync(MESSAGES_FILE, JSON.stringify([], null, 2));
+  }
+  if (!fs.existsSync(CONFIG_FILE)) {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({
+      cbu: {
+        number: '0000000000000000000000',
+        alias: 'mi.alias.cbu',
+        bank: 'Banco Ejemplo',
+        titular: 'Sala de Juegos'
+      },
+      welcomeMessage: '🎉 ¡Bienvenido a la Sala de Juegos!',
+      depositMessage: '💰 ¡Fichas cargadas! ${amount}. ¡Ya tenés tu carga en la plataforma! 🍀\n\n👤 Tu usuario: {username}\n🌐 Plataforma: www.jugaygana.bet\n\n¡Mucha suerte! 🎰✨'
+    }, null, 2));
+  }
+  if (!fs.existsSync(EXTERNAL_DB_FILE)) {
+    fs.writeFileSync(EXTERNAL_DB_FILE, JSON.stringify([], null, 2));
+  }
+} catch (error) {
+  console.error('Error creando archivos de datos:', error);
+}
+
+// Funciones de fallback a archivos
+const loadUsersFromFile = () => {
+  try {
+    const data = fs.readFileSync(USERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    return [];
+  }
+};
+
+const saveUsersToFile = (users) => {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Error guardando usuarios en archivo:', error);
+    return false;
+  }
+};
+
+const loadMessagesFromFile = () => {
+  try {
+    const data = fs.readFileSync(MESSAGES_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    return [];
+  }
+};
+
+const saveMessagesToFile = (messages) => {
+  try {
+    fs.writeFileSync(MESSAGES_FILE, JSON.stringify(messages, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Error guardando mensajes en archivo:', error);
+    return false;
+  }
+};
+
+const loadConfigFromFile = () => {
+  try {
+    if (!fs.existsSync(CONFIG_FILE)) {
+      const defaultConfig = {
+        cbu: {
+          number: '0000000000000000000000',
+          alias: 'mi.alias.cbu',
+          bank: 'Banco Ejemplo',
+          titular: 'Sala de Juegos'
+        },
+        welcomeMessage: '🎉 ¡Bienvenido a la Sala de Juegos!',
+        depositMessage: '💰 ¡Fichas cargadas! ${amount}. ¡Ya tenés tu carga en la plataforma! 🍀\n\n👤 Tu usuario: {username}\n🌐 Plataforma: www.jugaygana.bet\n\n¡Mucha suerte! 🎰✨'
+      };
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(defaultConfig, null, 2));
+      return defaultConfig;
+    }
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+  } catch (error) {
+    return {
+      cbu: {
+        number: '0000000000000000000000',
+        alias: 'mi.alias.cbu',
+        bank: 'Banco Ejemplo',
+        titular: 'Sala de Juegos'
+      },
+      welcomeMessage: '🎉 ¡Bienvenido a la Sala de Juegos!',
+      depositMessage: '💰 ¡Fichas cargadas! ${amount}. ¡Ya tenés tu carga en la plataforma! 🍀\n\n👤 Tu usuario: {username}\n🌐 Plataforma: www.jugaygana.bet\n\n¡Mucha suerte! 🎰✨'
+    };
+  }
+};
+
+const saveConfigToFile = (config) => {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Error guardando config en archivo:', error);
+    return false;
+  }
+};
+
+const loadExternalUsersFromFile = () => {
+  try {
+    if (!fs.existsSync(EXTERNAL_DB_FILE)) {
+      fs.writeFileSync(EXTERNAL_DB_FILE, JSON.stringify([], null, 2));
+      return [];
+    }
+    return JSON.parse(fs.readFileSync(EXTERNAL_DB_FILE, 'utf8'));
+  } catch (error) {
+    return [];
+  }
+};
+
+const saveExternalUsersToFile = (users) => {
+  try {
+    fs.writeFileSync(EXTERNAL_DB_FILE, JSON.stringify(users, null, 2));
+    return true;
+  } catch (error) {
+    console.error('Error guardando usuarios externos en archivo:', error);
+    return false;
+  }
+};
+
+// ============================================
+// SEGURIDAD - RATE LIMITING
+// ============================================
+
+const requestCounts = new Map();
+const RATE_LIMIT_WINDOW = 60 * 1000;
+const RATE_LIMIT_MAX = 100;
+const AUTH_RATE_LIMIT_MAX = 10;
+
+function rateLimit(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const isAuthEndpoint = req.path.includes('/auth/');
+  const maxRequests = isAuthEndpoint ? AUTH_RATE_LIMIT_MAX : RATE_LIMIT_MAX;
+  
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW;
+  
+  for (const [key, data] of requestCounts) {
+    if (data.timestamp < windowStart) {
+      requestCounts.delete(key);
+    }
+  }
+  
+  const key = `${ip}:${req.path}`;
+  const current = requestCounts.get(key);
+  
+  if (current && current.timestamp > windowStart) {
+    if (current.count >= maxRequests) {
+      return res.status(429).json({ 
+        error: 'Demasiadas solicitudes. Intenta más tarde.',
+        retryAfter: Math.ceil((current.timestamp + RATE_LIMIT_WINDOW - now) / 1000)
+      });
+    }
+    current.count++;
+  } else {
+    requestCounts.set(key, { count: 1, timestamp: now });
+  }
+  
+  next();
+}
+
+// ============================================
+// SEGURIDAD - HEADERS DE SEGURIDAD
+// ============================================
+
+function securityHeaders(req, res, next) {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self';");
+  next();
+}
+
+// ============================================
+// SEGURIDAD - VALIDACIÓN DE INPUT
+// ============================================
+
+function sanitizeInput(input) {
+  if (typeof input !== 'string') return input;
+  return input
+    .replace(/[<>]/g, '')
+    .trim()
+    .substring(0, 1000);
+}
+
+function validateUsername(username) {
+  if (!username || typeof username !== 'string') return false;
+  const sanitized = username.trim();
+  return /^[a-zA-Z0-9_.-]{3,30}$/.test(sanitized);
+}
+
+function validatePassword(password) {
+  if (!password || typeof password !== 'string') return false;
+  return password.length >= 6 && password.length <= 100;
+}
+
+// Integración JUGAYGANA
+const jugaygana = require('./jugaygana');
+const jugayganaMovements = require('./jugaygana-movements');
+const refunds = require('./models/refunds');
+
+// ============================================
+// BLOQUEO DE REEMBOLSOS
+// ============================================
+const refundLocks = new Map();
+
+function acquireRefundLock(userId, type) {
+  const key = `${userId}-${type}`;
+  if (refundLocks.has(key)) {
+    return false;
+  }
+  refundLocks.set(key, Date.now());
+  return true;
+}
+
+function releaseRefundLock(userId, type) {
+  const key = `${userId}-${type}`;
+  refundLocks.delete(key);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timestamp] of refundLocks.entries()) {
+    if (now - timestamp > 5 * 60 * 1000) {
+      refundLocks.delete(key);
+    }
+  }
+}, 60 * 1000);
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
+
+// ============================================
+// MIDDLEWARE DE SEGURIDAD
+// ============================================
+
+app.use(securityHeaders);
+app.use(rateLimit);
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
+  credentials: true
+}));
+app.use(express.json({ 
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    const body = buf.toString();
+    if (body.length > 10 * 1024 * 1024) {
+      throw new Error('Payload too large');
+    }
+  }
+}));
+app.use(express.static(path.join(__dirname, 'public'), {
+  dotfiles: 'deny',
+  index: false,
+  maxAge: '1d'
+}));
+
+// ============================================
+// FUNCIONES AUXILIARES
+// ============================================
+
+async function addExternalUser(userData) {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const existing = await ExternalUser.findOne({ username: userData.username });
+      if (existing) {
+        existing.lastSeen = new Date().toISOString();
+        existing.messageCount = (existing.messageCount || 0) + 1;
+        await existing.save();
+      } else {
+        await ExternalUser.create({
+          username: userData.username,
+          phone: userData.phone || null,
+          whatsapp: userData.whatsapp || null,
+          firstSeen: new Date().toISOString(),
+          lastSeen: new Date().toISOString(),
+          messageCount: 1
+        });
+      }
+    } else {
+      const users = await loadExternalUsers();
+      const existingIndex = users.findIndex(u => u.username === userData.username);
+      const userRecord = {
+        username: userData.username,
+        phone: userData.phone || null,
+        whatsapp: userData.whatsapp || null,
+        firstSeen: existingIndex >= 0 ? users[existingIndex].firstSeen : new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        messageCount: existingIndex >= 0 ? (users[existingIndex].messageCount || 0) + 1 : 1
+      };
+      if (existingIndex >= 0) {
+        users[existingIndex] = { ...users[existingIndex], ...userRecord };
+      } else {
+        users.push(userRecord);
+      }
+      await saveExternalUsers(users);
+    }
+  } catch (error) {
+    console.error('Error en addExternalUser:', error);
+  }
+}
+
+async function findUserByPhone(phone) {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const mainUser = await User.findOne({ $or: [{ phone }, { whatsapp: phone }] }).lean();
+      if (mainUser) {
+        return { username: mainUser.username, phone: mainUser.phone, source: 'main' };
+      }
+      const externalUser = await ExternalUser.findOne({ $or: [{ phone }, { whatsapp: phone }] }).lean();
+      if (externalUser) {
+        return { username: externalUser.username, phone: externalUser.phone, source: 'external' };
+      }
+    } else {
+      const users = await loadUsers();
+      const externalUsers = await loadExternalUsers();
+      const mainUser = users.find(u => u.phone === phone || u.whatsapp === phone);
+      if (mainUser) {
+        return { username: mainUser.username, phone: mainUser.phone, source: 'main' };
+      }
+      const externalUser = externalUsers.find(u => u.phone === phone || u.whatsapp === phone);
+      if (externalUser) {
+        return { username: externalUser.username, phone: externalUser.phone, source: 'external' };
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Error en findUserByPhone:', error);
+    return null;
+  }
+}
+
+async function changePasswordByPhone(phone, newPassword) {
+  try {
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    if (mongoose.connection.readyState === 1) {
+      const user = await User.findOneAndUpdate(
+        { $or: [{ phone }, { whatsapp: phone }] },
+        { password: hashedPassword, passwordChangedAt: new Date().toISOString() },
+        { new: true }
+      );
+      if (user) {
+        return { success: true, username: user.username };
+      }
+    } else {
+      const users = await loadUsers();
+      const userIndex = users.findIndex(u => u.phone === phone || u.whatsapp === phone);
+      if (userIndex !== -1) {
+        users[userIndex].password = hashedPassword;
+        users[userIndex].passwordChangedAt = new Date().toISOString();
+        await saveUsers(users);
+        return { success: true, username: users[userIndex].username };
+      }
+    }
+    return { success: false, error: 'Usuario no encontrado con ese número de teléfono' };
+  } catch (error) {
+    console.error('Error en changePasswordByPhone:', error);
+    return { success: false, error: 'Error del servidor' };
+  }
+}
+
+// ============================================
+// LIMPIEZA DE MENSAJES
+// ============================================
+
+async function cleanupOldMessages() {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const maxAge = new Date(Date.now() - 25 * 60 * 60 * 1000);
+      const result = await Message.deleteMany({ timestamp: { $lt: maxAge.toISOString() } });
+      if (result.deletedCount > 0) {
+        console.log(`🧹 Limpieza de mensajes: ${result.deletedCount} mensajes eliminados`);
+      }
+    } else {
+      const messages = await loadMessages();
+      const now = new Date();
+      const maxAge = 25 * 60 * 60 * 1000;
+      const filteredMessages = messages.filter(msg => {
+        const msgTime = new Date(msg.timestamp).getTime();
+        return (now.getTime() - msgTime) < maxAge;
+      });
+      if (filteredMessages.length < messages.length) {
+        await saveMessages(filteredMessages);
+        console.log(`🧹 Limpieza de mensajes: ${messages.length - filteredMessages.length} mensajes eliminados`);
+      }
+    }
+  } catch (error) {
+    console.error('Error limpiando mensajes antiguos:', error);
+  }
+}
+
+async function limitMessagesPerChat(userId) {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const userMessages = await Message.find({
+        $or: [
+          { senderId: userId, senderRole: 'user' },
+          { receiverId: userId, receiverRole: 'user' }
+        ]
+      }).sort({ timestamp: 1 });
+      if (userMessages.length > 10) {
+        const messagesToDelete = userMessages.length - 10;
+        const idsToDelete = userMessages.slice(0, messagesToDelete).map(m => m.id);
+        await Message.deleteMany({ id: { $in: idsToDelete } });
+        console.log(`🧹 Chat ${userId}: ${messagesToDelete} mensajes antiguos eliminados`);
+      }
+    } else {
+      const messages = await loadMessages();
+      const userMessages = messages.filter(m => 
+        (m.senderId === userId && m.senderRole === 'user') || 
+        (m.receiverId === userId && m.receiverRole === 'user')
+      );
+      if (userMessages.length > 10) {
+        const messagesToDelete = userMessages.length - 10;
+        const sortedMessages = userMessages.sort((a, b) => 
+          new Date(a.timestamp) - new Date(b.timestamp)
+        );
+        const idsToDelete = sortedMessages.slice(0, messagesToDelete).map(m => m.id);
+        const filteredMessages = messages.filter(m => !idsToDelete.includes(m.id));
+        await saveMessages(filteredMessages);
+        console.log(`🧹 Chat ${userId}: ${messagesToDelete} mensajes antiguos eliminados`);
+      }
+    }
+  } catch (error) {
+    console.error('Error limitando mensajes por chat:', error);
+  }
+}
+
+setInterval(cleanupOldMessages, 60 * 60 * 1000);
+
+const generateAccountNumber = () => {
+  return 'ACC' + Date.now().toString().slice(-8) + Math.random().toString(36).substr(2, 4).toUpperCase();
+};
+
+// ============================================
+// MIDDLEWARE DE AUTENTICACIÓN
+// ============================================
+
+const authMiddleware = async (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Token no proporcionado' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    let user;
+    if (mongoose.connection.readyState === 1) {
+      user = await User.findOne({ id: decoded.userId }).lean();
+    } else {
+      const users = await loadUsers();
+      user = users.find(u => u.id === decoded.userId);
+    }
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+    
+    if (user.tokenVersion && decoded.tokenVersion !== user.tokenVersion) {
+      return res.status(401).json({ error: 'Sesión expirada. Por favor, vuelve a iniciar sesión.' });
+    }
+    
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+};
+
+const adminMiddleware = (req, res, next) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'depositor' && req.user.role !== 'withdrawer') {
+    return res.status(403).json({ error: 'Acceso denegado. Solo administradores.' });
+  }
+  next();
+};
+
+const depositorMiddleware = (req, res, next) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'depositor') {
+    return res.status(403).json({ error: 'Acceso denegado. Solo agentes de carga.' });
+  }
+  next();
+};
+
+const withdrawerMiddleware = (req, res, next) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'withdrawer') {
+    return res.status(403).json({ error: 'Acceso denegado. Solo agentes de retiro.' });
+  }
+  next();
+};
+
+// ============================================
+// RUTAS DE AUTENTICACIÓN
+// ============================================
+
+// Verificar disponibilidad de username
+app.get('/api/auth/check-username', async (req, res) => {
+  try {
+    const { username } = req.query;
+    
+    if (!username || username.length < 3) {
+      return res.json({ available: false, message: 'Usuario muy corto' });
+    }
+    
+    let localExists;
+    if (mongoose.connection.readyState === 1) {
+      localExists = await User.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } });
+    } else {
+      const users = await loadUsers();
+      localExists = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    }
+    
+    if (localExists) {
+      return res.json({ available: false, message: 'Usuario ya registrado' });
+    }
+    
+    try {
+      const jgUser = await jugaygana.getUserInfoByName(username);
+      if (jgUser) {
+        return res.json({ 
+          available: false, 
+          message: 'Este nombre de usuario ya está en uso en JUGAYGANA. Intenta con otro nombre.',
+          existsInJugaygana: true,
+          alreadyExists: true
+        });
+      }
+    } catch (jgError) {
+      console.log('⚠️ No se pudo verificar en JUGAYGANA:', jgError.message);
+    }
+    
+    res.json({ 
+      available: true, 
+      message: 'Usuario disponible',
+      existsInJugaygana: false
+    });
+  } catch (error) {
+    console.error('Error verificando username:', error);
+    res.status(500).json({ available: false, message: 'Error del servidor' });
+  }
+});
+
+// Endpoint para enviar CBU al chat
+app.post('/api/admin/send-cbu', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const config = await loadConfig();
+    
+    if (!config.cbu || !config.cbu.number) {
+      return res.status(400).json({ error: 'CBU no configurado' });
+    }
+    
+    const timestamp = new Date().toISOString();
+    const fullMessage = `💳 *Datos para transferir:*\n\n🏦 Banco: ${config.cbu.bank}\n👤 Titular: ${config.cbu.titular}\n🔢 CBU: ${config.cbu.number}\n📱 Alias: ${config.cbu.alias}\n\n✅ Una vez realizada la transferencia, envianos el comprobante por aquí.`;
+    
+    if (mongoose.connection.readyState === 1) {
+      await Message.create({
+        id: uuidv4(),
+        senderId: req.user.userId,
+        senderUsername: req.user.username,
+        senderRole: 'admin',
+        receiverId: userId,
+        receiverRole: 'user',
+        content: fullMessage,
+        type: 'text',
+        timestamp: timestamp,
+        read: false
+      });
+      await Message.create({
+        id: uuidv4(),
+        senderId: req.user.userId,
+        senderUsername: req.user.username,
+        senderRole: 'admin',
+        receiverId: userId,
+        receiverRole: 'user',
+        content: config.cbu.number,
+        type: 'text',
+        timestamp: new Date(Date.now() + 100).toISOString(),
+        read: false
+      });
+    } else {
+      const messages = await loadMessages();
+      messages.push({
+        id: uuidv4(),
+        senderId: req.user.userId,
+        senderUsername: req.user.username,
+        senderRole: 'admin',
+        receiverId: userId,
+        receiverRole: 'user',
+        content: fullMessage,
+        type: 'text',
+        timestamp: timestamp,
+        read: false
+      });
+      messages.push({
+        id: uuidv4(),
+        senderId: req.user.userId,
+        senderUsername: req.user.username,
+        senderRole: 'admin',
+        receiverId: userId,
+        receiverRole: 'user',
+        content: config.cbu.number,
+        type: 'text',
+        timestamp: new Date(Date.now() + 100).toISOString(),
+        read: false
+      });
+      await saveMessages(messages);
+    }
+    
+    res.json({ success: true, message: 'CBU enviado' });
+  } catch (error) {
+    console.error('Error enviando CBU:', error);
+    res.status(500).json({ error: 'Error enviando CBU' });
+  }
+});
+
+// Registro de usuario
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { username, password, email, phone } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+    }
+    
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+    
+    if (!phone || phone.trim().length < 8) {
+      return res.status(400).json({ error: 'El número de teléfono es obligatorio (mínimo 8 dígitos)' });
+    }
+    
+    let userExists;
+    if (mongoose.connection.readyState === 1) {
+      userExists = await User.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } });
+    } else {
+      const users = await loadUsers();
+      userExists = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    }
+    
+    if (userExists) {
+      return res.status(400).json({ error: 'El usuario ya existe' });
+    }
+    
+    let jgResult = null;
+    try {
+      jgResult = await jugaygana.syncUserToPlatform({
+        username: username,
+        password: password
+      });
+      
+      if (!jgResult.success && !jgResult.alreadyExists) {
+        return res.status(400).json({ error: 'No se pudo crear el usuario en JUGAYGANA: ' + (jgResult.error || 'Error desconocido') });
+      }
+      
+      console.log('✅ Usuario creado/vinculado en JUGAYGANA:', username);
+    } catch (jgError) {
+      console.error('❌ Error creando en JUGAYGANA:', jgError);
+      return res.status(400).json({ error: 'Error al crear usuario en la plataforma. Intenta con otro nombre de usuario.' });
+    }
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const userId = uuidv4();
+    const newUser = {
+      id: userId,
+      username,
+      password: hashedPassword,
+      email: email || null,
+      phone: phone.trim(),
+      role: 'user',
+      accountNumber: generateAccountNumber(),
+      balance: jgResult.user?.balance || jgResult.user?.user_balance || 0,
+      createdAt: new Date().toISOString(),
+      lastLogin: null,
+      isActive: true,
+      jugayganaUserId: jgResult.jugayganaUserId || jgResult.user?.user_id,
+      jugayganaUsername: jgResult.jugayganaUsername || jgResult.user?.user_name,
+      jugayganaSyncStatus: jgResult.alreadyExists ? 'linked' : 'synced'
+    };
+    
+    if (mongoose.connection.readyState === 1) {
+      await User.create(newUser);
+    } else {
+      const users = await loadUsers();
+      users.push(newUser);
+      await saveUsers(users);
+    }
+    
+    // Enviar mensaje de bienvenida
+    const welcomeMessage = {
+      id: uuidv4(),
+      senderId: 'admin',
+      senderUsername: 'Admin',
+      senderRole: 'admin',
+      receiverId: userId,
+      receiverRole: 'user',
+      content: `🎉 ¡Bienvenido a la Sala de Juegos, ${username}!\n\n🎁 Beneficios exclusivos:\n• Reembolso DIARIO del 20%\n• Reembolso SEMANAL del 10%\n• Reembolso MENSUAL del 5%\n• Fueguito diario con recompensas\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.`,
+      type: 'text',
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    
+    if (mongoose.connection.readyState === 1) {
+      await Message.create(welcomeMessage);
+    } else {
+      const messages = await loadMessages();
+      messages.push(welcomeMessage);
+      await saveMessages(messages);
+    }
+    
+    const token = jwt.sign(
+      { userId: newUser.id, username: newUser.username, role: newUser.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.status(201).json({
+      message: 'Usuario creado exitosamente',
+      token,
+      user: {
+        id: newUser.id,
+        username: newUser.username,
+        email: newUser.email,
+        phone: newUser.phone,
+        accountNumber: newUser.accountNumber,
+        role: newUser.role,
+        balance: newUser.balance,
+        jugayganaLinked: true,
+        needsPasswordChange: false
+      }
+    });
+  } catch (error) {
+    console.error('Error en registro:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+    }
+    
+    let user;
+    if (mongoose.connection.readyState === 1) {
+      user = await User.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } });
+    } else {
+      const users = await loadUsers();
+      user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    }
+    
+    if (!user) {
+      console.log(`🔍 Usuario ${username} no encontrado localmente, verificando en JUGAYGANA...`);
+      
+      const jgUser = await jugaygana.getUserInfoByName(username);
+      
+      if (jgUser) {
+        console.log(`✅ Usuario encontrado en JUGAYGANA, creando localmente...`);
+        
+        const hashedPassword = await bcrypt.hash('asd123', 10);
+        const userId = uuidv4();
+        const newUser = {
+          id: userId,
+          username: jgUser.username,
+          password: hashedPassword,
+          email: jgUser.email || null,
+          phone: jgUser.phone || null,
+          role: 'user',
+          accountNumber: generateAccountNumber(),
+          balance: jgUser.balance || 0,
+          createdAt: new Date().toISOString(),
+          lastLogin: null,
+          isActive: true,
+          jugayganaUserId: jgUser.id,
+          jugayganaUsername: jgUser.username,
+          jugayganaSyncStatus: 'linked',
+          source: 'jugaygana'
+        };
+        
+        if (mongoose.connection.readyState === 1) {
+          await User.create(newUser);
+        } else {
+          const users = await loadUsers();
+          users.push(newUser);
+          await saveUsers(users);
+        }
+        user = newUser;
+        
+        console.log(`✅ Usuario ${username} creado automáticamente desde JUGAYGANA`);
+      } else {
+        return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+      }
+    }
+    
+    if (!user.isActive) {
+      return res.status(401).json({ error: 'Usuario desactivado' });
+    }
+    
+    let isValidPassword = await bcrypt.compare(password, user.password);
+    
+    if (!isValidPassword && !user.passwordChangedAt) {
+      const defaultHash = await bcrypt.hash('asd123', 10);
+      isValidPassword = await bcrypt.compare(password, defaultHash);
+    }
+    
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+    }
+    
+    const lastLogin = new Date().toISOString();
+    if (mongoose.connection.readyState === 1) {
+      await User.updateOne({ id: user.id }, { lastLogin });
+    } else {
+      const users = await loadUsers();
+      const userIndex = users.findIndex(u => u.id === user.id);
+      if (userIndex !== -1) {
+        users[userIndex].lastLogin = lastLogin;
+        await saveUsers(users);
+      }
+    }
+    
+    const token = jwt.sign(
+      { userId: user.id, username: user.username, role: user.role, tokenVersion: user.tokenVersion || 0 },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({
+      message: 'Login exitoso',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        accountNumber: user.accountNumber,
+        role: user.role,
+        balance: user.balance,
+        jugayganaLinked: !!user.jugayganaUserId
+      }
+    });
+  } catch (error) {
+    console.error('Error en login:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Obtener información del usuario actual
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  try {
+    let user;
+    if (mongoose.connection.readyState === 1) {
+      user = await User.findOne({ id: req.user.userId }).lean();
+    } else {
+      const users = await loadUsers();
+      user = users.find(u => u.id === req.user.userId);
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+    
+    res.json({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      phone: user.phone,
+      accountNumber: user.accountNumber,
+      role: user.role,
+      balance: user.balance,
+      bonusBalance: user.bonusBalance || 0,
+      jugayganaLinked: !!user.jugayganaUserId
+    });
+  } catch (error) {
+    console.error('Error obteniendo usuario:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Cambiar contraseña
+app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Contraseña actual y nueva requeridas' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
+    }
+    
+    let user;
+    if (mongoose.connection.readyState === 1) {
+      user = await User.findOne({ id: req.user.userId });
+    } else {
+      const users = await loadUsers();
+      user = users.find(u => u.id === req.user.userId);
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+    
+    const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+    }
+    
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const passwordChangedAt = new Date().toISOString();
+    const newTokenVersion = (user.tokenVersion || 0) + 1;
+    
+    if (mongoose.connection.readyState === 1) {
+      await User.updateOne(
+        { id: user.id },
+        { password: hashedPassword, passwordChangedAt, tokenVersion: newTokenVersion }
+      );
+    } else {
+      const users = await loadUsers();
+      const userIndex = users.findIndex(u => u.id === user.id);
+      if (userIndex !== -1) {
+        users[userIndex].password = hashedPassword;
+        users[userIndex].passwordChangedAt = passwordChangedAt;
+        users[userIndex].tokenVersion = newTokenVersion;
+        await saveUsers(users);
+      }
+    }
+    
+    const token = jwt.sign(
+      { userId: user.id, username: user.username, role: user.role, tokenVersion: newTokenVersion },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    res.json({
+      message: 'Contraseña cambiada exitosamente',
+      token
+    });
+  } catch (error) {
+    console.error('Error cambiando contraseña:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
