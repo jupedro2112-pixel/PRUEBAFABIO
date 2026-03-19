@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Administración - Sala de Juegos</title>
+    <link rel="stylesheet" href="admin.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="loginScreen" class="login-screen">
+            <div class="login-box">
+                <div class="login-logo">🎮</div>
+                <h1>Panel de Administración</h1>
+                <p>Sala de Juegos</p>
+                
+                <div class="login-form">
+                    <div class="input-group">
+                        <label>Usuario</label>
+                        <input type="text" id="username" placeholder="admin123" autocomplete="username">
+                    </div>
+                    <div class="input-group">
+                        <label>Contraseña</label>
+                        <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+                    </div>
+                    <button id="loginBtn" class="btn btn-primary">Ingresar</button>
+                </div>
+                
+                <div id="loginError" class="error-message"></div>
+            </div>
+        </div>
+
+        <!-- Main Dashboard -->
+        <div id="dashboard" class="dashboard hidden">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <span class="logo">🎮</span>
+                    <span class="brand">Admin Panel</span>
+                </div>
+                
+                <nav class="sidebar-nav">
+                    <a href="#" class="nav-item active" data-section="chats" id="chatsNavItem">
+                        <span class="icon">💬</span>
+                        <span>Chats</span>
+                        <span id="unreadBadge" class="badge hidden">0</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="users">
+                        <span class="icon">👥</span>
+                        <span>Usuarios</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="transactions">
+                        <span class="icon">💰</span>
+                        <span>Transacciones</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="commands">
+                        <span class="icon">⌨️</span>
+                        <span>Comandos</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="stats">
+                        <span class="icon">📊</span>
+                        <span>Estadísticas</span>
+                    </a>
+                    <a href="#" class="nav-item" data-section="refunds">
+                        <span class="icon">💰</span>
+                        <span>Reembolsos</span>
+                    </a>
+                    <a href="#" class="nav-item hidden" data-section="database" id="databaseNavItem">
+                        <span class="icon">🗄️</span>
+                        <span>Base de Datos</span>
+                    </a>
+                </nav>
+                
+                <div class="sidebar-footer">
+                    <div class="admin-info">
+                        <span class="admin-name" id="adminName">Admin</span>
+                        <span class="admin-role">Administrador</span>
+                    </div>
+                    <button id="logoutBtn" class="btn btn-logout">🚪 Salir</button>
+                </div>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="main-content">
+                <!-- Stats Bar - MÁS COMPACTO -->
+                <div class="stats-bar" style="padding: 8px 15px; gap: 10px;">
+                    <div class="stat-card" style="padding: 8px 12px; min-width: 80px;">
+                        <span class="stat-value" id="statUsers" style="font-size: 20px;">0</span>
+                        <span class="stat-label" style="font-size: 10px;">Usuarios</span>
+                    </div>
+                    <div class="stat-card" style="padding: 8px 12px; min-width: 80px;">
+                        <span class="stat-value" id="statOnline" style="font-size: 20px;">0</span>
+                        <span class="stat-label" style="font-size: 10px;">En línea</span>
+                    </div>
+                    <div class="stat-card" style="padding: 8px 12px; min-width: 80px;">
+                        <span class="stat-value" id="statMessages" style="font-size: 20px;">0</span>
+                        <span class="stat-label" style="font-size: 10px;">Mensajes</span>
+                    </div>
+                    <div class="stat-card" style="padding: 8px 12px; min-width: 80px;">
+                        <span class="stat-value" id="statUnread" style="font-size: 20px;">0</span>
+                        <span class="stat-label" style="font-size: 10px;">Sin leer</span>
+                    </div>
+                </div>
+
+                <!-- Chats Section -->
+                <section id="chatsSection" class="content-section">
+                    <div class="section-header">
+                        <h2>💬 Conversaciones</h2>
+                        <button id="refreshChats" class="btn btn-secondary">🔄 Actualizar</button>
+                    </div>
+                    
+                    <!-- Tabs de chats abiertos/cerrados/pagos -->
+                    <div class="chat-tabs" style="display: flex; gap: 10px; margin-bottom: 15px;">
+                        <button id="tabOpenChats" class="btn btn-primary" style="flex: 1;" onclick="filterChats('open')">📥 Abiertos</button>
+                        <button id="tabClosedChats" class="btn btn-secondary" style="flex: 1;" onclick="filterChats('closed')">📁 Cerrados</button>
+                        <button id="tabPagosChats" class="btn btn-secondary" style="flex: 1; background: linear-gradient(135deg, #00a8ff 0%, #0066cc 100%);" onclick="filterChats('pagos')">💳 Pagos</button>
+                    </div>
+                    
+                    <!-- Buscador de chats -->
+                    <div class="search-container" style="margin-bottom: 15px;">
+                        <input type="text" id="chatSearchInput" placeholder="🔍 Buscar usuario..." style="width: 100%; padding: 12px 15px; border: 2px solid rgba(212, 175, 55, 0.3); border-radius: 10px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 14px;">
+                    </div>
+                    
+                    <div class="chats-container">
+                        <div class="conversations-list" id="conversationsList">
+                            <!-- Conversations will be loaded here -->
+                        </div>
+                        
+                        <div class="chat-area" id="chatArea">
+                            <div class="chat-placeholder" id="chatPlaceholder">
+                                <span class="placeholder-icon">💬</span>
+                                <p>Selecciona una conversación para ver los mensajes</p>
+                            </div>
+                            
+                            <div class="chat-content hidden" id="chatContent">
+                                <div class="chat-header">
+                                    <div class="chat-user-info">
+                                        <span class="user-avatar">👤</span>
+                                        <div>
+                                            <span class="user-name" id="chatUserName">Usuario</span>
+                                            <span class="user-status" id="chatUserStatus">Desconectado</span>
+                                            <span class="user-balance" id="chatUserBalance">Balance: $0</span>
+                                            <span id="typingIndicator" style="color: #00ff88; font-size: 11px; display: none;">✍️ Escribiendo...</span>
+                                        </div>
+                                    </div>
+                                    <div class="chat-actions">
+                                        <button id="cbuBtn" class="btn btn-small" style="background: linear-gradient(135deg, #9d4edd 0%, #6603a8 100%); color: #fff;">💳 CBU</button>
+                                        <button id="depositUserBtn" class="btn btn-small btn-success">💰 Depositar</button>
+                                        <button id="withdrawUserBtn" class="btn btn-small btn-danger">💸 Retirar</button>
+                                        <button id="changePasswordChatBtn" class="btn btn-small" style="background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #000;">🔑 Cambiar Contraseña</button>
+                                        <button id="sendToPagosBtn" class="btn btn-small" style="background: linear-gradient(135deg, #00a8ff 0%, #0066cc 100%); color: #fff;">💳 Enviar a PAGOS</button>
+                                        <button id="backToCargasBtn" class="btn btn-small" style="background: linear-gradient(135deg, #00ff88 0%, #00cc66 100%); color: #fff; display: none;">📤 Volver a CARGAS</button>
+                                        <button id="openChatBtn" class="btn btn-small" style="background: #00ff88; color: #000; display: none;">📂 Abrir Chat</button>
+                                        <button id="closeChatBtn" class="btn btn-small" style="background: #ff4444; color: #fff;">❌ Cerrar Chat</button>
+                                    </div>
+                                </div>
+                                
+                                <div class="messages-container" id="messagesContainer">
+                                    <!-- Messages will be loaded here -->
+                                </div>
+                                
+                                <div class="chat-input-area">
+                                    <button id="attachFileBtn" class="btn btn-secondary" title="Adjuntar imagen">📎</button>
+                                    <input type="file" id="adminFileInput" accept="image/*" style="display: none;">
+                                    <div class="input-with-autocomplete" style="position: relative; flex: 1;">
+                                        <textarea id="messageInput" placeholder="Escribe un mensaje... Usa / para comandos" rows="1"></textarea>
+                                        <div id="commandAutocomplete" class="command-autocomplete hidden" style="position: absolute; bottom: 100%; left: 0; right: 0; background: #1a1a2e; border: 1px solid #d4af37; border-radius: 8px; max-height: 200px; overflow-y: auto; z-index: 1000;"></div>
+                                    </div>
+                                    <button id="sendMessageBtn" class="btn btn-primary">📤 Enviar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- PAGOS Section -->
+                <section id="pagosSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>💳 Chats de Pagos</h2>
+                        <div class="chat-tabs" style="display: flex; gap: 10px;">
+                            <button class="chat-tab active" data-pagos-filter="open">Abiertos</button>
+                            <button class="chat-tab" data-pagos-filter="closed">Cerrados</button>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-container" style="display: grid; grid-template-columns: 320px 1fr; gap: 20px; height: calc(100vh - 200px);">
+                        <!-- Lista de conversaciones PAGOS -->
+                        <div class="conversations-list" style="background: rgba(0,0,0,0.3); border-radius: 15px; overflow: hidden; display: flex; flex-direction: column;">
+                            <div style="padding: 15px; border-bottom: 1px solid rgba(212, 175, 55, 0.2);">
+                                <input type="text" id="pagosSearchInput" placeholder="Buscar chat..." style="width: 100%; padding: 10px; border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 8px; background: rgba(0,0,0,0.3); color: #fff;">
+                            </div>
+                            <div id="pagosConversationsList" style="flex: 1; overflow-y: auto; padding: 10px;">
+                                <!-- Conversaciones se cargan dinámicamente -->
+                            </div>
+                        </div>
+                        
+                        <!-- Área de chat PAGOS -->
+                        <div class="chat-area" style="background: rgba(0,0,0,0.3); border-radius: 15px; overflow: hidden; display: flex; flex-direction: column;">
+                            <div id="pagosChatPlaceholder" style="flex: 1; display: flex; align-items: center; justify-content: center; color: #888;">
+                                <p>Selecciona un chat para ver los mensajes</p>
+                            </div>
+                            <div id="pagosChatContent" class="hidden" style="flex: 1; display: flex; flex-direction: column;">
+                                <div class="chat-header" style="padding: 15px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <h3 id="pagosChatUserName" style="margin: 0; color: #d4af37;">Usuario</h3>
+                                        <span id="pagosChatUserStatus" class="user-status online">Activo</span>
+                                    </div>
+                                    <div class="chat-actions">
+                                        <button id="pagosViewUserBtn" class="btn btn-small">👤 Ver Usuario</button>
+                                        <button id="pagosWithdrawUserBtn" class="btn btn-small btn-danger">💸 Retirar</button>
+                                        <button id="pagosCloseChatBtn" class="btn btn-small" style="background: #ff4444; color: #fff;">❌ Cerrar Chat</button>
+                                        <button id="pagosBackToCargasBtn" class="btn btn-small" style="background: #00ff88; color: #000;">↩️ Volver a Cargas</button>
+                                    </div>
+                                </div>
+                                <div id="pagosMessagesContainer" class="messages-container" style="flex: 1; overflow-y: auto; padding: 20px;"></div>
+                                <div class="chat-input-area">
+                                    <textarea id="pagosMessageInput" placeholder="Escribe un mensaje..." rows="1"></textarea>
+                                    <button id="pagosSendMessageBtn" class="btn btn-primary">📤 Enviar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Users Section -->
+                <section id="usersSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>👥 Gestión de Usuarios</h2>
+                        <button id="createUserBtn" class="btn btn-primary">➕ Nuevo Usuario</button>
+                    </div>
+                    
+                    <div class="users-table-container">
+                        <table class="users-table" id="usersTable">
+                            <thead>
+                                <tr>
+                                    <th>Usuario</th>
+                                    <th>Cuenta</th>
+                                    <th>Email</th>
+                                    <th>Teléfono</th>
+                                    <th>JUGAYGANA</th>
+                                    <th>Balance</th>
+                                    <th>Estado</th>
+                                    <th>Último Login</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersTableBody">
+                                <!-- Users will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Transactions Section -->
+                <section id="transactionsSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>💰 Dashboard de Transacciones</h2>
+                    </div>
+                    
+                    <!-- Filtros de fecha -->
+                    <div class="filters-container" style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px; margin-bottom: 20px; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                        <div>
+                            <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Desde:</label>
+                            <input type="date" id="transDateFrom" style="padding: 8px 12px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                        </div>
+                        <div>
+                            <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Hasta:</label>
+                            <input type="date" id="transDateTo" style="padding: 8px 12px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                        </div>
+                        <div>
+                            <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Tipo:</label>
+                            <select id="transTypeFilter" style="padding: 8px 12px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                <option value="all">Todos</option>
+                                <option value="deposit">Depósitos</option>
+                                <option value="withdrawal">Retiros</option>
+                                <option value="bonus">Bonificaciones</option>
+                                <option value="refund">Reembolsos</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="color: transparent; font-size: 12px; display: block; margin-bottom: 5px;">.</label>
+                            <button id="applyTransFilters" class="btn btn-primary" style="padding: 8px 20px;">🔍 Filtrar</button>
+                        </div>
+                        <div>
+                            <label style="color: transparent; font-size: 12px; display: block; margin-bottom: 5px;">.</label>
+                            <button id="resetTransFilters" class="btn btn-secondary" style="padding: 8px 20px;">🔄 Limpiar</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Configuración de Comisión -->
+                    <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px; margin-bottom: 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                        <div>
+                            <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Comisión sobre depósitos (%):</label>
+                            <input type="number" id="commissionPercent" value="0" min="0" max="100" step="0.1" style="padding: 8px 12px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff; width: 100px;">
+                        </div>
+                        <div style="color: #888; font-size: 12px;">
+                            La comisión se calcula sobre el total de depósitos y se descuenta del balance neto.
+                        </div>
+                    </div>
+                    
+                    <!-- Resumen -->
+                    <div class="transactions-summary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(0,255,136,0.2) 0%, rgba(0,204,106,0.2) 100%); border: 1px solid #00ff88; border-radius: 10px; padding: 15px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #00ff88;" id="totalDeposits">$0</div>
+                            <div style="font-size: 12px; color: #888;">Total Depósitos</div>
+                        </div>
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(255,165,0,0.2) 0%, rgba(255,140,0,0.2) 100%); border: 1px solid #ffa500; border-radius: 10px; padding: 15px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #ffa500;" id="totalCommission">$0</div>
+                            <div style="font-size: 12px; color: #888;">Comisión</div>
+                        </div>
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(255,68,68,0.2) 0%, rgba(204,0,0,0.2) 100%); border: 1px solid #ff4444; border-radius: 10px; padding: 15px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #ff4444;" id="totalWithdrawals">$0</div>
+                            <div style="font-size: 12px; color: #888;">Total Retiros</div>
+                        </div>
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(255,215,0,0.2) 0%, rgba(212,175,55,0.2) 100%); border: 1px solid #ffd700; border-radius: 10px; padding: 15px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #ffd700;" id="totalBonuses">$0</div>
+                            <div style="font-size: 12px; color: #888;">Total Bonificaciones</div>
+                        </div>
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(157,78,221,0.2) 0%, rgba(102,3,168,0.2) 100%); border: 1px solid #9d4edd; border-radius: 10px; padding: 15px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #9d4edd;" id="totalRefunds">$0</div>
+                            <div style="font-size: 12px; color: #888;">Total Reembolsos</div>
+                        </div>
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(0,168,255,0.2) 0%, rgba(0,102,204,0.2) 100%); border: 1px solid #00a8ff; border-radius: 10px; padding: 15px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #00a8ff;" id="netBalance">$0</div>
+                            <div style="font-size: 12px; color: #888;">Balance Neto (después de comisión)</div>
+                        </div>
+                        <div class="summary-card" style="background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, rgba(200,200,200,0.15) 100%); border: 2px solid #fff; border-radius: 10px; padding: 15px; text-align: center; grid-column: span 2;">
+                            <div style="font-size: 28px; font-weight: bold; color: #fff;" id="totalGeneral">$0</div>
+                            <div style="font-size: 12px; color: #ccc;">TOTAL (Depósitos + Bonificaciones - Retiros)</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Tabla de transacciones -->
+                    <div class="transactions-table-container" style="background: rgba(0,0,0,0.3); border-radius: 10px; overflow: hidden;">
+                        <table class="transactions-table" style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: rgba(212, 175, 55, 0.2);">
+                                    <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Fecha</th>
+                                    <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Usuario</th>
+                                    <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Tipo</th>
+                                    <th style="padding: 12px; text-align: right; color: #d4af37; font-size: 12px;">Monto</th>
+                                    <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Descripción</th>
+                                    <th style="padding: 12px; text-align: center; color: #d4af37; font-size: 12px;">Agente</th>
+                                </tr>
+                            </thead>
+                            <tbody id="transactionsTableBody">
+                                <tr>
+                                    <td colspan="6" style="padding: 40px; text-align: center; color: #888;">Selecciona filtros para ver transacciones</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Commands Section -->
+                <section id="commandsSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>⌨️ Gestión de Comandos</h2>
+                    </div>
+                    
+                    <div class="commands-container" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        <!-- Configuración CBU -->
+                        <div class="cbu-config-card" style="background: rgba(0,0,0,0.3); border-radius: 15px; padding: 20px; border: 1px solid #9d4edd;">
+                            <h3 style="color: #9d4edd; margin-bottom: 15px;">💳 Configuración CBU</h3>
+                            <form id="cbuConfigForm">
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Número de CBU</label>
+                                    <input type="text" id="cbuNumber" placeholder="0000000000000000000000" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Alias</label>
+                                    <input type="text" id="cbuAlias" placeholder="mi.alias.cbu" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Banco</label>
+                                    <input type="text" id="cbuBank" placeholder="Nombre del banco" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Titular</label>
+                                    <input type="text" id="cbuTitular" placeholder="Nombre del titular" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 15px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Mensaje (usa {cbu}, {alias}, {bank}, {titular})</label>
+                                    <textarea id="cbuMessage" rows="4" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff; resize: vertical;"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary" style="width: 100%;">💾 Guardar CBU</button>
+                            </form>
+                        </div>
+                        
+                        <!-- Comandos disponibles -->
+                        <div class="commands-card" style="background: rgba(0,0,0,0.3); border-radius: 15px; padding: 20px; border: 1px solid #d4af37;">
+                            <h3 style="color: #d4af37; margin-bottom: 15px;">📋 Comandos Disponibles</h3>
+                            <div id="commandsList" style="display: flex; flex-direction: column; gap: 10px;">
+                                <!-- Los comandos se cargarán dinámicamente -->
+                            </div>
+                        </div>
+                        
+                        <!-- Agregar nuevo comando -->
+                        <div class="add-command-card" style="background: rgba(0,0,0,0.3); border-radius: 15px; padding: 20px; border: 1px solid #00ff88;">
+                            <h3 style="color: #00ff88; margin-bottom: 15px;">➕ Agregar Comando</h3>
+                            <form id="addCommandForm">
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Comando (ej: /bonus25)</label>
+                                    <input type="text" id="newCommandName" placeholder="/comando" required style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Descripción</label>
+                                    <input type="text" id="newCommandDesc" placeholder="Qué hace este comando" required style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Tipo</label>
+                                    <select id="newCommandType" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                        <option value="info">Información</option>
+                                        <option value="action">Acción</option>
+                                        <option value="bonus">Bonus</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" id="bonusAmountGroup" style="margin-bottom: 12px; display: none;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Porcentaje de Bonus</label>
+                                    <input type="number" id="newCommandBonusPercent" placeholder="25" min="1" max="500" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff;">
+                                </div>
+                                <div class="form-group" style="margin-bottom: 15px;">
+                                    <label style="color: #d4af37; font-size: 12px; display: block; margin-bottom: 5px;">Respuesta del comando</label>
+                                    <textarea id="newCommandResponse" rows="2" placeholder="Texto que se enviará al ejecutar el comando" style="width: 100%; padding: 10px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff; resize: vertical;"></textarea>
+                                </div>
+                                <button type="submit" class="btn btn-primary" style="width: 100%;">➕ Agregar Comando</button>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Stats Section -->
+                <section id="statsSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>📊 Estadísticas</h2>
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <h3>Total de Usuarios</h3>
+                            <span class="big-number" id="totalUsers">0</span>
+                        </div>
+                        <div class="stat-box">
+                            <h3>Usuarios Activos</h3>
+                            <span class="big-number" id="activeUsers">0</span>
+                        </div>
+                        <div class="stat-box">
+                            <h3>Total Mensajes</h3>
+                            <span class="big-number" id="totalMessages">0</span>
+                        </div>
+                        <div class="stat-box">
+                            <h3>Mensajes Hoy</h3>
+                            <span class="big-number" id="todayMessages">0</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Sincronización JUGAYGANA -->
+                    <div class="sync-section" style="margin-top: 30px; background: rgba(212, 175, 55, 0.1); border: 1px solid #d4af37; border-radius: 15px; padding: 25px;">
+                        <h3 style="color: #d4af37; margin-bottom: 15px;">🎰 Sincronización JUGAYGANA</h3>
+                        <p style="color: #b0b0b0; margin-bottom: 20px;">Sincroniza automáticamente todos los usuarios de la plataforma JUGAYGANA con esta página.</p>
+                        
+                        <div class="sync-status" id="syncStatus" style="margin-bottom: 20px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 10px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <span>📊 Usuarios locales:</span>
+                                <span id="syncLocalUsers">-</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <span>✅ Vinculados con JUGAYGANA:</span>
+                                <span id="syncJugayganaUsers">-</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <span>⏳ Pendientes:</span>
+                                <span id="syncPendingUsers">-</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span>🔄 Última sincronización:</span>
+                                <span id="syncLastSync">Nunca</span>
+                            </div>
+                        </div>
+                        
+                        <div class="sync-progress hidden" id="syncProgress" style="margin-bottom: 20px;">
+                            <div style="background: rgba(0,0,0,0.3); border-radius: 10px; height: 30px; overflow: hidden;">
+                                <div id="syncProgressBar" style="background: linear-gradient(90deg, #d4af37, #ffd700); height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: #000; font-weight: bold;">
+                                    0%
+                                </div>
+                            </div>
+                            <p id="syncProgressText" style="text-align: center; margin-top: 10px; color: #b0b0b0;">Iniciando sincronización...</p>
+                        </div>
+                        
+                        <div class="sync-actions" style="display: flex; gap: 15px; flex-wrap: wrap;">
+                            <button id="syncAllBtn" class="btn btn-primary" style="flex: 1; min-width: 200px;">
+                                🔄 Sincronizar TODOS los usuarios
+                            </button>
+                            <button id="syncRecentBtn" class="btn btn-secondary" style="flex: 1; min-width: 200px;">
+                                ⚡ Sincronizar usuarios recientes
+                            </button>
+                            <button id="refreshSyncStatusBtn" class="btn btn-secondary" style="min-width: 150px;">
+                                🔄 Actualizar estado
+                            </button>
+                        </div>
+                        
+                        <p id="syncMessage" style="margin-top: 15px; color: #00ff88; display: none;"></p>
+                    </div>
+                </section>
+
+                <!-- Refunds Section -->
+                <section id="refundsSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>💰 Reembolsos</h2>
+                    </div>
+                    
+                    <div class="refunds-content" style="background: rgba(0,0,0,0.3); border-radius: 15px; padding: 20px;">
+                        <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+                            <div style="background: rgba(0,255,136,0.1); border: 1px solid #00ff88; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #00ff88;" id="refundsDailyCount">0</div>
+                                <div style="font-size: 12px; color: #888;">Reembolsos Diarios</div>
+                            </div>
+                            <div style="background: rgba(0,168,255,0.1); border: 1px solid #00a8ff; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #00a8ff;" id="refundsWeeklyCount">0</div>
+                                <div style="font-size: 12px; color: #888;">Reembolsos Semanales</div>
+                            </div>
+                            <div style="background: rgba(255,215,0,0.1); border: 1px solid #ffd700; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #ffd700;" id="refundsMonthlyCount">0</div>
+                                <div style="font-size: 12px; color: #888;">Reembolsos Mensuales</div>
+                            </div>
+                            <div style="background: rgba(212,175,55,0.1); border: 1px solid #d4af37; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #d4af37;" id="refundsTotalAmount">$0</div>
+                                <div style="font-size: 12px; color: #888;">Total Reembolsado</div>
+                            </div>
+                        </div>
+                        
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="background: rgba(212, 175, 55, 0.2);">
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Fecha</th>
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Usuario</th>
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Tipo</th>
+                                        <th style="padding: 12px; text-align: right; color: #d4af37; font-size: 12px;">Monto</th>
+                                        <th style="padding: 12px; text-align: right; color: #d4af37; font-size: 12px;">Neto</th>
+                                        <th style="padding: 12px; text-align: right; color: #d4af37; font-size: 12px;">Depósitos</th>
+                                        <th style="padding: 12px; text-align: right; color: #d4af37; font-size: 12px;">Retiros</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="refundsTableBody">
+                                    <tr>
+                                        <td colspan="7" style="padding: 40px; text-align: center; color: #888;">Cargando reembolsos...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Database Password Modal (fuera de la sección para que sea visible) -->
+                <div id="databasePasswordModal" style="background: rgba(0,0,0,0.9); position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: none; align-items: center; justify-content: center; z-index: 1000;">
+                    <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border: 2px solid #d4af37; border-radius: 15px; padding: 30px; max-width: 400px; width: 90%; text-align: center; position: relative;">
+                        <button id="closeDatabasePasswordModal" style="position: absolute; top: 10px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; line-height: 1;">&times;</button>
+                        <div style="font-size: 48px; margin-bottom: 15px;">🔐</div>
+                        <h3 style="color: #d4af37; margin-bottom: 10px;">Acceso Restringido</h3>
+                        <p style="color: #888; margin-bottom: 20px; font-size: 14px;">Ingresa la contraseña para acceder a la Base de Datos</p>
+                        <input type="password" id="databasePasswordInput" placeholder="Contraseña" style="width: 100%; padding: 12px; border: 1px solid #d4af37; border-radius: 8px; background: rgba(0,0,0,0.5); color: #fff; margin-bottom: 15px; text-align: center;">
+                        <button id="verifyDatabasePasswordBtn" class="btn btn-primary" style="width: 100%;">Acceder</button>
+                        <p id="databasePasswordError" style="color: #ff4444; font-size: 12px; margin-top: 10px; display: none;">Contraseña incorrecta</p>
+                    </div>
+                </div>
+
+                <!-- Database Section -->
+                <section id="databaseSection" class="content-section hidden">
+                    <div class="section-header">
+                        <h2>🗄️ Base de Datos</h2>
+                        <button id="downloadDatabaseBtn" class="btn btn-primary">📥 Descargar Excel</button>
+                    </div>
+                    
+                    <div class="database-content" style="background: rgba(0,0,0,0.3); border-radius: 15px; padding: 20px;">
+                        <div style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
+                            <div style="background: rgba(0,255,136,0.1); border: 1px solid #00ff88; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #00ff88;" id="dbTotalUsers">0</div>
+                                <div style="font-size: 12px; color: #888;">Total Usuarios</div>
+                            </div>
+                            <div style="background: rgba(0,168,255,0.1); border: 1px solid #00a8ff; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #00a8ff;" id="dbTotalAdmins">0</div>
+                                <div style="font-size: 12px; color: #888;">Administradores</div>
+                            </div>
+                            <div style="background: rgba(255,215,0,0.1); border: 1px solid #ffd700; border-radius: 10px; padding: 15px; flex: 1; min-width: 150px; text-align: center;">
+                                <div style="font-size: 28px; font-weight: bold; color: #ffd700;" id="dbTotalMessages">0</div>
+                                <div style="font-size: 12px; color: #888;">Mensajes</div>
+                            </div>
+                        </div>
+                        
+                        <div style="overflow-x: auto;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="background: rgba(212, 175, 55, 0.2);">
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Usuario</th>
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Email</th>
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Teléfono</th>
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Rol</th>
+                                        <th style="padding: 12px; text-align: right; color: #d4af37; font-size: 12px;">Balance</th>
+                                        <th style="padding: 12px; text-align: left; color: #d4af37; font-size: 12px;">Creado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="databaseTableBody">
+                                    <!-- Datos se cargan dinámicamente -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+
+        <!-- Create User Modal -->
+        <div id="createUserModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>➕ Crear Nuevo Usuario</h3>
+                    <button class="btn-close" id="closeCreateModal">&times;</button>
+                </div>
+                <form id="createUserForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Usuario *</label>
+                            <input type="text" id="newUsername" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Contraseña *</label>
+                            <input type="password" id="newPassword" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="newEmail">
+                        </div>
+                        <div class="form-group">
+                            <label>Teléfono *</label>
+                            <input type="tel" id="newPhone" required minlength="8" placeholder="+54 9 11 1234-5678">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Rol</label>
+                            <select id="newRole">
+                                <option value="user">👤 Usuario</option>
+                                <option value="admin">👑 Administrador (Todo)</option>
+                                <option value="depositor">💰 Agente de Carga (Solo depositar)</option>
+                                <option value="withdrawer">💸 Agente de Retiro (Solo retirar)</option>
+                            </select>
+                            <small style="color: #888; font-size: 11px; display: block; margin-top: 5px;">
+                                • Admin: Acceso completo<br>
+                                • Carga: Solo puede depositar/bonificar<br>
+                                • Retiro: Solo puede retirar
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Balance Inicial</label>
+                            <input type="number" id="newBalance" value="0" min="0">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancelCreate">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Crear Usuario</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- View User Modal -->
+        <div id="viewUserModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>👤 Información del Usuario</h3>
+                    <button class="btn-close" id="closeViewModal">&times;</button>
+                </div>
+                <div id="userDetails" class="user-details">
+                    <!-- User details will be loaded here -->
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="closeViewBtn">Cerrar</button>
+                    <button type="button" class="btn btn-primary" id="editUserBtn">✏️ Editar</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit User Modal -->
+        <div id="editUserModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>✏️ Editar Usuario</h3>
+                    <button class="btn-close" id="closeEditModal">&times;</button>
+                </div>
+                <form id="editUserForm">
+                    <input type="hidden" id="editUserId">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Usuario</label>
+                            <input type="text" id="editUsername" readonly style="background: rgba(255,255,255,0.1);">
+                        </div>
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="editEmail">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Teléfono</label>
+                            <input type="tel" id="editPhone" placeholder="+54 9 11 1234-5678">
+                        </div>
+                        <div class="form-group">
+                            <label>Balance</label>
+                            <input type="number" id="editBalance" min="0" step="0.01">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Estado</label>
+                            <select id="editStatus">
+                                <option value="true">Activo</option>
+                                <option value="false">Inactivo</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Nueva Contraseña (dejar vacío para no cambiar)</label>
+                            <input type="password" id="editPassword" placeholder="••••••">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancelEdit">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Change Password Modal -->
+        <div id="changePasswordModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>🔑 Cambiar Contraseña</h3>
+                    <button class="btn-close" onclick="hideModal('changePasswordModal')">&times;</button>
+                </div>
+                <form id="changePasswordForm">
+                    <div class="form-group">
+                        <label>Nueva Contraseña *</label>
+                        <input type="password" id="changePasswordNew" required minlength="6" placeholder="Mínimo 6 caracteres">
+                    </div>
+                    <div class="form-group">
+                        <label>Confirmar Contraseña *</label>
+                        <input type="password" id="changePasswordConfirm" required minlength="6" placeholder="Repetir contraseña">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="hideModal('changePasswordModal')">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">🔑 Cambiar Contraseña</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Depósito Admin -->
+        <div id="adminDepositModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>💰 Depositar a Usuario</h3>
+                    <button class="btn-close" id="closeAdminDepositModal">&times;</button>
+                </div>
+                <form id="adminDepositForm">
+                    <!-- Botones de carga rápida -->
+                    <div class="quick-amounts" style="padding: 0 20px; margin-bottom: 15px;">
+                        <label style="color: #d4af37; font-size: 12px; margin-bottom: 8px; display: block;">Cargas rápidas:</label>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" class="btn btn-small quick-deposit" data-amount="1000" style="background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); color: #000; font-weight: bold;">$1.000</button>
+                            <button type="button" class="btn btn-small quick-deposit" data-amount="5000" style="background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); color: #000; font-weight: bold;">$5.000</button>
+                            <button type="button" class="btn btn-small quick-deposit" data-amount="10000" style="background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); color: #000; font-weight: bold;">$10.000</button>
+                            <button type="button" class="btn btn-small quick-deposit" data-amount="50000" style="background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); color: #000; font-weight: bold;">$50.000</button>
+                            <button type="button" class="btn btn-small quick-deposit" data-amount="100000" style="background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%); color: #000; font-weight: bold;">$100.000</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Bonificaciones -->
+                    <div class="bonus-section" style="padding: 0 20px; margin-bottom: 15px;">
+                        <label style="color: #d4af37; font-size: 12px; margin-bottom: 8px; display: block;">🎁 Bonificación extra:</label>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" class="btn btn-small bonus-btn bonus-selected" data-bonus="0" style="background: linear-gradient(135deg, #666 0%, #444 100%); color: #fff; font-weight: bold; transform: scale(1.1); box-shadow: 0 0 10px rgba(255,255,255,0.3);">❌ SIN BONUS</button>
+                            <button type="button" class="btn btn-small bonus-btn" data-bonus="10" style="background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #000; font-weight: bold;">+10%</button>
+                            <button type="button" class="btn btn-small bonus-btn" data-bonus="20" style="background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #000; font-weight: bold;">+20%</button>
+                            <button type="button" class="btn btn-small bonus-btn" data-bonus="30" style="background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #000; font-weight: bold;">+30%</button>
+                            <button type="button" class="btn btn-small bonus-btn" data-bonus="40" style="background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #000; font-weight: bold;">+40%</button>
+                            <button type="button" class="btn btn-small bonus-btn" data-bonus="50" style="background: linear-gradient(135deg, #ffd700 0%, #ffaa00 100%); color: #000; font-weight: bold;">+50%</button>
+                            <button type="button" class="btn btn-small bonus-btn" data-bonus="100" style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%); color: #fff; font-weight: bold;">+100%</button>
+                        </div>
+                        <div id="bonusInfo" style="margin-top: 8px; font-size: 12px; color: #ffd700; display: none;"></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Monto ($)</label>
+                        <input type="number" id="adminDepositAmount" required min="100" placeholder="Ej: 10000">
+                    </div>
+                    <div class="form-group">
+                        <label>Monto de Bonificación ($)</label>
+                        <input type="number" id="adminBonusAmount" min="0" placeholder="Ej: 1000 (se carga como BONUS)" readonly style="background: rgba(255, 215, 0, 0.1); border-color: #ffd700;">
+                    </div>
+                    <div class="form-group">
+                        <label>Descripción (opcional)</label>
+                        <input type="text" id="adminDepositDescription" placeholder="Descripción del depósito">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancelAdminDeposit">Cancelar</button>
+                        <button type="submit" class="btn btn-success">💰 Depositar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Retiro Admin -->
+        <div id="adminWithdrawModal" class="modal hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>💸 Retirar de Usuario</h3>
+                    <button class="btn-close" id="closeAdminWithdrawModal">&times;</button>
+                </div>
+                <form id="adminWithdrawForm">
+                    <!-- Botones de carga rápida -->
+                    <div class="quick-amounts" style="padding: 0 20px; margin-bottom: 15px;">
+                        <label style="color: #d4af37; font-size: 12px; margin-bottom: 8px; display: block;">Montos rápidos:</label>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" class="btn btn-small quick-withdraw" data-amount="1000" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: #fff; font-weight: bold;">$1.000</button>
+                            <button type="button" class="btn btn-small quick-withdraw" data-amount="5000" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: #fff; font-weight: bold;">$5.000</button>
+                            <button type="button" class="btn btn-small quick-withdraw" data-amount="10000" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: #fff; font-weight: bold;">$10.000</button>
+                            <button type="button" class="btn btn-small quick-withdraw" data-amount="50000" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: #fff; font-weight: bold;">$50.000</button>
+                            <button type="button" class="btn btn-small quick-withdraw" data-amount="100000" style="background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%); color: #fff; font-weight: bold;">$100.000</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Monto ($)</label>
+                        <input type="number" id="adminWithdrawAmount" required min="100" placeholder="Ej: 5000">
+                    </div>
+                    <div class="form-group">
+                        <label>Descripción (opcional)</label>
+                        <input type="text" id="adminWithdrawDescription" placeholder="Descripción del retiro">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" id="cancelAdminWithdraw">Cancelar</button>
+                        <button type="submit" class="btn btn-danger">💸 Retirar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toastContainer" class="toast-container"></div>
+    </div>
+    
+    <!-- Lightbox para imágenes -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox(event)">
+        <button class="lightbox-close" onclick="closeLightbox(event)">✕</button>
+        <img id="lightboxImage" src="" alt="Imagen ampliada">
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="admin.js"></script>
+</body>
+</html>
