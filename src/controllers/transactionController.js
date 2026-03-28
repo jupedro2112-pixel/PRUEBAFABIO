@@ -1,0 +1,188 @@
+
+/**
+ * Controlador de Transacciones
+ * Maneja depósitos, retiros y bonificaciones
+ */
+const { transactionService, jugayganaService } = require('../services');
+const { User, Message } = require('../models');
+const asyncHandler = require('../utils/asyncHandler');
+const { AppError, ErrorCodes } = require('../utils/AppError');
+const logger = require('../utils/logger');
+const { v4: uuidv4 } = require('uuid');
+
+/**
+ * GET /api/balance
+ * Obtener balance del usuario
+ */
+const getBalance = asyncHandler(async (req, res) => {
+  const result = await jugayganaService.getBalance(req.user.username);
+  
+  if (!result.success) {
+    throw new AppError(result.error, 400, ErrorCodes.TX_FAILED);
+  }
+  
+  res.json({
+    status: 'success',
+    data: {
+      balance: result.balance,
+      username: result.username
+    }
+  });
+});
+
+/**
+ * POST /api/admin/deposit
+ * Realizar depósito (admin)
+ */
+const deposit = asyncHandler(async (req, res) => {
+  const { userId, username, amount, bonus = 0, description } = req.body;
+  
+  // Buscar usuario
+  let user;
+  if (userId) {
+    user = await User.findOne({ id: userId });
+  } else if (username) {
+    user = await User.findOne({ username });
+  }
+  
+  if (!user) {
+    throw new AppError('Usuario no encontrado', 404, ErrorCodes.USER_NOT_FOUND);
+  }
+  
+  const result = await transactionService.deposit({
+    userId: user.id,
+    username: user.username,
+    amount: parseFloat(amount),
+    bonus: parseFloat(bonus),
+    description,
+    adminId: req.user.userId,
+    adminUsername: req.user.username,
+    adminRole: req.user.role
+  });
+  
+  if (!result.success) {
+    throw new AppError(result.error, 400, ErrorCodes.TX_FAILED);
+  }
+  
+  // Crear mensaje de sistema
+  const bonusMsg = bonus > 0 ? ` (incluye $${bonus} de bonificación)` : '';
+  await Message.create({
+    id: uuidv4(),
+    senderId: 'system',
+    senderUsername: req.user.username,
+    senderRole: 'admin',
+    receiverId: user.id,
+    receiverRole: 'user',
+    content: `💰 Depósito de $${amount}${bonusMsg} realizado correctamente. Tu nuevo saldo es $${result.newBalance}`,
+    type: 'system',
+    timestamp: new Date(),
+    read: false
+  });
+  
+  res.json({
+    status: 'success',
+    data: {
+      message: 'Depósito realizado correctamente',
+      newBalance: result.newBalance,
+      transactionId: result.transaction.transactionId
+    }
+  });
+});
+
+/**
+ * POST /api/admin/withdrawal
+ * Realizar retiro (admin)
+ */
+const withdraw = asyncHandler(async (req, res) => {
+  const { userId, username, amount, description } = req.body;
+  
+  // Buscar usuario
+  let user;
+  if (userId) {
+    user = await User.findOne({ id: userId });
+  } else if (username) {
+    user = await User.findOne({ username });
+  }
+  
+  if (!user) {
+    throw new AppError('Usuario no encontrado', 404, ErrorCodes.USER_NOT_FOUND);
+  }
+  
+  const result = await transactionService.withdraw({
+    userId: user.id,
+    username: user.username,
+    amount: parseFloat(amount),
+    description,
+    adminId: req.user.userId,
+    adminUsername: req.user.username,
+    adminRole: req.user.role
+  });
+  
+  if (!result.success) {
+    throw new AppError(result.error, 400, ErrorCodes.TX_FAILED);
+  }
+  
+  // Crear mensaje de sistema
+  await Message.create({
+    id: uuidv4(),
+    senderId: 'system',
+    senderUsername: req.user.username,
+    senderRole: 'admin',
+    receiverId: user.id,
+    receiverRole: 'user',
+    content: `💸 Retiro de $${amount} realizado correctamente. Tu nuevo saldo es $${result.newBalance}`,
+    type: 'system',
+    timestamp: new Date(),
+    read: false
+  });
+  
+  res.json({
+    status: 'success',
+    data: {
+      message: 'Retiro realizado correctamente',
+      newBalance: result.newBalance,
+      transactionId: result.transaction.transactionId
+    }
+  });
+});
+
+/**
+ * POST /api/admin/bonus
+ * Aplicar bonificación (admin)
+ */
+const bonus = asyncHandler(async (req, res) => {
+  const { username, amount, description } = req.body;
+  
+  if (!username || !amount) {
+    throw new AppError('Usuario y monto requeridos', 400, ErrorCodes.VALIDATION_ERROR);
+  }
+  
+  const result = await transactionService.bonus({
+    username,
+    amount: parseFloat(amount),
+    description,
+    adminId: req.user.userId,
+    adminUsername: req.user.username,
+    adminRole: req.user.role
+  });
+  
+  if (!result.success) {
+    throw new AppError(result.error, 400, ErrorCodes.TX_FAILED);
+  }
+  
+  res.json({
+    status: 'success',
+    data: {
+      message: `Bonificación de $${amount} realizada correctamente`,
+      newBalance: result.newBalance,
+      transactionId: result.transaction.transactionId
+    }
+  });
+});
+
+module.exports = {
+  getBalance,
+  deposit,
+  withdraw,
+  bonus
+};

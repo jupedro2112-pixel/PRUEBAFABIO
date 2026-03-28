@@ -1,0 +1,987 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Admin Panel - Sala de Juegos</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Admin Sala">
+    <meta name="application-name" content="Admin Sala de Juegos">
+    <meta name="msapplication-TileColor" content="#6366f1">
+    <meta name="theme-color" content="#6366f1">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180x180.png">
+    
+    <link rel="stylesheet" href="admin.css">
+    <!-- Socket.IO desde el servidor local -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js"></script>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-box">
+            <div class="login-logo">
+                <span class="icon icon-gamepad"></span>
+                <h1>Panel de Administración</h1>
+                <p>Sala de Juegos</p>
+            </div>
+            <form id="loginForm" class="login-form">
+                <div class="input-group">
+                    <span class="icon icon-user"></span>
+                    <input type="text" id="username" placeholder="Usuario" required>
+                </div>
+                <div class="input-group">
+                    <span class="icon icon-lock"></span>
+                    <input type="password" id="password" placeholder="Contraseña" required>
+                </div>
+                <button type="submit" class="login-btn">
+                    <span class="icon icon-sign-in"></span> Ingresar
+                </button>
+            </form>
+            <div id="loginError" class="login-error"></div>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" class="app hidden">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <span class="icon icon-gamepad"></span>
+                <span>Admin Panel</span>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-section="chats">
+                    <span class="icon icon-comments"></span>
+                    <span>Chats</span>
+                    <span id="unreadBadge" class="badge hidden">0</span>
+                </a>
+                <a href="#" class="nav-item" data-section="users">
+                    <span class="icon icon-users"></span>
+                    <span>Usuarios</span>
+                </a>
+                <a href="#" class="nav-item" data-section="transactions">
+                    <span class="icon icon-exchange"></span>
+                    <span>Transacciones</span>
+                </a>
+                <a href="#" class="nav-item" data-section="commands">
+                    <span class="icon icon-terminal"></span>
+                    <span>Comandos</span>
+                </a>
+                <a href="#" class="nav-item" data-section="stats">
+                    <span class="icon icon-chart"></span>
+                    <span>Estadísticas</span>
+                </a>
+
+                <a href="#" class="nav-item" data-section="database">
+                    <span class="icon icon-database"></span>
+                    <span>Base de Datos</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <span id="adminName">Admin</span>
+                <div class="sidebar-footer-actions">
+                    <!-- BOTÓN APP - Instalar PWA en Android -->
+                    <button id="installAppBtn" class="install-app-btn hidden" title="Instalar App">
+                        <span class="icon icon-download"></span> APP
+                    </button>
+                    <button id="logoutBtn" class="logout-btn">
+                        <span class="icon icon-sign-out"></span> Salir
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Stats Bar -->
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <span class="icon icon-users"></span>
+                    <div>
+                        <span id="statUsers" class="stat-value">0</span>
+                        <span class="stat-label">Usuarios</span>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <span class="icon icon-circle online"></span>
+                    <div>
+                        <span id="statOnline" class="stat-value">0</span>
+                        <span class="stat-label">En línea</span>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <span class="icon icon-comments"></span>
+                    <div>
+                        <span id="statMessages" class="stat-value">0</span>
+                        <span class="stat-label">Mensajes</span>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <span class="icon icon-envelope unread"></span>
+                    <div>
+                        <span id="statUnread" class="stat-value">0</span>
+                        <span class="stat-label">Sin leer</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chats Section -->
+            <section id="chatsSection" class="section active">
+                <div class="chats-container">
+                    <!-- Conversations List -->
+                    <div class="conversations-panel">
+                        <div class="panel-header">
+                            <h2><span class="icon icon-comments"></span> Conversaciones</h2>
+                            <button id="refreshChats" class="refresh-btn">
+                                <span class="icon icon-sync"></span>
+                            </button>
+                        </div>
+                        <div class="tabs">
+                            <button class="tab-btn active" data-tab="open">
+                                <span class="icon icon-folder-open"></span> Abiertos
+                            </button>
+                            <button class="tab-btn" data-tab="closed">
+                                <span class="icon icon-folder"></span> Cerrados
+                            </button>
+                            <button class="tab-btn" data-tab="payments">
+                                <span class="icon icon-credit-card"></span> Pagos
+                            </button>
+                        </div>
+                        <div class="search-box">
+                            <span class="icon icon-search"></span>
+                            <input type="text" id="searchUser" placeholder="Buscar usuario...">
+                        </div>
+                        <div id="conversationsList" class="conversations-list">
+                            <div class="empty-state">
+                                <span class="icon icon-comments"></span>
+                                <p>No hay conversaciones</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Panel -->
+                    <div class="chat-panel">
+                        <div id="chatHeader" class="chat-header hidden">
+                            <div class="user-info">
+                                <div class="user-avatar">
+                                    <span class="icon icon-user"></span>
+                                </div>
+                                <div class="user-details">
+                                    <span id="chatUsername" class="username">Usuario</span>
+                                    <span id="chatStatus" class="status">Desconectado</span>
+                                </div>
+                            </div>
+                            <div class="user-balance">
+                                <span class="icon icon-wallet"></span>
+                                <span id="chatBalance">$0</span>
+                            </div>
+                            <div class="chat-actions">
+                                <button id="btnCBU" class="action-btn cbu" title="Enviar CBU">
+                                    <span class="icon icon-university"></span> CBU
+                                </button>
+                                <button id="btnDeposit" class="action-btn deposit" title="Depositar">
+                                    <span class="icon icon-plus-circle"></span> Depositar
+                                </button>
+                                <button id="btnWithdraw" class="action-btn withdraw" title="Retirar">
+                                    <span class="icon icon-minus-circle"></span> Retirar
+                                </button>
+                                <button id="btnPassword" class="action-btn password" title="Cambiar Contraseña">
+                                    <span class="icon icon-key"></span> Cambiar Contraseña
+                                </button>
+                                <button id="btnPayments" class="action-btn payments" title="Enviar a Pagos">
+                                    <span class="icon icon-exchange"></span> Enviar a Pagos
+                                </button>
+                                <button id="btnClose" class="action-btn close" title="Cerrar Chat">
+                                    <span class="icon icon-times-circle"></span> Cerrar Chat
+                                </button>
+                            </div>
+                        </div>
+                        <div id="chatMessages" class="chat-messages">
+                            <div class="empty-state">
+                                <span class="icon icon-comment-dots"></span>
+                                <p>Selecciona una conversación para ver los mensajes</p>
+                            </div>
+                        </div>
+                        <div id="chatInputArea" class="chat-input-area hidden">
+                            <!-- CORREGIDO: Input para enviar imágenes -->
+                            <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                            
+                            <!-- CORREGIDO: Indicador de envío de imagen -->
+                            <div id="sendingIndicator" class="sending-indicator hidden">
+                                <span class="icon icon-spinner fa-spin"></span>
+                                <span>Enviando imagen...</span>
+                            </div>
+                            
+                            <div class="input-wrapper">
+                                <button id="attachImageBtn" class="attach-btn" title="Adjuntar imagen">
+                                    <span class="icon icon-image"></span>
+                                </button>
+                                <textarea id="messageInput" placeholder="Escribe un mensaje..." rows="1"></textarea>
+                                <button id="sendMessage" class="send-btn">
+                                    <span class="icon icon-paper-plane"></span>
+                                </button>
+                            </div>
+                            <div id="typingIndicator" class="typing-indicator hidden">
+                                <span class="icon icon-pencil"></span> <span>Escribiendo...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Users Section -->
+            <section id="usersSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-users"></span> Usuarios</h2>
+                    <div class="header-actions">
+                        <div class="search-box">
+                            <span class="icon icon-search"></span>
+                            <input type="text" id="searchUsers" placeholder="Buscar usuario...">
+                        </div>
+                        <button class="btn-primary" onclick="showCreateUserModal()">
+                            <span class="icon icon-plus"></span> Crear Usuario
+                        </button>
+                    </div>
+                </div>
+                <div id="usersList" class="users-list">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Usuario</th>
+                                <th>ID Cuenta</th>
+                                <th>Email</th>
+                                <th>Teléfono</th>
+                                <th>Rol</th>
+                                <th>Balance</th>
+                                <th>Estado</th>
+                                <th>Último Login</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Other Sections -->
+            <section id="transactionsSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-exchange"></span> Dashboard de Transacciones</h2>
+                </div>
+                <div id="transactionStats" class="stats-grid">
+                    <!-- Stats will be loaded here -->
+                </div>
+                
+                <!-- CORREGIDO: Recuadro de Comisión Ajustable -->
+                <div class="commission-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin: 20px 0; color: white;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px;">
+                        <div>
+                            <h3 style="margin: 0 0 10px 0; font-size: 1.1em;">
+                                <span class="icon icon-percent"></span> Configuración de Comisión
+                            </h3>
+                            <p style="margin: 0; opacity: 0.9; font-size: 0.9em;">Porcentaje sobre el total de depósitos</p>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <input type="number" id="commissionRate" value="0" min="0" max="100" step="0.1" 
+                                    style="width: 80px; padding: 10px; border: none; border-radius: 8px; text-align: center; font-size: 1.2em; font-weight: bold; color: #333;"
+                                    onchange="updateCommissionDisplay()">
+                                <span style="font-size: 1.5em; font-weight: bold;">%</span>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 0.85em; opacity: 0.9;">Comisión Total:</div>
+                                <div id="commissionAmount" style="font-size: 1.5em; font-weight: bold;">$0.00</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <span style="opacity: 0.8;">Total Depósitos: </span>
+                            <span id="commissionBaseAmount" style="font-weight: bold;">$0.00</span>
+                        </div>
+                        <div>
+                            <span style="opacity: 0.8;">Neto después de comisión: </span>
+                            <span id="netAfterCommission" style="font-weight: bold;">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="date-filter-bar">
+                    <div class="date-inputs">
+                        <div class="date-group">
+                            <label>Desde:</label>
+                            <input type="date" id="dateFrom" onchange="applyTransactionDateFilter()">
+                        </div>
+                        <div class="date-group">
+                            <label>Hasta:</label>
+                            <input type="date" id="dateTo" onchange="applyTransactionDateFilter()">
+                        </div>
+                    </div>
+                    <div class="quick-filters">
+                        <button class="btn-secondary btn-small" onclick="setTodayFilter()">Hoy</button>
+                        <button class="btn-secondary btn-small" onclick="setWeekFilter()">Esta Semana</button>
+                        <button class="btn-secondary btn-small" onclick="setMonthFilter()">Este Mes</button>
+                        <button class="btn-secondary btn-small" onclick="clearTransactionDateFilter()">Limpiar</button>
+                    </div>
+                </div>
+                <div class="filter-bar">
+                    <button class="filter-btn active" data-filter="all" onclick="filterTransactions('all')">Todas</button>
+                    <button class="filter-btn" data-filter="deposit" onclick="filterTransactions('deposit')">Depósitos</button>
+                    <button class="filter-btn" data-filter="withdrawal" onclick="filterTransactions('withdrawal')">Retiros</button>
+                    <button class="filter-btn" data-filter="bonus" onclick="filterTransactions('bonus')">Bonificaciones</button>
+                    <button class="filter-btn" data-filter="refund" onclick="filterTransactions('refund')">Reembolsos</button>
+                </div>
+                <div id="transactionsList" class="transactions-list">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Usuario</th>
+                                <th>Tipo</th>
+                                <th>Monto</th>
+                                <th>Descripción</th>
+                                <th>Admin</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transactionsTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="commandsSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-terminal"></span> Comandos y Configuración CBU</h2>
+                </div>
+                <div class="commands-layout">
+                    <div class="commands-panel">
+                        <div class="panel-subheader">
+                            <h3>Comandos Personalizados</h3>
+                            <button class="btn-primary btn-small" onclick="showCreateCommandModal()">
+                                <span class="icon icon-plus"></span> Nuevo
+                            </button>
+                        </div>
+                        <div id="commandsList" class="commands-list">
+                            <div class="empty-state">Cargando comandos...</div>
+                        </div>
+                    </div>
+                    <div class="cbu-panel">
+                        <div class="panel-subheader">
+                            <h3>Configuración CBU</h3>
+                        </div>
+                        <div class="cbu-form">
+                            <div class="form-group">
+                                <label>Banco:</label>
+                                <input type="text" id="cbuBank" placeholder="Ej: Banco Nación">
+                            </div>
+                            <div class="form-group">
+                                <label>Titular:</label>
+                                <input type="text" id="cbuTitular" placeholder="Nombre del titular">
+                            </div>
+                            <div class="form-group">
+                                <label>CBU:</label>
+                                <input type="text" id="cbuNumber" placeholder="22 dígitos del CBU">
+                            </div>
+                            <div class="form-group">
+                                <label>Alias:</label>
+                                <input type="text" id="cbuAlias" placeholder="Alias del CBU">
+                            </div>
+                            <button class="btn-primary" onclick="saveCBUConfig()">
+                                <span class="icon icon-save"></span> Guardar CBU
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="statsSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-chart"></span> Estadísticas</h2>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="icon icon-users"></span>
+                        <span id="totalUsers" class="stat-number">0</span>
+                        <span class="stat-label">Total Usuarios</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="icon icon-circle online"></span>
+                        <span id="onlineUsers" class="stat-number">0</span>
+                        <span class="stat-label">Usuarios Online</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="icon icon-comments"></span>
+                        <span id="totalChats" class="stat-number">0</span>
+                        <span class="stat-label">Chats Activos</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="icon icon-exchange"></span>
+                        <span id="totalTransactions" class="stat-number">0</span>
+                        <span class="stat-label">Transacciones Hoy</span>
+                    </div>
+                </div>
+            </section>
+
+            <section id="databaseSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-database"></span> Base de Datos</h2>
+                    <div class="db-stats">
+                        <span id="dbTotalUsers">0</span> usuarios | 
+                        <span id="dbTotalAdmins">0</span> admins
+                    </div>
+                </div>
+                <div id="databasePasswordInput" class="database-password-section">
+                    <div class="password-box">
+                        <span class="icon icon-lock"></span>
+                        <p>Esta sección está protegida. Ingresa la contraseña para acceder.</p>
+                        <input type="password" id="dbPassword" placeholder="Contraseña de base de datos">
+                        <button class="btn-primary" onclick="verifyDatabaseAccess()">
+                            <span class="icon icon-unlock"></span> Acceder
+                        </button>
+                    </div>
+                </div>
+                <div id="databaseContent" class="database-content hidden">
+                    <div class="database-actions">
+                        <button class="db-btn btn-primary" onclick="exportDatabaseCSV()">
+                            <span class="icon icon-download"></span> Exportar a CSV
+                        </button>
+                        <button class="db-btn" onclick="loadDatabaseUsers()">
+                            <span class="icon icon-sync"></span> Actualizar
+                        </button>
+                    </div>
+                    <div class="database-table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Usuario</th>
+                                    <th>Email</th>
+                                    <th>Teléfono</th>
+                                    <th>Rol</th>
+                                    <th>Balance</th>
+                                    <th>Estado</th>
+                                    <th>Último Login</th>
+                                    <th>Creado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="databaseTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Deposit Modal -->
+    <div id="depositModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-plus-circle"></span> Depositar a Usuario</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Carga rápida (acumulativo):</label>
+                    <div class="quick-amounts">
+                        <button data-amount="1000">$1.000</button>
+                        <button data-amount="5000">$5.000</button>
+                        <button data-amount="10000">$10.000</button>
+                        <button data-amount="50000">$50.000</button>
+                        <button data-amount="100000">$100.000</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Bonificación extra:</label>
+                    <div class="bonus-options">
+                        <button data-bonus="0" class="active">SIN BONUS</button>
+                        <button data-bonus="10">+10%</button>
+                        <button data-bonus="20">+20%</button>
+                        <button data-bonus="30">+30%</button>
+                        <button data-bonus="40">+40%</button>
+                        <button data-bonus="50">+50%</button>
+                        <button data-bonus="100">+100%</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="depositAmount">Monto ($):</label>
+                    <input type="number" id="depositAmount" placeholder="Ej: 10000" min="1">
+                </div>
+                <div class="form-group">
+                    <label for="depositBonus">Monto de Bonificación ($):</label>
+                    <input type="number" id="depositBonus" placeholder="0" readonly>
+                </div>
+                <div class="form-group">
+                    <label for="depositDesc">Descripción (opcional):</label>
+                    <input type="text" id="depositDesc" placeholder="Ej: Depósito inicial">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button id="confirmDeposit" class="btn-primary">
+                    <span class="icon icon-check"></span> Depositar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Withdraw Modal -->
+    <div id="withdrawModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-minus-circle"></span> Retirar de Usuario</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Carga rápida (acumulativo):</label>
+                    <div class="quick-amounts">
+                        <button data-amount="1000">$1.000</button>
+                        <button data-amount="5000">$5.000</button>
+                        <button data-amount="10000">$10.000</button>
+                        <button data-amount="50000">$50.000</button>
+                        <button data-amount="100000">$100.000</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="withdrawAmount">Monto ($):</label>
+                    <input type="number" id="withdrawAmount" placeholder="Ej: 10000" min="1">
+                </div>
+                <div class="form-group total-row">
+                    <label>TOTAL A RETIRAR:</label>
+                    <div class="total-display" id="withdrawTotal">$0</div>
+                </div>
+                <div class="form-group">
+                    <button class="btn-secondary btn-small" id="btnSelectAllBalance" onclick="selectAllBalance()">
+                        <span class="icon icon-wallet"></span> Seleccionar todo el saldo
+                    </button>
+                </div>
+                <div class="form-group">
+                    <label for="withdrawDesc">Descripción (opcional):</label>
+                    <input type="text" id="withdrawDesc" placeholder="Ej: Retiro solicitado">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button id="confirmWithdraw" class="btn-primary">
+                    <span class="icon icon-check"></span> Retirar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Password Modal -->
+    <div id="passwordModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-key"></span> Cambiar Contraseña de Usuario</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="newPassword">Nueva Contraseña:</label>
+                    <input type="password" id="newPassword" placeholder="Mínimo 6 caracteres">
+                </div>
+                <div class="form-group">
+                    <label for="confirmPassword">Confirmar Contraseña:</label>
+                    <input type="password" id="confirmPassword" placeholder="Repite la contraseña">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button id="confirmPasswordChange" class="btn-primary" onclick="handlePasswordChange()">
+                    <span class="icon icon-check"></span> Cambiar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Database Password Modal -->
+    <div id="databasePasswordModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-lock"></span> Acceso a Base de Datos</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="dbPasswordInput">Contraseña:</label>
+                    <input type="password" id="dbPasswordInput" placeholder="Ingresa la contraseña de base de datos">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button class="btn-primary" onclick="verifyDatabaseAccessFromModal()">
+                    <span class="icon icon-check"></span> Acceder
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-user-plus"></span> Crear Usuario/Admin</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="newUserUsername">Usuario:</label>
+                    <input type="text" id="newUserUsername" placeholder="Nombre de usuario">
+                </div>
+                <div class="form-group">
+                    <label for="newUserPassword">Contraseña:</label>
+                    <input type="password" id="newUserPassword" placeholder="Mínimo 6 caracteres">
+                </div>
+                <div class="form-group">
+                    <label for="newUserEmail">Email (opcional):</label>
+                    <input type="email" id="newUserEmail" placeholder="email@ejemplo.com">
+                </div>
+                <div class="form-group">
+                    <label for="newUserPhone">Teléfono (opcional):</label>
+                    <input type="tel" id="newUserPhone" placeholder="+54 11 1234 5678">
+                </div>
+                <div class="form-group">
+                    <label for="newUserRole">Rol:</label>
+                    <select id="newUserRole">
+                        <option value="user">Usuario</option>
+                        <option value="admin">Administrador General</option>
+                        <option value="depositor">Admin Depositor</option>
+                        <option value="withdrawer">Admin Withdrawer</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button id="confirmCreateUser" class="btn-primary" onclick="handleCreateUser()">
+                    <span class="icon icon-check"></span> Crear
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Command Modal -->
+    <div id="commandModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-terminal"></span> <span id="commandModalTitle">Nuevo Comando</span></h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="commandName">Comando (debe empezar con /):</label>
+                    <input type="text" id="commandName" placeholder="/comando">
+                </div>
+                <div class="form-group">
+                    <label for="commandDesc">Descripción:</label>
+                    <input type="text" id="commandDesc" placeholder="¿Qué hace este comando?">
+                </div>
+                <div class="form-group">
+                    <label for="commandResponse">Respuesta (se enviará al usuario):</label>
+                    <textarea id="commandResponse" rows="3" placeholder="Texto que se enviará al usuario cuando use este comando..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button id="commandModalAction" class="btn-primary">
+                    <span class="icon icon-check"></span> Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Lightbox -->
+    <div id="imageLightbox" class="lightbox hidden" onclick="closeLightbox(event)">
+        <span class="lightbox-close" onclick="closeLightbox(event)">&times;</span>
+        <img id="lightboxImage" src="" alt="Imagen ampliada">
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="admin.js"></script>
+    
+    <!-- ============================================
+         FIREBASE CLOUD MESSAGING & PWA - ADMIN
+         ============================================ -->
+    <script>
+        // ============================================
+        // CONFIGURACIÓN DE FIREBASE
+        // ============================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAjZuVIxNY-SrnihkyNVupZ8AhXX6qxAxY",
+            authDomain: "saladejuegos-673fa.firebaseapp.com",
+            projectId: "saladejuegos-673fa",
+            storageBucket: "saladejuegos-673fa.firebasestorage.app",
+            messagingSenderId: "553123191180",
+            appId: "1:553123191180:web:277eb460ef78dab8525ea9",
+            measurementId: "G-3ZJRT0NCTE"
+        };
+        
+        // Inicializar Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const messaging = firebase.messaging();
+        
+        // ============================================
+        // VARIABLES GLOBALES PWA
+        // ============================================
+        let deferredPrompt = null;
+        let fcmToken = null;
+        const VAPID_KEY = 'BMiQup3H-HSz11WPrifwz7yZqk-acTeEhqqxMnNA0RidRwAY_gQcLORHX0Vog3U0PRzdmK_N3vkejw91WIZThG0';
+        
+        // ============================================
+        // DETECTAR DISPOSITIVO
+        // ============================================
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        const isAndroid = /Android/.test(navigator.userAgent);
+        const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+        
+        // ============================================
+        // REGISTRAR SERVICE WORKER
+        // ============================================
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/firebase-messaging-sw.js')
+                .then(function(registration) {
+                    console.log('[PWA Admin] Service Worker registrado:', registration);
+                    // Inicializar notificaciones después de registrar SW
+                    initNotifications();
+                })
+                .catch(function(error) {
+                    console.log('[PWA Admin] Error al registrar Service Worker:', error);
+                });
+        }
+        
+        // ============================================
+        // INICIALIZAR NOTIFICACIONES PUSH
+        // ============================================
+        async function initNotifications() {
+            console.log('[FCM Admin] Inicializando notificaciones...');
+            
+            if (!('Notification' in window)) {
+                console.log('[FCM Admin] Este navegador no soporta notificaciones');
+                return;
+            }
+            
+            try {
+                const permission = await Notification.requestPermission();
+                console.log('[FCM Admin] Permiso de notificación:', permission);
+                
+                if (permission === 'granted') {
+                    // Obtener token FCM
+                    const currentToken = await messaging.getToken({ vapidKey: VAPID_KEY });
+                    if (currentToken) {
+                        fcmToken = currentToken;
+                        console.log('[FCM Admin] Token obtenido:', currentToken);
+                        // Enviar token al servidor
+                        sendTokenToServer(currentToken);
+                    } else {
+                        console.log('[FCM Admin] No se pudo obtener el token');
+                    }
+                } else {
+                    console.log('[FCM Admin] Usuario rechazó las notificaciones');
+                }
+            } catch (error) {
+                console.error('[FCM Admin] Error al inicializar notificaciones:', error);
+            }
+        }
+        
+        // ============================================
+        // ENVIAR TOKEN AL SERVIDOR
+        // ============================================
+        function sendTokenToServer(token) {
+            console.log('[FCM Admin] Token para enviar al servidor:', token);
+            localStorage.setItem('adminFcmToken', token);
+        }
+        
+        // ============================================
+        // MANEJAR NOTIFICACIONES EN PRIMER PLANO
+        // ============================================
+        messaging.onMessage(function(payload) {
+            console.log('[FCM Admin] Notificación recibida en primer plano:', payload);
+            
+            // Mostrar toast de notificación
+            const notificationTitle = payload.notification.title || 'Sala de Juegos';
+            const notificationBody = payload.notification.body || 'Nueva notificación';
+            
+            // Mostrar toast si la función existe
+            if (typeof showToast === 'function') {
+                showToast(`${notificationTitle}: ${notificationBody}`, 'info');
+            }
+            
+            // Mostrar notificación del navegador si la app no está enfocada
+            if (document.visibilityState !== 'visible') {
+                new Notification(notificationTitle, {
+                    body: notificationBody,
+                    icon: payload.notification.icon || '/icons/icon-192x192.png'
+                });
+            }
+        });
+        
+        // ============================================
+        // BOTÓN DE INSTALACIÓN PWA
+        // ============================================
+        window.addEventListener('beforeinstallprompt', (e) => {
+            console.log('[PWA Admin] Evento beforeinstallprompt detectado');
+            e.preventDefault();
+            deferredPrompt = e;
+            showInstallButton();
+        });
+        
+        window.addEventListener('appinstalled', (evt) => {
+            console.log('[PWA Admin] App instalada');
+            deferredPrompt = null;
+            hideInstallButton();
+            if (typeof showToast === 'function') {
+                showToast('✅ App instalada correctamente', 'success');
+            }
+        });
+        
+        // ============================================
+        // MOSTRAR BOTÓN DE INSTALACIÓN
+        // ============================================
+        function showInstallButton() {
+            // Crear botón si no existe
+            let installBtn = document.getElementById('pwaInstallButton');
+            if (!installBtn) {
+                installBtn = document.createElement('button');
+                installBtn.id = 'pwaInstallButton';
+                installBtn.className = 'install-app-btn';
+                installBtn.innerHTML = '📱 Instalar App';
+                installBtn.style.cssText = `
+                    position: fixed;
+                    bottom: 20px;
+                    right: 20px;
+                    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 50px;
+                    padding: 12px 20px;
+                    font-size: 14px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+                    z-index: 9999;
+                    display: none;
+                    align-items: center;
+                    gap: 8px;
+                `;
+                document.body.appendChild(installBtn);
+                installBtn.addEventListener('click', handleInstallClick);
+            }
+            installBtn.style.display = 'flex';
+            
+            if (isIOS) {
+                installBtn.innerHTML = '📱 Agregar a Inicio';
+            }
+        }
+        
+        // ============================================
+        // OCULTAR BOTÓN DE INSTALACIÓN
+        // ============================================
+        function hideInstallButton() {
+            const installBtn = document.getElementById('pwaInstallButton');
+            if (installBtn) {
+                installBtn.style.display = 'none';
+            }
+        }
+        
+        // ============================================
+        // MANEJAR CLICK EN BOTÓN DE INSTALACIÓN
+        // ============================================
+        async function handleInstallClick() {
+            if (isIOS) {
+                showIOSInstallInstructions();
+            } else if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                console.log('[PWA Admin] Resultado de instalación:', outcome);
+                deferredPrompt = null;
+            } else {
+                if (typeof showToast === 'function') {
+                    showToast('📱 Para instalar: usa el menú del navegador y selecciona "Agregar a pantalla de inicio"', 'info');
+                }
+            }
+        }
+        
+        // ============================================
+        // INSTRUCCIONES PARA iOS
+        // ============================================
+        function showIOSInstallInstructions() {
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+                padding: 20px;
+            `;
+            modal.innerHTML = `
+                <div style="
+                    background: #1e293b;
+                    border: 2px solid #6366f1;
+                    border-radius: 20px;
+                    padding: 30px;
+                    max-width: 400px;
+                    text-align: center;
+                    color: #fff;
+                ">
+                    <h3 style="color: #6366f1; margin-bottom: 15px;">📱 Agregar a Pantalla de Inicio</h3>
+                    <p style="margin-bottom: 15px;">Para instalar esta app en tu iPhone/iPad:</p>
+                    <ol style="text-align: left; margin: 20px 0; padding-left: 20px; line-height: 1.8;">
+                        <li>Presiona el botón <strong>Compartir</strong> <span style="font-size: 24px;">⎋</span> en Safari</li>
+                        <li>Desplázate hacia abajo y selecciona <strong>"Agregar a Pantalla de Inicio"</strong></li>
+                        <li>Presiona <strong>"Agregar"</strong> en la esquina superior derecha</li>
+                    </ol>
+                    <button onclick="this.closest('.modal').remove()" style="
+                        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+                        color: white;
+                        border: none;
+                        border-radius: 8px;
+                        padding: 12px 24px;
+                        font-size: 14px;
+                        font-weight: bold;
+                        cursor: pointer;
+                    ">Entendido</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        // ============================================
+        // VERIFICAR SI YA ESTÁ INSTALADA
+        // ============================================
+        if (isStandalone) {
+            console.log('[PWA Admin] App ya está instalada');
+            hideInstallButton();
+        } else {
+            // Mostrar botón en iOS inmediatamente (no espera beforeinstallprompt)
+            if (isIOS) {
+                console.log('[PWA Admin] Dispositivo iOS detectado, mostrando botón');
+                showInstallButton();
+            }
+            // Para Android, el botón se mostrará cuando se dispare beforeinstallprompt
+        }
+        
+        console.log('[PWA Admin] Firebase y PWA inicializados correctamente');
+    </script>
+</body>
+</html>
