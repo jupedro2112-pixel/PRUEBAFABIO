@@ -13,6 +13,10 @@ const logger = require('../utils/logger');
 const conversationCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
+// Cache de listas de conversaciones por status (TTL corto para actualizaciones rápidas)
+const chatListCache = new Map();
+const CHAT_LIST_CACHE_TTL = 10 * 1000; // 10 segundos
+
 /**
  * Obtener mensajes de una conversación (optimizado)
  */
@@ -128,8 +132,9 @@ const sendMessage = async (messageData) => {
     });
   }
   
-  // Invalidar cache
+  // Invalidar cache de mensajes de conversación y lista de chats
   invalidateCache(targetUserId);
+  invalidateChatListCache();
   
   logger.debug(`Mensaje enviado: ${message.id} de ${senderUsername}`);
   
@@ -150,7 +155,9 @@ const markAsRead = async (userId, readerId) => {
 /**
  * Obtener conversaciones para el panel admin (optimizado)
  */
-const getConversations = async (status = 'open', userRole = 'admin') => {
+const getConversations = async (status = 'open', userRole = 'admin', options = {}) => {
+  const { limit = 50, cursor = null } = options;
+
   // Validar permisos según rol
   if (userRole === 'depositor' && status === 'payments') {
     throw new AppError(
@@ -167,12 +174,29 @@ const getConversations = async (status = 'open', userRole = 'admin') => {
       ErrorCodes.AUTH_FORBIDDEN
     );
   }
+
+  // Cache sólo para primera página (sin cursor)
+  const cacheKey = `${status}:${limit}`;
+  if (!cursor && chatListCache.has(cacheKey)) {
+    const cached = chatListCache.get(cacheKey);
+    if (Date.now() - cached.timestamp < CHAT_LIST_CACHE_TTL) {
+      return cached.data;
+    }
+    chatListCache.delete(cacheKey);
+  }
   
   // Agregación optimizada: todo en una sola query
   const pipeline = [
-    { $match: { status } },
+    {
+      $match: {
+        status,
+        ...(cursor && !isNaN(new Date(cursor).getTime())
+          ? { lastMessageAt: { $lt: new Date(cursor) } }
+          : {})
+      }
+    },
     { $sort: { lastMessageAt: -1 } },
-    { $limit: 100 },
+    { $limit: limit },
     {
       $lookup: {
         from: 'users',
@@ -248,6 +272,14 @@ const getConversations = async (status = 'open', userRole = 'admin') => {
   ];
   
   const conversations = await ChatStatus.aggregate(pipeline);
+
+  // Guardar en cache la primera página
+  if (!cursor) {
+    chatListCache.set(cacheKey, {
+      data: conversations,
+      timestamp: Date.now()
+    });
+  }
   
   return conversations;
 };
@@ -298,6 +330,8 @@ const closeChat = async (userId, closedBy, options = {}) => {
   
   logger.info(`Chat cerrado para usuario ${userId} por ${closedBy}`);
   
+  invalidateChatListCache();
+  
   return { success: true };
 };
 
@@ -318,6 +352,8 @@ const reopenChat = async (userId, assignedTo) => {
   
   logger.info(`Chat reabierto para usuario ${userId}`);
   
+  invalidateChatListCache();
+  
   return { success: true };
 };
 
@@ -336,6 +372,8 @@ const assignChat = async (userId, agentId) => {
   
   logger.info(`Chat ${userId} asignado a ${agentId}`);
   
+  invalidateChatListCache();
+  
   return { success: true };
 };
 
@@ -352,6 +390,8 @@ const changeCategory = async (userId, category) => {
     { category },
     { upsert: true }
   );
+  
+  invalidateChatListCache();
   
   return { success: true, category };
 };
@@ -390,6 +430,13 @@ const invalidateCache = (userId) => {
 };
 
 /**
+ * Invalidar cache de listas de conversaciones por status
+ */
+const invalidateChatListCache = () => {
+  chatListCache.clear();
+};
+
+/**
  * Limpiar cache expirado
  */
 setInterval(() => {
@@ -397,6 +444,11 @@ setInterval(() => {
   for (const [key, value] of conversationCache.entries()) {
     if (now - value.timestamp > CACHE_TTL) {
       conversationCache.delete(key);
+    }
+  }
+  for (const [key, value] of chatListCache.entries()) {
+    if (now - value.timestamp > CHAT_LIST_CACHE_TTL) {
+      chatListCache.delete(key);
     }
   }
 }, 60000); // Limpiar cada minuto
@@ -412,5 +464,6 @@ module.exports = {
   assignChat,
   changeCategory,
   saveExternalUser,
-  invalidateCache
+  invalidateCache,
+  invalidateChatListCache
 };

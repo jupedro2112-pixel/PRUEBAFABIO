@@ -80,9 +80,12 @@ const markAsRead = asyncHandler(async (req, res) => {
  * Obtener conversaciones para el panel admin
  */
 const getConversations = asyncHandler(async (req, res) => {
-  const { status = 'open' } = req.query;
+  const { status = 'open', limit, cursor } = req.query;
   
-  const conversations = await chatService.getConversations(status, req.user.role);
+  const conversations = await chatService.getConversations(status, req.user.role, {
+    limit: parseInt(limit, 10) > 0 ? parseInt(limit, 10) : 50,
+    cursor: cursor || null
+  });
   
   res.json({
     status: 'success',

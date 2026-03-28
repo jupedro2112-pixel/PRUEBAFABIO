@@ -9,6 +9,7 @@ const { Message, User, ChatStatus } = require('../models');
 const { JWT_SECRET } = require('../middlewares/auth');
 const logger = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
+const { invalidateChatListCache } = require('../services/chatService');
 
 // Mapas de conexiones
 const connectedUsers = new Map();
@@ -24,7 +25,7 @@ const initializeSocket = (server) => {
       methods: ["GET", "POST"],
       credentials: true
     },
-    transports: ['websocket', 'polling'],
+    transports: ['websocket'],
     pingTimeout: 60000,
     pingInterval: 25000
   });
@@ -161,6 +162,18 @@ const initializeSocket = (server) => {
             senderUsername: socket.username
           });
         }
+        
+        // Emitir evento puntual de actualización de chat (diff mínimo)
+        // No incluye contenido del mensaje para evitar vectores XSS en el frontend
+        notifyAdmins(io, 'chat_updated', {
+          userId: targetUserId,
+          lastMessageAt: message.timestamp,
+          lastMessageRole: socket.role,
+          unreadIncrement: !isAdminRole ? 1 : 0
+        });
+        
+        // Invalidar cache de lista de conversaciones
+        invalidateChatListCache();
         
         broadcastStats(io);
       } catch (error) {
