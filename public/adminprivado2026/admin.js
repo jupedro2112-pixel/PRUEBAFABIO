@@ -10,7 +10,7 @@
 // ============================================
 const API_URL = '';
 const SOCKET_OPTIONS = {
-    transports: ['websocket', 'polling'],
+    transports: ['websocket'],
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
@@ -35,9 +35,7 @@ let availableCommands = []; // Comandos disponibles para sugerencias
 let commandSuggestions = [];
 let selectedCommandIndex = -1;
 let processedMessageIds = new Set(); // CORREGIDO: Para evitar mensajes duplicados
-let isLoadingMessages = false; // CORREGIDO: Para evitar cargas múltiples
-let messageRefreshInterval = null; // CORREGIDO: Intervalo para refresh automático de mensajes
-let conversationsRefreshInterval = null; // CORREGIDO: Intervalo para refresh automático de conversaciones
+let isLoadingMessages = false; // Para evitar cargas múltiples simultáneas
 
 // PWA - Instalación de App
 let deferredInstallPrompt = null;
@@ -139,9 +137,9 @@ function setupEventListeners() {
             elements.tabBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             currentTab = btn.dataset.tab;
-            // CORREGIDO: Limpiar selección de chat al cambiar de pestaña
+            // Limpiar selección de chat al cambiar de pestaña
             if (selectedUserId) {
-                stopMessageRefresh();
+                if (socket) socket.emit('leave_chat_room', { userId: selectedUserId });
                 selectedUserId = null;
                 elements.chatHeader.classList.add('hidden');
                 elements.chatInputArea.classList.add('hidden');
@@ -152,18 +150,21 @@ function setupEventListeners() {
                     </div>
                 `;
             }
-            // CORREGIDO: Limpiar caché y forzar recarga inmediata
-            conversationsCache = null;
-            lastConversationsLoad = 0;
-            // Mostrar loading inmediatamente
-            elements.conversationsList.innerHTML = `
-                <div class="empty-state">
-                    <span class="icon icon-sync" style="animation: spin 1s linear infinite;"></span>
-                    <p>Cargando...</p>
-                </div>
-            `;
-            // Cargar conversaciones inmediatamente
-            loadConversations(true);
+            // Mostrar datos cacheados de la pestaña al instante (sin pantalla en blanco)
+            const tabCache = conversationsCacheByTab.get(currentTab);
+            if (tabCache && tabCache.data.length > 0) {
+                conversations = tabCache.data;
+                renderConversations();
+            } else {
+                elements.conversationsList.innerHTML = `
+                    <div class="empty-state">
+                        <span class="icon icon-sync" style="animation: spin 1s linear infinite;"></span>
+                        <p>Cargando...</p>
+                    </div>
+                `;
+            }
+            // Refrescar datos en background (actualiza lista suavemente)
+            loadConversations(false);
             // Actualizar botón según la pestaña
             updateActionButtonsByTab();
         });
@@ -342,8 +343,6 @@ async function handleLogin(e) {
             
             try {
                 loadConversations();
-                // CORREGIDO: Iniciar refresh automático de conversaciones
-                startConversationsRefresh();
             } catch (e) {
                 console.log('Error cargando conversaciones:', e);
             }
@@ -375,9 +374,8 @@ async function validateToken() {
             currentAdmin = data.user || JSON.parse(localStorage.getItem('adminUser'));
             showApp();
             initSocket();
-            // CORREGIDO: Solicitar permiso para notificaciones y iniciar refresh automático
+            // CORREGIDO: Solicitar permiso para notificaciones al iniciar
             requestNotificationPermission();
-            startConversationsRefresh();
             loadConversations();
             loadStats();
             // CORREGIDO: Cargar comandos al iniciar para las sugerencias
@@ -397,7 +395,6 @@ function handleLogout() {
     if (socket) {
         socket.disconnect();
     }
-    stopMessageRefresh(); // CORREGIDO: Detener refresh automático
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
     currentToken = null;
@@ -536,36 +533,30 @@ function initSocket() {
     // CHAT CLOSED - Mantener chat abierto para seguir respondiendo
     socket.on('chat_closed', (data) => {
         console.log('🔒 Chat cerrado:', data);
-        // CORREGIDO: No limpiar el panel de chat, solo actualizar la lista
-        // El admin puede seguir respondiendo aunque el chat esté en "Cerrados"
         if (data.userId === selectedUserId) {
-            // Mostrar indicador de que el chat está cerrado pero permitir seguir escribiendo
             showToast('Chat movido a Cerrados. Puedes seguir respondiendo.', 'info');
         }
-        // Reload conversations immediately para mover a la pestaña correcta
-        loadConversations();
+        // Invalidar cache de las pestañas afectadas y recargar
+        conversationsCacheByTab.delete('open');
+        conversationsCacheByTab.delete('closed');
+        loadConversations(true);
     });
     
-    // CORREGIDO: CONVERSATION UPDATED - Para usuarios nuevos que envían mensajes
+    // CONVERSATION_UPDATED (para compatibilidad con versiones anteriores del backend)
     socket.on('conversation_updated', (data) => {
         console.log('🔄 Conversation updated:', data);
-        // Forzar actualización de la lista de conversaciones
-        conversationsCache = null;
-        lastConversationsLoad = 0;
-        loadConversations(true);
-        
-        // Incrementar contador de no leídos si no es el usuario seleccionado
         if (data.userId !== selectedUserId) {
             incrementUnreadCount();
             playNotificationSound();
         }
+        conversationsCacheByTab.delete(currentTab);
+        loadConversations(true);
     });
     
     // CHAT MOVED TO PAYMENTS
     socket.on('chat_moved', (data) => {
         console.log('💳 Chat moved to payments:', data);
         if (data.userId === selectedUserId) {
-            stopMessageRefresh(); // CORREGIDO: Detener refresh automático
             selectedUserId = null;
             elements.chatHeader.classList.add('hidden');
             elements.chatInputArea.classList.add('hidden');
@@ -576,7 +567,10 @@ function initSocket() {
                 </div>
             `;
         }
-        loadConversations();
+        // Invalidar cache de pestañas afectadas
+        conversationsCacheByTab.delete('open');
+        conversationsCacheByTab.delete('payments');
+        loadConversations(true);
         showToast('Chat enviado a pagos', 'info');
     });
     
@@ -594,16 +588,16 @@ function initSocket() {
     });
     
     // STATS UPDATE
-    socket.on('stats_update', (data) => {
+    socket.on('stats', (data) => {
         updateStats(data);
     });
     
     // USER ONLINE/OFFLINE
-    socket.on('user_online', (data) => {
+    socket.on('user_connected', (data) => {
         updateUserStatus(data.userId, true);
     });
     
-    socket.on('user_offline', (data) => {
+    socket.on('user_disconnected', (data) => {
         updateUserStatus(data.userId, false);
     });
     
@@ -677,7 +671,7 @@ function handleNewMessage(data) {
         // Mensaje de otro chat - actualizar lista y mostrar notificación
         incrementUnreadCount();
         playNotificationSound();
-        // CORREGIDO: Mostrar notificación del navegador SIEMPRE
+        // Mostrar notificación del navegador
         const senderName = message.senderUsername || 'Usuario';
         const messagePreview = message.type === 'image' ? '📸 Imagen' : (message.content?.substring(0, 50) + '...');
         showBrowserNotification(
@@ -685,27 +679,66 @@ function handleNewMessage(data) {
             messagePreview,
             '/favicon.ico'
         );
-        // Forzar actualización de conversaciones
-        conversationsCache = null;
-        lastConversationsLoad = 0;
-        loadConversations(true);
+        // Actualizar conversación en la lista en tiempo real (sin HTTP call)
+        updateConversationInList(message);
     }
 }
 
 // ============================================
 // CONVERSATIONS
 // ============================================
-let conversationsCache = null;
-let lastConversationsLoad = 0;
-const CONVERSATIONS_CACHE_TIME = 5000; // 5 segundos de cache
+// Cache por pestaña: clave = tab ('open'|'closed'|'payments'), valor = { data: [], timestamp: 0 }
+let conversationsCacheByTab = new Map();
+const CONVERSATIONS_CACHE_TIME = 30000; // 30 segundos (actualizamos en tiempo real vía WebSocket)
 
-// OPTIMIZADO: Con prefetch de mensajes
+/**
+ * Actualización inteligente de una conversación en la lista (sin HTTP call).
+ * Se llama cuando llega un mensaje nuevo de otro chat.
+ */
+function updateConversationInList(message) {
+    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const isFromAdmin = adminRoles.includes(message.senderRole);
+    const chatUserId = isFromAdmin ? message.receiverId : message.senderId;
+    
+    // Actualizar en el array conversations actual
+    const convIndex = conversations.findIndex(c => c.userId === chatUserId);
+    if (convIndex === -1) {
+        // Conversación nueva o no visible: invalidar cache y recargar
+        conversationsCacheByTab.delete(currentTab);
+        loadConversations(true);
+        return;
+    }
+    
+    const conv = conversations[convIndex];
+    if (message.type !== 'image') {
+        conv.lastMessage = message.content;
+    } else {
+        conv.lastMessage = '📸 Imagen';
+    }
+    conv.lastMessageAt = message.timestamp || new Date();
+    if (!isFromAdmin) {
+        conv.unread = (conv.unread || 0) + 1;
+    }
+    
+    // Mover la conversación al top de la lista
+    conversations.splice(convIndex, 1);
+    conversations.unshift(conv);
+    
+    // Actualizar cache de la pestaña actual
+    conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+    
+    // Re-renderizar la lista de forma instantánea
+    renderConversations();
+}
+
+// Cargar conversaciones con cache por pestaña
 async function loadConversations(forceRefresh = false) {
     const now = Date.now();
+    const tabCache = conversationsCacheByTab.get(currentTab);
     
-    // Usar cache si está disponible y no es forzado
-    if (!forceRefresh && conversationsCache && (now - lastConversationsLoad) < CONVERSATIONS_CACHE_TIME) {
-        conversations = conversationsCache;
+    // Usar cache si está disponible, no es forzado y no expiró
+    if (!forceRefresh && tabCache && (now - tabCache.timestamp) < CONVERSATIONS_CACHE_TIME) {
+        conversations = tabCache.data;
         renderConversations();
         return;
     }
@@ -719,8 +752,9 @@ async function loadConversations(forceRefresh = false) {
         
         const data = await response.json();
         conversations = data.conversations || [];
-        conversationsCache = conversations;
-        lastConversationsLoad = now;
+        
+        // Guardar en cache por pestaña
+        conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
         
         renderConversations();
         
@@ -845,49 +879,9 @@ async function selectConversation(userId, username) {
     
     // Load user info en paralelo
     loadUserInfo(userId);
-    
-    // CORREGIDO: Iniciar refresh automático de mensajes
-    startMessageRefresh(userId);
 }
 
-// CORREGIDO: Iniciar refresh automático de mensajes
-function startMessageRefresh(userId) {
-    // Detener intervalo anterior si existe
-    stopMessageRefresh();
-    
-    // Recargar mensajes cada 1 segundo para mantener el chat actualizado
-    messageRefreshInterval = setInterval(() => {
-        if (selectedUserId === userId) {
-            loadMessages(userId);
-        }
-    }, 1000);
-}
-
-// CORREGIDO: Detener refresh automático de mensajes
-function stopMessageRefresh() {
-    if (messageRefreshInterval) {
-        clearInterval(messageRefreshInterval);
-        messageRefreshInterval = null;
-    }
-}
-
-// CORREGIDO: Iniciar refresh automático de conversaciones (cada 3 segundos)
-function startConversationsRefresh() {
-    stopConversationsRefresh();
-    conversationsRefreshInterval = setInterval(() => {
-        loadConversations(true); // Forzar refresh sin usar caché
-    }, 3000);
-}
-
-// CORREGIDO: Detener refresh automático de conversaciones
-function stopConversationsRefresh() {
-    if (conversationsRefreshInterval) {
-        clearInterval(conversationsRefreshInterval);
-        conversationsRefreshInterval = null;
-    }
-}
-
-// CORREGIDO: Solicitar permiso para notificaciones del navegador
+// Solicitar permiso para notificaciones del navegador
 function requestNotificationPermission() {
     if ('Notification' in window && Notification.permission === 'default') {
         Notification.requestPermission().then(permission => {
@@ -979,25 +973,23 @@ function renderMessages(messages) {
         return;
     }
     
-    // CORREGIDO: Limpiar contenedor y renderizar todos los mensajes de una vez
-    // Esto evita duplicados y asegura orden correcto
-    elements.chatMessages.innerHTML = '';
+    // Usar DocumentFragment para mínimo reflow DOM
+    const fragment = document.createDocumentFragment();
     processedMessageIds.clear();
     
-    // Renderizar todos los mensajes (sin límite para mostrar historial completo)
     messages.forEach(msg => {
         if (msg.id) {
             processedMessageIds.add(msg.id);
         }
-        addMessageToChat(msg, getMessageType(msg) === 'outgoing');
+        const msgDiv = createMessageElement(msg);
+        fragment.appendChild(msgDiv);
     });
     
-    // CORREGIDO: Scroll automático después de renderizar todos los mensajes
-    requestAnimationFrame(() => {
-        scrollToBottom();
-        setTimeout(scrollToBottom, 100);
-        setTimeout(scrollToBottom, 300);
-    });
+    elements.chatMessages.innerHTML = '';
+    elements.chatMessages.appendChild(fragment);
+    
+    // Scroll instantáneo al final
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
 }
 
 function formatMessageContent(msg) {
@@ -1727,7 +1719,6 @@ async function sendToPayments() {
     setButtonLoading(btnPayments, true, 'Enviando...');
     
     // Optimistic UI - clear chat panel immediately
-    stopMessageRefresh(); // CORREGIDO: Detener refresh automático
     const userIdToRemove = selectedUserId;
     selectedUserId = null;
     elements.chatHeader.classList.add('hidden');
@@ -1768,7 +1759,10 @@ async function sendToPayments() {
             convItem.remove();
         }
         
-        // Reload conversations in background
+        // Invalidar cache y recargar en background
+        conversationsCacheByTab.delete('open');
+        conversationsCacheByTab.delete('closed');
+        conversationsCacheByTab.delete('payments');
         loadConversations();
         
     } catch (error) {
@@ -1795,7 +1789,6 @@ async function sendToOpen() {
     setButtonLoading(btnPayments, true, 'Enviando...');
     
     // Optimistic UI - clear chat panel immediately
-    stopMessageRefresh(); // CORREGIDO: Detener refresh automático
     const userIdToRemove = selectedUserId;
     selectedUserId = null;
     elements.chatHeader.classList.add('hidden');
@@ -1836,7 +1829,10 @@ async function sendToOpen() {
             convItem.remove();
         }
         
-        // Reload conversations in background
+        // Invalidar cache y recargar en background
+        conversationsCacheByTab.delete('open');
+        conversationsCacheByTab.delete('closed');
+        conversationsCacheByTab.delete('payments');
         loadConversations();
         
     } catch (error) {
@@ -1852,7 +1848,7 @@ async function sendToOpen() {
     }
 }
 
-// CORREGIDO: Función para deseleccionar el chat (sin cerrarlo)
+// Función para deseleccionar el chat (sin cerrarlo)
 function deselectChat() {
     if (!selectedUserId) return;
     
@@ -1860,9 +1856,6 @@ function deselectChat() {
     if (socket) {
         socket.emit('leave_chat_room', { userId: selectedUserId });
     }
-    
-    // CORREGIDO: Detener refresh automático
-    stopMessageRefresh();
     
     // Limpiar selección visual
     document.querySelectorAll('.conversation-item').forEach(item => {
@@ -1909,7 +1902,6 @@ async function closeChat() {
     
     if (isPaymentsTab) {
         // En pagos: cerrar completamente
-        stopMessageRefresh(); // CORREGIDO: Detener refresh automático
         selectedUserId = null;
         elements.chatHeader.classList.add('hidden');
         elements.chatInputArea.classList.add('hidden');
@@ -1957,7 +1949,9 @@ async function closeChat() {
             convItem.remove();
         }
         
-        // Reload conversations in background
+        // Invalidar cache y recargar en background
+        conversationsCacheByTab.delete('open');
+        conversationsCacheByTab.delete('closed');
         loadConversations();
         
     } catch (error) {
