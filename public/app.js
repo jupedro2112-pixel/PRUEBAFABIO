@@ -1284,7 +1284,7 @@ async function loadMessages(force = false) {
         
         console.log('[loadMessages] Cargando mensajes para:', currentUser.userId);
         
-        const response = await fetch(`${API_URL}/api/messages/${currentUser.userId}?limit=100`, {
+        const response = await fetch(`${API_URL}/api/messages/${currentUser.userId}?limit=15`, {
             headers: { 'Authorization': `Bearer ${currentToken}` },
             signal: controller.signal
         });

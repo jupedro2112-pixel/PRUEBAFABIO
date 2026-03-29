@@ -84,11 +84,6 @@
                     <span class="icon icon-chart"></span>
                     <span>Estadísticas</span>
                 </a>
-
-                <a href="#" class="nav-item" data-section="database">
-                    <span class="icon icon-database"></span>
-                    <span>Base de Datos</span>
-                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -253,6 +248,9 @@
                         </div>
                         <button class="btn-primary" onclick="showCreateUserModal()">
                             <span class="icon icon-plus"></span> Crear Usuario
+                        </button>
+                        <button id="exportUsersCSVBtn" class="btn-secondary" onclick="exportUsersCSV()" style="display:none;">
+                            <span class="icon icon-download"></span> Exportar CSV
                         </button>
                     </div>
                 </div>
@@ -435,53 +433,6 @@
                 </div>
             </section>
 
-            <section id="databaseSection" class="section">
-                <div class="panel-header">
-                    <h2><span class="icon icon-database"></span> Base de Datos</h2>
-                    <div class="db-stats">
-                        <span id="dbTotalUsers">0</span> usuarios | 
-                        <span id="dbTotalAdmins">0</span> admins
-                    </div>
-                </div>
-                <div id="databasePasswordInput" class="database-password-section">
-                    <div class="password-box">
-                        <span class="icon icon-lock"></span>
-                        <p>Esta sección está protegida. Ingresa la contraseña para acceder.</p>
-                        <input type="password" id="dbPassword" placeholder="Contraseña de base de datos">
-                        <button class="btn-primary" onclick="verifyDatabaseAccess()">
-                            <span class="icon icon-unlock"></span> Acceder
-                        </button>
-                    </div>
-                </div>
-                <div id="databaseContent" class="database-content hidden">
-                    <div class="database-actions">
-                        <button class="db-btn btn-primary" onclick="exportDatabaseCSV()">
-                            <span class="icon icon-download"></span> Exportar a CSV
-                        </button>
-                        <button class="db-btn" onclick="loadDatabaseUsers()">
-                            <span class="icon icon-sync"></span> Actualizar
-                        </button>
-                    </div>
-                    <div class="database-table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Usuario</th>
-                                    <th>Email</th>
-                                    <th>Teléfono</th>
-                                    <th>Rol</th>
-                                    <th>Balance</th>
-                                    <th>Estado</th>
-                                    <th>Último Login</th>
-                                    <th>Creado</th>
-                                </tr>
-                            </thead>
-                            <tbody id="databaseTableBody">
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </section>
         </main>
     </div>
 

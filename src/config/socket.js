@@ -316,8 +316,10 @@ const broadcastStats = async (io) => {
     const { User } = require('../models');
     const totalUsers = await User.countDocuments({ role: 'user' });
     
+    const onlineCount = connectedUsers.size;
     const stats = {
-      connectedUsers: connectedUsers.size,
+      connectedUsers: onlineCount,
+      onlineUsers: onlineCount, // alias para compatibilidad con HTTP endpoint
       connectedAdmins: connectedAdmins.size,
       totalUsers
     };

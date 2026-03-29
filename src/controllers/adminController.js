@@ -10,6 +10,8 @@ const { AppError, ErrorCodes } = require('../utils/AppError');
 const logger = require('../utils/logger');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
+// CORREGIDO: Importar conexiones de sockets para contador online real
+const { connectedUsers } = require('../config/socket');
 
 /**
  * GET /api/admin/users
@@ -301,18 +303,21 @@ const deleteCommand = asyncHandler(async (req, res) => {
  * Obtener estadísticas
  */
 const getStats = asyncHandler(async (req, res) => {
-  const [totalUsers, onlineUsers, totalTransactions, todayTotals] = await Promise.all([
+  const [totalUsers, totalTransactions, todayTotals] = await Promise.all([
     User.countDocuments(),
-    User.countDocuments({ lastLogin: { $gte: new Date(Date.now() - 5 * 60 * 1000) } }),
     Transaction.countDocuments(),
     transactionService.getTodayTotals()
   ]);
+  
+  // CORREGIDO: usar contador real de sockets en lugar de lastLogin
+  const onlineUsers = connectedUsers.size;
   
   res.json({
     status: 'success',
     data: {
       totalUsers,
       onlineUsers,
+      connectedUsers: onlineUsers, // alias para compatibilidad
       totalTransactions,
       todayDeposits: todayTotals.deposits,
       todayWithdrawals: todayTotals.withdrawals
@@ -399,6 +404,37 @@ const sendToOpen = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * GET /api/admin/users/export/csv
+ * Exportar todos los usuarios a CSV (solo admin)
+ */
+const exportUsersCSV = asyncHandler(async (req, res) => {
+  // Audit log
+  logger.info(`CSV export de usuarios solicitado por admin: ${req.user.username} (${req.user.userId})`);
+  
+  const users = await User.find().select('-password').lean();
+  
+  const headers = ['id', 'username', 'email', 'phone', 'role', 'balance', 'accountNumber', 'status', 'createdAt', 'lastLogin'];
+  const rows = users.map(u => [
+    u.id || '',
+    u.username || '',
+    u.email || '',
+    u.phone || '',
+    u.role || '',
+    u.balance || 0,
+    u.accountNumber || '',
+    u.status || '',
+    u.createdAt ? new Date(u.createdAt).toISOString() : '',
+    u.lastLogin ? new Date(u.lastLogin).toISOString() : ''
+  ]);
+  
+  const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');
+  
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename=usuarios_${new Date().toISOString().split('T')[0]}.csv`);
+  res.send(csv);
+});
+
 // Variable para almacenar contraseña de base de datos (en producción usar variables de entorno)
 const DB_PASSWORD = process.env.DB_PASSWORD || 'admin123';
 
@@ -470,6 +506,7 @@ module.exports = {
   changeChatCategory,
   sendToPayments,
   sendToOpen,
+  exportUsersCSV,
   verifyDatabaseAccess,
   exportDatabaseCSV
 };

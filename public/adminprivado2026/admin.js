@@ -180,13 +180,37 @@ function setupEventListeners() {
     
     // Chat input
     elements.messageInput.addEventListener('keydown', (e) => {
+        // CORREGIDO: Manejar navegación y selección de comandos ANTES de enviar mensaje
+        if (commandSuggestions.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedCommandIndex = (selectedCommandIndex + 1) % commandSuggestions.length;
+                updateCommandSelection();
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedCommandIndex = (selectedCommandIndex - 1 + commandSuggestions.length) % commandSuggestions.length;
+                updateCommandSelection();
+                return;
+            } else if (e.key === 'Enter' && selectedCommandIndex >= 0) {
+                e.preventDefault();
+                insertCommand(commandSuggestions[selectedCommandIndex].name);
+                return;
+            } else if (e.key === 'Tab') {
+                e.preventDefault();
+                const idx = selectedCommandIndex >= 0 ? selectedCommandIndex : 0;
+                insertCommand(commandSuggestions[idx].name);
+                return;
+            } else if (e.key === 'Escape') {
+                hideCommandSuggestions();
+                return;
+            }
+        }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
         handleTyping();
-        // Manejar navegación de sugerencias de comandos
-        handleCommandKeydown(e);
     });
     
     // COMANDOS: Detectar cuando se escribe "/" para mostrar sugerencias
@@ -467,6 +491,16 @@ function setupRoleBasedUI() {
         if (tabPayments) tabPayments.style.display = 'flex';
     }
     
+    // CORREGIDO: Solo admin general puede ver "Usuarios" y exportar CSV
+    const usersNavItem = document.querySelector('.nav-item[data-section="users"]');
+    if (usersNavItem) {
+        usersNavItem.style.display = role === 'admin' ? '' : 'none';
+    }
+    const exportCsvBtn = document.getElementById('exportUsersCSVBtn');
+    if (exportCsvBtn) {
+        exportCsvBtn.style.display = role === 'admin' ? '' : 'none';
+    }
+    
     // Actualizar botones según la pestaña actual
     updateActionButtonsByTab();
 }
@@ -602,6 +636,28 @@ function initSocket() {
     
     socket.on('user_disconnected', (data) => {
         updateUserStatus(data.userId, false);
+    });
+    
+    // CHAT UPDATED - Actualizar lista lateral en tiempo real cuando llega un mensaje
+    socket.on('chat_updated', (data) => {
+        const convIndex = conversations.findIndex(c => c.userId === data.userId);
+        if (convIndex === -1) {
+            // Conversación nueva o no visible: invalidar cache y recargar
+            conversationsCacheByTab.delete(currentTab);
+            loadConversations(true);
+            return;
+        }
+        const conv = conversations[convIndex];
+        conv.lastMessageAt = data.lastMessageAt || new Date();
+        if (data.unreadIncrement > 0 && data.userId !== selectedUserId) {
+            conv.unread = (conv.unread || 0) + data.unreadIncrement;
+        }
+        // Mover al tope de la lista
+        conversations.splice(convIndex, 1);
+        conversations.unshift(conv);
+        // Actualizar cache
+        conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+        renderConversations();
     });
     
     // DISCONNECT
@@ -1199,7 +1255,8 @@ async function sendMessage() {
     
     addMessageToChat(tempMessage, true);
     
-    // CORREGIDO: Scroll inmediato al enviar
+    // CORREGIDO: Actualizar lista de conversaciones en tiempo real (optimistic)
+    updateConversationInList({ ...tempMessage, receiverId: selectedUserId, senderId: currentAdmin.userId || currentAdmin.id, senderRole: 'admin' });
     scrollToBottom();
     setTimeout(scrollToBottom, 100);
     setTimeout(scrollToBottom, 300);
@@ -2021,7 +2078,9 @@ async function loadStats() {
         
         if (!response.ok) throw new Error('Failed to load stats');
         
-        const data = await response.json();
+        const json = await response.json();
+        // CORREGIDO: extraer data.data si existe (respuesta envuelta)
+        const data = json.data || json;
         updateStats(data);
     } catch (error) {
         console.error('Error loading stats:', error);
@@ -2030,7 +2089,8 @@ async function loadStats() {
 
 function updateStats(data) {
     elements.statUsers.textContent = data.totalUsers || 0;
-    elements.statOnline.textContent = data.onlineUsers || 0;
+    // CORREGIDO: usar connectedUsers (socket) o onlineUsers (HTTP)
+    elements.statOnline.textContent = data.connectedUsers !== undefined ? data.connectedUsers : (data.onlineUsers || 0);
     elements.statMessages.textContent = data.totalMessages || 0;
     elements.statUnread.textContent = data.unreadMessages || 0;
     
@@ -2068,6 +2128,37 @@ async function loadUsers() {
     }
 }
 
+// CORREGIDO: Exportar todos los usuarios a CSV (solo admin)
+async function exportUsersCSV() {
+    if (currentAdmin?.role !== 'admin') {
+        showToast('No tienes permiso para exportar usuarios', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_URL}/api/admin/users/export/csv`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        
+        if (!response.ok) throw new Error('Failed to export users');
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `usuarios_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+        showToast('Usuarios exportados correctamente', 'success');
+    } catch (error) {
+        console.error('Error exporting users:', error);
+        showToast('Error al exportar usuarios', 'error');
+    }
+}
+
 function renderUsers(users) {
     const tbody = document.getElementById('usersTableBody');
     
@@ -2102,6 +2193,12 @@ function renderUsers(users) {
 // UI HELPERS
 // ============================================
 function switchSection(section) {
+    // CORREGIDO: Solo admin general puede acceder a "Usuarios"
+    if (section === 'users' && currentAdmin?.role !== 'admin') {
+        showToast('No tienes permiso para acceder a esta sección', 'error');
+        return;
+    }
+    
     // Update nav
     elements.navItems.forEach(item => {
         item.classList.toggle('active', item.dataset.section === section);

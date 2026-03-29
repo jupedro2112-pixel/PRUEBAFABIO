@@ -10,7 +10,9 @@ const refundController = require('../controllers/refundController');
 const { authenticate, authorize, depositorOnly, withdrawerOnly } = require('../middlewares/auth');
 
 // Gestión de usuarios
-router.get('/users', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.getUsers);
+// CORREGIDO: Solo admin general puede ver la lista completa de usuarios y exportar CSV
+router.get('/users', authenticate, authorize('admin'), adminController.getUsers);
+router.get('/users/export/csv', authenticate, authorize('admin'), adminController.exportUsersCSV);
 router.get('/users/:userId', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.getUser);
 router.post('/users', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.createUser);
 router.put('/users/:id', authenticate, authorize('admin'), adminController.updateUser);
