@@ -11,9 +11,9 @@ let refundTimers = {};
 let lastMessageId = null;
 let messageCheckInterval = null;
 let balanceCheckInterval = null;
-let processedMessageIds = new Set(); // CORREGIDO: Para evitar mensajes duplicados
-let pendingSentMessages = new Map(); // CORREGIDO: Tracking de mensajes enviados pendientes
-let lastSentMessageTimestamp = 0; // CORREGIDO: Timestamp del último mensaje enviado
+let processedMessageIds = new Set(); // Para evitar mensajes duplicados
+let pendingSentMessages = new Map(); // Tracking de mensajes enviados pendientes
+let lastSentMessageTimestamp = 0; // Timestamp del último mensaje enviado
 
 // Función para obtener fecha en hora Argentina
 function getArgentinaDate(date = new Date()) {
@@ -1035,12 +1035,18 @@ let socket = null;
 
 function initSocket() {
     if (socket && socket.connected) return;
-    
+
+    // Si el socket existe pero está desconectado, reconectarlo
+    if (socket && !socket.connected) {
+        socket.connect();
+        return;
+    }
+
     console.log('🔄 Inicializando socket...');
-    
-    // Configurar socket con reconexión automática
+
+    // Configurar socket con reconexión automática (websocket únicamente para mayor velocidad)
     socket = io({
-        transports: ['websocket', 'polling'],
+        transports: ['websocket'],
         reconnection: true,
         reconnectionAttempts: 10,
         reconnectionDelay: 1000,
@@ -1205,10 +1211,25 @@ function initSocket() {
         lastMessageId = message.id;
     });
     
-    // Escuchar confirmación de mensaje enviado
+    // Escuchar confirmación de mensaje enviado: solo actualizar el ID temporal
     socket.on('message_sent', function(data) {
-        console.log('✅ Mensaje enviado confirmado:', data);
-        loadMessages();
+        console.log('✅ Mensaje enviado confirmado:', data?.id);
+        // Actualizar el mensaje temporal con el ID real del servidor
+        if (data && data.id) {
+            const tempEl = document.querySelector('[data-temp-id]');
+            if (tempEl) {
+                tempEl.setAttribute('data-message-id', data.id);
+                tempEl.removeAttribute('data-temp-id');
+                tempEl.classList.add('message-saved');
+                const msgDiv = tempEl.querySelector('.message');
+                if (msgDiv) {
+                    msgDiv.style.opacity = '1';
+                    msgDiv.style.border = '';
+                }
+            }
+            // Registrar ID como procesado para evitar duplicados del evento new_message
+            processedMessageIds.add(data.id);
+        }
     });
     
     // Manejar errores
@@ -1231,9 +1252,9 @@ let lastMessagesHash = ''; // Para evitar re-renderizar si no hay cambios
 
 function startMessagePolling() {
     loadMessages();
-    // CORREGIDO: Polling más frecuente (1 segundo) para mensajes en tiempo real
-    messageCheckInterval = setInterval(loadMessages, 1000);
-    initSocket(); // Inicializar socket también
+    // Polling de respaldo: cada 8 segundos (el socket maneja los mensajes en tiempo real)
+    messageCheckInterval = setInterval(loadMessages, 8000);
+    initSocket();
 }
 
 function stopMessagePolling() {
@@ -1250,7 +1271,9 @@ function stopMessagePolling() {
 async function loadMessages(force = false) {
     // Evitar cargas simultáneas
     if (isLoadingMessages && !force) return;
-    
+    // Verificar que el usuario esté cargado
+    if (!currentUser || !currentUser.userId) return;
+
     isLoadingMessages = true;
     
     try {
@@ -1295,132 +1318,104 @@ async function loadMessages(force = false) {
 
 function renderMessages(messages) {
     const container = document.getElementById('chatMessages');
-    
-    // CORREGIDO: Limpiar contenedor y renderizar todos los mensajes de una vez
-    // Esto evita duplicados y asegura orden correcto
-    container.innerHTML = '';
+    const wasAtBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) < 60;
+
+    // Usar DocumentFragment para mínimo reflow DOM
+    const fragment = document.createDocumentFragment();
     processedMessageIds.clear();
-    
+
+    messages.forEach(msg => {
+        if (msg.id) processedMessageIds.add(msg.id);
+        const wrapper = createMessageElement(msg);
+        if (wrapper) fragment.appendChild(wrapper);
+    });
+
+    container.innerHTML = '';
+    container.appendChild(fragment);
+
     // Detectar mensajes nuevos del admin para reproducir sonido
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
-    let hasNewAdminMessage = false;
     if (messages.length > 0) {
         const lastMsg = messages[messages.length - 1];
+        const adminRoles = ['admin', 'depositor', 'withdrawer'];
         if (lastMessageId && lastMessageId !== lastMsg.id && adminRoles.includes(lastMsg.senderRole)) {
-            hasNewAdminMessage = true;
+            playNotificationSound();
         }
+        lastMessageId = lastMsg.id;
     }
-    
-    // Renderizar todos los mensajes
-    messages.forEach(msg => {
-        if (msg.id) {
-            processedMessageIds.add(msg.id);
-        }
-        addMessageToChat(msg);
-        // Actualizar el último ID de mensaje
-        lastMessageId = msg.id;
-    });
-    
-    // CORREGIDO: Scroll automático después de renderizar todos los mensajes
-    requestAnimationFrame(() => {
-        scrollToBottom();
-        setTimeout(scrollToBottom, 100);
-        setTimeout(scrollToBottom, 300);
-    });
-    
-    // Reproducir sonido si hay mensaje nuevo del admin
-    if (hasNewAdminMessage) {
-        playNotificationSound();
+
+    // Scroll automático al final solo si estaba cerca del fondo
+    if (wasAtBottom) {
+        requestAnimationFrame(() => scrollToBottom());
     }
 }
 
-function addMessageToChat(message) {
-    const container = document.getElementById('chatMessages');
-    // Los roles de admin incluyen: admin, depositor, withdrawer
+// Crea el elemento DOM de un mensaje (sin agregarlo al contenedor)
+function createMessageElement(message) {
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     const isFromUser = message.senderRole === 'user';
-    const isFromAdmin = adminRoles.includes(message.senderRole);
-    
-    // CORREGIDO: Verificar si el mensaje ya existe en el DOM (evitar duplicados)
-    if (message.id) {
-        const existingById = container.querySelector(`[data-message-id="${message.id}"]`);
-        if (existingById) {
-            console.log('⚠️ Mensaje ya existe por ID, ignorando:', message.id);
-            return;
-        }
-        // También verificar por temp-id
-        const existingByTemp = container.querySelector(`[data-temp-id="${message.id}"]`);
-        if (existingByTemp) {
-            console.log('⚠️ Mensaje temporal ya existe, actualizando:', message.id);
-            existingByTemp.setAttribute('data-message-id', message.id);
-            existingByTemp.removeAttribute('data-temp-id');
-            return;
-        }
-    }
-    
-    // Debug: mostrar info del mensaje
-    console.log('📨 Mensaje - senderRole:', message.senderRole, 'senderUsername:', message.senderUsername, 'isFromUser:', isFromUser, 'isFromAdmin:', isFromAdmin);
-    
+
     const wrapper = document.createElement('div');
     wrapper.className = 'message-wrapper';
-    // Agregar atributo para identificar el mensaje
     if (message.id && message.id.startsWith('temp-')) {
         wrapper.setAttribute('data-temp-id', message.id);
     } else if (message.id) {
         wrapper.setAttribute('data-message-id', message.id);
     }
-    
+
     const msgDiv = document.createElement('div');
-    // Si es del usuario actual, clase 'agente' (verde - mensaje propio)
-    // Si es del admin, clase 'usuario' (gris - mensaje del agente)
     msgDiv.className = `message ${isFromUser ? 'agente' : 'usuario'}`;
-    
+
     const time = new Date(message.timestamp).toLocaleTimeString('es-AR', {
         hour: '2-digit',
         minute: '2-digit'
     });
-    
+
     let contentHtml = '';
     if (message.type === 'image') {
         contentHtml = `<img src="${message.content}" onclick="openLightbox('${message.content}')" loading="lazy">`;
     } else {
-        // CORREGIDO: Convertir URLs en links clickeables
         let content = escapeHtml(message.content);
-        
-        // Detectar y convertir URLs en links
         const urlRegex = /(https?:\/\/[^\s<]+[^\s<.,;:!?])/g;
         content = content.replace(urlRegex, '<a href="$1" target="_blank" rel="noopener noreferrer" class="chat-link">$1</a>');
-        
-        // Preservar saltos de línea
         content = content.replace(/\n/g, '<br>');
         contentHtml = `<div style="white-space: pre-wrap;">${content}</div>`;
     }
-    
-    // NO mostrar nombre del admin en el frontend del usuario
-    // El nombre del admin solo se muestra en el panel de admin
-    
-    msgDiv.innerHTML = `
-        ${contentHtml}
-        <span class="message-time">${time}</span>
-    `;
-    
+
+    msgDiv.innerHTML = `${contentHtml}<span class="message-time">${time}</span>`;
+
     const copyBtn = document.createElement('button');
     copyBtn.className = 'copy-btn';
     copyBtn.innerHTML = '📋';
     copyBtn.onclick = () => copyText(message.type === 'image' ? '[Imagen]' : message.content);
-    
+
     wrapper.appendChild(msgDiv);
     wrapper.appendChild(copyBtn);
-    container.appendChild(wrapper);
-    
-    // CORREGIDO: Scroll automático SIEMPRE después de agregar mensaje con múltiples intentos
-    requestAnimationFrame(() => {
-        scrollToBottom();
-        setTimeout(scrollToBottom, 50);
-        setTimeout(scrollToBottom, 150);
-        setTimeout(scrollToBottom, 300);
-    });
+    return wrapper;
 }
+
+function addMessageToChat(message) {
+    const container = document.getElementById('chatMessages');
+
+    // Verificar si el mensaje ya existe en el DOM (evitar duplicados)
+    if (message.id) {
+        const existingById = container.querySelector(`[data-message-id="${message.id}"]`);
+        if (existingById) {
+            return;
+        }
+        // También verificar por temp-id
+        const existingByTemp = container.querySelector(`[data-temp-id="${message.id}"]`);
+        if (existingByTemp) {
+            existingByTemp.setAttribute('data-message-id', message.id);
+            existingByTemp.removeAttribute('data-temp-id');
+            return;
+        }
+    }
+
+    const wrapper = createMessageElement(message);
+    container.appendChild(wrapper);
+
+    // Scroll automático al agregar mensaje
+    requestAnimationFrame(() => scrollToBottom());
 
 async function sendMessage() {
     const input = document.getElementById('messageInput');
@@ -2160,12 +2155,21 @@ function showChatScreen() {
     sendWelcomeMessages();
 }
 
-// CORREGIDO: Enviar mensaje de bienvenida actualizado con CBU activo
-// Se ejecuta SIEMPRE al iniciar sesión para asegurar que el usuario vea el mensaje correcto
+// CORREGIDO: Enviar mensaje de bienvenida solo una vez por usuario (máximo 1 vez cada 24h)
+// Se ejecuta al iniciar sesión para asegurar que el usuario vea el mensaje correcto
 async function sendWelcomeMessages() {
+    // Guardia: solo enviar si no se envió un bienvenido en las últimas 24 horas para este usuario
+    const welcomeKey = 'lastWelcome_' + (currentUser?.userId || '');
+    const lastWelcome = parseInt(localStorage.getItem(welcomeKey) || '0');
+    const hoursSince = (Date.now() - lastWelcome) / 3600000;
+    if (hoursSince < 24) {
+        console.log('ℹ️ Bienvenida ya enviada recientemente, omitiendo');
+        return;
+    }
+
     const username = currentUser?.username || 'Usuario';
-    
-    // CORREGIDO: Obtener CBU activo del servidor
+
+    // Obtener CBU activo del servidor
     let cbuNumber = 'No disponible';
     try {
         const response = await fetch(`${API_URL}/api/config/cbu`, {
@@ -2178,8 +2182,7 @@ async function sendWelcomeMessages() {
     } catch (error) {
         console.log('No se pudo obtener CBU para bienvenida:', error);
     }
-    
-    // CORREGIDO: Mensaje de bienvenida actualizado con formato único
+
     const welcomeMessage = `🎉 ¡Bienvenido a la Sala de Juegos, ${username}!
 
 🎁 Beneficios exclusivos:
@@ -2194,28 +2197,10 @@ async function sendWelcomeMessages() {
 Link de pagina: https://www.jugaygana.bet/
 
 CBU activo: ${cbuNumber}`;
-    
-    // CORREGIDO: Verificar si ya existe un mensaje de bienvenida similar en los últimos mensajes
-    const chatMessages = document.getElementById('chatMessages');
-    const recentMessages = chatMessages.querySelectorAll('.message.system');
-    let hasRecentWelcome = false;
-    
-    for (const msg of recentMessages) {
-        const msgContent = msg.querySelector('.message-content')?.textContent;
-        if (msgContent && msgContent.includes('¡Bienvenido a la Sala de Juegos')) {
-            hasRecentWelcome = true;
-            break;
-        }
-    }
-    
-    // Solo enviar si no hay un mensaje de bienvenida reciente
-    if (!hasRecentWelcome) {
-        // Enviar mensaje de bienvenida
-        await sendSystemMessage(welcomeMessage);
-        console.log('✅ Mensaje de bienvenida enviado con CBU:', cbuNumber);
-    } else {
-        console.log('ℹ️ Mensaje de bienvenida ya existe, no se envía duplicado');
-    }
+
+    await sendSystemMessage(welcomeMessage);
+    localStorage.setItem(welcomeKey, Date.now().toString());
+    console.log('✅ Mensaje de bienvenida enviado con CBU:', cbuNumber);
 }
 
 // Enviar mensaje de sistema al chat

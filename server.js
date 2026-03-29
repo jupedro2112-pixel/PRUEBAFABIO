@@ -2883,7 +2883,7 @@ io.on('connection', (socket) => {
         // Usuario enviando mensaje - notificar a todos los admins
         console.log(`[SOCKET] Usuario ${socket.username} envió mensaje`);
         
-        // Emitir a todos los admins conectados
+        // Emitir a todos los admins conectados (envuelto para facilitar extracción)
         io.to('admins').emit('new_message', {
           message,
           userId: socket.userId,
@@ -2893,9 +2893,8 @@ io.on('connection', (socket) => {
         // Emitir a la sala del chat específico (para admins que están viendo este chat)
         io.to(`chat_${socket.userId}`).emit('new_message', message);
         
-        // Confirmar al usuario
+        // Confirmar al usuario y entregar el mensaje via sala (evitar duplicado)
         socket.emit('message_sent', message);
-        socket.emit('new_message', message);
         io.to(`user_${socket.userId}`).emit('new_message', message);
       } else {
         // Admin/depositor/withdrawer enviando mensaje - notificar al usuario específico
