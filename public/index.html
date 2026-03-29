@@ -4,14 +4,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Sala de Juegos</title>
+    <title>VIPCARGAS | 24/7</title>
+    <!-- Ícono de ruleta como favicon SVG (issue #7) -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎰</text></svg>">
     
     <!-- PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Sala Juegos">
-    <meta name="application-name" content="Sala de Juegos">
+    <meta name="apple-mobile-web-app-title" content="VIPCARGAS">
+    <meta name="application-name" content="VIPCARGAS | 24/7">
     <meta name="msapplication-TileColor" content="#00ff88">
     <meta name="theme-color" content="#00ff88">
     
@@ -1585,14 +1587,85 @@
                 border: 2px solid currentColor;
             }
         }
+
+        /* ============================================
+           ISSUE #6: Ocultar NOTIS en escritorio
+           Solo visible en dispositivos móviles
+           ============================================ */
+        @media (min-width: 769px) {
+            #notificationBtn {
+                display: none !important;
+            }
+        }
+
+        /* ============================================
+           ISSUE #4: Mejoras de responsive para todos los dispositivos
+           ============================================ */
+
+        /* Grandes monitores (1440px+) */
+        @media (min-width: 1440px) {
+            .login-box {
+                max-width: 450px;
+                padding: 50px;
+            }
+            .chat-screen {
+                max-width: 1200px;
+                margin: 0 auto;
+            }
+        }
+
+        /* Mac (1280px - 1440px) */
+        @media (min-width: 1024px) and (max-width: 1440px) {
+            .login-box {
+                max-width: 420px;
+            }
+        }
+
+        /* Tablets en portrait (768px - 1024px) */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            .header-center {
+                gap: 6px;
+            }
+            .refund-btn {
+                font-size: 9px !important;
+                padding: 6px 8px !important;
+            }
+            .chat-messages {
+                min-height: 300px;
+            }
+        }
+
+        /* Asegurar que el chat input sea visible en todos los tamaños */
+        @media (max-width: 480px) {
+            .chat-input {
+                padding: 8px;
+                gap: 6px;
+            }
+            .chat-input textarea {
+                font-size: 14px;
+            }
+            #messageInput {
+                font-size: 14px !important;
+            }
+        }
+
+        /* Landscape en móvil */
+        @media (max-height: 500px) and (orientation: landscape) {
+            .header-center {
+                display: none;
+            }
+            .chat-messages {
+                min-height: 150px;
+            }
+        }
     </style>
 </head>
 <body>
     <!-- Login Screen -->
     <div id="loginScreen" class="login-screen">
         <div class="login-box">
-            <div class="login-logo">🎮</div>
-            <h1>Sala de Juegos</h1>
+            <div class="login-logo">🎰</div>
+            <h1>VIPCARGAS</h1>
             <p>Inicia sesión para continuar</p>
             
             <form id="loginForm" autocomplete="on">
