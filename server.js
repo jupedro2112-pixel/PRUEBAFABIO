@@ -1563,7 +1563,7 @@ app.get('/api/admin/chats/category/:category', authMiddleware, adminMiddleware, 
 app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 50, 50);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     
     const allowedRoles = ['admin', 'depositor', 'withdrawer'];
     if (!allowedRoles.includes(req.user.role) && req.user.userId !== userId) {
@@ -1683,6 +1683,11 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
     
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     const isAdminRole = adminRoles.includes(req.user.role);
+    
+    // Issue #3: Bloquear comandos enviados por usuarios comunes (solo admins pueden procesar comandos)
+    if (!isAdminRole && content.trim().startsWith('/')) {
+      return res.status(403).json({ error: 'Los usuarios no pueden enviar comandos' });
+    }
     
     console.log('[API_MESSAGES_SEND] isAdminRole:', isAdminRole);
     
@@ -2743,6 +2748,11 @@ io.on('connection', (socket) => {
       const targetReceiverRole = isAdminRole ? 'user' : 'admin';
       
       console.log(`[SEND_MESSAGE] isAdminRole: ${isAdminRole}, targetReceiverId: ${targetReceiverId}`);
+
+      // Issue #3: Bloquear comandos enviados por usuarios comunes
+      if (!isAdminRole && content && content.trim().startsWith('/')) {
+        return socket.emit('error', { message: 'Los usuarios no pueden enviar comandos' });
+      }
       
       // CORREGIDO: PROCESAR COMANDOS ANTES de guardar el mensaje
       // Si el mensaje empieza con /, es un comando - NO guardar el mensaje del comando

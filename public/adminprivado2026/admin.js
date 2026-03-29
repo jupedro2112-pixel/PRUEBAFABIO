@@ -1105,6 +1105,29 @@ function getMessageType(msg) {
 async function sendMessage() {
     const content = elements.messageInput.value.trim();
     if (!content || !selectedUserId) return;
+
+    // Issue #3: Si el admin escribe un comando (/...), enviar solo la respuesta del comando
+    let messageToSend = content;
+    if (content.startsWith('/')) {
+        const cmdName = content.split(' ')[0];
+        const cmd = availableCommands.find(c => c.name === cmdName);
+        if (cmd && cmd.response) {
+            messageToSend = cmd.response;
+        } else if (cmd) {
+            showToast('Este comando no tiene respuesta configurada', 'error');
+            elements.messageInput.value = '';
+            elements.messageInput.style.height = 'auto';
+            hideCommandSuggestions();
+            return;
+        } else {
+            showToast('Comando no encontrado', 'error');
+            elements.messageInput.value = '';
+            elements.messageInput.style.height = 'auto';
+            hideCommandSuggestions();
+            return;
+        }
+        hideCommandSuggestions();
+    }
     
     // CORREGIDO: Verificar si ya existe un mensaje con el mismo contenido en los últimos 3 segundos
     const recentMessages = elements.chatMessages.querySelectorAll('.message');
@@ -1112,7 +1135,7 @@ async function sendMessage() {
     for (const msg of recentMessages) {
         const msgContent = msg.querySelector('.message-content')?.textContent?.trim();
         const msgTime = msg.querySelector('.message-time')?.textContent;
-        if (msgContent === content && msgTime) {
+        if (msgContent === messageToSend && msgTime) {
             // Verificar si el mensaje fue enviado hace menos de 3 segundos
             const msgTimestamp = new Date(msgTime).getTime();
             if (now - msgTimestamp < 3000) {
@@ -1125,7 +1148,7 @@ async function sendMessage() {
     }
     
     // CORREGIDO: Verificar si ya se envió este contenido recientemente
-    if (lastSentMessageContent === content && (now - lastSentMessageTime) < 5000) {
+    if (lastSentMessageContent === messageToSend && (now - lastSentMessageTime) < 5000) {
         console.log('⚠️ Mensaje duplicado detectado (mismo contenido reciente), ignorando');
         elements.messageInput.value = '';
         elements.messageInput.style.height = 'auto';
@@ -1137,7 +1160,7 @@ async function sendMessage() {
     elements.messageInput.style.height = 'auto';
     
     // CORREGIDO: Guardar el contenido del mensaje enviado para evitar duplicados
-    lastSentMessageContent = content;
+    lastSentMessageContent = messageToSend;
     lastSentMessageTime = Date.now();
     
     // Optimistic UI - show message immediately
@@ -1146,7 +1169,7 @@ async function sendMessage() {
         senderId: currentAdmin.userId,
         senderUsername: currentAdmin.username,
         senderRole: 'admin',
-        content: content,
+        content: messageToSend,
         timestamp: new Date(),
         type: 'text'
     };
@@ -1161,7 +1184,7 @@ async function sendMessage() {
     // Send via socket (fastest)
     if (socket && socket.connected) {
         socket.emit('send_message', {
-            content,
+            content: messageToSend,
             receiverId: selectedUserId,
             type: 'text'
         });
@@ -1169,7 +1192,7 @@ async function sendMessage() {
         // CORREGIDO: Enviar notificación push al usuario
         sendPushNotification(selectedUserId, {
             type: 'text',
-            content: content
+            content: messageToSend
         });
     } else {
         // Fallback to REST API
@@ -1181,7 +1204,7 @@ async function sendMessage() {
                     'Authorization': `Bearer ${currentToken}`
                 },
                 body: JSON.stringify({
-                    content,
+                    content: messageToSend,
                     receiverId: selectedUserId,
                     type: 'text'
                 })
@@ -1203,7 +1226,7 @@ async function sendMessage() {
             // CORREGIDO: Enviar notificación push al usuario
             sendPushNotification(selectedUserId, {
                 type: 'text',
-                content: content
+                content: messageToSend
             });
             
         } catch (error) {
@@ -2358,12 +2381,14 @@ function renderTransactionStats(summary) {
         `;
     }
     
-    // CORREGIDO: Actualizar comisión con el total de depósitos
+    // CORREGIDO: Actualizar comisión con el total de depósitos y retiros
     window.currentDepositsTotal = summary.deposits || 0;
+    window.currentWithdrawalsTotal = summary.withdrawals || 0;
     updateCommissionDisplay();
 }
 
 // CORREGIDO: Función para actualizar la visualización de comisión
+// Issue #5: La comisión total se resta al saldo neto para reflejar el valor real
 function updateCommissionDisplay() {
     const commissionRateInput = document.getElementById('commissionRate');
     const commissionAmountEl = document.getElementById('commissionAmount');
@@ -2374,12 +2399,25 @@ function updateCommissionDisplay() {
     
     const rate = parseFloat(commissionRateInput.value) || 0;
     const baseAmount = window.currentDepositsTotal || 0;
+    const withdrawals = window.currentWithdrawalsTotal || 0;
     const commissionAmount = baseAmount * (rate / 100);
-    const netAfterCommission = baseAmount - commissionAmount;
+    // Saldo neto = (depósitos - retiros) - comisión
+    const netBeforeCommission = baseAmount - withdrawals;
+    const netAfterCommission = netBeforeCommission - commissionAmount;
     
     commissionAmountEl.textContent = formatMoney(commissionAmount);
     if (commissionBaseEl) commissionBaseEl.textContent = formatMoney(baseAmount);
     if (netAfterCommissionEl) netAfterCommissionEl.textContent = formatMoney(netAfterCommission);
+
+    // Issue #5: Actualizar también la tarjeta "Saldo Neto" en el dashboard
+    const netBalanceEl = document.querySelector('.stat-card.net-balance .stat-number');
+    if (netBalanceEl) {
+        netBalanceEl.textContent = formatMoney(netAfterCommission);
+        const netBalanceCard = netBalanceEl.closest('.stat-card');
+        if (netBalanceCard) {
+            netBalanceCard.classList.toggle('negative', netAfterCommission < 0);
+        }
+    }
 }
 
 function applyTransactionDateFilter() {
@@ -2467,6 +2505,7 @@ function filterTransactions(type) {
 // DATABASE SECTION
 // ============================================
 let dbAccessGranted = false;
+let dbStoredPassword = ''; // Issue #2: Almacenar contraseña para reuso sin requerir re-entrada
 
 function showDatabasePasswordModal() {
     showModal('databasePasswordModal');
@@ -2492,6 +2531,7 @@ async function verifyDatabaseAccess() {
         
         if (response.ok) {
             dbAccessGranted = true;
+            dbStoredPassword = password; // Issue #2: guardar para reuso
             hideModal('databasePasswordModal');
             document.getElementById('databasePasswordInput').classList.add('hidden');
             document.getElementById('databaseContent').classList.remove('hidden');
@@ -2510,7 +2550,14 @@ async function loadDatabaseUsers() {
     if (!dbAccessGranted) return;
     
     try {
-        const password = document.getElementById('dbPassword').value;
+        // Issue #2: Usar contraseña almacenada para evitar pérdida del valor del campo
+        const password = dbStoredPassword || document.getElementById('dbPassword').value;
+        if (!password) {
+            console.warn('[DB] Contraseña no disponible, se requiere re-verificación');
+            dbAccessGranted = false;
+            switchSection('database');
+            return;
+        }
         const response = await fetch(`${API_URL}/api/admin/database/users?dbPassword=${encodeURIComponent(password)}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
@@ -2564,7 +2611,14 @@ async function exportDatabaseCSV() {
     if (!dbAccessGranted) return;
     
     try {
-        const password = document.getElementById('dbPassword').value;
+        // Issue #2: Usar contraseña almacenada para exportar todos los usuarios
+        const password = dbStoredPassword || document.getElementById('dbPassword').value;
+        if (!password) {
+            console.warn('[DB] Contraseña no disponible para exportar, se requiere re-verificación');
+            dbAccessGranted = false;
+            switchSection('database');
+            return;
+        }
         const response = await fetch(`${API_URL}/api/admin/database/export/csv?dbPassword=${encodeURIComponent(password)}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
@@ -2604,6 +2658,7 @@ async function verifyDatabaseAccessFromModal() {
         
         if (response.ok) {
             dbAccessGranted = true;
+            dbStoredPassword = password; // Issue #2: guardar para reuso
             hideModal('databasePasswordModal');
             document.getElementById('databasePasswordInput').classList.add('hidden');
             document.getElementById('databaseContent').classList.remove('hidden');

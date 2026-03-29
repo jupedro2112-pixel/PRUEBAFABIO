@@ -1282,7 +1282,7 @@ async function loadMessages(force = false) {
         
         console.log('[loadMessages] Cargando mensajes para:', currentUser.userId);
         
-        const response = await fetch(`${API_URL}/api/messages/${currentUser.userId}?limit=50`, {
+        const response = await fetch(`${API_URL}/api/messages/${currentUser.userId}?limit=100`, {
             headers: { 'Authorization': `Bearer ${currentToken}` },
             signal: controller.signal
         });
@@ -1318,7 +1318,9 @@ async function loadMessages(force = false) {
 
 function renderMessages(messages) {
     const container = document.getElementById('chatMessages');
-    const wasAtBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) < 60;
+    // Issue #1: En la carga inicial (hash vacío), siempre hacer scroll al final
+    const isInitialLoad = lastMessagesHash === '';
+    const wasAtBottom = isInitialLoad || (container.scrollHeight - container.scrollTop - container.clientHeight) < 60;
 
     // Usar DocumentFragment para mínimo reflow DOM
     const fragment = document.createDocumentFragment();
@@ -1423,6 +1425,14 @@ async function sendMessage() {
     const content = input.value.trim();
     
     if (!content) return;
+
+    // Issue #3: Los usuarios no pueden enviar comandos (mensajes que comiencen con /)
+    if (content.startsWith('/')) {
+        showToast('No puedes enviar comandos', 'error');
+        input.value = '';
+        input.style.height = 'auto';
+        return;
+    }
     
     // CORREGIDO: Verificar si ya se envió un mensaje idéntico en los últimos 3 segundos
     const now = Date.now();
