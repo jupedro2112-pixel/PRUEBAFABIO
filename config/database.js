@@ -57,6 +57,8 @@ const messageSchema = new mongoose.Schema({
   content: { type: String, required: true },
   type: { type: String, enum: ['text', 'image', 'system'], default: 'text' },
   read: { type: Boolean, default: false },
+  // Solo visible para admins (ej. mensaje de cierre de chat)
+  adminOnly: { type: Boolean, default: false },
   timestamp: { type: Date, default: Date.now, index: true }
 }, {
   timestamps: true

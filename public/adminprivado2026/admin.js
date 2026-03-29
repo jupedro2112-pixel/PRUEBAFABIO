@@ -535,6 +535,9 @@ function initSocket() {
         console.log('🔒 Chat cerrado:', data);
         if (data.userId === selectedUserId) {
             showToast('Chat movido a Cerrados. Puedes seguir respondiendo.', 'info');
+            // Fix #3: Recargar mensajes para mostrar el mensaje de cierre desde DB
+            messageCache.delete(selectedUserId);
+            loadMessages(selectedUserId);
         }
         // Invalidar cache de las pestañas afectadas y recargar
         conversationsCacheByTab.delete('open');
@@ -847,6 +850,26 @@ async function selectConversation(userId, username) {
         item.classList.toggle('active', item.dataset.userid === userId);
     });
     
+    // Fix #2: Marcar como leído de forma instantánea en la UI (antes de la llamada API)
+    const convItem = document.querySelector(`.conversation-item[data-userid="${userId}"]`);
+    if (convItem) {
+        convItem.classList.remove('unread');
+        const badge = convItem.querySelector('.conv-badge');
+        if (badge) badge.remove();
+    }
+    const conv = conversations.find(c => c.userId === userId);
+    if (conv && conv.unread > 0) {
+        const currentBadgeCount = parseInt(elements.unreadBadge.textContent) || 0;
+        const newCount = Math.max(0, currentBadgeCount - conv.unread);
+        if (newCount <= 0) {
+            elements.unreadBadge.classList.add('hidden');
+            elements.unreadBadge.textContent = '0';
+        } else {
+            elements.unreadBadge.textContent = String(newCount);
+        }
+        conv.unread = 0;
+    }
+    
     // Show chat panel inmediatamente
     elements.chatHeader.classList.remove('hidden');
     elements.chatInputArea.classList.remove('hidden');
@@ -873,7 +896,7 @@ async function selectConversation(userId, username) {
     
     // CORREGIDO: Cargar mensajes en paralelo (no await) para eliminar lag
     loadMessages(userId).then(() => {
-        // Mark as read después de cargar
+        // Mark as read después de cargar (confirma en DB)
         markMessagesAsRead(userId);
     });
     
@@ -935,8 +958,8 @@ async function loadMessages(userId) {
             elements.chatMessages.innerHTML = '<div class="empty-state"><span class="icon icon-sync" style="animation: spin 1s linear infinite;"></span><p>Cargando mensajes...</p></div>';
         }
         
-        // Cargar mensajes del servidor (limit 50)
-        const response = await fetch(`${API_URL}/api/messages/${userId}?limit=50`, {
+        // Fix #1: Cargar más historial (200 mensajes)
+        const response = await fetch(`${API_URL}/api/messages/${userId}?limit=200`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
@@ -1934,17 +1957,9 @@ async function closeChat() {
                 <p>Chat cerrado. Selecciona otra conversación.</p>
             </div>
         `;
-    } else {
-        // En abiertos: mantener chat visible para seguir respondiendo
-        const adminName = currentAdmin?.username || 'Admin';
-        elements.chatMessages.innerHTML += `
-            <div class="system-message">
-                <span class="icon icon-lock"></span>
-                <p><strong>Chat cerrado por:</strong> ${adminName}</p>
-                <p style="font-size: 11px; opacity: 0.8;">Puedes seguir respondiendo si el usuario escribe. El chat se reabrirá automáticamente si el cliente envía un mensaje.</p>
-            </div>
-        `;
     }
+    // Fix #3: No insertar mensaje de cierre en el DOM manualmente; el backend lo guarda
+    // en la DB como adminOnly y se muestra al recargar mensajes.
     
     try {
         const response = await fetch(`${API_URL}/api/admin/close-chat`, {
@@ -1970,6 +1985,12 @@ async function closeChat() {
         // If on open tab, remove from list
         if (currentTab === 'open' && convItem) {
             convItem.remove();
+        }
+        
+        // Fix #3: Recargar mensajes para mostrar el mensaje de cierre guardado en DB
+        if (!isPaymentsTab && selectedUserId === userIdToClose) {
+            messageCache.delete(userIdToClose);
+            loadMessages(userIdToClose);
         }
         
         // Invalidar cache y recargar en background
@@ -3162,6 +3183,15 @@ function renderMessagesUltraFast(messages) {
 
 // Crear elemento de mensaje optimizado
 function createMessageElement(message) {
+    // Fix #3: Mensajes de sistema (ej. cierre de chat) con estilo propio
+    if (message.type === 'system') {
+        const div = document.createElement('div');
+        div.className = 'message system';
+        div.dataset.messageid = message.id || '';
+        div.innerHTML = `<span class="icon icon-lock"></span> <span>${escapeHtml(message.content)}</span>`;
+        return div;
+    }
+    
     const isOutgoing = getMessageType(message) === 'outgoing';
     
     const msgDiv = document.createElement('div');

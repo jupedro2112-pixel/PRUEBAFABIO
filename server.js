@@ -1563,23 +1563,29 @@ app.get('/api/admin/chats/category/:category', authMiddleware, adminMiddleware, 
 app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    // Fix #1: Aumentar límite para mostrar todo el historial (500 máx)
+    const limit = Math.min(parseInt(req.query.limit) || 50, 500);
     
     const allowedRoles = ['admin', 'depositor', 'withdrawer'];
-    if (!allowedRoles.includes(req.user.role) && req.user.userId !== userId) {
+    const isAdminRole = allowedRoles.includes(req.user.role);
+    if (!isAdminRole && req.user.userId !== userId) {
       return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    
+    // Fix #3: Filtrar mensajes adminOnly para usuarios normales
+    const matchStage = {
+      $or: [
+        { senderId: userId },
+        { receiverId: userId }
+      ]
+    };
+    if (!isAdminRole) {
+      matchStage.adminOnly = { $ne: true };
     }
     
     // AGREGACIÓN OPTIMIZADA: Proyección mínima
     const messages = await Message.aggregate([
-      {
-        $match: {
-          $or: [
-            { senderId: userId },
-            { receiverId: userId }
-          ]
-        }
-      },
+      { $match: matchStage },
       { $sort: { timestamp: -1 } },
       { $limit: limit },
       { $sort: { timestamp: 1 } },
@@ -1595,6 +1601,7 @@ app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
           content: 1,
           type: 1,
           read: 1,
+          adminOnly: 1,
           timestamp: 1
         }
       }
@@ -3790,8 +3797,20 @@ app.post('/api/admin/close-chat', authMiddleware, adminMiddleware, async (req, r
       { upsert: true }
     );
     
-    // NOTA: No se envía mensaje al usuario al cerrar el chat (solo notificación interna a admins)
-    // El parámetro notifyClient fue removido para evitar mensajes innecesarios
+    // Fix #3: Crear mensaje de sistema interno (solo visible para admins, persiste en historial)
+    await Message.create({
+      id: uuidv4(),
+      senderId: req.user.userId,
+      senderUsername: req.user.username,
+      senderRole: req.user.role || 'admin',
+      receiverId: userId,
+      receiverRole: 'user',
+      content: `Chat cerrado por: ${req.user.username}. Puedes seguir respondiendo si el usuario escribe. El chat se reabrirá automáticamente si el cliente envía un mensaje.`,
+      type: 'system',
+      adminOnly: true,
+      read: true,
+      timestamp: new Date()
+    });
     
     // Notificar a admins (siempre, es interno)
     notifyAdmins('chat_closed', { userId, by: req.user.username, adminId: req.user.userId, isPaymentsTab });
