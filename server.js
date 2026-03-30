@@ -445,7 +445,7 @@ app.get('/api/auth/check-username', async (req, res) => {
         });
       }
     } catch (jgError) {
-      console.log('⚠️ No se pudo verificar en JUGAYGANA:', jgError.message);
+      logger.warn(`JUGAYGANA check failed: ${jgError.message}`);
     }
     
     res.json({ 
@@ -567,9 +567,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         return res.status(400).json({ error: 'No se pudo crear el usuario en JUGAYGANA: ' + (jgResult.error || 'Error desconocido') });
       }
       
-      console.log('✅ Usuario creado/vinculado en JUGAYGANA:', username);
+      logger.info(`User created/linked in JUGAYGANA: ${username}`);
     } catch (jgError) {
-      console.error('❌ Error creando en JUGAYGANA:', jgError);
+      logger.error(`Error creating user in JUGAYGANA: ${jgError.message}`);
       return res.status(400).json({ error: 'Error al crear usuario en la plataforma. Intenta con otro nombre de usuario.' });
     }
     
@@ -629,7 +629,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error en registro:', error);
+    logger.error(`Registration error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -782,7 +782,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌ Error en login:', error);
+    logger.error(`Login error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -1907,9 +1907,8 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
     
     res.json(message);
   } catch (error) {
-    console.error('Error enviando mensaje:', error);
+    logger.error(`Error sending message: ${error.message}`);
     if (error.name === 'ValidationError') {
-      console.error('Validation error details:', error.errors);
       return res.status(400).json({ error: 'Error de validación: ' + Object.values(error.errors).map(e => e.message).join(', ') });
     }
     res.status(500).json({ error: 'Error del servidor: ' + error.message });
