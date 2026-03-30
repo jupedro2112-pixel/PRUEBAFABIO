@@ -9,6 +9,22 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
+const { createClient } = require('redis');
+const { createAdapter } = require('@socket.io/redis-adapter');
+const winston = require('winston');
+
+// ============================================
+// LOGGER (Winston)
+// ============================================
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.printf(({ timestamp, level, message }) => `${timestamp} [${level.toUpperCase()}] ${message}`)
+  ),
+  transports: [new winston.transports.Console()]
+});
 
 // ============================================
 // IMPORTAR MODELOS DE MONGODB
@@ -35,43 +51,25 @@ const {
 
 // ============================================
 // SEGURIDAD - RATE LIMITING
+// NOTE: Uses in-memory store per instance. In multi-instance deployments each
+// instance counts independently. For consistent distributed rate limiting,
+// configure a Redis store (e.g. rate-limit-redis) via REDIS_URL.
 // ============================================
-const requestCounts = new Map();
-const RATE_LIMIT_WINDOW = 60 * 1000;
-const RATE_LIMIT_MAX = 100;
-const AUTH_RATE_LIMIT_MAX = 10;
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes. Intenta más tarde.' }
+});
 
-function rateLimit(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress || 'unknown';
-  const isAuthEndpoint = req.path.includes('/auth/');
-  const maxRequests = isAuthEndpoint ? AUTH_RATE_LIMIT_MAX : RATE_LIMIT_MAX;
-  
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW;
-  
-  for (const [key, data] of requestCounts) {
-    if (data.timestamp < windowStart) {
-      requestCounts.delete(key);
-    }
-  }
-  
-  const key = `${ip}:${req.path}`;
-  const current = requestCounts.get(key);
-  
-  if (current && current.timestamp > windowStart) {
-    if (current.count >= maxRequests) {
-      return res.status(429).json({ 
-        error: 'Demasiadas solicitudes. Intenta más tarde.',
-        retryAfter: Math.ceil((current.timestamp + RATE_LIMIT_WINDOW - now) / 1000)
-      });
-    }
-    current.count++;
-  } else {
-    requestCounts.set(key, { count: 1, timestamp: now });
-  }
-  
-  next();
-}
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos de autenticación. Intenta más tarde.' }
+});
 
 // ============================================
 // SEGURIDAD - HEADERS DE SEGURIDAD
@@ -151,9 +149,57 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  // Force WebSocket transport for lower latency and better behavior behind ALB/NLB.
+  // Clients in public/app.js already request ['websocket'] so this is consistent.
+  transports: ['websocket', 'polling'],
+  pingInterval: 25000,
+  pingTimeout: 60000
 });
+
+// ============================================
+// REDIS ADAPTER FOR SOCKET.IO (horizontal scaling)
+// Provide REDIS_URL (e.g. redis://user:pass@host:6379) or individual
+// REDIS_HOST / REDIS_PORT / REDIS_USERNAME / REDIS_PASSWORD env vars.
+// When none are set the app runs in single-instance (in-memory) mode.
+// ============================================
+async function setupRedisAdapter() {
+  const redisUrl = process.env.REDIS_URL;
+  const redisHost = process.env.REDIS_HOST;
+
+  if (!redisUrl && !redisHost) {
+    logger.warn('Redis not configured (REDIS_URL / REDIS_HOST missing). Socket.IO running in single-instance mode.');
+    return;
+  }
+
+  try {
+    const connectionOptions = redisUrl
+      ? { url: redisUrl }
+      : {
+          socket: {
+            host: redisHost,
+            port: parseInt(process.env.REDIS_PORT || '6379', 10)
+          },
+          username: process.env.REDIS_USERNAME || undefined,
+          password: process.env.REDIS_PASSWORD || undefined
+        };
+
+    const pubClient = createClient(connectionOptions);
+    const subClient = pubClient.duplicate();
+
+    pubClient.on('error', (err) => logger.error(`Redis pub client error: ${err.message}`));
+    subClient.on('error', (err) => logger.error(`Redis sub client error: ${err.message}`));
+
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+
+    io.adapter(createAdapter(pubClient, subClient));
+    logger.info('Socket.IO Redis adapter initialized — multi-instance mode active');
+  } catch (err) {
+    logger.error(`Failed to initialize Redis adapter: ${err.message}. Falling back to single-instance mode.`);
+  }
+}
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
@@ -162,7 +208,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
 // MIDDLEWARE DE SEGURIDAD
 // ============================================
 app.use(securityHeaders);
-app.use(rateLimit);
+app.use(generalLimiter);
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
   credentials: true
@@ -484,7 +530,7 @@ app.post('/api/admin/send-cbu', authMiddleware, adminMiddleware, async (req, res
 });
 
 // Registro de usuario
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const { username, password, email, phone } = req.body;
     
@@ -589,7 +635,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     
@@ -597,7 +643,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
     }
     
-    console.log(`🔐 Intentando login para: ${username}`);
+    logger.debug(`Login attempt for: ${username}`);
     
     // Buscar usuario case-insensitive (para soportar usernames con mayúsculas/minúsculas)
     let user = await User.findOne({ 
@@ -606,12 +652,12 @@ app.post('/api/auth/login', async (req, res) => {
     
     // Si no existe localmente, verificar en JUGAYGANA
     if (!user) {
-      console.log(`🔍 Usuario ${username} no encontrado localmente, verificando en JUGAYGANA...`);
+      logger.debug(`User ${username} not found locally, checking JUGAYGANA...`);
       
       const jgUser = await jugaygana.getUserInfoByName(username);
       
       if (jgUser) {
-        console.log(`✅ Usuario encontrado en JUGAYGANA, creando localmente...`);
+        logger.debug(`User found in JUGAYGANA, creating locally...`);
         
         const hashedPassword = await bcrypt.hash('asd123', 10);
         const userId = uuidv4();
@@ -642,7 +688,7 @@ app.post('/api/auth/login', async (req, res) => {
           category: 'cargas'
         });
         
-        console.log(`✅ Usuario ${username} creado automáticamente desde JUGAYGANA`);
+        logger.info(`User ${username} auto-created from JUGAYGANA`);
       } else {
         return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
       }
@@ -654,10 +700,10 @@ app.post('/api/auth/login', async (req, res) => {
     // Usar 'id' si existe, sino usar '_id' como fallback
     const userId = userObj.id || userObj._id?.toString();
     
-    console.log(`👤 Usuario encontrado: ${userObj.username}, ID: ${userId}`);
+    logger.debug(`User found: ${userObj.username}, ID: ${userId}`);
     
     if (!userId) {
-      console.error(`❌ Usuario ${username} no tiene ID válido`);
+      logger.error(`User ${username} has no valid ID`);
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
@@ -667,14 +713,14 @@ app.post('/api/auth/login', async (req, res) => {
     
     // Verificar que el usuario tenga una contraseña válida
     if (!userObj.password) {
-      console.error(`❌ Usuario ${username} no tiene contraseña configurada`);
+      logger.error(`User ${username} has no password configured`);
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
     // Verificar si la contraseña almacenada es un hash bcrypt válido
     const isValidBcryptHash = userObj.password.startsWith('$2') || userObj.password.startsWith('$2a$') || userObj.password.startsWith('$2b$');
     if (!isValidBcryptHash) {
-      console.error(`❌ Usuario ${username} tiene contraseña en formato inválido. Resetear contraseña requerido.`);
+      logger.error(`User ${username} has password in invalid format`);
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
@@ -689,26 +735,26 @@ app.post('/api/auth/login', async (req, res) => {
     try {
       isValidPassword = await bcrypt.compare(password, userObj.password);
     } catch (bcryptError) {
-      console.error(`❌ Error comparando contraseña para ${username}:`, bcryptError.message);
+      logger.error(`Error comparing password for ${username}: ${bcryptError.message}`);
     }
     
     // Si la contraseña no coincide y el usuario nunca cambió su contraseña, intentar con 'asd123'
     if (!isValidPassword && !userObj.passwordChangedAt) {
-      console.log(`🔑 Probando contraseña por defecto para ${username}...`);
+      logger.debug(`Trying default password for ${username}...`);
       const defaultHash = await bcrypt.hash('asd123', 10);
       try {
         isValidPassword = await bcrypt.compare(password, defaultHash);
       } catch (bcryptError) {
-        console.error(`❌ Error comparando contraseña por defecto:`, bcryptError.message);
+        logger.error(`Error comparing default password: ${bcryptError.message}`);
       }
     }
     
     if (!isValidPassword) {
-      console.log(`❌ Contraseña incorrecta para ${username}`);
+      logger.debug(`Wrong password for ${username}`);
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     }
     
-    console.log(`✅ Login exitoso para ${username}`);
+    logger.info(`Login successful for ${username}`);
     
     // Actualizar lastLogin usando el modelo de Mongoose
     user.lastLogin = new Date();
@@ -928,7 +974,7 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
     user.passwordChangedAt = new Date();
     await user.save();
     
-    console.log(`🔑 Admin ${req.user.username} reseteó contraseña de ${user.username}`);
+    logger.info(`Admin ${req.user.username} reset password for ${user.username}`);
     
     res.json({ 
       success: true, 
@@ -1661,17 +1707,10 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
   try {
     const { content, type = 'text', receiverId } = req.body;
     
-    console.log('[API_MESSAGES_SEND] ============================================');
-    console.log('[API_MESSAGES_SEND] Iniciando envío de mensaje');
-    console.log('[API_MESSAGES_SEND] UserID:', req.user.userId);
-    console.log('[API_MESSAGES_SEND] Username:', req.user.username);
-    console.log('[API_MESSAGES_SEND] Role:', req.user.role);
-    console.log('[API_MESSAGES_SEND] Content:', content);
-    console.log('[API_MESSAGES_SEND] ReceiverId:', receiverId);
-    console.log('[API_MESSAGES_SEND] Type:', type);
+    logger.debug(`[API_MESSAGES_SEND] user=${req.user.username} role=${req.user.role} receiverId=${receiverId} type=${type}`);
     
     if (!content) {
-      console.log('[API_MESSAGES_SEND] ERROR: Contenido requerido');
+      logger.debug('[API_MESSAGES_SEND] ERROR: content required');
       return res.status(400).json({ error: 'Contenido requerido' });
     }
     
@@ -1683,7 +1722,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Los usuarios no pueden enviar comandos' });
     }
     
-    console.log('[API_MESSAGES_SEND] isAdminRole:', isAdminRole);
+    logger.debug(`[API_MESSAGES_SEND] isAdminRole: ${isAdminRole}`);
     
     const messageData = {
       id: uuidv4(),
@@ -1698,21 +1737,19 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       read: false
     };
     
-    console.log('[API_MESSAGES_SEND] Datos del mensaje:', JSON.stringify(messageData, null, 2));
-    console.log('[API_MESSAGES_SEND] Intentando crear mensaje con Message.create()...');
+    logger.debug(`[API_MESSAGES_SEND] Creating message for receiver: ${messageData.receiverId}`);
+    
     
     let message;
     try {
       message = await Message.create(messageData);
-      console.log('[API_MESSAGES_SEND] ✅ Mensaje CREADO exitosamente');
-      console.log('[API_MESSAGES_SEND] ID del mensaje:', message.id);
-      console.log('[API_MESSAGES_SEND] MongoDB _id:', message._id);
+      logger.debug(`[API_MESSAGES_SEND] Message created: ${message.id}`);
+      
+      
     } catch (createError) {
-      console.error('[API_MESSAGES_SEND] ❌ ERROR al crear mensaje:', createError.message);
-      console.error('[API_MESSAGES_SEND] Error name:', createError.name);
-      console.error('[API_MESSAGES_SEND] Error code:', createError.code);
+      logger.error(`[API_MESSAGES_SEND] Error creating message: ${createError.message}`);
       if (createError.errors) {
-        console.error('[API_MESSAGES_SEND] Validation errors:', JSON.stringify(createError.errors, null, 2));
+        logger.error(`[API_MESSAGES_SEND] Validation errors: ${JSON.stringify(createError.errors)}`);
       }
       throw createError;
     }
@@ -1765,14 +1802,14 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
     // CORREGIDO: Procesar comandos si el mensaje empieza con /
     if (content.trim().startsWith('/')) {
       const commandName = content.trim().split(' ')[0];
-      console.log(`[API_COMMAND] Detectado comando: ${commandName}`);
+      logger.debug(`[API_COMMAND] Command detected: ${commandName}`);
       
       try {
         const command = await Command.findOne({ name: commandName, isActive: true });
         const commandReceiverId = isAdminRole ? (receiverId || req.body.receiverId) : req.user.userId;
         
         if (command) {
-          console.log(`[API_COMMAND] Comando encontrado: ${command.name}`);
+          logger.debug(`[API_COMMAND] Command found: ${command.name}`);
           
           // Incrementar contador de uso
           await Command.updateOne(
@@ -1811,12 +1848,12 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
             command: commandName
           });
           
-          console.log(`[API_COMMAND] Respuesta enviada: ${command.response}`);
+          logger.debug(`[API_COMMAND] Response sent for command: ${commandName}`);
           
           // NO emitir el mensaje original del comando, solo la respuesta
           return res.json(responseMessage);
         } else {
-          console.log(`[API_COMMAND] Comando no encontrado: ${commandName}`);
+          logger.debug(`[API_COMMAND] Command not found: ${commandName}`);
           
           const notFoundMessage = await Message.create({
             id: uuidv4(),
@@ -1835,7 +1872,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
           return res.json(notFoundMessage);
         }
       } catch (cmdError) {
-        console.error(`[API_COMMAND] Error procesando comando:`, cmdError);
+        logger.error(`[API_COMMAND] Error processing command: ${cmdError.message}`);
       }
     }
     
@@ -2662,7 +2699,7 @@ const connectedUsers = new Map();
 const connectedAdmins = new Map();
 
 io.on('connection', (socket) => {
-  console.log('Nueva conexión:', socket.id);
+  logger.debug(`New socket connection: ${socket.id}`);
   
   socket.on('authenticate', (token) => {
     try {
@@ -2674,12 +2711,12 @@ io.on('connection', (socket) => {
       if (['admin', 'depositor', 'withdrawer'].includes(decoded.role)) {
         connectedAdmins.set(decoded.userId, socket);
         socket.join('admins'); // Unir a sala de admins
-        console.log(`✅ Admin conectado: ${decoded.username} (${decoded.role}) - Socket: ${socket.id}`);
+        logger.info(`Admin connected: ${decoded.username} (${decoded.role}) socket=${socket.id}`);
         broadcastStats();
       } else {
         connectedUsers.set(decoded.userId, socket);
         socket.join(`user_${decoded.userId}`); // Unir a sala personal del usuario
-        console.log(`✅ Usuario conectado: ${decoded.username} - ID: ${decoded.userId} - Socket: ${socket.id}`);
+        logger.info(`User connected: ${decoded.username} id=${decoded.userId} socket=${socket.id}`);
         notifyAdmins('user_connected', {
           userId: decoded.userId,
           username: decoded.username
@@ -2688,7 +2725,7 @@ io.on('connection', (socket) => {
       
       socket.emit('authenticated', { success: true, role: decoded.role });
     } catch (error) {
-      console.error('❌ Error autenticando socket:', error.message);
+      logger.error(`Socket auth error: ${error.message}`);
       socket.emit('authenticated', { success: false, error: 'Token inválido' });
     }
   });
@@ -2697,7 +2734,7 @@ io.on('connection', (socket) => {
   socket.on('join_admin_room', () => {
     if (['admin', 'depositor', 'withdrawer'].includes(socket.role)) {
       socket.join('admins');
-      console.log(`Admin ${socket.username} (${socket.role}) unido a sala de admins`);
+      logger.debug(`Admin ${socket.username} (${socket.role}) joined admin room`);
     }
   });
   
@@ -2705,7 +2742,7 @@ io.on('connection', (socket) => {
   socket.on('join_user_room', (data) => {
     if (socket.role === 'user' && data && data.userId) {
       socket.join(`user_${data.userId}`);
-      console.log(`✅ Usuario ${socket.username} unido a sala personal: user_${data.userId}`);
+      logger.debug(`User ${socket.username} joined personal room: user_${data.userId}`);
     }
   });
   
@@ -2713,7 +2750,7 @@ io.on('connection', (socket) => {
   socket.on('join_chat_room', (data) => {
     if (['admin', 'depositor', 'withdrawer'].includes(socket.role) && data && data.userId) {
       socket.join(`chat_${data.userId}`);
-      console.log(`✅ Admin ${socket.username} unido a sala de chat: chat_${data.userId}`);
+      logger.debug(`Admin ${socket.username} joined chat room: chat_${data.userId}`);
     }
   });
   
@@ -2721,7 +2758,7 @@ io.on('connection', (socket) => {
   socket.on('leave_chat_room', (data) => {
     if (data && data.userId) {
       socket.leave(`chat_${data.userId}`);
-      console.log(`👋 ${socket.username} salió de sala de chat: chat_${data.userId}`);
+      logger.debug(`${socket.username} left chat room: chat_${data.userId}`);
     }
   });
   
@@ -2729,10 +2766,10 @@ io.on('connection', (socket) => {
     try {
       const { content, type = 'text', receiverId } = data;
       
-      console.log(`[SEND_MESSAGE] Iniciando - socket.userId: ${socket.userId}, role: ${socket.role}, receiverId: ${receiverId}, content: ${content?.substring(0, 30)}`);
+      logger.debug(`[SEND_MESSAGE] user=${socket.userId} role=${socket.role} receiverId=${receiverId}`);
       
       if (!socket.userId) {
-        console.log('[SEND_MESSAGE] ERROR: No autenticado');
+        logger.debug('[SEND_MESSAGE] ERROR: not authenticated');
         return socket.emit('error', { message: 'No autenticado' });
       }
       
@@ -2741,7 +2778,7 @@ io.on('connection', (socket) => {
       const targetReceiverId = isAdminRole ? receiverId : 'admin';
       const targetReceiverRole = isAdminRole ? 'user' : 'admin';
       
-      console.log(`[SEND_MESSAGE] isAdminRole: ${isAdminRole}, targetReceiverId: ${targetReceiverId}`);
+      logger.debug(`[SEND_MESSAGE] isAdminRole=${isAdminRole} targetReceiverId=${targetReceiverId}`);
 
       // Issue #3: Bloquear comandos enviados por usuarios comunes
       if (!isAdminRole && content && content.trim().startsWith('/')) {
@@ -2752,7 +2789,7 @@ io.on('connection', (socket) => {
       // Si el mensaje empieza con /, es un comando - NO guardar el mensaje del comando
       if (content.trim().startsWith('/')) {
         const commandName = content.trim().split(' ')[0];
-        console.log(`[COMMAND] Detectado comando: ${commandName}`);
+        logger.debug(`[COMMAND] Command detected: ${commandName}`);
         
         try {
           const command = await Command.findOne({ name: commandName, isActive: true });
@@ -2761,7 +2798,7 @@ io.on('connection', (socket) => {
           const commandReceiverId = isAdminRole ? receiverId : socket.userId;
           
           if (command) {
-            console.log(`[COMMAND] Comando encontrado: ${command.name}`);
+            logger.debug(`[COMMAND] Command found: ${command.name}`);
             
             // Incrementar contador de uso
             await Command.updateOne(
@@ -2801,13 +2838,13 @@ io.on('connection', (socket) => {
               command: commandName
             });
             
-            console.log(`[COMMAND] ✅ Respuesta enviada: ${command.response}`);
+            logger.debug(`[COMMAND] Response sent for command: ${commandName}`);
             
             // IMPORTANTE: NO guardar el mensaje del comando (/cbu), solo la respuesta
             // Salir aquí - el mensaje del comando NO se guarda ni se emite
             return;
           } else {
-            console.log(`[COMMAND] Comando no encontrado: ${commandName}`);
+            logger.debug(`[COMMAND] Command not found: ${commandName}`);
             
             const notFoundMessage = await Message.create({
               id: uuidv4(),
@@ -2829,7 +2866,7 @@ io.on('connection', (socket) => {
             return;
           }
         } catch (cmdError) {
-          console.error(`[COMMAND] Error procesando comando:`, cmdError);
+          logger.error(`[COMMAND] Error processing command: ${cmdError.message}`);
           return;
         }
       }
@@ -2852,9 +2889,9 @@ io.on('connection', (socket) => {
       let message;
       try {
         message = await Message.create(messageData);
-        console.log(`[SEND_MESSAGE] ✅ Mensaje guardado - ID: ${message.id}`);
+        logger.debug(`[SEND_MESSAGE] Message saved: ${message.id}`);
       } catch (createError) {
-        console.error(`[SEND_MESSAGE] ❌ ERROR al guardar:`, createError.message);
+        logger.error(`[SEND_MESSAGE] Error saving message: ${createError.message}`);
         throw createError;
       }
       
@@ -2885,7 +2922,7 @@ io.on('connection', (socket) => {
       
       if (!isAdminRole) {
         // Usuario enviando mensaje - notificar a todos los admins
-        console.log(`[SOCKET] Usuario ${socket.username} envió mensaje`);
+        logger.debug(`[SOCKET] User ${socket.username} sent message`);
         
         // Emitir a todos los admins conectados (envuelto para facilitar extracción)
         io.to('admins').emit('new_message', {
@@ -2902,8 +2939,7 @@ io.on('connection', (socket) => {
         io.to(`user_${socket.userId}`).emit('new_message', message);
       } else {
         // Admin/depositor/withdrawer enviando mensaje - notificar al usuario específico
-        console.log(`🔍 Buscando socket para usuario ${receiverId}...`);
-        console.log(`   Usuarios conectados: ${Array.from(connectedUsers.keys()).join(', ')}`);
+        logger.debug(`[SEND_MESSAGE] Looking up socket for user ${receiverId}`);
         
         // CORREGIDO: Múltiples canales de entrega para asegurar que llegue
         let delivered = false;
@@ -2913,16 +2949,14 @@ io.on('connection', (socket) => {
         if (userSocket) {
           userSocket.emit('new_message', message);
           delivered = true;
-          console.log(`✅ Mensaje enviado a usuario ${receiverId} via socket directo`);
+          logger.debug(`Message delivered to user ${receiverId} via direct socket`);
         }
         
         // Canal 2: Sala del usuario (por si está conectado en otra pestaña/dispositivo)
         io.to(`user_${receiverId}`).emit('new_message', message);
-        console.log(`📢 Mensaje emitido a sala user_${receiverId}`);
         
         // Canal 3: Sala del chat (por si hay admins viendo)
         io.to(`chat_${receiverId}`).emit('new_message', message);
-        console.log(`📢 Mensaje emitido a sala chat_${receiverId}`);
         
         // CORREGIDO: También notificar a otros admins que están viendo este chat
         notifyAdmins('new_message', {
@@ -2934,15 +2968,13 @@ io.on('connection', (socket) => {
         // Confirmar al admin
         socket.emit('message_sent', message);
         
-        // Log de entrega
-        console.log(`📨 Mensaje ${message.id} entregado: ${delivered ? 'SÍ' : 'NO (usuario offline)'}`);
+        logger.debug(`Message ${message.id} delivered: ${delivered ? 'YES (direct)' : 'NO (user offline, used rooms)'}`);
       }
       
       broadcastStats();
     } catch (error) {
-      console.error('Error enviando mensaje via socket:', error);
+      logger.error(`Error sending message via socket: ${error.message}`);
       if (error.name === 'ValidationError') {
-        console.error('Validation error details:', error.errors);
         socket.emit('error', { message: 'Error de validación: ' + Object.values(error.errors).map(e => e.message).join(', ') });
       } else {
         socket.emit('error', { message: 'Error enviando mensaje: ' + error.message });
@@ -2987,7 +3019,7 @@ io.on('connection', (socket) => {
   });
   
   socket.on('disconnect', () => {
-    console.log('Desconexión:', socket.id);
+    logger.debug(`Socket disconnected: ${socket.id}`);
     
     if (socket.role === 'admin') {
       connectedAdmins.delete(socket.userId);
@@ -4413,35 +4445,15 @@ app.get('/api/diagnostic/messages', authMiddleware, adminMiddleware, async (req,
 
 if (process.env.VERCEL) {
   initializeData().then(() => {
-    console.log('✅ Datos inicializados para Vercel');
+    logger.info('Data initialized for Vercel');
   });
   
   module.exports = app;
 } else {
-  initializeData().then(() => {
+  initializeData().then(async () => {
+    await setupRedisAdapter();
     server.listen(PORT, () => {
-      console.log(`
-🎮 ============================================
-🎮  SALA DE JUEGOS - BACKEND INICIADO (MongoDB)
-🎮 ============================================
-🎮  
-🎮  🌐 URL: http://localhost:${PORT}
-🎮  
-🎮  📊 Endpoints:
-🎮  • POST /api/auth/login        - Login
-🎮  • POST /api/auth/register     - Registro
-🎮  • GET  /api/users             - Lista usuarios (admin)
-🎮  • GET  /api/messages/:userId  - Mensajes de usuario
-🎮  • GET  /api/conversations     - Conversaciones (admin)
-🎮  
-🎮  🔑 Credenciales Admin:
-🎮  • Usuario: ignite100
-🎮  • Contraseña: pepsi100
-🎮  
-🎮  🗄️  Base de datos: MongoDB
-🎮  
-🎮 ============================================
-      `);
+      logger.info(`Server started on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
     });
   });
 }
