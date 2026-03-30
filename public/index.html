@@ -454,6 +454,8 @@
             font-weight: bold;
             cursor: pointer;
             transition: all 0.3s ease;
+            align-items: center;
+            gap: 5px;
         }
         
         .header-right .notification-btn:hover {
@@ -465,7 +467,7 @@
             background: linear-gradient(135deg, #00cc6a 0%, #00ff88 100%);
         }
         
-        /* Botón de instalación APP - SIEMPRE VISIBLE */
+        /* Botón de instalación APP - oculto por defecto; JS lo muestra al capturar beforeinstallprompt */
         .app-install-btn {
             background: linear-gradient(135deg, #00cc6a 0%, #00ff88 100%) !important;
             color: #000 !important;
@@ -477,9 +479,6 @@
             cursor: pointer !important;
             animation: pulse 2s infinite !important;
             box-shadow: 0 0 10px rgba(0, 255, 136, 0.5) !important;
-            display: inline-flex !important;
-            visibility: visible !important;
-            opacity: 1 !important;
             z-index: 100 !important;
             white-space: nowrap !important;
             min-width: auto !important;
@@ -1791,11 +1790,28 @@
         }
 
         /* ============================================
-           ISSUE #6: Ocultar NOTIS en escritorio
-           Solo visible en dispositivos móviles
+           NOTIS: oculto por defecto en cualquier tamaño.
+           Solo se muestra cuando la app está abierta en modo
+           standalone/PWA instalada (display-mode: standalone).
            ============================================ */
-        @media (min-width: 769px) {
+        #notificationBtn {
+            display: none !important;
+        }
+
+        @media (display-mode: standalone) {
             #notificationBtn {
+                display: inline-flex !important;
+            }
+        }
+
+        /* ============================================
+           Dentro de la app instalada (standalone) nunca
+           debe aparecer el botón/aviso de instalar app.
+           ============================================ */
+        @media (display-mode: standalone) {
+            #appInstallBtn,
+            #installBtn,
+            .pwa-install-btn {
                 display: none !important;
             }
         }
@@ -1940,12 +1956,12 @@
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
                     📢 CANAL INFORMATIVO
                 </a>
-                <!-- BOTÓN APP - Instalar PWA (PRIMERO para máxima visibilidad) -->
-                <button class="app-install-btn" id="appInstallBtn" title="Instalar App" style="display: inline-flex; visibility: visible; opacity: 1;">
+                <!-- BOTÓN APP - Instalar PWA (visible solo cuando beforeinstallprompt dispara y no estamos en standalone) -->
+                <button class="app-install-btn" id="appInstallBtn" title="Instalar App">
                     ⬇️ APP
                 </button>
-                <!-- BOTÓN NOTIFICACIONES - Activar/ver estado -->
-                <button class="notification-btn" id="notificationBtn" title="Activar Notificaciones" style="display: inline-flex; align-items: center; gap: 5px; background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%); border: none; border-radius: 20px; padding: 8px 15px; color: white; font-weight: bold; cursor: pointer; font-size: 12px;">
+                <!-- BOTÓN NOTIFICACIONES - Solo visible en modo standalone/PWA instalada -->
+                <button class="notification-btn" id="notificationBtn" title="Activar Notificaciones">
                     🔔 NOTIS
                 </button>
                 <a href="https://wa.link/metawin2026" target="_blank" class="support-btn" style="display: flex; align-items: center; gap: 5px;">
@@ -2790,6 +2806,11 @@
         // Escuchar evento beforeinstallprompt (Android/Chrome)
         window.addEventListener('beforeinstallprompt', (e) => {
             console.log('[PWA] Evento beforeinstallprompt detectado');
+            // No mostrar si ya estamos en modo standalone (app ya instalada)
+            if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+                console.log('[PWA] Ya en standalone, ignorando beforeinstallprompt');
+                return;
+            }
             // Prevenir que Chrome muestre el prompt automático
             e.preventDefault();
             // Guardar el evento para usarlo después
@@ -3010,10 +3031,17 @@
         `;
         document.head.appendChild(pwaStyles);
         
-        // Botón de notificaciones
+        // Botón de notificaciones (solo visible en modo standalone/PWA instalada)
         const notificationBtn = document.getElementById('notificationBtn');
         console.log('[FCM] Buscando botón notificationBtn:', notificationBtn);
         if (notificationBtn) {
+            // Aplicar visibilidad según modo de visualización (respaldo JS para
+            // navegadores que no soportan @media (display-mode: standalone))
+            const standaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+            notificationBtn.style.display = standaloneMode ? 'inline-flex' : 'none';
+            console.log('[FCM] NOTIS visible (standalone):', standaloneMode);
+
             notificationBtn.addEventListener('click', async () => {
                 console.log('[FCM] Botón de notificaciones clickeado');
                 const result = await enableNotifications();

@@ -2505,6 +2505,11 @@ window.deferredPrompt = null;
 
 // Capturar el evento beforeinstallprompt
 window.addEventListener('beforeinstallprompt', (e) => {
+    // No mostrar si ya estamos en modo standalone (app instalada)
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+        console.log('PWA: ya en standalone, ignorando beforeinstallprompt');
+        return;
+    }
     // Prevenir que el navegador muestre el prompt automático
     e.preventDefault();
     // Guardar el evento para usarlo después
@@ -2678,9 +2683,4 @@ if (isAppInstalled()) {
     if (appInstallBtn) {
         appInstallBtn.classList.add('hidden');
     }
-}
-
-// Service Worker
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js').catch(() => {});
 }
