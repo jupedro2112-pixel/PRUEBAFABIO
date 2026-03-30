@@ -2,45 +2,60 @@
 /**
  * Service Worker para Admin Panel - Sala de Juegos
  * Maneja notificaciones push y caché de la app
+ *
+ * IMPORTANTE: Incrementar CACHE_VERSION en cada deploy para forzar
+ * la invalidación del caché en dispositivos con la app instalada.
  */
 
-const CACHE_NAME = 'admin-sala-v1';
-const urlsToCache = [
-    '/adminprivado2026/',
-    '/adminprivado2026/admin.css',
-    '/adminprivado2026/admin.js',
-    '/adminprivado2026/manifest.json'
+// Bump this version with every deploy so the admin PWA always loads fresh code.
+const CACHE_VERSION = 'v3';
+const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
+
+// Only pre-cache stable assets (icons rarely change).
+const PRECACHE_URLS = [
+    '/icons/icon-192x192.png',
+    '/icons/icon-512x512.png'
 ];
+
+// Main admin files that must always be fetched fresh from the network after a
+// redeploy so admins never run stale admin.js code.
+function isNetworkFirst(url) {
+    return (
+        url.includes('/adminprivado2026/') ||
+        url.includes('admin.js') ||
+        url.includes('admin.css') ||
+        url.includes('manifest.json')
+    );
+}
 
 // Instalación del Service Worker
 self.addEventListener('install', (event) => {
-    console.log('[SW] Instalando Service Worker...');
+    console.log('[SW-Admin] Instalando Service Worker', CACHE_VERSION);
     
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
-                console.log('[SW] Cache abierto');
-                return cache.addAll(urlsToCache);
+                console.log('[SW-Admin] Pre-cacheando recursos estables');
+                return cache.addAll(PRECACHE_URLS);
             })
             .catch((err) => {
-                console.log('[SW] Error al cachear:', err);
+                console.log('[SW-Admin] Error al pre-cachear:', err);
             })
     );
     
-    // Activar inmediatamente
     self.skipWaiting();
 });
 
 // Activación del Service Worker
 self.addEventListener('activate', (event) => {
-    console.log('[SW] Service Worker activado');
+    console.log('[SW-Admin] Service Worker activado', CACHE_VERSION);
     
     event.waitUntil(
         caches.keys().then((cacheNames) => {
             return Promise.all(
                 cacheNames.map((cacheName) => {
                     if (cacheName !== CACHE_NAME) {
-                        console.log('[SW] Eliminando cache antiguo:', cacheName);
+                        console.log('[SW-Admin] Eliminando cache antiguo:', cacheName);
                         return caches.delete(cacheName);
                     }
                 })
@@ -48,101 +63,126 @@ self.addEventListener('activate', (event) => {
         })
     );
     
-    // Tomar control de todas las páginas
     self.clients.claim();
 });
 
 // Interceptar fetch requests
 self.addEventListener('fetch', (event) => {
-    // Solo cachear requests GET de la app admin
     if (event.request.method !== 'GET') {
         return;
     }
     
-    // No cachear requests de API o socket.io
     if (event.request.url.includes('/api/') || 
         event.request.url.includes('/socket.io/')) {
         return;
     }
-    
-    event.respondWith(
-        caches.match(event.request)
-            .then((response) => {
-                // Cache hit - retornar respuesta cacheada
-                if (response) {
-                    return response;
-                }
-                
-                // Fetch desde la red
-                return fetch(event.request)
-                    .then((response) => {
-                        // No cachear si no es válida
-                        if (!response || response.status !== 200 || response.type !== 'basic') {
-                            return response;
-                        }
-                        
-                        // Clonar respuesta para cachear
+
+    const url = event.request.url;
+
+    if (isNetworkFirst(url)) {
+        // Network-first: always try network so deploys are immediately visible.
+        event.respondWith(
+            fetch(event.request)
+                .then((response) => {
+                    if (response && response.status === 200 && response.type === 'basic') {
+                        // Only cache same-origin ('basic') responses.
+                        // Opaque cross-origin responses are excluded intentionally
+                        // to avoid caching errors or security issues.
                         const responseToCache = response.clone();
-                        
-                        caches.open(CACHE_NAME)
-                            .then((cache) => {
-                                cache.put(event.request, responseToCache);
-                            });
-                        
-                        return response;
+                        caches.open(CACHE_NAME).then((cache) => {
+                            cache.put(event.request, responseToCache);
+                        });
+                    }
+                    return response;
+                })
+                .catch(() => {
+                    return caches.match(event.request).then((cached) => {
+                        if (cached) return cached;
+                        if (event.request.mode === 'navigate') {
+                            return caches.match('/adminprivado2026/');
+                        }
                     });
-            })
-            .catch(() => {
-                // Fallback si está offline
-                if (event.request.mode === 'navigate') {
-                    return caches.match('/adminprivado2026/');
-                }
-            })
-    );
+                })
+        );
+    } else {
+        // Cache-first for icons and other stable assets.
+        event.respondWith(
+            caches.match(event.request)
+                .then((response) => {
+                    if (response) {
+                        return response;
+                    }
+                    return fetch(event.request)
+                        .then((networkResponse) => {
+                            if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+                                return networkResponse;
+                            }
+                            const responseToCache = networkResponse.clone();
+                            caches.open(CACHE_NAME)
+                                .then((cache) => {
+                                    cache.put(event.request, responseToCache);
+                                });
+                            return networkResponse;
+                        });
+                })
+                .catch(() => {
+                    if (event.request.mode === 'navigate') {
+                        return caches.match('/adminprivado2026/');
+                    }
+                })
+        );
+    }
 });
 
 // Manejar notificaciones push
+// Supports both legacy (payload.title/body) and FCM format (payload.notification.title/body)
 self.addEventListener('push', (event) => {
-    console.log('[SW] Push recibido:', event);
+    console.log('[SW-Admin] Push recibido:', event);
     
-    let data = {};
+    let title = 'Admin Sala de Juegos';
+    let body = 'Tienes una nueva notificación';
+    let icon = '/icons/icon-192x192.png';
+    let badge = '/icons/icon-72x72.png';
+    let tag = 'admin-notification';
+    let extraData = {};
+
     try {
-        data = event.data.json();
+        const payload = event.data.json();
+
+        const notif = payload.notification || {};
+        const webpushNotif = (payload.webpush && payload.webpush.notification) || {};
+
+        title = notif.title || webpushNotif.title || payload.title || title;
+        body = notif.body || webpushNotif.body || payload.body || body;
+        icon = notif.icon || webpushNotif.icon || payload.icon || icon;
+        badge = notif.badge || webpushNotif.badge || payload.badge || badge;
+        tag = (payload.data && payload.data.tag) || payload.tag || tag;
+        extraData = payload.data || {};
     } catch (e) {
-        data = {
-            title: 'Nueva notificación',
-            body: event.data.text(),
-            icon: '/icons/icon-192x192.png'
-        };
+        try { body = event.data.text(); } catch (_) {}
     }
     
     const options = {
-        body: data.body || 'Tienes un nuevo mensaje',
-        icon: data.icon || '/icons/icon-192x192.png',
-        badge: data.badge || '/icons/icon-72x72.png',
-        tag: data.tag || 'default',
-        requireInteraction: data.requireInteraction || false,
-        data: data.data || {},
-        actions: data.actions || [
-            {
-                action: 'open',
-                title: 'Abrir'
-            },
-            {
-                action: 'close',
-                title: 'Cerrar'
-            }
+        body,
+        icon,
+        badge,
+        tag,
+        requireInteraction: extraData.requireInteraction || false,
+        data: extraData,
+        actions: [
+            { action: 'open', title: 'Abrir' },
+            { action: 'close', title: 'Cerrar' }
         ]
     };
     
     event.waitUntil(
-        self.registration.showNotification(data.title || 'Admin Sala', options)
+        self.registration.showNotification(title, options)
     );
 });
 
 // Manejar click en notificación
 self.addEventListener('notificationclick', (event) => {
-    console.log('[SW] Click en notificación:', event);
+    console.log('[SW-Admin] Click en notificación:', event);
     
     event.notification.close();
     
@@ -160,13 +200,11 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil(
         clients.matchAll({ type: 'window', includeUncontrolled: true })
             .then((clientList) => {
-                // Si ya hay una ventana abierta, enfocarla
                 for (const client of clientList) {
                     if (client.url.includes('/adminprivado2026/') && 'focus' in client) {
                         return client.focus();
                     }
                 }
-                // Si no, abrir nueva ventana
                 if (clients.openWindow) {
                     return clients.openWindow(url);
                 }
@@ -176,13 +214,13 @@ self.addEventListener('notificationclick', (event) => {
 
 // Escuchar mensajes desde la app
 self.addEventListener('message', (event) => {
-    console.log('[SW] Mensaje recibido:', event.data);
+    console.log('[SW-Admin] Mensaje recibido:', event.data);
     
-    if (event.data.type === 'SKIP_WAITING') {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     }
     
-    if (event.data.type === 'SHOW_NOTIFICATION') {
+    if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
         self.registration.showNotification(event.data.title, {
             body: event.data.body,
             icon: event.data.icon || '/icons/icon-192x192.png',
@@ -193,18 +231,5 @@ self.addEventListener('message', (event) => {
     }
 });
 
-// Sincronización en background (para mensajes pendientes)
-self.addEventListener('sync', (event) => {
-    if (event.tag === 'sync-messages') {
-        console.log('[SW] Sincronización de mensajes');
-        event.waitUntil(syncPendingMessages());
-    }
-});
+console.log('[SW-Admin] Service Worker cargado', CACHE_VERSION);
 
-// Función para sincronizar mensajes pendientes
-async function syncPendingMessages() {
-    // Esta función se conectaría con la API para enviar mensajes pendientes
-    console.log('[SW] Sincronizando mensajes pendientes...');
-}
-
-console.log('[SW] Service Worker cargado');

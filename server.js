@@ -169,6 +169,11 @@ setInterval(() => {
 }, 60000);
 
 const app = express();
+// Trust the first proxy hop (AWS ALB / Elastic Beanstalk / Cloudflare) so that
+// Express sees the real client IP and HTTPS status from X-Forwarded-* headers.
+// Without this, req.ip returns the internal LB address and Socket.IO/CORS may
+// behave incorrectly when accessed through a custom domain like vipcargas.com.
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
@@ -250,10 +255,22 @@ app.use(express.json({
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',
   index: false,
+  // Default: cache static assets for 1 day. HTML, JS, CSS and service-worker
+  // files override this below so that a redeploy is picked up immediately by
+  // installed PWAs and browsers without waiting 24 hours.
   maxAge: '1d',
-  setHeaders: (res, path) => {
-    // No cachear el service worker
-    if (path.includes('firebase-messaging-sw.js')) {
+  setHeaders: (res, filePath) => {
+    // Never cache files that change with every deploy so installed PWAs always
+    // get fresh code after a redeploy on AWS Elastic Beanstalk.
+    const noCache =
+      filePath.endsWith('.html') ||
+      filePath.endsWith('.js') ||
+      filePath.endsWith('.css') ||
+      filePath.includes('firebase-messaging-sw') ||
+      filePath.includes('user-sw') ||
+      filePath.includes('admin-sw') ||
+      filePath.includes('manifest.json');
+    if (noCache) {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');

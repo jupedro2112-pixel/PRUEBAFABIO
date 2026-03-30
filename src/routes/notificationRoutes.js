@@ -640,4 +640,180 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
 let _io = null;
 router.setIo = (ioInstance) => { _io = ioInstance; };
 
+// ============================================
+// LISTAR USUARIOS CON ESTADO DE TOKEN (Para panel de notificaciones)
+// ============================================
+router.get('/users-status', requireAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 50, filter = 'all' } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    let query = {};
+    if (filter === 'with_token') {
+      query = { fcmToken: { $exists: true, $ne: null } };
+    } else if (filter === 'without_token') {
+      query = { $or: [{ fcmToken: { $exists: false } }, { fcmToken: null }] };
+    }
+
+    const total = await User.countDocuments(query);
+    const users = await User.find(query)
+      .select('username fcmToken fcmTokenUpdatedAt lastLogin createdAt')
+      .sort({ fcmTokenUpdatedAt: -1, lastLogin: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    const totalUsers = await User.countDocuments();
+    const usersWithToken = await User.countDocuments({ fcmToken: { $exists: true, $ne: null } });
+
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        usersWithToken,
+        usersWithoutToken: totalUsers - usersWithToken,
+        coverage: totalUsers > 0 ? Math.round((usersWithToken / totalUsers) * 100) : 0
+      },
+      users: users.map(u => ({
+        username: u.username,
+        hasToken: !!(u.fcmToken),
+        tokenUpdatedAt: u.fcmTokenUpdatedAt,
+        lastLogin: u.lastLogin,
+        tokenPreview: u.fcmToken ? u.fcmToken.substring(0, 20) + '...' : null
+      })),
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    console.error('[FCM] Error en users-status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// ENVIAR NOTIFICACIÓN POR LOTES CONFIGURABLES
+// Permite enviar a todos o a usuarios con token, en lotes de 50/100/200
+// Limpia automáticamente tokens inválidos detectados en el envío
+// ============================================
+router.post('/send-batch', requireAdmin, async (req, res) => {
+  try {
+    const { title, body, data, batchSize = 100, usernames } = req.body;
+
+    if (!title || !body) {
+      return res.status(400).json({ error: 'Título y cuerpo son requeridos' });
+    }
+
+    const validBatchSizes = [50, 100, 200];
+    const chunkSize = validBatchSizes.includes(parseInt(batchSize)) ? parseInt(batchSize) : 100;
+
+    // Build query: if specific usernames were provided, send only to those
+    const query = usernames && usernames.length > 0
+      ? { username: { $in: usernames }, fcmToken: { $exists: true, $ne: null } }
+      : { fcmToken: { $exists: true, $ne: null } };
+
+    const allUsers = await User.find(query).select('username fcmToken').lean();
+
+    if (allUsers.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No hay usuarios con token FCM para enviar',
+        totalUsers: 0, successCount: 0, failureCount: 0, cleanedTokens: 0,
+        batches: 0, batchResults: []
+      });
+    }
+
+    console.log(`[FCM Batch] Enviando a ${allUsers.length} usuarios en lotes de ${chunkSize}`);
+
+    let totalSuccess = 0;
+    let totalFailure = 0;
+    let totalCleaned = 0;
+    const batchResults = [];
+    const allFailedTokens = [];
+
+
+    for (let i = 0; i < allUsers.length; i += chunkSize) {
+      const chunk = allUsers.slice(i, i + chunkSize);
+      const batchNum = Math.floor(i / chunkSize) + 1;
+      let batchSuccess = 0;
+      let batchFail = 0;
+      const batchFailed = [];
+
+      for (const user of chunk) {
+        const result = await sendNotificationToUser(user.fcmToken, title, body, data || {});
+        if (result.success) {
+          batchSuccess++;
+        } else {
+          batchFail++;
+          const errorMsg = result.error || '';
+          const errorCode = result.code || '';
+          const isInvalid =
+            errorMsg.includes('registration-token-not-registered') ||
+            errorMsg.includes('invalid-registration-token') ||
+            errorMsg.includes('Requested entity was not found') ||
+            errorMsg.includes('NotRegistered') ||
+            errorCode === 'messaging/registration-token-not-registered' ||
+            errorCode === 'messaging/invalid-registration-token';
+
+          batchFailed.push({ username: user.username, error: errorMsg, code: errorCode, cleaned: isInvalid });
+
+          if (isInvalid) {
+            await User.updateOne(
+              { username: user.username },
+              { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+            );
+            totalCleaned++;
+            console.log(`[FCM Batch] 🧹 Token inválido borrado: ${user.username}`);
+            if (_io) {
+              _io.to('admins').emit('user_app_status', {
+                username: user.username,
+                appInstalled: false
+              });
+            }
+          }
+        }
+      }
+
+      totalSuccess += batchSuccess;
+      totalFailure += batchFail;
+      allFailedTokens.push(...batchFailed);
+
+      batchResults.push({
+        batch: batchNum,
+        total: chunk.length,
+        success: batchSuccess,
+        failure: batchFail,
+        failed: batchFailed
+      });
+
+      console.log(`[FCM Batch] Lote ${batchNum}: ${batchSuccess}✅ ${batchFail}❌`);
+    }
+
+    console.log(`[FCM Batch] ✅ Total: ${totalSuccess} exitosas, ${totalFailure} fallidas, ${totalCleaned} tokens limpiados`);
+
+    res.json({
+      success: true,
+      totalUsers: allUsers.length,
+      successCount: totalSuccess,
+      failureCount: totalFailure,
+      cleanedTokens: totalCleaned,
+      batches: batchResults.length,
+      batchSize: chunkSize,
+      batchResults: batchResults.map(b => ({
+        batch: b.batch,
+        total: b.total,
+        success: b.success,
+        failure: b.failure
+      })),
+      failedTokens: allFailedTokens.slice(0, 20)
+    });
+  } catch (error) {
+    console.error('[FCM Batch] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

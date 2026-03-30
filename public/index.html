@@ -2380,50 +2380,52 @@
         const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
         
         // ============================================
-        // REGISTRAR SERVICE WORKER (SIN CACHÉ)
+        // REGISTRAR SERVICE WORKER
         // ============================================
+        // Root cause fix for "PWA breaks after redeploy" AND "push notifications not arriving":
+        //   - REMOVED: the "unregister all SWs + timestamp URL" approach.
+        //     That approach was re-creating the FCM subscription on every page load
+        //     (different URL → different SW registration → old FCM token became invalid)
+        //     and was also replacing the caching user-sw.js on each load.
+        //   - Now we register /user-sw.js as the single SW (handles caching + push events).
+        //     The server sends this file with no-cache headers so it is always up-to-date.
+        //   - FCM getToken() is called with this SW's registration so push subscriptions
+        //     are stable and survive page reloads.
         async function registerServiceWorker() {
             if (!('serviceWorker' in navigator)) {
                 console.log('[PWA] Service Worker no soportado');
-                return false;
+                return null;
             }
             
             try {
-                // Desregistrar service workers antiguos para evitar caché
-                const registrations = await navigator.serviceWorker.getRegistrations();
-                for (let registration of registrations) {
-                    console.log('[PWA] Desregistrando SW antiguo:', registration.scope);
-                    await registration.unregister();
-                }
-                
-                // Registrar nuevo service worker con timestamp para evitar caché
-                const swUrl = '/firebase-messaging-sw.js?v=' + Date.now();
-                const registration = await navigator.serviceWorker.register(swUrl, {
+                // Register with updateViaCache:'none' so the browser always fetches a
+                // fresh copy of the SW script (server already sends no-cache headers).
+                const registration = await navigator.serviceWorker.register('/user-sw.js', {
                     updateViaCache: 'none'
                 });
                 
-                console.log('[PWA] Service Worker registrado:', registration);
+                console.log('[PWA] Service Worker registrado:', registration.scope);
                 
-                // Esperar a que esté activo
+                // Wait until the SW is active and controlling the page.
                 await navigator.serviceWorker.ready;
                 console.log('[PWA] Service Worker listo');
                 
-                return true;
+                return registration;
             } catch (error) {
                 console.log('[PWA] Error al registrar Service Worker:', error);
-                return false;
+                return null;
             }
         }
         
         // Registrar SW e inicializar notificaciones
-        registerServiceWorker().then(() => {
-            initNotifications();
+        registerServiceWorker().then((swRegistration) => {
+            initNotifications(swRegistration);
         });
         
         // ============================================
         // INICIALIZAR NOTIFICACIONES PUSH (AUTOMÁTICO)
         // ============================================
-        async function initNotifications() {
+        async function initNotifications(swRegistration) {
             console.log('[FCM] Inicializando notificaciones...');
             
             // Detectar iOS/Safari
@@ -2485,20 +2487,19 @@
                 if (permission === 'granted') {
                     console.log('[FCM] ✅ Permiso concedido');
                     
-                    // Esperar a que el Service Worker esté listo
-                    await new Promise(resolve => setTimeout(resolve, 1500));
-                    
-                    // Obtener token FCM
+                    // Obtener token FCM usando la misma SW registration que se pasó
+                    // (evita que FCM y la SW de caché compitan por el mismo scope)
                     console.log('[FCM] Solicitando token FCM...');
                     let currentToken;
                     try {
-                        // Para iOS, el Service Worker debe estar registrado correctamente
-                        const swRegistration = await navigator.serviceWorker.ready;
-                        console.log('[FCM] Service Worker listo:', swRegistration.scope);
+                        // Use the SW registration that was passed in (user-sw.js).
+                        // If it wasn't provided, fall back to navigator.serviceWorker.ready.
+                        const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
+                        console.log('[FCM] Service Worker listo:', usedRegistration.scope);
                         
                         currentToken = await messaging.getToken({ 
                             vapidKey: VAPID_KEY,
-                            serviceWorkerRegistration: swRegistration
+                            serviceWorkerRegistration: usedRegistration
                         });
                         
                         console.log('[FCM] getToken completado');
@@ -2595,7 +2596,7 @@
                 await sendTokenToServer(token);
             } else {
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
-                await initNotifications();
+                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
             }
         };
         
@@ -2639,7 +2640,7 @@
                 fcmToken = null;
                 
                 // Reintentar obtener el token
-                await initNotifications();
+                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
                 
                 const newToken = localStorage.getItem('fcmToken');
                 if (newToken) {

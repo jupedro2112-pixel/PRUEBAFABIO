@@ -60,23 +60,12 @@ window.addEventListener('resize', adjustLayout);
 // Pequeño delay para que el navegador complete el reflow tras cambio de orientación
 window.addEventListener('orientationchange', () => setTimeout(adjustLayout, 150));
 
-// CORREGIDO: Registrar Service Worker del usuario
+// Service Worker registration is handled by the inline script in index.html
+// (registers /user-sw.js with updateViaCache:'none' and passes the registration
+// to FCM so push subscriptions are stable across page loads).
+// This function is kept as a no-op to avoid breaking any existing call sites.
 async function registerUserServiceWorker() {
-    if (!('serviceWorker' in navigator)) {
-        console.log('⚠️ Service Worker no soportado');
-        return;
-    }
-    
-    try {
-        const registration = await navigator.serviceWorker.register('/user-sw.js');
-        console.log('✅ Service Worker de usuario registrado:', registration.scope);
-        
-        // Solicitar permiso para notificaciones
-        requestNotificationPermission();
-        
-    } catch (error) {
-        console.error('❌ Error registrando Service Worker:', error);
-    }
+    // No-op: registration is done in index.html inline script
 }
 
 // CORREGIDO: Solicitar permiso para notificaciones
