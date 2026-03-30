@@ -3,7 +3,6 @@
 // ============================================
 
 const admin = require('firebase-admin');
-const path = require('path');
 
 // Variable para tracking de inicialización
 let isInitialized = false;
@@ -36,6 +35,8 @@ function isInvalidTokenError(errorMsg, errorCode) {
 
 // ============================================
 // INICIALIZAR FIREBASE ADMIN
+// Usa exclusivamente env vars de AWS Elastic Beanstalk.
+// NO lee ningún archivo .json del proyecto.
 // ============================================
 function initializeFirebase() {
   if (isInitialized) {
@@ -43,29 +44,29 @@ function initializeFirebase() {
     return true;
   }
 
+  const projectId   = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey  = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!projectId || !clientEmail || !privateKey) {
+    console.error('[FCM] ❌ Faltan variables de entorno para Firebase Admin:');
+    if (!projectId)   console.error('[FCM]   - FIREBASE_PROJECT_ID no está definida');
+    if (!clientEmail) console.error('[FCM]   - FIREBASE_CLIENT_EMAIL no está definida');
+    if (!privateKey)  console.error('[FCM]   - FIREBASE_PRIVATE_KEY no está definida');
+    return false;
+  }
+
   try {
-    // Buscar el archivo de credenciales
-    const serviceAccountPath = path.join(__dirname, '../../firebase-service-account.json');
-    
-    // Verificar si existe el archivo
-    const fs = require('fs');
-    if (!fs.existsSync(serviceAccountPath)) {
-      console.error('[FCM] ❌ No se encontró firebase-service-account.json');
-      console.error('[FCM] Asegúrate de colocar el archivo en la raíz del proyecto');
-      return false;
-    }
-
-    // Cargar credenciales
-    const serviceAccount = require(serviceAccountPath);
-
-    // Inicializar Firebase Admin
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      projectId: 'saladejuegos-673fa'
+      credential: admin.credential.cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(/\\n/g, '\n'),
+      }),
     });
 
     isInitialized = true;
-    console.log('[FCM] ✅ Firebase Admin inicializado correctamente');
+    console.log('[FCM] ✅ Firebase Admin inicializado correctamente con env vars');
     return true;
   } catch (error) {
     console.error('[FCM] ❌ Error al inicializar Firebase Admin:', error.message);

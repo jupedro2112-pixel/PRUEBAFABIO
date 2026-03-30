@@ -533,15 +533,17 @@ router.get('/stats', async (req, res) => {
 router.get('/diagnostic', async (req, res) => {
   try {
     const admin = require('firebase-admin');
-    const fs = require('fs');
-    const path = require('path');
     
     // Verificar si Firebase Admin está inicializado
     const firebaseInitialized = admin.apps.length > 0;
-    
-    // Verificar si el archivo de credenciales existe
-    const credPath = path.join(__dirname, '../../firebase-service-account.json');
-    const credExists = fs.existsSync(credPath);
+
+    // Verificar env vars (sin exponer sus valores)
+    const envVars = {
+      FIREBASE_PROJECT_ID:   !!process.env.FIREBASE_PROJECT_ID,
+      FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
+      FIREBASE_PRIVATE_KEY:  !!process.env.FIREBASE_PRIVATE_KEY,
+    };
+    const allEnvVarsPresent = Object.values(envVars).every(Boolean);
     
     // Contar usuarios con token
     const usersWithToken = await User.countDocuments({ 
@@ -552,8 +554,8 @@ router.get('/diagnostic', async (req, res) => {
       success: true,
       diagnostic: {
         firebaseInitialized,
-        credentialsFileExists: credExists,
-        credentialsPath: credPath,
+        envVarsPresent: envVars,
+        allEnvVarsPresent,
         usersWithToken,
         timestamp: new Date().toISOString()
       }

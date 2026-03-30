@@ -3,18 +3,31 @@
 // ============================================
 // SCRIPT PARA ENVIAR NOTIFICACIONES PUSH
 // Uso: node send-notification.js <fcm-token> "Título" "Mensaje"
+// Requiere env vars: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
 // ============================================
 
 const admin = require('firebase-admin');
-const path = require('path');
 
-// Cargar credenciales
-const serviceAccount = require(path.join(__dirname, '../firebase-service-account.json'));
+// Cargar credenciales desde variables de entorno
+const projectId   = process.env.FIREBASE_PROJECT_ID;
+const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+const privateKey  = process.env.FIREBASE_PRIVATE_KEY;
+
+if (!projectId || !clientEmail || !privateKey) {
+  console.error('❌ Faltan variables de entorno para Firebase Admin:');
+  if (!projectId)   console.error('   - FIREBASE_PROJECT_ID no está definida');
+  if (!clientEmail) console.error('   - FIREBASE_CLIENT_EMAIL no está definida');
+  if (!privateKey)  console.error('   - FIREBASE_PRIVATE_KEY no está definida');
+  process.exit(1);
+}
 
 // Inicializar Firebase Admin
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-  projectId: 'saladejuegos-673fa'
+  credential: admin.credential.cert({
+    projectId,
+    clientEmail,
+    privateKey: privateKey.replace(/\\n/g, '\n'),
+  }),
 });
 
 // Obtener argumentos
