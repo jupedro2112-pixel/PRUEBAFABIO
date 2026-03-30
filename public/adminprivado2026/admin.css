@@ -1697,6 +1697,31 @@ body {
     .date-inputs {
         flex-direction: column;
     }
+
+    /* Prevent horizontal overflow on mobile */
+    .section-content,
+    .users-table-wrapper,
+    .transactions-table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .modal-content {
+        width: 95vw;
+        max-width: 95vw;
+        margin: 10px;
+        padding: 16px;
+    }
+
+    .header-bar {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .search-bar {
+        width: 100%;
+        min-width: 0;
+    }
 }
 
 /* ============================================

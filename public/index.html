@@ -183,6 +183,8 @@
             display: flex;
             align-items: center;
             justify-content: flex-start;
+            gap: 8px;
+            min-width: 0;
         }
         
         .header-center {
@@ -190,6 +192,8 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
+            min-width: 0;
+            overflow: hidden;
         }
         
         .header-right {
@@ -197,6 +201,8 @@
             align-items: center;
             justify-content: flex-end;
             gap: 8px;
+            min-width: 0;
+            flex-shrink: 0;
         }
         
         @keyframes golden-shimmer {
@@ -1700,12 +1706,16 @@
     <div id="chatScreen" class="chat-screen hidden">
         <!-- Header -->
         <header class="header">
-            <!-- Sección izquierda: Fueguito -->
+            <!-- Sección izquierda: Fueguito + Plataforma -->
             <div class="header-left">
                 <button id="fireBtn" class="fire-btn" title="Racha diaria - Reclama cada día!">
                     🔥
                     <span class="fire-streak" id="fireStreak">0</span>
                 </button>
+                <div class="platform-section">
+                    <span class="platform-label">PLATAFORMA</span>
+                    <a href="https://www.jugaygana.bet" target="_blank" rel="noopener noreferrer" class="jugaygana-btn">🎮 JUGAR</a>
+                </div>
             </div>
             
             <!-- Sección centro: Reembolsos -->
@@ -1824,7 +1834,9 @@
                 <div class="input-group">
                     <label>Teléfono *</label>
                     <input type="tel" id="registerPhone" name="phone" placeholder="+54 9 11 1234-5678" required autocomplete="tel" minlength="8">
-                    <span style="font-size: 11px; color: #888;">Mínimo 8 dígitos</span>
+                    <span style="font-size: 12px; color: #ffaa00; margin-top: 6px; display: block; background: rgba(255,170,0,0.1); border: 1px solid rgba(255,170,0,0.3); border-radius: 8px; padding: 8px 10px; line-height: 1.5;">
+                        ⚠️ <strong>Importante:</strong> Ingresá tu número <strong>real</strong>. Lo usamos para recuperar tu cuenta y enviarte regalos/promociones.
+                    </span>
                 </div>
                 <div class="input-group">
                     <label>Email (opcional)</label>
@@ -1840,12 +1852,11 @@
     </div>
 
     <!-- Modal Cambio de Contraseña Obligatorio -->
-    <div id="changePasswordModal" class="modal hidden">
-        <div class="modal-content" style="position: relative;">
-            <button onclick="hideModal('changePasswordModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+    <div id="changePasswordModal" class="modal hidden" onclick="event.stopPropagation()">
+        <div class="modal-content" style="position: relative;" onclick="event.stopPropagation()">
             <div class="modal-header">
-                <h2>🔐 Cambio de Contraseña</h2>
-                <p>Por seguridad, debes cambiar tu contraseña y verificar tu WhatsApp.</p>
+                <h2>🔐 Cambio de Contraseña Obligatorio</h2>
+                <p>⚠️ Por seguridad, <strong>debes cambiar tu contraseña</strong> antes de continuar. No puedes cerrar esta pantalla hasta completarlo.</p>
             </div>
             <form id="changePasswordForm" autocomplete="on">
                 <div class="input-group">
