@@ -36,6 +36,8 @@ let commandSuggestions = [];
 let selectedCommandIndex = -1;
 let processedMessageIds = new Set(); // CORREGIDO: Para evitar mensajes duplicados
 let isLoadingMessages = false; // Para evitar cargas múltiples simultáneas
+let activeConversationId = null; // Identificador estable del chat activo (race condition fix)
+let activeFetchController = null; // AbortController para cancelar fetches de mensajes anteriores
 
 // PWA - Instalación de App
 let deferredInstallPrompt = null;
@@ -595,6 +597,7 @@ function initSocket() {
         console.log('💳 Chat moved to payments:', data);
         if (data.userId === selectedUserId) {
             selectedUserId = null;
+            activeConversationId = null; // RACE CONDITION FIX
             elements.chatHeader.classList.add('hidden');
             elements.chatInputArea.classList.add('hidden');
             elements.chatMessages.innerHTML = `
@@ -900,6 +903,7 @@ async function selectConversation(userId, username) {
     
     selectedUserId = userId;
     selectedUsername = username;
+    activeConversationId = userId; // Identificador estable para verificar respuestas tardías
     
     // Update UI inmediatamente
     document.querySelectorAll('.conversation-item').forEach(item => {
@@ -953,7 +957,10 @@ async function selectConversation(userId, username) {
     // CORREGIDO: Cargar mensajes en paralelo (no await) para eliminar lag
     loadMessages(userId).then(() => {
         // Mark as read después de cargar (confirma en DB)
-        markMessagesAsRead(userId);
+        // RACE CONDITION FIX: Solo marcar leído si este chat sigue activo
+        if (userId === activeConversationId) {
+            markMessagesAsRead(userId);
+        }
     });
     
     // Load user info en paralelo
@@ -996,27 +1003,34 @@ function showBrowserNotification(title, body, icon = '/favicon.ico') {
 }
 
 async function loadMessages(userId) {
-    // CORREGIDO: Evitar cargas múltiples
-    if (isLoadingMessages) {
-        console.log('⚠️ Ya se están cargando mensajes, ignorando solicitud duplicada');
-        return;
+    // RACE CONDITION FIX: Crear un nuevo AbortController para este fetch
+    if (activeFetchController) {
+        activeFetchController.abort();
     }
-    
+    const controller = new AbortController();
+    activeFetchController = controller;
+
     isLoadingMessages = true;
     
     try {
         // Mostrar mensajes cacheados inmediatamente si existen
         const cachedMessages = messageCache.get(userId);
         if (cachedMessages && cachedMessages.length > 0) {
-            renderMessages(cachedMessages);
+            // Verificar que siga siendo el chat activo antes de renderizar cache
+            if (userId === activeConversationId) {
+                renderMessages(cachedMessages);
+            }
         } else {
-            // Solo mostrar loading si no hay cache
-            elements.chatMessages.innerHTML = '<div class="empty-state"><span class="icon icon-sync" style="animation: spin 1s linear infinite;"></span><p>Cargando mensajes...</p></div>';
+            // Solo mostrar loading si no hay cache y sigue activo
+            if (userId === activeConversationId) {
+                elements.chatMessages.innerHTML = '<div class="empty-state"><span class="icon icon-sync" style="animation: spin 1s linear infinite;"></span><p>Cargando mensajes...</p></div>';
+            }
         }
         
         // Cargar últimos 15 mensajes previos (límite del panel de admin)
         const response = await fetch(`${API_URL}/api/messages/${userId}?limit=15`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+            headers: { 'Authorization': `Bearer ${currentToken}` },
+            signal: controller.signal
         });
         
         if (!response.ok) throw new Error('Failed to load messages');
@@ -1024,18 +1038,32 @@ async function loadMessages(userId) {
         const data = await response.json();
         const messages = data.messages || [];
         
+        // RACE CONDITION FIX: Ignorar respuesta si ya no es el chat activo
+        if (userId !== activeConversationId) {
+            console.log('⚠️ Respuesta de chat antiguo ignorada:', userId, '!= activo:', activeConversationId);
+            return;
+        }
+        
         // Cache messages
         messageCache.set(userId, messages);
         
         // Solo re-renderizar si hay cambios
         renderMessages(messages);
     } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log('🚫 Fetch de mensajes cancelado para:', userId);
+            return;
+        }
         console.error('Error loading messages:', error);
-        // Solo mostrar error si no hay cache
-        if (!messageCache.get(userId)) {
+        // Solo mostrar error si sigue siendo el chat activo y no hay cache
+        if (userId === activeConversationId && !messageCache.get(userId)) {
             elements.chatMessages.innerHTML = '<div class="empty-state"><span class="icon icon-times-circle"></span><p>Error cargando mensajes</p></div>';
         }
     } finally {
+        // Limpiar controller solo si sigue siendo el activo
+        if (activeFetchController === controller) {
+            activeFetchController = null;
+        }
         isLoadingMessages = false;
     }
 }
@@ -1583,6 +1611,12 @@ async function loadUserInfo(userId) {
         const data = await response.json();
         const user = data.user;
         
+        // RACE CONDITION FIX: Ignorar respuesta si ya no es el chat activo
+        if (userId !== activeConversationId) {
+            console.log('⚠️ Respuesta de userInfo de chat antiguo ignorada:', userId);
+            return;
+        }
+        
         elements.chatBalance.textContent = formatMoney(user.balance);
         elements.chatStatus.textContent = user.online ? 'En línea' : 'Desconectado';
         elements.chatStatus.className = user.online ? 'status online' : 'status';
@@ -1824,6 +1858,7 @@ async function sendToPayments() {
     // Optimistic UI - clear chat panel immediately
     const userIdToRemove = selectedUserId;
     selectedUserId = null;
+    activeConversationId = null; // RACE CONDITION FIX
     elements.chatHeader.classList.add('hidden');
     elements.chatInputArea.classList.add('hidden');
     elements.chatMessages.innerHTML = `
@@ -1894,6 +1929,7 @@ async function sendToOpen() {
     // Optimistic UI - clear chat panel immediately
     const userIdToRemove = selectedUserId;
     selectedUserId = null;
+    activeConversationId = null; // RACE CONDITION FIX
     elements.chatHeader.classList.add('hidden');
     elements.chatInputArea.classList.add('hidden');
     elements.chatMessages.innerHTML = `
@@ -1955,6 +1991,13 @@ async function sendToOpen() {
 function deselectChat() {
     if (!selectedUserId) return;
     
+    // RACE CONDITION FIX: Cancelar fetch en curso y limpiar id activo
+    if (activeFetchController) {
+        activeFetchController.abort();
+        activeFetchController = null;
+    }
+    activeConversationId = null;
+
     // Salir de la sala de chat
     if (socket) {
         socket.emit('leave_chat_room', { userId: selectedUserId });
