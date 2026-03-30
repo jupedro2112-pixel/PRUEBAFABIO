@@ -48,6 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('load', adjustLayout);
 window.addEventListener('resize', adjustLayout);
+// Pequeño delay para que el navegador complete el reflow tras cambio de orientación
 window.addEventListener('orientationchange', () => setTimeout(adjustLayout, 150));
 
 // CORREGIDO: Registrar Service Worker del usuario
@@ -2391,7 +2392,7 @@ function adjustLayout() {
     const promoBanner = document.querySelector('.promo-banner');
     const chatSection = document.querySelector('.chat-section');
 
-    if (!header) return;
+    if (!header || !chatSection) return;
 
     const headerHeight = header.getBoundingClientRect().height;
 
@@ -2400,15 +2401,11 @@ function adjustLayout() {
         if (bannerComputed.display !== 'none') {
             promoBanner.style.top = headerHeight + 'px';
             const bannerHeight = promoBanner.getBoundingClientRect().height;
-            if (chatSection) {
-                chatSection.style.marginTop = (headerHeight + bannerHeight) + 'px';
-            }
+            chatSection.style.marginTop = (headerHeight + bannerHeight) + 'px';
         } else {
-            if (chatSection) {
-                chatSection.style.marginTop = headerHeight + 'px';
-            }
+            chatSection.style.marginTop = headerHeight + 'px';
         }
-    } else if (chatSection) {
+    } else {
         chatSection.style.marginTop = headerHeight + 'px';
     }
 }
