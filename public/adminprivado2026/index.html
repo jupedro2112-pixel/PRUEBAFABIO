@@ -84,6 +84,10 @@
                     <span class="icon icon-chart"></span>
                     <span>Estadísticas</span>
                 </a>
+                <a href="#" class="nav-item" data-section="notifications">
+                    <span class="icon icon-bell"></span>
+                    <span>Notificaciones</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -448,6 +452,109 @@
                 </div>
             </section>
 
+            <!-- ============================================================
+                 PANEL DE NOTIFICACIONES PUSH
+                 Ruta: /adminprivado2026/ → sección "Notificaciones" en el nav
+                 ============================================================ -->
+            <section id="notificationsSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-bell"></span> Panel de Notificaciones Push</h2>
+                    <button id="notifRefreshBtn" class="btn btn-secondary btn-sm" onclick="loadNotificationsPanel()">🔄 Actualizar</button>
+                </div>
+
+                <!-- Stats de tokens -->
+                <div class="stats-grid" id="notifStatsGrid" style="margin-bottom:1.5rem">
+                    <div class="stat-card">
+                        <span class="icon icon-users"></span>
+                        <span id="notifTotalUsers" class="stat-number">—</span>
+                        <span class="stat-label">Total Usuarios</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#00ff88">
+                        <span class="icon icon-mobile" style="color:#00ff88">📱</span>
+                        <span id="notifWithToken" class="stat-number" style="color:#00ff88">—</span>
+                        <span class="stat-label">Con App instalada</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#888">
+                        <span style="font-size:1.4rem">📵</span>
+                        <span id="notifWithoutToken" class="stat-number" style="color:#888">—</span>
+                        <span class="stat-label">Sin App / Sin token</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#6366f1">
+                        <span style="font-size:1.4rem">📊</span>
+                        <span id="notifCoverage" class="stat-number" style="color:#6366f1">—%</span>
+                        <span class="stat-label">Cobertura</span>
+                    </div>
+                </div>
+
+                <!-- Compositor de notificación -->
+                <div class="commands-section" style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa)">✉️ Redactar notificación</h3>
+                    <div class="form-group">
+                        <label class="form-label">Título *</label>
+                        <input type="text" id="notifTitle" class="form-input" placeholder="Ej: 🎉 Nuevo bono disponible" maxlength="100" />
+                    </div>
+                    <div class="form-group" style="margin-top:.75rem">
+                        <label class="form-label">Mensaje *</label>
+                        <textarea id="notifBody" class="form-input" rows="3" placeholder="Ej: Ingresá ahora y reclamá tu bono de reactivación." maxlength="250" style="resize:vertical"></textarea>
+                    </div>
+
+                    <div style="display:flex;gap:1rem;margin-top:1rem;flex-wrap:wrap;align-items:center">
+                        <!-- Segmento -->
+                        <div>
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Segmento</label>
+                            <select id="notifSegment" class="form-input" style="min-width:180px">
+                                <option value="all">Todos con app instalada</option>
+                                <option value="specific">Usuarios específicos</option>
+                            </select>
+                        </div>
+                        <!-- Tamaño de lote -->
+                        <div>
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Tamaño de lote</label>
+                            <select id="notifBatchSize" class="form-input" style="min-width:120px">
+                                <option value="50">50</option>
+                                <option value="100" selected>100</option>
+                                <option value="200">200</option>
+                            </select>
+                        </div>
+                        <!-- Botón enviar -->
+                        <div style="align-self:flex-end">
+                            <button id="notifSendBtn" class="btn btn-primary" onclick="sendBatchNotification()">🚀 Enviar notificación</button>
+                        </div>
+                    </div>
+
+                    <!-- Selección de usuarios específicos (oculto por defecto) -->
+                    <div id="notifSpecificUsers" style="display:none;margin-top:1rem">
+                        <label class="form-label">Usernames (uno por línea o separados por coma)</label>
+                        <textarea id="notifUsernames" class="form-input" rows="4" placeholder="usuario1&#10;usuario2&#10;usuario3"></textarea>
+                    </div>
+                </div>
+
+                <!-- Resultado del último envío -->
+                <div id="notifResult" style="display:none;background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+                    <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa)">📋 Resultado del envío</h3>
+                    <div id="notifResultContent"></div>
+                </div>
+
+                <!-- Lista de usuarios con estado de token -->
+                <div style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+                        <h3 style="font-size:1rem;color:var(--text-secondary,#aaa)">👥 Usuarios y estado de app</h3>
+                        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                            <select id="notifUserFilter" class="form-input btn-sm" onchange="loadNotificationsPanel()" style="min-width:150px">
+                                <option value="all">Todos</option>
+                                <option value="with_token">Con app instalada</option>
+                                <option value="without_token">Sin app / sin token</option>
+                            </select>
+                            <button class="btn btn-danger btn-sm" onclick="cleanInvalidTokens()" title="Verificar y eliminar tokens inválidos">🧹 Limpiar tokens inválidos</button>
+                        </div>
+                    </div>
+                    <div id="notifUsersList" style="max-height:400px;overflow-y:auto">
+                        <p style="color:#888;text-align:center">Cargando usuarios...</p>
+                    </div>
+                    <div id="notifPagination" style="margin-top:1rem;display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap"></div>
+                </div>
+            </section>
+
         </main>
     </div>
 
@@ -717,23 +824,27 @@
         
         // ============================================
         // REGISTRAR SERVICE WORKER
+        // Root cause fix: register /admin-sw.js (handles caching + push) and
+        // pass it to FCM getToken() so the push subscription is stable.
+        // admin.js also calls navigator.serviceWorker.register('/admin-sw.js') but
+        // browsers deduplicate registrations at the same scope, so it's safe.
         // ============================================
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/firebase-messaging-sw.js')
+            navigator.serviceWorker.register('/admin-sw.js', { updateViaCache: 'none' })
                 .then(function(registration) {
-                    console.log('[PWA Admin] Service Worker registrado:', registration);
-                    // Inicializar notificaciones después de registrar SW
-                    initNotifications();
+                    console.log('[PWA Admin] Service Worker registrado:', registration.scope);
+                    initNotifications(registration);
                 })
                 .catch(function(error) {
                     console.log('[PWA Admin] Error al registrar Service Worker:', error);
+                    initNotifications(null);
                 });
         }
         
         // ============================================
         // INICIALIZAR NOTIFICACIONES PUSH
         // ============================================
-        async function initNotifications() {
+        async function initNotifications(swRegistration) {
             console.log('[FCM Admin] Inicializando notificaciones...');
             
             if (!('Notification' in window)) {
@@ -746,12 +857,16 @@
                 console.log('[FCM Admin] Permiso de notificación:', permission);
                 
                 if (permission === 'granted') {
-                    // Obtener token FCM
-                    const currentToken = await messaging.getToken({ vapidKey: VAPID_KEY });
+                    // Use the admin-sw.js registration for FCM so push subscriptions
+                    // are tied to the same SW as caching.
+                    const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
+                    const currentToken = await messaging.getToken({
+                        vapidKey: VAPID_KEY,
+                        serviceWorkerRegistration: usedRegistration
+                    });
                     if (currentToken) {
                         fcmToken = currentToken;
-                        console.log('[FCM Admin] Token obtenido:', currentToken);
-                        // Enviar token al servidor
+                        console.log('[FCM Admin] Token obtenido:', currentToken.substring(0, 30) + '...');
                         sendTokenToServer(currentToken);
                     } else {
                         console.log('[FCM Admin] No se pudo obtener el token');
@@ -766,10 +881,39 @@
         
         // ============================================
         // ENVIAR TOKEN AL SERVIDOR
+        // Root cause fix: token was only saved to localStorage and NEVER sent to
+        // the backend, so admin push tokens were never registered.
         // ============================================
-        function sendTokenToServer(token) {
-            console.log('[FCM Admin] Token para enviar al servidor:', token);
+        async function sendTokenToServer(token) {
+            console.log('[FCM Admin] Enviando token al servidor...');
             localStorage.setItem('adminFcmToken', token);
+            
+            // Attempt to send to backend now. If admin isn't logged in yet, the
+            // token will be sent when admin.js calls sendFcmTokenAfterLogin().
+            const adminToken = localStorage.getItem('adminToken');
+            if (!adminToken) {
+                console.log('[FCM Admin] No hay sesión activa aún; el token se enviará al hacer login');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/notifications/register-token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + adminToken
+                    },
+                    body: JSON.stringify({ fcmToken: token })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    console.log('[FCM Admin] ✅ Token registrado en servidor');
+                } else {
+                    console.log('[FCM Admin] ⚠️ No se pudo registrar token:', data.error);
+                }
+            } catch (error) {
+                console.log('[FCM Admin] ⚠️ Error al registrar token:', error.message);
+            }
         }
         
         // ============================================
@@ -779,8 +923,8 @@
             console.log('[FCM Admin] Notificación recibida en primer plano:', payload);
             
             // Mostrar toast de notificación
-            const notificationTitle = payload.notification.title || 'Sala de Juegos';
-            const notificationBody = payload.notification.body || 'Nueva notificación';
+            const notificationTitle = (payload.notification && payload.notification.title) || 'Sala de Juegos';
+            const notificationBody = (payload.notification && payload.notification.body) || 'Nueva notificación';
             
             // Mostrar toast si la función existe
             if (typeof showToast === 'function') {
@@ -791,7 +935,7 @@
             if (document.visibilityState !== 'visible') {
                 new Notification(notificationTitle, {
                     body: notificationBody,
-                    icon: payload.notification.icon || '/icons/icon-192x192.png'
+                    icon: (payload.notification && payload.notification.icon) || '/icons/icon-192x192.png'
                 });
             }
         });

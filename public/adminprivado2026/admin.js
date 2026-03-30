@@ -10,7 +10,11 @@
 // ============================================
 const API_URL = '';
 const SOCKET_OPTIONS = {
-    transports: ['websocket'],
+    // Allow both WebSocket and HTTP long-polling so the connection works even when
+    // WebSocket is blocked (e.g. Cloudflare without WebSocket enabled) when
+    // accessing via the custom domain vipcargas.com.  WebSocket is tried first
+    // (faster), polling is used as fallback.
+    transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
@@ -360,6 +364,21 @@ async function handleLogin(e) {
             
             // CORREGIDO: Solicitar permiso para notificaciones del navegador
             requestNotificationPermission();
+            
+            // Send FCM token to backend now that we have an auth token
+            const pendingFcmToken = localStorage.getItem('adminFcmToken');
+            if (pendingFcmToken) {
+                fetch(`${API_URL}/api/notifications/register-token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ fcmToken: pendingFcmToken })
+                }).then(r => r.json()).then(d => {
+                    if (d.success) console.log('[FCM Admin] ✅ Token registrado post-login');
+                }).catch(() => {});
+            }
             
             // Luego intentar cargar datos (con manejo de errores)
             try {
@@ -2349,6 +2368,7 @@ function switchSection(section) {
     if (section === 'users') loadUsers();
     if (section === 'transactions') loadTransactions();
     if (section === 'commands') loadCommands();
+    if (section === 'notifications') loadNotificationsPanel();
     if (section === 'database') {
         if (!dbAccessGranted) {
             showDatabasePasswordModal();
@@ -3507,3 +3527,228 @@ document.addEventListener('DOMContentLoaded', () => {
 // Exponer funciones globales
 window.handleInstallApp = handleInstallApp;
 window.requestPushPermission = requestPushPermission;
+// ============================================
+// PANEL DE NOTIFICACIONES PUSH
+// Ruta: /adminprivado2026/ → nav item "Notificaciones"
+// ============================================
+
+let notifCurrentPage = 1;
+
+async function loadNotificationsPanel() {
+    const filter = document.getElementById('notifUserFilter')?.value || 'all';
+    await Promise.all([
+        loadNotifStats(),
+        loadNotifUsers(1, filter)
+    ]);
+}
+
+async function loadNotifStats() {
+    try {
+        const res = await fetch(`${API_URL}/api/notifications/users-status?page=1&limit=1&filter=all`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        const data = await res.json();
+        if (!data.success) return;
+        const s = data.stats;
+        document.getElementById('notifTotalUsers').textContent = s.totalUsers;
+        document.getElementById('notifWithToken').textContent = s.usersWithToken;
+        document.getElementById('notifWithoutToken').textContent = s.usersWithoutToken;
+        document.getElementById('notifCoverage').textContent = s.coverage + '%';
+    } catch (e) {
+        console.error('[Notif Panel] Error cargando stats:', e);
+    }
+}
+
+async function loadNotifUsers(page = 1, filter = 'all') {
+    notifCurrentPage = page;
+    const limit = 50;
+    const listEl = document.getElementById('notifUsersList');
+    const pagEl = document.getElementById('notifPagination');
+    if (listEl) listEl.innerHTML = '<p style="color:#888;text-align:center">Cargando...</p>';
+
+    try {
+        const res = await fetch(`${API_URL}/api/notifications/users-status?page=${page}&limit=${limit}&filter=${filter}`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        const data = await res.json();
+        if (!data.success) { if (listEl) listEl.innerHTML = '<p style="color:#f00">Error al cargar</p>'; return; }
+
+        if (!data.users || data.users.length === 0) {
+            if (listEl) listEl.innerHTML = '<p style="color:#888;text-align:center">No hay usuarios con este filtro</p>';
+            if (pagEl) pagEl.innerHTML = '';
+            return;
+        }
+
+        const rows = data.users.map(u => `
+            <tr>
+                <td style="padding:.5rem .75rem">${escapeHtml(u.username)}</td>
+                <td style="padding:.5rem .75rem;text-align:center">
+                    ${u.hasToken
+                        ? '<span style="color:#00ff88;font-size:.85rem">📱 App instalada</span>'
+                        : '<span style="color:#888;font-size:.85rem">📵 Sin app</span>'}
+                </td>
+                <td style="padding:.5rem .75rem;color:#888;font-size:.8rem">
+                    ${u.tokenUpdatedAt ? new Date(u.tokenUpdatedAt).toLocaleDateString('es-AR') : '—'}
+                </td>
+                <td style="padding:.5rem .75rem;color:#888;font-size:.8rem">
+                    ${u.lastLogin ? new Date(u.lastLogin).toLocaleDateString('es-AR') : '—'}
+                </td>
+            </tr>
+        `).join('');
+
+        if (listEl) listEl.innerHTML = `
+            <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+                <thead>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,.1);color:#aaa;font-size:.8rem">
+                        <th style="padding:.5rem .75rem;text-align:left">Usuario</th>
+                        <th style="padding:.5rem .75rem;text-align:center">Estado App</th>
+                        <th style="padding:.5rem .75rem;text-align:left">Token actualizado</th>
+                        <th style="padding:.5rem .75rem;text-align:left">Último login</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+
+        // Pagination: show prev, up to 5 pages around current, and next
+        if (pagEl) {
+            const totalPages = data.pagination.pages;
+            let btns = '';
+            if (page > 1) btns += `<button class="btn btn-sm btn-secondary" onclick="loadNotifUsers(${page - 1}, '${filter}')">◀ Ant</button>`;
+            const startPage = Math.max(1, page - 2);
+            const endPage = Math.min(totalPages, page + 2);
+            if (startPage > 1) btns += `<button class="btn btn-sm btn-secondary" onclick="loadNotifUsers(1, '${filter}')">1</button><span style="color:#888;padding:.25rem .25rem">…</span>`;
+            for (let i = startPage; i <= endPage; i++) {
+                btns += `<button class="btn btn-sm ${i === page ? 'btn-primary' : 'btn-secondary'}" onclick="loadNotifUsers(${i}, '${filter}')">${i}</button>`;
+            }
+            if (endPage < totalPages) btns += `<span style="color:#888;padding:.25rem .25rem">…</span><button class="btn btn-sm btn-secondary" onclick="loadNotifUsers(${totalPages}, '${filter}')">${totalPages}</button>`;
+            if (page < totalPages) btns += `<button class="btn btn-sm btn-secondary" onclick="loadNotifUsers(${page + 1}, '${filter}')">Sig ▶</button>`;
+            pagEl.innerHTML = btns;
+        }
+    } catch (e) {
+        console.error('[Notif Panel] Error cargando usuarios:', e);
+        if (listEl) listEl.innerHTML = '<p style="color:#f00;text-align:center">Error al cargar usuarios</p>';
+    }
+}
+
+async function sendBatchNotification() {
+    const title = document.getElementById('notifTitle')?.value?.trim();
+    const body = document.getElementById('notifBody')?.value?.trim();
+    const segment = document.getElementById('notifSegment')?.value || 'all';
+    const batchSize = parseInt(document.getElementById('notifBatchSize')?.value || '100');
+
+    if (!title || !body) {
+        showToast('❌ El título y el mensaje son obligatorios', 'error');
+        return;
+    }
+
+    let usernames = null;
+    if (segment === 'specific') {
+        const raw = document.getElementById('notifUsernames')?.value || '';
+        usernames = raw.split(/[\n,]+/).map(u => u.trim()).filter(Boolean);
+        if (usernames.length === 0) {
+            showToast('❌ Ingresá al menos un username en "Usuarios específicos"', 'error');
+            return;
+        }
+    }
+
+    const sendBtn = document.getElementById('notifSendBtn');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '⏳ Enviando...'; }
+
+    const resultEl = document.getElementById('notifResult');
+    const resultContent = document.getElementById('notifResultContent');
+    if (resultEl) resultEl.style.display = 'none';
+
+    try {
+        const res = await fetch(`${API_URL}/api/notifications/send-batch`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ title, body, batchSize, usernames })
+        });
+        const data = await res.json();
+
+        if (resultEl) resultEl.style.display = 'block';
+        if (resultContent) {
+            if (data.success) {
+                const pct = data.totalUsers > 0 ? Math.round((data.successCount / data.totalUsers) * 100) : 0;
+                resultContent.innerHTML = `
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1rem;margin-bottom:1rem">
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${data.successCount}</div><div style="color:#aaa;font-size:.8rem">Enviados</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#f87171">${data.failureCount}</div><div style="color:#aaa;font-size:.8rem">Fallidos</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#fbbf24">${data.cleanedTokens}</div><div style="color:#aaa;font-size:.8rem">Tokens limpiados</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${data.totalUsers}</div><div style="color:#aaa;font-size:.8rem">Destinatarios</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${pct}%</div><div style="color:#aaa;font-size:.8rem">Tasa de éxito</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${data.batches}</div><div style="color:#aaa;font-size:.8rem">Lotes (${data.batchSize} c/u)</div></div>
+                    </div>
+                    ${data.failedTokens && data.failedTokens.length > 0 ? `
+                    <details style="margin-top:.5rem">
+                        <summary style="cursor:pointer;color:#aaa;font-size:.85rem">Ver tokens fallidos (${data.failedTokens.length})</summary>
+                        <div style="margin-top:.5rem;max-height:200px;overflow-y:auto">
+                        ${data.failedTokens.map(f => `<div style="font-size:.8rem;padding:.25rem 0;border-bottom:1px solid rgba(255,255,255,.05)"><strong>${escapeHtml(f.username)}</strong> — ${escapeHtml(f.error || '')} ${f.cleaned ? '<span style="color:#fbbf24">(token limpiado)</span>' : ''}</div>`).join('')}
+                        </div>
+                    </details>` : ''}
+                `;
+                showToast(`✅ Notificación enviada a ${data.successCount} usuarios`, 'success');
+                // Reload stats and token list after sending (tokens may have been cleaned)
+                loadNotificationsPanel();
+            } else {
+                resultContent.innerHTML = `<p style="color:#f87171">❌ Error: ${escapeHtml(data.error || 'Error desconocido')}</p>`;
+                showToast('❌ Error al enviar notificaciones', 'error');
+            }
+        }
+    } catch (e) {
+        showToast('❌ Error de conexión al enviar notificaciones', 'error');
+        console.error('[Notif Panel] Error enviando:', e);
+    } finally {
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '🚀 Enviar notificación'; }
+    }
+}
+
+async function cleanInvalidTokens() {
+    if (!confirm('¿Verificar y limpiar tokens inválidos? Esto enviará una notificación de prueba silenciosa a cada usuario con token. Puede tardar unos minutos.')) return;
+
+    const btn = document.querySelector('button[onclick="cleanInvalidTokens()"]');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Verificando...'; }
+
+    try {
+        const res = await fetch(`${API_URL}/api/notifications/verify-tokens`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ sendTest: false })
+        });
+        const data = await res.json();
+        if (data.success) {
+            const r = data.results;
+            showToast(`🧹 Verificación completada: ${r.valid} válidos, ${r.invalid} inválidos, ${r.cleaned} limpiados`, 'success');
+            loadNotificationsPanel();
+        } else {
+            showToast('❌ Error en verificación de tokens', 'error');
+        }
+    } catch (e) {
+        showToast('❌ Error de conexión', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🧹 Limpiar tokens inválidos'; }
+    }
+}
+
+// Mostrar/ocultar campo de usuarios específicos según segmento seleccionado
+document.addEventListener('DOMContentLoaded', () => {
+    const segmentSelect = document.getElementById('notifSegment');
+    if (segmentSelect) {
+        segmentSelect.addEventListener('change', () => {
+            const specificDiv = document.getElementById('notifSpecificUsers');
+            if (specificDiv) specificDiv.style.display = segmentSelect.value === 'specific' ? 'block' : 'none';
+        });
+    }
+});
+
+// Exponer funciones del panel de notificaciones al scope global (usadas por onclick)
+window.loadNotificationsPanel = loadNotificationsPanel;
+window.loadNotifUsers = loadNotifUsers;
+window.sendBatchNotification = sendBatchNotification;
+window.cleanInvalidTokens = cleanInvalidTokens;

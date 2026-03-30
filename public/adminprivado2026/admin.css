@@ -68,6 +68,7 @@ body {
 .icon-exchange::before { content: "🔄"; }
 .icon-terminal::before { content: "💻"; }
 .icon-chart::before { content: "📊"; }
+.icon-bell::before { content: "🔔"; }
 .icon-database::before { content: "🗄️"; }
 .icon-sign-out::before { content: "🚪"; }
 .icon-circle::before { content: "●"; }
@@ -1787,3 +1788,35 @@ body {
 .message.outgoing .chat-link:hover {
     color: #e0e7ff;
 }
+
+/* ============================================
+   PANEL DE NOTIFICACIONES - Utilidades extra
+   ============================================ */
+.btn-sm { padding: 6px 12px; font-size: 12px; }
+.btn-danger {
+    padding: 10px 20px;
+    background: var(--danger);
+    border: none;
+    border-radius: var(--radius);
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s ease;
+}
+.btn-danger:hover { opacity: 0.85; }
+.form-input {
+    background: var(--bg-tertiary, #0f172a);
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: var(--radius);
+    color: var(--light);
+    padding: 8px 12px;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.form-input:focus { outline: none; border-color: var(--primary); }
+.form-label { font-size: 12px; color: var(--text-secondary, #aaa); display: block; margin-bottom: 4px; }
