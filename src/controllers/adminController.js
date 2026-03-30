@@ -232,8 +232,16 @@ const updateCanalUrl = asyncHandler(async (req, res) => {
   
   // Permitir vaciar la URL
   const safeUrl = (url || '').trim();
-  if (safeUrl && !/^https?:\/\/.+/.test(safeUrl)) {
-    throw new AppError('URL inválida. Debe comenzar con http:// o https://', 400, ErrorCodes.VALIDATION_ERROR);
+  if (safeUrl) {
+    try {
+      const parsed = new URL(safeUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new AppError('URL inválida. Debe comenzar con http:// o https://', 400, ErrorCodes.VALIDATION_ERROR);
+      }
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      throw new AppError('URL inválida. Verificá que sea una URL completa y válida.', 400, ErrorCodes.VALIDATION_ERROR);
+    }
   }
   
   await Config.set('canalInformativoUrl', safeUrl, req.user.username);

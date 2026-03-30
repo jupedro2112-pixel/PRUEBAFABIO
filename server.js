@@ -266,6 +266,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // ============================================
 const notificationRoutes = require('./src/routes/notificationRoutes');
 app.use('/api/notifications', notificationRoutes);
+notificationRoutes.setIo(io);
 
 // ============================================
 // FUNCIONES HELPER PARA MONGODB
@@ -3548,14 +3549,38 @@ app.get('/api/admin/config', authMiddleware, adminMiddleware, async (req, res) =
     const cbuConfig = await getConfig('cbu');
     const welcomeMessage = await getConfig('welcomeMessage');
     const depositMessage = await getConfig('depositMessage');
+    const canalInformativoUrl = await getConfig('canalInformativoUrl', '');
     
     res.json({
       cbu: cbuConfig || {},
       welcomeMessage: welcomeMessage || '🎉 ¡Bienvenido a la Sala de Juegos!',
-      depositMessage: depositMessage || '💰 ¡Fichas cargadas!'
+      depositMessage: depositMessage || '💰 ¡Fichas cargadas!',
+      canalInformativoUrl: canalInformativoUrl || ''
     });
   } catch (error) {
     console.error('Error obteniendo configuración:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.post('/api/admin/canal-url', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { url } = req.body;
+    const safeUrl = (url || '').trim();
+    if (safeUrl) {
+      try {
+        const parsed = new URL(safeUrl);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return res.status(400).json({ error: 'URL inválida. Debe comenzar con http:// o https://' });
+        }
+      } catch {
+        return res.status(400).json({ error: 'URL inválida. Verificá que sea una URL completa y válida.' });
+      }
+    }
+    await setConfig('canalInformativoUrl', safeUrl);
+    res.json({ success: true, message: 'URL del Canal Informativo actualizada correctamente' });
+  } catch (error) {
+    console.error('Error guardando canal URL:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

@@ -82,6 +82,7 @@ const elements = {
     chatInputArea: document.getElementById('chatInputArea'),
     chatUsername: document.getElementById('chatUsername'),
     chatStatus: document.getElementById('chatStatus'),
+    chatAppStatus: document.getElementById('chatAppStatus'),
     chatBalance: document.getElementById('chatBalance'),
     messageInput: document.getElementById('messageInput'),
     sendMessage: document.getElementById('sendMessage'),
@@ -639,10 +640,27 @@ function initSocket() {
     // USER ONLINE/OFFLINE
     socket.on('user_connected', (data) => {
         updateUserStatus(data.userId, true);
+        // Si el usuario conectado es el chat activo, actualizar info (incl. estado de app)
+        if (data.userId === selectedUserId) {
+            loadUserInfo(data.userId);
+        }
     });
     
     socket.on('user_disconnected', (data) => {
         updateUserStatus(data.userId, false);
+    });
+    
+    // Actualizar estado de app de notificaciones en tiempo real
+    socket.on('user_app_status', (data) => {
+        if (data.userId === selectedUserId && elements.chatAppStatus) {
+            if (data.appInstalled) {
+                elements.chatAppStatus.textContent = '📱 app instalada';
+                elements.chatAppStatus.style.color = '#00ff88';
+            } else {
+                elements.chatAppStatus.textContent = '📵 app borrada';
+                elements.chatAppStatus.style.color = '#aaa';
+            }
+        }
     });
     
     // CHAT UPDATED - Actualizar lista lateral en tiempo real cuando llega un mensaje
@@ -1642,6 +1660,17 @@ async function loadUserInfo(userId) {
         elements.chatBalance.textContent = formatMoney(user.balance);
         elements.chatStatus.textContent = user.online ? 'En línea' : 'Desconectado';
         elements.chatStatus.className = user.online ? 'status online' : 'status';
+        
+        // Mostrar estado de la app de notificaciones
+        if (elements.chatAppStatus) {
+            if (user.fcmToken) {
+                elements.chatAppStatus.textContent = '📱 app instalada';
+                elements.chatAppStatus.style.color = '#00ff88';
+            } else {
+                elements.chatAppStatus.textContent = '📵 app borrada';
+                elements.chatAppStatus.style.color = '#aaa';
+            }
+        }
     } catch (error) {
         console.error('Error loading user info:', error);
     }
@@ -2035,6 +2064,9 @@ function deselectChat() {
     selectedUsername = null;
     elements.chatHeader.classList.add('hidden');
     elements.chatInputArea.classList.add('hidden');
+    if (elements.chatAppStatus) {
+        elements.chatAppStatus.textContent = '';
+    }
     elements.chatMessages.innerHTML = `
         <div class="empty-state">
             <span class="icon icon-comment-dots"></span>

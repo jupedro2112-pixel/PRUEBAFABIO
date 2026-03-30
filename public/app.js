@@ -2128,7 +2128,8 @@ async function showFireModal() {
             } else {
                 rewardText = m.reward ? `$${m.reward.toLocaleString('es-AR')}` : '-';
             }
-            const depositReq = m.hasDepositRequirement ? ' <span style="font-size:10px;color:#aaa;">(requiere actividad del mes)</span>' : '';
+            // Todos los hitos requieren actividad del mes (condición base del sistema)
+            const depositReq = ' <span style="font-size:10px;color:#aaa;">(requiere actividad del mes)</span>';
             return `<div class="milestone-item ${statusClass}" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);">
                 <span>${statusIcon} <strong>Día ${m.day}</strong>: ${rewardText}${depositReq}</span>
                 <span style="font-size:11px;color:#aaa;">${statusLabel}</span>

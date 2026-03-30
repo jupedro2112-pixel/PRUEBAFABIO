@@ -93,6 +93,15 @@ router.post('/register-token', async (req, res) => {
     
     console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username);
     
+    // Notificar a admins en tiempo real sobre el nuevo estado de la app
+    if (_io) {
+      _io.to('admins').emit('user_app_status', {
+        userId: user.id,
+        username: user.username,
+        appInstalled: true
+      });
+    }
+    
     res.json({ 
       success: true, 
       message: 'Token registrado correctamente',
@@ -599,6 +608,14 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
             );
             results.cleaned++;
             console.log(`[FCM] 🧹 Token borrado automáticamente: ${user.username}`);
+            // Notificar a admins que la app del usuario fue borrada
+            if (_io) {
+              _io.to('admins').emit('user_app_status', {
+                userId: user.id,
+                username: user.username,
+                appInstalled: false
+              });
+            }
           }
         }
       } catch (e) {
@@ -618,5 +635,9 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Referencia a io para emitir eventos de socket
+let _io = null;
+router.setIo = (ioInstance) => { _io = ioInstance; };
 
 module.exports = router;
