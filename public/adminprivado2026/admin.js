@@ -684,7 +684,36 @@ function initSocket() {
         conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
         renderConversations();
     });
-    
+
+    // MESSAGES READ - Sincronizar estado leído/no leído entre admins
+    socket.on('messages_read', (data) => {
+        const convIndex = conversations.findIndex(c => c.userId === data.userId);
+        if (convIndex !== -1) {
+            conversations[convIndex].unread = 0;
+            conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+            renderConversations();
+        }
+        loadStats();
+    });
+
+    // ADMIN MESSAGE SENT - Actualizar lista cuando otro admin envía un mensaje
+    socket.on('admin_message_sent', (data) => {
+        const message = data.message;
+        if (!message) return;
+        const chatUserId = data.receiverId;
+        const currentAdminId = currentAdmin && (currentAdmin.userId || currentAdmin.id);
+        // Si otro admin envió al chat activo, mostrar el mensaje
+        if (chatUserId === selectedUserId && data.senderId !== currentAdminId) {
+            if (!processedMessageIds.has(message.id)) {
+                processedMessageIds.add(message.id);
+                addMessageToChat(message, true);
+                scrollToBottom();
+            }
+        }
+        // Actualizar conversación en la lista
+        updateConversationInList(message);
+    });
+
     // DISCONNECT
     socket.on('disconnect', () => {
         console.log('🔌 Socket disconnected');
@@ -769,6 +798,8 @@ function handleNewMessage(data) {
         playNotificationSound();
         scrollToBottom();
         setTimeout(scrollToBottom, 100);
+        // También actualizar conversación en la lista (mover al tope y actualizar preview)
+        updateConversationInList(message);
     } else {
         // Mensaje de otro chat - actualizar lista y mostrar notificación
         incrementUnreadCount();
@@ -1630,6 +1661,14 @@ async function markMessagesAsRead(userId) {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
+        // Actualizar conteo local de no leídos inmediatamente (optimistic update)
+        const convIndex = conversations.findIndex(c => c.userId === userId);
+        if (convIndex !== -1) {
+            conversations[convIndex].unread = 0;
+            conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+            renderConversations();
+        }
+
         // Update unread count
         loadStats();
     } catch (error) {

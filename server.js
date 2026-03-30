@@ -1740,6 +1740,9 @@ app.post('/api/messages/read/:userId', authMiddleware, async (req, res) => {
       { read: true }
     );
     
+    // Notificar a todos los admins que los mensajes de este usuario fueron leídos
+    notifyAdmins('messages_read', { userId, by: req.user.userId });
+    
     res.json({ message: 'Mensajes marcados como leídos' });
   } catch (error) {
     console.error('Error marcando mensajes como leídos:', error);
