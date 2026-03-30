@@ -944,25 +944,7 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
 // RUTAS DE CONFIGURACIÓN PÚBLICA
 // ============================================
 
-app.get('/api/config/cbu', authMiddleware, async (req, res) => {
-  try {
-    const cbuConfig = await getConfig('cbu');
-    if (!cbuConfig) {
-      return res.status(404).json({ error: 'CBU no configurado' });
-    }
-    
-    res.json({
-      cbu: cbuConfig.number,
-      alias: cbuConfig.alias,
-      bank: cbuConfig.bank,
-      titular: cbuConfig.titular
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// CORREGIDO: Ruta GET para obtener CBU activo (para mensaje de bienvenida)
+// Ruta GET para obtener CBU activo (para mensaje de bienvenida y panel usuario)
 app.get('/api/config/cbu', authMiddleware, async (req, res) => {
   try {
     const cbuConfig = await getConfig('cbu');

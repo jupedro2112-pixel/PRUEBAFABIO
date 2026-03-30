@@ -14,6 +14,7 @@ let balanceCheckInterval = null;
 let processedMessageIds = new Set(); // Para evitar mensajes duplicados
 let pendingSentMessages = new Map(); // Tracking de mensajes enviados pendientes
 let lastSentMessageTimestamp = 0; // Timestamp del último mensaje enviado
+let passwordChangePending = false; // Flag: cambio de contraseña obligatorio pendiente
 
 // Función para obtener fecha en hora Argentina
 function getArgentinaDate(date = new Date()) {
@@ -364,6 +365,7 @@ async function handleLogin(e) {
             }
             
             if (data.user.needsPasswordChange) {
+                passwordChangePending = true;
                 showModal('changePasswordModal');
             }
             
@@ -733,6 +735,7 @@ async function handleChangePassword(e) {
         });
         
         if (response.ok) {
+            passwordChangePending = false; // Desbloquear: cambio obligatorio completado
             hideModal('changePasswordModal');
             showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
             // Limpiar campos
@@ -1019,6 +1022,11 @@ function closeLightbox(event) {
 // Cerrar lightbox con tecla Escape
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
+        // Si hay cambio de contraseña pendiente, bloquear Escape
+        if (passwordChangePending) {
+            e.preventDefault();
+            return;
+        }
         const lightbox = document.getElementById('lightbox');
         if (lightbox.classList.contains('active')) {
             lightbox.classList.remove('active');
@@ -2212,6 +2220,12 @@ Link de pagina: https://www.jugaygana.bet/
 CBU activo: ${cbuNumber}`;
 
     await sendSystemMessage(welcomeMessage);
+    
+    // Enviar segundo mensaje con solo el CBU para que sea fácil de copiar
+    if (cbuNumber && cbuNumber !== 'No disponible') {
+        await sendSystemMessage(cbuNumber);
+    }
+    
     localStorage.setItem(welcomeKey, Date.now().toString());
     console.log('✅ Mensaje de bienvenida enviado con CBU:', cbuNumber);
 }
@@ -2324,6 +2338,10 @@ function showModal(modalId) {
 }
 
 function hideModal(modalId) {
+    // Si el cambio de contraseña es obligatorio, no permitir cerrar ese modal
+    if (modalId === 'changePasswordModal' && passwordChangePending) {
+        return;
+    }
     document.getElementById(modalId).classList.add('hidden');
 }
 
@@ -2414,21 +2432,31 @@ window.addEventListener('appinstalled', () => {
 
 // Función para instalar la app
 async function installApp() {
+    const ua = navigator.userAgent;
+    const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    const isAndroid = /Android/.test(ua);
+    const isWindows = /Windows/.test(ua);
+    const isMac = /Macintosh|MacIntel/.test(ua) && !isIOS;
+
     if (!window.deferredPrompt) {
-        // Si no hay prompt guardado, mostrar instrucciones manuales
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        // Sin prompt nativo disponible — mostrar instrucciones específicas por plataforma
         if (isIOS) {
-            showToast('📱 En Safari: Compartir > Agregar a Inicio', 'success');
+            showInstallInstructions('ios');
+        } else if (isAndroid) {
+            showInstallInstructions('android');
+        } else if (isWindows) {
+            showInstallInstructions('windows');
+        } else if (isMac) {
+            showInstallInstructions('mac');
         } else {
-            showToast('📱 Usa el menú del navegador: Agregar a inicio', 'success');
+            showInstallInstructions('generic');
         }
         return;
     }
     
-    // Mostrar el prompt de instalación
+    // Mostrar el prompt de instalación (Android/Chrome nativo)
     window.deferredPrompt.prompt();
     
-    // Esperar la respuesta del usuario
     const { outcome } = await window.deferredPrompt.userChoice;
     console.log('PWA: Resultado de la instalación:', outcome);
     
@@ -2438,8 +2466,70 @@ async function installApp() {
         showToast('❌ Instalación cancelada', 'error');
     }
     
-    // Limpiar el prompt guardado (solo se puede usar una vez)
     window.deferredPrompt = null;
+}
+
+function showInstallInstructions(platform) {
+    const modal = document.createElement('div');
+    modal.className = 'ios-install-modal';
+    
+    let title, steps, note;
+    
+    if (platform === 'ios') {
+        title = '📱 Instalar en iPhone / iPad';
+        note = '⚠️ <strong>Solo funciona desde Safari.</strong>';
+        steps = [
+            'Abrí esta página en <strong>Safari</strong> (no Chrome, no otro navegador)',
+            'Tocá el botón <strong>Compartir</strong> <span style="font-size:18px">⬆️</span> en la barra inferior de Safari',
+            'Deslizá hacia abajo y tocá <strong>"Agregar a pantalla de inicio"</strong>',
+            'Presioná <strong>"Agregar"</strong>'
+        ];
+    } else if (platform === 'android') {
+        title = '📱 Instalar en Android';
+        note = '⚠️ <strong>Solo funciona desde Google Chrome.</strong>';
+        steps = [
+            'Abrí esta página en <strong>Google Chrome</strong>',
+            'Tocá el ícono <strong>⋮</strong> (tres puntos) en la esquina superior derecha',
+            'Seleccioná <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong>',
+            'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>'
+        ];
+    } else if (platform === 'windows') {
+        title = '💻 Instalar en Windows (PC)';
+        note = '💡 Funciona en Chrome o Edge.';
+        steps = [
+            'Abrí esta página en <strong>Google Chrome</strong> o <strong>Microsoft Edge</strong>',
+            'En Chrome: hacé clic en el ícono de instalación <strong>⊕</strong> en la barra de direcciones',
+            'En Edge: hacé clic en el ícono <strong>⊕</strong> o el menú <strong>⋯</strong> → <strong>"Aplicaciones"</strong> → <strong>"Instalar este sitio como aplicación"</strong>',
+            'Confirmá la instalación'
+        ];
+    } else if (platform === 'mac') {
+        title = '💻 Instalar en Mac';
+        note = '💡 Funciona en Chrome o Safari.';
+        steps = [
+            'Abrí esta página en <strong>Google Chrome</strong> o <strong>Safari</strong>',
+            'En Chrome: hacé clic en el ícono <strong>⊕</strong> en la barra de direcciones',
+            'En Safari: usá <strong>Archivo → Agregar a Dock</strong> (macOS Sonoma o superior)',
+            'Confirmá la instalación'
+        ];
+    } else {
+        title = '📱 Instalar App';
+        note = '';
+        steps = [
+            'Abrí esta página en <strong>Chrome</strong> o <strong>Safari</strong>',
+            'Buscá la opción <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong> en el menú del navegador',
+            'Confirmá la instalación'
+        ];
+    }
+    
+    modal.innerHTML = `
+        <div class="ios-install-content">
+            <h3>${title}</h3>
+            ${note ? `<p style="color: #f7931e; margin-bottom: 12px;">${note}</p>` : ''}
+            <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>
+            <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="margin-top:15px;">Entendido</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
 }
 
 // Verificar si la app ya está instalada (modo standalone)

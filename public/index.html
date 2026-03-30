@@ -197,6 +197,8 @@
             align-items: center;
             justify-content: flex-end;
             gap: 8px;
+            flex-wrap: nowrap;
+            overflow: hidden;
         }
         
         @keyframes golden-shimmer {
@@ -393,6 +395,27 @@
         .header-right .info-btn {
             font-size: 12px;
             padding: 5px 8px;
+        }
+
+        /* PLATAFORMA button - user panel only */
+        .plataforma-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: linear-gradient(135deg, #d4af37 0%, #f7931e 100%);
+            color: #000;
+            font-weight: 700;
+            font-size: 11px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+        }
+        .plataforma-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 15px rgba(212, 175, 55, 0.5);
         }
         
         .header-right .user-name {
@@ -1296,6 +1319,11 @@
                 padding: 3px 6px;
             }
             
+            .plataforma-btn {
+                font-size: 9px;
+                padding: 3px 8px;
+            }
+            
             .user-section {
                 gap: 4px;
             }
@@ -1408,6 +1436,11 @@
             }
             
             .support-btn {
+                font-size: 8px;
+                padding: 3px 6px;
+            }
+            
+            .plataforma-btn {
                 font-size: 8px;
                 padding: 3px 6px;
             }
@@ -1729,6 +1762,10 @@
             
             <!-- Sección derecha: Usuario y acciones -->
             <div class="header-right">
+                <!-- BOTÓN PLATAFORMA - Solo usuario -->
+                <a href="https://www.jugaygana.bet" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Ir a la Plataforma">
+                    🎰 PLATAFORMA
+                </a>
                 <!-- BOTÓN APP - Instalar PWA (PRIMERO para máxima visibilidad) -->
                 <button class="app-install-btn" id="appInstallBtn" title="Instalar App" style="display: inline-flex !important; visibility: visible !important; opacity: 1 !important;">
                     ⬇️ APP
@@ -1824,7 +1861,7 @@
                 <div class="input-group">
                     <label>Teléfono *</label>
                     <input type="tel" id="registerPhone" name="phone" placeholder="+54 9 11 1234-5678" required autocomplete="tel" minlength="8">
-                    <span style="font-size: 11px; color: #888;">Mínimo 8 dígitos</span>
+                    <span style="font-size: 11px; color: #f7931e; font-weight: 600;">⚠️ Ingresá tu número real. Es importante para no perder el acceso a tu cuenta y para recibir regalos y promociones exclusivas.</span>
                 </div>
                 <div class="input-group">
                     <label>Email (opcional)</label>
@@ -1842,10 +1879,10 @@
     <!-- Modal Cambio de Contraseña Obligatorio -->
     <div id="changePasswordModal" class="modal hidden">
         <div class="modal-content" style="position: relative;">
-            <button onclick="hideModal('changePasswordModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <!-- Sin botón de cierre: el cambio de contraseña es obligatorio -->
             <div class="modal-header">
-                <h2>🔐 Cambio de Contraseña</h2>
-                <p>Por seguridad, debes cambiar tu contraseña y verificar tu WhatsApp.</p>
+                <h2>🔐 Cambio de Contraseña Obligatorio</h2>
+                <p>Por seguridad, <strong>debés cambiar tu contraseña</strong> antes de continuar. No podés omitir este paso.</p>
             </div>
             <form id="changePasswordForm" autocomplete="on">
                 <div class="input-group">
@@ -2671,7 +2708,7 @@
                     <h3>📱 Agregar a Pantalla de Inicio</h3>
                     <p>Para instalar esta app en tu iPhone/iPad:</p>
                     <ol>
-                        <li>Presiona el botón <strong>Compartir</strong> <span style="font-size: 24px;">⎋</span> en Safari</li>
+                        <li>Presiona el botón <strong>Compartir</strong> <span style="font-size: 24px;">⬆️</span> en Safari</li>
                         <li>Desplázate hacia abajo y selecciona <strong>"Agregar a Pantalla de Inicio"</strong></li>
                         <li>Presiona <strong>"Agregar"</strong> en la esquina superior derecha</li>
                     </ol>
