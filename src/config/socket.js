@@ -15,6 +15,24 @@ const { invalidateChatListCache } = require('../services/chatService');
 const connectedUsers = new Map();
 const connectedAdmins = new Map();
 
+// Rate limiting por usuario para mensajes de socket (máximo 2 por segundo)
+const socketMsgTimestamps = new Map(); // userId -> timestamp[]
+const SOCKET_RATE_MAX = 2;
+const SOCKET_RATE_WINDOW_MS = 1000;
+
+// Limpiar entradas antiguas cada 30 segundos
+setInterval(() => {
+  const cutoff = Date.now() - SOCKET_RATE_WINDOW_MS * 2;
+  for (const [userId, timestamps] of socketMsgTimestamps.entries()) {
+    const recent = timestamps.filter(t => t > cutoff);
+    if (recent.length === 0) {
+      socketMsgTimestamps.delete(userId);
+    } else {
+      socketMsgTimestamps.set(userId, recent);
+    }
+  }
+}, 30000);
+
 /**
  * Inicializar WebSocket
  */
@@ -93,6 +111,15 @@ const initializeSocket = (server) => {
         if (!content || content.trim().length === 0) {
           return socket.emit('error', { message: 'Contenido requerido' });
         }
+
+        // Rate limiting por usuario: máximo 2 mensajes por segundo
+        const now = Date.now();
+        const recentMsgs = (socketMsgTimestamps.get(socket.userId) || []).filter(t => now - t < SOCKET_RATE_WINDOW_MS);
+        if (recentMsgs.length >= SOCKET_RATE_MAX) {
+          return socket.emit('rate_limited', { message: 'Estás enviando mensajes muy rápido. Espera un momento.' });
+        }
+        recentMsgs.push(now);
+        socketMsgTimestamps.set(socket.userId, recentMsgs);
         
         // Determinar receptor
         const targetReceiverId = isAdminRole ? receiverId : 'admin';

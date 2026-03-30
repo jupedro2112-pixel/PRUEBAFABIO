@@ -59,6 +59,11 @@ const refundClaimSchema = new mongoose.Schema({
     default: '',
     trim: true
   },
+  periodKey: {
+    type: String,
+    default: null,
+    trim: true
+  },
   transactionId: { 
     type: String, 
     default: null,
@@ -79,6 +84,8 @@ refundClaimSchema.index({ userId: 1, type: 1 });
 refundClaimSchema.index({ userId: 1, claimedAt: -1 });
 refundClaimSchema.index({ claimedAt: -1 });
 refundClaimSchema.index({ type: 1, claimedAt: -1 });
+// Índice único por período para prevenir doble reclamo (sparse permite valores null para registros históricos)
+refundClaimSchema.index({ userId: 1, type: 1, periodKey: 1 }, { unique: true, sparse: true });
 
 // Método estático para verificar si puede reclamar
 refundClaimSchema.statics.canClaim = async function(userId, type) {

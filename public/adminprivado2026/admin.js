@@ -378,6 +378,8 @@ async function handleLogin(e) {
             } catch (e) {
                 console.log('Error cargando stats:', e);
             }
+
+            startConversationReconciliation();
             
             showToast('Login exitoso', 'success');
         } else {
@@ -400,12 +402,14 @@ async function validateToken() {
             currentAdmin = data.user || JSON.parse(localStorage.getItem('adminUser'));
             showApp();
             initSocket();
-            // CORREGIDO: Solicitar permiso para notificaciones al iniciar
+            // Solicitar permiso para notificaciones al iniciar
             requestNotificationPermission();
             loadConversations();
             loadStats();
-            // CORREGIDO: Cargar comandos al iniciar para las sugerencias
+            // Cargar comandos al iniciar para las sugerencias
             loadCommands();
+            // Iniciar reconciliación periódica de conversaciones
+            startConversationReconciliation();
         } else {
             localStorage.removeItem('adminToken');
             localStorage.removeItem('adminUser');
@@ -667,12 +671,30 @@ function initSocket() {
     socket.on('disconnect', () => {
         console.log('🔌 Socket disconnected');
     });
+
+    // RECONNECT - Re-fetch conversations to recover any missed events
+    socket.on('reconnect', () => {
+        console.log('🔄 Socket reconnected — re-fetching conversations');
+        conversationsCacheByTab.delete(currentTab);
+        loadConversations(true);
+    });
     
     // ERROR
     socket.on('error', (data) => {
         console.error('❌ Socket error:', data);
         showToast(data.message || 'Error de conexión', 'error');
     });
+}
+
+// Reconciliación periódica: cada 60 segundos invalidar cache y recargar
+// conversaciones para recuperar cualquier evento perdido por reconexión u otro motivo.
+let reconciliationInterval = null;
+function startConversationReconciliation() {
+    if (reconciliationInterval) clearInterval(reconciliationInterval);
+    reconciliationInterval = setInterval(() => {
+        conversationsCacheByTab.delete(currentTab);
+        loadConversations(false);
+    }, 60000);
 }
 
 function joinAdminRoom() {
@@ -2958,6 +2980,9 @@ async function loadCBUConfig() {
     } catch (error) {
         console.error('Error loading CBU:', error);
     }
+    
+    // Cargar también la URL del Canal Informativo
+    loadCanalUrlConfig();
 }
 
 async function saveCBUConfig() {
@@ -2991,6 +3016,50 @@ async function saveCBUConfig() {
     } catch (error) {
         console.error('Error saving CBU:', error);
         showToast('Error al guardar CBU', 'error');
+    }
+}
+
+async function loadCanalUrlConfig() {
+    try {
+        const response = await fetch(`${API_URL}/api/admin/config`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (response.ok) {
+            const data = await response.json();
+            const urlInput = document.getElementById('canalInformativoUrl');
+            if (urlInput) {
+                urlInput.value = data.canalInformativoUrl || '';
+            }
+        }
+    } catch (error) {
+        console.error('Error loading canal URL:', error);
+    }
+}
+
+async function saveCanalUrl() {
+    const urlInput = document.getElementById('canalInformativoUrl');
+    const url = urlInput ? urlInput.value.trim() : '';
+    
+    try {
+        const response = await fetch(`${API_URL}/api/admin/canal-url`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ url })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            showToast('URL del Canal Informativo guardada correctamente', 'success');
+        } else {
+            showToast(data.error || data.message || 'Error al guardar URL', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving canal URL:', error);
+        showToast('Error al guardar URL', 'error');
     }
 }
 

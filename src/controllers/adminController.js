@@ -210,14 +210,37 @@ const getConfig = asyncHandler(async (req, res) => {
   const cbu = await Config.get('cbu', {});
   const welcomeMessage = await Config.get('welcomeMessage', '🎉 ¡Bienvenido a la Sala de Juegos!');
   const depositMessage = await Config.get('depositMessage', '💰 ¡Fichas cargadas!');
+  const canalInformativoUrl = await Config.get('canalInformativoUrl', '');
   
   res.json({
     status: 'success',
     data: {
       cbu,
       welcomeMessage,
-      depositMessage
+      depositMessage,
+      canalInformativoUrl
     }
+  });
+});
+
+/**
+ * POST /api/admin/canal-url
+ * Actualizar URL del Canal Informativo
+ */
+const updateCanalUrl = asyncHandler(async (req, res) => {
+  const { url } = req.body;
+  
+  // Permitir vaciar la URL
+  const safeUrl = (url || '').trim();
+  if (safeUrl && !/^https?:\/\/.+/.test(safeUrl)) {
+    throw new AppError('URL inválida. Debe comenzar con http:// o https://', 400, ErrorCodes.VALIDATION_ERROR);
+  }
+  
+  await Config.set('canalInformativoUrl', safeUrl, req.user.username);
+  
+  res.json({
+    status: 'success',
+    message: 'URL del Canal Informativo actualizada correctamente'
   });
 });
 
@@ -498,6 +521,7 @@ module.exports = {
   deleteUser,
   getConfig,
   updateCbu,
+  updateCanalUrl,
   getCommands,
   createCommand,
   deleteCommand,

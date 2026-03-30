@@ -8,7 +8,7 @@ const jugayganaService = require('./jugayganaService');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 
-// Locks para prevenir reclamos duplicados
+// Locks para prevenir reclamos duplicados (primera línea de defensa: evita round-trips a DB)
 const refundLocks = new Map();
 
 /**
@@ -40,6 +40,34 @@ setInterval(() => {
     }
   }
 }, 60000);
+
+/**
+ * Calcular clave de período para evitar doble reclamo atómico en DB
+ */
+const getPeriodKey = (type) => {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(now.getUTCDate()).padStart(2, '0');
+  switch (type) {
+    case 'daily':
+      return `${y}-${m}-${d}`;
+    case 'weekly': {
+      // Usar el lunes de la semana actual como clave
+      const day = now.getUTCDay(); // 0=Dom, 1=Lun ... 6=Sab
+      const monday = new Date(now);
+      monday.setUTCDate(now.getUTCDate() - ((day + 6) % 7));
+      const wy = monday.getUTCFullYear();
+      const wm = String(monday.getUTCMonth() + 1).padStart(2, '0');
+      const wd = String(monday.getUTCDate()).padStart(2, '0');
+      return `week-${wy}-${wm}-${wd}`;
+    }
+    case 'monthly':
+      return `${y}-${m}`;
+    default:
+      return null;
+  }
+};
 
 /**
  * Calcular reembolso
@@ -169,19 +197,32 @@ const claimDaily = async (userId, username) => {
       };
     }
     
-    // Guardar reclamo
-    await RefundClaim.create({
-      id: uuidv4(),
-      userId,
-      username,
-      type: 'daily',
-      amount: calc.refundAmount,
-      netAmount: calc.netAmount,
-      percentage: 20,
-      deposits: movements.totalDeposits,
-      withdrawals: movements.totalWithdraws,
-      transactionId: depositResult.data?.transfer_id
-    });
+    // Guardar reclamo (el índice único {userId, type, periodKey} previene duplicados atómicamente)
+    const periodKey = getPeriodKey('daily');
+    try {
+      await RefundClaim.create({
+        id: uuidv4(),
+        userId,
+        username,
+        type: 'daily',
+        amount: calc.refundAmount,
+        netAmount: calc.netAmount,
+        percentage: 20,
+        deposits: movements.totalDeposits,
+        withdrawals: movements.totalWithdraws,
+        periodKey,
+        transactionId: depositResult.data?.transfer_id
+      });
+    } catch (dbErr) {
+      if (dbErr.code === 11000) {
+        return {
+          success: false,
+          message: 'Ya reclamaste tu reembolso diario para hoy.',
+          canClaim: false
+        };
+      }
+      throw dbErr;
+    }
     
     // Registrar transacción
     await Transaction.create({
@@ -248,16 +289,29 @@ const claimWeekly = async (userId, username) => {
       };
     }
     
-    await RefundClaim.create({
-      id: uuidv4(),
-      userId,
-      username,
-      type: 'weekly',
-      amount: calc.refundAmount,
-      netAmount: calc.netAmount,
-      percentage: 10,
-      transactionId: depositResult.data?.transfer_id
-    });
+    const weeklyPeriodKey = getPeriodKey('weekly');
+    try {
+      await RefundClaim.create({
+        id: uuidv4(),
+        userId,
+        username,
+        type: 'weekly',
+        amount: calc.refundAmount,
+        netAmount: calc.netAmount,
+        percentage: 10,
+        periodKey: weeklyPeriodKey,
+        transactionId: depositResult.data?.transfer_id
+      });
+    } catch (dbErr) {
+      if (dbErr.code === 11000) {
+        return {
+          success: false,
+          message: 'Ya reclamaste tu reembolso semanal para esta semana.',
+          canClaim: false
+        };
+      }
+      throw dbErr;
+    }
     
     await Transaction.create({
       id: uuidv4(),
@@ -312,26 +366,39 @@ const claimMonthly = async (userId, username) => {
       };
     }
     
-    const depositResult = await jugayganaService.creditBalance(username, calc.refundAmount, 'Reembolso mensual');
+    const depositResult2 = await jugayganaService.creditBalance(username, calc.refundAmount, 'Reembolso mensual');
     
-    if (!depositResult.success) {
+    if (!depositResult2.success) {
       return {
         success: false,
-        message: 'Error al acreditar: ' + depositResult.error,
+        message: 'Error al acreditar: ' + depositResult2.error,
         canClaim: true
       };
     }
     
-    await RefundClaim.create({
-      id: uuidv4(),
-      userId,
-      username,
-      type: 'monthly',
-      amount: calc.refundAmount,
-      netAmount: calc.netAmount,
-      percentage: 5,
-      transactionId: depositResult.data?.transfer_id
-    });
+    const monthlyPeriodKey = getPeriodKey('monthly');
+    try {
+      await RefundClaim.create({
+        id: uuidv4(),
+        userId,
+        username,
+        type: 'monthly',
+        amount: calc.refundAmount,
+        netAmount: calc.netAmount,
+        percentage: 5,
+        periodKey: monthlyPeriodKey,
+        transactionId: depositResult2.data?.transfer_id
+      });
+    } catch (dbErr) {
+      if (dbErr.code === 11000) {
+        return {
+          success: false,
+          message: 'Ya reclamaste tu reembolso mensual para este mes.',
+          canClaim: false
+        };
+      }
+      throw dbErr;
+    }
     
     await Transaction.create({
       id: uuidv4(),
@@ -339,7 +406,7 @@ const claimMonthly = async (userId, username) => {
       amount: calc.refundAmount,
       username,
       description: 'Reembolso mensual',
-      transactionId: depositResult.data?.transfer_id
+      transactionId: depositResult2.data?.transfer_id
     });
     
     return {

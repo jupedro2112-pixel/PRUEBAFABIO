@@ -16,6 +16,15 @@ let pendingSentMessages = new Map(); // Tracking de mensajes enviados pendientes
 let lastSentMessageTimestamp = 0; // Timestamp del último mensaje enviado
 let passwordChangePending = false; // Flag: cambio de contraseña obligatorio pendiente
 
+// Rate limiting frontend para mensajes (segunda línea de defensa; el backend es la primaria)
+const sentMessageTimestamps = []; // sliding window de timestamps
+const FRONTEND_MSG_RATE_MAX = 2;
+const FRONTEND_MSG_RATE_WINDOW_MS = 1000;
+
+// Protección anti-spam para botón CBU
+let lastCbuClickTime = 0;
+const CBU_CLICK_COOLDOWN_MS = 10000; // 10 segundos
+
 // Función para obtener fecha en hora Argentina
 function getArgentinaDate(date = new Date()) {
     return new Date(date.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
@@ -578,6 +587,7 @@ async function initializeSession(afterRegister = false) {
     startMessagePolling();
     loadRefundStatus();
     loadFireStatus();
+    loadCanalInformativoUrl();
     
     return userLoaded;
 }
@@ -587,6 +597,14 @@ async function initializeSession(afterRegister = false) {
 // ========================================
 
 async function loadAndShowCBU() {
+    // Protección anti-spam: máximo 1 clic cada 10 segundos
+    const now = Date.now();
+    if (now - lastCbuClickTime < CBU_CLICK_COOLDOWN_MS) {
+        showToast('Espera unos segundos antes de volver a solicitar el CBU.', 'info');
+        return;
+    }
+    lastCbuClickTime = now;
+
     try {
         // Enviar solicitud de CBU que guarda mensaje en el chat
         const response = await fetch(`${API_URL}/api/cbu/request`, {
@@ -653,6 +671,32 @@ function fallbackCopy(text) {
     }
     
     document.body.removeChild(textarea);
+}
+
+// ========================================
+// CANAL INFORMATIVO
+// ========================================
+
+async function loadCanalInformativoUrl() {
+    try {
+        const response = await fetch(`${API_URL}/api/config/canal-url`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        const btn = document.getElementById('canalInformativoBtn');
+        if (!btn) return;
+        if (data.url) {
+            btn.href = data.url;
+            btn.style.display = 'inline-flex';
+        } else {
+            btn.style.display = 'none';
+        }
+    } catch {
+        // Si no hay URL configurada, ocultar el botón silenciosamente
+        const btn = document.getElementById('canalInformativoBtn');
+        if (btn) btn.style.display = 'none';
+    }
 }
 
 // ========================================
@@ -1254,6 +1298,11 @@ function initSocket() {
     socket.on('error', function(data) {
         console.error('❌ Error de socket:', data);
     });
+
+    // Manejar rate limiting de mensajes
+    socket.on('rate_limited', function(data) {
+        showToast(data.message || 'Estás enviando mensajes muy rápido. Esperá un momento.', 'info');
+    });
     
     // Manejar desconexión
     socket.on('disconnect', function() {
@@ -1444,48 +1493,35 @@ async function sendMessage() {
     
     if (!content) return;
 
-    // Issue #3: Los usuarios no pueden enviar comandos (mensajes que comiencen con /)
+    // Los usuarios no pueden enviar comandos (mensajes que comiencen con /)
     if (content.startsWith('/')) {
         showToast('No puedes enviar comandos', 'error');
         input.value = '';
         input.style.height = 'auto';
         return;
     }
-    
-    // CORREGIDO: Verificar si ya se envió un mensaje idéntico en los últimos 3 segundos
+
+    // Rate limiting frontend: máximo 2 mensajes por segundo
     const now = Date.now();
+    const recentTimestamps = sentMessageTimestamps.filter(t => now - t < FRONTEND_MSG_RATE_WINDOW_MS);
+    if (recentTimestamps.length >= FRONTEND_MSG_RATE_MAX) {
+        showToast('Estás enviando mensajes muy rápido. Esperá un momento.', 'info');
+        input.value = '';
+        input.style.height = 'auto';
+        return;
+    }
+    sentMessageTimestamps.length = 0;
+    sentMessageTimestamps.push(...recentTimestamps, now);
+    
+    // Verificar si ya se envió un mensaje idéntico en los últimos 3 segundos
     if (now - lastSentMessageTimestamp < 3000) {
         const recentContent = pendingSentMessages.get(content);
         if (recentContent && (now - recentContent) < 3000) {
-            console.log('⚠️ Mensaje duplicado detectado (mismo contenido en los últimos 3s), ignorando');
             input.value = '';
             input.style.height = 'auto';
             return;
         }
     }
-    
-    // CORREGIDO: Verificar si ya existe un mensaje con el mismo contenido en el DOM
-    const existingMessages = document.querySelectorAll('.message-wrapper');
-    for (const msg of existingMessages) {
-        const msgContent = msg.querySelector('.message > div')?.textContent?.trim();
-        const msgTimeText = msg.querySelector('.message-time')?.textContent;
-        if (msgContent === content && msgTimeText) {
-            const msgTime = new Date();
-            const timeParts = msgTimeText.split(':');
-            if (timeParts.length >= 2) {
-                msgTime.setHours(parseInt(timeParts[0]), parseInt(timeParts[1]));
-                if (now - msgTime.getTime() < 5000) {
-                    console.log('⚠️ Mensaje con mismo contenido ya existe en el chat, ignorando');
-                    input.value = '';
-                    input.style.height = 'auto';
-                    return;
-                }
-            }
-        }
-    }
-    
-    // Registrar mensaje como pendiente
-    lastSentMessageTimestamp = now;
     pendingSentMessages.set(content, now);
     
     // Limpiar mensajes pendientes antiguos (más de 10 segundos)
@@ -1951,6 +1987,13 @@ async function showRefundModal(type) {
 }
 
 async function claimRefund(type) {
+    // Proteger botón contra doble click
+    const claimBtn = document.getElementById('claimRefundBtn');
+    if (claimBtn) {
+        if (claimBtn.disabled) return;
+        claimBtn.disabled = true;
+        claimBtn.textContent = '⏳ Procesando...';
+    }
     try {
         const response = await fetch(`${API_URL}/api/refunds/claim/${type}`, {
             method: 'POST',
@@ -1972,6 +2015,11 @@ async function claimRefund(type) {
         }
     } catch (error) {
         showToast('Error de conexión', 'error');
+    } finally {
+        if (claimBtn) {
+            claimBtn.disabled = false;
+            claimBtn.textContent = '🎁 Reclamar Reembolso';
+        }
     }
 }
 
@@ -2044,13 +2092,56 @@ async function showFireModal() {
     if (fireCountdownInterval) {
         clearInterval(fireCountdownInterval);
     }
+
+    // Condición general visible al usuario (sin revelar monto exacto)
+    const activityConditionEl = document.getElementById('fireActivityCondition');
+    if (activityConditionEl) {
+        activityConditionEl.innerHTML = '📋 <strong>Condición:</strong> Para acceder a las recompensas Fueguito diario necesitás tener movimientos de cargas y retiros durante el mes.';
+    }
+
+    // Mostrar premio pendiente "100% próxima carga" si aplica
+    const pendingBonusEl = document.getElementById('firePendingBonus');
+    if (pendingBonusEl) {
+        if (fireStatus.pendingNextLoadBonus) {
+            pendingBonusEl.style.display = 'block';
+            pendingBonusEl.innerHTML = '🎉 <strong style="color:#d4af37;">Tenés un 100% en tu próxima carga disponible!</strong> Avisale a un operador cuando quieras usarlo.';
+        } else {
+            pendingBonusEl.style.display = 'none';
+        }
+    }
+
+    // Renderizar menú de milestones/recompensas
+    const milestonesEl = document.getElementById('fireMilestonesMenu');
+    if (milestonesEl && fireStatus.milestones) {
+        milestonesEl.innerHTML = fireStatus.milestones.map(m => {
+            let statusIcon, statusLabel, statusClass;
+            if (m.status === 'completed') {
+                statusIcon = '✅'; statusLabel = 'Completado'; statusClass = 'milestone-done';
+            } else if (m.status === 'next') {
+                statusIcon = '🔓'; statusLabel = '¡Próximo!'; statusClass = 'milestone-next';
+            } else {
+                statusIcon = '🔒'; statusLabel = 'Bloqueado'; statusClass = 'milestone-locked';
+            }
+            let rewardText;
+            if (m.type === 'next_load_bonus') {
+                rewardText = '100% en próxima carga';
+            } else {
+                rewardText = m.reward ? `$${m.reward.toLocaleString('es-AR')}` : '-';
+            }
+            const depositReq = m.hasDepositRequirement ? ' <span style="font-size:10px;color:#aaa;">(requiere actividad del mes)</span>' : '';
+            return `<div class="milestone-item ${statusClass}" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);">
+                <span>${statusIcon} <strong>Día ${m.day}</strong>: ${rewardText}${depositReq}</span>
+                <span style="font-size:11px;color:#aaa;">${statusLabel}</span>
+            </div>`;
+        }).join('');
+    }
     
     // Sin requisitos de actividad - todos pueden reclamar
     if (fireStatus.canClaim) {
         claimBtn.disabled = false;
         claimBtn.textContent = '🔥 Reclamar Fueguito';
         claimBtn.style.background = 'linear-gradient(135deg, #ff4500 0%, #ff6347 100%)';
-        condition.innerHTML = '✅ <strong style="color: #00ff88;">Puedes reclamar tu fueguito hoy!</strong>';
+        condition.innerHTML = '✅ <strong style="color: #00ff88;">Podés reclamar tu fueguito hoy!</strong>';
     } else {
         claimBtn.disabled = true;
         claimBtn.textContent = '⏳ Ya reclamado';
@@ -2128,6 +2219,9 @@ async function claimFire() {
             fireStatus.canClaim = false;
             fireStatus.lastClaim = new Date().toISOString();
             fireStatus.streak = data.streak;
+            if (data.pendingNextLoadBonus !== undefined) {
+                fireStatus.pendingNextLoadBonus = data.pendingNextLoadBonus;
+            }
             
             // Iniciar cuenta regresiva
             startFireCountdown();
@@ -2136,9 +2230,11 @@ async function claimFire() {
             updateFireButton();
             
             if (data.reward > 0) {
-                sendSystemMessage(`🔥🔥🔥 Racha de 10 días! Recompensa: $${data.reward.toLocaleString()}`);
+                sendSystemMessage(`🔥🔥🔥 ¡Recompensa Fueguito día ${data.streak}! Premio: $${data.reward.toLocaleString('es-AR')}`);
+            } else if (data.rewardType === 'next_load_bonus') {
+                sendSystemMessage(`🎉 ¡Recompensa Fueguito día 15! Tenés 100% en tu próxima carga. Avisale a un operador cuando quieras usarlo.`);
             } else {
-                sendSystemMessage(`🔥 Día ${data.streak} de racha!`);
+                sendSystemMessage(`🔥 Día ${data.streak} de racha Fueguito!`);
             }
             
             // Cerrar modal después de un momento
