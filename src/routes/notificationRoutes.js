@@ -192,9 +192,22 @@ router.post('/send', requireAdmin, async (req, res) => {
         messageId: result.messageId 
       });
     } else {
+      // Si el token está permanentemente inválido, borrarlo de la BD
+      if (result.invalidToken) {
+        try {
+          await User.updateOne(
+            { fcmToken: fcmToken },
+            { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+          );
+          console.log('[FCM] 🗑️ Token inválido eliminado automáticamente de la BD');
+        } catch (cleanErr) {
+          console.error('[FCM] Error al borrar token inválido:', cleanErr.message);
+        }
+      }
       res.status(500).json({ 
         success: false, 
-        error: result.error 
+        error: result.error,
+        tokenCleaned: result.invalidToken === true
       });
     }
   } catch (error) {
@@ -596,12 +609,8 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
           results.errors.push({ username: user.username, error: testResult.error });
           console.log(`[FCM] ❌ Token inválido: ${user.username} - ${testResult.error}`);
           
-          // Si el error indica token inválido, borrarlo
-          if (testResult.error && (
-            testResult.error.includes('registration-token-not-registered') ||
-            testResult.error.includes('invalid-registration-token') ||
-            testResult.error.includes('Requested entity was not found')
-          )) {
+          // Si el error indica token inválido, borrarlo (usa flag del servicio)
+          if (testResult.invalidToken) {
             await User.updateOne(
               { username: user.username },
               { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
@@ -750,13 +759,7 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
           batchFail++;
           const errorMsg = result.error || '';
           const errorCode = result.code || '';
-          const isInvalid =
-            errorMsg.includes('registration-token-not-registered') ||
-            errorMsg.includes('invalid-registration-token') ||
-            errorMsg.includes('Requested entity was not found') ||
-            errorMsg.includes('NotRegistered') ||
-            errorCode === 'messaging/registration-token-not-registered' ||
-            errorCode === 'messaging/invalid-registration-token';
+          const isInvalid = result.invalidToken === true;
 
           batchFailed.push({ username: user.username, error: errorMsg, code: errorCode, cleaned: isInvalid });
 

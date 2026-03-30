@@ -728,6 +728,79 @@
             font-size: 12px;
             line-height: 1.4;
         }
+
+        /* ============================================
+           MODAL INFO - RESPONSIVE PARA MÓVILES
+           Root cause fix: el modal-content del infoModal no
+           tenía max-height ni overflow-y, lo que hacía que
+           desbordara la pantalla en dispositivos pequeños y
+           bloqueara la salida del usuario.
+           ============================================ */
+        #infoModal .modal-content {
+            max-height: 90dvh;        /* respeta el viewport dinámico (barras del browser) */
+            max-height: 90vh;         /* fallback para navegadores sin dvh */
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding-bottom: 20px;
+        }
+
+        @media (max-width: 600px) {
+            #infoModal .modal-content {
+                width: 96%;
+                max-width: 96%;
+                margin: 4px;
+                padding: 16px 14px 18px;
+                max-height: 92dvh;
+                max-height: 92vh;
+                border-radius: 14px;
+            }
+
+            #infoModal .info-grid {
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+            }
+
+            #infoModal .info-card {
+                padding: 10px 8px;
+            }
+
+            #infoModal .info-card-icon {
+                font-size: 1.8em;
+                margin-bottom: 6px;
+            }
+
+            #infoModal .info-card-title {
+                font-size: 11px;
+                margin-bottom: 4px;
+            }
+
+            #infoModal .info-card-desc {
+                font-size: 10px;
+            }
+
+            /* Botón X siempre visible aunque el scroll no esté arriba */
+            #infoModal .modal-content > button[onclick] {
+                position: sticky;
+                top: 4px;
+                float: right;
+                margin-bottom: -30px;
+                background: rgba(10,0,21,0.85) !important;
+                border-radius: 50% !important;
+                width: 30px;
+                height: 30px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px !important;
+                z-index: 20;
+            }
+        }
+
+        @media (max-width: 380px) {
+            #infoModal .info-grid {
+                grid-template-columns: 1fr;
+            }
+        }
         
         /* Promo Banner */
         .promo-banner {
@@ -2382,15 +2455,14 @@
         // ============================================
         // REGISTRAR SERVICE WORKER
         // ============================================
-        // Root cause fix for "PWA breaks after redeploy" AND "push notifications not arriving":
-        //   - REMOVED: the "unregister all SWs + timestamp URL" approach.
-        //     That approach was re-creating the FCM subscription on every page load
-        //     (different URL → different SW registration → old FCM token became invalid)
-        //     and was also replacing the caching user-sw.js on each load.
-        //   - Now we register /user-sw.js as the single SW (handles caching + push events).
-        //     The server sends this file with no-cache headers so it is always up-to-date.
-        //   - FCM getToken() is called with this SW's registration so push subscriptions
-        //     are stable and survive page reloads.
+        // ROOT CAUSE FIX (Issues #1 y #2):
+        //   Anteriormente existían dos SWs compitiendo en el scope /:
+        //     - user-sw.js  (registrado explícitamente, manejaba caché + push manual)
+        //     - firebase-messaging-sw.js (manejaba FCM mediante SDK)
+        //   Esto provocaba que el token FCM quedara asociado a un SW pero las
+        //   notificaciones llegaran al otro, haciendo que todos los envíos fallaran.
+        //   Ahora se usa SOLO firebase-messaging-sw.js, que combina FCM + caché.
+        //   user-sw.js es un stub de migración que se auto-desregistra.
         async function registerServiceWorker() {
             if (!('serviceWorker' in navigator)) {
                 console.log('[PWA] Service Worker no soportado');
@@ -2398,9 +2470,11 @@
             }
             
             try {
-                // Register with updateViaCache:'none' so the browser always fetches a
-                // fresh copy of the SW script (server already sends no-cache headers).
-                const registration = await navigator.serviceWorker.register('/user-sw.js', {
+                // ROOT CAUSE FIX: registrar firebase-messaging-sw.js (no user-sw.js).
+                // FCM asocia el token FCM a la registration del SW. Si el SW activo es
+                // user-sw.js y FCM usa firebase-messaging-sw.js, los tokens no coinciden.
+                // Al usar un único SW (firebase-messaging-sw.js) se elimina ese conflicto.
+                const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
                     updateViaCache: 'none'
                 });
                 
@@ -2492,8 +2566,8 @@
                     console.log('[FCM] Solicitando token FCM...');
                     let currentToken;
                     try {
-                        // Use the SW registration that was passed in (user-sw.js).
-                        // If it wasn't provided, fall back to navigator.serviceWorker.ready.
+                        // Usar la registration de firebase-messaging-sw.js que se pasó.
+                        // Si no se proporcionó, hacer fallback a navigator.serviceWorker.ready.
                         const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
                         console.log('[FCM] Service Worker listo:', usedRegistration.scope);
                         

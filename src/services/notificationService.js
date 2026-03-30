@@ -9,6 +9,32 @@ const path = require('path');
 let isInitialized = false;
 
 // ============================================
+// HELPER: DETECTAR TOKEN INVÁLIDO/NO REGISTRADO
+// Cubre todos los códigos de error que FCM devuelve para
+// tokens que ya no son válidos y deben borrarse de la BD.
+// ROOT CAUSE FIX (Issue #3): anteriormente solo se detectaban
+// algunos errores. Ahora se cubren también 'unregistered',
+// 'UNREGISTERED', 'invalid-argument', y variaciones de case.
+// ============================================
+function isInvalidTokenError(errorMsg, errorCode) {
+  const msg  = (errorMsg  || '').toLowerCase();
+  const code = (errorCode || '').toLowerCase();
+  return (
+    msg.includes('registration-token-not-registered') ||
+    msg.includes('invalid-registration-token')        ||
+    msg.includes('requested entity was not found')    ||
+    msg.includes('notregistered')                     ||
+    msg.includes('not_registered')                    ||
+    msg.includes('unregistered')                      ||
+    msg.includes('mismatched-credential')             ||
+    code.includes('registration-token-not-registered') ||
+    code.includes('invalid-registration-token')        ||
+    code.includes('unregistered')                      ||
+    code === 'messaging/invalid-argument'
+  );
+}
+
+// ============================================
 // INICIALIZAR FIREBASE ADMIN
 // ============================================
 function initializeFirebase() {
@@ -120,7 +146,13 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
     console.error('[FCM] ❌ Error al enviar notificación:', error.message);
     console.error('[FCM] Error code:', error.code);
     console.error('[FCM] Error details:', error);
-    return { success: false, error: error.message, code: error.code };
+    return { 
+      success: false, 
+      error: error.message, 
+      code: error.code,
+      // Indicar explícitamente si el token debe borrarse
+      invalidToken: isInvalidTokenError(error.message, error.code)
+    };
   }
 }
 
@@ -192,11 +224,29 @@ async function sendNotificationToMultiple(fcmTokens, title, body, data = {}) {
     }
 
     console.log(`[FCM] ✅ Notificaciones enviadas: ${response.successCount} exitosas, ${response.failureCount} fallidas`);
+
+    // Identificar tokens inválidos para que el caller pueda limpiarlos.
+    // Nota: Firebase Admin SDK garantiza que responses[i] corresponde a messages[i]
+    // (ver documentación de sendEach/sendAll: la respuesta conserva el orden de entrada).
+    const invalidTokens = [];
+    if (response.responses) {
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success) {
+          const errorMsg  = resp.error?.message || 'Error desconocido';
+          const errorCode = resp.error?.code    || '';
+          if (isInvalidTokenError(errorMsg, errorCode)) {
+            invalidTokens.push(fcmTokens[idx]);
+          }
+        }
+      });
+    }
+
     return { 
       success: true, 
       successCount: response.successCount,
       failureCount: response.failureCount,
-      responses: response.responses
+      responses: response.responses,
+      invalidTokens  // lista de tokens que deben borrarse
     };
   } catch (error) {
     console.error('[FCM] ❌ Error al enviar notificaciones:', error.message);
@@ -394,8 +444,8 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
       if (response.responses) {
         response.responses.forEach((resp, idx) => {
           if (!resp.success) {
-            const errorMsg = resp.error?.message || 'Error desconocido';
-            const errorCode = resp.error?.code || '';
+            const errorMsg  = resp.error?.message || 'Error desconocido';
+            const errorCode = resp.error?.code    || '';
             
             failedTokens.push({
               token: batch[idx].fcmToken,
@@ -404,16 +454,8 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
               code: errorCode
             });
             
-            // Detectar tokens inválidos para borrarlos
-            const isInvalidToken = 
-              errorMsg.includes('registration-token-not-registered') ||
-              errorMsg.includes('invalid-registration-token') ||
-              errorMsg.includes('Requested entity was not found') ||
-              errorMsg.includes('NotRegistered') ||
-              errorCode === 'messaging/registration-token-not-registered' ||
-              errorCode === 'messaging/invalid-registration-token';
-            
-            if (isInvalidToken) {
+            // Usar el helper compartido para detectar todos los tipos de token inválido
+            if (isInvalidTokenError(errorMsg, errorCode)) {
               tokensToDelete.push({
                 username: batch[idx].username,
                 token: batch[idx].fcmToken
@@ -489,6 +531,23 @@ async function sendNotificationToUsernames(UserModel, usernames, title, body, da
 
     const result = await sendNotificationToMultiple(tokens, title, body, data);
     result.targetUsers = users.map(u => u.username);
+
+    // Limpiar tokens inválidos detectados por sendNotificationToMultiple
+    if (result.invalidTokens && result.invalidTokens.length > 0) {
+      console.log(`[FCM] 🧹 Borrando ${result.invalidTokens.length} tokens inválidos de usuarios específicos...`);
+      for (const badToken of result.invalidTokens) {
+        try {
+          await UserModel.updateOne(
+            { fcmToken: badToken },
+            { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+          );
+          console.log(`[FCM] 🗑️ Token inválido borrado: ${badToken.substring(0, 20)}...`);
+        } catch (e) {
+          console.error(`[FCM] ❌ Error borrando token inválido:`, e.message);
+        }
+      }
+      result.cleanedTokens = result.invalidTokens.length;
+    }
     
     return result;
   } catch (error) {

@@ -1,13 +1,40 @@
 // ============================================
-// FIREBASE CLOUD MESSAGING - SERVICE WORKER
-// Maneja notificaciones push en background
+// FIREBASE CLOUD MESSAGING + CACHE SERVICE WORKER
+// SW único para notificaciones push Y caché PWA.
+// Versión: 2.0.0
 // ============================================
-// Versión: 1.0.1 - Actualizado para evitar caché
+// ROOT CAUSE FIX: antes existían dos SWs (firebase-messaging-sw.js y
+// user-sw.js) compitiendo en el mismo scope (/). Eso provocaba que el
+// token FCM apuntara a un SW pero las notificaciones llegaran al otro,
+// invalidando todos los envíos. Ahora este es el único SW activo.
+// ============================================
 
 importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js');
 
-// Configuración de Firebase
+// ============================================
+// CONFIGURACIÓN DE CACHÉ
+// ============================================
+const CACHE_VERSION = 'v5';
+const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
+
+const PRECACHE_URLS = [
+  '/icons/icon-192x192.png',
+  '/icons/icon-512x512.png'
+];
+
+function isNetworkFirst(url) {
+  return (
+    url.endsWith('/') ||
+    url.includes('/index.html') ||
+    url.includes('/app.js') ||
+    url.includes('/manifest.json')
+  );
+}
+
+// ============================================
+// CONFIGURACIÓN DE FIREBASE
+// ============================================
 const firebaseConfig = {
   apiKey: "AIzaSyAjZuVIxNY-SrnihkyNVupZ8AhXX6qxAxY",
   authDomain: "saladejuegos-673fa.firebaseapp.com",
@@ -18,51 +45,61 @@ const firebaseConfig = {
   measurementId: "G-3ZJRT0NCTE"
 };
 
-// Inicializar Firebase
 firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
-console.log('[SW] Firebase Messaging Service Worker iniciado');
+console.log('[FCM-SW] Firebase Messaging Service Worker v4 iniciado');
 
 // ============================================
-// MANEJAR NOTIFICACIONES EN BACKGROUND
+// NOTIFICACIONES EN BACKGROUND (FCM SDK)
 // ============================================
 messaging.onBackgroundMessage(function(payload) {
-  console.log('[Firebase Messaging] Notificación recibida en background:', payload);
-  
-  const notificationTitle = payload.notification.title || 'Sala de Juegos';
-  const notificationOptions = {
-    body: payload.notification.body || 'Nueva notificación',
-    icon: payload.notification.icon || '/icons/icon-192x192.png',
-    badge: '/icons/icon-72x72.png',
-    tag: payload.data?.tag || 'default',
+  console.log('[FCM-SW] Notificación en background:', payload);
+
+  const notif = payload.notification || {};
+  const webNotif = (payload.webpush && payload.webpush.notification) || {};
+
+  const title = notif.title || webNotif.title || 'Sala de Juegos';
+  const body  = notif.body  || webNotif.body  || 'Tienes un mensaje del soporte';
+  const icon  = notif.icon  || webNotif.icon  || '/icons/icon-192x192.png';
+  const badge = notif.badge || webNotif.badge || '/icons/icon-72x72.png';
+  const tag   = (payload.data && payload.data.tag) || 'chat-message';
+
+  const options = {
+    body,
+    icon,
+    badge,
+    tag,
     requireInteraction: false,
-    data: payload.data || {}
+    data: payload.data || {},
+    actions: [
+      { action: 'open',  title: 'Abrir chat' },
+      { action: 'close', title: 'Cerrar'     }
+    ],
+    vibrate: [200, 100, 200]
   };
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
+  return self.registration.showNotification(title, options);
 });
 
 // ============================================
-// MANEJAR CLICK EN NOTIFICACIÓN
+// CLICK EN NOTIFICACIÓN
 // ============================================
 self.addEventListener('notificationclick', function(event) {
-  console.log('[Firebase Messaging] Click en notificación:', event);
-  
+  console.log('[FCM-SW] Click en notificación:', event.action);
+
   event.notification.close();
-  
-  // Abrir o enfocar la aplicación
+
+  if (event.action === 'close') return;
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then(function(clientList) {
-        // Si ya hay una ventana abierta, enfocarla
-        for (let i = 0; i < clientList.length; i++) {
-          const client = clientList[i];
+        for (const client of clientList) {
           if (client.url.includes(self.location.origin) && 'focus' in client) {
             return client.focus();
           }
         }
-        // Si no hay ventana abierta, abrir una nueva
         if (clients.openWindow) {
           return clients.openWindow('/');
         }
@@ -71,14 +108,102 @@ self.addEventListener('notificationclick', function(event) {
 });
 
 // ============================================
-// INSTALACIÓN DEL SERVICE WORKER
+// INSTALACIÓN
 // ============================================
 self.addEventListener('install', function(event) {
-  console.log('[Firebase Messaging] Service Worker instalado');
+  console.log('[FCM-SW] Instalando', CACHE_VERSION);
+
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(function(cache) {
+        return cache.addAll(PRECACHE_URLS);
+      })
+      .catch(function(err) {
+        console.log('[FCM-SW] Error al pre-cachear:', err);
+      })
+  );
+
   self.skipWaiting();
 });
 
+// ============================================
+// ACTIVACIÓN
+// ============================================
 self.addEventListener('activate', function(event) {
-  console.log('[Firebase Messaging] Service Worker activado');
-  event.waitUntil(clients.claim());
+  console.log('[FCM-SW] Activado', CACHE_VERSION);
+
+  event.waitUntil(
+    caches.keys().then(function(cacheNames) {
+      return Promise.all(
+        cacheNames.map(function(name) {
+          if (name !== CACHE_NAME) {
+            console.log('[FCM-SW] Eliminando caché antiguo:', name);
+            return caches.delete(name);
+          }
+        })
+      );
+    })
+  );
+
+  self.clients.claim();
+});
+
+// ============================================
+// FETCH (ESTRATEGIA DE CACHÉ)
+// ============================================
+self.addEventListener('fetch', function(event) {
+  if (event.request.method !== 'GET') return;
+
+  const url = event.request.url;
+
+  if (url.includes('/api/') || url.includes('/socket.io/')) return;
+
+  if (isNetworkFirst(url)) {
+    event.respondWith(
+      fetch(event.request)
+        .then(function(response) {
+          if (response && response.status === 200 && response.type === 'basic') {
+            var toCache = response.clone();
+            caches.open(CACHE_NAME).then(function(cache) {
+              cache.put(event.request, toCache);
+            });
+          }
+          return response;
+        })
+        .catch(function() {
+          return caches.match(event.request).then(function(cached) {
+            if (cached) return cached;
+            if (event.request.mode === 'navigate') return caches.match('/');
+          });
+        })
+    );
+  } else {
+    event.respondWith(
+      caches.match(event.request)
+        .then(function(cached) {
+          if (cached) return cached;
+          return fetch(event.request).then(function(response) {
+            if (response && response.status === 200 && response.type === 'basic') {
+              var toCache = response.clone();
+              caches.open(CACHE_NAME).then(function(cache) {
+                cache.put(event.request, toCache);
+              });
+            }
+            return response;
+          });
+        })
+        .catch(function() {
+          if (event.request.mode === 'navigate') return caches.match('/');
+        })
+    );
+  }
+});
+
+// ============================================
+// MENSAJES DESDE LA APP
+// ============================================
+self.addEventListener('message', function(event) {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
