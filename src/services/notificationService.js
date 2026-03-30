@@ -34,6 +34,34 @@ function isInvalidTokenError(errorMsg, errorCode) {
 }
 
 // ============================================
+// HELPER: NORMALIZAR FIREBASE PRIVATE KEY
+// Maneja los distintos formatos en que AWS Elastic Beanstalk
+// puede almacenar FIREBASE_PRIVATE_KEY:
+//   - literal \\n (doble escape)
+//   - \r\n (saltos Windows)
+//   - comillas externas (simples o dobles)
+//   - espacios/saltos al inicio o final
+// ============================================
+function normalizePrivateKey(raw) {
+  // 1. Convertir a string y quitar espacios extremos
+  let key = String(raw).trim();
+
+  // 2. Eliminar comillas externas si las tiene (simples o dobles)
+  if ((key.startsWith('"') && key.endsWith('"')) ||
+      (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).trim();
+  }
+
+  // 3. Convertir \\n (literal backslash-n doble escapado) → \n real
+  key = key.replace(/\\n/g, '\n');
+
+  // 4. Normalizar saltos de línea Windows (\r\n) → \n
+  key = key.replace(/\r\n/g, '\n');
+
+  return key;
+}
+
+// ============================================
 // INICIALIZAR FIREBASE ADMIN
 // Usa exclusivamente env vars de AWS Elastic Beanstalk.
 // NO lee ningún archivo .json del proyecto.
@@ -46,13 +74,45 @@ function initializeFirebase() {
 
   const projectId   = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey  = process.env.FIREBASE_PRIVATE_KEY;
+  const rawKey      = process.env.FIREBASE_PRIVATE_KEY;
 
-  if (!projectId || !clientEmail || !privateKey) {
+  // ---- Logs diagnóstico seguros (sin exponer la clave) ----
+  console.log('[FCM] Diagnóstico FIREBASE_PRIVATE_KEY:');
+  console.log('[FCM]   Existe:', !!rawKey);
+  if (rawKey) {
+    console.log('[FCM]   Longitud raw:', rawKey.length);
+    console.log('[FCM]   Contiene \\\\n literal:', rawKey.includes('\\n'));
+    console.log('[FCM]   Contiene saltos reales:', rawKey.includes('\n'));
+  }
+
+  if (!projectId || !clientEmail || !rawKey) {
     console.error('[FCM] ❌ Faltan variables de entorno para Firebase Admin:');
     if (!projectId)   console.error('[FCM]   - FIREBASE_PROJECT_ID no está definida');
     if (!clientEmail) console.error('[FCM]   - FIREBASE_CLIENT_EMAIL no está definida');
-    if (!privateKey)  console.error('[FCM]   - FIREBASE_PRIVATE_KEY no está definida');
+    if (!rawKey)      console.error('[FCM]   - FIREBASE_PRIVATE_KEY no está definida');
+    return false;
+  }
+
+  const privateKey = normalizePrivateKey(rawKey);
+
+  // ---- Validación defensiva del formato PEM ----
+  console.log('[FCM]   Longitud normalizada:', privateKey.length);
+  console.log('[FCM]   Empieza con BEGIN:', privateKey.startsWith('-----BEGIN PRIVATE KEY-----'));
+  console.log('[FCM]   Termina con END:', privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----'));
+
+  if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
+    console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY no comienza con -----BEGIN PRIVATE KEY-----');
+    console.error('[FCM]   Verifica el valor de FIREBASE_PRIVATE_KEY en las env vars de AWS EB');
+    return false;
+  }
+
+  if (!privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
+    console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----');
+    return false;
+  }
+
+  if (privateKey.length < 100) {
+    console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY tiene longitud sospechosamente corta:', privateKey.length);
     return false;
   }
 
@@ -61,7 +121,7 @@ function initializeFirebase() {
       credential: admin.credential.cert({
         projectId,
         clientEmail,
-        privateKey: privateKey.replace(/\\n/g, '\n'),
+        privateKey,
       }),
     });
 

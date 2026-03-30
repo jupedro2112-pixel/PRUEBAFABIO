@@ -8,16 +8,39 @@
 
 const admin = require('firebase-admin');
 
+// ============================================
+// HELPER: NORMALIZAR FIREBASE PRIVATE KEY
+// Idéntico al de src/services/notificationService.js.
+// ============================================
+function normalizePrivateKey(raw) {
+  let key = String(raw).trim();
+  if ((key.startsWith('"') && key.endsWith('"')) ||
+      (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).trim();
+  }
+  key = key.replace(/\\n/g, '\n');
+  key = key.replace(/\r\n/g, '\n');
+  return key;
+}
+
 // Cargar credenciales desde variables de entorno
 const projectId   = process.env.FIREBASE_PROJECT_ID;
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-const privateKey  = process.env.FIREBASE_PRIVATE_KEY;
+const rawKey      = process.env.FIREBASE_PRIVATE_KEY;
 
-if (!projectId || !clientEmail || !privateKey) {
+if (!projectId || !clientEmail || !rawKey) {
   console.error('❌ Faltan variables de entorno para Firebase Admin:');
   if (!projectId)   console.error('   - FIREBASE_PROJECT_ID no está definida');
   if (!clientEmail) console.error('   - FIREBASE_CLIENT_EMAIL no está definida');
-  if (!privateKey)  console.error('   - FIREBASE_PRIVATE_KEY no está definida');
+  if (!rawKey)      console.error('   - FIREBASE_PRIVATE_KEY no está definida');
+  process.exit(1);
+}
+
+const privateKey = normalizePrivateKey(rawKey);
+
+if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----') ||
+    !privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
+  console.error('❌ FIREBASE_PRIVATE_KEY tiene formato inválido (falta BEGIN/END PRIVATE KEY)');
   process.exit(1);
 }
 
@@ -26,7 +49,7 @@ admin.initializeApp({
   credential: admin.credential.cert({
     projectId,
     clientEmail,
-    privateKey: privateKey.replace(/\\n/g, '\n'),
+    privateKey,
   }),
 });
 
