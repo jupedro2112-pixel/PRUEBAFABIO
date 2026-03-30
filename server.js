@@ -144,6 +144,30 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
+// ============================================
+// RATE LIMITING POR USUARIO (CBU requests)
+// Máximo 1 solicitud de CBU cada 10 segundos por usuario
+// ============================================
+const cbuRequestTimestamps = new Map(); // userId -> timestamp
+const CBU_RATE_WINDOW_MS = 10000;
+
+function checkCbuRateLimit(userId) {
+  const last = cbuRequestTimestamps.get(userId);
+  const now = Date.now();
+  if (last && now - last < CBU_RATE_WINDOW_MS) {
+    return false; // Bloqueado
+  }
+  cbuRequestTimestamps.set(userId, now);
+  return true;
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - CBU_RATE_WINDOW_MS * 2;
+  for (const [userId, ts] of cbuRequestTimestamps.entries()) {
+    if (ts < cutoff) cbuRequestTimestamps.delete(userId);
+  }
+}, 60000);
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -1010,8 +1034,27 @@ app.get('/api/config/cbu', authMiddleware, async (req, res) => {
   }
 });
 
+// Ruta GET para obtener URL del Canal Informativo (panel usuario)
+app.get('/api/config/canal-url', authMiddleware, async (req, res) => {
+  try {
+    const url = await getConfig('canalInformativoUrl', '');
+    res.json({ url: url || '' });
+  } catch (error) {
+    console.error('Error obteniendo canal URL:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.post('/api/cbu/request', authMiddleware, async (req, res) => {
   try {
+    // Rate limiting por usuario: máximo 1 solicitud de CBU cada 10 segundos
+    if (!checkCbuRateLimit(req.user.userId)) {
+      return res.status(429).json({
+        success: false,
+        error: 'Solicitaste CBU muy recientemente. Espera unos segundos antes de volver a intentar.'
+      });
+    }
+
     const cbuConfig = await getConfig('cbu');
     if (!cbuConfig) {
       return res.status(404).json({ error: 'CBU no configurado' });

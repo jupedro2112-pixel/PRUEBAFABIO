@@ -39,7 +39,12 @@ const fireStreakSchema = new mongoose.Schema({
     date: { type: Date },
     reward: { type: Number, default: 0 },
     streakDay: { type: Number }
-  }]
+  }],
+  // Premio pendiente "100% en próxima carga" (día 15)
+  pendingNextLoadBonus: {
+    type: Boolean,
+    default: false
+  }
 }, {
   timestamps: true
 });

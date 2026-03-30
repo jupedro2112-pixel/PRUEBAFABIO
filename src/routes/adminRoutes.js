@@ -22,6 +22,7 @@ router.post('/users/:id/reset-password', authenticate, authorize('admin', 'depos
 // Configuración
 router.get('/config', authenticate, authorize('admin'), adminController.getConfig);
 router.post('/cbu', authenticate, authorize('admin'), adminController.updateCbu);
+router.post('/canal-url', authenticate, authorize('admin'), adminController.updateCanalUrl);
 
 // Comandos
 router.get('/commands', authenticate, authorize('admin'), adminController.getCommands);
