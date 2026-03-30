@@ -1864,7 +1864,7 @@
                     🎰 PLATAFORMA
                 </a>
                 <!-- BOTÓN APP - Instalar PWA (PRIMERO para máxima visibilidad) -->
-                <button class="app-install-btn" id="appInstallBtn" title="Instalar App" style="display: inline-flex !important; visibility: visible !important; opacity: 1 !important;">
+                <button class="app-install-btn" id="appInstallBtn" title="Instalar App" style="display: inline-flex; visibility: visible; opacity: 1;">
                     ⬇️ APP
                 </button>
                 <!-- BOTÓN NOTIFICACIONES - Activar/ver estado -->
@@ -2916,20 +2916,6 @@
             }
         `;
         document.head.appendChild(pwaStyles);
-        
-        // ============================================
-        // CONFIGURAR BOTÓN DEL HEADER
-        // ============================================
-        const appInstallBtn = document.getElementById('appInstallBtn');
-        console.log('[PWA] Buscando botón appInstallBtn:', appInstallBtn);
-        if (appInstallBtn) {
-            appInstallBtn.addEventListener('click', handleInstallClick);
-            appInstallBtn.style.display = 'inline-flex';
-            appInstallBtn.style.visibility = 'visible';
-            console.log('[PWA] ✅ Botón del header configurado y visible');
-        } else {
-            console.log('[PWA] ❌ Botón appInstallBtn no encontrado en el DOM');
-        }
         
         // Botón de notificaciones
         const notificationBtn = document.getElementById('notificationBtn');
