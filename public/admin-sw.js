@@ -8,7 +8,7 @@
  */
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).
@@ -26,6 +26,21 @@ function isNetworkFirst(url) {
         url.includes('admin.css') ||
         url.includes('manifest.json')
     );
+}
+
+// Verifica si una URL pertenece a Cloudflare u otros dominios de seguridad
+// que NUNCA deben pasar por el caché del SW.
+function isCloudflareOrSecurityUrl(url) {
+    try {
+        const parsed = new URL(url);
+        return (
+            parsed.hostname === 'challenges.cloudflare.com' ||
+            parsed.hostname.endsWith('.cloudflare.com') ||
+            parsed.pathname.startsWith('/cdn-cgi/')
+        );
+    } catch (e) {
+        return false;
+    }
 }
 
 // Instalación del Service Worker
@@ -71,13 +86,30 @@ self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') {
         return;
     }
-    
-    if (event.request.url.includes('/api/') || 
-        event.request.url.includes('/socket.io/')) {
+
+    const url = event.request.url;
+
+    // CLOUDFLARE FIX: nunca interceptar navigation requests.
+    // Igual que en firebase-messaging-sw.js: si el SW intercepta una
+    // navegación y Cloudflare redirige a challenges.cloudflare.com,
+    // el challenge falla porque la respuesta se sirve en el contexto URL
+    // incorrecto. Dejando pasar las navegaciones, el challenge se resuelve
+    // correctamente y la pantalla de "red incompatible" desaparece.
+    if (event.request.mode === 'navigate') {
+        console.log('[SW-Admin] Navigation request - pasando al navegador nativo:', url);
         return;
     }
 
-    const url = event.request.url;
+    // Excluir URLs de Cloudflare y seguridad.
+    if (isCloudflareOrSecurityUrl(url)) {
+        console.log('[SW-Admin] URL de seguridad excluida del caché:', url);
+        return;
+    }
+
+    if (url.includes('/api/') || 
+        url.includes('/socket.io/')) {
+        return;
+    }
 
     if (isNetworkFirst(url)) {
         // Network-first: always try network so deploys are immediately visible.
@@ -96,12 +128,8 @@ self.addEventListener('fetch', (event) => {
                     return response;
                 })
                 .catch(() => {
-                    return caches.match(event.request).then((cached) => {
-                        if (cached) return cached;
-                        if (event.request.mode === 'navigate') {
-                            return caches.match('/adminprivado2026/');
-                        }
-                    });
+                    console.log('[SW-Admin] Red no disponible, buscando en caché:', url);
+                    return caches.match(event.request);
                 })
         );
     } else {
@@ -125,11 +153,7 @@ self.addEventListener('fetch', (event) => {
                             return networkResponse;
                         });
                 })
-                .catch(() => {
-                    if (event.request.mode === 'navigate') {
-                        return caches.match('/adminprivado2026/');
-                    }
-                })
+                .catch(() => undefined)
         );
     }
 });

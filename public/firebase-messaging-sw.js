@@ -1,12 +1,18 @@
 // ============================================
 // FIREBASE CLOUD MESSAGING + CACHE SERVICE WORKER
 // SW único para notificaciones push Y caché PWA.
-// Versión: 2.0.0
+// Versión: 2.1.0
 // ============================================
 // ROOT CAUSE FIX: antes existían dos SWs (firebase-messaging-sw.js y
 // user-sw.js) compitiendo en el mismo scope (/). Eso provocaba que el
 // token FCM apuntara a un SW pero las notificaciones llegaran al otro,
 // invalidando todos los envíos. Ahora este es el único SW activo.
+// ============================================
+// CLOUDFLARE FIX: el SW jamás debe interceptar navigation requests ni
+// URLs de Cloudflare. Si lo hace, el challenge de Cloudflare falla en
+// la segunda visita porque fetch() sigue la redirección a
+// challenges.cloudflare.com y devuelve una respuesta opaca en el
+// contexto incorrecto, lo que Chrome detecta como incompatibilidad.
 // ============================================
 
 importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js');
@@ -15,7 +21,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compa
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -23,13 +29,29 @@ const PRECACHE_URLS = [
   '/icons/icon-512x512.png'
 ];
 
+// Determina si un asset (no navegación) debe usar network-first.
+// NOTA: Las navigation requests (modo 'navigate') se excluyen antes de
+// llegar aquí, por lo que NO es necesario listar '/' ni '/index.html'.
 function isNetworkFirst(url) {
   return (
-    url.endsWith('/') ||
-    url.includes('/index.html') ||
     url.includes('/app.js') ||
     url.includes('/manifest.json')
   );
+}
+
+// Verifica si una URL pertenece a Cloudflare u otros dominios de seguridad
+// que NUNCA deben pasar por el caché del SW.
+function isCloudflareOrSecurityUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname === 'challenges.cloudflare.com' ||
+      parsed.hostname.endsWith('.cloudflare.com') ||
+      parsed.pathname.startsWith('/cdn-cgi/')
+    );
+  } catch (e) {
+    return false;
+  }
 }
 
 // ============================================
@@ -156,9 +178,30 @@ self.addEventListener('fetch', function(event) {
 
   const url = event.request.url;
 
+  // CLOUDFLARE FIX: nunca interceptar navigation requests.
+  // Cuando el SW intercepta una navegación y Cloudflare redirige a
+  // challenges.cloudflare.com, fetch() sigue la redirección y devuelve
+  // una respuesta opaca/cross-origin en el contexto URL incorrecto.
+  // Chrome detecta esa inconsistencia y muestra la pantalla de
+  // "extensión o red incompatible". Dejando las navegaciones pasar al
+  // navegador nativo, el challenge se resuelve correctamente.
+  if (event.request.mode === 'navigate') {
+    console.log('[FCM-SW] Navigation request - pasando al navegador nativo:', url);
+    return;
+  }
+
+  // Excluir URLs de Cloudflare, cdn-cgi y cualquier dominio de seguridad.
+  if (isCloudflareOrSecurityUrl(url)) {
+    console.log('[FCM-SW] URL de seguridad excluida del caché:', url);
+    return;
+  }
+
+  // Excluir API y sockets: siempre van a red.
   if (url.includes('/api/') || url.includes('/socket.io/')) return;
 
   if (isNetworkFirst(url)) {
+    // Network-first: siempre intenta red para que los deploys sean inmediatos.
+    console.log('[FCM-SW] Network-first para:', url);
     event.respondWith(
       fetch(event.request)
         .then(function(response) {
@@ -171,17 +214,20 @@ self.addEventListener('fetch', function(event) {
           return response;
         })
         .catch(function() {
-          return caches.match(event.request).then(function(cached) {
-            if (cached) return cached;
-            if (event.request.mode === 'navigate') return caches.match('/');
-          });
+          console.log('[FCM-SW] Red no disponible, buscando en caché:', url);
+          return caches.match(event.request);
         })
     );
   } else {
+    // Cache-first para assets estáticos estables (iconos, fuentes, etc.)
     event.respondWith(
       caches.match(event.request)
         .then(function(cached) {
-          if (cached) return cached;
+          if (cached) {
+            console.log('[FCM-SW] Cache hit para:', url);
+            return cached;
+          }
+          console.log('[FCM-SW] Cache miss - red para:', url);
           return fetch(event.request).then(function(response) {
             if (response && response.status === 200 && response.type === 'basic') {
               var toCache = response.clone();
@@ -193,7 +239,7 @@ self.addEventListener('fetch', function(event) {
           });
         })
         .catch(function() {
-          if (event.request.mode === 'navigate') return caches.match('/');
+          return undefined;
         })
     );
   }
