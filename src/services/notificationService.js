@@ -39,6 +39,7 @@ function isInvalidTokenError(errorMsg, errorCode) {
 // puede almacenar FIREBASE_PRIVATE_KEY:
 //   - literal \\n (doble escape)
 //   - \r\n (saltos Windows)
+//   - \r solos (Mac clásico)
 //   - comillas externas (simples o dobles)
 //   - espacios/saltos al inicio o final
 // ============================================
@@ -58,6 +59,9 @@ function normalizePrivateKey(raw) {
   // 4. Normalizar saltos de línea Windows (\r\n) → \n
   key = key.replace(/\r\n/g, '\n');
 
+  // 5. Normalizar retornos de carro solos (\r) → \n
+  key = key.replace(/\r/g, '\n');
+
   return key;
 }
 
@@ -67,8 +71,17 @@ function normalizePrivateKey(raw) {
 // NO lee ningún archivo .json del proyecto.
 // ============================================
 function initializeFirebase() {
+  // Si Firebase Admin ya fue inicializado por otro módulo/importación,
+  // adoptarlo sin intentar inicializar de nuevo.
+  if (admin.apps && admin.apps.length > 0) {
+    if (!isInitialized) {
+      isInitialized = true;
+      console.log('[FCM] ✅ Firebase Admin ya estaba inicializado (adoptando app existente)');
+    }
+    return true;
+  }
+
   if (isInitialized) {
-    console.log('[FCM] Firebase Admin ya inicializado');
     return true;
   }
 
@@ -106,9 +119,11 @@ function initializeFirebase() {
     return false;
   }
 
+  // Advertencia en lugar de fallo: dejar que Firebase Admin SDK valide la clave completa.
+  // Algunos entornos almacenan la clave sin el marcador final visible.
   if (!privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
-    console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----');
-    return false;
+    console.warn('[FCM] ⚠️  FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----');
+    console.warn('[FCM]   Se intentará inicializar de todas formas. Firebase Admin SDK validará la clave.');
   }
 
   if (privateKey.length < 100) {
@@ -129,6 +144,13 @@ function initializeFirebase() {
     console.log('[FCM] ✅ Firebase Admin inicializado correctamente con env vars');
     return true;
   } catch (error) {
+    // Si ya existe una app por defecto (e.g. race condition entre módulos),
+    // adoptarla en lugar de fallar.
+    if (error.code === 'app/duplicate-app' || (error.message && error.message.includes('already exists'))) {
+      isInitialized = true;
+      console.log('[FCM] ✅ Firebase Admin ya inicializado (app/duplicate-app detectado)');
+      return true;
+    }
     console.error('[FCM] ❌ Error al inicializar Firebase Admin:', error.message);
     return false;
   }
@@ -145,19 +167,38 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
     }
   }
 
+  // Comprobación defensiva adicional: asegurarse de que haya una app Firebase activa.
+  // Esto cubre el caso donde isInitialized quedó en true pero la app fue removida.
+  if (!admin.apps || admin.apps.length === 0) {
+    console.error('[FCM] ❌ No hay apps Firebase activas pese a isInitialized=true. Reiniciando...');
+    isInitialized = false;
+    return { success: false, error: 'Firebase Admin perdió su estado. Intente de nuevo en un momento.' };
+  }
+
   try {
     console.log('[FCM] Enviando notificación...');
     console.log('[FCM] Token preview:', fcmToken ? fcmToken.substring(0, 30) + '...' : 'null');
     console.log('[FCM] Título:', title);
     console.log('[FCM] Cuerpo:', body);
 
+    // Convertir todos los valores de data a string (requisito de FCM),
+    // omitiendo entradas con valores null/undefined.
+    const safeData = {};
+    if (data && typeof data === 'object') {
+      for (const [k, v] of Object.entries(data)) {
+        if (v !== null && v !== undefined) {
+          safeData[k] = String(v);
+        }
+      }
+    }
+
     const message = {
       notification: {
-        title: title,
-        body: body
+        title: String(title || ''),
+        body: String(body || '')
       },
       data: {
-        ...data,
+        ...safeData,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
         sound: 'default'
       },
@@ -174,8 +215,8 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
         payload: {
           aps: {
             alert: {
-              title: title,
-              body: body
+              title: String(title || ''),
+              body: String(body || '')
             },
             sound: 'default',
             badge: 1
@@ -187,8 +228,8 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
       },
       webpush: {
         notification: {
-          title: title,
-          body: body,
+          title: String(title || ''),
+          body: String(body || ''),
           icon: '/icons/icon-192x192.png',
           badge: '/icons/icon-72x72.png',
           requireInteraction: true,
@@ -200,13 +241,19 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
       }
     };
 
-    const response = await admin.messaging().send(message);
+    // Obtener el servicio de mensajería de forma defensiva
+    const messagingService = admin.messaging();
+    if (!messagingService || typeof messagingService.send !== 'function') {
+      console.error('[FCM] ❌ Firebase Messaging no disponible');
+      return { success: false, error: 'Firebase Messaging no disponible' };
+    }
+
+    const response = await messagingService.send(message);
     console.log('[FCM] ✅ Notificación enviada exitosamente:', response);
     return { success: true, messageId: response };
   } catch (error) {
     console.error('[FCM] ❌ Error al enviar notificación:', error.message);
     console.error('[FCM] Error code:', error.code);
-    console.error('[FCM] Error details:', error);
     return { 
       success: false, 
       error: error.message, 

@@ -754,7 +754,19 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
       const batchFailed = [];
 
       for (const user of chunk) {
-        const result = await sendNotificationToUser(user.fcmToken, title, body, data || {});
+        let result;
+        try {
+          result = await sendNotificationToUser(user.fcmToken, title, body, data || {});
+        } catch (userErr) {
+          // Error inesperado: aislar por usuario para no romper el lote
+          console.error(`[FCM Batch] ❌ Error inesperado para ${user.username}:`, userErr.message);
+          result = {
+            success: false,
+            error: userErr.message || 'Error inesperado',
+            code: userErr.code || '',
+            invalidToken: false
+          };
+        }
         if (result.success) {
           batchSuccess++;
         } else {

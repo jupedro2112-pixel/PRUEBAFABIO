@@ -20,6 +20,7 @@ function normalizePrivateKey(raw) {
   }
   key = key.replace(/\\n/g, '\n');
   key = key.replace(/\r\n/g, '\n');
+  key = key.replace(/\r/g, '\n');
   return key;
 }
 
@@ -38,10 +39,13 @@ if (!projectId || !clientEmail || !rawKey) {
 
 const privateKey = normalizePrivateKey(rawKey);
 
-if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----') ||
-    !privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
-  console.error('❌ FIREBASE_PRIVATE_KEY tiene formato inválido (falta BEGIN/END PRIVATE KEY)');
+if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
+  console.error('❌ FIREBASE_PRIVATE_KEY no comienza con -----BEGIN PRIVATE KEY-----');
   process.exit(1);
+}
+
+if (!privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
+  console.warn('⚠️  FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----. Se intentará enviar de todas formas.');
 }
 
 // Inicializar Firebase Admin
