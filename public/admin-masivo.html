@@ -447,7 +447,7 @@
         
         // Verificar autenticación al cargar
         document.addEventListener('DOMContentLoaded', () => {
-            const token = localStorage.getItem('token');
+            const token = localStorage.getItem('adminToken');
             if (!token) {
                 document.querySelector('.container').innerHTML = `
                     <div class="login-required">
@@ -478,7 +478,7 @@
             try {
                 const response = await fetch(`${API_URL}/api/notifications/stats`, {
                     headers: {
-                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        'Authorization': 'Bearer ' + localStorage.getItem('adminToken')
                     }
                 });
                 
@@ -545,7 +545,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        'Authorization': 'Bearer ' + localStorage.getItem('adminToken')
                     },
                     body: JSON.stringify({
                         title,
@@ -595,7 +595,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + localStorage.getItem('token')
+                        'Authorization': 'Bearer ' + localStorage.getItem('adminToken')
                     },
                     body: JSON.stringify({
                         usernames: usernameList,
