@@ -67,9 +67,38 @@ function normalizePrivateKey(raw) {
 }
 
 // ============================================
+// HELPER: OBTENER SERVICE ACCOUNT DESDE JSON ENV
+// Lee FIREBASE_SERVICE_ACCOUNT_JSON (JSON completo) y valida campos.
+// Devuelve el objeto serviceAccount o null si no disponible/inválido.
+// ============================================
+function getServiceAccountFromJsonEnv() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(raw.trim());
+  } catch (e) {
+    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON no es JSON válido:', e.message);
+    return null;
+  }
+
+  if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
+    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON incompleto: faltan project_id, client_email o private_key');
+    return null;
+  }
+
+  return serviceAccount;
+}
+
+// ============================================
 // INICIALIZAR FIREBASE ADMIN
-// Usa exclusivamente env vars de AWS Elastic Beanstalk.
+// Lee credenciales desde variables de entorno de AWS Elastic Beanstalk.
 // NO lee ningún archivo .json del proyecto.
+// Primero intenta FIREBASE_SERVICE_ACCOUNT_JSON (JSON completo),
+// luego cae al método legacy (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).
 // ============================================
 function initializeFirebase() {
   // Si Firebase Admin ya fue inicializado por otro módulo/importación,
@@ -85,6 +114,31 @@ function initializeFirebase() {
   if (isInitialized) {
     return true;
   }
+
+  // ---- Intentar inicialización con FIREBASE_SERVICE_ACCOUNT_JSON ----
+  const serviceAccount = getServiceAccountFromJsonEnv();
+  if (serviceAccount) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      });
+
+      isInitialized = true;
+      console.log('[FCM] ✅ Firebase Admin inicializado con FIREBASE_SERVICE_ACCOUNT_JSON');
+      return true;
+    } catch (error) {
+      if (error.code === 'app/duplicate-app' || (error.message && error.message.includes('already exists'))) {
+        isInitialized = true;
+        console.log('[FCM] ✅ Firebase Admin ya inicializado (app/duplicate-app detectado)');
+        return true;
+      }
+      console.error('[FCM] ❌ Error al inicializar Firebase Admin con FIREBASE_SERVICE_ACCOUNT_JSON:', error.message);
+      return false;
+    }
+  }
+
+  // ---- Fallback: credenciales legacy por variables separadas ----
+  console.log('[FCM] ⚠️ Usando credenciales legacy por variables separadas');
 
   const projectId   = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
