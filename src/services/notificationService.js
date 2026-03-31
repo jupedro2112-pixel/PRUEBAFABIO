@@ -67,6 +67,45 @@ function normalizePrivateKey(raw) {
 }
 
 // ============================================
+// HELPER: VALIDAR CAMPOS REQUERIDOS DE SERVICE ACCOUNT
+// Devuelve true si el objeto tiene project_id, client_email y private_key.
+// ============================================
+function validateServiceAccount(sa) {
+  if (!sa || !sa.project_id || !sa.client_email || !sa.private_key) {
+    console.error('[FCM] ❌ Credenciales incompletas (project_id/client_email/private_key)');
+    return false;
+  }
+  return true;
+}
+
+// ============================================
+// HELPER: OBTENER SERVICE ACCOUNT DESDE BASE64 ENV
+// Lee FIREBASE_SERVICE_ACCOUNT_JSON_BASE64, decodifica base64 → utf8 → JSON y valida campos.
+// Devuelve el objeto serviceAccount o null si no disponible/inválido.
+// ============================================
+function getServiceAccountFromBase64Env() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64;
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  let serviceAccount;
+  try {
+    const decoded = Buffer.from(raw.trim(), 'base64').toString('utf8');
+    serviceAccount = JSON.parse(decoded);
+  } catch (e) {
+    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 inválida:', e.message);
+    return null;
+  }
+
+  if (!validateServiceAccount(serviceAccount)) {
+    return null;
+  }
+
+  return serviceAccount;
+}
+
+// ============================================
 // HELPER: OBTENER SERVICE ACCOUNT DESDE JSON ENV
 // Lee FIREBASE_SERVICE_ACCOUNT_JSON (JSON completo) y valida campos.
 // Devuelve el objeto serviceAccount o null si no disponible/inválido.
@@ -81,12 +120,11 @@ function getServiceAccountFromJsonEnv() {
   try {
     serviceAccount = JSON.parse(raw.trim());
   } catch (e) {
-    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON no es JSON válido:', e.message);
+    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON inválida:', e.message);
     return null;
   }
 
-  if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
-    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON incompleto: faltan project_id, client_email o private_key');
+  if (!validateServiceAccount(serviceAccount)) {
     return null;
   }
 
@@ -97,8 +135,10 @@ function getServiceAccountFromJsonEnv() {
 // INICIALIZAR FIREBASE ADMIN
 // Lee credenciales desde variables de entorno de AWS Elastic Beanstalk.
 // NO lee ningún archivo .json del proyecto.
-// Primero intenta FIREBASE_SERVICE_ACCOUNT_JSON (JSON completo),
-// luego cae al método legacy (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).
+// Prioridad:
+//   1) FIREBASE_SERVICE_ACCOUNT_JSON_BASE64
+//   2) FIREBASE_SERVICE_ACCOUNT_JSON
+//   3) Legacy: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
 // ============================================
 function initializeFirebase() {
   // Si Firebase Admin ya fue inicializado por otro módulo/importación,
@@ -115,7 +155,29 @@ function initializeFirebase() {
     return true;
   }
 
-  // ---- Intentar inicialización con FIREBASE_SERVICE_ACCOUNT_JSON ----
+  // ---- Prioridad 1: FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 ----
+  const serviceAccountFromBase64 = getServiceAccountFromBase64Env();
+  if (serviceAccountFromBase64) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccountFromBase64),
+      });
+
+      isInitialized = true;
+      console.log('[FCM] ✅ Firebase Admin inicializado con FIREBASE_SERVICE_ACCOUNT_JSON_BASE64');
+      return true;
+    } catch (error) {
+      if (error.code === 'app/duplicate-app' || (error.message && error.message.includes('already exists'))) {
+        isInitialized = true;
+        console.log('[FCM] ✅ Firebase Admin ya inicializado (app/duplicate-app detectado)');
+        return true;
+      }
+      console.error('[FCM] ❌ Error al inicializar Firebase Admin con FIREBASE_SERVICE_ACCOUNT_JSON_BASE64:', error.message);
+      // Continuar al siguiente método
+    }
+  }
+
+  // ---- Prioridad 2: FIREBASE_SERVICE_ACCOUNT_JSON ----
   const serviceAccount = getServiceAccountFromJsonEnv();
   if (serviceAccount) {
     try {

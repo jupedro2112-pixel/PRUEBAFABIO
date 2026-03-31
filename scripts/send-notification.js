@@ -3,8 +3,10 @@
 // ============================================
 // SCRIPT PARA ENVIAR NOTIFICACIONES PUSH
 // Uso: node send-notification.js <fcm-token> "Título" "Mensaje"
-// Requiere env vars: FIREBASE_SERVICE_ACCOUNT_JSON
-//   o bien: FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
+// Requiere env vars (prioridad):
+//   1) FIREBASE_SERVICE_ACCOUNT_JSON_BASE64
+//   2) FIREBASE_SERVICE_ACCOUNT_JSON
+//   3) FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY
 // ============================================
 
 const admin = require('firebase-admin');
@@ -26,6 +28,45 @@ function normalizePrivateKey(raw) {
 }
 
 // ============================================
+// HELPER: VALIDAR CAMPOS REQUERIDOS DE SERVICE ACCOUNT
+// Devuelve true si el objeto tiene project_id, client_email y private_key.
+// ============================================
+function validateServiceAccount(sa) {
+  if (!sa || !sa.project_id || !sa.client_email || !sa.private_key) {
+    console.error('[FCM] ❌ Credenciales incompletas (project_id/client_email/private_key)');
+    return false;
+  }
+  return true;
+}
+
+// ============================================
+// HELPER: OBTENER SERVICE ACCOUNT DESDE BASE64 ENV
+// Lee FIREBASE_SERVICE_ACCOUNT_JSON_BASE64, decodifica base64 → utf8 → JSON y valida campos.
+// Devuelve el objeto serviceAccount o null si no disponible/inválido.
+// ============================================
+function getServiceAccountFromBase64Env() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64;
+  if (!raw || !raw.trim()) {
+    return null;
+  }
+
+  let serviceAccount;
+  try {
+    const decoded = Buffer.from(raw.trim(), 'base64').toString('utf8');
+    serviceAccount = JSON.parse(decoded);
+  } catch (e) {
+    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 inválida:', e.message);
+    return null;
+  }
+
+  if (!validateServiceAccount(serviceAccount)) {
+    return null;
+  }
+
+  return serviceAccount;
+}
+
+// ============================================
 // HELPER: OBTENER SERVICE ACCOUNT DESDE JSON ENV
 // Lee FIREBASE_SERVICE_ACCOUNT_JSON (JSON completo) y valida campos.
 // Devuelve el objeto serviceAccount o null si no disponible/inválido.
@@ -40,12 +81,11 @@ function getServiceAccountFromJsonEnv() {
   try {
     serviceAccount = JSON.parse(raw.trim());
   } catch (e) {
-    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON no es JSON válido:', e.message);
+    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON inválida:', e.message);
     return null;
   }
 
-  if (!serviceAccount.project_id || !serviceAccount.client_email || !serviceAccount.private_key) {
-    console.error('[FCM] ❌ FIREBASE_SERVICE_ACCOUNT_JSON incompleto: faltan project_id, client_email o private_key');
+  if (!validateServiceAccount(serviceAccount)) {
     return null;
   }
 
@@ -54,46 +94,56 @@ function getServiceAccountFromJsonEnv() {
 
 // Inicializar Firebase Admin
 if (!admin.apps.length) {
-  const serviceAccount = getServiceAccountFromJsonEnv();
-  if (serviceAccount) {
+  // Prioridad 1: FIREBASE_SERVICE_ACCOUNT_JSON_BASE64
+  const serviceAccountFromBase64 = getServiceAccountFromBase64Env();
+  if (serviceAccountFromBase64) {
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+      credential: admin.credential.cert(serviceAccountFromBase64),
     });
-    console.log('[FCM] ✅ Firebase Admin inicializado con FIREBASE_SERVICE_ACCOUNT_JSON');
+    console.log('[FCM] ✅ Firebase Admin inicializado con FIREBASE_SERVICE_ACCOUNT_JSON_BASE64');
   } else {
-    // Fallback: credenciales legacy por variables separadas
-    console.log('[FCM] ⚠️ Usando credenciales legacy por variables separadas');
+    // Prioridad 2: FIREBASE_SERVICE_ACCOUNT_JSON
+    const serviceAccount = getServiceAccountFromJsonEnv();
+    if (serviceAccount) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      });
+      console.log('[FCM] ✅ Firebase Admin inicializado con FIREBASE_SERVICE_ACCOUNT_JSON');
+    } else {
+      // Prioridad 3: Fallback legacy por variables separadas
+      console.log('[FCM] ⚠️ Usando credenciales legacy por variables separadas');
 
-    const projectId   = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const rawKey      = process.env.FIREBASE_PRIVATE_KEY;
+      const projectId   = process.env.FIREBASE_PROJECT_ID;
+      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+      const rawKey      = process.env.FIREBASE_PRIVATE_KEY;
 
-    if (!projectId || !clientEmail || !rawKey) {
-      console.error('❌ Faltan variables de entorno para Firebase Admin:');
-      if (!projectId)   console.error('   - FIREBASE_PROJECT_ID no está definida');
-      if (!clientEmail) console.error('   - FIREBASE_CLIENT_EMAIL no está definida');
-      if (!rawKey)      console.error('   - FIREBASE_PRIVATE_KEY no está definida');
-      process.exit(1);
+      if (!projectId || !clientEmail || !rawKey) {
+        console.error('❌ Faltan variables de entorno para Firebase Admin:');
+        if (!projectId)   console.error('   - FIREBASE_PROJECT_ID no está definida');
+        if (!clientEmail) console.error('   - FIREBASE_CLIENT_EMAIL no está definida');
+        if (!rawKey)      console.error('   - FIREBASE_PRIVATE_KEY no está definida');
+        process.exit(1);
+      }
+
+      const privateKey = normalizePrivateKey(rawKey);
+
+      if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
+        console.error('❌ FIREBASE_PRIVATE_KEY no comienza con -----BEGIN PRIVATE KEY-----');
+        process.exit(1);
+      }
+
+      if (!privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
+        console.warn('⚠️  FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----. Se intentará enviar de todas formas.');
+      }
+
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+      });
     }
-
-    const privateKey = normalizePrivateKey(rawKey);
-
-    if (!privateKey.startsWith('-----BEGIN PRIVATE KEY-----')) {
-      console.error('❌ FIREBASE_PRIVATE_KEY no comienza con -----BEGIN PRIVATE KEY-----');
-      process.exit(1);
-    }
-
-    if (!privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
-      console.warn('⚠️  FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----. Se intentará enviar de todas formas.');
-    }
-
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-    });
   }
 }
 
