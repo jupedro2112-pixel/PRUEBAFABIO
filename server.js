@@ -275,6 +275,13 @@ app.use(express.static(path.join(__dirname, 'public'), {
       res.setHeader('Pragma', 'no-cache');
       res.setHeader('Expires', '0');
     }
+    // Serve manifest.json with the correct Content-Type for PWA installability.
+    // Chrome requires application/manifest+json (or application/json) to recognise
+    // the file as a Web App Manifest. Express static defaults to application/json
+    // which Chrome accepts, but setting the canonical type is best practice.
+    if (path.basename(filePath) === 'manifest.json') {
+      res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    }
   }
 }));
 
