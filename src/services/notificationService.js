@@ -3,6 +3,7 @@
 // ============================================
 
 const admin = require('firebase-admin');
+const { createPrivateKey } = require('crypto');
 
 // Variable para tracking de inicialización
 let isInitialized = false;
@@ -119,15 +120,31 @@ function initializeFirebase() {
     return false;
   }
 
-  // Advertencia en lugar de fallo: dejar que Firebase Admin SDK valide la clave completa.
-  // Algunos entornos almacenan la clave sin el marcador final visible.
   if (!privateKey.trimEnd().endsWith('-----END PRIVATE KEY-----')) {
-    console.warn('[FCM] ⚠️  FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----');
-    console.warn('[FCM]   Se intentará inicializar de todas formas. Firebase Admin SDK validará la clave.');
+    console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY no termina con -----END PRIVATE KEY-----');
+    console.error('[FCM]   La clave está incompleta. Verifica FIREBASE_PRIVATE_KEY en AWS EB.');
+    return false;
   }
 
   if (privateKey.length < 100) {
     console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY tiene longitud sospechosamente corta:', privateKey.length);
+    return false;
+  }
+
+  // ---- Validación criptográfica: verificar que la clave sea RSA válida ----
+  // ROOT CAUSE FIX: si la clave no puede parsearse como RSA private key,
+  // Firebase Admin inicializa sin error pero falla al primer uso con
+  // "secretOrPrivateKey must be an asymmetric key when using RS256",
+  // dejando isRefreshing=true y promiseToCachedToken_=undefined,
+  // lo que en llamadas subsiguientes produce "Cannot read properties of
+  // undefined (reading 'then')".
+  try {
+    // Solo validamos que la clave sea parseable; el resultado no se reutiliza
+    // porque Firebase Admin SDK genera su propio objeto de clave internamente.
+    createPrivateKey(privateKey);
+  } catch (cryptoErr) {
+    console.error('[FCM] ❌ FIREBASE_PRIVATE_KEY no es una clave RSA privada válida:', cryptoErr.message);
+    console.error('[FCM]   Asegúrate de que FIREBASE_PRIVATE_KEY contenga la clave PKCS#8 completa con saltos de línea reales.');
     return false;
   }
 
@@ -254,6 +271,29 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
   } catch (error) {
     console.error('[FCM] ❌ Error al enviar notificación:', error.message);
     console.error('[FCM] Error code:', error.code);
+
+    // ROOT CAUSE FIX: si el error es de credencial RSA (clave privada inválida),
+    // el Firebase Admin SDK deja isRefreshing=true y promiseToCachedToken_=undefined,
+    // lo que causa "Cannot read properties of undefined (reading 'then')" en llamadas
+    // posteriores. Al resetear isInitialized y borrar la app, forzamos una
+    // re-evaluación limpia en el próximo intento.
+    const isCredentialError = error.message && (
+      error.message.includes('secretOrPrivateKey') ||
+      error.message.includes('Cannot read properties of undefined (reading \'then\')')
+    );
+    if (isCredentialError) {
+      console.error('[FCM] ❌ Error de credencial detectado - reseteando estado de Firebase Admin');
+      isInitialized = false;
+      try {
+        if (admin.apps && admin.apps.length > 0) {
+          await admin.app().delete();
+          console.log('[FCM] App Firebase borrada para forzar re-inicialización');
+        }
+      } catch (deleteErr) {
+        console.error('[FCM] Error al borrar app Firebase:', deleteErr.message);
+      }
+    }
+
     return { 
       success: false, 
       error: error.message, 

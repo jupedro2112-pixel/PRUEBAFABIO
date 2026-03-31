@@ -326,7 +326,7 @@
     
     <script>
         const API_URL = '';
-        let currentUserToken = localStorage.getItem('userToken');
+        let currentUserToken = localStorage.getItem('adminToken') || localStorage.getItem('userToken');
         
         // Logger
         function log(msg, type = 'info') {
