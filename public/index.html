@@ -2518,11 +2518,23 @@
         async function initNotifications(swRegistration) {
             console.log('[FCM] Inicializando notificaciones...');
             
-            // Detectar iOS/Safari
+            // Detectar dispositivo y modo de ejecución
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isAndroidDevice = /Android/.test(navigator.userAgent);
+            const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
                                  window.navigator.standalone === true;
+
+            // Debug logs útiles para diagnosticar en Android Chrome
+            console.log('[FCM] 📊 Entorno de ejecución:');
+            console.log('[FCM]   Modo display:', isStandalone ? 'standalone (PWA instalada)' : 'browser');
+            console.log('[FCM]   iOS:', isIOS ? 'Sí' : 'No');
+            console.log('[FCM]   Android:', isAndroidDevice ? 'Sí' : 'No');
+            console.log('[FCM]   Chrome:', isChromeBrowser ? 'Sí' : 'No');
+            console.log('[FCM]   Safari:', isSafari ? 'Sí' : 'No');
+            console.log('[FCM]   SW registration:', swRegistration ? swRegistration.scope : 'null');
+            console.log('[FCM]   Notification.permission:', 'Notification' in window ? Notification.permission : 'no soportado');
             
             if (isIOS) {
                 console.log('[FCM] 📱 iOS detectado');
@@ -2595,6 +2607,7 @@
                         console.log('[FCM] getToken completado');
                     } catch (tokenError) {
                         console.error('[FCM] ❌ Error al obtener token:', tokenError.message);
+                        console.error('[FCM] Código de error:', tokenError.code || 'n/a');
                         console.error('[FCM] Error completo:', tokenError);
                         
                         if (isIOS) {
@@ -2603,6 +2616,12 @@
                             console.log('[FCM] 2. Agregar la app a la pantalla de inicio');
                             console.log('[FCM] 3. Abrir desde el icono de inicio instalado');
                             console.log('[FCM] 4. iOS 16.4 o superior');
+                        } else if (isAndroidDevice) {
+                            console.log('[FCM] ⚠️ En Android Chrome, posibles causas:');
+                            console.log('[FCM] 1. VAPID key incorrecta o expirada');
+                            console.log('[FCM] 2. Service Worker no registrado o en error');
+                            console.log('[FCM] 3. Proyecto Firebase mal configurado');
+                            console.log('[FCM] 4. Revisar: chrome://flags/#unsafely-treat-insecure-origin-as-secure (en desarrollo)');
                         }
                         return;
                     }
@@ -2755,16 +2774,20 @@
         window.checkNotificationStatus = function() {
             const permission = Notification.permission;
             const token = localStorage.getItem('fcmToken');
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            const isSafariBrowser = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            const isAndroidDevice = /Android/.test(navigator.userAgent);
+            const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
                                  window.navigator.standalone === true;
             
             console.log('=== ESTADO DE NOTIFICACIONES ===');
             console.log('Permiso:', permission);
             console.log('Token FCM:', token ? 'Sí (' + token.substring(0, 30) + '...)' : 'No');
-            console.log('iOS:', isIOS ? 'Sí' : 'No');
-            console.log('Safari:', isSafari ? 'Sí' : 'No');
+            console.log('iOS:', isIOSDevice ? 'Sí' : 'No');
+            console.log('Android:', isAndroidDevice ? 'Sí' : 'No');
+            console.log('Chrome:', isChromeBrowser ? 'Sí' : 'No');
+            console.log('Safari:', isSafariBrowser ? 'Sí' : 'No');
             console.log('App instalada (standalone):', isStandalone ? 'Sí' : 'No');
             console.log('=================================');
             
@@ -2772,8 +2795,10 @@
                 permission: permission,
                 hasToken: !!token,
                 tokenPreview: token ? token.substring(0, 30) + '...' : null,
-                isIOS: isIOS,
-                isSafari: isSafari,
+                isIOS: isIOSDevice,
+                isAndroid: isAndroidDevice,
+                isChrome: isChromeBrowser,
+                isSafari: isSafariBrowser,
                 isStandalone: isStandalone
             };
         };
@@ -3031,16 +3056,26 @@
         `;
         document.head.appendChild(pwaStyles);
         
-        // Botón de notificaciones (solo visible en modo standalone/PWA instalada)
+        // Botón de notificaciones: visible en standalone (todas las plataformas) y
+        // también en Android Chrome en modo browser (las notificaciones push de FCM
+        // no requieren que la PWA esté instalada en Android/Chrome).
+        // En iOS, las notificaciones push web solo funcionan en standalone (Safari).
         const notificationBtn = document.getElementById('notificationBtn');
         console.log('[FCM] Buscando botón notificationBtn:', notificationBtn);
         if (notificationBtn) {
-            // Aplicar visibilidad según modo de visualización (respaldo JS para
-            // navegadores que no soportan @media (display-mode: standalone))
             const standaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
                                    window.navigator.standalone === true;
-            notificationBtn.style.display = standaloneMode ? 'inline-flex' : 'none';
-            console.log('[FCM] NOTIS visible (standalone):', standaloneMode);
+            // isAndroid and isIOS are declared in the outer script scope (lines above).
+            // Show on Android Chrome (installed or not) and on any platform when standalone.
+            const showNotisBtn = standaloneMode || (isAndroid && !isIOS);
+            // Use setProperty with 'important' so this inline style overrides the CSS
+            // rule `#notificationBtn { display: none !important }`.
+            if (showNotisBtn) {
+                notificationBtn.style.setProperty('display', 'inline-flex', 'important');
+            } else {
+                notificationBtn.style.display = 'none';
+            }
+            console.log('[FCM] NOTIS visible:', showNotisBtn, '(standalone:', standaloneMode, '| Android:', isAndroid, ')');
 
             notificationBtn.addEventListener('click', async () => {
                 console.log('[FCM] Botón de notificaciones clickeado');
