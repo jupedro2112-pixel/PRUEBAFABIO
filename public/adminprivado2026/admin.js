@@ -536,11 +536,19 @@ function updateActionButtonsByTab() {
     const btnPayments = elements.btnPayments;
     if (!btnPayments) return;
     
+    const role = currentAdmin?.role;
+    
     if (currentTab === 'payments') {
-        // En pestaña Pagos: mostrar "Enviar a Abiertos"
-        btnPayments.innerHTML = '<span class="icon icon-exchange"></span> Enviar a Abiertos';
-        btnPayments.onclick = sendToOpen;
+        // En pestaña Pagos: mostrar "Enviar a Abiertos" solo para admin general (no para withdrawer)
+        if (role === 'withdrawer') {
+            btnPayments.style.display = 'none';
+        } else {
+            btnPayments.style.display = '';
+            btnPayments.innerHTML = '<span class="icon icon-exchange"></span> Enviar a Abiertos';
+            btnPayments.onclick = sendToOpen;
+        }
     } else {
+        btnPayments.style.display = '';
         // En otras pestañas: mostrar "Enviar a Pagos"
         btnPayments.innerHTML = '<span class="icon icon-exchange"></span> Enviar a Pagos';
         btnPayments.onclick = sendToPayments;

@@ -46,7 +46,7 @@ router.post('/chats/:userId/category', authenticate, authorize('admin', 'deposit
 
 // Enviar a pagos/abiertos
 router.post('/send-to-payments', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.sendToPayments);
-router.post('/send-to-open', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.sendToOpen);
+router.post('/send-to-open', authenticate, authorize('admin', 'depositor'), adminController.sendToOpen);
 
 // Base de datos - exportar a CSV
 router.post('/database/verify', authenticate, authorize('admin'), adminController.verifyDatabaseAccess);

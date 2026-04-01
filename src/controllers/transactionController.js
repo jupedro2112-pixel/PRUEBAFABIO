@@ -64,12 +64,12 @@ const deposit = asyncHandler(async (req, res) => {
     throw new AppError(result.error, 400, ErrorCodes.TX_FAILED);
   }
   
-  // Crear mensaje de sistema
+  // Crear mensajes de sistema (2 mensajes)
   let messageContent;
   if (bonus > 0) {
-    messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${result.newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+    messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${result.newBalance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
   } else {
-    messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${result.newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+    messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${result.newBalance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
   }
   await Message.create({
     id: uuidv4(),
@@ -79,6 +79,18 @@ const deposit = asyncHandler(async (req, res) => {
     receiverId: user.id,
     receiverRole: 'user',
     content: messageContent,
+    type: 'system',
+    timestamp: new Date(),
+    read: false
+  });
+  await Message.create({
+    id: uuidv4(),
+    senderId: 'system',
+    senderUsername: req.user.username,
+    senderRole: 'admin',
+    receiverId: user.id,
+    receiverRole: 'user',
+    content: `🎮 ¡Recuerda!\nPara cargar o cobrar, ingresa a 🌐 www.vipcargas.com.\n🔥 ¡Ya tienes el acceso guardado, así que te queda más fácil y rápido cada vez que entres!  \n🕹️ ¡No olvides guardarla y mantenerla a mano!\n\nwww.vipcargas.com`,
     type: 'system',
     timestamp: new Date(),
     read: false
@@ -135,7 +147,7 @@ const withdraw = asyncHandler(async (req, res) => {
     senderRole: 'admin',
     receiverId: user.id,
     receiverRole: 'user',
-    content: `💸 Retiro de $${amount} realizado correctamente. Tu nuevo saldo es $${result.newBalance}`,
+    content: `🔒💸 Retiro de $${amount} realizado correctamente. \n💸 Tu nuevo saldo es $${result.newBalance} 💸\nSu pago se está procesando. Por favor, aguarde un momento.`,
     type: 'system',
     timestamp: new Date(),
     read: false

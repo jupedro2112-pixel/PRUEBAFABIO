@@ -1855,14 +1855,13 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
         { 
           userId: targetUserId,
           username: user ? user.username : req.user.username,
-          status: 'open',
           lastMessageAt: new Date()
         },
         { upsert: true }
       );
     }
     
-    // Si es usuario enviando mensaje, reabrir chat si estaba cerrado
+    // Si es usuario enviando mensaje, reabrir chat solo si estaba cerrado (no si está en pagos)
     if (req.user.role === 'user') {
       await ChatStatus.findOneAndUpdate(
         { userId: req.user.userId, status: 'closed' },
@@ -2519,9 +2518,9 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       // Crear mensaje de sistema para el usuario
       let messageContent;
       if (bonus > 0) {
-        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
       } else {
-        messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+        messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
       }
       
       const systemMessage = await Message.create({
@@ -2562,6 +2561,35 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         userId: user.id,
         username: user.username
       });
+
+      // Segundo mensaje recordatorio
+      const reminderContent = `🎮 ¡Recuerda!\nPara cargar o cobrar, ingresa a 🌐 www.vipcargas.com.\n🔥 ¡Ya tienes el acceso guardado, así que te queda más fácil y rápido cada vez que entres!  \n🕹️ ¡No olvides guardarla y mantenerla a mano!\n\nwww.vipcargas.com`;
+      const reminderMessage = await Message.create({
+        id: uuidv4(),
+        senderId: 'admin',
+        senderUsername: req.user.username,
+        senderRole: 'admin',
+        receiverId: user.id,
+        receiverRole: 'user',
+        content: reminderContent,
+        type: 'system',
+        timestamp: new Date(),
+        read: false
+      });
+      const reminderData = {
+        id: reminderMessage.id,
+        senderId: 'admin',
+        senderUsername: req.user.username,
+        senderRole: 'admin',
+        receiverId: user.id,
+        receiverRole: 'user',
+        content: reminderContent,
+        timestamp: new Date(),
+        type: 'system'
+      };
+      io.to(`user_${user.id}`).emit('new_message', reminderData);
+      io.to(`chat_${user.id}`).emit('new_message', reminderData);
+      notifyAdmins('new_message', { message: reminderData, userId: user.id, username: user.username });
       
       // Notificar al usuario específico si está conectado
       const userSocket = connectedUsers.get(user.id);
@@ -2645,7 +2673,7 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
       const newBalance = balanceResult.success ? balanceResult.balance : (result.data?.user_balance_after || 0);
       
       // Crear mensaje de sistema para el usuario
-      const messageContent = `💸 Retiro de $${amount} realizado correctamente. Tu nuevo saldo es $${newBalance}`;
+      const messageContent = `🔒💸 Retiro de $${amount} realizado correctamente. \n💸 Tu nuevo saldo es $${newBalance} 💸\nSu pago se está procesando. Por favor, aguarde un momento.`;
       
       const systemMessage = await Message.create({
         id: uuidv4(),
@@ -2980,18 +3008,19 @@ io.on('connection', (socket) => {
           lastMessageAt: new Date()
         };
         
-        // Solo los mensajes del usuario reabren el chat
-        if (!isAdminRole) {
-          updateData.status = 'open';
-          updateData.closedAt = null;
-          updateData.closedBy = null;
-        }
-        
         await ChatStatus.findOneAndUpdate(
           { userId: targetUserId },
           updateData,
           { upsert: true }
         );
+        
+        // Solo los mensajes del usuario reabren el chat si estaba cerrado (no si está en pagos)
+        if (!isAdminRole) {
+          await ChatStatus.findOneAndUpdate(
+            { userId: targetUserId, status: 'closed' },
+            { status: 'open', closedAt: null, closedBy: null }
+          );
+        }
       }
       
       if (!isAdminRole) {
@@ -3876,7 +3905,7 @@ app.post('/api/admin/send-to-payments', authMiddleware, adminMiddleware, async (
       senderRole: 'admin',
       receiverId: userId,
       receiverRole: 'user',
-      content: '💳 Tu chat ha sido transferido al departamento de cargas. Un agente especializado te atenderá pronto.',
+      content: '💳 Tu chat ha sido transferido al departamento de PAGOS. Un agente especializado te atenderá pronto.\n\nPor favor para agilizar el tiempo envie monto a retirar y cvu por favor!',
       type: 'text',
       timestamp: new Date(),
       read: false
@@ -3899,6 +3928,11 @@ app.post('/api/admin/send-to-open', authMiddleware, adminMiddleware, async (req,
 
     if (!userId) {
       return res.status(400).json({ error: 'Usuario no especificado' });
+    }
+
+    // Withdrawer no puede enviar a abiertos
+    if (req.user.role === 'withdrawer') {
+      return res.status(403).json({ error: 'No tienes permisos para esta acción' });
     }
 
     // Al mover a Abiertos: resetear categoría a 'cargas' (pool general)
