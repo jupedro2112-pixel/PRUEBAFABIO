@@ -3,7 +3,7 @@
   "short_name": "VIPCARGAS",
   "description": "VIPCARGAS - Chat y reembolsos con notificaciones push",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "background_color": "#0a0015",
@@ -70,6 +70,15 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "VIPCARGAS - Chat"
     }
   ],
   "categories": ["games", "social", "entertainment"],

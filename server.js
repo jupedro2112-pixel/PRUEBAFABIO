@@ -2611,6 +2611,22 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         transactionId: result.data?.transfer_id || result.data?.transferId,
         timestamp: new Date()
       });
+
+      // Registrar bonificación como transacción separada (solo informativo, no afecta saldo neto)
+      if (parseFloat(bonus) > 0) {
+        await Transaction.create({
+          id: uuidv4(),
+          type: 'bonus',
+          amount: parseFloat(bonus),
+          username: user.username,
+          userId: user.id,
+          description: `Bonificación incluida en depósito de $${amount}`,
+          adminId: req.user?.userId,
+          adminUsername: req.user?.username,
+          adminRole: req.user?.role || 'admin',
+          timestamp: new Date()
+        });
+      }
       
       res.json({
         success: true,

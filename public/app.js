@@ -139,6 +139,9 @@ function setupEventListeners() {
         document.getElementById('fileInput').click();
     });
     document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+
+    // Pegar imagen con Ctrl+V desde portapapeles (escritorio)
+    document.getElementById('messageInput').addEventListener('paste', handlePaste);
     
     // Reembolsos
     document.getElementById('dailyRefundBtn').addEventListener('click', () => showRefundModal('daily'));
@@ -1676,6 +1679,71 @@ async function handleFileSelect(e) {
     };
     reader.readAsDataURL(file);
 }
+
+// Pegar imagen con Ctrl+V desde portapapeles (escritorio)
+async function handlePaste(e) {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+
+    for (const item of items) {
+        if (item.type.startsWith('image/')) {
+            e.preventDefault(); // No insertar texto de la imagen en el textarea
+            const file = item.getAsFile();
+            if (!file) continue;
+
+            if (file.size > 5 * 1024 * 1024) {
+                showToast('La imagen es muy grande. Máximo 5MB', 'error');
+                return;
+            }
+
+            const sendingIndicator = document.getElementById('sendingIndicator');
+            if (sendingIndicator) sendingIndicator.style.display = 'block';
+
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const tempMessage = {
+                        id: 'temp-image-' + Date.now(),
+                        senderId: currentUser?.id || 'me',
+                        senderUsername: currentUser?.username || 'Yo',
+                        senderRole: 'user',
+                        content: event.target.result,
+                        timestamp: new Date(),
+                        type: 'image'
+                    };
+                    addMessageToChat(tempMessage);
+                    scrollToBottom();
+
+                    const response = await fetch(`${API_URL}/api/messages/send`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${currentToken}`
+                        },
+                        body: JSON.stringify({ content: event.target.result, type: 'image' })
+                    });
+
+                    if (response.ok) {
+                        loadMessages();
+                        showToast('📸 Imagen enviada', 'success');
+                    }
+                } catch (error) {
+                    console.error('Error enviando imagen pegada:', error);
+                    showToast('Error al enviar imagen', 'error');
+                } finally {
+                    if (sendingIndicator) sendingIndicator.style.display = 'none';
+                }
+            };
+            reader.onerror = () => {
+                showToast('Error al leer la imagen', 'error');
+                if (sendingIndicator) sendingIndicator.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+            break; // Solo procesar la primera imagen
+        }
+    }
+}
+
 
 function scrollToBottom() {
     const container = document.getElementById('chatMessages');

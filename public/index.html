@@ -1226,8 +1226,11 @@
             border: 2px solid #d4af37;
             border-radius: 20px;
             padding: 25px;
+            padding-bottom: max(25px, env(safe-area-inset-bottom));
             width: 90%;
             max-width: 400px;
+            max-height: calc(100dvh - 40px);
+            overflow-y: auto;
             animation: modalSlide 0.3s ease;
         }
         
@@ -2575,8 +2578,16 @@
                 let permission = Notification.permission;
                 console.log('[FCM] Permiso actual:', permission);
                 
-                // Si no está decidido, solicitar permiso
+                // Si no está decidido, solicitar permiso.
+                // IMPORTANTE: En iOS (Safari/standalone), requestPermission requiere gesto del usuario.
+                // Por eso NO auto-solicitamos en iOS; el usuario debe presionar el botón NOTIS.
                 if (permission === 'default') {
+                    if (isIOS) {
+                        // En iOS, NO solicitamos permiso automáticamente.
+                        // El usuario debe tocar el botón NOTIS para disparar el gesto.
+                        console.log('[FCM] iOS detectado: omitiendo auto-solicitud de permiso. El usuario debe presionar NOTIS.');
+                        return;
+                    }
                     permission = await Notification.requestPermission();
                     console.log('[FCM] Permiso solicitado:', permission);
                 }
@@ -2719,55 +2730,81 @@
         // si las rechazó inicialmente o si no funcionaron
         window.enableNotifications = async function() {
             console.log('[FCM] enableNotifications() llamado manualmente');
-            
-            // Verificar si el permiso fue denegado anteriormente
-            const currentPermission = Notification.permission;
-            console.log('[FCM] Permiso actual:', currentPermission);
-            
-            if (currentPermission === 'denied') {
-                console.log('[FCM] ⚠️ El permiso fue denegado anteriormente.');
-                console.log('[FCM] Para reactivar notificaciones en Android/Chrome:');
-                console.log('[FCM] 1. Toca el ícono de candado/info en la barra de direcciones');
-                console.log('[FCM] 2. Ve a "Configuración del sitio"');
-                console.log('[FCM] 3. Cambia "Notificaciones" a "Permitir"');
-                console.log('[FCM] 4. Recarga la página');
-                
-                // Mostrar mensaje al usuario
-                if (typeof showToast === 'function') {
-                    showToast('⚠️ Activa notificaciones desde la configuración del sitio (tocá el candado arriba)', 'warning');
-                }
-                return { success: false, error: 'Permiso denegado. Activa desde configuración del sitio.' };
-            }
-            
-            // Solicitar permiso nuevamente
-            console.log('[FCM] Solicitando permiso...');
-            const permission = await Notification.requestPermission();
-            console.log('[FCM] Nuevo permiso:', permission);
-            
-            if (permission === 'granted') {
-                console.log('[FCM] ✅ Permiso concedido. Obteniendo token...');
-                
-                // Borrar token anterior para forzar uno nuevo
-                localStorage.removeItem('fcmToken');
-                fcmToken = null;
-                
-                // Reintentar obtener el token
-                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
-                
-                const newToken = localStorage.getItem('fcmToken');
-                if (newToken) {
-                    console.log('[FCM] ✅ Token obtenido correctamente');
+
+            try {
+                // Verificar soporte de Notifications API
+                if (!('Notification' in window)) {
+                    console.log('[FCM] ❌ API Notification no disponible en este navegador/contexto');
                     if (typeof showToast === 'function') {
-                        showToast('✅ Notificaciones activadas correctamente', 'success');
+                        showToast('⚠️ Este navegador no soporta notificaciones', 'warning');
                     }
-                    return { success: true, token: newToken };
-                } else {
-                    console.log('[FCM] ⚠️ No se pudo obtener el token');
-                    return { success: false, error: 'No se pudo obtener el token' };
+                    return { success: false, error: 'API Notification no disponible' };
                 }
-            } else {
-                console.log('[FCM] ❌ Permiso no concedido:', permission);
-                return { success: false, error: 'Permiso no concedido: ' + permission };
+
+                // Verificar si el permiso fue denegado anteriormente
+                const currentPermission = Notification.permission;
+                console.log('[FCM] Permiso actual:', currentPermission);
+
+                if (currentPermission === 'denied') {
+                    console.log('[FCM] ⚠️ El permiso fue denegado anteriormente.');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Notificaciones bloqueadas. Activá desde la configuración del sitio (ícono de candado arriba)', 'warning');
+                    }
+                    return { success: false, error: 'Permiso denegado. Activa desde configuración del sitio.' };
+                }
+
+                // Solicitar permiso (requiere gesto del usuario - este es el flujo correcto para iOS y Android)
+                console.log('[FCM] Solicitando permiso...');
+                let permission;
+                try {
+                    permission = await Notification.requestPermission();
+                } catch (permError) {
+                    // Algunos entornos (iOS < 16.4 standalone) pueden lanzar error
+                    console.error('[FCM] Error al solicitar permiso:', permError);
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ No se pudo solicitar permiso de notificaciones', 'warning');
+                    }
+                    return { success: false, error: permError.message };
+                }
+                console.log('[FCM] Nuevo permiso:', permission);
+
+                if (permission === 'granted') {
+                    console.log('[FCM] ✅ Permiso concedido. Obteniendo token...');
+
+                    // Borrar token anterior para forzar uno nuevo
+                    localStorage.removeItem('fcmToken');
+                    fcmToken = null;
+
+                    // Reintentar obtener el token
+                    await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+
+                    const newToken = localStorage.getItem('fcmToken');
+                    if (newToken) {
+                        console.log('[FCM] ✅ Token obtenido correctamente');
+                        if (typeof showToast === 'function') {
+                            showToast('✅ Notificaciones activadas correctamente', 'success');
+                        }
+                        return { success: true, token: newToken };
+                    } else {
+                        console.log('[FCM] ⚠️ No se pudo obtener el token FCM');
+                        if (typeof showToast === 'function') {
+                            showToast('⚠️ Permiso concedido pero no se pudo obtener el token. Intenta de nuevo.', 'warning');
+                        }
+                        return { success: false, error: 'No se pudo obtener el token' };
+                    }
+                } else {
+                    console.log('[FCM] ❌ Permiso no concedido:', permission);
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Permiso de notificaciones no concedido', 'warning');
+                    }
+                    return { success: false, error: 'Permiso no concedido: ' + permission };
+                }
+            } catch (err) {
+                console.error('[FCM] Error inesperado en enableNotifications:', err);
+                if (typeof showToast === 'function') {
+                    showToast('❌ Error al activar notificaciones', 'error');
+                }
+                return { success: false, error: err.message };
             }
         };
         
@@ -3082,16 +3119,30 @@
 
             notificationBtn.addEventListener('click', async () => {
                 console.log('[FCM] Botón de notificaciones clickeado');
-                const result = await enableNotifications();
-                if (result.success) {
-                    notificationBtn.classList.add('active');
-                    notificationBtn.innerHTML = '🔔 ACTIVADO';
-                    notificationBtn.title = 'Notificaciones activadas';
-                } else {
+                // Mostrar estado de carga mientras se procesa
+                const prevHtml = notificationBtn.innerHTML;
+                notificationBtn.innerHTML = '⏳ ...';
+                notificationBtn.disabled = true;
+                try {
+                    const result = await enableNotifications();
+                    if (result && result.success) {
+                        notificationBtn.classList.add('active');
+                        notificationBtn.innerHTML = '🔔 ACTIVADO';
+                        notificationBtn.title = 'Notificaciones activadas';
+                    } else {
+                        notificationBtn.innerHTML = '🔔 ERROR';
+                        setTimeout(() => {
+                            notificationBtn.innerHTML = '🔔 NOTIS';
+                        }, 3000);
+                    }
+                } catch (err) {
+                    console.error('[FCM] Error en click de NOTIS:', err);
                     notificationBtn.innerHTML = '🔔 ERROR';
                     setTimeout(() => {
                         notificationBtn.innerHTML = '🔔 NOTIS';
                     }, 3000);
+                } finally {
+                    notificationBtn.disabled = false;
                 }
             });
             console.log('[FCM] ✅ Botón de notificaciones configurado');

@@ -242,6 +242,11 @@ function setupEventListeners() {
         });
         imageInput.addEventListener('change', handleImageSelect);
     }
+
+    // Pegar imagen con Ctrl+V desde portapapeles (escritorio)
+    if (elements.messageInput) {
+        elements.messageInput.addEventListener('paste', handleAdminPaste);
+    }
     
     // Action buttons
     elements.btnCBU.addEventListener('click', sendCBU);
@@ -929,7 +934,7 @@ async function loadConversations(forceRefresh = false) {
 async function prefetchMessages(convs) {
     for (const conv of convs) {
         if (!messageCache.has(conv.userId)) {
-            fetch(`${API_URL}/api/messages/${conv.userId}?limit=15`, {
+            fetch(`${API_URL}/api/messages/${conv.userId}?limit=50`, {
                 headers: { 'Authorization': `Bearer ${currentToken}` }
             })
             .then(r => r.json())
@@ -1125,8 +1130,8 @@ async function loadMessages(userId) {
             }
         }
         
-        // Cargar últimos 15 mensajes previos (límite del panel de admin)
-        const response = await fetch(`${API_URL}/api/messages/${userId}?limit=15`, {
+        // Cargar últimos 50 mensajes previos (límite del panel de admin)
+        const response = await fetch(`${API_URL}/api/messages/${userId}?limit=50`, {
             headers: { 'Authorization': `Bearer ${currentToken}` },
             signal: controller.signal
         });
@@ -1543,6 +1548,75 @@ function fileToBase64(file) {
         reader.readAsDataURL(file);
     });
 }
+
+// Pegar imagen con Ctrl+V desde portapapeles (escritorio)
+async function handleAdminPaste(e) {
+    if (!selectedUserId) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+
+    for (const item of items) {
+        if (item.type.startsWith('image/')) {
+            e.preventDefault();
+            const file = item.getAsFile();
+            if (!file) continue;
+
+            if (file.size > 5 * 1024 * 1024) {
+                showToast('❌ La imagen es demasiado grande (máx 5MB)', 'error');
+                return;
+            }
+
+            const sendingIndicator = document.getElementById('sendingIndicator');
+            if (sendingIndicator) sendingIndicator.classList.remove('hidden');
+
+            try {
+                const base64Image = await fileToBase64(file);
+
+                if (socket && socket.connected) {
+                    socket.emit('send_message', {
+                        content: base64Image,
+                        receiverId: selectedUserId,
+                        type: 'image'
+                    });
+
+                    const tempMessage = {
+                        id: 'temp-image-' + Date.now(),
+                        senderId: currentAdmin.userId,
+                        senderUsername: currentAdmin.username,
+                        senderRole: 'admin',
+                        content: base64Image,
+                        timestamp: new Date(),
+                        type: 'image'
+                    };
+                    addMessageToChat(tempMessage, true);
+                    scrollToBottom();
+
+                    sendPushNotification(selectedUserId, { type: 'image', content: '📸 Imagen' });
+                    showToast('✅ Imagen enviada', 'success');
+                } else {
+                    const response = await fetch(`${API_URL}/api/messages/send`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${currentToken}`
+                        },
+                        body: JSON.stringify({ content: base64Image, receiverId: selectedUserId, type: 'image' })
+                    });
+                    if (!response.ok) throw new Error('Failed to send image');
+                    showToast('✅ Imagen enviada', 'success');
+                    loadMessages(selectedUserId, true);
+                }
+            } catch (error) {
+                console.error('Error sending pasted image:', error);
+                showToast('❌ Error al enviar imagen', 'error');
+            } finally {
+                if (sendingIndicator) sendingIndicator.classList.add('hidden');
+            }
+            break; // Solo procesar la primera imagen
+        }
+    }
+}
+
 
 function handleTyping() {
     if (!selectedUserId) return;
@@ -3450,7 +3524,7 @@ async function prefetchFrequentConversations() {
     
     for (const conv of frequentUsers) {
         if (!messageCache.has(conv.userId)) {
-            fetch(`${API_URL}/api/messages/${conv.userId}?limit=15`, {
+            fetch(`${API_URL}/api/messages/${conv.userId}?limit=50`, {
                 headers: { 'Authorization': `Bearer ${currentToken}` }
             })
             .then(r => r.json())
