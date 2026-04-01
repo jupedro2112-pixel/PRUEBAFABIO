@@ -1,7 +1,7 @@
 {
-  "name": "Sala de Juegos",
-  "short_name": "Sala Juegos",
-  "description": "Sala de Juegos - Chat y reembolsos con notificaciones push",
+  "name": "VIPCARGAS",
+  "short_name": "VIPCARGAS",
+  "description": "VIPCARGAS - Chat y reembolsos con notificaciones push",
   "id": "/",
   "start_url": "/",
   "display": "standalone",

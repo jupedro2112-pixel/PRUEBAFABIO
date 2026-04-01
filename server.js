@@ -2517,8 +2517,12 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       const newBalance = balanceResult.success ? balanceResult.balance : (result.data?.user_balance_after || 0);
       
       // Crear mensaje de sistema para el usuario
-      const bonusMsg = bonus > 0 ? ` (incluye $${bonus} de bonificación)` : '';
-      const messageContent = `💰 Depósito de $${amount}${bonusMsg} realizado correctamente. Tu nuevo saldo es $${newBalance}`;
+      let messageContent;
+      if (bonus > 0) {
+        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+      } else {
+        messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+      }
       
       const systemMessage = await Message.create({
         id: uuidv4(),

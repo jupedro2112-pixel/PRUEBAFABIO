@@ -38,6 +38,7 @@
             background-attachment: fixed;
             color: #ffffff;
             height: 100vh;
+            height: 100dvh;
             overflow: hidden;
         }
         
@@ -155,6 +156,7 @@
         /* Chat Screen */
         .chat-screen {
             height: 100vh;
+            height: 100dvh;
             display: flex;
             flex-direction: column;
         }
@@ -1029,6 +1031,7 @@
         /* Chat Input - MÁS COMPACTO */
         .chat-input-container {
             padding: 8px 15px;
+            padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
             border-top: 1px solid #d4af37;
             position: fixed;
             bottom: 0;

@@ -65,7 +65,12 @@ const deposit = asyncHandler(async (req, res) => {
   }
   
   // Crear mensaje de sistema
-  const bonusMsg = bonus > 0 ? ` (incluye $${bonus} de bonificación)` : '';
+  let messageContent;
+  if (bonus > 0) {
+    messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${result.newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+  } else {
+    messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${result.newBalance} 💸\n\nMuchas gracias por confiar en nosotros. \nPuedes verificarlo en: https://jugaygana.bet\n\nRecuerda que para cargar y retirar, debes volver a esta página. ¡Guárdala!\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+  }
   await Message.create({
     id: uuidv4(),
     senderId: 'system',
@@ -73,7 +78,7 @@ const deposit = asyncHandler(async (req, res) => {
     senderRole: 'admin',
     receiverId: user.id,
     receiverRole: 'user',
-    content: `💰 Depósito de $${amount}${bonusMsg} realizado correctamente. Tu nuevo saldo es $${result.newBalance}`,
+    content: messageContent,
     type: 'system',
     timestamp: new Date(),
     read: false

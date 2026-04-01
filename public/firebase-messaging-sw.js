@@ -21,7 +21,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compa
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

@@ -2477,6 +2477,7 @@ function adjustLayout() {
     const header = document.querySelector('.header');
     const promoBanner = document.querySelector('.promo-banner');
     const chatSection = document.querySelector('.chat-section');
+    const inputContainer = document.querySelector('.chat-input-container');
 
     if (!header || !chatSection) return;
 
@@ -2493,6 +2494,13 @@ function adjustLayout() {
         }
     } else {
         chatSection.style.marginTop = headerHeight + 'px';
+    }
+
+    // Set bottom margin dynamically based on actual input container height
+    // This ensures the last message is always visible above the input bar
+    if (inputContainer) {
+        const inputHeight = inputContainer.getBoundingClientRect().height;
+        chatSection.style.marginBottom = inputHeight + 'px';
     }
 }
 
