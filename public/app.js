@@ -2586,9 +2586,9 @@ window.addEventListener('beforeinstallprompt', (e) => {
         console.log('PWA: ya en standalone, ignorando beforeinstallprompt');
         return;
     }
-    // Prevenir que el navegador muestre el prompt automático
-    e.preventDefault();
-    // Guardar el evento para usarlo después
+    // No llamar e.preventDefault(): dejar que Chrome muestre la mini-barra
+    // nativa de instalación (que crea un WebAPK real en Android).
+    // Guardamos el evento para que los botones personalizados también puedan usarlo.
     window.deferredPrompt = e;
     // Mostrar los botones de instalar (login, header y app)
     const loginInstallBtn = document.getElementById('installBtn');
