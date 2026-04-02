@@ -3278,6 +3278,9 @@ app.get('/', (req, res) => {
   const content = readFileSafe(indexPath);
   if (content) {
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.send(content);
   } else {
     res.status(500).send('Error loading page');
@@ -3289,6 +3292,9 @@ app.get('/adminprivado2026', (req, res) => {
   const content = readFileSafe(adminPath);
   if (content) {
     res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.send(content);
   } else {
     res.status(500).send('Error loading admin page');

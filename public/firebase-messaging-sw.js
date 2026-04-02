@@ -1,18 +1,21 @@
 // ============================================
 // FIREBASE CLOUD MESSAGING + CACHE SERVICE WORKER
 // SW único para notificaciones push Y caché PWA.
-// Versión: 2.1.0
+// Versión: 2.2.0
 // ============================================
 // ROOT CAUSE FIX: antes existían dos SWs (firebase-messaging-sw.js y
 // user-sw.js) compitiendo en el mismo scope (/). Eso provocaba que el
 // token FCM apuntara a un SW pero las notificaciones llegaran al otro,
 // invalidando todos los envíos. Ahora este es el único SW activo.
 // ============================================
-// CLOUDFLARE FIX: el SW jamás debe interceptar navigation requests ni
-// URLs de Cloudflare. Si lo hace, el challenge de Cloudflare falla en
-// la segunda visita porque fetch() sigue la redirección a
-// challenges.cloudflare.com y devuelve una respuesta opaca en el
-// contexto incorrecto, lo que Chrome detecta como incompatibilidad.
+// PWA WEBAPK FIX: Chrome Android exige que el SW responda (con
+// event.respondWith) a la navegación hacia start_url para generar un
+// WebAPK real. Si el SW ignora navigation requests (return sin llamar
+// respondWith), Chrome no lo considera capaz de controlar start_url y
+// sólo ofrece un acceso directo/shortcut en lugar de instalar la app
+// como WebAPK. Se usa redirect:'manual' para que las redirecciones de
+// Cloudflare Challenge sean seguidas por el navegador de forma nativa
+// (opaqueredirect), sin que el SW actúe como proxy cross-origin.
 // ============================================
 
 importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js');
@@ -21,7 +24,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compa
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v9';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -178,15 +181,24 @@ self.addEventListener('fetch', function(event) {
 
   const url = event.request.url;
 
-  // CLOUDFLARE FIX: nunca interceptar navigation requests.
-  // Cuando el SW intercepta una navegación y Cloudflare redirige a
-  // challenges.cloudflare.com, fetch() sigue la redirección y devuelve
-  // una respuesta opaca/cross-origin en el contexto URL incorrecto.
-  // Chrome detecta esa inconsistencia y muestra la pantalla de
-  // "extensión o red incompatible". Dejando las navegaciones pasar al
-  // navegador nativo, el challenge se resuelve correctamente.
+  // PWA WEBAPK FIX: responder a navigation requests con fetch de red
+  // (sin caché). Esto es imprescindible para que Chrome Android verifique
+  // que el SW controla start_url y genere un WebAPK real en lugar de un
+  // acceso directo. redirect:'manual' devuelve opaqueredirect para
+  // redirecciones cross-origin (p. ej. Cloudflare Challenge), que Chrome
+  // sigue de forma nativa sin que el SW actúe como proxy.
   if (event.request.mode === 'navigate') {
-    console.log('[FCM-SW] Navigation request - pasando al navegador nativo:', url);
+    console.log('[FCM-SW] Navigation request - respondiendo con red (sin caché):', url);
+    event.respondWith(
+      fetch(event.request, { redirect: 'manual' })
+        .catch(function() {
+          console.log('[FCM-SW] Red no disponible para navegación:', url);
+          return new Response('Sin conexión - por favor verificá tu internet.', {
+            status: 503,
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+          });
+        })
+    );
     return;
   }
 
