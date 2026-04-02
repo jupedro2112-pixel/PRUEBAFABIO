@@ -2613,14 +2613,34 @@
                         const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
                         console.log('[FCM] Service Worker listo:', usedRegistration.scope);
                         
-                        currentToken = await messaging.getToken({ 
-                            vapidKey: VAPID_KEY,
-                            serviceWorkerRegistration: usedRegistration
-                        });
-                        
-                        console.log('[FCM] getToken completado');
+                        try {
+                            currentToken = await messaging.getToken({ 
+                                vapidKey: VAPID_KEY,
+                                serviceWorkerRegistration: usedRegistration
+                            });
+                            console.log('[FCM] getToken completado');
+                        } catch (firstErr) {
+                            // En Android PWA instalada el token anterior puede quedar en un estado
+                            // obsoleto (push subscription válida en el browser pero revocada en FCM).
+                            // Limpiamos la suscripción push subyacente y reintentamos para obtener
+                            // un token completamente nuevo sin necesidad de que el usuario intervenga.
+                            console.warn('[FCM] ⚠️ Error en getToken (intento 1):', firstErr.message);
+                            console.log('[FCM] Limpiando suscripción push obsoleta y reintentando...');
+                            try {
+                                await messaging.deleteToken();
+                            } catch (delErr) {
+                                console.warn('[FCM] deleteToken (pre-reintento):', delErr.message);
+                            }
+                            currentToken = await messaging.getToken({ 
+                                vapidKey: VAPID_KEY,
+                                serviceWorkerRegistration: usedRegistration
+                            });
+                            console.log('[FCM] ✅ getToken completado tras limpiar suscripción obsoleta');
+                        }
                     } catch (tokenError) {
-                        console.error('[FCM] ❌ Error al obtener token:', tokenError.message);
+                        // Llega aquí si falló tanto el intento inicial como el reintento post-deleteToken.
+                        // En este punto el token es irrecuperable sin intervención del usuario.
+                        console.error('[FCM] ❌ Error al obtener token (intento 1 + reintento fallaron):', tokenError.message);
                         console.error('[FCM] Código de error:', tokenError.code || 'n/a');
                         console.error('[FCM] Error completo:', tokenError);
                         
@@ -2771,7 +2791,16 @@
                 if (permission === 'granted') {
                     console.log('[FCM] ✅ Permiso concedido. Obteniendo token...');
 
-                    // Borrar token anterior para forzar uno nuevo
+                    // Borrar token anterior (incluida la suscripción push subyacente) para
+                    // forzar la creación de una suscripción nueva. Sin llamar deleteToken()
+                    // solo se borra el valor de localStorage pero la suscripción push obsoleta
+                    // permanece, y getToken() devuelve el mismo token invalidado.
+                    try {
+                        await messaging.deleteToken();
+                        console.log('[FCM] Suscripción push anterior eliminada correctamente');
+                    } catch (delErr) {
+                        console.warn('[FCM] No se pudo eliminar suscripción anterior:', delErr.message);
+                    }
                     localStorage.removeItem('fcmToken');
                     fcmToken = null;
 
@@ -2849,11 +2878,11 @@
         messaging.onMessage(function(payload) {
             console.log('[FCM] Notificación recibida en primer plano:', payload);
             
-            // Mostrar notificación manualmente
-            const notificationTitle = payload.notification.title || 'Sala de Juegos';
+            const notif = payload.notification || {};
+            const notificationTitle = notif.title || 'Sala de Juegos';
             const notificationOptions = {
-                body: payload.notification.body || 'Nueva notificación',
-                icon: payload.notification.icon || '/icons/icon-192x192.png',
+                body: notif.body || 'Nueva notificación',
+                icon: notif.icon || '/icons/icon-192x192.png',
                 badge: '/icons/icon-72x72.png',
                 tag: payload.data?.tag || 'default'
             };
