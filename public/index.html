@@ -2736,16 +2736,20 @@
         window.sendFcmTokenAfterLogin = async function() {
             console.log('[FCM] sendFcmTokenAfterLogin() llamado desde app.js');
             const token = localStorage.getItem('fcmToken');
-            if (token) {
+            const permissionGranted = 'Notification' in window && Notification.permission === 'granted';
+
+            if (token && permissionGranted) {
+                // Permiso concedido y token en localStorage: enviar al servidor Y refrescar desde FCM
+                // en una sola llamada a initNotifications (que internamente revalida el token con FCM
+                // y vuelve a enviarlo al servidor si cambió).
+                await sendTokenToServer(token);
+                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+            } else if (token) {
+                // Hay token pero permiso no confirmado: solo enviar al servidor
                 await sendTokenToServer(token);
             } else {
+                // No hay token: intentar inicializar notificaciones (generará token si hay permiso)
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
-                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
-            }
-            // Si el permiso ya está concedido, refrescar/sincronizar el token con FCM
-            // Esto garantiza que en iOS (y cualquier plataforma) el token esté siempre
-            // registrado en el servidor sin necesitar presionar el botón NOTIS.
-            if ('Notification' in window && Notification.permission === 'granted' && token) {
                 await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
             }
         };

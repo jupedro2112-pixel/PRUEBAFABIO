@@ -1994,9 +1994,6 @@ async function handleDirectBonus() {
     setButtonLoading(confirmBtn, true, 'Procesando...');
 
     try {
-        const user = await getSelectedUser();
-        if (!user) throw new Error('Usuario no encontrado');
-
         const response = await fetch(`${API_URL}/api/admin/bonus`, {
             method: 'POST',
             headers: {
@@ -2004,7 +2001,7 @@ async function handleDirectBonus() {
                 'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({
-                username: user.username,
+                userId: selectedUserId,
                 amount,
                 description
             })
@@ -2029,20 +2026,6 @@ async function handleDirectBonus() {
         showToast(error.message || 'Error al aplicar bonus', 'error');
     } finally {
         setButtonLoading(confirmBtn, false, 'Confirmar Bonus');
-    }
-}
-
-async function getSelectedUser() {
-    if (!selectedUserId) return null;
-    try {
-        const response = await fetch(`${API_URL}/api/admin/users/${selectedUserId}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
-        });
-        if (!response.ok) return null;
-        const data = await response.json();
-        return data.user || data;
-    } catch {
-        return null;
     }
 }
 

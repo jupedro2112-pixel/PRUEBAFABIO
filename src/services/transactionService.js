@@ -27,7 +27,10 @@ const deposit = async (data) => {
     return { success: false, error: result.error };
   }
   
-  // Registrar transacción de depósito (solo el monto de depósito, sin bonus)
+  // Registrar transacción de depósito (solo el monto base, sin bonus).
+  // Nota: el campo `bonus` se deja en 0 porque el bonus se registra como
+  // una transacción separada de tipo 'bonus' más abajo, para que quede
+  // reflejado correctamente en el historial y en los totales de bonificaciones.
   const transaction = await Transaction.create({
     id: uuidv4(),
     type: 'deposit',
@@ -43,8 +46,9 @@ const deposit = async (data) => {
     status: 'completed'
   });
 
-  // Si hay bonus, registrar una transacción separada de tipo 'bonus'
-  // (el saldo ya fue acreditado en jugaygana con el totalAmount, aquí solo registramos)
+  // Si hay bonus, registrar una transacción separada de tipo 'bonus'.
+  // El saldo ya fue acreditado en jugaygana con el totalAmount (amount + bonus)
+  // en una sola operación; aquí solo se registra el desglose interno.
   if (parseFloat(bonus) > 0) {
     await Transaction.create({
       id: uuidv4(),
@@ -52,7 +56,7 @@ const deposit = async (data) => {
       amount: parseFloat(bonus),
       username,
       userId,
-      description: `Bonificación sobre depósito${description ? ': ' + description : ''}`,
+      description: `Bonificación sobre depósito (ref: ${transaction.id})${description ? ' - ' + description : ''}`,
       adminId,
       adminUsername,
       adminRole,
