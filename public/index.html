@@ -168,6 +168,7 @@
             animation: golden-shimmer 3s ease infinite;
             color: #000;
             padding: 12px 15px;
+            padding-top: max(12px, env(safe-area-inset-top, 12px));
             display: grid;
             grid-template-columns: auto 1fr auto;
             align-items: center;
@@ -983,7 +984,7 @@
         
         .lightbox-close {
             position: absolute;
-            top: 20px;
+            top: max(20px, env(safe-area-inset-top, 20px));
             right: 30px;
             font-size: 40px;
             color: #fff;
@@ -2739,6 +2740,12 @@
                 await sendTokenToServer(token);
             } else {
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
+                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+            }
+            // Si el permiso ya está concedido, refrescar/sincronizar el token con FCM
+            // Esto garantiza que en iOS (y cualquier plataforma) el token esté siempre
+            // registrado en el servidor sin necesitar presionar el botón NOTIS.
+            if ('Notification' in window && Notification.permission === 'granted' && token) {
                 await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
             }
         };
