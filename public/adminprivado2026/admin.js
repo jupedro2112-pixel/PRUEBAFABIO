@@ -95,6 +95,7 @@ const elements = {
     // Action buttons
     btnCBU: document.getElementById('btnCBU'),
     btnDeposit: document.getElementById('btnDeposit'),
+    btnBonus: document.getElementById('btnBonus'),
     btnWithdraw: document.getElementById('btnWithdraw'),
     btnPassword: document.getElementById('btnPassword'),
     btnPayments: document.getElementById('btnPayments'),
@@ -251,6 +252,9 @@ function setupEventListeners() {
     // Action buttons
     elements.btnCBU.addEventListener('click', sendCBU);
     elements.btnDeposit.addEventListener('click', () => showModal('depositModal'));
+    if (elements.btnBonus) {
+        elements.btnBonus.addEventListener('click', () => showModal('bonusModal'));
+    }
     elements.btnWithdraw.addEventListener('click', () => showModal('withdrawModal'));
     elements.btnPassword.addEventListener('click', () => showModal('passwordModal'));
     elements.btnPayments.addEventListener('click', sendToPayments);
@@ -301,6 +305,10 @@ function setupEventListeners() {
     document.getElementById('confirmDeposit').addEventListener('click', handleDeposit);
     document.getElementById('confirmWithdraw').addEventListener('click', handleWithdraw);
     document.getElementById('confirmPassword').addEventListener('click', handlePasswordChange);
+    const confirmBonusBtn = document.getElementById('confirmBonus');
+    if (confirmBonusBtn) {
+        confirmBonusBtn.addEventListener('click', handleDirectBonus);
+    }
     
     // Close modals on backdrop click
     document.querySelectorAll('.modal').forEach(modal => {
@@ -522,14 +530,20 @@ function setupRoleBasedUI() {
         if (tabPayments) tabPayments.style.display = 'flex';
     }
     
-    // CORREGIDO: Solo admin general puede ver "Usuarios" y exportar CSV
+    // Depositor y withdrawer también pueden ver "Usuarios" y exportar CSV
     const usersNavItem = document.querySelector('.nav-item[data-section="users"]');
     if (usersNavItem) {
-        usersNavItem.style.display = role === 'admin' ? '' : 'none';
+        usersNavItem.style.display = ['admin', 'depositor', 'withdrawer'].includes(role) ? '' : 'none';
     }
     const exportCsvBtn = document.getElementById('exportUsersCSVBtn');
     if (exportCsvBtn) {
-        exportCsvBtn.style.display = role === 'admin' ? '' : 'none';
+        exportCsvBtn.style.display = ['admin', 'depositor', 'withdrawer'].includes(role) ? '' : 'none';
+    }
+
+    // Bonus directo: visible para admin y depositor
+    const btnBonus = elements.btnBonus;
+    if (btnBonus) {
+        btnBonus.style.display = ['admin', 'depositor'].includes(role) ? '' : 'none';
     }
     
     // Actualizar botones según la pestaña actual
@@ -1962,6 +1976,59 @@ async function handleWithdraw() {
     }
 }
 
+async function handleDirectBonus() {
+    const amount = parseFloat(document.getElementById('bonusAmount').value);
+    const description = document.getElementById('bonusDesc').value;
+    const confirmBtn = document.getElementById('confirmBonus');
+
+    if (!amount || amount <= 0) {
+        showToast('Ingresa un monto válido', 'error');
+        return;
+    }
+
+    if (!selectedUserId) {
+        showToast('Selecciona un usuario primero', 'error');
+        return;
+    }
+
+    setButtonLoading(confirmBtn, true, 'Procesando...');
+
+    try {
+        const response = await fetch(`${API_URL}/api/admin/bonus`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({
+                userId: selectedUserId,
+                amount,
+                description
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Error al aplicar bonus');
+        }
+
+        showToast(`Bonus de ${formatMoney(amount)} aplicado`, 'success');
+        hideModal('bonusModal');
+        document.getElementById('bonusAmount').value = '';
+        document.getElementById('bonusDesc').value = '';
+
+        loadUserInfo(selectedUserId);
+        loadMessages(selectedUserId);
+
+    } catch (error) {
+        console.error('Error applying bonus:', error);
+        showToast(error.message || 'Error al aplicar bonus', 'error');
+    } finally {
+        setButtonLoading(confirmBtn, false, 'Confirmar Bonus');
+    }
+}
+
 async function handlePasswordChange() {
     const newPassword = document.getElementById('newPassword').value;
     const confirmPassword = document.getElementById('confirmPassword').value;
@@ -2365,9 +2432,9 @@ async function loadUsers() {
     }
 }
 
-// CORREGIDO: Exportar todos los usuarios a CSV (solo admin)
+// Exportar todos los usuarios a CSV (admin, depositor y withdrawer)
 async function exportUsersCSV() {
-    if (currentAdmin?.role !== 'admin') {
+    if (!['admin', 'depositor', 'withdrawer'].includes(currentAdmin?.role)) {
         showToast('No tienes permiso para exportar usuarios', 'error');
         return;
     }
@@ -2567,7 +2634,7 @@ function formatMoney(amount) {
 function formatDate(date) {
     if (!date) return 'Nunca';
     const d = new Date(date);
-    return d.toLocaleDateString('es-AR');
+    return d.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 }
 
 function formatTime(date) {
@@ -2578,14 +2645,14 @@ function formatTime(date) {
     
     if (diff < 60000) return 'Ahora';
     if (diff < 3600000) return Math.floor(diff / 60000) + 'm';
-    if (diff < 86400000) return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+    if (diff < 86400000) return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+    return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
 }
 
 function formatDateTime(date) {
     if (!date) return '';
     const d = new Date(date);
-    return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
 }
 
 function debounce(func, wait) {
@@ -3670,10 +3737,10 @@ async function loadNotifUsers(page = 1, filter = 'all') {
                         : '<span style="color:#888;font-size:.85rem">📵 Sin app</span>'}
                 </td>
                 <td style="padding:.5rem .75rem;color:#888;font-size:.8rem">
-                    ${u.tokenUpdatedAt ? new Date(u.tokenUpdatedAt).toLocaleDateString('es-AR') : '—'}
+                    ${u.tokenUpdatedAt ? new Date(u.tokenUpdatedAt).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }) : '—'}
                 </td>
                 <td style="padding:.5rem .75rem;color:#888;font-size:.8rem">
-                    ${u.lastLogin ? new Date(u.lastLogin).toLocaleDateString('es-AR') : '—'}
+                    ${u.lastLogin ? new Date(u.lastLogin).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }) : '—'}
                 </td>
             </tr>
         `).join('');

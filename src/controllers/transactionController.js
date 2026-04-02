@@ -168,14 +168,22 @@ const withdraw = asyncHandler(async (req, res) => {
  * Aplicar bonificación (admin)
  */
 const bonus = asyncHandler(async (req, res) => {
-  const { username, amount, description } = req.body;
+  const { username, userId, amount, description } = req.body;
   
-  if (!username || !amount) {
+  // Resolver username desde userId si es necesario
+  let resolvedUsername = username;
+  if (!resolvedUsername && userId) {
+    const user = await User.findOne({ id: userId });
+    if (!user) throw new AppError('Usuario no encontrado', 404, ErrorCodes.USER_NOT_FOUND);
+    resolvedUsername = user.username;
+  }
+  
+  if (!resolvedUsername || !amount) {
     throw new AppError('Usuario y monto requeridos', 400, ErrorCodes.VALIDATION_ERROR);
   }
   
   const result = await transactionService.bonus({
-    username,
+    username: resolvedUsername,
     amount: parseFloat(amount),
     description,
     adminId: req.user.userId,

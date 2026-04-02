@@ -443,7 +443,10 @@ const exportUsersCSV = asyncHandler(async (req, res) => {
   // Audit log
   logger.info(`CSV export de usuarios solicitado por admin: ${req.user.username} (${req.user.userId})`);
   
-  const users = await User.find().select('-password').lean();
+  const userRole = req.user.role;
+  // Depositor y withdrawer solo exportan usuarios regulares (no admins)
+  const query = userRole !== 'admin' ? { role: 'user' } : {};
+  const users = await User.find(query).select('-password').lean();
   
   const headers = ['id', 'username', 'email', 'phone', 'role', 'balance', 'accountNumber', 'status', 'createdAt', 'lastLogin'];
   const rows = users.map(u => [

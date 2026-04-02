@@ -195,6 +195,9 @@
                                 <button id="btnDeposit" class="action-btn deposit" title="Depositar">
                                     <span class="icon icon-plus-circle"></span> Depositar
                                 </button>
+                                <button id="btnBonus" class="action-btn bonus" title="Bonus Directo">
+                                    <span class="icon icon-star"></span> Bonus
+                                </button>
                                 <button id="btnWithdraw" class="action-btn withdraw" title="Retirar">
                                     <span class="icon icon-minus-circle"></span> Retirar
                                 </button>
@@ -605,6 +608,32 @@
                 <button class="btn-secondary close-modal">Cancelar</button>
                 <button id="confirmDeposit" class="btn-primary">
                     <span class="icon icon-check"></span> Depositar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bonus Modal -->
+    <div id="bonusModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-star"></span> Bonus Directo</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="bonusAmount">Monto de Bonus ($):</label>
+                    <input type="number" id="bonusAmount" placeholder="Ej: 5000" min="1">
+                </div>
+                <div class="form-group">
+                    <label for="bonusDesc">Descripción (opcional):</label>
+                    <input type="text" id="bonusDesc" placeholder="Ej: Bonus especial">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button id="confirmBonus" class="btn-primary">
+                    <span class="icon icon-check"></span> Confirmar Bonus
                 </button>
             </div>
         </div>

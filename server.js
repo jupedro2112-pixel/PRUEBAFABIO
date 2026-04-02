@@ -243,10 +243,10 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ 
-  limit: '10mb',
+  limit: '150mb',
   verify: (req, res, buf) => {
     const body = buf.toString();
-    if (body.length > 10 * 1024 * 1024) {
+    if (body.length > 150 * 1024 * 1024) {
       throw new Error('Payload too large');
     }
   }

@@ -749,6 +749,11 @@ body {
     color: var(--secondary);
 }
 
+.action-btn.bonus {
+    background: rgba(212, 175, 55, 0.2);
+    color: var(--warning);
+}
+
 .action-btn.withdraw {
     background: rgba(239, 68, 68, 0.2);
     color: var(--danger);

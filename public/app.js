@@ -1437,7 +1437,8 @@ function createMessageElement(message) {
 
     const time = new Date(message.timestamp).toLocaleTimeString('es-AR', {
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        timeZone: 'America/Argentina/Buenos_Aires'
     });
 
     let contentHtml = '';
@@ -1624,12 +1625,10 @@ async function handleFileSelect(e) {
         return;
     }
     
-    if (file.size > 5 * 1024 * 1024) {
-        showToast('La imagen es muy grande. Máximo 5MB', 'error');
+    if (file.size > 100 * 1024 * 1024) {
+        showToast('La imagen es muy grande. Máximo 100MB', 'error');
         return;
     }
-    
-    // CORREGIDO: Mostrar indicador de envío
     const sendingIndicator = document.getElementById('sendingIndicator');
     if (sendingIndicator) {
         sendingIndicator.style.display = 'block';
@@ -1700,8 +1699,8 @@ async function handlePaste(e) {
             const file = item.getAsFile();
             if (!file) continue;
 
-            if (file.size > 5 * 1024 * 1024) {
-                showToast('La imagen es muy grande. Máximo 5MB', 'error');
+            if (file.size > 100 * 1024 * 1024) {
+                showToast('La imagen es muy grande. Máximo 100MB', 'error');
                 return;
             }
 
@@ -2142,7 +2141,7 @@ async function showFireModal() {
     const streak = fireStatus.streak || 0;
     document.getElementById('fireStreakModal').textContent = streak;
     document.getElementById('fireLastClaim').textContent = fireStatus.lastClaim 
-        ? new Date(fireStatus.lastClaim).toLocaleString('es-AR')
+        ? new Date(fireStatus.lastClaim).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
         : 'Nunca';
     
     // Actualizar barra de progreso
