@@ -243,6 +243,9 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ 
+  // Photos up to 100 MB arrive base64-encoded in the JSON body.
+  // Base64 inflates binary by ~33%, so 100 MB binary → ~133 MB encoded.
+  // We allow 150 MB to accommodate encoding overhead and request headers.
   limit: '150mb',
   verify: (req, res, buf) => {
     const body = buf.toString();
