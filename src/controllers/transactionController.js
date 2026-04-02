@@ -173,6 +173,7 @@ const bonus = asyncHandler(async (req, res) => {
   // Resolver username desde userId si es necesario
   let resolvedUsername = username;
   if (!resolvedUsername && userId) {
+    if (typeof userId !== 'string') throw new AppError('userId inválido', 400, ErrorCodes.VALIDATION_ERROR);
     const user = await User.findOne({ id: userId });
     if (!user) throw new AppError('Usuario no encontrado', 404, ErrorCodes.USER_NOT_FOUND);
     resolvedUsername = user.username;

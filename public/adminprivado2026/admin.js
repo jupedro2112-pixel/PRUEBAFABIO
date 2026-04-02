@@ -21,6 +21,11 @@ const SOCKET_OPTIONS = {
     reconnectionDelayMax: 5000
 };
 
+// Roles that can manage users (view list, export CSV).
+const USER_MANAGEMENT_ROLES = ['admin', 'depositor', 'withdrawer'];
+// Roles that can apply bonuses.
+const BONUS_ROLES = ['admin', 'depositor'];
+
 // ============================================
 // STATE
 // ============================================
@@ -533,17 +538,17 @@ function setupRoleBasedUI() {
     // Depositor y withdrawer también pueden ver "Usuarios" y exportar CSV
     const usersNavItem = document.querySelector('.nav-item[data-section="users"]');
     if (usersNavItem) {
-        usersNavItem.style.display = ['admin', 'depositor', 'withdrawer'].includes(role) ? '' : 'none';
+        usersNavItem.style.display = USER_MANAGEMENT_ROLES.includes(role) ? '' : 'none';
     }
     const exportCsvBtn = document.getElementById('exportUsersCSVBtn');
     if (exportCsvBtn) {
-        exportCsvBtn.style.display = ['admin', 'depositor', 'withdrawer'].includes(role) ? '' : 'none';
+        exportCsvBtn.style.display = USER_MANAGEMENT_ROLES.includes(role) ? '' : 'none';
     }
 
     // Bonus directo: visible para admin y depositor
     const btnBonus = elements.btnBonus;
     if (btnBonus) {
-        btnBonus.style.display = ['admin', 'depositor'].includes(role) ? '' : 'none';
+        btnBonus.style.display = BONUS_ROLES.includes(role) ? '' : 'none';
     }
     
     // Actualizar botones según la pestaña actual
@@ -2434,7 +2439,7 @@ async function loadUsers() {
 
 // Exportar todos los usuarios a CSV (admin, depositor y withdrawer)
 async function exportUsersCSV() {
-    if (!['admin', 'depositor', 'withdrawer'].includes(currentAdmin?.role)) {
+    if (!USER_MANAGEMENT_ROLES.includes(currentAdmin?.role)) {
         showToast('No tienes permiso para exportar usuarios', 'error');
         return;
     }
