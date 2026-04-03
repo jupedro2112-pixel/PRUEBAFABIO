@@ -1917,6 +1917,14 @@ async function handleDeposit() {
         showToast(`Depósito de ${formatMoney(amount + bonus)} realizado`, 'success');
         hideModal('depositModal');
         
+        // Reset deposit form
+        document.getElementById('depositAmount').value = '';
+        document.getElementById('depositBonus').value = '';
+        document.getElementById('depositDesc').value = '';
+        document.querySelectorAll('.bonus-options button').forEach(b => b.classList.remove('active'));
+        const noBonusBtn = document.querySelector('.bonus-options button[data-bonus="0"]');
+        if (noBonusBtn) noBonusBtn.classList.add('active');
+        
         // Update balance display
         loadUserInfo(selectedUserId);
         
@@ -1971,6 +1979,10 @@ async function handleWithdraw() {
         
         showToast(`Retiro de ${formatMoney(amount)} realizado`, 'success');
         hideModal('withdrawModal');
+        
+        // Reset withdrawal form
+        document.getElementById('withdrawAmount').value = '';
+        document.getElementById('withdrawDesc').value = '';
         
         // Update balance display
         loadUserInfo(selectedUserId);
@@ -3214,7 +3226,7 @@ function renderCommands(commands) {
     container.innerHTML = commands.map(cmd => `
         <div class="command-card">
             <div class="command-info">
-                <code class="command-name">${escapeHtml(cmd.name)}</code>
+                <code class="command-name">${escapeHtml(cmd.name)}${cmd.isSystem ? ' 🔒' : ''}</code>
                 <p class="command-desc">${escapeHtml(cmd.description || 'Sin descripción')}</p>
                 <p class="command-response">${escapeHtml(cmd.response || 'Sin respuesta')}</p>
             </div>
@@ -3222,9 +3234,9 @@ function renderCommands(commands) {
                 <button class="btn-small" onclick="editCommand('${cmd.name}')">
                     <span class="icon icon-edit"></span>
                 </button>
-                <button class="btn-small btn-danger" onclick="deleteCommand('${cmd.name}')">
+                ${cmd.isSystem ? '' : `<button class="btn-small btn-danger" onclick="deleteCommand('${cmd.name}')">
                     <span class="icon icon-trash"></span>
-                </button>
+                </button>`}
             </div>
         </div>
     `).join('');

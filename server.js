@@ -2524,8 +2524,15 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       const newBalance = balanceResult.success ? balanceResult.balance : (result.data?.user_balance_after || 0);
       
       // Crear mensaje de sistema para el usuario
+      const depositCmdName = parseFloat(bonus) > 0 ? '/sys_deposit_bonus' : '/sys_deposit';
+      const depositCmd = await Command.findOne({ name: depositCmdName, isActive: true });
       let messageContent;
-      if (bonus > 0) {
+      if (depositCmd && depositCmd.response) {
+        messageContent = depositCmd.response
+          .replace(/\{amount\}/g, amount)
+          .replace(/\{bonus\}/g, bonus)
+          .replace(/\{balance\}/g, newBalance);
+      } else if (bonus > 0) {
         messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
       } else {
         messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es $${newBalance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
@@ -2571,7 +2578,12 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       });
 
       // Segundo mensaje recordatorio
-      const reminderContent = `🎮 ¡Recuerda!\nPara cargar o cobrar, ingresa a 🌐 www.vipcargas.com.\n🔥 ¡Ya tienes el acceso guardado, así que te queda más fácil y rápido cada vez que entres!  \n🕹️ ¡No olvides guardarla y mantenerla a mano!\n\nwww.vipcargas.com`;
+      const reminderCmd = await Command.findOne({ name: '/sys_reminder', isActive: true });
+      const reminderContent = (reminderCmd && reminderCmd.response)
+        ? reminderCmd.response
+            .replace(/\{amount\}/g, amount)
+            .replace(/\{balance\}/g, newBalance)
+        : `🎮 ¡Recuerda!\nPara cargar o cobrar, ingresa a 🌐 www.vipcargas.com.\n🔥 ¡Ya tienes el acceso guardado, así que te queda más fácil y rápido cada vez que entres!  \n🕹️ ¡No olvides guardarla y mantenerla a mano!\n\nwww.vipcargas.com`;
       const reminderMessage = await Message.create({
         id: uuidv4(),
         senderId: 'admin',
@@ -2698,7 +2710,12 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
       const newBalance = balanceResult.success ? balanceResult.balance : (result.data?.user_balance_after || 0);
       
       // Crear mensaje de sistema para el usuario
-      const messageContent = `🔒💸 Retiro de $${amount} realizado correctamente. \n💸 Tu nuevo saldo es $${newBalance} 💸\nSu pago se está procesando. Por favor, aguarde un momento.`;
+      const withdrawalCmd = await Command.findOne({ name: '/sys_withdrawal', isActive: true });
+      const messageContent = (withdrawalCmd && withdrawalCmd.response)
+        ? withdrawalCmd.response
+            .replace(/\{amount\}/g, amount)
+            .replace(/\{balance\}/g, newBalance)
+        : `🔒💸 Retiro de $${amount} realizado correctamente. \n💸 Tu nuevo saldo es $${newBalance} 💸\nSu pago se está procesando. Por favor, aguarde un momento.`;
       
       const systemMessage = await Message.create({
         id: uuidv4(),
@@ -3441,7 +3458,53 @@ async function initializeData() {
     });
     console.log('✅ Configuración CBU por defecto creada');
   }
-  
+
+  // Verificar/crear comandos de sistema (mensajes automáticos editables desde COMANDOS)
+  const systemCmds = [
+    {
+      name: '/sys_deposit',
+      description: 'Mensaje automático al realizar un depósito sin bonus. Variables disponibles: ${amount}, ${balance}',
+      type: 'message',
+      response: '🔒💰 Depósito de ${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
+    },
+    {
+      name: '/sys_deposit_bonus',
+      description: 'Mensaje automático al realizar un depósito con bonus. Variables disponibles: ${amount}, ${bonus}, ${balance}',
+      type: 'message',
+      response: '🔒💰 Depósito de ${amount} (incluye ${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
+    },
+    {
+      name: '/sys_withdrawal',
+      description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
+      type: 'message',
+      response: '🔒💸 Retiro de ${amount} realizado correctamente. \n💸 Tu nuevo saldo es ${balance} 💸\nSu pago se está procesando. Por favor, aguarde un momento.'
+    },
+    {
+      name: '/sys_reminder',
+      description: 'Mensaje recordatorio enviado después de cada depósito (sin variables de monto por defecto).',
+      type: 'message',
+      response: '🎮 ¡Recuerda!\nPara cargar o cobrar, ingresa a 🌐 www.vipcargas.com.\n🔥 ¡Ya tienes el acceso guardado, así que te queda más fácil y rápido cada vez que entres!  \n🕹️ ¡No olvides guardarla y mantenerla a mano!\n\nwww.vipcargas.com'
+    }
+  ];
+  for (const cmd of systemCmds) {
+    await Command.findOneAndUpdate(
+      { name: cmd.name },
+      {
+        $set: { isSystem: true },
+        $setOnInsert: {
+          name: cmd.name,
+          description: cmd.description,
+          type: cmd.type,
+          response: cmd.response,
+          isActive: true,
+          usageCount: 0
+        }
+      },
+      { upsert: true }
+    );
+  }
+  console.log('✅ Comandos de sistema verificados');
+
   console.log('✅ Datos inicializados correctamente');
 }
 
@@ -4341,6 +4404,10 @@ app.post('/api/admin/commands', authMiddleware, adminMiddleware, async (req, res
 // Eliminar comando
 app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    const cmd = await Command.findOne({ name: req.params.name });
+    if (cmd && cmd.isSystem) {
+      return res.status(403).json({ error: 'No se puede eliminar un comando del sistema' });
+    }
     await Command.deleteOne({ name: req.params.name });
     res.json({ success: true, message: 'Comando eliminado correctamente' });
   } catch (error) {

@@ -74,6 +74,7 @@ const commandSchema = new mongoose.Schema({
   bonusPercent: { type: Number, default: 0 },
   response: { type: String, default: '' },
   isActive: { type: Boolean, default: true },
+  isSystem: { type: Boolean, default: false },
   usageCount: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
