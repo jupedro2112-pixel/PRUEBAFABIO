@@ -2776,12 +2776,14 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
 
 app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, res) => {
   try {
-    const { username: rawUsername, userId, amount } = req.body;
+    const { username: rawUsername, userId: rawUserId, amount } = req.body;
 
     // Resolver username: puede venir como username directo o como userId
-    let resolvedUsername = rawUsername;
-    if (!resolvedUsername && userId) {
-      const user = await User.findOne({ id: userId });
+    // Sanitizar userId a string para evitar inyección NoSQL
+    let resolvedUsername = rawUsername && typeof rawUsername === 'string' ? rawUsername.trim() : null;
+    if (!resolvedUsername && rawUserId) {
+      const safeUserId = String(rawUserId).trim();
+      const user = await User.findOne({ id: safeUserId });
       if (!user) {
         return res.status(404).json({ error: 'Usuario no encontrado' });
       }
