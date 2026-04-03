@@ -18,13 +18,20 @@ const deposit = async (data) => {
     return { success: false, error: 'Monto inválido' };
   }
   
-  const totalAmount = parseFloat(amount) + parseFloat(bonus);
-  
-  // Realizar depósito en JUGAYGANA
-  const result = await jugayganaService.deposit(username, totalAmount, description);
+  // Realizar depósito base en JUGAYGANA
+  const result = await jugayganaService.deposit(username, parseFloat(amount), description);
   
   if (!result.success) {
     return { success: false, error: result.error };
+  }
+
+  // Si hay bonus, acreditarlo en JUGAYGANA como individual_bonus en operación separada
+  let bonusResult = null;
+  if (parseFloat(bonus) > 0) {
+    bonusResult = await jugayganaService.bonus(username, parseFloat(bonus), description);
+    if (!bonusResult.success) {
+      logger.error(`Error al acreditar bonus en JUGAYGANA para ${username}:`, bonusResult.error);
+    }
   }
   
   // Registrar transacción de depósito (solo el monto base, sin bonus).
@@ -46,10 +53,9 @@ const deposit = async (data) => {
     status: 'completed'
   });
 
-  // Si hay bonus, registrar una transacción separada de tipo 'bonus'.
-  // El saldo ya fue acreditado en jugaygana con el totalAmount (amount + bonus)
-  // en una sola operación; aquí solo se registra el desglose interno.
-  if (parseFloat(bonus) > 0) {
+  // Si hay bonus, registrar una transacción separada de tipo 'bonus' solo si fue acreditada correctamente.
+  // La bonificación fue acreditada en JUGAYGANA como individual_bonus en operación separada.
+  if (parseFloat(bonus) > 0 && bonusResult?.success) {
     await Transaction.create({
       id: uuidv4(),
       type: 'bonus',
@@ -60,7 +66,7 @@ const deposit = async (data) => {
       adminId,
       adminUsername,
       adminRole,
-      transactionId: result.data?.transfer_id,
+      transactionId: bonusResult.data?.transfer_id,
       status: 'completed'
     });
   }

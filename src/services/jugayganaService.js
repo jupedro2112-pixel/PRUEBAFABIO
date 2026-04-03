@@ -356,10 +356,55 @@ const withdraw = async (username, amount, description = '') => {
 };
 
 /**
- * Acreditar bonificación
+ * Acreditar bonificación (individual_bonus)
+ */
+const bonus = async (username, amount, description = '') => {
+  const ok = await ensureSession();
+  if (!ok) return { success: false, error: 'No hay sesión válida' };
+
+  try {
+    const body = toFormUrlEncoded({
+      action: 'CREDITBALANCE',
+      token: sessionToken,
+      username,
+      amount: Math.round(amount * 100),
+      deposit_type: 'individual_bonus',
+      description: description || `Bonificación - ${new Date().toLocaleString('es-AR')}`
+    });
+
+    const headers = {};
+    if (sessionCookie) headers.Cookie = sessionCookie;
+
+    const resp = await client.post('', body, { 
+      headers, 
+      validateStatus: () => true 
+    });
+
+    const data = parseJson(resp.data);
+    if (isHtmlBlocked(data)) {
+      return { success: false, error: 'IP bloqueada / HTML' };
+    }
+
+    if (data?.success) {
+      return { 
+        success: true, 
+        data: data.data,
+        newBalance: data.data?.user_balance_after
+      };
+    }
+    
+    return { success: false, error: data?.error || 'Bonificación falló' };
+  } catch (error) {
+    logger.error('Error en bonificación JUGAYGANA:', error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
+ * Acreditar bonificación (alias - usa individual_bonus)
  */
 const creditBalance = async (username, amount, description = '') => {
-  return await deposit(username, amount, description);
+  return await bonus(username, amount, description);
 };
 
 module.exports = {
@@ -371,5 +416,6 @@ module.exports = {
   getBalance,
   deposit,
   withdraw,
+  bonus,
   creditBalance
 };
