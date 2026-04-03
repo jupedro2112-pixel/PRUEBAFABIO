@@ -2774,11 +2774,21 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
   }
 });
 
-app.post('/api/admin/bonus', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, res) => {
   try {
-    const { username, amount } = req.body;
-    
-    if (!username || !amount) {
+    const { username: rawUsername, userId, amount } = req.body;
+
+    // Resolver username: puede venir como username directo o como userId
+    let resolvedUsername = rawUsername;
+    if (!resolvedUsername && userId) {
+      const user = await User.findOne({ id: userId });
+      if (!user) {
+        return res.status(404).json({ error: 'Usuario no encontrado' });
+      }
+      resolvedUsername = user.username;
+    }
+
+    if (!resolvedUsername || !amount) {
       return res.status(400).json({ error: 'Usuario y monto requeridos' });
     }
     
@@ -2787,14 +2797,14 @@ app.post('/api/admin/bonus', authMiddleware, adminMiddleware, async (req, res) =
       return res.status(400).json({ error: 'Monto de bonificación inválido' });
     }
     
-    const depositResult = await jugaygana.creditUserBalance(username, bonusAmount);
+    const depositResult = await jugaygana.creditUserBalance(resolvedUsername, bonusAmount);
     
     if (depositResult.success) {
       await Transaction.create({
         id: uuidv4(),
         type: 'bonus',
         amount: bonusAmount,
-        username,
+        username: resolvedUsername,
         description: 'Bonificación otorgada',
         adminId: req.user?.userId,
         adminUsername: req.user?.username,
@@ -3728,17 +3738,21 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
     
     let query = {};
     
-    // Manejo de fechas
+    // Manejo de fechas — las fechas recibidas (YYYY-MM-DD) se interpretan en
+    // horario argentino (ART = UTC-3, sin DST).
+    // 00:00 ART = 03:00 UTC del mismo día.
+    // 23:59:59 ART = 02:59:59 UTC del día siguiente.
     if (from || to) {
       query.timestamp = {};
       if (from) {
-        const fromDate = new Date(from);
-        fromDate.setHours(0, 0, 0, 0);
+        // Inicio del día en Argentina: 00:00 ART = 03:00 UTC
+        const fromDate = new Date(from + 'T03:00:00.000Z');
         query.timestamp.$gte = fromDate;
       }
       if (to) {
-        const toDate = new Date(to);
-        toDate.setHours(23, 59, 59, 999);
+        // Fin del día en Argentina: 23:59:59.999 ART = inicio del día siguiente 03:00 UTC - 1ms
+        const toDate = new Date(to + 'T03:00:00.000Z');
+        toDate.setTime(toDate.getTime() + 24 * 60 * 60 * 1000 - 1);
         query.timestamp.$lte = toDate;
       }
     }
@@ -4396,7 +4410,11 @@ app.get('/api/admin/database/export/csv', authMiddleware, adminMiddleware, dbPas
 // EXPORTAR USUARIOS A CSV
 // ============================================
 
-app.get('/api/admin/users/export/csv', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
+  // Solo el admin general puede exportar usuarios
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Acceso denegado. Solo el admin general puede exportar usuarios.' });
+  }
   try {
     const users = await User.find().select('username phone email balance lastLogin').lean();
     

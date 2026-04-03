@@ -1444,6 +1444,8 @@ function createMessageElement(message) {
     let contentHtml = '';
     if (message.type === 'image') {
         contentHtml = `<img src="${message.content}" onclick="openLightbox('${message.content}')" loading="lazy">`;
+    } else if (message.type === 'video') {
+        contentHtml = `<video src="${message.content}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
     } else {
         let content = escapeHtml(message.content);
         const urlRegex = /(https?:\/\/[^\s<]+[^\s<.,;:!?])/g;
@@ -1457,7 +1459,7 @@ function createMessageElement(message) {
     const copyBtn = document.createElement('button');
     copyBtn.className = 'copy-btn';
     copyBtn.innerHTML = '📋';
-    copyBtn.onclick = () => copyText(message.type === 'image' ? '[Imagen]' : message.content);
+    copyBtn.onclick = () => copyText(message.type === 'image' ? '[Imagen]' : message.type === 'video' ? '[Video]' : message.content);
 
     wrapper.appendChild(msgDiv);
     wrapper.appendChild(copyBtn);
@@ -1615,20 +1617,26 @@ async function sendMessage() {
     }
 }
 
-// CORREGIDO: Manejar selección de archivo con indicador de envío
+// Manejar selección de archivo (imágenes y videos)
 async function handleFileSelect(e) {
     const file = e.target.files[0];
     if (!file) return;
     
-    if (!file.type.startsWith('image/')) {
-        showToast('Solo se permiten imágenes', 'error');
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    if (!isImage && !isVideo) {
+        showToast('Solo se permiten imágenes o videos', 'error');
         return;
     }
     
     if (file.size > 100 * 1024 * 1024) {
-        showToast('La imagen es muy grande. Máximo 100MB', 'error');
+        showToast('El archivo es muy grande. Máximo 100MB', 'error');
         return;
     }
+
+    const fileType = isVideo ? 'video' : 'image';
+    const fileLabel = isVideo ? '🎥 Video' : '📸 Imagen';
+
     const sendingIndicator = document.getElementById('sendingIndicator');
     if (sendingIndicator) {
         sendingIndicator.style.display = 'block';
@@ -1637,15 +1645,14 @@ async function handleFileSelect(e) {
     const reader = new FileReader();
     reader.onload = async (event) => {
         try {
-            // CORREGIDO: Mostrar imagen inmediatamente (optimistic UI)
             const tempMessage = {
-                id: 'temp-image-' + Date.now(),
+                id: 'temp-' + fileType + '-' + Date.now(),
                 senderId: currentUser?.id || 'me',
                 senderUsername: currentUser?.username || 'Yo',
                 senderRole: 'user',
                 content: event.target.result,
                 timestamp: new Date(),
-                type: 'image'
+                type: fileType
             };
             addMessageToChat(tempMessage);
             scrollToBottom();
@@ -1658,28 +1665,26 @@ async function handleFileSelect(e) {
                 },
                 body: JSON.stringify({
                     content: event.target.result,
-                    type: 'image'
+                    type: fileType
                 })
             });
             
             if (response.ok) {
                 loadMessages();
-                showToast('📸 Imagen enviada', 'success');
+                showToast(`${fileLabel} enviada`, 'success');
             }
         } catch (error) {
-            console.error('Error enviando imagen:', error);
-            showToast('Error al enviar imagen', 'error');
+            console.error('Error enviando archivo:', error);
+            showToast('Error al enviar archivo', 'error');
         } finally {
-            // CORREGIDO: Ocultar indicador de envío
             if (sendingIndicator) {
                 sendingIndicator.style.display = 'none';
             }
-            // Limpiar input
             e.target.value = '';
         }
     };
     reader.onerror = () => {
-        showToast('Error al leer la imagen', 'error');
+        showToast('Error al leer el archivo', 'error');
         if (sendingIndicator) {
             sendingIndicator.style.display = 'none';
         }

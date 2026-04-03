@@ -219,17 +219,17 @@
                             </div>
                         </div>
                         <div id="chatInputArea" class="chat-input-area hidden">
-                            <!-- CORREGIDO: Input para enviar imágenes -->
-                            <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                            <!-- Input para enviar imágenes y videos -->
+                            <input type="file" id="imageInput" accept="image/*,video/*" style="display: none;">
                             
-                            <!-- CORREGIDO: Indicador de envío de imagen -->
+                            <!-- Indicador de envío de archivo -->
                             <div id="sendingIndicator" class="sending-indicator hidden">
                                 <span class="icon icon-spinner fa-spin"></span>
-                                <span>Enviando imagen...</span>
+                                <span>Enviando archivo...</span>
                             </div>
                             
                             <div class="input-wrapper">
-                                <button id="attachImageBtn" class="attach-btn" title="Adjuntar imagen">
+                                <button id="attachImageBtn" class="attach-btn" title="Adjuntar imagen o video">
                                     <span class="icon icon-image"></span>
                                 </button>
                                 <textarea id="messageInput" placeholder="Escribe un mensaje..." rows="1"></textarea>
@@ -338,6 +338,7 @@
                     </div>
                     <div class="quick-filters">
                         <button class="btn-secondary btn-small" onclick="setTodayFilter()">Hoy</button>
+                        <button class="btn-secondary btn-small" onclick="setYesterdayFilter()">Ayer</button>
                         <button class="btn-secondary btn-small" onclick="setWeekFilter()">Esta Semana</button>
                         <button class="btn-secondary btn-small" onclick="setMonthFilter()">Este Mes</button>
                         <button class="btn-secondary btn-small" onclick="clearTransactionDateFilter()">Limpiar</button>

@@ -55,7 +55,7 @@ const messageSchema = new mongoose.Schema({
   receiverId: { type: String, required: true, index: true },
   receiverRole: { type: String, enum: ['user', 'admin'], required: true },
   content: { type: String, required: true },
-  type: { type: String, enum: ['text', 'image', 'system'], default: 'text' },
+  type: { type: String, enum: ['text', 'image', 'video', 'system'], default: 'text' },
   read: { type: Boolean, default: false },
   // Solo visible para admins (ej. mensaje de cierre de chat)
   adminOnly: { type: Boolean, default: false },
