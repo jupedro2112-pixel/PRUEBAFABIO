@@ -53,9 +53,9 @@ const deposit = async (data) => {
     status: 'completed'
   });
 
-  // Si hay bonus, registrar una transacción separada de tipo 'bonus'.
+  // Si hay bonus, registrar una transacción separada de tipo 'bonus' solo si fue acreditada correctamente.
   // La bonificación fue acreditada en JUGAYGANA como individual_bonus en operación separada.
-  if (parseFloat(bonus) > 0) {
+  if (parseFloat(bonus) > 0 && bonusResult?.success) {
     await Transaction.create({
       id: uuidv4(),
       type: 'bonus',
@@ -66,7 +66,7 @@ const deposit = async (data) => {
       adminId,
       adminUsername,
       adminRole,
-      transactionId: bonusResult?.data?.transfer_id,
+      transactionId: bonusResult.data?.transfer_id,
       status: 'completed'
     });
   }

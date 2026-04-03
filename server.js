@@ -2620,8 +2620,8 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         timestamp: new Date()
       });
 
-      // Registrar bonificación como transacción separada (acreditada en JUGAYGANA como individual_bonus)
-      if (parseFloat(bonus) > 0) {
+      // Registrar bonificación como transacción separada solo si fue acreditada correctamente en JUGAYGANA
+      if (parseFloat(bonus) > 0 && bonusJgResult?.success) {
         await Transaction.create({
           id: uuidv4(),
           type: 'bonus',
@@ -2632,7 +2632,7 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
           adminId: req.user?.userId,
           adminUsername: req.user?.username,
           adminRole: req.user?.role || 'admin',
-          transactionId: bonusJgResult?.data?.transfer_id || bonusJgResult?.data?.transferId,
+          transactionId: bonusJgResult.data?.transfer_id,
           timestamp: new Date()
         });
       }
