@@ -530,14 +530,15 @@ function setupRoleBasedUI() {
         if (tabPayments) tabPayments.style.display = 'flex';
     }
     
-    // Depositor y withdrawer también pueden ver "Usuarios" y exportar CSV
+    // Depositor y withdrawer pueden ver "Usuarios" pero NO pueden exportar CSV
     const usersNavItem = document.querySelector('.nav-item[data-section="users"]');
     if (usersNavItem) {
         usersNavItem.style.display = ['admin', 'depositor', 'withdrawer'].includes(role) ? '' : 'none';
     }
+    // Solo el admin general puede exportar usuarios
     const exportCsvBtn = document.getElementById('exportUsersCSVBtn');
     if (exportCsvBtn) {
-        exportCsvBtn.style.display = ['admin', 'depositor', 'withdrawer'].includes(role) ? '' : 'none';
+        exportCsvBtn.style.display = role === 'admin' ? '' : 'none';
     }
 
     // Bonus directo: visible para admin y depositor
@@ -852,7 +853,7 @@ function handleNewMessage(data) {
         playNotificationSound();
         // Mostrar notificación del navegador
         const senderName = message.senderUsername || 'Usuario';
-        const messagePreview = message.type === 'image' ? '📸 Imagen' : (message.content?.substring(0, 50) + '...');
+        const messagePreview = message.type === 'image' ? '📸 Imagen' : message.type === 'video' ? '🎥 Video' : (message.content?.substring(0, 50) + '...');
         showBrowserNotification(
             `💬 Nuevo mensaje de ${senderName}`,
             messagePreview,
@@ -889,7 +890,9 @@ function updateConversationInList(message) {
     }
     
     const conv = conversations[convIndex];
-    if (message.type !== 'image') {
+    if (message.type === 'video') {
+        conv.lastMessage = '🎥 Video';
+    } else if (message.type !== 'image') {
         conv.lastMessage = message.content;
     } else {
         conv.lastMessage = '📸 Imagen';
@@ -1221,6 +1224,10 @@ function formatMessageContent(msg) {
         return `<img src="${escapeHtml(msg.content)}" class="message-image" onclick="openLightbox('${escapeHtml(msg.content)}')" alt="Imagen" loading="lazy">`;
     }
     
+    if (msg.type === 'video') {
+        return `<video src="${escapeHtml(msg.content)}" class="message-video" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
+    }
+    
     // CORREGIDO: Convertir URLs en links clickeables
     let content = escapeHtml(msg.content);
     
@@ -1464,20 +1471,22 @@ async function sendMessage() {
     socket.emit('stop_typing', { receiverId: selectedUserId });
 }
 
-// CORREGIDO: Manejar selección de imagen
+// Manejar selección de imagen o video
 async function handleImageSelect(e) {
     const file = e.target.files[0];
     if (!file || !selectedUserId) return;
     
-    // Validar tipo de archivo
-    if (!file.type.startsWith('image/')) {
-        showToast('❌ Solo se permiten imágenes', 'error');
+    // Validar tipo de archivo: imágenes y videos
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    if (!isImage && !isVideo) {
+        showToast('❌ Solo se permiten imágenes o videos', 'error');
         return;
     }
     
-    // Validar tamaño (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-        showToast('❌ La imagen es demasiado grande (máx 5MB)', 'error');
+    // Límite de 100 MB para imágenes y videos
+    if (file.size > 100 * 1024 * 1024) {
+        showToast('❌ El archivo es demasiado grande (máx 100 MB)', 'error');
         return;
     }
     
@@ -1487,38 +1496,40 @@ async function handleImageSelect(e) {
         sendingIndicator.classList.remove('hidden');
     }
     
+    const fileType = isVideo ? 'video' : 'image';
+    const fileLabel = isVideo ? '🎥 Video' : '📸 Imagen';
+
     try {
         // Convertir a base64
-        const base64Image = await fileToBase64(file);
+        const base64File = await fileToBase64(file);
         
-        // Enviar imagen vía socket
+        // Enviar vía socket
         if (socket && socket.connected) {
             socket.emit('send_message', {
-                content: base64Image,
+                content: base64File,
                 receiverId: selectedUserId,
-                type: 'image'
+                type: fileType
             });
             
-            // Mostrar imagen inmediatamente (optimistic UI)
+            // Mostrar inmediatamente (optimistic UI)
             const tempMessage = {
-                id: 'temp-image-' + Date.now(),
+                id: 'temp-' + fileType + '-' + Date.now(),
                 senderId: currentAdmin.userId,
                 senderUsername: currentAdmin.username,
                 senderRole: 'admin',
-                content: base64Image,
+                content: base64File,
                 timestamp: new Date(),
-                type: 'image'
+                type: fileType
             };
             addMessageToChat(tempMessage, true);
             scrollToBottom();
             
-            // CORREGIDO: Enviar notificación push al usuario
             sendPushNotification(selectedUserId, {
-                type: 'image',
-                content: '📸 Imagen'
+                type: fileType,
+                content: fileLabel
             });
             
-            showToast('✅ Imagen enviada', 'success');
+            showToast(`✅ ${fileLabel} enviada`, 'success');
         } else {
             // Fallback a REST API
             const response = await fetch(`${API_URL}/api/messages/send`, {
@@ -1528,21 +1539,20 @@ async function handleImageSelect(e) {
                     'Authorization': `Bearer ${currentToken}`
                 },
                 body: JSON.stringify({
-                    content: base64Image,
+                    content: base64File,
                     receiverId: selectedUserId,
-                    type: 'image'
+                    type: fileType
                 })
             });
             
-            if (!response.ok) throw new Error('Failed to send image');
+            if (!response.ok) throw new Error('Failed to send file');
             
-            showToast('✅ Imagen enviada', 'success');
-            // Recargar mensajes para mostrar la imagen
+            showToast(`✅ ${fileLabel} enviada`, 'success');
             loadMessages(selectedUserId, true);
         }
     } catch (error) {
-        console.error('Error sending image:', error);
-        showToast('❌ Error al enviar imagen', 'error');
+        console.error('Error sending file:', error);
+        showToast('❌ Error al enviar archivo', 'error');
     } finally {
         // Ocultar indicador de envío
         if (sendingIndicator) {
@@ -2432,9 +2442,9 @@ async function loadUsers() {
     }
 }
 
-// Exportar todos los usuarios a CSV (admin, depositor y withdrawer)
+// Exportar todos los usuarios a CSV (solo admin general)
 async function exportUsersCSV() {
-    if (!['admin', 'depositor', 'withdrawer'].includes(currentAdmin?.role)) {
+    if (currentAdmin?.role !== 'admin') {
         showToast('No tienes permiso para exportar usuarios', 'error');
         return;
     }
@@ -2857,26 +2867,42 @@ function clearTransactionDateFilter() {
     loadTransactions();
 }
 
+// Devuelve la fecha actual en Argentina (UTC-3, sin DST) como "YYYY-MM-DD"
+function getArgentinaDateStr(date) {
+    // Argentina es UTC-3 todo el año (no usa horario de verano desde 2009)
+    const offset = -3 * 60; // -180 minutos
+    const local = new Date(date.getTime() + offset * 60 * 1000);
+    return local.toISOString().split('T')[0];
+}
+
 function setTodayFilter() {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getArgentinaDateStr(new Date());
     document.getElementById('dateFrom').value = today;
     document.getElementById('dateTo').value = today;
     applyTransactionDateFilter();
 }
 
+function setYesterdayFilter() {
+    const yesterday = getArgentinaDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    document.getElementById('dateFrom').value = yesterday;
+    document.getElementById('dateTo').value = yesterday;
+    applyTransactionDateFilter();
+}
+
 function setWeekFilter() {
-    const today = new Date();
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    document.getElementById('dateFrom').value = weekAgo.toISOString().split('T')[0];
-    document.getElementById('dateTo').value = today.toISOString().split('T')[0];
+    const today = getArgentinaDateStr(new Date());
+    const weekAgo = getArgentinaDateStr(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+    document.getElementById('dateFrom').value = weekAgo;
+    document.getElementById('dateTo').value = today;
     applyTransactionDateFilter();
 }
 
 function setMonthFilter() {
-    const today = new Date();
-    const monthAgo = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
-    document.getElementById('dateFrom').value = monthAgo.toISOString().split('T')[0];
-    document.getElementById('dateTo').value = today.toISOString().split('T')[0];
+    const now = new Date();
+    const today = getArgentinaDateStr(now);
+    const monthAgo = getArgentinaDateStr(new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()));
+    document.getElementById('dateFrom').value = monthAgo;
+    document.getElementById('dateTo').value = today;
     applyTransactionDateFilter();
 }
 
