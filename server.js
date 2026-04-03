@@ -2505,11 +2505,19 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       return res.status(400).json({ error: 'Monto inválido' });
     }
     
-    const totalAmount = parseFloat(amount) + parseFloat(bonus);
-    const result = await jugaygana.depositToUser(user.username, totalAmount, description);
+    const result = await jugaygana.depositToUser(user.username, parseFloat(amount), description);
     
     if (result.success) {
-      await recordUserActivity(user.id, 'deposit', totalAmount);
+      // Si hay bonus, acreditarlo en JUGAYGANA como individual_bonus en operación separada
+      let bonusJgResult = null;
+      if (parseFloat(bonus) > 0) {
+        bonusJgResult = await jugaygana.creditUserBalance(user.username, parseFloat(bonus));
+        if (!bonusJgResult.success) {
+          console.error('Error al acreditar bonus en JUGAYGANA:', bonusJgResult.error);
+        }
+      }
+
+      await recordUserActivity(user.id, 'deposit', parseFloat(amount));
       
       // Obtener saldo actualizado del usuario
       const balanceResult = await jugayganaMovements.getUserBalance(user.username);
@@ -2612,7 +2620,7 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         timestamp: new Date()
       });
 
-      // Registrar bonificación como transacción separada (solo informativo, no afecta saldo neto)
+      // Registrar bonificación como transacción separada (acreditada en JUGAYGANA como individual_bonus)
       if (parseFloat(bonus) > 0) {
         await Transaction.create({
           id: uuidv4(),
@@ -2624,6 +2632,7 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
           adminId: req.user?.userId,
           adminUsername: req.user?.username,
           adminRole: req.user?.role || 'admin',
+          transactionId: bonusJgResult?.data?.transfer_id || bonusJgResult?.data?.transferId,
           timestamp: new Date()
         });
       }
