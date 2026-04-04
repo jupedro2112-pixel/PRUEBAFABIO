@@ -361,9 +361,9 @@ const getStats = asyncHandler(async (req, res) => {
  * Obtener transacciones
  */
 const getTransactions = asyncHandler(async (req, res) => {
-  const { from, to, type } = req.query;
+  const { from, to, type, username } = req.query;
   
-  const result = await transactionService.getTransactions({ from, to, type });
+  const result = await transactionService.getTransactions({ from, to, type, username });
   
   res.json({
     status: 'success',
@@ -473,6 +473,76 @@ const exportUsersCSV = asyncHandler(async (req, res) => {
 const DB_PASSWORD = process.env.DB_PASSWORD || 'admin123';
 
 /**
+ * GET /api/admin/datos
+ * Métricas de adquisición y retención del día
+ */
+const getDatos = asyncHandler(async (req, res) => {
+  // Argentina es UTC-3 todo el año
+  const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+  const nowUTC = Date.now();
+
+  // Inicio del día ART en UTC: medianoche ART = 03:00 UTC
+  const todayART = new Date(nowUTC - ART_OFFSET_MS);
+  todayART.setUTCHours(0, 0, 0, 0);
+  const todayStartUTC = new Date(todayART.getTime() + ART_OFFSET_MS);
+
+  // Fin del día ART = inicio del día siguiente ART - 1ms
+  const todayEndUTC = new Date(todayStartUTC.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+  const [newUsersToday, depositsToday, firstTimeStats] = await Promise.all([
+    // Nuevos usuarios del día (creados hoy según createdAt)
+    User.countDocuments({ createdAt: { $gte: todayStartUTC, $lte: todayEndUTC } }),
+
+    // Total depósitos del día
+    Transaction.countDocuments({ type: 'deposit', timestamp: { $gte: todayStartUTC, $lte: todayEndUTC } }),
+
+    // Primeras cargas vs. cargas de usuarios recurrentes
+    Transaction.aggregate([
+      // Depósitos de hoy, agrupados por usuario con conteo
+      { $match: { type: 'deposit', timestamp: { $gte: todayStartUTC, $lte: todayEndUTC } } },
+      { $group: { _id: '$username', todayCount: { $sum: 1 } } },
+      // Buscar si el usuario tuvo depósitos previos (antes de hoy)
+      { $lookup: {
+        from: 'transactions',
+        let: { uname: '$_id' },
+        pipeline: [
+          { $match: { $expr: { $and: [
+            { $eq: ['$type', 'deposit'] },
+            { $eq: ['$username', '$$uname'] },
+            { $lt: ['$timestamp', todayStartUTC] }
+          ]}}}
+        ],
+        as: 'priorDeposits'
+      }},
+      { $addFields: { isFirstTime: { $eq: [{ $size: '$priorDeposits' }, 0] } } },
+      { $group: {
+        _id: null,
+        firstTimeDeposits: { $sum: { $cond: ['$isFirstTime', '$todayCount', 0] } },
+        returningDeposits: { $sum: { $cond: ['$isFirstTime', 0, '$todayCount'] } },
+        firstTimeUsers: { $sum: { $cond: ['$isFirstTime', 1, 0] } },
+        returningUsers: { $sum: { $cond: ['$isFirstTime', 0, 1] } }
+      }}
+    ])
+  ]);
+
+  const stats = firstTimeStats[0] || { firstTimeDeposits: 0, returningDeposits: 0, firstTimeUsers: 0, returningUsers: 0 };
+
+  res.json({
+    status: 'success',
+    data: {
+      newUsersToday,
+      depositsToday,
+      firstTimeDeposits: stats.firstTimeDeposits,
+      returningDeposits: stats.returningDeposits,
+      firstTimeUsers: stats.firstTimeUsers,
+      returningUsers: stats.returningUsers,
+      todayRangeStart: todayStartUTC,
+      todayRangeEnd: todayEndUTC
+    }
+  });
+});
+
+/**
  * POST /api/admin/database/verify
  * Verificar acceso a base de datos
  */
@@ -543,5 +613,6 @@ module.exports = {
   sendToOpen,
   exportUsersCSV,
   verifyDatabaseAccess,
-  exportDatabaseCSV
+  exportDatabaseCSV,
+  getDatos
 };

@@ -32,6 +32,7 @@ router.delete('/commands/:name', authenticate, authorize('admin'), adminControll
 // Estadísticas
 router.get('/stats', authenticate, authorize('admin'), adminController.getStats);
 router.get('/transactions', authenticate, authorize('admin'), adminController.getTransactions);
+router.get('/datos', authenticate, authorize('admin'), adminController.getDatos);
 
 // Transacciones (con permisos específicos)
 router.post('/deposit', authenticate, depositorOnly, transactionController.deposit);

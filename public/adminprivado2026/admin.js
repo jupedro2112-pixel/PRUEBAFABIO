@@ -2394,6 +2394,29 @@ async function closeChat() {
 }
 
 // ============================================
+// DATOS (métricas de adquisición y retención)
+// ============================================
+async function loadDatos() {
+    try {
+        const response = await fetch(`${API_URL}/api/admin/datos`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!response.ok) throw new Error('Failed to load datos');
+        const json = await response.json();
+        const d = json.data || {};
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val !== undefined ? val : '—'; };
+        set('datosNewUsers', d.newUsersToday);
+        set('datosDepositsToday', d.depositsToday);
+        set('datosFirstTimeDeposits', d.firstTimeDeposits);
+        set('datosReturningDeposits', d.returningDeposits);
+        set('datosFirstTimeUsers', d.firstTimeUsers);
+        set('datosReturningUsers', d.returningUsers);
+    } catch (error) {
+        console.error('Error loading datos:', error);
+    }
+}
+
+// ============================================
 // STATS
 // ============================================
 async function loadStats() {
@@ -2539,6 +2562,7 @@ function switchSection(section) {
     if (section === 'users') loadUsers();
     if (section === 'transactions') loadTransactions();
     if (section === 'commands') loadCommands();
+    if (section === 'datos') loadDatos();
     if (section === 'notifications') loadNotificationsPanel();
     if (section === 'database') {
         if (!dbAccessGranted) {
@@ -2754,6 +2778,7 @@ let transactionsData = [];
 let transactionsFilter = 'all';
 let transactionDateFrom = '';
 let transactionDateTo = '';
+let transactionUsernameFilter = '';
 
 async function loadTransactions() {
     try {
@@ -2765,6 +2790,9 @@ async function loadTransactions() {
         }
         if (transactionDateTo) {
             params.push(`to=${transactionDateTo}`);
+        }
+        if (transactionUsernameFilter) {
+            params.push(`username=${encodeURIComponent(transactionUsernameFilter)}`);
         }
         
         if (params.length > 0) {
@@ -2876,6 +2904,19 @@ function clearTransactionDateFilter() {
     transactionDateTo = '';
     document.getElementById('dateFrom').value = '';
     document.getElementById('dateTo').value = '';
+    loadTransactions();
+}
+
+function applyTxUserFilter() {
+    const input = document.getElementById('txUserFilter');
+    transactionUsernameFilter = input ? input.value.trim() : '';
+    loadTransactions();
+}
+
+function clearTxUserFilter() {
+    transactionUsernameFilter = '';
+    const input = document.getElementById('txUserFilter');
+    if (input) input.value = '';
     loadTransactions();
 }
 

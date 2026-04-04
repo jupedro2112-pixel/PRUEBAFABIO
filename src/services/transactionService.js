@@ -190,7 +190,9 @@ const getTransactions = async (filters = {}) => {
   }
   
   if (username) {
-    query.username = username;
+    // Escapar caracteres especiales de regex para evitar ReDoS
+    const safeUsername = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.username = { $regex: safeUsername, $options: 'i' };
   }
   
   const transactions = await Transaction.find(query)

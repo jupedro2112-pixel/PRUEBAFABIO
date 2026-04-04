@@ -80,6 +80,10 @@
                     <span class="icon icon-terminal"></span>
                     <span>Comandos</span>
                 </a>
+                <a href="#" class="nav-item" data-section="datos">
+                    <span class="icon icon-chart"></span>
+                    <span>Datos</span>
+                </a>
                 <a href="#" class="nav-item" data-section="stats">
                     <span class="icon icon-chart"></span>
                     <span>Estadísticas</span>
@@ -345,6 +349,10 @@
                     </div>
                 </div>
                 <div class="filter-bar">
+                    <div class="user-search-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;width:100%;">
+                        <input type="text" id="txUserFilter" placeholder="Buscar por usuario..." style="flex:1;padding:7px 12px;border-radius:8px;border:1px solid var(--border-color,#333);background:var(--bg-secondary,#1a1a2e);color:inherit;font-size:0.9em;" oninput="applyTxUserFilter()" />
+                        <button class="btn-secondary btn-small" onclick="clearTxUserFilter()">✕ Limpiar usuario</button>
+                    </div>
                     <button class="filter-btn active" data-filter="all" onclick="filterTransactions('all')">Todas</button>
                     <button class="filter-btn" data-filter="deposit" onclick="filterTransactions('deposit')">Depósitos</button>
                     <button class="filter-btn" data-filter="withdrawal" onclick="filterTransactions('withdrawal')">Retiros</button>
@@ -426,6 +434,49 @@
                         </div>
                     </div>
                 </div>
+            </section>
+
+            <!-- SECCIÓN DATOS: métricas de adquisición y retención -->
+            <section id="datosSection" class="section">
+                <div class="panel-header">
+                    <h2><span class="icon icon-chart"></span> Datos del Día</h2>
+                    <button class="btn btn-secondary btn-sm" onclick="loadDatos()">🔄 Actualizar</button>
+                </div>
+                <div class="stats-grid" id="datosGrid">
+                    <div class="stat-card">
+                        <span class="icon icon-users"></span>
+                        <span id="datosNewUsers" class="stat-number">—</span>
+                        <span class="stat-label">Nuevos usuarios hoy</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#00c853">
+                        <span style="font-size:1.4rem">💰</span>
+                        <span id="datosDepositsToday" class="stat-number" style="color:#00c853">—</span>
+                        <span class="stat-label">Depósitos del día</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#2196f3">
+                        <span style="font-size:1.4rem">🆕</span>
+                        <span id="datosFirstTimeDeposits" class="stat-number" style="color:#2196f3">—</span>
+                        <span class="stat-label">Primeras cargas</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#ff9800">
+                        <span style="font-size:1.4rem">🔁</span>
+                        <span id="datosReturningDeposits" class="stat-number" style="color:#ff9800">—</span>
+                        <span class="stat-label">Cargas recurrentes</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#9c27b0">
+                        <span style="font-size:1.4rem">👤</span>
+                        <span id="datosFirstTimeUsers" class="stat-number" style="color:#9c27b0">—</span>
+                        <span class="stat-label">Usuarios nueva carga</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#e91e63">
+                        <span style="font-size:1.4rem">♻️</span>
+                        <span id="datosReturningUsers" class="stat-number" style="color:#e91e63">—</span>
+                        <span class="stat-label">Usuarios recurrentes</span>
+                    </div>
+                </div>
+                <p style="margin-top:12px;font-size:0.8em;color:var(--text-secondary,#aaa);text-align:center">
+                    Horario Argentina (UTC-3). <em>Primeras cargas</em>: depósitos de usuarios que nunca habían cargado antes. <em>Recurrentes</em>: usuarios que ya tenían carga previa.
+                </p>
             </section>
 
             <section id="statsSection" class="section">
