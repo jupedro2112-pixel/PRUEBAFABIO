@@ -93,15 +93,30 @@ const login = async () => {
     
     if (isHtmlBlocked(data)) {
       logger.error('Login bloqueado por HTML');
+      logger.error(`HTTP status: ${resp.status}, URL: ${API_URL}`);
       return false;
     }
 
-    if (!data?.token) {
+    // Intentar token en múltiples campos por compatibilidad con cambios de API
+    const token = data?.token || data?.access_token || data?.sessionToken || data?.data?.token;
+
+    if (!token) {
       logger.error('Login falló: no se recibió token');
+      logger.error(`HTTP status: ${resp.status}`);
+      logger.error(`Content-Type: ${resp.headers['content-type'] || 'sin content-type'}`);
+      logger.error(`URL usada: ${API_URL}`);
+      if (typeof data === 'object' && data !== null) {
+        const keys = Object.keys(data);
+        logger.error(`Campos en respuesta: ${keys.length ? keys.join(', ') : '(objeto vacío)'}`);
+        const errMsg = data.error || data.message || data.msg || data.detail;
+        if (errMsg) logger.error(`Mensaje de error de API: ${errMsg}`);
+      } else if (typeof data === 'string') {
+        logger.error(`Respuesta (primeros 200 chars): ${data.substring(0, 200)}`);
+      }
       return false;
     }
 
-    sessionToken = data.token;
+    sessionToken = token;
     sessionParentId = data?.user?.user_id ?? null;
     lastLogin = Date.now();
     

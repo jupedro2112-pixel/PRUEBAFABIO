@@ -6,7 +6,7 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
-const API_URL = 'https://admin.agentesadmin.bet/api/admin/';
+const API_URL = process.env.JUGAYGANA_API_URL || 'https://admin.agentesadmin.bet/api/admin/';
 const PROXY_URL = process.env.PROXY_URL || '';
 
 // Variables de sesión
@@ -111,15 +111,31 @@ async function loginAndGetToken() {
     let data = parsePossiblyWrappedJson(resp.data);
     if (isHtmlBlocked(data)) {
       console.error('❌ Login bloqueado: respuesta HTML (posible bloqueo de IP)');
+      console.error('   HTTP status:', resp.status);
+      console.error('   URL usada:', API_URL);
       return false;
     }
 
-    if (!data?.token) {
+    // Intentar token en múltiples campos por compatibilidad con cambios de API
+    const token = data?.token || data?.access_token || data?.sessionToken || data?.data?.token;
+
+    if (!token) {
       console.error('❌ Login falló: no se recibió token');
+      console.error('   HTTP status:', resp.status);
+      console.error('   Content-Type:', resp.headers['content-type'] || 'sin content-type');
+      console.error('   URL usada:', API_URL);
+      if (typeof data === 'object' && data !== null) {
+        const keys = Object.keys(data);
+        console.error('   Campos en respuesta:', keys.length ? keys.join(', ') : '(objeto vacío)');
+        const errMsg = data.error || data.message || data.msg || data.detail;
+        if (errMsg) console.error('   Mensaje de error de API:', errMsg);
+      } else if (typeof data === 'string') {
+        console.error('   Respuesta (primeros 200 chars):', data.substring(0, 200));
+      }
       return false;
     }
 
-    SESSION_TOKEN = data.token;
+    SESSION_TOKEN = token;
     SESSION_PARENT_ID = data?.user?.user_id ?? null;
     SESSION_LAST_LOGIN = Date.now();
     
