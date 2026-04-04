@@ -440,7 +440,11 @@
             <section id="datosSection" class="section">
                 <div class="panel-header">
                     <h2><span class="icon icon-chart"></span> Datos del Día</h2>
-                    <button class="btn btn-secondary btn-sm" onclick="loadDatos()">🔄 Actualizar</button>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <label for="datosFecha" style="font-size:0.85em;color:var(--text-secondary,#aaa);">Fecha:</label>
+                        <input type="date" id="datosFecha" onchange="loadDatos()" style="background:var(--darker,#1a1a2e);color:var(--light,#fff);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:4px 8px;font-size:0.85em;">
+                        <button class="btn btn-secondary btn-sm" onclick="loadDatos()">🔄 Actualizar</button>
+                    </div>
                 </div>
                 <div class="stats-grid" id="datosGrid">
                     <div class="stat-card">

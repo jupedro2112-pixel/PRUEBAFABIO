@@ -2822,6 +2822,9 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
     const depositResult = await jugaygana.creditUserBalance(resolvedUsername, bonusAmount);
     
     if (depositResult.success) {
+      // Buscar usuario para obtener su id (necesario para el mensaje)
+      const bonusUser = await User.findOne({ username: resolvedUsername });
+
       await Transaction.create({
         id: uuidv4(),
         type: 'bonus',
@@ -2834,11 +2837,44 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
         timestamp: new Date()
       });
-      
+
+      // Obtener saldo actualizado para incluirlo en el mensaje
+      const balanceResult = await jugayganaMovements.getUserBalance(resolvedUsername);
+      const newBalance = balanceResult.success ? balanceResult.balance : null;
+
+      // Enviar mensaje automático al usuario con el monto acreditado y el saldo actual
+      if (bonusUser) {
+        try {
+          const bonusCmd = await Command.findOne({ name: '/sys_bonus', isActive: true });
+          let bonusMsg;
+          if (bonusCmd && bonusCmd.response) {
+            bonusMsg = bonusCmd.response
+              .replace(/\$\{amount\}/g, bonusAmount)
+              .replace(/\$\{balance\}/g, newBalance !== null ? newBalance : '—');
+          } else {
+            bonusMsg = `🎁 ¡Bonificación de $${bonusAmount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es $${newBalance !== null ? newBalance : '—'} 💸\n\nPuedes verificarlo en: https://www.jugaygana44.bet`;
+          }
+          await Message.create({
+            id: uuidv4(),
+            senderId: 'system',
+            senderUsername: req.user?.username,
+            senderRole: 'admin',
+            receiverId: bonusUser.id,
+            receiverRole: 'user',
+            content: bonusMsg,
+            type: 'system',
+            timestamp: new Date(),
+            read: false
+          });
+        } catch (msgErr) {
+          console.error('No se pudo enviar mensaje de bonus al usuario:', msgErr);
+        }
+      }
+
       res.json({
         success: true,
         message: `Bonificación de $${bonusAmount.toLocaleString()} realizada correctamente`,
-        newBalance: depositResult.data?.user_balance_after,
+        newBalance: newBalance !== null ? newBalance : depositResult.data?.user_balance_after,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId
       });
     } else {
@@ -3474,6 +3510,12 @@ async function initializeData() {
       response: '🔒💰 Depósito de ${amount} (incluye ${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸\n\nPuedes verificarlo en: https://jugaygana.bet\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
     },
     {
+      name: '/sys_bonus',
+      description: 'Mensaje automático al aplicar una bonificación. Variables disponibles: ${amount}, ${balance}',
+      type: 'message',
+      response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸\n\nPuedes verificarlo en: https://www.jugaygana44.bet'
+    },
+    {
       name: '/sys_withdrawal',
       description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
@@ -3918,6 +3960,85 @@ app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) =>
     });
   } catch (error) {
     console.error('Error obteniendo estadísticas:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// DATOS - Métricas de adquisición y retención por fecha
+// ============================================
+
+app.get('/api/admin/datos', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Argentina es UTC-3 todo el año
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+    let dayStartUTC, dayEndUTC;
+
+    if (req.query.date) {
+      // date debe ser YYYY-MM-DD en horario ART
+      const [year, month, day] = req.query.date.split('-').map(Number);
+      if (!year || !month || !day) {
+        return res.status(400).json({ error: 'Formato de fecha inválido. Use YYYY-MM-DD.' });
+      }
+      // Construir inicio del día ART como UTC
+      dayStartUTC = new Date(Date.UTC(year, month - 1, day, 3, 0, 0, 0)); // ART medianoche = 03:00 UTC
+    } else {
+      // Sin fecha: usar el día actual en ART
+      const nowUTC = Date.now();
+      const todayART = new Date(nowUTC - ART_OFFSET_MS);
+      todayART.setUTCHours(0, 0, 0, 0);
+      dayStartUTC = new Date(todayART.getTime() + ART_OFFSET_MS);
+    }
+
+    dayEndUTC = new Date(dayStartUTC.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+    const [newUsersCount, depositsCount, firstTimeStats] = await Promise.all([
+      User.countDocuments({ createdAt: { $gte: dayStartUTC, $lte: dayEndUTC } }),
+      Transaction.countDocuments({ type: 'deposit', timestamp: { $gte: dayStartUTC, $lte: dayEndUTC } }),
+      Transaction.aggregate([
+        { $match: { type: 'deposit', timestamp: { $gte: dayStartUTC, $lte: dayEndUTC } } },
+        { $group: { _id: '$username', dayCount: { $sum: 1 } } },
+        { $lookup: {
+          from: 'transactions',
+          let: { uname: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $and: [
+              { $eq: ['$type', 'deposit'] },
+              { $eq: ['$username', '$$uname'] },
+              { $lt: ['$timestamp', dayStartUTC] }
+            ]}}}
+          ],
+          as: 'priorDeposits'
+        }},
+        { $addFields: { isFirstTime: { $eq: [{ $size: '$priorDeposits' }, 0] } } },
+        { $group: {
+          _id: null,
+          firstTimeDeposits: { $sum: { $cond: ['$isFirstTime', '$dayCount', 0] } },
+          returningDeposits: { $sum: { $cond: ['$isFirstTime', 0, '$dayCount'] } },
+          firstTimeUsers: { $sum: { $cond: ['$isFirstTime', 1, 0] } },
+          returningUsers: { $sum: { $cond: ['$isFirstTime', 0, 1] } }
+        }}
+      ])
+    ]);
+
+    const stats = firstTimeStats[0] || { firstTimeDeposits: 0, returningDeposits: 0, firstTimeUsers: 0, returningUsers: 0 };
+
+    res.json({
+      status: 'success',
+      data: {
+        newUsersToday: newUsersCount,
+        depositsToday: depositsCount,
+        firstTimeDeposits: stats.firstTimeDeposits,
+        returningDeposits: stats.returningDeposits,
+        firstTimeUsers: stats.firstTimeUsers,
+        returningUsers: stats.returningUsers,
+        dayRangeStart: dayStartUTC,
+        dayRangeEnd: dayEndUTC
+      }
+    });
+  } catch (error) {
+    console.error('Error obteniendo datos:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

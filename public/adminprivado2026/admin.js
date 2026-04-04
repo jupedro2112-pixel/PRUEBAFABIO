@@ -2398,7 +2398,12 @@ async function closeChat() {
 // ============================================
 async function loadDatos() {
     try {
-        const response = await fetch(`${API_URL}/api/admin/datos`, {
+        const fechaInput = document.getElementById('datosFecha');
+        const fecha = fechaInput ? fechaInput.value : '';
+        const url = fecha
+            ? `${API_URL}/api/admin/datos?date=${encodeURIComponent(fecha)}`
+            : `${API_URL}/api/admin/datos`;
+        const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!response.ok) throw new Error('Failed to load datos');

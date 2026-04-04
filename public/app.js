@@ -2393,7 +2393,7 @@ async function sendWelcomeMessages() {
 
 💬 Escribe aquí para hablar con un agente.
 
-Link de pagina: https://www.jugaygana.bet/
+Link de pagina: https://www.jugaygana44.bet/
 
 CBU activo: ${cbuNumber}`;
 
