@@ -4,9 +4,11 @@
  * para calcular el revenue mensual por usuario referido.
  *
  * Variables de entorno relevantes:
- *   JUGAYGANA_ADMIN_REPORTS_URL  - URL completa del endpoint (default: /api/v2/admin/reports/royalty-statistics)
- *   JUGAYGANA_REVENUE_LOGIN_FIELD - campo para el usuario en el body ("login", "username", "player" – default: "login")
- *   JUGAYGANA_REVENUE_DATE_FORMAT - formato de fechas ("iso", "epoch_ms", "epoch_s" – default: "iso")
+ *   JUGAYGANA_ADMIN_REPORTS_URL      - URL completa del endpoint (default: /api/v2/admin/reports/royalty-statistics)
+ *   JUGAYGANA_REVENUE_LOGIN_FIELD    - campo para el usuario en el body ("login", "username", "player" – default: "login")
+ *   JUGAYGANA_REVENUE_DATE_FORMAT    - formato de fechas ("iso", "epoch_ms", "epoch_s" – default: "iso")
+ *   JUGAYGANA_REVENUE_DATE_FROM_FIELD - nombre del campo fecha inicio en el body (default: "date_from")
+ *   JUGAYGANA_REVENUE_DATE_TO_FIELD   - nombre del campo fecha fin en el body (default: "date_to")
  */
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
@@ -46,6 +48,11 @@ const REVENUE_DATE_FORMAT = ALLOWED_DATE_FORMATS.includes(REVENUE_DATE_FORMAT_RA
       );
       return 'iso';
     })();
+
+// Nombres de los campos de fecha inicio/fin en el body del endpoint de revenue
+// El proveedor externo (JUGAYGANA v2) espera "date_from" y "date_to" (no "from"/"to")
+const REVENUE_DATE_FROM_FIELD = process.env.JUGAYGANA_REVENUE_DATE_FROM_FIELD || 'date_from';
+const REVENUE_DATE_TO_FIELD = process.env.JUGAYGANA_REVENUE_DATE_TO_FIELD || 'date_to';
 
 let sessionToken = null;
 let sessionCookie = null;
@@ -190,17 +197,17 @@ async function getUserRevenueForPeriod(username, periodKey) {
     };
     if (sessionCookie) headers.Cookie = sessionCookie;
 
-    // Construir el body con el campo de login configurable y fechas en formato ISO
-    // JUGAYGANA v2 REST espera "login" (no "username") y fechas como "YYYY-MM-DD"
+    // Construir el body con el campo de login configurable y fechas en los campos correctos
+    // JUGAYGANA v2 REST espera "login" (no "username") y fechas como date_from/date_to en formato "YYYY-MM-DD"
     const body = {
       [REVENUE_LOGIN_FIELD]: username,
-      from: fromFormatted,
-      to: toFormatted
+      [REVENUE_DATE_FROM_FIELD]: fromFormatted,
+      [REVENUE_DATE_TO_FIELD]: toFormatted
     };
 
     logger.info(
       `[ReferralRevenue] POST royalty-statistics | loginField=${REVENUE_LOGIN_FIELD} ` +
-      `usuario=${username} período=${periodKey} from=${fromFormatted} to=${toFormatted} ` +
+      `usuario=${username} período=${periodKey} ${REVENUE_DATE_FROM_FIELD}=${fromFormatted} ${REVENUE_DATE_TO_FIELD}=${toFormatted} ` +
       `dateFormat=${REVENUE_DATE_FORMAT} endpoint=${ADMIN_API_URL}`
     );
     logger.debug(`[ReferralRevenue] Request body: ${JSON.stringify(body)}`);
@@ -225,10 +232,11 @@ async function getUserRevenueForPeriod(username, periodKey) {
       );
       if (resp.status === 422) {
         logger.warn(
-          `[ReferralRevenue] HTTP 422 - Posibles causas: campo de usuario incorrecto ` +
-          `(actual: ${REVENUE_LOGIN_FIELD}), formato de fecha incorrecto ` +
-          `(actual: ${REVENUE_DATE_FORMAT}=${fromFormatted}), campos requeridos faltantes. ` +
-          `Ajustar JUGAYGANA_REVENUE_LOGIN_FIELD y JUGAYGANA_REVENUE_DATE_FORMAT según el API.`
+          `[ReferralRevenue] HTTP 422 - Validation error del proveedor para ${username} | ` +
+          `loginField=${REVENUE_LOGIN_FIELD} (valor="${username}"), ` +
+          `dateFromField=${REVENUE_DATE_FROM_FIELD} (valor="${fromFormatted}"), ` +
+          `dateToField=${REVENUE_DATE_TO_FIELD} (valor="${toFormatted}"), ` +
+          `dateFormat=${REVENUE_DATE_FORMAT} | Respuesta proveedor: ${rawBody}`
         );
       }
       if (resp.status === 401 || resp.status === 403) {
