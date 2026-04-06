@@ -54,8 +54,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (refCode) {
         const refInput = document.getElementById('registerReferralCode');
         if (refInput) refInput.value = refCode.toUpperCase();
-        // Si hay código en URL, abrir modal de registro automáticamente
-        showModal('registerModal');
+        // Mostrar un banner invitando a registrarse con el código
+        const registerBtn = document.getElementById('registerBtn');
+        if (registerBtn) {
+            registerBtn.style.background = 'linear-gradient(135deg, #d4af37 0%, #b8860b 100%)';
+            registerBtn.textContent = '🤝 Registrarse con código de referido';
+        }
     }
 
     // CORREGIDO: Registrar Service Worker para notificaciones push

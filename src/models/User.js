@@ -5,6 +5,7 @@
  */
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { generateReferralCode } = require('../utils/referralCode');
 
 const userSchema = new mongoose.Schema({
   id: { 
@@ -247,11 +248,7 @@ userSchema.pre('save', async function(next) {
 // Middleware pre-save para generar referralCode si no existe
 userSchema.pre('save', async function(next) {
   if (!this.referralCode && this.isNew) {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const code = Array.from({ length: 6 }, () =>
-      chars[Math.floor(Math.random() * chars.length)]
-    ).join('');
-    this.referralCode = code;
+    this.referralCode = generateReferralCode();
   }
   next();
 });

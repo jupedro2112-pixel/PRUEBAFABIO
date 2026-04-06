@@ -187,15 +187,16 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       if (!dryRun) {
         if (existing) {
+          // Never overwrite a paid commission
+          if (existing.status === 'paid') {
+            logger.info(`[ReferralCalc] Comisión ya pagada para ${referredUser.username} período ${periodKey} - omitiendo`);
+            results.commissionsSkipped++;
+            continue;
+          }
+          const { status: _omit, ...dataWithoutStatus } = commissionData;
           await ReferralCommission.updateOne(
             { _id: existing._id },
-            {
-              $set: {
-                ...commissionData,
-                // no sobreescribir paidAt si ya está pagado
-                ...(existing.status !== 'paid' ? {} : { status: existing.status })
-              }
-            }
+            { $set: { ...dataWithoutStatus, status } }
           );
         } else {
           await ReferralCommission.create(commissionData).catch(err => {

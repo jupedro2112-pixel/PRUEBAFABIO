@@ -68,10 +68,34 @@ function getPeriodLabel(periodKey) {
   return `${months[month]} ${year}`;
 }
 
+/**
+ * Obtener clave del período siguiente a un periodKey dado
+ * @param {string} periodKey e.g. "2026-04"
+ * @returns {string} e.g. "2026-05"
+ */
+function getNextPeriodKey(periodKey) {
+  const [year, month] = periodKey.split('-').map(Number);
+  if (month === 12) {
+    return formatPeriodKey(year + 1, 1);
+  }
+  return formatPeriodKey(year, month + 1);
+}
+
+/**
+ * Nombre legible del período siguiente en español
+ * @param {string} periodKey
+ * @returns {string} e.g. "mayo 2026"
+ */
+function getNextPeriodLabel(periodKey) {
+  return getPeriodLabel(getNextPeriodKey(periodKey));
+}
+
 module.exports = {
   getCurrentPeriodKey,
   getPreviousPeriodKey,
   formatPeriodKey,
   getPeriodRange,
-  getPeriodLabel
+  getPeriodLabel,
+  getNextPeriodKey,
+  getNextPeriodLabel
 };

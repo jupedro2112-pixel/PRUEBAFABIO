@@ -7,8 +7,32 @@ const { AppError } = require('../utils/AppError');
 const { User, ReferralCommission, ReferralPayout, ReferralEvent, Transaction } = require('../models');
 const referralCalculationService = require('../services/referralCalculationService');
 const referralPayoutService = require('../services/referralPayoutService');
-const { getCurrentPeriodKey, getPreviousPeriodKey, getPeriodLabel, getPeriodRange } = require('../utils/periodKey');
+const { getCurrentPeriodKey, getPreviousPeriodKey, getPeriodLabel, getPeriodRange, getNextPeriodLabel } = require('../utils/periodKey');
 const logger = require('../utils/logger');
+
+// Validate period key format (YYYY-MM)
+const PERIOD_KEY_REGEX = /^\d{4}-\d{2}$/;
+// Allowed status values for payout queries
+const VALID_PAYOUT_STATUSES = ['pending', 'paid', 'failed', 'cancelled'];
+
+/**
+ * Sanitize a string for use as a plain-string query filter (no operators)
+ * Strips MongoDB operator prefixes to prevent NoSQL injection via query objects.
+ */
+function sanitizeString(value) {
+  if (typeof value !== 'string') return null;
+  // Remove any $ prefixes that could inject Mongo operators
+  return value.replace(/^\$/, '').trim();
+}
+
+/**
+ * Sanitize a period key — only allow YYYY-MM format
+ */
+function sanitizePeriodKey(value) {
+  if (typeof value !== 'string') return null;
+  const s = value.trim();
+  return PERIOD_KEY_REGEX.test(s) ? s : null;
+}
 
 // =============================================
 // Endpoints de Usuario
@@ -98,11 +122,7 @@ const getMyReferralSummary = asyncHandler(async (req, res) => {
         amount: lastPayout.totalCommissionAmount,
         creditedAt: lastPayout.creditedAt
       } : null,
-      estimatedCreditDate: `Primer día hábil de ${getPeriodLabel(currentPeriod.replace(/-\d+$/, m => {
-        const [y, mo] = currentPeriod.split('-').map(Number);
-        const next = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
-        return next.split('-')[1];
-      }))}`
+      estimatedCreditDate: `Primer día hábil de ${getNextPeriodLabel(currentPeriod)}`
     }
   });
 });
@@ -235,18 +255,27 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
  */
 const adminGetUserReferrals = asyncHandler(async (req, res) => {
   const { userId } = req.params;
-  const { period } = req.query;
+  const rawPeriod = req.query.period;
+  const period = sanitizePeriodKey(rawPeriod);
 
-  const user = await User.findOne({ id: userId }).lean();
+  if (rawPeriod && !period) {
+    throw new AppError('Formato de período inválido. Usar YYYY-MM', 400);
+  }
+
+  // Sanitize userId - must be a non-empty string without Mongo operators
+  const safeUserId = sanitizeString(userId);
+  if (!safeUserId) throw new AppError('userId inválido', 400);
+
+  const user = await User.findOne({ id: safeUserId }).lean();
   if (!user) throw new AppError('Usuario no encontrado', 404);
 
   // Usuarios referidos por este usuario
-  const referredUsers = await User.find({ referredByUserId: userId })
+  const referredUsers = await User.find({ referredByUserId: safeUserId })
     .select('id username referredAt referralStatus excludedFromReferral')
     .lean();
 
   // Comisiones del período (o todas)
-  const commissionQuery = { referrerUserId: userId };
+  const commissionQuery = { referrerUserId: safeUserId };
   if (period) commissionQuery.periodKey = period;
 
   const commissions = await ReferralCommission.find(commissionQuery)
@@ -254,7 +283,7 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
     .lean();
 
   // Pagos
-  const payoutQuery = { referrerUserId: userId };
+  const payoutQuery = { referrerUserId: safeUserId };
   if (period) payoutQuery.periodKey = period;
 
   const payouts = await ReferralPayout.find(payoutQuery)
@@ -291,13 +320,29 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
  * Historial de todos los pagos con filtros
  */
 const adminGetPayouts = asyncHandler(async (req, res) => {
-  const { period, status, username, page = 1, limit = 50 } = req.query;
+  const { page = 1, limit = 50 } = req.query;
+  const rawPeriod = req.query.period;
+  const rawStatus = req.query.status;
+  const rawUsername = req.query.username;
   const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const period = sanitizePeriodKey(rawPeriod);
+  if (rawPeriod && !period) throw new AppError('Formato de período inválido. Usar YYYY-MM', 400);
+
+  const status = rawStatus && VALID_PAYOUT_STATUSES.includes(rawStatus) ? rawStatus : null;
+  if (rawStatus && !status) throw new AppError('Estado inválido', 400);
+
+  // For username search, sanitize and escape for regex
+  const safeUsername = rawUsername ? sanitizeString(rawUsername) : null;
 
   const query = {};
   if (period) query.periodKey = period;
   if (status) query.status = status;
-  if (username) query.referrerUsername = { $regex: username, $options: 'i' };
+  if (safeUsername) {
+    // Escape special regex chars to prevent ReDoS
+    const escaped = safeUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.referrerUsername = { $regex: escaped, $options: 'i' };
+  }
 
   const [payouts, total] = await Promise.all([
     ReferralPayout.find(query)
@@ -326,11 +371,14 @@ const adminGetPayouts = asyncHandler(async (req, res) => {
  * Ejecutar cálculo mensual (Fase A)
  */
 const adminCalculate = asyncHandler(async (req, res) => {
-  const { periodKey, referrerUserId, dryRun = false } = req.body;
+  const { periodKey, dryRun = false } = req.body;
+  const rawReferrerUserId = req.body.referrerUserId;
 
-  if (!periodKey || !/^\d{4}-\d{2}$/.test(periodKey)) {
+  if (!periodKey || !PERIOD_KEY_REGEX.test(periodKey)) {
     throw new AppError('periodKey inválido. Formato esperado: YYYY-MM', 400);
   }
+
+  const referrerUserId = rawReferrerUserId ? sanitizeString(rawReferrerUserId) : null;
 
   logger.info(`[Admin] Cálculo de referidos iniciado por ${req.user.username} para ${periodKey}`);
 
@@ -350,11 +398,14 @@ const adminCalculate = asyncHandler(async (req, res) => {
  * Preview del cálculo sin guardar (dry run)
  */
 const adminPreview = asyncHandler(async (req, res) => {
-  const { periodKey, referrerUserId } = req.body;
+  const { periodKey } = req.body;
+  const rawReferrerUserId = req.body.referrerUserId;
 
-  if (!periodKey || !/^\d{4}-\d{2}$/.test(periodKey)) {
+  if (!periodKey || !PERIOD_KEY_REGEX.test(periodKey)) {
     throw new AppError('periodKey inválido. Formato esperado: YYYY-MM', 400);
   }
+
+  const referrerUserId = rawReferrerUserId ? sanitizeString(rawReferrerUserId) : null;
 
   logger.info(`[Admin] Preview de referidos por ${req.user.username} para ${periodKey}`);
 
@@ -374,11 +425,14 @@ const adminPreview = asyncHandler(async (req, res) => {
  * Ejecutar pago mensual (Fase B)
  */
 const adminPayout = asyncHandler(async (req, res) => {
-  const { periodKey, referrerUserId } = req.body;
+  const { periodKey } = req.body;
+  const rawReferrerUserId = req.body.referrerUserId;
 
-  if (!periodKey || !/^\d{4}-\d{2}$/.test(periodKey)) {
+  if (!periodKey || !PERIOD_KEY_REGEX.test(periodKey)) {
     throw new AppError('periodKey inválido. Formato esperado: YYYY-MM', 400);
   }
+
+  const referrerUserId = rawReferrerUserId ? sanitizeString(rawReferrerUserId) : null;
 
   logger.info(`[Admin] Pago de referidos iniciado por ${req.user.username} para ${periodKey}`);
 
