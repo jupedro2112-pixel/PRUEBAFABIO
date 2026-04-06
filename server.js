@@ -650,6 +650,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       const collision = await User.findOne({ referralCode: candidate }).lean();
       if (!collision) { newReferralCode = candidate; break; }
     }
+    if (!newReferralCode) {
+      logger.warn(`[Register] No se pudo generar un referralCode único para ${username} después de 10 intentos. El usuario se creará sin código.`);
+    }
     
     const newUser = await User.create({
       id: userId,

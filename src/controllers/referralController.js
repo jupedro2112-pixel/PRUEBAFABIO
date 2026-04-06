@@ -243,9 +243,8 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   // Contar totales globales
-  const totalReferrers = await User.countDocuments({
-    id: { $in: await User.distinct('referredByUserId', { referredByUserId: { $ne: null, $exists: true } }) }
-  });
+  const referrerIdsAll = await User.distinct('referredByUserId', { referredByUserId: { $ne: null, $exists: true } });
+  const totalReferrers = referrerIdsAll.length;
   const totalReferred = await User.countDocuments({ referredByUserId: { $ne: null, $exists: true } });
 
   // Top referidores por todos los tiempos
