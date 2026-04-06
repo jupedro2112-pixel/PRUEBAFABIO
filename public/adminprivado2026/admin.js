@@ -4414,37 +4414,55 @@ function renderReferralCalcResult(data, container, actionLabel) {
     }
 
     if (details.length > 0) {
+        const revenueOkLabel = (d) => {
+            if (d.status === 'excluded') return '<span style="color:#ff4444;font-size:10px;">excluido</span>';
+            if (d.status === 'error') return '<span style="color:#ff6666;font-size:10px;">❌ error</span>';
+            if (d.revenueOk === false) return '<span style="color:#ff6666;font-size:10px;">❌ error</span>';
+            if (d.revenueOk === true) return '<span style="color:#00ff88;font-size:10px;">✓ ok</span>';
+            return '<span style="color:#888;font-size:10px;">—</span>';
+        };
         html += `<div style="margin-bottom:10px;">
             <div style="font-size:12px;color:#888;margin-bottom:6px;font-weight:600;">DETALLE POR REFERIDO:</div>
-            <table style="width:100%;border-collapse:collapse;">
+            <div style="overflow-x:auto;">
+            <table style="width:100%;border-collapse:collapse;min-width:700px;">
                 <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                    <th style="padding:4px;">Referido</th>
-                    <th style="padding:4px;">Usuario JG</th>
-                    <th style="padding:4px;">Referidor</th>
-                    <th style="padding:4px;">Rev. Dueño</th>
-                    <th style="padding:4px;">Comisión</th>
-                    <th style="padding:4px;">Estado</th>
-                    <th style="padding:4px;">Nota</th>
+                    <th style="padding:4px 6px;">Referido</th>
+                    <th style="padding:4px 6px;">Usuario JG</th>
+                    <th style="padding:4px 6px;">Período</th>
+                    <th style="padding:4px 6px;">Revenue ok</th>
+                    <th style="padding:4px 6px;">GGR</th>
+                    <th style="padding:4px 6px;">Rev. Dueño</th>
+                    <th style="padding:4px 6px;">Comisión</th>
+                    <th style="padding:4px 6px;">Estado</th>
+                    <th style="padding:4px 6px;">Nota</th>
                 </tr></thead>
                 <tbody>
                 ${details.map(d => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <td style="padding:4px;color:#fff;font-size:12px;">${escHtml(d.referredUsername)}</td>
-                    <td style="padding:4px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername != null ? d.jugayganaUsername : d.referredUsername)}</td>
-                    <td style="padding:4px;color:#d4af37;font-size:12px;">${escHtml(d.referrerUsername)}</td>
-                    <td style="padding:4px;color:#b0b0b0;font-size:12px;">${fmtARS(d.totalOwnerRevenue)}</td>
-                    <td style="padding:4px;color:#d4af37;font-weight:bold;font-size:12px;">${fmtARS(d.commissionAmount)}</td>
-                    <td style="padding:4px;"><span style="color:${statusColor(d.status)};font-size:11px;">${escHtml(d.status)}</span></td>
-                    <td style="padding:4px;color:#888;font-size:10px;">${escHtml(d.reason || '')}</td>
+                    <td style="padding:4px 6px;color:#fff;font-size:12px;">${escHtml(d.referredUsername)}</td>
+                    <td style="padding:4px 6px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername != null ? d.jugayganaUsername : d.referredUsername)}</td>
+                    <td style="padding:4px 6px;color:#888;font-size:11px;">${escHtml(d.periodKey || data.periodKey || '')}</td>
+                    <td style="padding:4px 6px;">${revenueOkLabel(d)}</td>
+                    <td style="padding:4px 6px;color:#b0b0b0;font-size:12px;">${d.status !== 'error' ? fmtARS(d.totalGgr != null ? d.totalGgr : 0) : '—'}</td>
+                    <td style="padding:4px 6px;color:#b0b0b0;font-size:12px;">${d.status !== 'error' ? fmtARS(d.totalOwnerRevenue) : '—'}</td>
+                    <td style="padding:4px 6px;color:#d4af37;font-weight:bold;font-size:12px;">${fmtARS(d.commissionAmount)}</td>
+                    <td style="padding:4px 6px;"><span style="color:${statusColor(d.status)};font-size:11px;">${escHtml(d.status)}</span></td>
+                    <td style="padding:4px 6px;color:#888;font-size:10px;max-width:200px;word-break:break-word;">${escHtml(d.reason || '')}</td>
                 </tr>`).join('')}
                 </tbody>
             </table>
+            </div>
         </div>`;
     }
 
     if (errors.length > 0) {
         html += `<div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:10px;margin-bottom:10px;">
-            <div style="color:#ff4444;font-size:12px;margin-bottom:6px;font-weight:600;">ERRORES (${errors.length}):</div>
-            ${errors.map(e => `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">• Usuario: <strong>${escHtml(e.referredUsername || '?')}</strong>${e.jugayganaUsername && e.jugayganaUsername !== e.referredUsername ? ` (JG: ${escHtml(e.jugayganaUsername)})` : ''} → ${escHtml(e.error)}</div>`).join('')}
+            <div style="color:#ff4444;font-size:12px;margin-bottom:6px;font-weight:600;">ERRORES EN REVENUE (${errors.length}):</div>
+            ${errors.map(e => `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">
+                • <strong>${escHtml(e.referredUsername || '?')}</strong>${e.jugayganaUsername && e.jugayganaUsername !== e.referredUsername ? ` <span style="color:#888;">(JG: ${escHtml(e.jugayganaUsername)})</span>` : ''}
+                ${e.periodKey ? `<span style="color:#888;"> período ${escHtml(e.periodKey)}</span>` : ''}
+                → <span style="color:#ff6666;">${escHtml(e.error)}</span>
+                ${e.statusCode ? `<span style="color:#888;font-size:10px;"> [HTTP ${e.statusCode}]</span>` : ''}
+            </div>`).join('')}
         </div>`;
     }
 

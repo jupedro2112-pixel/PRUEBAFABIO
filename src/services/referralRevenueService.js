@@ -142,42 +142,54 @@ async function getUserRevenueForPeriod(username, periodKey) {
     };
     if (sessionCookie) headers.Cookie = sessionCookie;
 
-    // El endpoint acepta filtros por username y rango de fechas
-    const params = {
+    // El endpoint requiere POST con JSON body — GET devuelve HTTP 405
+    const body = {
       username,
       from: fromEpoch,
       to: toEpoch,
       currency: 'ARS'
     };
 
-    logger.info(`[ReferralRevenue] Consultando royalty-statistics para ${username} período ${periodKey}`);
+    logger.info(
+      `[ReferralRevenue] POST royalty-statistics | usuario=${username} período=${periodKey} ` +
+      `from=${fromEpoch} to=${toEpoch} endpoint=${ADMIN_API_URL}`
+    );
 
-    const resp = await reportsClient.get(ADMIN_API_URL, {
+    const resp = await reportsClient.post(ADMIN_API_URL, body, {
       headers,
-      params,
       validateStatus: () => true
     });
 
+    const rawBody = resp.data == null
+      ? '(empty)'
+      : typeof resp.data === 'string'
+        ? resp.data.substring(0, 300)
+        : JSON.stringify(resp.data).substring(0, 300);
+
     if (resp.status !== 200) {
-      logger.warn(`[ReferralRevenue] Respuesta HTTP ${resp.status} para ${username}`);
+      logger.warn(
+        `[ReferralRevenue] HTTP ${resp.status} para ${username} | endpoint=${ADMIN_API_URL} | body=${rawBody}`
+      );
       // Sesión puede haber expirado
       if (resp.status === 401 || resp.status === 403) {
         sessionToken = null;
         lastLogin = 0;
       }
-      return { success: false, error: `HTTP ${resp.status}` };
+      return { success: false, error: `HTTP ${resp.status}`, statusCode: resp.status };
     }
 
     const data = resp.data;
 
     if (!data || !data.success) {
-      logger.warn(`[ReferralRevenue] Respuesta no exitosa para ${username}: ${JSON.stringify(data)?.substring(0, 200)}`);
-      return { success: false, error: 'Respuesta no exitosa del endpoint' };
+      logger.warn(
+        `[ReferralRevenue] Respuesta no exitosa para ${username}: ${rawBody}`
+      );
+      return { success: false, error: 'Respuesta no exitosa del endpoint', rawBody };
     }
 
     return parseRoyaltyResponse(data, username, periodKey);
   } catch (err) {
-    logger.error(`[ReferralRevenue] Error consultando royalty-statistics para ${username}:`, err.message);
+    logger.error(`[ReferralRevenue] Error consultando royalty-statistics para ${username}: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
