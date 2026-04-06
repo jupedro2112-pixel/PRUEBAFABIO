@@ -8,6 +8,7 @@ const { User, ReferralCommission, ReferralPayout, ReferralEvent, Transaction } =
 const referralCalculationService = require('../services/referralCalculationService');
 const referralPayoutService = require('../services/referralPayoutService');
 const { getCurrentPeriodKey, getPreviousPeriodKey, getPeriodLabel, getPeriodRange, getNextPeriodLabel } = require('../utils/periodKey');
+const { generateReferralCode } = require('../utils/referralCode');
 const logger = require('../utils/logger');
 
 // Validate period key format (YYYY-MM)
@@ -43,8 +44,28 @@ function sanitizePeriodKey(value) {
  * Información del referido del usuario actual: código, link, stats
  */
 const getMyReferralInfo = asyncHandler(async (req, res) => {
-  const user = await User.findOne({ id: req.user.userId }).lean();
+  let user = await User.findOne({ id: req.user.userId }).lean();
   if (!user) throw new AppError('Usuario no encontrado', 404);
+
+  // Auto-generate referralCode for legacy users who don't have one
+  if (!user.referralCode) {
+    let newCode = null;
+    for (let attempts = 0; attempts < 10; attempts++) {
+      const candidate = generateReferralCode();
+      const collision = await User.findOne({ referralCode: candidate }).lean();
+      if (!collision) { newCode = candidate; break; }
+    }
+    if (!newCode) throw new AppError('No se pudo generar un código de referido único. Reintentá.', 500);
+
+    const updated = await User.findOneAndUpdate(
+      { id: user.id, referralCode: null },
+      { $set: { referralCode: newCode } },
+      { new: true }
+    ).lean();
+    if (!updated || !updated.referralCode) throw new AppError('No se pudo guardar el código de referido. Reintentá.', 500);
+    user = updated;
+    logger.info(`[Referrals] Código generado automáticamente para ${user.username}: ${user.referralCode}`);
+  }
 
   const frontendUrl = process.env.FRONTEND_URL || 'https://vipcargas.com';
   const referralLink = user.referralCode
