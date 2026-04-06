@@ -166,16 +166,41 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       );
 
       if (!revenueResult.success) {
+        const authDetail = revenueResult.authDetail || null;
+        const providerMessage = revenueResult.providerMessage || null;
+        const providerCode = revenueResult.providerCode || null;
         logger.error(
           `[ReferralCalc] Error revenue | referido=${referredUser.username} ` +
-          `jugayganaUsername=${jugayganaUsername} período=${periodKey} error=${revenueResult.error}`
+          `jugayganaUsername=${jugayganaUsername} período=${periodKey} error=${revenueResult.error}` +
+          (providerMessage ? ` providerMsg="${providerMessage}"` : '') +
+          (providerCode ? ` providerCode=${providerCode}` : '') +
+          (authDetail ? ` authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente}` : '')
         );
+
+        // Armar razón descriptiva para el detalle del admin
+        let reason = `Error consultando revenue: ${revenueResult.error}`;
+        if (revenueResult.statusCode === 401 || revenueResult.statusCode === 403) {
+          reason = `Autenticación rechazada por el proveedor (${revenueResult.statusCode})`;
+          if (providerMessage) reason += `: ${providerMessage}`;
+          if (authDetail) {
+            reason += ` | authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente}`;
+          }
+        } else if (revenueResult.statusCode === 422) {
+          reason = `Validación rechazada por el proveedor (422)`;
+          if (providerMessage) reason += `: ${providerMessage}`;
+        } else if (providerMessage) {
+          reason += ` | ${providerMessage}`;
+        }
+
         results.errors.push({
           referredUsername: referredUser.username,
           jugayganaUsername,
           periodKey,
           error: revenueResult.error,
           statusCode: revenueResult.statusCode || null,
+          providerMessage,
+          providerCode,
+          authDetail,
           providerResponse: revenueResult.rawProviderBody || null
         });
         results.details.push({
@@ -190,7 +215,10 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           totalOwnerRevenue: 0,
           commissionAmount: 0,
           status: 'error',
-          reason: `Error consultando revenue: ${revenueResult.error}`,
+          reason,
+          providerMessage,
+          providerCode,
+          authDetail,
           providerResponse: revenueResult.rawProviderBody || null
         });
         continue;
