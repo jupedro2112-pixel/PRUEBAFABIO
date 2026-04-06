@@ -2,6 +2,11 @@
  * Servicio de Ingresos de Referidos
  * Consulta el endpoint royalty-statistics de JUGAYGANA
  * para calcular el revenue mensual por usuario referido.
+ *
+ * Variables de entorno relevantes:
+ *   JUGAYGANA_ADMIN_REPORTS_URL  - URL completa del endpoint (default: /api/v2/admin/reports/royalty-statistics)
+ *   JUGAYGANA_REVENUE_LOGIN_FIELD - campo para el usuario en el body ("login", "username", "player" – default: "login")
+ *   JUGAYGANA_REVENUE_DATE_FORMAT - formato de fechas ("iso", "epoch_ms", "epoch_s" – default: "iso")
  */
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
@@ -15,6 +20,32 @@ const PLATFORM_USER = process.env.PLATFORM_USER;
 const PLATFORM_PASS = process.env.PLATFORM_PASS;
 const API_URL = process.env.JUGAYGANA_API_URL || 'https://admin.agentesadmin.bet/api/admin/';
 const TOKEN_TTL_MINUTES = parseInt(process.env.TOKEN_TTL_MINUTES || '20', 10);
+
+// Campo que identifica al jugador en el body de revenue ("login" es el estándar en v2 REST)
+const ALLOWED_LOGIN_FIELDS = ['login', 'username', 'player'];
+const REVENUE_LOGIN_FIELD_RAW = process.env.JUGAYGANA_REVENUE_LOGIN_FIELD || 'login';
+const REVENUE_LOGIN_FIELD = ALLOWED_LOGIN_FIELDS.includes(REVENUE_LOGIN_FIELD_RAW)
+  ? REVENUE_LOGIN_FIELD_RAW
+  : (() => {
+      logger.warn(
+        `[ReferralRevenue] JUGAYGANA_REVENUE_LOGIN_FIELD="${REVENUE_LOGIN_FIELD_RAW}" no es un valor válido ` +
+        `(permitidos: ${ALLOWED_LOGIN_FIELDS.join(', ')}). Usando "login".`
+      );
+      return 'login';
+    })();
+
+// Formato de fechas para el body ("iso" = "YYYY-MM-DD", "epoch_ms" = milisegundos, "epoch_s" = segundos)
+const ALLOWED_DATE_FORMATS = ['iso', 'epoch_ms', 'epoch_s'];
+const REVENUE_DATE_FORMAT_RAW = process.env.JUGAYGANA_REVENUE_DATE_FORMAT || 'iso';
+const REVENUE_DATE_FORMAT = ALLOWED_DATE_FORMATS.includes(REVENUE_DATE_FORMAT_RAW)
+  ? REVENUE_DATE_FORMAT_RAW
+  : (() => {
+      logger.warn(
+        `[ReferralRevenue] JUGAYGANA_REVENUE_DATE_FORMAT="${REVENUE_DATE_FORMAT_RAW}" no es un valor válido ` +
+        `(permitidos: ${ALLOWED_DATE_FORMATS.join(', ')}). Usando "iso".`
+      );
+      return 'iso';
+    })();
 
 let sessionToken = null;
 let sessionCookie = null;
@@ -123,8 +154,22 @@ async function ensureSession() {
 }
 
 /**
+ * Formatear fechas para el body según REVENUE_DATE_FORMAT
+ */
+function formatRevenueDate(date, epochSecs) {
+  if (REVENUE_DATE_FORMAT === 'epoch_s') {
+    return epochSecs;
+  }
+  if (REVENUE_DATE_FORMAT === 'epoch_ms') {
+    return date.getTime();
+  }
+  // default: "iso" → "YYYY-MM-DD"
+  return date.toISOString().split('T')[0];
+}
+
+/**
  * Consultar royalty-statistics para un usuario y período
- * @param {string} username - username en JUGAYGANA
+ * @param {string} username - username/login en JUGAYGANA
  * @param {string} periodKey - e.g. "2026-04"
  * @returns {Object} resultado de revenue calculado
  */
@@ -135,25 +180,30 @@ async function getUserRevenueForPeriod(username, periodKey) {
   }
 
   const { fromEpoch, toEpoch, fromDate, toDate } = getPeriodRange(periodKey);
+  const fromFormatted = formatRevenueDate(fromDate, fromEpoch);
+  const toFormatted = formatRevenueDate(toDate, toEpoch);
 
   try {
     const headers = {
-      Authorization: `Bearer ${sessionToken}`
+      Authorization: `Bearer ${sessionToken}`,
+      'Content-Type': 'application/json'
     };
     if (sessionCookie) headers.Cookie = sessionCookie;
 
-    // El endpoint requiere POST con JSON body — GET devuelve HTTP 405
+    // Construir el body con el campo de login configurable y fechas en formato ISO
+    // JUGAYGANA v2 REST espera "login" (no "username") y fechas como "YYYY-MM-DD"
     const body = {
-      username,
-      from: fromEpoch,
-      to: toEpoch,
-      currency: 'ARS'
+      [REVENUE_LOGIN_FIELD]: username,
+      from: fromFormatted,
+      to: toFormatted
     };
 
     logger.info(
-      `[ReferralRevenue] POST royalty-statistics | usuario=${username} período=${periodKey} ` +
-      `from=${fromEpoch} to=${toEpoch} endpoint=${ADMIN_API_URL}`
+      `[ReferralRevenue] POST royalty-statistics | loginField=${REVENUE_LOGIN_FIELD} ` +
+      `usuario=${username} período=${periodKey} from=${fromFormatted} to=${toFormatted} ` +
+      `dateFormat=${REVENUE_DATE_FORMAT} endpoint=${ADMIN_API_URL}`
     );
+    logger.debug(`[ReferralRevenue] Request body: ${JSON.stringify(body)}`);
 
     const resp = await reportsClient.post(ADMIN_API_URL, body, {
       headers,
@@ -163,31 +213,56 @@ async function getUserRevenueForPeriod(username, periodKey) {
     const rawBody = resp.data == null
       ? '(empty)'
       : typeof resp.data === 'string'
-        ? resp.data.substring(0, 300)
-        : JSON.stringify(resp.data).substring(0, 300);
+        ? resp.data.substring(0, 500)
+        : JSON.stringify(resp.data).substring(0, 500);
 
     if (resp.status !== 200) {
+      // Loguear el cuerpo completo de error para facilitar diagnóstico
       logger.warn(
-        `[ReferralRevenue] HTTP ${resp.status} para ${username} | endpoint=${ADMIN_API_URL} | body=${rawBody}`
+        `[ReferralRevenue] HTTP ${resp.status} para ${username} | ` +
+        `loginField=${REVENUE_LOGIN_FIELD} dateFormat=${REVENUE_DATE_FORMAT} | ` +
+        `endpoint=${ADMIN_API_URL} | respuesta=${rawBody}`
       );
-      // Sesión puede haber expirado
+      if (resp.status === 422) {
+        logger.warn(
+          `[ReferralRevenue] HTTP 422 - Posibles causas: campo de usuario incorrecto ` +
+          `(actual: ${REVENUE_LOGIN_FIELD}), formato de fecha incorrecto ` +
+          `(actual: ${REVENUE_DATE_FORMAT}=${fromFormatted}), campos requeridos faltantes. ` +
+          `Ajustar JUGAYGANA_REVENUE_LOGIN_FIELD y JUGAYGANA_REVENUE_DATE_FORMAT según el API.`
+        );
+      }
       if (resp.status === 401 || resp.status === 403) {
         sessionToken = null;
         lastLogin = 0;
       }
-      return { success: false, error: `HTTP ${resp.status}`, statusCode: resp.status };
+      return {
+        success: false,
+        error: `HTTP ${resp.status}`,
+        statusCode: resp.status,
+        rawProviderBody: rawBody
+      };
     }
 
     const data = resp.data;
 
-    if (!data || !data.success) {
+    // La API v2 puede devolver datos directamente (sin wrapper "success") o con él
+    // Verificar que haya un objeto con datos, no importa el wrapper exacto
+    const hasData = data && typeof data === 'object' && !Array.isArray(data);
+    const isExplicitFailure = hasData && 'success' in data && !data.success;
+
+    if (!hasData || isExplicitFailure) {
       logger.warn(
         `[ReferralRevenue] Respuesta no exitosa para ${username}: ${rawBody}`
       );
       return { success: false, error: 'Respuesta no exitosa del endpoint', rawBody };
     }
 
-    return parseRoyaltyResponse(data, username, periodKey);
+    logger.info(
+      `[ReferralRevenue] Revenue recibido para ${username} período ${periodKey} | ` +
+      `parseando respuesta...`
+    );
+
+    return parseRoyaltyResponse(resp.data, username, periodKey);
   } catch (err) {
     logger.error(`[ReferralRevenue] Error consultando royalty-statistics para ${username}: ${err.message}`);
     return { success: false, error: err.message };
@@ -204,8 +279,10 @@ async function getUserRevenueForPeriod(username, periodKey) {
 function parseRoyaltyResponse(data, username, periodKey) {
   try {
     const currency = 'ARS';
-    const totals = data?.data?.totals?.[currency] || {};
-    const providers = data?.data?.providers || [];
+    // La API v2 puede devolver { data: { totals, providers } } o { totals, providers } directamente
+    const inner = data?.data || data;
+    const totals = inner?.totals?.[currency] || {};
+    const providers = inner?.providers || [];
 
     const totalBets = Number(totals.total_bets || 0) / 100;
     const totalWins = Number(totals.total_wins || 0) / 100;

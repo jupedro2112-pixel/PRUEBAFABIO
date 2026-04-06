@@ -175,7 +175,8 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           jugayganaUsername,
           periodKey,
           error: revenueResult.error,
-          statusCode: revenueResult.statusCode || null
+          statusCode: revenueResult.statusCode || null,
+          providerResponse: revenueResult.rawProviderBody || null
         });
         results.details.push({
           referredUsername: referredUser.username,
@@ -189,7 +190,8 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           totalOwnerRevenue: 0,
           commissionAmount: 0,
           status: 'error',
-          reason: `Error consultando revenue: ${revenueResult.error}`
+          reason: `Error consultando revenue: ${revenueResult.error}`,
+          providerResponse: revenueResult.rawProviderBody || null
         });
         continue;
       }

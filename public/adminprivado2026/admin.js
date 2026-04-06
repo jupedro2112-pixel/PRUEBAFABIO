@@ -4462,6 +4462,7 @@ function renderReferralCalcResult(data, container, actionLabel) {
                 ${e.periodKey ? `<span style="color:#888;"> período ${escHtml(e.periodKey)}</span>` : ''}
                 → <span style="color:#ff6666;">${escHtml(e.error)}</span>
                 ${e.statusCode ? `<span style="color:#888;font-size:10px;"> [HTTP ${e.statusCode}]</span>` : ''}
+                ${e.providerResponse ? `<details style="margin-top:2px;"><summary style="color:#888;font-size:10px;cursor:pointer;">detalle proveedor</summary><pre style="color:#aaa;font-size:10px;white-space:pre-wrap;word-break:break-all;margin:2px 0 0 0;">${escHtml(e.providerResponse)}</pre></details>` : ''}
             </div>`).join('')}
         </div>`;
     }
