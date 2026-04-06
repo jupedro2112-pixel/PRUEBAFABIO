@@ -2637,6 +2637,7 @@ function switchSection(section) {
     if (section === 'commands') loadCommands();
     if (section === 'datos') loadDatos();
     if (section === 'notifications') loadNotificationsPanel();
+    if (section === 'referrals') loadAdminReferralSummary();
     if (section === 'database') {
         if (!dbAccessGranted) {
             showDatabasePasswordModal();
@@ -4053,3 +4054,170 @@ window.loadNotificationsPanel = loadNotificationsPanel;
 window.loadNotifUsers = loadNotifUsers;
 window.sendBatchNotification = sendBatchNotification;
 window.cleanInvalidTokens = cleanInvalidTokens;
+
+// =============================================
+// PANEL DE REFERIDOS - ADMIN
+// =============================================
+
+async function loadAdminReferralSummary() {
+    const container = document.getElementById('referralTopList');
+    if (!container) return;
+    container.textContent = 'Cargando...';
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/summary`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!res.ok) { container.textContent = 'Error cargando datos.'; return; }
+        const data = await res.json();
+        const referrers = data.data?.topReferrers || [];
+        if (referrers.length === 0) {
+            container.innerHTML = '<span style="color:#888;">No hay referidores activos.</span>';
+            return;
+        }
+        container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                <th style="padding:6px 4px;">Usuario</th>
+                <th style="padding:6px 4px;">Código</th>
+                <th style="padding:6px 4px;">Referidos</th>
+                <th style="padding:6px 4px;">Tier</th>
+                <th style="padding:6px 4px;">Acciones</th>
+            </tr></thead>
+            <tbody>
+            ${referrers.map(r => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:6px 4px;color:#fff;">${r.username}</td>
+                <td style="padding:6px 4px;color:#d4af37;letter-spacing:2px;">${r.referralCode || '—'}</td>
+                <td style="padding:6px 4px;color:#00ff88;">${r.totalReferreds}</td>
+                <td style="padding:6px 4px;color:#888;">${r.referralTier || 'default'}</td>
+                <td style="padding:6px 4px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
+            </tr>`).join('')}
+            </tbody></table>`;
+
+        // Cargar también el historial de pagos
+        loadAdminReferralPayouts();
+    } catch (e) {
+        container.textContent = 'Error: ' + e.message;
+    }
+}
+
+async function loadAdminReferralPayouts() {
+    const container = document.getElementById('referralPayoutList');
+    if (!container) return;
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/payouts?limit=20`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const payouts = data.data?.payouts || [];
+        if (payouts.length === 0) {
+            container.innerHTML = '<span style="color:#888;">Sin pagos registrados.</span>';
+            return;
+        }
+        container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                <th style="padding:6px 4px;">Período</th>
+                <th style="padding:6px 4px;">Referidor</th>
+                <th style="padding:6px 4px;">Monto</th>
+                <th style="padding:6px 4px;">Referidos</th>
+                <th style="padding:6px 4px;">Estado</th>
+                <th style="padding:6px 4px;">Fecha</th>
+            </tr></thead>
+            <tbody>
+            ${payouts.map(p => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:6px 4px;color:#b0b0b0;">${p.periodLabel || p.periodKey}</td>
+                <td style="padding:6px 4px;color:#fff;">${p.referrerUsername}</td>
+                <td style="padding:6px 4px;color:#d4af37;font-weight:bold;">$${new Intl.NumberFormat('es-AR').format(Math.round(p.totalCommissionAmount || 0))}</td>
+                <td style="padding:6px 4px;color:#00ff88;">${p.referralCount}</td>
+                <td style="padding:6px 4px;"><span style="color:${p.status==='paid'?'#00ff88':p.status==='failed'?'#ff4444':'#f7931e'}">${p.status}</span></td>
+                <td style="padding:6px 4px;color:#888;font-size:11px;">${p.creditedAt ? new Date(p.creditedAt).toLocaleDateString('es-AR') : '—'}</td>
+            </tr>`).join('')}
+            </tbody></table>`;
+    } catch (e) { /* ignorar */ }
+}
+
+async function loadAdminUserReferrals(userId) {
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/users/${userId}`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const d = data.data;
+        showToast(`${d.user.username}: ${d.totalReferred} referidos, $${Math.round(d.totalCommissionHistorical)} acreditado`, 'info');
+    } catch (e) { /* ignorar */ }
+}
+
+async function adminReferralPreview() {
+    const period = document.getElementById('referralPeriodInput')?.value?.trim();
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+        showToast('⚠️ Ingresá el período en formato YYYY-MM', 'error'); return;
+    }
+    const resultDiv = document.getElementById('referralActionResult');
+    if (resultDiv) resultDiv.textContent = 'Calculando preview...';
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/preview`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ periodKey: period })
+        });
+        const data = await res.json();
+        if (resultDiv) resultDiv.textContent = JSON.stringify(data.data, null, 2);
+    } catch (e) {
+        if (resultDiv) resultDiv.textContent = 'Error: ' + e.message;
+    }
+}
+
+async function adminReferralCalculate() {
+    const period = document.getElementById('referralPeriodInput')?.value?.trim();
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+        showToast('⚠️ Ingresá el período en formato YYYY-MM', 'error'); return;
+    }
+    if (!confirm(`¿Calcular comisiones de referidos para ${period}? Esto guardará los cálculos en la base de datos.`)) return;
+    const resultDiv = document.getElementById('referralActionResult');
+    if (resultDiv) resultDiv.textContent = 'Calculando...';
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/calculate`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ periodKey: period })
+        });
+        const data = await res.json();
+        if (resultDiv) resultDiv.textContent = JSON.stringify(data.data, null, 2);
+        showToast('✅ Cálculo completado', 'success');
+    } catch (e) {
+        if (resultDiv) resultDiv.textContent = 'Error: ' + e.message;
+        showToast('❌ Error en cálculo', 'error');
+    }
+}
+
+async function adminReferralPayout() {
+    const period = document.getElementById('referralPeriodInput')?.value?.trim();
+    if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+        showToast('⚠️ Ingresá el período en formato YYYY-MM', 'error'); return;
+    }
+    if (!confirm(`⚠️ ¿Ejecutar pagos de referidos para ${period}? Esta acción acreditará fichas REALMENTE. Solo continuar si el cálculo fue verificado.`)) return;
+    const resultDiv = document.getElementById('referralActionResult');
+    if (resultDiv) resultDiv.textContent = 'Procesando pagos...';
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/payout`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ periodKey: period })
+        });
+        const data = await res.json();
+        if (resultDiv) resultDiv.textContent = JSON.stringify(data.data, null, 2);
+        showToast('✅ Pagos procesados', 'success');
+        loadAdminReferralSummary();
+    } catch (e) {
+        if (resultDiv) resultDiv.textContent = 'Error: ' + e.message;
+        showToast('❌ Error en pagos', 'error');
+    }
+}
+
+// Exponer funciones de referidos al scope global
+window.loadAdminReferralSummary = loadAdminReferralSummary;
+window.loadAdminReferralPayouts = loadAdminReferralPayouts;
+window.loadAdminUserReferrals = loadAdminUserReferrals;
+window.adminReferralPreview = adminReferralPreview;
+window.adminReferralCalculate = adminReferralCalculate;
+window.adminReferralPayout = adminReferralPayout;

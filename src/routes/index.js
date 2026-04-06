@@ -10,12 +10,14 @@ const authRoutes = require('./authRoutes');
 const chatRoutes = require('./chatRoutes');
 const adminRoutes = require('./adminRoutes');
 const userRoutes = require('./userRoutes');
+const referralRoutes = require('./referralRoutes');
 
 // Prefijos de rutas
 router.use('/api/auth', authRoutes);
 router.use('/api', chatRoutes);
 router.use('/api/admin', adminRoutes);
 router.use('/api/users', userRoutes);
+router.use('/api/referrals', referralRoutes);
 
 // Ruta de salud
 router.get('/health', (req, res) => {

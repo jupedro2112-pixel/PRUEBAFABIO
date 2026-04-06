@@ -5,10 +5,11 @@
  */
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const { User, ChatStatus } = require('../models');
+const { User, ChatStatus, ReferralEvent } = require('../models');
 const { generateTokenPair, revokeToken } = require('../middlewares/auth');
 const { AppError, ErrorCodes, ErrorMessages } = require('../utils/AppError');
 const logger = require('../utils/logger');
+const { generateReferralCode } = require('../utils/referralCode');
 
 // Importar servicio de JUGAYGANA
 const jugayganaService = require('./jugayganaService');
@@ -25,7 +26,7 @@ const generateAccountNumber = () => {
  * Registrar nuevo usuario
  */
 const register = async (userData) => {
-  const { username, password, email, phone } = userData;
+  const { username, password, email, phone, referralCode } = userData;
   
   logger.info(`Intentando registro de usuario: ${username}`);
   
@@ -39,6 +40,18 @@ const register = async (userData) => {
     );
   }
   
+  // Resolver código de referido (si se proporcionó)
+  let referrer = null;
+  const normalizedReferralCode = referralCode ? String(referralCode).toUpperCase().trim() : null;
+
+  if (normalizedReferralCode) {
+    referrer = await User.findOne({ referralCode: normalizedReferralCode }).lean();
+    if (!referrer) {
+      logger.warn(`Código de referido inválido: ${normalizedReferralCode}`);
+      // No romper el registro, pero log claro
+    }
+  }
+
   // Crear usuario en JUGAYGANA PRIMERO
   let jgResult;
   try {
@@ -67,7 +80,22 @@ const register = async (userData) => {
   
   // Crear usuario localmente
   const userId = uuidv4();
-  
+
+  // Generar código de referido único para el nuevo usuario
+  let newReferralCode = null;
+  let codeAttempts = 0;
+  while (!newReferralCode && codeAttempts < 10) {
+    const candidate = generateReferralCode(username);
+    const collision = await User.findOne({ referralCode: candidate }).lean();
+    if (!collision) {
+      newReferralCode = candidate;
+    }
+    codeAttempts++;
+  }
+
+  // Evitar auto-referido (por si el referrer y el nuevo usuario fueran el mismo ID, improbable pero seguro)
+  const isValidReferral = referrer && referrer.id !== userId;
+
   const newUser = await User.create({
     id: userId,
     username: username.toLowerCase().trim(),
@@ -80,9 +108,33 @@ const register = async (userData) => {
     isActive: true,
     jugayganaUserId: jgResult.jugayganaUserId || jgResult.user?.user_id,
     jugayganaUsername: jgResult.jugayganaUsername || jgResult.user?.user_name,
-    jugayganaSyncStatus: jgResult.alreadyExists ? 'linked' : 'synced'
+    jugayganaSyncStatus: jgResult.alreadyExists ? 'linked' : 'synced',
+    referralCode: newReferralCode,
+    referredByUserId: isValidReferral ? referrer.id : null,
+    referredByCode: isValidReferral ? normalizedReferralCode : null,
+    referredAt: isValidReferral ? new Date() : null,
+    referralStatus: isValidReferral ? 'referred' : 'none'
   });
   
+  // Registrar evento de referido para trazabilidad
+  if (isValidReferral) {
+    try {
+      await ReferralEvent.create({
+        id: uuidv4(),
+        referrerUserId: referrer.id,
+        referrerUsername: referrer.username,
+        referredUserId: userId,
+        referredUsername: newUser.username,
+        codeUsed: normalizedReferralCode,
+        meta: { ip: null, registeredAt: new Date() }
+      });
+      logger.info(`Referido registrado: ${newUser.username} referido por ${referrer.username}`);
+    } catch (err) {
+      logger.error('Error registrando evento de referido:', err.message);
+      // No interrumpir el flujo
+    }
+  }
+
   // Crear chat status para el usuario
   await ChatStatus.create({
     userId: userId,
@@ -106,7 +158,9 @@ const register = async (userData) => {
       accountNumber: newUser.accountNumber,
       role: newUser.role,
       balance: newUser.balance,
-      jugayganaLinked: !!newUser.jugayganaUserId
+      jugayganaLinked: !!newUser.jugayganaUserId,
+      referralCode: newUser.referralCode,
+      referredBy: isValidReferral ? referrer.username : null
     },
     tokens
   };
