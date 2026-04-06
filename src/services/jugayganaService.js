@@ -144,6 +144,18 @@ const ensureSession = async () => {
 };
 
 /**
+ * Invalidar la sesión actual.
+ * Útil cuando un endpoint externo rechaza el token con 401/403 para forzar
+ * un login fresco en la próxima llamada a ensureSession().
+ */
+const invalidateSession = () => {
+  sessionToken = null;
+  sessionCookie = null;
+  lastLogin = 0;
+  logger.info('[JugayganaService] Sesión invalidada manualmente (forzará re-login en próxima llamada)');
+};
+
+/**
  * Obtener información de usuario
  */
 const getUserInfo = async (username) => {
@@ -431,6 +443,7 @@ const getSessionCookie = () => sessionCookie;
 module.exports = {
   login,
   ensureSession,
+  invalidateSession,
   getSessionToken,
   getSessionCookie,
   getUserInfo,
