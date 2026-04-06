@@ -5,18 +5,29 @@
  *
  * Variables de entorno relevantes:
  *   JUGAYGANA_ADMIN_REPORTS_URL        - URL completa del endpoint (default: /api/v2/admin/reports/royalty-statistics)
- *   JUGAYGANA_API_KEY                  - API key estática para autenticación (alternativa a login)
+ *   JUGAYGANA_API_KEY                  - API key estática para autenticación (alternativa a login, recomendado)
  *   JUGAYGANA_AUTH_SCHEME              - Esquema de autenticación: "Bearer" (default), "Token", "none"
  *   JUGAYGANA_REPORTS_USER             - usuario dedicado para reports (default: PLATFORM_USER)
  *   JUGAYGANA_REPORTS_PASS             - contraseña dedicada para reports (default: PLATFORM_PASS)
- *   JUGAYGANA_REPORTS_LOGIN_URL        - URL de login dedicado para el endpoint de reports v2 (opcional)
- *                                        Si no se configura, se reutiliza el login v1 del servicio principal.
+ *   JUGAYGANA_REPORTS_LOGIN_URL        - URL de login dedicado para la API v2 de reports.
+ *                                        Si no se configura, se auto-deriva del endpoint de reports
+ *                                        (ej: .../api/v2/... → .../api/v2/auth/login).
+ *                                        Si la auto-derivación también falla, se hace fallback al
+ *                                        login v1 de jugayganaService (token v1 NO válido para v2 REST).
  *   JUGAYGANA_REVENUE_TOKEN_TTL_MINUTES - TTL del token de reports en minutos (default: 15)
  *   JUGAYGANA_REVENUE_LOGIN_FIELD      - campo para el usuario en el body ("login", "username", "player" – default: "login")
  *   JUGAYGANA_REVENUE_DATE_FORMAT      - formato de fechas ("iso", "epoch_ms", "epoch_s" – default: "iso")
  *   JUGAYGANA_REVENUE_DATE_FROM_FIELD  - nombre del campo fecha inicio en el body (default: "date_from")
  *   JUGAYGANA_REVENUE_DATE_TO_FIELD    - nombre del campo fecha fin en el body (default: "date_to")
  *   JUGAYGANA_REPORTS_TOKEN_IN_BODY    - si "true", también envía el token como campo "token" en el body JSON
+ *
+ * NOTA IMPORTANTE sobre autenticación v1 vs v2:
+ *   El login v1 (jugayganaService) usa form-urlencoded POST con action=LOGIN y produce un token
+ *   de sesión válido para la API v1 solamente. La API v2 REST (/api/v2/...) requiere un token
+ *   diferente obtenido via REST JSON login (JUGAYGANA_REPORTS_LOGIN_URL).
+ *   Si solo se configura PLATFORM_USER/PASS sin JUGAYGANA_REPORTS_LOGIN_URL, el fallback al
+ *   token v1 probablemente causará 401 "Access denied" en el endpoint v2.
+ *   Solución: configurar JUGAYGANA_API_KEY (preferido) o JUGAYGANA_REPORTS_LOGIN_URL.
  */
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
@@ -35,10 +46,44 @@ const JUGAYGANA_API_KEY = process.env.JUGAYGANA_API_KEY || '';
 const REPORTS_USER = process.env.JUGAYGANA_REPORTS_USER || process.env.PLATFORM_USER || '';
 const REPORTS_PASS = process.env.JUGAYGANA_REPORTS_PASS || process.env.PLATFORM_PASS || '';
 
-// URL de login dedicado para el endpoint de reports v2 (opcional).
-// Si se configura, se usa para obtener un token específico para la API v2.
-// Si no se configura, se hace fallback al login v1 de jugayganaService.
+// URL de login dedicado para el endpoint de reports v2.
+// Si se configura explícitamente, se usa como endpoint de login REST JSON.
+// Si no se configura, se auto-deriva del endpoint de reports (ver deriveReportsLoginUrl más abajo).
 const REPORTS_LOGIN_URL = process.env.JUGAYGANA_REPORTS_LOGIN_URL || '';
+
+/**
+ * Derivar la URL de login v2 a partir del endpoint de reports.
+ * Ejemplo: https://admin.agentesadmin.bet/api/v2/admin/reports/royalty-statistics
+ *       → https://admin.agentesadmin.bet/api/v2/auth/login
+ *
+ * Esta derivación permite que el servicio intente login en el endpoint correcto de la API v2
+ * incluso cuando JUGAYGANA_REPORTS_LOGIN_URL no está configurado explícitamente.
+ *
+ * @param {string} reportsUrl - URL del endpoint de reports
+ * @returns {string|null} URL derivada o null si no se pudo derivar
+ */
+function deriveReportsLoginUrl(reportsUrl) {
+  try {
+    const url = new URL(reportsUrl);
+    // Si la ruta contiene /api/vN/ (e.g., /api/v2/), usar ese prefijo + /auth/login
+    const versionMatch = url.pathname.match(/^(\/api\/v\d+)\//);
+    if (versionMatch) {
+      return `${url.origin}${versionMatch[1]}/auth/login`;
+    }
+    // Si la ruta contiene /api/ sin versión explícita, intentar /api/auth/login
+    const apiMatch = url.pathname.match(/^(\/api)\//);
+    if (apiMatch) {
+      return `${url.origin}${apiMatch[1]}/auth/login`;
+    }
+    return null;
+  } catch {
+    // URL may not be parseable (e.g., relative path or env var not set); return null silently
+    return null;
+  }
+}
+
+// URL de login v2 auto-derivada del endpoint de reports (usada si REPORTS_LOGIN_URL no está configurado)
+const REPORTS_LOGIN_URL_DERIVED = !REPORTS_LOGIN_URL ? deriveReportsLoginUrl(ADMIN_API_URL) : null;
 
 // TTL en minutos para el token de reports (independiente del TOKEN_TTL_MINUTES del servicio principal)
 const REPORTS_TOKEN_TTL_MINUTES = parseInt(process.env.JUGAYGANA_REVENUE_TOKEN_TTL_MINUTES || '15', 10);
@@ -115,6 +160,40 @@ let reportsSessionToken = null;
 let reportsSessionCookie = null;
 let reportsSessionLastLogin = 0;
 
+// Log de configuración de autenticación al cargar el módulo
+(() => {
+  if (JUGAYGANA_API_KEY) {
+    logger.info(
+      `[ReferralRevenue] Auth configurada: JUGAYGANA_API_KEY (estática) | ` +
+      `authScheme=${JUGAYGANA_AUTH_SCHEME} endpoint=${ADMIN_API_URL}`
+    );
+  } else if (REPORTS_LOGIN_URL) {
+    logger.info(
+      `[ReferralRevenue] Auth configurada: login v2 explícito | ` +
+      `JUGAYGANA_REPORTS_LOGIN_URL=${REPORTS_LOGIN_URL} user=${REPORTS_USER || '(no configurado)'} ` +
+      `authScheme=${JUGAYGANA_AUTH_SCHEME} endpoint=${ADMIN_API_URL}`
+    );
+  } else if (REPORTS_LOGIN_URL_DERIVED) {
+    logger.warn(
+      `[ReferralRevenue] Auth: JUGAYGANA_REPORTS_LOGIN_URL no configurado. ` +
+      `Se usará URL auto-derivada: ${REPORTS_LOGIN_URL_DERIVED} user=${REPORTS_USER || '(no configurado)'} | ` +
+      `Si falla, configurar JUGAYGANA_REPORTS_LOGIN_URL explícitamente o usar JUGAYGANA_API_KEY.`
+    );
+  } else if (REPORTS_USER) {
+    logger.warn(
+      `[ReferralRevenue] ADVERTENCIA DE CONFIGURACIÓN: Sin JUGAYGANA_API_KEY ni JUGAYGANA_REPORTS_LOGIN_URL. ` +
+      `Se usará token v1 de jugayganaService como fallback, ` +
+      `que probablemente NO es válido para la API v2 REST de reports → esperar 401. ` +
+      `Configurar JUGAYGANA_API_KEY o JUGAYGANA_REPORTS_LOGIN_URL para corregir.`
+    );
+  } else {
+    logger.warn(
+      `[ReferralRevenue] ADVERTENCIA: No hay credenciales configuradas para reports. ` +
+      `Configurar JUGAYGANA_API_KEY, o JUGAYGANA_REPORTS_USER+PASS+LOGIN_URL.`
+    );
+  }
+})();
+
 const parseJson = (data) => {
   if (typeof data !== 'string') return data;
   try {
@@ -131,22 +210,28 @@ const isHtmlBlocked = (data) => {
 /**
  * Login dedicado para el endpoint de reports/revenue.
  * Flujo de prioridad:
- *   1. JSON POST a JUGAYGANA_REPORTS_LOGIN_URL (login v2 REST, si está configurado)
- *   2. Fallback: forzar login fresco v1 en jugayganaService y reutilizar su token
+ *   1. JSON POST a JUGAYGANA_REPORTS_LOGIN_URL (configurado explícitamente)
+ *   2. JSON POST a URL auto-derivada del endpoint de reports (e.g. /api/v2/auth/login)
+ *   3. Fallback: login v1 de jugayganaService (ADVERTENCIA: token v1 probablemente NO válido para API v2 REST)
  *
  * El token obtenido se cachea en reportsSessionToken para evitar logins repetidos.
  *
  * @returns {{ token: string|null, source: string, cookie: string|null }}
  */
 async function loginForReports() {
-  // Opción A: login JSON a endpoint v2 dedicado (JUGAYGANA_REPORTS_LOGIN_URL)
-  if (REPORTS_LOGIN_URL && REPORTS_USER && REPORTS_PASS) {
+  /**
+   * Intentar un login REST JSON a una URL dada.
+   * @param {string} loginUrl
+   * @param {string} sourceLabel - etiqueta para logs
+   * @returns {{ token: string|null, source: string, cookie: string|null }|null} null si falló
+   */
+  async function tryJsonLogin(loginUrl, sourceLabel) {
     try {
       logger.info(
-        `[ReferralRevenue] Intentando login dedicado para reports | ` +
-        `url=${REPORTS_LOGIN_URL} user=${REPORTS_USER}`
+        `[ReferralRevenue] Intentando login REST JSON para reports | ` +
+        `url=${loginUrl} user=${REPORTS_USER} source=${sourceLabel}`
       );
-      const resp = await reportsClient.post(REPORTS_LOGIN_URL, {
+      const resp = await reportsClient.post(loginUrl, {
         username: REPORTS_USER,
         password: REPORTS_PASS
       }, {
@@ -166,30 +251,64 @@ async function loginForReports() {
           reportsSessionCookie = null;
           reportsSessionLastLogin = Date.now();
           logger.info(
-            `[ReferralRevenue] Login dedicado para reports exitoso | ` +
-            `url=${REPORTS_LOGIN_URL} tokenSource=reports:dedicated-login`
+            `[ReferralRevenue] Login REST JSON para reports exitoso | ` +
+            `url=${loginUrl} tokenSource=${sourceLabel}`
           );
-          return { token, source: 'reports:dedicated-login', cookie: null };
+          return { token, source: sourceLabel, cookie: null };
         }
+        logger.warn(
+          `[ReferralRevenue] Login REST JSON respondió 200 pero sin token | ` +
+          `url=${loginUrl} source=${sourceLabel} ` +
+          `camposRespuesta=${Object.keys(data || {}).join(', ') || '(vacío)'}`
+        );
+      } else {
+        logger.warn(
+          `[ReferralRevenue] Login REST JSON falló | ` +
+          `url=${loginUrl} source=${sourceLabel} status=${resp.status} ` +
+          `respuesta=${JSON.stringify(data).substring(0, 200)}`
+        );
       }
-      logger.warn(
-        `[ReferralRevenue] Login dedicado para reports falló | ` +
-        `url=${REPORTS_LOGIN_URL} status=${resp.status} ` +
-        `respuesta=${JSON.stringify(data).substring(0, 200)}`
-      );
     } catch (err) {
-      logger.error(
-        `[ReferralRevenue] Error en login dedicado para reports (${REPORTS_LOGIN_URL}): ${err.message}`
+      logger.warn(
+        `[ReferralRevenue] Error en login REST JSON (${loginUrl}): ${err.message}`
       );
     }
+    return null;
   }
 
-  // Opción B: Forzar login fresco en jugayganaService y reutilizar su token
-  // (la sesión v1 ya debe estar invalidada por el llamador en caso de reintento tras 401)
-  if (REPORTS_USER && REPORTS_PASS) {
+  // Opción A: login JSON a endpoint v2 configurado explícitamente (JUGAYGANA_REPORTS_LOGIN_URL)
+  if (REPORTS_LOGIN_URL && REPORTS_USER && REPORTS_PASS) {
+    const result = await tryJsonLogin(REPORTS_LOGIN_URL, 'reports:dedicated-login');
+    if (result) return result;
+  }
+
+  // Opción B: login JSON a URL auto-derivada del endpoint de reports (e.g. /api/v2/auth/login)
+  // Solo se intenta si JUGAYGANA_REPORTS_LOGIN_URL no estaba configurado explícitamente.
+  if (REPORTS_LOGIN_URL_DERIVED && REPORTS_USER && REPORTS_PASS) {
     logger.info(
-      `[ReferralRevenue] Usando login v1 de jugayganaService para reports | ` +
-      `user=${REPORTS_USER} REPORTS_LOGIN_URL=${REPORTS_LOGIN_URL ? 'configurado (falló)' : 'no configurado'}`
+      `[ReferralRevenue] JUGAYGANA_REPORTS_LOGIN_URL no configurado. ` +
+      `Intentando login en URL auto-derivada: ${REPORTS_LOGIN_URL_DERIVED}`
+    );
+    const result = await tryJsonLogin(REPORTS_LOGIN_URL_DERIVED, 'reports:auto-derived-login');
+    if (result) return result;
+    logger.warn(
+      `[ReferralRevenue] Login en URL auto-derivada falló (${REPORTS_LOGIN_URL_DERIVED}). ` +
+      `Configure JUGAYGANA_REPORTS_LOGIN_URL con la URL correcta del endpoint de login v2.`
+    );
+  }
+
+  // Opción C: Fallback al login v1 de jugayganaService.
+  // ADVERTENCIA: El token v1 (form-urlencoded, action=LOGIN) NO es válido para la API v2 REST.
+  // Si el endpoint de reports es /api/v2/..., este fallback CAUSARÁ 401 "Access denied".
+  // Solución definitiva: configurar JUGAYGANA_API_KEY o JUGAYGANA_REPORTS_LOGIN_URL.
+  if (REPORTS_USER && REPORTS_PASS) {
+    logger.warn(
+      `[ReferralRevenue] ADVERTENCIA: Usando token v1 de jugayganaService como fallback para reports. ` +
+      `El token v1 (form-urlencoded action=LOGIN) probablemente NO es válido para la API v2 REST. ` +
+      `Esto causará 401 "Access denied" si el endpoint de reports es /api/v2/... ` +
+      `URLs de login v2 intentadas: ${[REPORTS_LOGIN_URL || null, REPORTS_LOGIN_URL_DERIVED || null].filter(Boolean).join(', ') || '(ninguna)'} | ` +
+      `Solución: configurar JUGAYGANA_API_KEY o JUGAYGANA_REPORTS_LOGIN_URL con la URL del login v2. ` +
+      `user=${REPORTS_USER} reportsEndpoint=${ADMIN_API_URL}`
     );
     const ok = await jugayganaService.ensureSession();
     if (ok) {
@@ -199,23 +318,28 @@ async function loginForReports() {
         reportsSessionToken = token;
         reportsSessionCookie = cookie || null;
         reportsSessionLastLogin = Date.now();
-        logger.info(
-          `[ReferralRevenue] Token v1 obtenido para reports | ` +
-          `tokenSource=jugayganaService:fresh-login`
+        logger.warn(
+          `[ReferralRevenue] Token v1 obtenido como fallback para reports | ` +
+          `tokenSource=jugayganaService:fresh-login ` +
+          `ADVERTENCIA: token v1 probablemente inválido para API v2 REST → esperar 401`
         );
         return { token, source: 'jugayganaService:fresh-login', cookie: cookie || null };
       }
     }
     logger.error(
-      '[ReferralRevenue] Login v1 de jugayganaService falló para reports. ' +
+      '[ReferralRevenue] Login v1 de jugayganaService también falló para reports. ' +
       'Verifique JUGAYGANA_REPORTS_USER/PASS o PLATFORM_USER/PASS.'
     );
   }
 
   logger.error(
     '[ReferralRevenue] No se pudo obtener token para reports. ' +
-    'Configure JUGAYGANA_API_KEY, JUGAYGANA_REPORTS_LOGIN_URL con credenciales, ' +
-    'o asegúrese de que PLATFORM_USER/PLATFORM_PASS estén definidos.'
+    'Soluciones posibles: ' +
+    '(1) Configurar JUGAYGANA_API_KEY con una API key estática del proveedor. ' +
+    '(2) Configurar JUGAYGANA_REPORTS_LOGIN_URL con la URL del endpoint de login v2 ' +
+    '(ej: https://admin.agentesadmin.bet/api/v2/auth/login) junto con ' +
+    'JUGAYGANA_REPORTS_USER y JUGAYGANA_REPORTS_PASS. ' +
+    '(3) Verificar que PLATFORM_USER/PLATFORM_PASS son correctos.'
   );
   return { token: null, source: 'none', cookie: null };
 }
@@ -371,7 +495,14 @@ async function getUserRevenueForPeriod(username, periodKey) {
     return {
       success: false,
       error: 'No hay sesión válida en JUGAYGANA',
-      authDetail: { tokenSource: authInfo.source, tokenPresente: false, authScheme: JUGAYGANA_AUTH_SCHEME }
+      authDetail: {
+        tokenSource: authInfo.source,
+        tokenPresente: false,
+        authScheme: JUGAYGANA_AUTH_SCHEME,
+        derivedLoginUrl: REPORTS_LOGIN_URL_DERIVED || null,
+        reportsLoginUrl: REPORTS_LOGIN_URL || null,
+        reportsEndpoint: ADMIN_API_URL
+      }
     };
   }
 
@@ -459,14 +590,30 @@ async function getUserRevenueForPeriod(username, periodKey) {
       }
 
       if (resp.status === 401 || resp.status === 403) {
+        // Detectar el escenario más probable según la fuente del token
+        const isV1TokenForV2Api = authInfo.source === 'jugayganaService:fresh-login';
+        const derivedLoginUrl = REPORTS_LOGIN_URL_DERIVED || '(no derivada)';
+        const loginUrlHint = REPORTS_LOGIN_URL
+          ? `JUGAYGANA_REPORTS_LOGIN_URL=${REPORTS_LOGIN_URL}`
+          : `URL auto-derivada intentada: ${REPORTS_LOGIN_URL_DERIVED || '(no disponible)'}`;
+
         logger.error(
           `[ReferralRevenue] Autenticación rechazada (${resp.status}) para ${username} | ` +
           `authScheme=${JUGAYGANA_AUTH_SCHEME} tokenSource=${authInfo.source} ` +
-          `tokenPresente=${!!authInfo.token} | ` +
-          `Mensaje proveedor: "${providerMsg || 'Access denied'}" | ` +
-          `POSIBLE CAUSA: token de sesión v1 no válido para la API v2 de reports. ` +
-          `Solución recomendada: configurar JUGAYGANA_API_KEY (token estático) o ` +
-          `JUGAYGANA_REPORTS_LOGIN_URL con credenciales dedicadas para la API v2.`
+          `tokenPresente=${!!authInfo.token} reloginAttempted=${reloginAttempted} | ` +
+          `Mensaje proveedor: "${providerMsg || 'Access denied'}" código=${providerCode || '(sin código)'} | ` +
+          `endpoint=${ADMIN_API_URL} | ` +
+          (isV1TokenForV2Api
+            ? `CAUSA PROBABLE: token de sesión v1 (form-urlencoded action=LOGIN) ` +
+              `NO es válido para la API v2 REST de reports. ` +
+              `El login v1 produce un token de sesión para la API v1 solamente. ` +
+              `${loginUrlHint} | `
+            : ``) +
+          `SOLUCIONES: ` +
+          `(1) Configurar JUGAYGANA_API_KEY con una API key estática del proveedor (preferido). ` +
+          `(2) Configurar JUGAYGANA_REPORTS_LOGIN_URL=${derivedLoginUrl} ` +
+          `(o la URL correcta del login v2) junto con JUGAYGANA_REPORTS_USER y JUGAYGANA_REPORTS_PASS. ` +
+          `(3) Verificar que las credenciales tienen permisos de reports/royalty-statistics en el proveedor.`
         );
       }
 
@@ -481,7 +628,11 @@ async function getUserRevenueForPeriod(username, periodKey) {
           tokenSource: authInfo.source,
           tokenPresente: !!authInfo.token,
           cookiePresente: !!authInfo.cookie,
-          reloginAttempted
+          reloginAttempted,
+          isV1TokenForV2Api: authInfo.source === 'jugayganaService:fresh-login',
+          derivedLoginUrl: REPORTS_LOGIN_URL_DERIVED || null,
+          reportsLoginUrl: REPORTS_LOGIN_URL || null,
+          reportsEndpoint: ADMIN_API_URL
         },
         rawProviderBody: rawBody
       };
