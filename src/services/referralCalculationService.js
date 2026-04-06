@@ -174,7 +174,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           `jugayganaUsername=${jugayganaUsername} período=${periodKey} error=${revenueResult.error}` +
           (providerMessage ? ` providerMsg="${providerMessage}"` : '') +
           (providerCode ? ` providerCode=${providerCode}` : '') +
-          (authDetail ? ` authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente}` : '')
+          (authDetail ? ` authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente} reloginAttempted=${authDetail.reloginAttempted}` : '')
         );
 
         // Armar razón descriptiva para el detalle del admin
@@ -184,6 +184,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           if (providerMessage) reason += `: ${providerMessage}`;
           if (authDetail) {
             reason += ` | authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente}`;
+            if (authDetail.reloginAttempted) reason += ' | reloginAttempted=true';
           }
         } else if (revenueResult.statusCode === 422) {
           reason = `Validación rechazada por el proveedor (422)`;
