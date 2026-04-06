@@ -48,6 +48,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     setupEventListeners();
     
+    // Auto-rellenar código de referido desde URL ?ref=CODE
+    const urlParams = new URLSearchParams(window.location.search);
+    const refCode = urlParams.get('ref');
+    if (refCode) {
+        const refInput = document.getElementById('registerReferralCode');
+        if (refInput) refInput.value = refCode.toUpperCase();
+        // Mostrar un banner invitando a registrarse con el código
+        const registerBtn = document.getElementById('registerBtn');
+        if (registerBtn) {
+            registerBtn.style.background = 'linear-gradient(135deg, #d4af37 0%, #b8860b 100%)';
+            registerBtn.textContent = '🤝 Registrarse con código de referido';
+        }
+    }
+
     // CORREGIDO: Registrar Service Worker para notificaciones push
     registerUserServiceWorker();
 
@@ -162,6 +176,9 @@ function setupEventListeners() {
     document.getElementById('closeFireModal').addEventListener('click', () => hideModal('fireModal'));
     document.getElementById('claimFireBtn').addEventListener('click', claimFire);
     
+    // Referidos
+    document.getElementById('referralBtn').addEventListener('click', () => openReferralModal());
+    
     // Información del servicio
     document.getElementById('infoBtn').addEventListener('click', () => showModal('infoModal'));
     document.getElementById('closeInfoModal').addEventListener('click', () => hideModal('infoModal'));
@@ -234,6 +251,8 @@ async function handleRegister(e) {
     const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
     const email = document.getElementById('registerEmail').value.trim();
     const phone = document.getElementById('registerPhone').value.trim();
+    const referralCodeInput = document.getElementById('registerReferralCode');
+    const referralCode = referralCodeInput ? referralCodeInput.value.trim().toUpperCase() : null;
     const errorDiv = document.getElementById('registerError');
     const submitBtn = e.target.querySelector('button[type="submit"]');
     
@@ -271,7 +290,8 @@ async function handleRegister(e) {
                 username, 
                 password, 
                 email: email || null, 
-                phone: phone || null 
+                phone: phone || null,
+                referralCode: referralCode || undefined
             })
         });
         
@@ -2772,4 +2792,114 @@ if (isAppInstalled()) {
     if (appInstallBtn) {
         appInstallBtn.classList.add('hidden');
     }
+}
+
+
+// =============================================
+// SISTEMA DE REFERIDOS
+// =============================================
+
+let referralData = null;
+
+async function openReferralModal() {
+    showModal('referralModal');
+    await loadReferralData();
+}
+
+async function loadReferralData() {
+    try {
+        const [meRes, histRes] = await Promise.all([
+            fetch(`${API_URL}/api/referrals/me`, {
+                headers: { 'Authorization': `Bearer ${currentToken}` }
+            }),
+            fetch(`${API_URL}/api/referrals/history?limit=10`, {
+                headers: { 'Authorization': `Bearer ${currentToken}` }
+            })
+        ]);
+
+        if (!meRes.ok) return;
+        const meData = await meRes.json();
+        const me = meData.data;
+
+        // Actualizar UI
+        document.getElementById('myReferralCode').textContent = me.referralCode || '—';
+        document.getElementById('myReferralLink').textContent = me.referralLink || '—';
+        document.getElementById('referralTotalCount').textContent = me.totalReferred || 0;
+        document.getElementById('referralHistoricalTotal').textContent =
+            '$' + new Intl.NumberFormat('es-AR').format(Math.round(me.historicalTotalCredited || 0));
+        document.getElementById('referralCurrentPeriod').textContent = me.currentPeriodLabel || me.currentPeriod || '—';
+
+        referralData = me;
+
+        // Summary para pendiente
+        try {
+            const sumRes = await fetch(`${API_URL}/api/referrals/summary`, {
+                headers: { 'Authorization': `Bearer ${currentToken}` }
+            });
+            if (sumRes.ok) {
+                const sumData = await sumRes.json();
+                const sum = sumData.data;
+                document.getElementById('referralPendingAmount').textContent =
+                    '$' + new Intl.NumberFormat('es-AR').format(Math.round(sum.pendingEstimatedAmount || 0));
+                document.getElementById('referralCreditDate').textContent =
+                    sum.estimatedCreditDate || 'Inicio del próximo mes';
+            }
+        } catch (e) { /* ignorar */ }
+
+        // Historial
+        if (histRes.ok) {
+            const histData = await histRes.json();
+            const payouts = histData.data?.payouts || [];
+            const histContainer = document.getElementById('referralPayoutHistory');
+            if (payouts.length === 0) {
+                histContainer.innerHTML = '<span style="color:#888;font-size:12px;">Aún no hay pagos acreditados.</span>';
+            } else {
+                histContainer.innerHTML = payouts.map(p => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <span style="font-size:12px;color:#b0b0b0;">${p.periodLabel || p.periodKey}</span>
+                        <span style="font-size:13px;color:${p.status === 'paid' ? '#00ff88' : '#d4af37'};font-weight:600;">
+                            $${new Intl.NumberFormat('es-AR').format(Math.round(p.totalCommissionAmount || 0))}
+                            <span style="font-size:10px;color:#888;font-weight:normal;">${p.status === 'paid' ? '✅' : '⏳'}</span>
+                        </span>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (err) {
+        console.error('[Referrals] Error cargando datos:', err);
+    }
+}
+
+function copyReferralCode() {
+    const code = document.getElementById('myReferralCode').textContent;
+    if (code && code !== '—') {
+        navigator.clipboard.writeText(code).then(() => {
+            showToast('✅ Código copiado', 'success');
+        }).catch(() => {
+            fallbackCopy(code);
+        });
+    }
+}
+
+function copyReferralLink() {
+    const link = document.getElementById('myReferralLink').textContent;
+    if (link && link !== '—') {
+        navigator.clipboard.writeText(link).then(() => {
+            showToast('✅ Link copiado', 'success');
+        }).catch(() => {
+            fallbackCopy(link);
+        });
+    }
+}
+
+function fallbackCopy(text) {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.position = 'fixed';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    try { document.execCommand('copy'); showToast('✅ Copiado', 'success'); } catch (e) {}
+    document.body.removeChild(el);
 }

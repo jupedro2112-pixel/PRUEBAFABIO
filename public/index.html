@@ -197,6 +197,7 @@
         }
 
         .user-action-btns .settings-btn,
+        .user-action-btns .referral-btn,
         .user-action-btns .logout-btn {
             padding: 4px 7px;
             font-size: 13px;
@@ -1930,6 +1931,7 @@
                 </button>
                 <div class="user-action-btns">
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
+                    <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
                     <button class="logout-btn" id="logoutBtn">🚪</button>
                 </div>
             </div>
@@ -2061,6 +2063,11 @@
                 <div class="input-group">
                     <label>Email (opcional)</label>
                     <input type="email" id="registerEmail" name="email" placeholder="tu@email.com" autocomplete="email">
+                </div>
+                <div class="input-group">
+                    <label>Código de Referido (opcional)</label>
+                    <input type="text" id="registerReferralCode" name="referralCode" placeholder="Ej: VIP3X7" autocomplete="off" maxlength="12" style="text-transform:uppercase;letter-spacing:2px;">
+                    <span style="font-size: 11px; color: #888;">Si te invitó alguien, ingresá su código para vincularte.</span>
                 </div>
                 <div id="registerError" class="error-message"></div>
                 <div class="modal-actions">
@@ -3208,6 +3215,69 @@
     <div id="lightbox" class="lightbox" onclick="closeLightbox(event)">
         <button class="lightbox-close" onclick="closeLightbox(event)">✕</button>
         <img id="lightboxImage" src="" alt="Imagen ampliada">
+    </div>
+
+    <!-- Modal de Referidos -->
+    <div id="referralModal" class="modal hidden" onclick="if(event.target===this)hideModal('referralModal')">
+        <div class="modal-content" style="position:relative;max-width:480px;max-height:90vh;overflow-y:auto;">
+            <button onclick="hideModal('referralModal')" style="position:absolute;top:15px;right:15px;background:none;border:none;color:#888;font-size:24px;cursor:pointer;z-index:10;">✕</button>
+            <div class="modal-header">
+                <h2>🤝 Mis Referidos</h2>
+                <p>Las ganancias por referidos se acreditan mensualmente en fichas</p>
+            </div>
+            <div id="referralContent">
+                <!-- Código y link -->
+                <div style="background:rgba(255,255,255,0.05);border:1px solid #d4af37;border-radius:12px;padding:16px;margin-bottom:16px;">
+                    <div style="margin-bottom:12px;">
+                        <span style="color:#b0b0b0;font-size:12px;display:block;margin-bottom:4px;">TU CÓDIGO DE REFERIDO</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span id="myReferralCode" style="font-size:22px;font-weight:bold;color:#d4af37;letter-spacing:4px;">—</span>
+                            <button onclick="copyReferralCode()" style="background:rgba(212,175,55,0.2);border:1px solid #d4af37;color:#d4af37;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">📋 Copiar</button>
+                        </div>
+                    </div>
+                    <div>
+                        <span style="color:#b0b0b0;font-size:12px;display:block;margin-bottom:4px;">TU LINK DE REFERIDO</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span id="myReferralLink" style="font-size:11px;color:#00ff88;word-break:break-all;">—</span>
+                            <button onclick="copyReferralLink()" style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">📋 Copiar</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- Stats -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+                    <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:22px;font-weight:bold;color:#00ff88;" id="referralTotalCount">0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Referidos totales</span>
+                    </div>
+                    <div style="background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:22px;font-weight:bold;color:#d4af37;" id="referralHistoricalTotal">$0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Total acreditado</span>
+                    </div>
+                </div>
+                <!-- Período actual -->
+                <div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:12px;margin-bottom:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <span style="color:#b0b0b0;font-size:12px;">Período actual:</span>
+                        <span id="referralCurrentPeriod" style="color:#fff;font-size:12px;font-weight:600;">—</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                        <span style="color:#b0b0b0;font-size:12px;">Ganancias pendientes estimadas:</span>
+                        <span id="referralPendingAmount" style="color:#d4af37;font-size:14px;font-weight:bold;">$0</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="color:#b0b0b0;font-size:12px;">Próximo crédito estimado:</span>
+                        <span id="referralCreditDate" style="color:#888;font-size:11px;">—</span>
+                    </div>
+                </div>
+                <!-- Historial -->
+                <div>
+                    <span style="color:#b0b0b0;font-size:12px;font-weight:600;display:block;margin-bottom:8px;">HISTORIAL DE PAGOS</span>
+                    <div id="referralPayoutHistory" style="max-height:200px;overflow-y:auto;">
+                        <span style="color:#888;font-size:12px;">Cargando...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </body>
 </html>

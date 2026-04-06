@@ -5,6 +5,7 @@
  */
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const { generateReferralCode } = require('../utils/referralCode');
 
 const userSchema = new mongoose.Schema({
   id: { 
@@ -116,6 +117,55 @@ const userSchema = new mongoose.Schema({
   fcmTokenUpdatedAt: {
     type: Date,
     default: null
+  },
+
+  // =============================================
+  // Campos de sistema de referidos
+  // =============================================
+  referralCode: {
+    type: String,
+    default: null,
+    unique: true,
+    sparse: true,
+    uppercase: true,
+    trim: true,
+    index: true
+  },
+  referredByUserId: {
+    type: String,
+    default: null,
+    index: true
+  },
+  referredByCode: {
+    type: String,
+    default: null,
+    trim: true
+  },
+  referredAt: {
+    type: Date,
+    default: null
+  },
+  referralStatus: {
+    type: String,
+    enum: ['none', 'referred', 'active'],
+    default: 'none',
+    index: true
+  },
+  excludedFromReferral: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  // Para futura escalabilidad de tiers / tasas personalizadas
+  referralTier: {
+    type: String,
+    default: null
+  },
+  referralRateOverride: {
+    type: Number,
+    default: null,
+    min: 0,
+    max: 1
   }
 }, {
   timestamps: true,
@@ -191,6 +241,14 @@ userSchema.pre('save', async function(next) {
   if (!this.accountNumber && this.isNew) {
     this.accountNumber = 'ACC' + Date.now().toString().slice(-8) + 
       Math.random().toString(36).substr(2, 4).toUpperCase();
+  }
+  next();
+});
+
+// Middleware pre-save para generar referralCode si no existe
+userSchema.pre('save', async function(next) {
+  if (!this.referralCode && this.isNew) {
+    this.referralCode = generateReferralCode();
   }
   next();
 });

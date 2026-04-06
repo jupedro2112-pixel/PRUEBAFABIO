@@ -14,6 +14,9 @@ const RefundClaim = require('./RefundClaim');
 const FireStreak = require('./FireStreak');
 const Command = require('./Command');
 const Config = require('./Config');
+const ReferralCommission = require('./ReferralCommission');
+const ReferralPayout = require('./ReferralPayout');
+const ReferralEvent = require('./ReferralEvent');
 
 // Configuración de conexión
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos';
@@ -55,6 +58,9 @@ module.exports = {
   FireStreak,
   Command,
   Config,
+  ReferralCommission,
+  ReferralPayout,
+  ReferralEvent,
   
   // Funciones de conexión
   connectDB,

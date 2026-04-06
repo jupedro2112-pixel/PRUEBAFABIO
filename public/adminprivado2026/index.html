@@ -92,6 +92,10 @@
                     <span class="icon icon-bell"></span>
                     <span>Notificaciones</span>
                 </a>
+                <a href="#" class="nav-item" data-section="referrals">
+                    <span class="icon icon-chart"></span>
+                    <span>Referidos</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -738,6 +742,43 @@
                         <p style="color:#888;text-align:center">Cargando usuarios...</p>
                     </div>
                     <div id="notifPagination" style="margin-top:1rem;display:flex;gap:.5rem;justify-content:center;flex-wrap:wrap"></div>
+                </div>
+            </section>
+
+            <!-- Referidos Section -->
+            <section id="referralsSection" class="section">
+                <div class="panel-header">
+                    <h2>🤝 Referidos</h2>
+                </div>
+                <div style="padding:16px;display:grid;gap:16px;max-width:900px;">
+                    <!-- Cálculo y pago -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
+                        <h3 style="margin-bottom:12px;color:#d4af37;">⚙️ Cálculo y Pago Mensual</h3>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+                            <div>
+                                <label style="display:block;font-size:12px;color:#888;margin-bottom:4px;">Período (YYYY-MM)</label>
+                                <input type="text" id="referralPeriodInput" placeholder="2026-04" maxlength="7"
+                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:8px 12px;border-radius:6px;width:120px;">
+                            </div>
+                            <button onclick="adminReferralPreview()" class="btn-secondary" style="padding:8px 14px;border-radius:6px;cursor:pointer;">🔍 Preview</button>
+                            <button onclick="adminReferralCalculate()" class="btn-warning" style="padding:8px 14px;border-radius:6px;cursor:pointer;background:rgba(247,147,30,0.2);border:1px solid #f7931e;color:#f7931e;">📊 Calcular</button>
+                            <button onclick="adminReferralPayout()" class="btn-success" style="padding:8px 14px;border-radius:6px;cursor:pointer;background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;">💸 Pagar</button>
+                        </div>
+                        <div id="referralActionResult" style="font-size:12px;color:#b0b0b0;white-space:pre-wrap;max-height:200px;overflow-y:auto;"></div>
+                    </div>
+                    <!-- Top referidores -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                            <h3 style="color:#d4af37;">👑 Top Referidores</h3>
+                            <button onclick="loadAdminReferralSummary()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Actualizar</button>
+                        </div>
+                        <div id="referralTopList" style="font-size:13px;">Cargando...</div>
+                    </div>
+                    <!-- Historial de pagos -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
+                        <h3 style="margin-bottom:12px;color:#d4af37;">📋 Historial de Pagos</h3>
+                        <div id="referralPayoutList" style="font-size:13px;">Cargando...</div>
+                    </div>
                 </div>
             </section>
 
