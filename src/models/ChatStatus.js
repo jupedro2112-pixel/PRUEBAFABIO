@@ -130,4 +130,4 @@ chatStatusSchema.methods.updateLastMessage = async function() {
   return this;
 };
 
-module.exports = mongoose.model('ChatStatus', chatStatusSchema);
+module.exports = mongoose.models['ChatStatus'] || mongoose.model('ChatStatus', chatStatusSchema);

@@ -47,4 +47,4 @@ const referralEventSchema = new mongoose.Schema({
 
 referralEventSchema.index({ referrerUserId: 1, createdAt: -1 });
 
-module.exports = mongoose.model('ReferralEvent', referralEventSchema);
+module.exports = mongoose.models['ReferralEvent'] || mongoose.model('ReferralEvent', referralEventSchema);

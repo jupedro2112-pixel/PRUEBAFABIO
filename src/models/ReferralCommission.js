@@ -109,4 +109,4 @@ referralCommissionSchema.index(
 referralCommissionSchema.index({ periodKey: 1, referrerUserId: 1 });
 referralCommissionSchema.index({ status: 1, periodKey: 1 });
 
-module.exports = mongoose.model('ReferralCommission', referralCommissionSchema);
+module.exports = mongoose.models['ReferralCommission'] || mongoose.model('ReferralCommission', referralCommissionSchema);

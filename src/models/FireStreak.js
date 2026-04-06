@@ -137,4 +137,4 @@ fireStreakSchema.methods.claim = async function() {
   };
 };
 
-module.exports = mongoose.model('FireStreak', fireStreakSchema);
+module.exports = mongoose.models['FireStreak'] || mongoose.model('FireStreak', fireStreakSchema);
