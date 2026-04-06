@@ -210,8 +210,8 @@ async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInf
     `endpoint=${ADMIN_API_URL}`
   );
   // Ocultar token en body antes de loguear para no exponer credenciales
-  const safeBody = { ...body };
-  if (safeBody.token) safeBody.token = '<redacted>';
+  const { token: _tokenField, ...safeBody } = body;
+  if (_tokenField) safeBody.token = '<redacted>';
   logger.debug(`[ReferralRevenue] Request body: ${JSON.stringify(safeBody)}`);
 
   return reportsClient.post(ADMIN_API_URL, body, {
