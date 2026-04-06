@@ -174,7 +174,12 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           `jugayganaUsername=${jugayganaUsername} período=${periodKey} error=${revenueResult.error}` +
           (providerMessage ? ` providerMsg="${providerMessage}"` : '') +
           (providerCode ? ` providerCode=${providerCode}` : '') +
-          (authDetail ? ` authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente} reloginAttempted=${authDetail.reloginAttempted}` : '')
+          (authDetail
+            ? ` authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource}` +
+              ` tokenPresente=${authDetail.tokenPresente} reloginAttempted=${authDetail.reloginAttempted}` +
+              (authDetail.isV1TokenForV2Api ? ' isV1TokenForV2Api=true' : '') +
+              (authDetail.derivedLoginUrl ? ` derivedLoginUrl=${authDetail.derivedLoginUrl}` : '')
+            : '')
         );
 
         // Armar razón descriptiva para el detalle del admin
@@ -185,6 +190,14 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           if (authDetail) {
             reason += ` | authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente}`;
             if (authDetail.reloginAttempted) reason += ' | reloginAttempted=true';
+            if (authDetail.isV1TokenForV2Api) {
+              reason += ' | CAUSA: token v1 no válido para API v2 REST';
+              if (authDetail.derivedLoginUrl) {
+                reason += ` | Configurar JUGAYGANA_REPORTS_LOGIN_URL=${authDetail.derivedLoginUrl}`;
+              } else {
+                reason += ' | Configurar JUGAYGANA_API_KEY o JUGAYGANA_REPORTS_LOGIN_URL';
+              }
+            }
           }
         } else if (revenueResult.statusCode === 422) {
           reason = `Validación rechazada por el proveedor (422)`;
