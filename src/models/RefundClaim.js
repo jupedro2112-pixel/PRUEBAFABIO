@@ -161,4 +161,4 @@ refundClaimSchema.statics.getSummary = async function() {
   ]);
 };
 
-module.exports = mongoose.model('RefundClaim', refundClaimSchema);
+module.exports = mongoose.models['RefundClaim'] || mongoose.model('RefundClaim', refundClaimSchema);

@@ -65,4 +65,4 @@ configSchema.statics.getMultiple = async function(keys) {
   return result;
 };
 
-module.exports = mongoose.model('Config', configSchema);
+module.exports = mongoose.models['Config'] || mongoose.model('Config', configSchema);

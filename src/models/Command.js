@@ -78,4 +78,4 @@ commandSchema.methods.incrementUsage = async function() {
   return this;
 };
 
-module.exports = mongoose.model('Command', commandSchema);
+module.exports = mongoose.models['Command'] || mongoose.model('Command', commandSchema);

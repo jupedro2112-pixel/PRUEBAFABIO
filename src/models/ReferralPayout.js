@@ -79,4 +79,4 @@ referralPayoutSchema.index(
 );
 referralPayoutSchema.index({ status: 1, periodKey: 1 });
 
-module.exports = mongoose.model('ReferralPayout', referralPayoutSchema);
+module.exports = mongoose.models['ReferralPayout'] || mongoose.model('ReferralPayout', referralPayoutSchema);
