@@ -30,9 +30,9 @@ function buildFrontendUrl(req) {
   // Use only safe protocol values
   const rawProto = req.get('x-forwarded-proto') || req.protocol || 'https';
   const proto = /^https?$/.test(rawProto) ? rawProto : 'https';
-  // Strip any characters that could break or inject into the URL
+  // Strip any characters that could break or inject into the URL; fall back to 'localhost' if nothing remains
   const rawHost = (req.get('x-forwarded-host') || req.get('host') || 'localhost');
-  const host = rawHost.replace(SAFE_HOST_REGEX, '');
+  const host = rawHost.replace(SAFE_HOST_REGEX, '') || 'localhost';
   return `${proto}://${host}`;
 }
 

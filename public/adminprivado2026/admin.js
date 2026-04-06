@@ -4429,7 +4429,7 @@ function renderReferralCalcResult(data, container, actionLabel) {
                 <tbody>
                 ${details.map(d => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                     <td style="padding:4px;color:#fff;font-size:12px;">${escHtml(d.referredUsername)}</td>
-                    <td style="padding:4px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername || d.referredUsername)}</td>
+                    <td style="padding:4px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername != null ? d.jugayganaUsername : d.referredUsername)}</td>
                     <td style="padding:4px;color:#d4af37;font-size:12px;">${escHtml(d.referrerUsername)}</td>
                     <td style="padding:4px;color:#b0b0b0;font-size:12px;">${fmtARS(d.totalOwnerRevenue)}</td>
                     <td style="padding:4px;color:#d4af37;font-weight:bold;font-size:12px;">${fmtARS(d.commissionAmount)}</td>
