@@ -5,23 +5,44 @@
  *
  * Variables de entorno relevantes:
  *   JUGAYGANA_ADMIN_REPORTS_URL      - URL completa del endpoint (default: /api/v2/admin/reports/royalty-statistics)
+ *   JUGAYGANA_API_KEY                - API key estática para autenticación (alternativa a login con usuario/contraseña)
+ *   JUGAYGANA_AUTH_SCHEME            - Esquema de autenticación: "Bearer" (default), "Token", "none"
  *   JUGAYGANA_REVENUE_LOGIN_FIELD    - campo para el usuario en el body ("login", "username", "player" – default: "login")
  *   JUGAYGANA_REVENUE_DATE_FORMAT    - formato de fechas ("iso", "epoch_ms", "epoch_s" – default: "iso")
  *   JUGAYGANA_REVENUE_DATE_FROM_FIELD - nombre del campo fecha inicio en el body (default: "date_from")
  *   JUGAYGANA_REVENUE_DATE_TO_FIELD   - nombre del campo fecha fin en el body (default: "date_to")
+ *   JUGAYGANA_REPORTS_TOKEN_IN_BODY  - si "true", también envía el token como campo "token" en el body JSON
  */
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const logger = require('../utils/logger');
 const { getPeriodRange } = require('../utils/periodKey');
+const jugayganaService = require('./jugayganaService');
 
 const ADMIN_API_URL = process.env.JUGAYGANA_ADMIN_REPORTS_URL ||
   'https://admin.agentesadmin.bet/api/v2/admin/reports/royalty-statistics';
 const PROXY_URL = process.env.PROXY_URL || '';
 const PLATFORM_USER = process.env.PLATFORM_USER;
 const PLATFORM_PASS = process.env.PLATFORM_PASS;
-const API_URL = process.env.JUGAYGANA_API_URL || 'https://admin.agentesadmin.bet/api/admin/';
-const TOKEN_TTL_MINUTES = parseInt(process.env.TOKEN_TTL_MINUTES || '20', 10);
+
+// API key estática: si está configurada se usa directamente como token Bearer sin necesidad de login
+const JUGAYGANA_API_KEY = process.env.JUGAYGANA_API_KEY || '';
+
+// Esquema de auth: "Bearer" (default), "Token", "none"
+const ALLOWED_AUTH_SCHEMES = ['Bearer', 'Token', 'none'];
+const JUGAYGANA_AUTH_SCHEME_RAW = process.env.JUGAYGANA_AUTH_SCHEME || 'Bearer';
+const JUGAYGANA_AUTH_SCHEME = ALLOWED_AUTH_SCHEMES.includes(JUGAYGANA_AUTH_SCHEME_RAW)
+  ? JUGAYGANA_AUTH_SCHEME_RAW
+  : (() => {
+      logger.warn(
+        `[ReferralRevenue] JUGAYGANA_AUTH_SCHEME="${JUGAYGANA_AUTH_SCHEME_RAW}" no válido ` +
+        `(permitidos: ${ALLOWED_AUTH_SCHEMES.join(', ')}). Usando "Bearer".`
+      );
+      return 'Bearer';
+    })();
+
+// Si true, también agrega el token como campo "token" en el body JSON (compatibilidad con API legacy)
+const REPORTS_TOKEN_IN_BODY = (process.env.JUGAYGANA_REPORTS_TOKEN_IN_BODY || '').toLowerCase() === 'true';
 
 // Campo que identifica al jugador en el body de revenue ("login" es el estándar en v2 REST)
 const ALLOWED_LOGIN_FIELDS = ['login', 'username', 'player'];
@@ -54,29 +75,10 @@ const REVENUE_DATE_FORMAT = ALLOWED_DATE_FORMATS.includes(REVENUE_DATE_FORMAT_RA
 const REVENUE_DATE_FROM_FIELD = process.env.JUGAYGANA_REVENUE_DATE_FROM_FIELD || 'date_from';
 const REVENUE_DATE_TO_FIELD = process.env.JUGAYGANA_REVENUE_DATE_TO_FIELD || 'date_to';
 
-let sessionToken = null;
-let sessionCookie = null;
-let lastLogin = 0;
-
 let httpsAgent = null;
 if (PROXY_URL) {
   httpsAgent = new HttpsProxyAgent(PROXY_URL);
 }
-
-const authClient = axios.create({
-  baseURL: API_URL,
-  timeout: 20000,
-  httpsAgent,
-  proxy: false,
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Content-Type': 'application/x-www-form-urlencoded',
-    'Origin': 'https://admin.agentesadmin.bet',
-    'Referer': 'https://admin.agentesadmin.bet/users',
-    'Accept-Language': 'es-419,es;q=0.9'
-  }
-});
 
 const reportsClient = axios.create({
   timeout: 30000,
@@ -92,13 +94,6 @@ const reportsClient = axios.create({
   }
 });
 
-const toFormUrlEncoded = (data) => {
-  return Object.keys(data)
-    .filter(k => data[k] !== undefined && data[k] !== null)
-    .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(data[k]))
-    .join('&');
-};
-
 const parseJson = (data) => {
   if (typeof data !== 'string') return data;
   try {
@@ -113,51 +108,64 @@ const isHtmlBlocked = (data) => {
 };
 
 /**
- * Login para obtener token de sesión
+ * Obtener token activo para autenticar la llamada al endpoint de revenue.
+ * Prioridad:
+ *   1. JUGAYGANA_API_KEY (estática, más fiable)
+ *   2. Sesión compartida de jugayganaService (reutiliza el login ya hecho por el servicio principal)
+ *
+ * @returns {{ token: string|null, source: string, cookie: string|null }}
  */
-async function ensureSession() {
-  if (!PLATFORM_USER || !PLATFORM_PASS) {
-    logger.error('[ReferralRevenue] Faltan credenciales de JUGAYGANA');
-    return false;
+async function getActiveToken() {
+  // 1. API key estática configurada por env var
+  if (JUGAYGANA_API_KEY) {
+    logger.debug('[ReferralRevenue] Usando JUGAYGANA_API_KEY como token estático');
+    return { token: JUGAYGANA_API_KEY, source: 'env:JUGAYGANA_API_KEY', cookie: null };
   }
-  const expired = Date.now() - lastLogin > TOKEN_TTL_MINUTES * 60 * 1000;
-  if (sessionToken && !expired) return true;
 
-  try {
-    const body = toFormUrlEncoded({
-      action: 'LOGIN',
-      username: PLATFORM_USER,
-      password: PLATFORM_PASS
-    });
-    const resp = await authClient.post('', body, {
-      validateStatus: s => s >= 200 && s < 500,
-      maxRedirects: 0
-    });
-
-    if (resp.headers['set-cookie']) {
-      sessionCookie = resp.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
+  // 2. Reutilizar sesión del servicio principal para evitar logins concurrentes con las mismas credenciales
+  if (PLATFORM_USER && PLATFORM_PASS) {
+    const ok = await jugayganaService.ensureSession();
+    if (ok) {
+      const token = jugayganaService.getSessionToken();
+      const cookie = jugayganaService.getSessionCookie();
+      if (token) {
+        logger.debug('[ReferralRevenue] Usando sesión compartida de jugayganaService');
+        return { token, source: 'jugayganaService:shared-session', cookie };
+      }
     }
-
-    const data = parseJson(resp.data);
-    if (isHtmlBlocked(data)) {
-      logger.error('[ReferralRevenue] Login bloqueado (HTML)');
-      return false;
-    }
-
-    const token = data?.token || data?.access_token || data?.sessionToken || data?.data?.token;
-    if (!token) {
-      logger.error('[ReferralRevenue] Login falló: no se recibió token');
-      return false;
-    }
-
-    sessionToken = token;
-    lastLogin = Date.now();
-    logger.info('[ReferralRevenue] Login exitoso');
-    return true;
-  } catch (err) {
-    logger.error('[ReferralRevenue] Error en login:', err.message);
-    return false;
   }
+
+  logger.error(
+    '[ReferralRevenue] No se pudo obtener token activo. ' +
+    'Configure JUGAYGANA_API_KEY o asegúrese de que PLATFORM_USER/PLATFORM_PASS estén definidos.'
+  );
+  return { token: null, source: 'none', cookie: null };
+}
+
+/**
+ * Construir los headers de autenticación para la solicitud al endpoint externo.
+ * Registra en log el esquema usado y si el token está presente.
+ */
+function buildAuthHeaders(token, cookie) {
+  const headers = { 'Content-Type': 'application/json' };
+
+  if (JUGAYGANA_AUTH_SCHEME !== 'none' && token) {
+    headers.Authorization = `${JUGAYGANA_AUTH_SCHEME} ${token}`;
+    logger.debug(
+      `[ReferralRevenue] Auth header: ${JUGAYGANA_AUTH_SCHEME} <token presente>`
+    );
+  } else if (JUGAYGANA_AUTH_SCHEME === 'none') {
+    logger.debug('[ReferralRevenue] Auth scheme=none: no se envía Authorization header');
+  } else {
+    logger.warn('[ReferralRevenue] Token no disponible: Authorization header no será enviado');
+  }
+
+  if (cookie) {
+    headers.Cookie = cookie;
+    logger.debug('[ReferralRevenue] Cookie de sesión incluida en la solicitud');
+  }
+
+  return headers;
 }
 
 /**
@@ -175,47 +183,95 @@ function formatRevenueDate(date, epochSecs) {
 }
 
 /**
- * Consultar royalty-statistics para un usuario y período
+ * Ejecutar la llamada POST al endpoint de revenue.
+ * Retorna el objeto de respuesta de axios.
+ */
+async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo) {
+  const { token, cookie } = authInfo;
+  const headers = buildAuthHeaders(token, cookie);
+
+  const body = {
+    [REVENUE_LOGIN_FIELD]: username,
+    [REVENUE_DATE_FROM_FIELD]: fromFormatted,
+    [REVENUE_DATE_TO_FIELD]: toFormatted
+  };
+
+  // Compatibilidad con APIs que aceptan el token en el body
+  if (REPORTS_TOKEN_IN_BODY && token) {
+    body.token = token;
+  }
+
+  logger.info(
+    `[ReferralRevenue] POST royalty-statistics | loginField=${REVENUE_LOGIN_FIELD} ` +
+    `usuario=${username} ${REVENUE_DATE_FROM_FIELD}=${fromFormatted} ${REVENUE_DATE_TO_FIELD}=${toFormatted} ` +
+    `dateFormat=${REVENUE_DATE_FORMAT} authScheme=${JUGAYGANA_AUTH_SCHEME} ` +
+    `tokenSource=${authInfo.source} tokenPresente=${!!token} ` +
+    `tokenEnBody=${REPORTS_TOKEN_IN_BODY} cookiePresente=${!!cookie} ` +
+    `endpoint=${ADMIN_API_URL}`
+  );
+  // Ocultar token en body antes de loguear para no exponer credenciales
+  const { token: _tokenField, ...safeBody } = body;
+  if (_tokenField) safeBody.token = '<redacted>';
+  logger.debug(`[ReferralRevenue] Request body: ${JSON.stringify(safeBody)}`);
+
+  return reportsClient.post(ADMIN_API_URL, body, {
+    headers,
+    validateStatus: () => true
+  });
+}
+
+/**
+ * Consultar royalty-statistics para un usuario y período.
+ * Incluye lógica de reintentos: si se recibe 401/403, invalida la sesión y reintenta una vez.
+ *
  * @param {string} username - username/login en JUGAYGANA
  * @param {string} periodKey - e.g. "2026-04"
  * @returns {Object} resultado de revenue calculado
  */
 async function getUserRevenueForPeriod(username, periodKey) {
-  const ok = await ensureSession();
-  if (!ok) {
-    return { success: false, error: 'No hay sesión válida en JUGAYGANA' };
-  }
-
   const { fromEpoch, toEpoch, fromDate, toDate } = getPeriodRange(periodKey);
   const fromFormatted = formatRevenueDate(fromDate, fromEpoch);
   const toFormatted = formatRevenueDate(toDate, toEpoch);
 
+  let authInfo = await getActiveToken();
+  if (!authInfo.token && JUGAYGANA_AUTH_SCHEME !== 'none') {
+    return {
+      success: false,
+      error: 'No hay sesión válida en JUGAYGANA',
+      authDetail: { tokenSource: authInfo.source, tokenPresente: false, authScheme: JUGAYGANA_AUTH_SCHEME }
+    };
+  }
+
   try {
-    const headers = {
-      Authorization: `Bearer ${sessionToken}`,
-      'Content-Type': 'application/json'
-    };
-    if (sessionCookie) headers.Cookie = sessionCookie;
+    let resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo);
 
-    // Construir el body con el campo de login configurable y fechas en los campos correctos
-    // JUGAYGANA v2 REST espera "login" (no "username") y fechas como date_from/date_to en formato "YYYY-MM-DD"
-    const body = {
-      [REVENUE_LOGIN_FIELD]: username,
-      [REVENUE_DATE_FROM_FIELD]: fromFormatted,
-      [REVENUE_DATE_TO_FIELD]: toFormatted
-    };
+    // Si devuelve 401/403 y no estamos usando API key estática, intentar re-login y reintentar una vez
+    if ((resp.status === 401 || resp.status === 403) && authInfo.source !== 'env:JUGAYGANA_API_KEY') {
+      const rawBodyFirst = resp.data == null
+        ? '(empty)'
+        : typeof resp.data === 'string'
+          ? resp.data.substring(0, 300)
+          : JSON.stringify(resp.data).substring(0, 300);
 
-    logger.info(
-      `[ReferralRevenue] POST royalty-statistics | loginField=${REVENUE_LOGIN_FIELD} ` +
-      `usuario=${username} período=${periodKey} ${REVENUE_DATE_FROM_FIELD}=${fromFormatted} ${REVENUE_DATE_TO_FIELD}=${toFormatted} ` +
-      `dateFormat=${REVENUE_DATE_FORMAT} endpoint=${ADMIN_API_URL}`
-    );
-    logger.debug(`[ReferralRevenue] Request body: ${JSON.stringify(body)}`);
+      logger.warn(
+        `[ReferralRevenue] HTTP ${resp.status} para ${username} | ` +
+        `tokenSource=${authInfo.source} | Reintentando con nueva sesión... | ` +
+        `respuesta inicial: ${rawBodyFirst}`
+      );
 
-    const resp = await reportsClient.post(ADMIN_API_URL, body, {
-      headers,
-      validateStatus: () => true
-    });
+      // Forzar re-login en jugayganaService
+      const reloginOk = await jugayganaService.login();
+      if (reloginOk) {
+        authInfo = await getActiveToken();
+        resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo);
+        logger.info(
+          `[ReferralRevenue] Reintento tras re-login | usuario=${username} ` +
+          `nuevoStatus=${resp.status} tokenSource=${authInfo.source}`
+        );
+      } else {
+        logger.error('[ReferralRevenue] Re-login falló, no es posible reintentar');
+      }
+    }
 
     const rawBody = resp.data == null
       ? '(empty)'
@@ -224,12 +280,23 @@ async function getUserRevenueForPeriod(username, periodKey) {
         : JSON.stringify(resp.data).substring(0, 500);
 
     if (resp.status !== 200) {
-      // Loguear el cuerpo completo de error para facilitar diagnóstico
+      const parsedErr = parseJson(resp.data);
+      const providerMsg = !isHtmlBlocked(parsedErr) && typeof parsedErr === 'object'
+        ? (parsedErr?.error?.message || parsedErr?.message || parsedErr?.error || null)
+        : null;
+      const providerCode = !isHtmlBlocked(parsedErr) && typeof parsedErr === 'object'
+        ? (parsedErr?.error?.code || parsedErr?.code || null)
+        : null;
+
       logger.warn(
         `[ReferralRevenue] HTTP ${resp.status} para ${username} | ` +
-        `loginField=${REVENUE_LOGIN_FIELD} dateFormat=${REVENUE_DATE_FORMAT} | ` +
+        `authScheme=${JUGAYGANA_AUTH_SCHEME} tokenSource=${authInfo.source} ` +
+        `tokenPresente=${!!authInfo.token} cookiePresente=${!!authInfo.cookie} | ` +
+        `providerMsg="${providerMsg || '(sin mensaje)'}" ` +
+        `providerCode=${providerCode || '(sin código)'} | ` +
         `endpoint=${ADMIN_API_URL} | respuesta=${rawBody}`
       );
+
       if (resp.status === 422) {
         logger.warn(
           `[ReferralRevenue] HTTP 422 - Validation error del proveedor para ${username} | ` +
@@ -239,14 +306,29 @@ async function getUserRevenueForPeriod(username, periodKey) {
           `dateFormat=${REVENUE_DATE_FORMAT} | Respuesta proveedor: ${rawBody}`
         );
       }
+
       if (resp.status === 401 || resp.status === 403) {
-        sessionToken = null;
-        lastLogin = 0;
+        logger.error(
+          `[ReferralRevenue] Autenticación rechazada (${resp.status}) para ${username}. ` +
+          `authScheme=${JUGAYGANA_AUTH_SCHEME} tokenSource=${authInfo.source} ` +
+          `tokenPresente=${!!authInfo.token}. ` +
+          `Verifique JUGAYGANA_API_KEY o las credenciales PLATFORM_USER/PLATFORM_PASS. ` +
+          `Mensaje proveedor: "${providerMsg || 'Access denied'}"`
+        );
       }
+
       return {
         success: false,
         error: `HTTP ${resp.status}`,
         statusCode: resp.status,
+        providerMessage: providerMsg,
+        providerCode,
+        authDetail: {
+          authScheme: JUGAYGANA_AUTH_SCHEME,
+          tokenSource: authInfo.source,
+          tokenPresente: !!authInfo.token,
+          cookiePresente: !!authInfo.cookie
+        },
         rawProviderBody: rawBody
       };
     }

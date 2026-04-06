@@ -422,9 +422,17 @@ const creditBalance = async (username, amount, description = '') => {
   return await bonus(username, amount, description);
 };
 
+/**
+ * Obtener token y cookie de la sesión actual (para compartir con otros servicios)
+ */
+const getSessionToken = () => sessionToken;
+const getSessionCookie = () => sessionCookie;
+
 module.exports = {
   login,
   ensureSession,
+  getSessionToken,
+  getSessionCookie,
   getUserInfo,
   createUser,
   syncUser,
