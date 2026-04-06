@@ -4986,6 +4986,30 @@ const referralRoutes = require('./src/routes/referralRoutes');
 app.use('/api/referrals', referralRoutes);
 
 // ============================================
+// SPA FALLBACK: sirve index.html para rutas
+// frontend desconocidas (ej: /register?ref=CODE)
+// Esto permite que los links de referido funcionen
+// aunque la ruta no esté definida explícitamente.
+// ============================================
+
+app.get('*', (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'Endpoint no encontrado' });
+  }
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  const content = readFileSafe(indexPath);
+  if (content) {
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.send(content);
+  } else {
+    res.status(500).send('Error loading page');
+  }
+});
+
+// ============================================
 // MANEJADOR DE ERRORES CENTRALIZADO
 // ============================================
 

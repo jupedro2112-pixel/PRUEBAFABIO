@@ -4059,6 +4059,16 @@ window.cleanInvalidTokens = cleanInvalidTokens;
 // PANEL DE REFERIDOS - ADMIN
 // =============================================
 
+function escHtml(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function fmtARS(n) {
     return '$' + new Intl.NumberFormat('es-AR').format(Math.round(n || 0));
 }
@@ -4409,6 +4419,7 @@ function renderReferralCalcResult(data, container, actionLabel) {
             <table style="width:100%;border-collapse:collapse;">
                 <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
                     <th style="padding:4px;">Referido</th>
+                    <th style="padding:4px;">Usuario JG</th>
                     <th style="padding:4px;">Referidor</th>
                     <th style="padding:4px;">Rev. Dueño</th>
                     <th style="padding:4px;">Comisión</th>
@@ -4417,12 +4428,13 @@ function renderReferralCalcResult(data, container, actionLabel) {
                 </tr></thead>
                 <tbody>
                 ${details.map(d => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <td style="padding:4px;color:#fff;font-size:12px;">${d.referredUsername}</td>
-                    <td style="padding:4px;color:#d4af37;font-size:12px;">${d.referrerUsername}</td>
+                    <td style="padding:4px;color:#fff;font-size:12px;">${escHtml(d.referredUsername)}</td>
+                    <td style="padding:4px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername != null ? d.jugayganaUsername : d.referredUsername)}</td>
+                    <td style="padding:4px;color:#d4af37;font-size:12px;">${escHtml(d.referrerUsername)}</td>
                     <td style="padding:4px;color:#b0b0b0;font-size:12px;">${fmtARS(d.totalOwnerRevenue)}</td>
                     <td style="padding:4px;color:#d4af37;font-weight:bold;font-size:12px;">${fmtARS(d.commissionAmount)}</td>
-                    <td style="padding:4px;"><span style="color:${statusColor(d.status)};font-size:11px;">${d.status}</span></td>
-                    <td style="padding:4px;color:#888;font-size:10px;">${d.reason || ''}</td>
+                    <td style="padding:4px;"><span style="color:${statusColor(d.status)};font-size:11px;">${escHtml(d.status)}</span></td>
+                    <td style="padding:4px;color:#888;font-size:10px;">${escHtml(d.reason || '')}</td>
                 </tr>`).join('')}
                 </tbody>
             </table>
@@ -4432,11 +4444,19 @@ function renderReferralCalcResult(data, container, actionLabel) {
     if (errors.length > 0) {
         html += `<div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:10px;margin-bottom:10px;">
             <div style="color:#ff4444;font-size:12px;margin-bottom:6px;font-weight:600;">ERRORES (${errors.length}):</div>
-            ${errors.map(e => `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">• ${e.referredUsername || e.jugayganaUsername || '?'}: ${e.error}</div>`).join('')}
+            ${errors.map(e => `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">• Usuario: <strong>${escHtml(e.referredUsername || '?')}</strong>${e.jugayganaUsername && e.jugayganaUsername !== e.referredUsername ? ` (JG: ${escHtml(e.jugayganaUsername)})` : ''} → ${escHtml(e.error)}</div>`).join('')}
         </div>`;
     }
 
     container.innerHTML = html;
+}
+
+function renderReferralCalcError(message, container) {
+    if (!container) return;
+    container.innerHTML = `<div style="background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.3);border-radius:8px;padding:12px;">
+        <div style="color:#ff4444;font-size:13px;font-weight:bold;margin-bottom:6px;">❌ Error en la operación</div>
+        <div style="color:#ff8888;font-size:12px;">${escHtml(message)}</div>
+    </div>`;
 }
 
 async function adminReferralPreview() {
@@ -4453,9 +4473,13 @@ async function adminReferralPreview() {
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
+        if (!res.ok || data.status !== 'success') {
+            renderReferralCalcError(data.message || data.error || `HTTP ${res.status}`, resultDiv);
+            return;
+        }
         renderReferralCalcResult(data.data, resultDiv, '🔍 Preview');
     } catch (e) {
-        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
+        renderReferralCalcError('Error de red: ' + e.message, resultDiv);
     }
 }
 
@@ -4474,10 +4498,15 @@ async function adminReferralCalculate() {
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
+        if (!res.ok || data.status !== 'success') {
+            renderReferralCalcError(data.message || data.error || `HTTP ${res.status}`, resultDiv);
+            showToast('❌ Error en cálculo', 'error');
+            return;
+        }
         renderReferralCalcResult(data.data, resultDiv, '📊 Cálculo');
         showToast('✅ Cálculo completado', 'success');
     } catch (e) {
-        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
+        renderReferralCalcError('Error de red: ' + e.message, resultDiv);
         showToast('❌ Error en cálculo', 'error');
     }
 }
