@@ -4059,19 +4059,53 @@ window.cleanInvalidTokens = cleanInvalidTokens;
 // PANEL DE REFERIDOS - ADMIN
 // =============================================
 
+function fmtARS(n) {
+    return '$' + new Intl.NumberFormat('es-AR').format(Math.round(n || 0));
+}
+
+function fmtDate(d) {
+    if (!d) return '—';
+    const dt = new Date(d);
+    return dt.toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' });
+}
+
+function fmtPeriod(pk) {
+    if (!pk) return '—';
+    const [y, m] = pk.split('-');
+    return `${m}/${y}`;
+}
+
 async function loadAdminReferralSummary() {
     const container = document.getElementById('referralTopList');
+    const summaryContainer = document.getElementById('referralGlobalSummary');
     if (!container) return;
-    container.textContent = 'Cargando...';
+    container.innerHTML = '<span style="color:#888;">Cargando...</span>';
     // Always load payouts independently
     loadAdminReferralPayouts();
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/summary`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-        if (!res.ok) { container.textContent = 'Error cargando datos.'; return; }
+        if (!res.ok) { container.innerHTML = '<span style="color:#ff4444;">Error cargando datos.</span>'; return; }
         const data = await res.json();
         const referrers = data.data?.topReferrers || [];
+        const summary = data.data?.summary || {};
+
+        // Render global summary cards
+        if (summaryContainer) {
+            const cardStyle = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;text-align:center;';
+            summaryContainer.innerHTML = `
+                <div style="${cardStyle}">
+                    <div style="font-size:24px;font-weight:bold;color:#d4af37;">${summary.totalReferrers || 0}</div>
+                    <div style="font-size:11px;color:#888;margin-top:4px;">Referidores activos</div>
+                </div>
+                <div style="${cardStyle}">
+                    <div style="font-size:24px;font-weight:bold;color:#00ff88;">${summary.totalReferred || 0}</div>
+                    <div style="font-size:11px;color:#888;margin-top:4px;">Usuarios referidos</div>
+                </div>
+            `;
+        }
+
         if (referrers.length === 0) {
             container.innerHTML = '<span style="color:#888;">No hay referidores activos todavía.</span>';
             return;
@@ -4081,6 +4115,7 @@ async function loadAdminReferralSummary() {
                 <th style="padding:6px 4px;">Usuario</th>
                 <th style="padding:6px 4px;">Código</th>
                 <th style="padding:6px 4px;">Referidos</th>
+                <th style="padding:6px 4px;">Referidos (nombres)</th>
                 <th style="padding:6px 4px;">Tier</th>
                 <th style="padding:6px 4px;">Acciones</th>
             </tr></thead>
@@ -4088,13 +4123,14 @@ async function loadAdminReferralSummary() {
             ${referrers.map(r => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                 <td style="padding:6px 4px;color:#fff;">${r.username}</td>
                 <td style="padding:6px 4px;color:#d4af37;letter-spacing:2px;">${r.referralCode || '—'}</td>
-                <td style="padding:6px 4px;color:#00ff88;">${r.totalReferreds}</td>
+                <td style="padding:6px 4px;color:#00ff88;font-weight:bold;">${r.totalReferreds}</td>
+                <td style="padding:6px 4px;color:#b0b0b0;font-size:11px;">${(r.referredUsernames || []).slice(0, 5).join(', ')}${r.totalReferreds > 5 ? ` +${r.totalReferreds - 5} más` : ''}</td>
                 <td style="padding:6px 4px;color:#888;">${r.referralTier || 'default'}</td>
                 <td style="padding:6px 4px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
             </tr>`).join('')}
             </tbody></table>`;
     } catch (e) {
-        container.textContent = 'Error: ' + e.message;
+        container.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
     }
 }
 
@@ -4141,15 +4177,266 @@ async function loadAdminReferralPayouts() {
 }
 
 async function loadAdminUserReferrals(userId) {
+    const detailPanel = document.getElementById('referralUserDetail');
+    const detailContent = document.getElementById('referralUserDetailContent');
+    if (detailPanel) detailPanel.style.display = 'block';
+    if (detailContent) detailContent.innerHTML = '<span style="color:#888;">Cargando detalle...</span>';
+    // Scroll to detail
+    if (detailPanel) detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/users/${userId}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+            if (detailContent) detailContent.innerHTML = '<span style="color:#ff4444;">Error cargando detalle del referidor.</span>';
+            return;
+        }
         const data = await res.json();
         const d = data.data;
-        showToast(`${d.user.username}: ${d.totalReferred} referidos, $${Math.round(d.totalCommissionHistorical)} acreditado`, 'info');
-    } catch (e) { /* ignorar */ }
+        const u = d.user;
+
+        const referredRows = (d.referredUsers || []).map(ru => `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:5px 4px;color:#fff;">${ru.username}</td>
+                <td style="padding:5px 4px;color:#b0b0b0;font-size:11px;">${fmtDate(ru.referredAt)}</td>
+                <td style="padding:5px 4px;">
+                    <span style="color:${ru.referralStatus==='active'?'#00ff88':ru.referralStatus==='referred'?'#f7931e':'#888'};font-size:11px;">${ru.referralStatus || '—'}</span>
+                </td>
+                <td style="padding:5px 4px;color:${ru.excludedFromReferral?'#ff4444':'#888'};font-size:11px;">${ru.excludedFromReferral ? '❌ Excluido' : '✅ Activo'}</td>
+            </tr>
+        `).join('');
+
+        const commissionRows = (d.commissions || []).slice(0, 20).map(c => `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:5px 4px;color:#b0b0b0;">${fmtPeriod(c.periodKey)}</td>
+                <td style="padding:5px 4px;color:#fff;">${c.referredUsername}</td>
+                <td style="padding:5px 4px;color:#888;">${fmtARS(c.totalBets)}</td>
+                <td style="padding:5px 4px;color:#888;">${fmtARS(c.totalGgr)}</td>
+                <td style="padding:5px 4px;color:#b0b0b0;">${fmtARS(c.totalOwnerRevenue)}</td>
+                <td style="padding:5px 4px;color:#d4af37;font-weight:bold;">${fmtARS(c.commissionAmount)}</td>
+                <td style="padding:5px 4px;">
+                    <span style="color:${c.status==='paid'?'#00ff88':c.status==='calculated'?'#f7931e':c.status==='excluded'?'#ff4444':'#888'};font-size:11px;">${c.status}</span>
+                </td>
+            </tr>
+        `).join('');
+
+        if (detailContent) {
+            detailContent.innerHTML = `
+                <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.1);">
+                    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+                        <div><span style="color:#888;font-size:11px;">USUARIO</span><br><span style="color:#fff;font-weight:bold;">${u.username}</span></div>
+                        <div><span style="color:#888;font-size:11px;">CÓDIGO</span><br><span style="color:#d4af37;letter-spacing:2px;font-weight:bold;">${u.referralCode || '—'}</span></div>
+                        <div><span style="color:#888;font-size:11px;">TOTAL REFERIDOS</span><br><span style="color:#00ff88;font-weight:bold;font-size:20px;">${d.totalReferred}</span></div>
+                        <div><span style="color:#888;font-size:11px;">COMISIONES PAGADAS</span><br><span style="color:#d4af37;font-weight:bold;">${fmtARS(d.totalCommissionHistorical)}</span></div>
+                        ${u.excludedFromReferral ? '<div><span style="color:#ff4444;font-size:11px;">⚠️ EXCLUIDO DEL SISTEMA</span></div>' : ''}
+                    </div>
+                </div>
+
+                ${d.referredUsers && d.referredUsers.length > 0 ? `
+                <div style="margin-bottom:14px;">
+                    <h4 style="color:#d4af37;margin-bottom:8px;">👥 Usuarios Referidos (${d.referredUsers.length})</h4>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                            <th style="padding:5px 4px;">Usuario</th>
+                            <th style="padding:5px 4px;">Registro</th>
+                            <th style="padding:5px 4px;">Estado</th>
+                            <th style="padding:5px 4px;">Acceso</th>
+                        </tr></thead>
+                        <tbody>${referredRows}</tbody>
+                    </table>
+                </div>` : '<div style="color:#888;font-size:12px;margin-bottom:14px;">Sin usuarios referidos en la base de datos.</div>'}
+
+                ${d.commissions && d.commissions.length > 0 ? `
+                <div style="margin-bottom:14px;">
+                    <h4 style="color:#d4af37;margin-bottom:8px;">💰 Comisiones Calculadas</h4>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                            <th style="padding:5px 4px;">Período</th>
+                            <th style="padding:5px 4px;">Referido</th>
+                            <th style="padding:5px 4px;">Apuestas</th>
+                            <th style="padding:5px 4px;">GGR</th>
+                            <th style="padding:5px 4px;">Rev. Dueño</th>
+                            <th style="padding:5px 4px;">Comisión</th>
+                            <th style="padding:5px 4px;">Estado</th>
+                        </tr></thead>
+                        <tbody>${commissionRows}</tbody>
+                    </table>
+                </div>` : '<div style="color:#888;font-size:12px;margin-bottom:14px;">Sin comisiones calculadas aún. Usá Preview/Calcular para generar los datos.</div>'}
+
+                ${d.payouts && d.payouts.length > 0 ? `
+                <div>
+                    <h4 style="color:#d4af37;margin-bottom:8px;">📤 Pagos Realizados</h4>
+                    ${d.payouts.map(p => `
+                        <div style="padding:8px;background:rgba(0,255,136,0.03);border:1px solid rgba(0,255,136,0.1);border-radius:6px;margin-bottom:6px;display:flex;justify-content:space-between;">
+                            <span style="color:#b0b0b0;">${fmtPeriod(p.periodKey)}</span>
+                            <span style="color:#d4af37;font-weight:bold;">${fmtARS(p.totalCommissionAmount)}</span>
+                            <span style="color:${p.status==='paid'?'#00ff88':'#f7931e'};font-size:11px;">${p.status}</span>
+                            <span style="color:#888;font-size:11px;">${fmtDate(p.creditedAt)}</span>
+                        </div>
+                    `).join('')}
+                </div>` : ''}
+            `;
+        }
+    } catch (e) {
+        if (detailContent) detailContent.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
+    }
+}
+
+async function loadAdminReferralRelationships() {
+    const container = document.getElementById('referralRelationshipsList');
+    if (!container) return;
+    container.innerHTML = '<span style="color:#888;">Cargando relaciones...</span>';
+    const referrerFilter = document.getElementById('referralRelFilterReferrer')?.value?.trim() || '';
+    const referredFilter = document.getElementById('referralRelFilterReferred')?.value?.trim() || '';
+    const params = new URLSearchParams({ limit: 200 });
+    if (referrerFilter) params.append('referrerUsername', referrerFilter);
+    if (referredFilter) params.append('referredUsername', referredFilter);
+    try {
+        const res = await fetch(`${API_URL}/api/referrals/admin/relationships?${params}`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!res.ok) {
+            container.innerHTML = '<span style="color:#ff4444;">Error cargando relaciones. Verificar que el endpoint exista.</span>';
+            return;
+        }
+        const data = await res.json();
+        const rels = data.data?.relationships || [];
+        const msg = data.data?.message || null;
+
+        if (rels.length === 0) {
+            container.innerHTML = `<div style="color:#888;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px;">
+                ${msg || 'No se encontraron relaciones de referido.'}
+                <br><br>
+                <span style="color:#f7931e;font-size:12px;">
+                    ℹ️ Si ya se realizó un registro con código de referido, verificá que el campo <code>referredByUserId</code> esté guardado en ese usuario.
+                    Si la cuenta fue creada antes de este fix, la atribución no se habrá guardado.
+                </span>
+            </div>`;
+            return;
+        }
+
+        container.innerHTML = `
+            <div style="margin-bottom:8px;font-size:12px;color:#888;">Total: ${data.data?.pagination?.total || rels.length} relaciones encontradas</div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                    <th style="padding:6px 4px;">Referidor</th>
+                    <th style="padding:6px 4px;">Código usado</th>
+                    <th style="padding:6px 4px;">Referido</th>
+                    <th style="padding:6px 4px;">Usuario JG</th>
+                    <th style="padding:6px 4px;">Fecha registro</th>
+                    <th style="padding:6px 4px;">Estado</th>
+                    <th style="padding:6px 4px;">Excluido</th>
+                </tr></thead>
+                <tbody>
+                ${rels.map(r => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <td style="padding:5px 4px;">
+                        <span style="color:#d4af37;font-weight:bold;">${r.referrer?.username || '—'}</span>
+                        ${r.referrer?.id ? `<button onclick="loadAdminUserReferrals('${r.referrer.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:2px 6px;border-radius:4px;cursor:pointer;font-size:10px;margin-left:4px;">Detalle</button>` : ''}
+                    </td>
+                    <td style="padding:5px 4px;color:#d4af37;letter-spacing:1px;font-size:12px;">${r.codeUsed || '—'}</td>
+                    <td style="padding:5px 4px;color:#fff;">${r.referredUsername}</td>
+                    <td style="padding:5px 4px;color:#888;font-size:11px;">${r.jugayganaUsername || r.referredUsername}</td>
+                    <td style="padding:5px 4px;color:#b0b0b0;font-size:11px;">${fmtDate(r.referredAt)}</td>
+                    <td style="padding:5px 4px;">
+                        <span style="color:${r.referralStatus==='active'?'#00ff88':r.referralStatus==='referred'?'#f7931e':'#888'};font-size:11px;">${r.referralStatus || '—'}</span>
+                    </td>
+                    <td style="padding:5px 4px;color:${r.excludedFromReferral?'#ff4444':'#888'};font-size:11px;">${r.excludedFromReferral ? '❌' : '✅'}</td>
+                </tr>`).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        container.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
+    }
+}
+
+function renderReferralCalcResult(data, container, actionLabel) {
+    if (!container) return;
+    if (!data) { container.innerHTML = '<span style="color:#ff4444;">Sin datos en la respuesta.</span>'; return; }
+
+    const statusColor = (s) => {
+        if (s === 'calculated') return '#d4af37';
+        if (s === 'skipped') return '#888';
+        if (s === 'excluded') return '#ff4444';
+        if (s === 'error') return '#ff6666';
+        if (s === 'paid') return '#00ff88';
+        return '#b0b0b0';
+    };
+
+    const details = data.details || [];
+    const errors = data.errors || [];
+
+    let html = `
+        <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:12px;margin-bottom:10px;">
+            <div style="font-size:14px;font-weight:bold;color:#d4af37;margin-bottom:8px;">📊 ${actionLabel} — Período ${fmtPeriod(data.periodKey)} ${data.dryRun ? '<span style="color:#888;font-size:11px;">(PREVIEW - no guardado)</span>' : ''}</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;">
+                <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:6px;padding:8px;text-align:center;">
+                    <div style="color:#00ff88;font-size:18px;font-weight:bold;">${data.referrersProcessed}</div>
+                    <div style="color:#888;font-size:11px;">Referidores procesados</div>
+                </div>
+                <div style="background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.2);border-radius:6px;padding:8px;text-align:center;">
+                    <div style="color:#d4af37;font-size:18px;font-weight:bold;">${data.referredsProcessed}</div>
+                    <div style="color:#888;font-size:11px;">Referidos procesados</div>
+                </div>
+                <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:6px;padding:8px;text-align:center;">
+                    <div style="color:#00ff88;font-size:18px;font-weight:bold;">${data.commissionsCreated}</div>
+                    <div style="color:#888;font-size:11px;">Comisiones generadas</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px;text-align:center;">
+                    <div style="color:#888;font-size:18px;font-weight:bold;">${data.commissionsSkipped}</div>
+                    <div style="color:#888;font-size:11px;">Sin revenue</div>
+                </div>
+                ${data.commissionsExcluded > 0 ? `
+                <div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:6px;padding:8px;text-align:center;">
+                    <div style="color:#ff4444;font-size:18px;font-weight:bold;">${data.commissionsExcluded}</div>
+                    <div style="color:#888;font-size:11px;">Excluidos</div>
+                </div>` : ''}
+            </div>
+        </div>`;
+
+    if (data.referrersProcessed === 0) {
+        html += `<div style="background:rgba(247,147,30,0.08);border:1px solid rgba(247,147,30,0.3);border-radius:8px;padding:12px;margin-bottom:10px;color:#f7931e;font-size:13px;">
+            ⚠️ <strong>Sin referidores procesados.</strong><br>
+            Esto significa que ningún usuario tiene el campo <code>referredByUserId</code> guardado en la base de datos.<br>
+            Las cuentas creadas con código de referido antes del fix no tienen atribución guardada.
+            Para verificar, usá la sección <strong>"Relaciones de Referido (Auditoría)"</strong>.
+        </div>`;
+    }
+
+    if (details.length > 0) {
+        html += `<div style="margin-bottom:10px;">
+            <div style="font-size:12px;color:#888;margin-bottom:6px;font-weight:600;">DETALLE POR REFERIDO:</div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                    <th style="padding:4px;">Referido</th>
+                    <th style="padding:4px;">Referidor</th>
+                    <th style="padding:4px;">Rev. Dueño</th>
+                    <th style="padding:4px;">Comisión</th>
+                    <th style="padding:4px;">Estado</th>
+                    <th style="padding:4px;">Nota</th>
+                </tr></thead>
+                <tbody>
+                ${details.map(d => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <td style="padding:4px;color:#fff;font-size:12px;">${d.referredUsername}</td>
+                    <td style="padding:4px;color:#d4af37;font-size:12px;">${d.referrerUsername}</td>
+                    <td style="padding:4px;color:#b0b0b0;font-size:12px;">${fmtARS(d.totalOwnerRevenue)}</td>
+                    <td style="padding:4px;color:#d4af37;font-weight:bold;font-size:12px;">${fmtARS(d.commissionAmount)}</td>
+                    <td style="padding:4px;"><span style="color:${statusColor(d.status)};font-size:11px;">${d.status}</span></td>
+                    <td style="padding:4px;color:#888;font-size:10px;">${d.reason || ''}</td>
+                </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    if (errors.length > 0) {
+        html += `<div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:10px;margin-bottom:10px;">
+            <div style="color:#ff4444;font-size:12px;margin-bottom:6px;font-weight:600;">ERRORES (${errors.length}):</div>
+            ${errors.map(e => `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">• ${e.referredUsername || e.jugayganaUsername || '?'}: ${e.error}</div>`).join('')}
+        </div>`;
+    }
+
+    container.innerHTML = html;
 }
 
 async function adminReferralPreview() {
@@ -4158,7 +4445,7 @@ async function adminReferralPreview() {
         showToast('⚠️ Ingresá el período en formato YYYY-MM', 'error'); return;
     }
     const resultDiv = document.getElementById('referralActionResult');
-    if (resultDiv) resultDiv.textContent = 'Calculando preview...';
+    if (resultDiv) resultDiv.innerHTML = '<span style="color:#888;">Calculando preview...</span>';
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/preview`, {
             method: 'POST',
@@ -4166,9 +4453,9 @@ async function adminReferralPreview() {
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
-        if (resultDiv) resultDiv.textContent = JSON.stringify(data.data, null, 2);
+        renderReferralCalcResult(data.data, resultDiv, '🔍 Preview');
     } catch (e) {
-        if (resultDiv) resultDiv.textContent = 'Error: ' + e.message;
+        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
     }
 }
 
@@ -4179,7 +4466,7 @@ async function adminReferralCalculate() {
     }
     if (!confirm(`¿Calcular comisiones de referidos para ${period}? Esto guardará los cálculos en la base de datos.`)) return;
     const resultDiv = document.getElementById('referralActionResult');
-    if (resultDiv) resultDiv.textContent = 'Calculando...';
+    if (resultDiv) resultDiv.innerHTML = '<span style="color:#888;">Calculando...</span>';
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/calculate`, {
             method: 'POST',
@@ -4187,10 +4474,10 @@ async function adminReferralCalculate() {
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
-        if (resultDiv) resultDiv.textContent = JSON.stringify(data.data, null, 2);
+        renderReferralCalcResult(data.data, resultDiv, '📊 Cálculo');
         showToast('✅ Cálculo completado', 'success');
     } catch (e) {
-        if (resultDiv) resultDiv.textContent = 'Error: ' + e.message;
+        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
         showToast('❌ Error en cálculo', 'error');
     }
 }
@@ -4202,7 +4489,7 @@ async function adminReferralPayout() {
     }
     if (!confirm(`⚠️ ¿Ejecutar pagos de referidos para ${period}? Esta acción acreditará fichas REALMENTE. Solo continuar si el cálculo fue verificado.`)) return;
     const resultDiv = document.getElementById('referralActionResult');
-    if (resultDiv) resultDiv.textContent = 'Procesando pagos...';
+    if (resultDiv) resultDiv.innerHTML = '<span style="color:#888;">Procesando pagos...</span>';
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/payout`, {
             method: 'POST',
@@ -4210,11 +4497,11 @@ async function adminReferralPayout() {
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
-        if (resultDiv) resultDiv.textContent = JSON.stringify(data.data, null, 2);
+        if (resultDiv) resultDiv.innerHTML = data.data ? `<div style="color:#00ff88;padding:8px;">✅ Pagos procesados correctamente. Revisá el historial de pagos.</div>` : '<span style="color:#f7931e;">Sin datos de pago.</span>';
         showToast('✅ Pagos procesados', 'success');
         loadAdminReferralSummary();
     } catch (e) {
-        if (resultDiv) resultDiv.textContent = 'Error: ' + e.message;
+        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
         showToast('❌ Error en pagos', 'error');
     }
 }
@@ -4223,6 +4510,7 @@ async function adminReferralPayout() {
 window.loadAdminReferralSummary = loadAdminReferralSummary;
 window.loadAdminReferralPayouts = loadAdminReferralPayouts;
 window.loadAdminUserReferrals = loadAdminUserReferrals;
+window.loadAdminReferralRelationships = loadAdminReferralRelationships;
 window.adminReferralPreview = adminReferralPreview;
 window.adminReferralCalculate = adminReferralCalculate;
 window.adminReferralPayout = adminReferralPayout;

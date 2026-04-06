@@ -49,6 +49,10 @@ const {
   incrementCommandUsage
 } = require('./config/database');
 
+// Importar modelos de referidos (usados por el handler de registro inline)
+const ReferralEvent = require('./src/models/ReferralEvent');
+const { generateReferralCode } = require('./src/utils/referralCode');
+
 // ============================================
 // SEGURIDAD - RATE LIMITING
 // NOTE: Uses in-memory store per instance. In multi-instance deployments each
@@ -581,7 +585,7 @@ app.post('/api/admin/send-cbu', authMiddleware, adminMiddleware, async (req, res
 // Registro de usuario
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
-    const { username, password, email, phone } = req.body;
+    const { username, password, email, phone, referralCode } = req.body;
     
     if (!username || !password) {
       return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
@@ -602,6 +606,16 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     
     if (existingUser) {
       return res.status(400).json({ error: 'El usuario ya existe' });
+    }
+
+    // Resolver código de referido si fue proporcionado
+    const normalizedReferralCode = referralCode ? String(referralCode).toUpperCase().trim() : null;
+    let referrer = null;
+    if (normalizedReferralCode) {
+      referrer = await User.findOne({ referralCode: normalizedReferralCode }).lean();
+      if (!referrer) {
+        logger.warn(`[Register] Código de referido inválido: ${normalizedReferralCode}`);
+      }
     }
     
     // Crear usuario en JUGAYGANA PRIMERO
@@ -625,6 +639,20 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     // Crear usuario localmente
     const hashedPassword = await bcrypt.hash(password, 10);
     const userId = uuidv4();
+
+    // Validar referido (evitar auto-referido)
+    const isValidReferral = referrer && referrer.id !== userId;
+
+    // Generar referralCode único para el nuevo usuario (con control de colisiones)
+    let newReferralCode = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const candidate = generateReferralCode();
+      const collision = await User.findOne({ referralCode: candidate }).lean();
+      if (!collision) { newReferralCode = candidate; break; }
+    }
+    if (!newReferralCode) {
+      logger.warn(`[Register] No se pudo generar un referralCode único para ${username} después de 10 intentos. El usuario se creará sin código.`);
+    }
     
     const newUser = await User.create({
       id: userId,
@@ -640,8 +668,33 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       isActive: true,
       jugayganaUserId: jgResult.jugayganaUserId || jgResult.user?.user_id,
       jugayganaUsername: jgResult.jugayganaUsername || jgResult.user?.user_name,
-      jugayganaSyncStatus: jgResult.alreadyExists ? 'linked' : 'synced'
+      jugayganaSyncStatus: jgResult.alreadyExists ? 'linked' : 'synced',
+      // Campos de referido
+      referralCode: newReferralCode,
+      referredByUserId: isValidReferral ? referrer.id : null,
+      referredByCode: isValidReferral ? normalizedReferralCode : null,
+      referredAt: isValidReferral ? new Date() : null,
+      referralStatus: isValidReferral ? 'referred' : 'none'
     });
+
+    // Registrar evento de referido para trazabilidad
+    if (isValidReferral) {
+      try {
+        await ReferralEvent.create({
+          id: uuidv4(),
+          referrerUserId: referrer.id,
+          referrerUsername: referrer.username,
+          referredUserId: userId,
+          referredUsername: newUser.username,
+          codeUsed: normalizedReferralCode,
+          meta: { ip: req.ip || null, registeredAt: new Date() }
+        });
+        logger.info(`[Register] Referido registrado: ${newUser.username} referido por ${referrer.username} (código: ${normalizedReferralCode})`);
+      } catch (refErr) {
+        logger.error(`[Register] Error registrando evento de referido: ${refErr.message}`);
+        // No interrumpir el flujo de registro
+      }
+    }
     
     // CORREGIDO: El mensaje de bienvenida se envía desde el cliente (app.js) con el formato actualizado incluyendo CBU
     // No enviamos mensaje de bienvenida desde el servidor para evitar duplicados y usar el formato correcto
@@ -674,7 +727,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
         role: newUser.role,
         balance: newUser.balance,
         jugayganaLinked: true,
-        needsPasswordChange: false
+        needsPasswordChange: false,
+        referralCode: newUser.referralCode,
+        referredBy: isValidReferral ? referrer.username : null
       }
     });
   } catch (error) {

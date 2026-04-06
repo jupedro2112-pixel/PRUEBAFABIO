@@ -33,6 +33,9 @@ router.get('/admin/summary', authenticate, authorize('admin'), referralControlle
 // GET /api/referrals/admin/payouts - historial de todos los pagos
 router.get('/admin/payouts', authenticate, authorize('admin'), referralController.adminGetPayouts);
 
+// GET /api/referrals/admin/relationships - lista de relaciones referidor→referido para auditoría
+router.get('/admin/relationships', authenticate, authorize('admin'), referralController.adminGetReferralRelationships);
+
 // GET /api/referrals/admin/users/:userId - detalle del referidor
 router.get('/admin/users/:userId', authenticate, authorize('admin'), referralController.adminGetUserReferrals);
 

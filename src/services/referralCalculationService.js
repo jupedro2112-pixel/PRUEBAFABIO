@@ -33,58 +33,70 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     details: []
   };
 
-  // Cargar referidores: usuarios con al menos un referido
-  const referrerQuery = {
+  // Armar mapa de referidores -> referidos
+  // Buscar usuarios que tienen referredByUserId establecido (son los referidos)
+  const referredQuery = {
     role: 'user',
-    isActive: true
+    isActive: true,
+    referredByUserId: { $ne: null, $exists: true }
   };
+  // Si se filtró por referidor, solo buscar referidos de ese referidor
   if (referrerUserId) {
-    referrerQuery.id = referrerUserId;
+    referredQuery.referredByUserId = referrerUserId;
   }
 
-  const allUsers = await User.find(referrerQuery).lean();
+  const referredUsers = await User.find(referredQuery).lean();
 
-  // Armar mapa de referidores -> referidos
+  // Armar mapa de referidores -> sus referidos
   const referrers = new Map();
-  for (const user of allUsers) {
-    if (user.referredByUserId) {
-      const referrerId = user.referredByUserId;
-      if (!referrers.has(referrerId)) {
-        referrers.set(referrerId, []);
-      }
-      referrers.get(referrerId).push(user);
+  for (const user of referredUsers) {
+    const referrerId = user.referredByUserId;
+    if (!referrers.has(referrerId)) {
+      referrers.set(referrerId, []);
     }
+    referrers.get(referrerId).push(user);
   }
 
   if (referrers.size === 0) {
-    logger.info('[ReferralCalc] No hay referidores activos');
+    logger.info('[ReferralCalc] No hay referidores activos con referidos asignados');
     return results;
   }
 
   results.referrersProcessed = referrers.size;
 
-  // Cargar datos de los referidores
+  // Cargar datos de los referidores por sus IDs (sin restricción de rol/estado para que funcione incluso si el referidor fue desactivado)
+  const referrerIds = Array.from(referrers.keys());
+  const referrerDocs = await User.find({ id: { $in: referrerIds } }).lean();
   const referrerMap = new Map();
-  for (const u of allUsers) {
+  for (const u of referrerDocs) {
     referrerMap.set(u.id, u);
   }
 
-  for (const [referrerId, referredUsers] of referrers) {
+  for (const [referrerId, usersReferredByThisReferrer] of referrers) {
     const referrer = referrerMap.get(referrerId);
     if (!referrer) {
-      logger.warn(`[ReferralCalc] Referidor ${referrerId} no encontrado`);
+      logger.warn(`[ReferralCalc] Referidor ${referrerId} no encontrado en la base de datos`);
       continue;
     }
 
     const referralRate = getReferralRateForUser(referrer);
 
-    for (const referredUser of referredUsers) {
+    for (const referredUser of usersReferredByThisReferrer) {
       results.referredsProcessed++;
 
       // Verificar exclusión
       if (referredUser.excludedFromReferral) {
         logger.info(`[ReferralCalc] Usuario ${referredUser.username} excluido de referidos`);
         results.commissionsExcluded++;
+
+        results.details.push({
+          referredUsername: referredUser.username,
+          referrerUsername: referrer.username,
+          totalOwnerRevenue: 0,
+          commissionAmount: 0,
+          status: 'excluded',
+          reason: 'Usuario marcado como excluido del sistema de referidos'
+        });
 
         if (!dryRun) {
           await ReferralCommission.findOneAndUpdate(
@@ -128,10 +140,19 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       if (existing && !dryRun) {
         logger.info(`[ReferralCalc] Comisión ya existe para ${referredUser.username} período ${periodKey}`);
         results.commissionsSkipped++;
+        results.details.push({
+          referredUsername: referredUser.username,
+          referrerUsername: referrer.username,
+          totalOwnerRevenue: existing.totalOwnerRevenue,
+          commissionAmount: existing.commissionAmount,
+          status: existing.status,
+          reason: 'Comisión ya calculada previamente'
+        });
         continue;
       }
 
       // Consultar revenue real en JUGAYGANA
+      // Usar jugayganaUsername si está disponible, sino caer en username
       const jugayganaUsername = referredUser.jugayganaUsername || referredUser.username;
       const revenueResult = await referralRevenueService.getUserRevenueForPeriod(
         jugayganaUsername,
@@ -140,11 +161,21 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       if (!revenueResult.success) {
         logger.error(
-          `[ReferralCalc] Error obteniendo revenue para ${referredUser.username}: ${revenueResult.error}`
+          `[ReferralCalc] Error obteniendo revenue para ${referredUser.username} (JG: ${jugayganaUsername}): ${revenueResult.error}`
         );
         results.errors.push({
           referredUsername: referredUser.username,
+          jugayganaUsername,
           error: revenueResult.error
+        });
+        results.details.push({
+          referredUsername: referredUser.username,
+          referrerUsername: referrer.username,
+          jugayganaUsername,
+          totalOwnerRevenue: 0,
+          commissionAmount: 0,
+          status: 'error',
+          reason: `Error consultando revenue: ${revenueResult.error}`
         });
         continue;
       }
@@ -157,6 +188,9 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         : 0;
 
       const status = totalOwnerRevenue <= 0 ? 'skipped' : 'calculated';
+      const reason = totalOwnerRevenue <= 0
+        ? `Revenue del período es $0 (apuestas: $${totalBets?.toFixed(2) || 0}, ganancias: $${totalWins?.toFixed(2) || 0})`
+        : null;
 
       const commissionData = {
         id: existing?.id || uuidv4(),
@@ -180,9 +214,15 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       results.details.push({
         referredUsername: referredUser.username,
         referrerUsername: referrer.username,
+        jugayganaUsername,
+        totalBets,
+        totalWins,
+        totalGgr,
         totalOwnerRevenue,
+        referralRate,
         commissionAmount,
-        status
+        status,
+        reason: reason || undefined
       });
 
       if (!dryRun) {
