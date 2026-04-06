@@ -4,7 +4,7 @@
  * Soporta access tokens y refresh tokens
  */
 const jwt = require('jsonwebtoken');
-const { AppError, ErrorCodes } = require('../utils/AppError');
+const { AppError, ErrorCodes, ErrorMessages } = require('../utils/AppError');
 const logger = require('../utils/logger');
 
 // Claves secretas (deberían estar en variables de entorno)
@@ -127,8 +127,8 @@ const authenticate = async (req, res, next) => {
       ));
     }
 
-    // Verificar que sea un access token
-    if (decoded.type !== 'access') {
+    // Verificar que sea un access token (backward compat: legacy tokens may not have 'type')
+    if (decoded.type && decoded.type !== 'access') {
       return next(new AppError(
         'Tipo de token inválido',
         401,
