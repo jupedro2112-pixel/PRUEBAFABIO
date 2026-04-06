@@ -15,6 +15,26 @@ const logger = require('../utils/logger');
 const PERIOD_KEY_REGEX = /^\d{4}-\d{2}$/;
 // Allowed status values for payout queries
 const VALID_PAYOUT_STATUSES = ['pending', 'paid', 'failed', 'cancelled'];
+// Regex that allows only safe hostname characters (alphanumeric, dot, hyphen, colon for port)
+const SAFE_HOST_REGEX = /[^a-zA-Z0-9.\-:]/g;
+
+/**
+ * Build the frontend base URL from env var or request.
+ * When FRONTEND_URL is not set, derives it from the incoming request.
+ * Host characters are sanitised to prevent header-injection attacks.
+ */
+function buildFrontendUrl(req) {
+  if (process.env.FRONTEND_URL) {
+    return process.env.FRONTEND_URL.replace(/\/+$/, '');
+  }
+  // Use only safe protocol values
+  const rawProto = req.get('x-forwarded-proto') || req.protocol || 'https';
+  const proto = /^https?$/.test(rawProto) ? rawProto : 'https';
+  // Strip any characters that could break or inject into the URL
+  const rawHost = (req.get('x-forwarded-host') || req.get('host') || 'localhost');
+  const host = rawHost.replace(SAFE_HOST_REGEX, '');
+  return `${proto}://${host}`;
+}
 
 /**
  * Sanitize a string for use as a plain-string query filter (no operators)
@@ -81,8 +101,7 @@ const getMyReferralInfo = asyncHandler(async (req, res) => {
     }
   }
 
-  const frontendUrl = process.env.FRONTEND_URL ||
-    `${req.get('x-forwarded-proto') || req.protocol}://${req.get('x-forwarded-host') || req.get('host')}`;
+  const frontendUrl = buildFrontendUrl(req);
   const referralLink = user.referralCode
     ? `${frontendUrl}/?ref=${user.referralCode}`
     : null;
@@ -375,8 +394,7 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  const frontendUrl = process.env.FRONTEND_URL ||
-    `${req.get('x-forwarded-proto') || req.protocol}://${req.get('x-forwarded-host') || req.get('host')}`;
+  const frontendUrl = buildFrontendUrl(req);
 
   res.json({
     status: 'success',
