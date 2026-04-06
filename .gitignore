@@ -3,3 +3,7 @@ firebase-service-account.json
 *.env
 .env
 .env.*
+
+# Log files
+logs/
+*.log
