@@ -4063,6 +4063,8 @@ async function loadAdminReferralSummary() {
     const container = document.getElementById('referralTopList');
     if (!container) return;
     container.textContent = 'Cargando...';
+    // Always load payouts independently
+    loadAdminReferralPayouts();
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/summary`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -4071,7 +4073,7 @@ async function loadAdminReferralSummary() {
         const data = await res.json();
         const referrers = data.data?.topReferrers || [];
         if (referrers.length === 0) {
-            container.innerHTML = '<span style="color:#888;">No hay referidores activos.</span>';
+            container.innerHTML = '<span style="color:#888;">No hay referidores activos todavía.</span>';
             return;
         }
         container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
@@ -4091,9 +4093,6 @@ async function loadAdminReferralSummary() {
                 <td style="padding:6px 4px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
             </tr>`).join('')}
             </tbody></table>`;
-
-        // Cargar también el historial de pagos
-        loadAdminReferralPayouts();
     } catch (e) {
         container.textContent = 'Error: ' + e.message;
     }
@@ -4102,15 +4101,19 @@ async function loadAdminReferralSummary() {
 async function loadAdminReferralPayouts() {
     const container = document.getElementById('referralPayoutList');
     if (!container) return;
+    container.innerHTML = '<span style="color:#888;font-size:12px;">Cargando...</span>';
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/payouts?limit=20`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+            container.innerHTML = '<span style="color:#ff4444;font-size:12px;">Error cargando historial de pagos.</span>';
+            return;
+        }
         const data = await res.json();
         const payouts = data.data?.payouts || [];
         if (payouts.length === 0) {
-            container.innerHTML = '<span style="color:#888;">Sin pagos registrados.</span>';
+            container.innerHTML = '<span style="color:#888;">No hay pagos registrados todavía.</span>';
             return;
         }
         container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
@@ -4132,7 +4135,9 @@ async function loadAdminReferralPayouts() {
                 <td style="padding:6px 4px;color:#888;font-size:11px;">${p.creditedAt ? new Date(p.creditedAt).toLocaleDateString('es-AR') : '—'}</td>
             </tr>`).join('')}
             </tbody></table>`;
-    } catch (e) { /* ignorar */ }
+    } catch (e) {
+        container.innerHTML = '<span style="color:#ff4444;font-size:12px;">Error cargando historial de pagos.</span>';
+    }
 }
 
 async function loadAdminUserReferrals(userId) {

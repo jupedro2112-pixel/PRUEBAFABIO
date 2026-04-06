@@ -2807,6 +2807,9 @@ async function openReferralModal() {
 }
 
 async function loadReferralData() {
+    const histContainer = document.getElementById('referralPayoutHistory');
+    if (histContainer) histContainer.innerHTML = '<span style="color:#888;font-size:12px;">Cargando...</span>';
+
     try {
         const [meRes, histRes] = await Promise.all([
             fetch(`${API_URL}/api/referrals/me`, {
@@ -2817,7 +2820,10 @@ async function loadReferralData() {
             })
         ]);
 
-        if (!meRes.ok) return;
+        if (!meRes.ok) {
+            if (histContainer) histContainer.innerHTML = '<span style="color:#ff4444;font-size:12px;">No se pudieron cargar tus datos de referidos. Reintentá.</span>';
+            return;
+        }
         const meData = await meRes.json();
         const me = meData.data;
 
@@ -2846,13 +2852,14 @@ async function loadReferralData() {
             }
         } catch (e) { /* ignorar */ }
 
+        const EMPTY_HISTORY_HTML = '<span style="color:#888;font-size:12px;">Todavía no tenés pagos por referidos.</span>';
+
         // Historial
         if (histRes.ok) {
             const histData = await histRes.json();
             const payouts = histData.data?.payouts || [];
-            const histContainer = document.getElementById('referralPayoutHistory');
             if (payouts.length === 0) {
-                histContainer.innerHTML = '<span style="color:#888;font-size:12px;">Aún no hay pagos acreditados.</span>';
+                histContainer.innerHTML = EMPTY_HISTORY_HTML;
             } else {
                 histContainer.innerHTML = payouts.map(p => `
                     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
@@ -2864,9 +2871,12 @@ async function loadReferralData() {
                     </div>
                 `).join('');
             }
+        } else {
+            histContainer.innerHTML = EMPTY_HISTORY_HTML;
         }
     } catch (err) {
         console.error('[Referrals] Error cargando datos:', err);
+        if (histContainer) histContainer.innerHTML = '<span style="color:#ff4444;font-size:12px;">No se pudieron cargar tus datos de referidos. Reintentá.</span>';
     }
 }
 

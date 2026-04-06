@@ -55,17 +55,13 @@ function getPeriodRange(periodKey) {
 }
 
 /**
- * Nombre legible de un period key en español
+ * Nombre legible de un period key en formato MM/YYYY
  * @param {string} periodKey
- * @returns {string} e.g. "abril 2026"
+ * @returns {string} e.g. "04/2026"
  */
 function getPeriodLabel(periodKey) {
   const [year, month] = periodKey.split('-').map(Number);
-  const months = [
-    '', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
-  ];
-  return `${months[month]} ${year}`;
+  return `${String(month).padStart(2, '0')}/${year}`;
 }
 
 /**
