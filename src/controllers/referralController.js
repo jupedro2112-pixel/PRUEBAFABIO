@@ -242,6 +242,12 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
+  // Contar totales globales
+  const totalReferrers = await User.countDocuments({
+    id: { $in: await User.distinct('referredByUserId', { referredByUserId: { $ne: null, $exists: true } }) }
+  });
+  const totalReferred = await User.countDocuments({ referredByUserId: { $ne: null, $exists: true } });
+
   // Top referidores por todos los tiempos
   const topReferrers = await User.aggregate([
     {
@@ -261,7 +267,13 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
         referralTier: 1,
         referralRateOverride: 1,
         excludedFromReferral: 1,
-        totalReferreds: { $size: '$referredUsers' }
+        totalReferreds: { $size: '$referredUsers' },
+        referredUsernames: {
+          $map: { input: '$referredUsers', as: 'u', in: '$$u.username' }
+        },
+        referredUserIds: {
+          $map: { input: '$referredUsers', as: 'u', in: '$$u.id' }
+        }
       }
     },
     { $sort: { totalReferreds: -1 } },
@@ -269,7 +281,7 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
     { $limit: parseInt(limit) }
   ]);
 
-  // Estadísticas de pagos por período
+  // Agregar estadísticas de comisiones por período para cada referidor
   const periodFilter = period ? { periodKey: period } : {};
   const payoutStats = await ReferralPayout.aggregate([
     { $match: periodFilter },
@@ -282,9 +294,39 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
     }
   ]);
 
+  // Comisiones calculadas del período para enriquecer los datos de referidores
+  if (topReferrers.length > 0 && period) {
+    const referrerIds = topReferrers.map(r => r.id);
+    const periodCommissions = await ReferralCommission.aggregate([
+      { $match: { periodKey: period, referrerUserId: { $in: referrerIds } } },
+      {
+        $group: {
+          _id: '$referrerUserId',
+          totalOwnerRevenue: { $sum: '$totalOwnerRevenue' },
+          totalCommission: { $sum: '$commissionAmount' },
+          activeReferreds: { $sum: { $cond: [{ $gt: ['$totalOwnerRevenue', 0] }, 1, 0] } }
+        }
+      }
+    ]);
+    const commissionsByReferrer = new Map(periodCommissions.map(c => [c._id, c]));
+    for (const r of topReferrers) {
+      const stats = commissionsByReferrer.get(r.id);
+      r.periodStats = stats ? {
+        totalOwnerRevenue: stats.totalOwnerRevenue,
+        estimatedCommission: stats.totalCommission,
+        activeReferreds: stats.activeReferreds
+      } : null;
+    }
+  }
+
   res.json({
     status: 'success',
     data: {
+      summary: {
+        totalReferrers,
+        totalReferred,
+        period: period || null
+      },
       topReferrers,
       payoutStats,
       pagination: { page: parseInt(page), limit: parseInt(limit) }
@@ -492,6 +534,101 @@ const adminPayout = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * GET /api/referrals/admin/relationships
+ * Lista de todas las relaciones referidor → referido para auditoría
+ */
+const adminGetReferralRelationships = asyncHandler(async (req, res) => {
+  logger.info(`[Referrals] Admin relationships solicitado por ${req.user.username}`);
+  const { page = 1, limit = 100 } = req.query;
+  const rawReferrerUsername = req.query.referrerUsername;
+  const rawReferredUsername = req.query.referredUsername;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const safeReferrerUsername = rawReferrerUsername ? sanitizeString(rawReferrerUsername) : null;
+  const safeReferredUsername = rawReferredUsername ? sanitizeString(rawReferredUsername) : null;
+
+  // Buscar todos los usuarios referidos (tienen referredByUserId)
+  const referredQuery = {
+    referredByUserId: { $ne: null, $exists: true }
+  };
+  if (safeReferredUsername) {
+    const escaped = safeReferredUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    referredQuery.username = { $regex: escaped, $options: 'i' };
+  }
+
+  const [referredUsers, total] = await Promise.all([
+    User.find(referredQuery)
+      .select('id username referredByUserId referredByCode referredAt referralStatus excludedFromReferral jugayganaUsername')
+      .sort({ referredAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean(),
+    User.countDocuments(referredQuery)
+  ]);
+
+  if (referredUsers.length === 0) {
+    return res.json({
+      status: 'success',
+      data: {
+        relationships: [],
+        pagination: { total: 0, page: parseInt(page), pages: 0 },
+        message: 'No se encontraron relaciones de referido en la base de datos. Esto indica que ningún usuario se registró usando un código de referido.'
+      }
+    });
+  }
+
+  // Cargar datos de referidores
+  const referrerIds = [...new Set(referredUsers.map(u => u.referredByUserId))];
+  const referrerDocs = await User.find({ id: { $in: referrerIds } })
+    .select('id username referralCode referralTier excludedFromReferral')
+    .lean();
+  const referrerMap = new Map(referrerDocs.map(r => [r.id, r]));
+
+  // Filtrar por referrerUsername si se especificó
+  let relationships = referredUsers.map(referred => {
+    const referrer = referrerMap.get(referred.referredByUserId);
+    return {
+      referredUserId: referred.id,
+      referredUsername: referred.username,
+      referredAt: referred.referredAt,
+      referralStatus: referred.referralStatus,
+      excludedFromReferral: referred.excludedFromReferral,
+      jugayganaUsername: referred.jugayganaUsername || referred.username,
+      codeUsed: referred.referredByCode,
+      referrer: referrer ? {
+        id: referrer.id,
+        username: referrer.username,
+        referralCode: referrer.referralCode,
+        excludedFromReferral: referrer.excludedFromReferral
+      } : {
+        id: referred.referredByUserId,
+        username: '(no encontrado)',
+        referralCode: referred.referredByCode
+      }
+    };
+  });
+
+  if (safeReferrerUsername) {
+    const escaped = safeReferrerUsername.toLowerCase();
+    relationships = relationships.filter(r =>
+      r.referrer.username.toLowerCase().includes(escaped)
+    );
+  }
+
+  res.json({
+    status: 'success',
+    data: {
+      relationships,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    }
+  });
+});
+
 module.exports = {
   getMyReferralInfo,
   getMyReferralSummary,
@@ -502,5 +639,6 @@ module.exports = {
   adminGetPayouts,
   adminCalculate,
   adminPreview,
-  adminPayout
+  adminPayout,
+  adminGetReferralRelationships
 };
