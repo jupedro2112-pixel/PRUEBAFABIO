@@ -81,9 +81,10 @@ const getMyReferralInfo = asyncHandler(async (req, res) => {
     }
   }
 
-  const frontendUrl = process.env.FRONTEND_URL || 'https://vipcargas.com';
+  const frontendUrl = process.env.FRONTEND_URL ||
+    `${req.get('x-forwarded-proto') || req.protocol}://${req.get('x-forwarded-host') || req.get('host')}`;
   const referralLink = user.referralCode
-    ? `${frontendUrl}/register?ref=${user.referralCode}`
+    ? `${frontendUrl}/?ref=${user.referralCode}`
     : null;
 
   // Contar referidos
@@ -374,7 +375,8 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  const frontendUrl = process.env.FRONTEND_URL || 'https://vipcargas.com';
+  const frontendUrl = process.env.FRONTEND_URL ||
+    `${req.get('x-forwarded-proto') || req.protocol}://${req.get('x-forwarded-host') || req.get('host')}`;
 
   res.json({
     status: 'success',
@@ -383,7 +385,7 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
         id: user.id,
         username: user.username,
         referralCode: user.referralCode,
-        referralLink: user.referralCode ? `${frontendUrl}/register?ref=${user.referralCode}` : null,
+        referralLink: user.referralCode ? `${frontendUrl}/?ref=${user.referralCode}` : null,
         referralTier: user.referralTier,
         referralRateOverride: user.referralRateOverride,
         excludedFromReferral: user.excludedFromReferral
