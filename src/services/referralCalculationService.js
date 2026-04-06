@@ -154,6 +154,12 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       // Consultar revenue real en JUGAYGANA
       // Usar jugayganaUsername si está disponible, sino caer en username
       const jugayganaUsername = referredUser.jugayganaUsername || referredUser.username;
+
+      logger.info(
+        `[ReferralCalc] Consultando revenue | referido=${referredUser.username} ` +
+        `jugayganaUsername=${jugayganaUsername} período=${periodKey}`
+      );
+
       const revenueResult = await referralRevenueService.getUserRevenueForPeriod(
         jugayganaUsername,
         periodKey
@@ -161,17 +167,25 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       if (!revenueResult.success) {
         logger.error(
-          `[ReferralCalc] Error obteniendo revenue para ${referredUser.username} (JG: ${jugayganaUsername}): ${revenueResult.error}`
+          `[ReferralCalc] Error revenue | referido=${referredUser.username} ` +
+          `jugayganaUsername=${jugayganaUsername} período=${periodKey} error=${revenueResult.error}`
         );
         results.errors.push({
           referredUsername: referredUser.username,
           jugayganaUsername,
-          error: revenueResult.error
+          periodKey,
+          error: revenueResult.error,
+          statusCode: revenueResult.statusCode || null
         });
         results.details.push({
           referredUsername: referredUser.username,
           referrerUsername: referrer.username,
           jugayganaUsername,
+          periodKey,
+          revenueOk: false,
+          totalBets: 0,
+          totalWins: 0,
+          totalGgr: 0,
           totalOwnerRevenue: 0,
           commissionAmount: 0,
           status: 'error',
@@ -182,6 +196,11 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       const { totalOwnerRevenue, totalBets, totalWins, totalGgr, providers } = revenueResult;
 
+      logger.info(
+        `[ReferralCalc] Revenue obtenido | referido=${referredUser.username} ` +
+        `GGR=${totalGgr?.toFixed(2)} ownerRevenue=${totalOwnerRevenue?.toFixed(2)}`
+      );
+
       // Solo revenue positivo genera comisión
       const commissionAmount = totalOwnerRevenue > 0
         ? totalOwnerRevenue * referralRate
@@ -189,7 +208,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       const status = totalOwnerRevenue <= 0 ? 'skipped' : 'calculated';
       const reason = totalOwnerRevenue <= 0
-        ? `Revenue del período es $0 (apuestas: $${totalBets?.toFixed(2) || 0}, ganancias: $${totalWins?.toFixed(2) || 0})`
+        ? `Revenue del período es $0 (GGR: $${(totalGgr ?? 0).toFixed(2)}, apuestas: $${(totalBets ?? 0).toFixed(2)}, ganancias: $${(totalWins ?? 0).toFixed(2)})`
         : null;
 
       const commissionData = {
@@ -215,6 +234,8 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         referredUsername: referredUser.username,
         referrerUsername: referrer.username,
         jugayganaUsername,
+        periodKey,
+        revenueOk: true,
         totalBets,
         totalWins,
         totalGgr,
