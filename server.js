@@ -4924,6 +4924,20 @@ app.get('/api/diagnostic/messages', authMiddleware, adminMiddleware, async (req,
 });
 
 // ============================================
+// RUTAS DE REFERIDOS
+// ============================================
+
+const referralRoutes = require('./src/routes/referralRoutes');
+app.use('/api/referrals', referralRoutes);
+
+// ============================================
+// MANEJADOR DE ERRORES CENTRALIZADO
+// ============================================
+
+const errorHandler = require('./src/middlewares/errorHandler');
+app.use(errorHandler);
+
+// ============================================
 // INICIAR SERVIDOR
 // ============================================
 

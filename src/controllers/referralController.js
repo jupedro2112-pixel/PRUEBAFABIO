@@ -44,11 +44,13 @@ function sanitizePeriodKey(value) {
  * Información del referido del usuario actual: código, link, stats
  */
 const getMyReferralInfo = asyncHandler(async (req, res) => {
+  logger.info(`[Referrals] GET /me solicitado por ${req.user.username} (${req.user.userId})`);
   let user = await User.findOne({ id: req.user.userId }).lean();
   if (!user) throw new AppError('Usuario no encontrado', 404);
 
   // Auto-generate referralCode for legacy users who don't have one
   if (!user.referralCode) {
+    logger.info(`[Referrals] Usuario ${req.user.username} sin referralCode — generando automáticamente`);
     let newCode = null;
     for (let attempts = 0; attempts < 10; attempts++) {
       const candidate = generateReferralCode();
@@ -62,9 +64,21 @@ const getMyReferralInfo = asyncHandler(async (req, res) => {
       { $set: { referralCode: newCode } },
       { new: true }
     ).lean();
-    if (!updated || !updated.referralCode) throw new AppError('No se pudo guardar el código de referido. Reintentá.', 500);
-    user = updated;
-    logger.info(`[Referrals] Código generado automáticamente para ${user.username}: ${user.referralCode}`);
+
+    if (!updated) {
+      // Race condition: another concurrent request already set the code — re-fetch
+      const refetched = await User.findOne({ id: user.id }).lean();
+      if (!refetched || !refetched.referralCode) {
+        throw new AppError('No se pudo guardar el código de referido. Reintentá.', 500);
+      }
+      user = refetched;
+      logger.info(`[Referrals] Código ya generado concurrentemente para ${user.username}: ${user.referralCode}`);
+    } else if (!updated.referralCode) {
+      throw new AppError('No se pudo guardar el código de referido. Reintentá.', 500);
+    } else {
+      user = updated;
+      logger.info(`[Referrals] Código generado automáticamente para ${user.username}: ${user.referralCode}`);
+    }
   }
 
   const frontendUrl = process.env.FRONTEND_URL || 'https://vipcargas.com';
@@ -217,7 +231,15 @@ const getMyPendingCommissions = asyncHandler(async (req, res) => {
  * Resumen de todos los referidores
  */
 const adminGetReferralsSummary = asyncHandler(async (req, res) => {
-  const { period, page = 1, limit = 50 } = req.query;
+  logger.info(`[Referrals] Admin summary solicitado por ${req.user.username}`);
+  const { page = 1, limit = 50 } = req.query;
+  const rawPeriod = req.query.period;
+  const period = sanitizePeriodKey(rawPeriod);
+
+  if (rawPeriod && !period) {
+    throw new AppError('Formato de período inválido. Usar YYYY-MM', 400);
+  }
+
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   // Top referidores por todos los tiempos
@@ -341,6 +363,7 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
  * Historial de todos los pagos con filtros
  */
 const adminGetPayouts = asyncHandler(async (req, res) => {
+  logger.info(`[Referrals] Admin payouts solicitado por ${req.user.username}`);
   const { page = 1, limit = 50 } = req.query;
   const rawPeriod = req.query.period;
   const rawStatus = req.query.status;
