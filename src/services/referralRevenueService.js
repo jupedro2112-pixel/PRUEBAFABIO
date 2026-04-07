@@ -146,6 +146,82 @@ const isHtmlBlocked = (data) => {
 };
 
 /**
+ * Genera una huella segura del token para logging (sin exponer el valor completo).
+ * Para tokens de sesión muestra: "len=128 prefix=eyJhbGci..."
+ * Para API keys estáticas muestra solo la longitud (nunca el prefijo).
+ * @param {string|null} token
+ * @param {boolean} [isStaticSecret=false] - true para API keys estáticas; nunca expone prefijo
+ */
+function safeTokenFingerprint(token, isStaticSecret = false) {
+  if (!token) return '(null)';
+  if (isStaticSecret) return `len=${token.length}`;
+  if (token.length <= 12) return `len=${token.length}`;
+  return `len=${token.length} prefix=${token.substring(0, 8)}...`;
+}
+
+/**
+ * Categoriza el fallo de autenticación basándose en los resultados de las variantes probadas
+ * y el mensaje del proveedor.
+ *
+ * Categorías:
+ *   classic_token_rejected_by_endpoint          – token obtenido, endpoint lo rechazó en todas las variantes
+ *   classic_token_obtained_but_insufficient_permissions – evidencia de que la cuenta no tiene permiso
+ *   classic_token_auth_shape_mismatch           – Bearer solo falla pero Bearer+Cookie tiene éxito
+ *   provider_response_inconclusive              – respuesta no permite determinar más
+ *
+ * @param {Array<{variant: string, status: number, providerMsg: string|null}>} variantsTested
+ * @param {boolean} tokenObtained - si se obtuvo un token desde jugayganaService
+ * @returns {string}
+ */
+function classifyAuthFailure(variantsTested, tokenObtained) {
+  if (!tokenObtained) {
+    return 'provider_response_inconclusive';
+  }
+
+  // Si Bearer+Cookie tuvo éxito → el endpoint necesita la cookie además del Bearer
+  const variantBSuccess = variantsTested.find(v => v.variant === 'Bearer+Cookie' && v.status === 200);
+  if (variantBSuccess) {
+    return 'classic_token_auth_shape_mismatch';
+  }
+
+  // Si ninguna variante tuvo éxito, examinar mensaje del proveedor
+  const anyMsg = variantsTested.map(v => (v.providerMsg || '').toLowerCase()).join(' ');
+  const permissionKeywords = ['access denied', 'forbidden', 'permission', 'no access', 'not authorized'];
+  const tokenInvalidKeywords = ['invalid token', 'token expired', 'bad token', 'token invalid', 'invalid credentials', 'malformed'];
+
+  const hasPermMsg = permissionKeywords.some(kw => anyMsg.includes(kw));
+  const hasTokenMsg = tokenInvalidKeywords.some(kw => anyMsg.includes(kw));
+
+  if (variantsTested.length === 0) {
+    return 'provider_response_inconclusive';
+  }
+
+  // Mensaje de permiso sin indicación de token inválido → cuenta sin permisos
+  if (hasPermMsg && !hasTokenMsg) {
+    return 'classic_token_obtained_but_insufficient_permissions';
+  }
+
+  // Token obtenido y presentado, rechazado en todas las variantes → token no válido para este endpoint
+  return 'classic_token_rejected_by_endpoint';
+}
+
+/**
+ * Genera la conclusión en español basada en la categoría de diagnóstico.
+ */
+function buildConclusion(diagnosisCategory, tokenSource) {
+  switch (diagnosisCategory) {
+    case 'classic_token_rejected_by_endpoint':
+      return `La cuenta autenticó localmente (${tokenSource}) pero el endpoint rechaza el token en todas las variantes de auth probadas. El endpoint probablemente requiere un token de tipo diferente (API key REST o auth v2 distinta).`;
+    case 'classic_token_obtained_but_insufficient_permissions':
+      return `La cuenta autenticó localmente (${tokenSource}) pero el proveedor indica que la cuenta no tiene permisos para el endpoint royalty-statistics. Verificar permisos de la cuenta en el panel del proveedor.`;
+    case 'classic_token_auth_shape_mismatch':
+      return `El endpoint acepta el token clásico únicamente cuando se envía con Cookie de sesión además del Bearer. Configurar auth combinada Bearer+Cookie.`;
+    default:
+      return `La respuesta del proveedor no permite determinar si el fallo es por tipo de token o por permisos de cuenta.`;
+  }
+}
+
+/**
  * Obtener token activo para autenticar la llamada al endpoint de revenue.
  *
  * Prioridad:
@@ -166,19 +242,33 @@ async function getActiveToken() {
   }
 
   // 2. Sesión clásica de jugayganaService (PLATFORM_USER / PLATFORM_PASS) — fuente primaria
+  // Verificar si ya hay una sesión cacheada antes de llamar ensureSession()
+  const tokenBeforeEnsure = jugayganaService.getSessionToken();
+  const sessionWasCached = !!tokenBeforeEnsure;
+
   logger.info(
-    '[ReferralRevenue] Obteniendo sesión de jugayganaService (PLATFORM_USER/PLATFORM_PASS) para revenue...'
+    `[ReferralRevenue] Obteniendo sesión de jugayganaService (PLATFORM_USER/PLATFORM_PASS) para revenue | ` +
+    `sesionPrevia=${sessionWasCached ? 'reutilizada' : 'login-fresco'}`
   );
+
   const sessionOk = await jugayganaService.ensureSession();
   if (sessionOk) {
     const token = jugayganaService.getSessionToken();
     const cookie = jugayganaService.getSessionCookie();
+    const sessionReused = sessionWasCached && token === tokenBeforeEnsure;
     logger.info(
       `[ReferralRevenue] jugayganaService.ensureSession() exitoso | ` +
-      `tokenPresente=${!!token} cookiePresente=${!!cookie} tokenSource=jugayganaService`
+      `tokenPresente=${!!token} cookiePresente=${!!cookie} ` +
+      `tokenSource=jugayganaService sessionState=${sessionReused ? 'reutilizada' : 'login-fresco'} ` +
+      `tokenFingerprint=${safeTokenFingerprint(token)}`
     );
     if (token) {
-      return { token, source: 'jugayganaService', cookie: cookie || null };
+      return {
+        token,
+        source: 'jugayganaService',
+        cookie: cookie || null,
+        sessionReused
+      };
     }
     logger.warn(
       '[ReferralRevenue] jugayganaService.ensureSession() respondió ok pero no hay token en la sesión'
@@ -325,7 +415,9 @@ async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInf
 
 /**
  * Consultar royalty-statistics para un usuario y período.
- * Incluye lógica de reintentos: si se recibe 401/403, invalida la sesión y reintenta una vez.
+ * Implementa pruebas de variantes controladas para diagnóstico definitivo:
+ *   Variante A: Authorization: Bearer <token> (sin cookie)
+ *   Variante B: Authorization: Bearer <token> + Cookie de sesión (si está disponible)
  *
  * @param {string} username - username/login en JUGAYGANA
  * @param {string} periodKey - e.g. "2026-04"
@@ -336,161 +428,232 @@ async function getUserRevenueForPeriod(username, periodKey) {
   const fromFormatted = formatRevenueDate(fromDate, fromEpoch);
   const toFormatted = formatRevenueDate(toDate, toEpoch);
 
-  let authInfo = await getActiveToken();
+  const authInfo = await getActiveToken();
   if (!authInfo.token && JUGAYGANA_AUTH_SCHEME !== 'none') {
     return {
       success: false,
       error: 'No hay sesión válida en JUGAYGANA. Verificar PLATFORM_USER y PLATFORM_PASS.',
+      diagnosisCategory: 'provider_response_inconclusive',
+      conclusion: 'No se pudo obtener token desde jugayganaService (PLATFORM_USER/PLATFORM_PASS). Verificar credenciales.',
       authDetail: {
         tokenSource: authInfo.source,
         tokenPresente: false,
         authScheme: JUGAYGANA_AUTH_SCHEME,
+        cookiePresente: false,
         reportsEndpoint: ADMIN_API_URL
       }
     };
   }
 
-  let reloginAttempted = false;
+  const variantsTested = [];
 
   try {
-    let resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo);
+    // ── Variante A: Bearer only (sin cookie) ──────────────────────────────────
+    const variantA_auth = { ...authInfo, cookie: null };
+    logger.info(
+      `[ReferralRevenue] [Variante A] Bearer only | usuario=${username} ` +
+      `tokenSource=${authInfo.source} tokenFingerprint=${safeTokenFingerprint(authInfo.token, authInfo.source === 'env:JUGAYGANA_API_KEY')} ` +
+      `sessionState=${authInfo.sessionReused ? 'reutilizada' : 'login-fresco'} ` +
+      `endpoint=${ADMIN_API_URL}`
+    );
+    const respA = await callRevenueEndpoint(username, fromFormatted, toFormatted, variantA_auth);
 
-    // Si devuelve 401/403 y no estamos usando API key estática, invalidar sesión y reintentar una vez
-    if ((resp.status === 401 || resp.status === 403) && authInfo.source !== 'env:JUGAYGANA_API_KEY') {
-      reloginAttempted = true;
-      const rawBodyFirst = resp.data == null
-        ? '(empty)'
-        : typeof resp.data === 'string'
-          ? resp.data.substring(0, 300)
-          : JSON.stringify(resp.data).substring(0, 300);
+    const rawBodyA = respA.data == null
+      ? '(empty)'
+      : typeof respA.data === 'string'
+        ? respA.data.substring(0, 400)
+        : JSON.stringify(respA.data).substring(0, 400);
+    const parsedA = parseJson(respA.data);
+    const providerMsgA = !isHtmlBlocked(parsedA) && typeof parsedA === 'object'
+      ? (parsedA?.error?.message || parsedA?.message || parsedA?.error || null)
+      : null;
+    const providerCodeA = !isHtmlBlocked(parsedA) && typeof parsedA === 'object'
+      ? (parsedA?.error?.code || parsedA?.code || null)
+      : null;
 
-      logger.warn(
-        `[ReferralRevenue] HTTP ${resp.status} para ${username} | ` +
-        `tokenSource=${authInfo.source} | ` +
-        `Invalidando sesión de jugayganaService para forzar re-login fresco... | ` +
-        `respuesta inicial: ${rawBodyFirst}`
-      );
+    logger.info(
+      `[ReferralRevenue] [Variante A] Respuesta | status=${respA.status} ` +
+      `providerMsg="${providerMsgA || '(sin mensaje)'}" ` +
+      `providerCode=${providerCodeA || '(sin código)'} | body=${rawBodyA}`
+    );
 
-      // Invalidar la sesión de jugayganaService para forzar re-login
-      if (typeof jugayganaService.invalidateSession === 'function') {
-        jugayganaService.invalidateSession();
-      }
+    variantsTested.push({
+      variant: 'Bearer',
+      status: respA.status,
+      providerMsg: providerMsgA,
+      providerCode: providerCodeA,
+      rawBody: rawBodyA
+    });
 
-      // Forzar login fresco
-      authInfo = await getActiveToken();
-
-      if (authInfo.token) {
-        resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo);
+    // Si Variante A tuvo éxito, retornar directamente
+    if (respA.status === 200) {
+      const hasData = respA.data && typeof respA.data === 'object' && !Array.isArray(respA.data);
+      const isExplicitFailure = hasData && 'success' in respA.data && !respA.data.success;
+      if (hasData && !isExplicitFailure) {
         logger.info(
-          `[ReferralRevenue] Reintento tras re-login | usuario=${username} ` +
-          `nuevoStatus=${resp.status} tokenSource=${authInfo.source} ` +
-          `reintentoCorrecto=${resp.status === 200}`
+          `[ReferralRevenue] [Variante A] Éxito con Bearer only | usuario=${username} período=${periodKey}`
         );
-      } else {
-        logger.error(
-          `[ReferralRevenue] Re-login falló para ${username}, no es posible reintentar. ` +
-          `Verificar PLATFORM_USER y PLATFORM_PASS.`
-        );
+        return parseRoyaltyResponse(respA.data, username, periodKey);
+      }
+      if (!hasData || isExplicitFailure) {
+        logger.warn(`[ReferralRevenue] [Variante A] Respuesta 200 pero no exitosa para ${username}: ${rawBodyA}`);
+        return { success: false, error: 'Respuesta no exitosa del endpoint', rawBody: rawBodyA };
       }
     }
 
-    const rawBody = resp.data == null
-      ? '(empty)'
-      : typeof resp.data === 'string'
-        ? resp.data.substring(0, 500)
-        : JSON.stringify(resp.data).substring(0, 500);
+    // ── Variante B: Bearer + Cookie (si hay cookie disponible) ────────────────
+    let respFinal = respA;
+    let authModeTested = 'Bearer';
 
-    if (resp.status !== 200) {
-      const parsedErr = parseJson(resp.data);
-      const providerMsg = !isHtmlBlocked(parsedErr) && typeof parsedErr === 'object'
-        ? (parsedErr?.error?.message || parsedErr?.message || parsedErr?.error || null)
+    if ((respA.status === 401 || respA.status === 403) && authInfo.cookie) {
+      logger.info(
+        `[ReferralRevenue] [Variante B] Bearer+Cookie | usuario=${username} ` +
+        `cookiePresente=true | Variante A devolvió ${respA.status}, probando con Cookie...`
+      );
+      const respB = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo);
+
+      const rawBodyB = respB.data == null
+        ? '(empty)'
+        : typeof respB.data === 'string'
+          ? respB.data.substring(0, 400)
+          : JSON.stringify(respB.data).substring(0, 400);
+      const parsedB = parseJson(respB.data);
+      const providerMsgB = !isHtmlBlocked(parsedB) && typeof parsedB === 'object'
+        ? (parsedB?.error?.message || parsedB?.message || parsedB?.error || null)
         : null;
-      const providerCode = !isHtmlBlocked(parsedErr) && typeof parsedErr === 'object'
-        ? (parsedErr?.error?.code || parsedErr?.code || null)
+      const providerCodeB = !isHtmlBlocked(parsedB) && typeof parsedB === 'object'
+        ? (parsedB?.error?.code || parsedB?.code || null)
         : null;
 
-      logger.warn(
-        `[ReferralRevenue] HTTP ${resp.status} para ${username} | ` +
-        `authScheme=${JUGAYGANA_AUTH_SCHEME} tokenSource=${authInfo.source} ` +
-        `tokenPresente=${!!authInfo.token} cookiePresente=${!!authInfo.cookie} | ` +
-        `providerMsg="${providerMsg || '(sin mensaje)'}" ` +
-        `providerCode=${providerCode || '(sin código)'} | ` +
-        `endpoint=${ADMIN_API_URL} | respuesta=${rawBody}`
+      logger.info(
+        `[ReferralRevenue] [Variante B] Respuesta | status=${respB.status} ` +
+        `providerMsg="${providerMsgB || '(sin mensaje)'}" ` +
+        `providerCode=${providerCodeB || '(sin código)'} | body=${rawBodyB}`
       );
 
-      if (resp.status === 422) {
-        logger.warn(
-          `[ReferralRevenue] HTTP 422 - Validation error del proveedor para ${username} | ` +
-          `loginField=${REVENUE_LOGIN_FIELD} (valor="${username}"), ` +
-          `dateFromField=${REVENUE_DATE_FROM_FIELD} (valor="${fromFormatted}"), ` +
-          `dateToField=${REVENUE_DATE_TO_FIELD} (valor="${toFormatted}"), ` +
-          `dateFormat=${REVENUE_DATE_FORMAT} | Respuesta proveedor: ${rawBody}`
-        );
-      }
+      variantsTested.push({
+        variant: 'Bearer+Cookie',
+        status: respB.status,
+        providerMsg: providerMsgB,
+        providerCode: providerCodeB,
+        rawBody: rawBodyB
+      });
 
-      if (resp.status === 401 || resp.status === 403) {
-        const classicTokenRejected = authInfo.source === 'jugayganaService';
-        logger.error(
-          `[ReferralRevenue] Autenticación rechazada por el proveedor (${resp.status}) para ${username} | ` +
-          `authScheme=${JUGAYGANA_AUTH_SCHEME} tokenSource=${authInfo.source} ` +
-          `tokenPresente=${!!authInfo.token} reloginAttempted=${reloginAttempted} | ` +
-          `Mensaje proveedor: "${providerMsg || 'Access denied'}" código=${providerCode || '(sin código)'} | ` +
-          `endpoint=${ADMIN_API_URL} | ` +
-          (classicTokenRejected
-            ? `DIAGNÓSTICO: el token clásico de PLATFORM_USER/PLATFORM_PASS (jugayganaService) ` +
-              `fue presentado al endpoint de revenue y fue rechazado con ${resp.status}. ` +
-              `Esto confirma que el endpoint no acepta el token de sesión clásico. ` +
-              `Solución: configurar JUGAYGANA_API_KEY con una API key REST del proveedor.`
-            : ``) +
-          (authInfo.source === 'env:JUGAYGANA_API_KEY'
-            ? `DIAGNÓSTICO: la JUGAYGANA_API_KEY configurada fue rechazada. Verificar que sea válida.`
-            : ``) +
-          (authInfo.source === 'reports:dedicated-login'
-            ? `DIAGNÓSTICO: el token del login dedicado (JUGAYGANA_REPORTS_LOGIN_URL) fue rechazado. ` +
-              `Verificar credenciales y permisos.`
-            : ``)
-        );
+      respFinal = respB;
+      authModeTested = 'Bearer+Cookie';
+
+      // Si Variante B tuvo éxito, retornar (y registrar shape mismatch)
+      if (respB.status === 200) {
+        const hasData = respB.data && typeof respB.data === 'object' && !Array.isArray(respB.data);
+        const isExplicitFailure = hasData && 'success' in respB.data && !respB.data.success;
+        if (hasData && !isExplicitFailure) {
+          logger.info(
+            `[ReferralRevenue] [Variante B] Éxito con Bearer+Cookie | usuario=${username} período=${periodKey} ` +
+            `DIAGNÓSTICO: classic_token_auth_shape_mismatch – el endpoint requiere Cookie además de Bearer`
+          );
+          return parseRoyaltyResponse(respB.data, username, periodKey);
+        }
       }
+    } else if (respA.status === 401 || respA.status === 403) {
+      logger.info(
+        `[ReferralRevenue] [Variante B] Omitida: no hay cookie de sesión disponible | usuario=${username}`
+      );
+    }
+
+    // ── Ambas variantes fallaron (o solo A fue posible) ───────────────────────
+    const finalParsed = parseJson(respFinal.data);
+    const providerMsg = !isHtmlBlocked(finalParsed) && typeof finalParsed === 'object'
+      ? (finalParsed?.error?.message || finalParsed?.message || finalParsed?.error || null)
+      : null;
+    const providerCode = !isHtmlBlocked(finalParsed) && typeof finalParsed === 'object'
+      ? (finalParsed?.error?.code || finalParsed?.code || null)
+      : null;
+    const rawBody = respFinal.data == null
+      ? '(empty)'
+      : typeof respFinal.data === 'string'
+        ? respFinal.data.substring(0, 500)
+        : JSON.stringify(respFinal.data).substring(0, 500);
+
+    if (respFinal.status === 422) {
+      logger.warn(
+        `[ReferralRevenue] HTTP 422 - Validation error del proveedor para ${username} | ` +
+        `loginField=${REVENUE_LOGIN_FIELD} (valor="${username}"), ` +
+        `dateFromField=${REVENUE_DATE_FROM_FIELD} (valor="${fromFormatted}"), ` +
+        `dateToField=${REVENUE_DATE_TO_FIELD} (valor="${toFormatted}"), ` +
+        `dateFormat=${REVENUE_DATE_FORMAT} | Respuesta proveedor: ${rawBody}`
+      );
+    }
+
+    if (respFinal.status === 401 || respFinal.status === 403) {
+      const diagnosisCategory = classifyAuthFailure(variantsTested, !!authInfo.token);
+      const conclusion = buildConclusion(diagnosisCategory, authInfo.source);
+      const variantsSummary = variantsTested
+        .map(v => `${v.variant}→${v.status}`)
+        .join(' | ');
+
+      logger.error(
+        `[ReferralRevenue] Autenticación rechazada por el proveedor (${respFinal.status}) para ${username} | ` +
+        `diagnosisCategory=${diagnosisCategory} | ` +
+        `tokenSource=${authInfo.source} tokenFingerprint=${safeTokenFingerprint(authInfo.token, authInfo.source === 'env:JUGAYGANA_API_KEY')} ` +
+        `cookiePresente=${!!authInfo.cookie} sessionState=${authInfo.sessionReused ? 'reutilizada' : 'login-fresco'} | ` +
+        `variantesProbadas=[${variantsSummary}] authModeTested=${authModeTested} | ` +
+        `providerStatus=${respFinal.status} providerMsg="${providerMsg || 'Access denied'}" ` +
+        `providerCode=${providerCode || '(sin código)'} | ` +
+        `endpoint=${ADMIN_API_URL} | ` +
+        `CONCLUSIÓN: ${conclusion}`
+      );
 
       return {
         success: false,
-        error: `HTTP ${resp.status}`,
-        statusCode: resp.status,
+        error: `HTTP ${respFinal.status}`,
+        statusCode: respFinal.status,
         providerMessage: providerMsg,
         providerCode,
+        diagnosisCategory,
+        conclusion,
         authDetail: {
+          diagnosisCategory,
           authScheme: JUGAYGANA_AUTH_SCHEME,
           tokenSource: authInfo.source,
           tokenPresente: !!authInfo.token,
           cookiePresente: !!authInfo.cookie,
-          reloginAttempted,
-          classicTokenRejected: authInfo.source === 'jugayganaService' && (resp.status === 401 || resp.status === 403),
-          reportsEndpoint: ADMIN_API_URL
+          sessionState: authInfo.sessionReused ? 'reutilizada' : 'login-fresco',
+          authModeTested,
+          variantsTested,
+          reportsEndpoint: ADMIN_API_URL,
+          conclusion
         },
         rawProviderBody: rawBody
       };
     }
 
-    const data = resp.data;
-
-    // La API v2 puede devolver datos directamente (sin wrapper "success") o con él
-    // Verificar que haya un objeto con datos, no importa el wrapper exacto
-    const hasData = data && typeof data === 'object' && !Array.isArray(data);
-    const isExplicitFailure = hasData && 'success' in data && !data.success;
-
-    if (!hasData || isExplicitFailure) {
-      logger.warn(
-        `[ReferralRevenue] Respuesta no exitosa para ${username}: ${rawBody}`
-      );
-      return { success: false, error: 'Respuesta no exitosa del endpoint', rawBody };
-    }
-
-    logger.info(
-      `[ReferralRevenue] Revenue recibido para ${username} período ${periodKey} | ` +
-      `parseando respuesta...`
+    // Otro status de error (no 401/403/422)
+    logger.warn(
+      `[ReferralRevenue] HTTP ${respFinal.status} para ${username} | ` +
+      `authScheme=${JUGAYGANA_AUTH_SCHEME} tokenSource=${authInfo.source} ` +
+      `tokenPresente=${!!authInfo.token} cookiePresente=${!!authInfo.cookie} | ` +
+      `providerMsg="${providerMsg || '(sin mensaje)'}" ` +
+      `providerCode=${providerCode || '(sin código)'} | ` +
+      `endpoint=${ADMIN_API_URL} | respuesta=${rawBody}`
     );
 
-    return parseRoyaltyResponse(resp.data, username, periodKey);
+    return {
+      success: false,
+      error: `HTTP ${respFinal.status}`,
+      statusCode: respFinal.status,
+      providerMessage: providerMsg,
+      providerCode,
+      authDetail: {
+        authScheme: JUGAYGANA_AUTH_SCHEME,
+        tokenSource: authInfo.source,
+        tokenPresente: !!authInfo.token,
+        cookiePresente: !!authInfo.cookie,
+        authModeTested,
+        reportsEndpoint: ADMIN_API_URL
+      },
+      rawProviderBody: rawBody
+    };
+
   } catch (err) {
     logger.error(`[ReferralRevenue] Error consultando royalty-statistics para ${username}: ${err.message}`);
     return { success: false, error: err.message };
