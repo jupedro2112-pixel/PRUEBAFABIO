@@ -55,7 +55,19 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
   }
 
   for (const [refId, group] of byReferrer) {
-    const totalAmount = group.commissions.reduce((sum, c) => sum + c.commissionAmount, 0);
+    // Only eligible commissions: status=calculated AND commissionAmount > 0
+    const eligibleCommissions = group.commissions.filter(c => c.commissionAmount > 0);
+    const zeroAmountCommissions = group.commissions.filter(c => c.commissionAmount <= 0);
+    const zeroAmountReferralsExcluded = zeroAmountCommissions.length > 0;
+    const totalAmount = eligibleCommissions.reduce((sum, c) => sum + c.commissionAmount, 0);
+    const paidReferralsCount = eligibleCommissions.length;
+    const skippedReferralsCount = zeroAmountCommissions.length;
+
+    logger.info(
+      `[ReferralPayout] payFlowStarted=true period=${periodKey} referrer=${group.referrerUsername} ` +
+      `eligibleCommissionsCount=${paidReferralsCount} eligibleCommissionTotal=${totalAmount.toFixed(2)} ` +
+      `zeroAmountReferralsExcluded=${zeroAmountReferralsExcluded} skippedReferralsCount=${skippedReferralsCount}`
+    );
 
     if (totalAmount <= 0) {
       logger.info(`[ReferralPayout] Total $0 para ${group.referrerUsername} - skipping`);
@@ -88,7 +100,7 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
           {
             $set: {
               totalCommissionAmount: totalAmount,
-              referralCount: group.commissions.length,
+              referralCount: paidReferralsCount,
               status: 'pending',
               errorMessage: null
             }
@@ -103,11 +115,16 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
           referrerUsername: group.referrerUsername,
           currency: 'ARS',
           totalCommissionAmount: totalAmount,
-          referralCount: group.commissions.length,
+          referralCount: paidReferralsCount,
           status: 'pending',
-          details: { commissionIds: group.commissions.map(c => c.id) }
+          details: { commissionIds: eligibleCommissions.map(c => c.id) }
         });
       }
+
+      logger.info(
+        `[ReferralPayout] historyRecordCreated=true referrer=${group.referrerUsername} ` +
+        `period=${periodKey} payoutId=${payoutDoc.id} paidReferralsCount=${paidReferralsCount}`
+      );
 
       // Acreditar fichas en JUGAYGANA usando bonus (individual_bonus)
       const referrer = await User.findOne({ id: refId }).lean();
@@ -143,7 +160,7 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         status: 'completed',
         metadata: {
           periodKey,
-          referralCount: group.commissions.length,
+          referralCount: paidReferralsCount,
           payoutId: payoutDoc.id
         }
       });
@@ -161,9 +178,10 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         }
       );
 
-      // Marcar comisiones como pagadas
+      // Marcar solo las comisiones elegibles como pagadas (amount > 0)
+      const eligibleIds = eligibleCommissions.map(c => c._id);
       await ReferralCommission.updateMany(
-        { periodKey, referrerUserId: refId, status: 'calculated' },
+        { _id: { $in: eligibleIds } },
         {
           $set: {
             status: 'paid',
@@ -177,14 +195,20 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       await sendReferralCreditMessage(referrer, totalAmount, periodLabel);
 
       logger.info(
-        `[ReferralPayout] Pagado $${totalAmount.toFixed(2)} a ${group.referrerUsername} para ${periodKey}`
+        `[ReferralPayout] paymentStatusPersisted=paid referrer=${group.referrerUsername} ` +
+        `period=${periodKey} amount=${totalAmount.toFixed(2)} paidReferralsCount=${paidReferralsCount} ` +
+        `skippedReferralsCount=${skippedReferralsCount}`
+      );
+      logger.info(
+        `[ReferralPayout] payment flow completed with persisted status=paid and uiSuccess=true ` +
+        `referrer=${group.referrerUsername} period=${periodKey}`
       );
 
       results.payoutsCreated++;
       results.details.push({
         referrerUsername: group.referrerUsername,
         amount: totalAmount,
-        referralCount: group.commissions.length,
+        referralCount: paidReferralsCount,
         status: 'paid'
       });
     } catch (err) {
@@ -200,6 +224,15 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         ).catch(() => {});
       }
 
+      logger.info(
+        `[ReferralPayout] paymentStatusPersisted=failed referrer=${group.referrerUsername} ` +
+        `period=${periodKey} paidReferralsCount=0`
+      );
+      logger.info(
+        `[ReferralPayout] payment flow completed with persisted status=failed and uiSuccess=false ` +
+        `referrer=${group.referrerUsername} period=${periodKey}`
+      );
+
       results.payoutsFailed++;
       results.errors.push({
         referrerUsername: group.referrerUsername,
@@ -208,11 +241,14 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
     }
   }
 
+  const overallSuccess = results.payoutsCreated > 0 && results.payoutsFailed === 0;
+  const overallPartial = results.payoutsCreated > 0 && results.payoutsFailed > 0;
   logger.info(
     `[ReferralPayout] Período ${periodKey}: ` +
     `${results.payoutsCreated} pagados, ` +
     `${results.payoutsFailed} fallidos, ` +
-    `${results.payoutsSkipped} sin cambios`
+    `${results.payoutsSkipped} sin cambios | ` +
+    `uiResponseSuccess=${overallSuccess} overallPartial=${overallPartial}`
   );
 
   return results;
