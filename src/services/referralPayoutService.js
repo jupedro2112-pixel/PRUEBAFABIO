@@ -134,6 +134,12 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
 
       const jugayganaUsername = referrer.jugayganaUsername || referrer.username;
 
+      logger.info(
+        `[ReferralPayout] attemptedAction=DepositMoney deposit_type=individual_bonus ` +
+        `attemptedStatusTransition=calculated->paid referrer=${group.referrerUsername} ` +
+        `jugayganaUsername=${jugayganaUsername} period=${periodKey} amount=${totalAmount.toFixed(2)}`
+      );
+
       const creditResult = await jugayganaService.bonus(
         jugayganaUsername,
         totalAmount,

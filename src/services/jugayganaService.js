@@ -459,17 +459,31 @@ const withdraw = async (username, amount, description = '') => {
 
 /**
  * Acreditar bonificación (individual_bonus)
+ * Usa action=DepositMoney con childid (user_id numérico) — CREDITBALANCE no existe en esta API.
  */
 const bonus = async (username, amount, description = '') => {
   const ok = await ensureSession();
   if (!ok) return { success: false, error: 'No hay sesión válida' };
 
+  // Obtener el childid numérico requerido por DepositMoney
+  const userInfo = await getUserInfo(username);
+  if (!userInfo || !userInfo.id) {
+    logger.error(`[JugayganaService] bonus: usuario ${username} no encontrado en JUGAYGANA`);
+    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
+  }
+
+  logger.info(
+    `[JugayganaService] bonus: attemptedAction=DepositMoney username=${username} ` +
+    `childid=${userInfo.id} deposit_type=individual_bonus amount=${amount}`
+  );
+
   try {
     const body = toFormUrlEncoded({
-      action: 'CREDITBALANCE',
+      action: 'DepositMoney',
       token: sessionToken,
-      username,
+      childid: userInfo.id,
       amount: Math.round(amount * 100),
+      currency: 'ARS',
       deposit_type: 'individual_bonus',
       description: description || `Bonificación - ${new Date().toLocaleString('es-AR')}`
     });
@@ -487,15 +501,20 @@ const bonus = async (username, amount, description = '') => {
       return { success: false, error: 'IP bloqueada / HTML' };
     }
 
-    if (data?.success) {
+    // Accept both snake_case and camelCase transfer id variants for API compatibility
+    if (data?.success || data?.transfer_id || data?.transferId) {
       return { 
         success: true, 
-        data: data.data,
-        newBalance: data.data?.user_balance_after
+        data: data.data || data,
+        newBalance: data.user_balance_after || data.data?.user_balance_after
       };
     }
     
-    return { success: false, error: data?.error || 'Bonificación falló' };
+    const errMsg = data?.error || data?.message || 'Bonificación falló';
+    logger.error(
+      `[JugayganaService] bonus: DepositMoney falló username=${username} error=${errMsg}`
+    );
+    return { success: false, error: errMsg };
   } catch (error) {
     logger.error('Error en bonificación JUGAYGANA:', error.message);
     return { success: false, error: error.message };
