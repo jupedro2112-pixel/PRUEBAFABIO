@@ -188,15 +188,14 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           reason = `Autenticación rechazada por el proveedor (${revenueResult.statusCode})`;
           if (providerMessage) reason += `: ${providerMessage}`;
           if (authDetail) {
-            reason += ` | authScheme=${authDetail.authScheme} tokenSource=${authDetail.tokenSource} tokenPresente=${authDetail.tokenPresente}`;
-            if (authDetail.reloginAttempted) reason += ' | reloginAttempted=true';
-            if (authDetail.isV1TokenForV2Api) {
-              reason += ' | CAUSA: token v1 no válido para API v2 REST';
-              if (authDetail.derivedLoginUrl) {
-                reason += ` | Configurar JUGAYGANA_REPORTS_LOGIN_URL=${authDetail.derivedLoginUrl}`;
-              } else {
-                reason += ' | Configurar JUGAYGANA_API_KEY o JUGAYGANA_REPORTS_LOGIN_URL';
-              }
+            reason += ` | diagnosisCategory=${revenueResult.diagnosisCategory || authDetail.diagnosisCategory || 'provider_response_inconclusive'}`;
+            reason += ` | providerStatus=${revenueResult.statusCode}`;
+            reason += ` | tokenSource=${authDetail.tokenSource}`;
+            reason += ` | cookiePresent=${authDetail.cookiePresente}`;
+            reason += ` | authModeTested=${authDetail.authModeTested || authDetail.authScheme || 'Bearer'}`;
+            if (authDetail.sessionState) reason += ` | sessionState=${authDetail.sessionState}`;
+            if (revenueResult.conclusion || authDetail.conclusion) {
+              reason += ` | conclusion=${revenueResult.conclusion || authDetail.conclusion}`;
             }
           }
         } else if (revenueResult.statusCode === 422) {
