@@ -85,8 +85,32 @@ const login = async () => {
       maxRedirects: 0
     });
 
-    if (resp.headers['set-cookie']) {
-      sessionCookie = resp.headers['set-cookie'].map(c => c.split(';')[0]).join('; ');
+    // ── Diagnóstico de set-cookie ─────────────────────────────────────────────
+    const rawSetCookie = resp.headers['set-cookie'];
+    if (rawSetCookie && Array.isArray(rawSetCookie) && rawSetCookie.length > 0) {
+      const parsed = rawSetCookie.map(c => c.split(';')[0]);
+      sessionCookie = parsed.join('; ');
+      logger.info(
+        `[JugayganaService] set-cookie presente en respuesta de login | ` +
+        `cantidad=${rawSetCookie.length} cookieAlmacenada=true ` +
+        `longitudCookie=${sessionCookie.length}chars`
+      );
+    } else if (rawSetCookie) {
+      // Existe pero no es un array; formato inesperado
+      sessionCookie = String(rawSetCookie).split(';')[0];
+      logger.warn(
+        `[JugayganaService] set-cookie presente pero en formato inesperado (no-array) | ` +
+        `tipo=${typeof rawSetCookie} cookieAlmacenada=true ` +
+        `longitudCookie=${sessionCookie.length}`
+      );
+    } else {
+      // El proveedor no devolvió set-cookie en esta respuesta de login
+      sessionCookie = null;
+      logger.info(
+        `[JugayganaService] El proveedor NO devolvió set-cookie en la respuesta de login | ` +
+        `cookieAlmacenada=false ` +
+        `conclusión=El login clásico no produce cookie de sesión reutilizable`
+      );
     }
 
     const data = parseJson(resp.data);
@@ -120,7 +144,10 @@ const login = async () => {
     sessionParentId = data?.user?.user_id ?? null;
     lastLogin = Date.now();
     
-    logger.info('Login exitoso en JUGAYGANA');
+    logger.info(
+      `[JugayganaService] Login exitoso en JUGAYGANA | ` +
+      `tokenObtenido=true cookieObtenida=${!!sessionCookie}`
+    );
     return true;
   } catch (error) {
     logger.error('Error en login JUGAYGANA:', error.message);
