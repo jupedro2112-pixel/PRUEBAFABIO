@@ -305,7 +305,11 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       );
       // ─────────────────────────────────────────────────────────────────────────
 
-      // Status: calculated only if there is something to pay; skipped if zero
+      // Status: calculated only if there is something to pay; skipped if zero revenue;
+      // 'paid' kept for records where everything was already settled and revenue hasn't grown.
+      // NOTE: when commissionAmount === 0 but totalOwnerRevenue > 0 it means the full period
+      // revenue is already settled — we keep status='paid' so the record shows as fully settled
+      // (not pending). This is correct: there is nothing new to pay for this commission record.
       const status = commissionAmount > 0
         ? 'calculated'
         : (totalOwnerRevenue <= 0 ? 'skipped' : 'paid');

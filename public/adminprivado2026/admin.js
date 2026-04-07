@@ -4259,8 +4259,9 @@ async function loadAdminUserReferrals(userId) {
 
         // Enriched commission rows with paid/pending breakdown
         const commissionRows = (d.commissions || []).slice(0, 30).map(c => {
-            const alreadyPaid = c.alreadyPaidAmount || c.settledCommissionAmount || 0;
-            const pending = c.pendingAmount != null ? c.pendingAmount : (c.status === 'calculated' ? c.commissionAmount : 0);
+            const alreadyPaid = c.alreadyPaidAmount != null ? c.alreadyPaidAmount : (c.settledCommissionAmount || 0);
+            // pendingAmount from API is always commissionAmount when > 0 (status-independent)
+            const pending = c.pendingAmount != null ? c.pendingAmount : (c.commissionAmount > 0 ? c.commissionAmount : 0);
             const isDelta = c.isDelta || alreadyPaid > 0;
             const statusColor = c.status === 'paid' ? '#00ff88' : c.status === 'calculated' ? '#f7931e' : c.status === 'excluded' ? '#ff4444' : '#888';
             const statusLabel = c.status === 'paid' ? '✅ Pagado' : c.status === 'calculated' ? '⏳ Pendiente' : c.status === 'excluded' ? '🚫 Excluido' : c.status;

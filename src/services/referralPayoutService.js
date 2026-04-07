@@ -83,9 +83,12 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
     }
 
     // Determine the sequence index for this payout (how many paid payouts already exist for this period+referrer)
+    // Coerce to strings to prevent any potential NoSQL injection from loosely-typed inputs
+    const safePeriodKey = String(periodKey);
+    const safeRefId = String(refId);
     const previousPaidPayoutsCount = await ReferralPayout.countDocuments({
-      periodKey,
-      referrerUserId: refId,
+      periodKey: safePeriodKey,
+      referrerUserId: safeRefId,
       status: 'paid'
     });
     const payoutIndex = previousPaidPayoutsCount + 1;
@@ -193,7 +196,9 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         }
       );
 
-      // Marcar comisiones elegibles como pagadas y registrar montos liquidados
+      // Mark commissions as paid (status and payoutId), then update settled amounts individually.
+      // commissionAmount is set to 0 intentionally: it represents "currently pending amount".
+      // The historical value is captured in settledCommissionAmount before being zeroed out.
       const eligibleIds = eligibleCommissions.map(c => c._id);
       await ReferralCommission.updateMany(
         { _id: { $in: eligibleIds } },
@@ -202,10 +207,6 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
             status: 'paid',
             paidAt: new Date(),
             payoutId: payoutDoc.id
-          },
-          // Accumulate settled amounts so the next delta calculation is correct
-          $inc: {
-            settledOwnerRevenue: 0 // updated individually below
           }
         }
       );

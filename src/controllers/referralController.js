@@ -501,9 +501,9 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
 
   // Financial summary using settled tracking fields
   const totalSettledCommission = commissions.reduce((sum, c) => sum + (c.settledCommissionAmount || 0), 0);
-  const totalPendingCommission = commissions
-    .filter(c => c.status === 'calculated')
-    .reduce((sum, c) => sum + c.commissionAmount, 0);
+  // pendingAmount is commissionAmount when it is > 0 and status is 'calculated'.
+  // A record with status 'paid' always has commissionAmount=0 (zeroed after payout).
+  const totalPendingCommission = commissions.reduce((sum, c) => sum + (c.commissionAmount > 0 ? c.commissionAmount : 0), 0);
   const totalGeneratedCommission = totalSettledCommission + totalPendingCommission;
 
   // Enrich commissions with computed fields for UI clarity
@@ -511,8 +511,9 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
     ...c,
     periodLabel: getPeriodLabel(c.periodKey),
     alreadyPaidAmount: c.settledCommissionAmount || 0,
-    pendingAmount: c.status === 'calculated' ? c.commissionAmount : 0,
-    totalGeneratedAmount: (c.settledCommissionAmount || 0) + (c.status === 'calculated' ? c.commissionAmount : 0),
+    // commissionAmount represents the current pending amount (0 after payout, delta after recalculation)
+    pendingAmount: c.commissionAmount > 0 ? c.commissionAmount : 0,
+    totalGeneratedAmount: (c.settledCommissionAmount || 0) + (c.commissionAmount > 0 ? c.commissionAmount : 0),
     isDelta: (c.settledCommissionAmount || 0) > 0
   }));
 
