@@ -317,12 +317,10 @@ async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInf
     body.token = token;
   }
 
-  const xTokenFingerprint = authInfo.source === 'env:JUGAYGANA_API_KEY'
-    ? '(static-api-key)'
-    : (token ? safeTokenFingerprint(token) : '(none)');
+  const xTokenPresent = !!token;
   logger.info(
     `[ReferralRevenue] POST royalty-statistics | authModeTested=X-Token authorizationBearerUsed=false ` +
-    `xTokenPresent=${!!token} xTokenFingerprint=${xTokenFingerprint} ` +
+    `xTokenPresent=${xTokenPresent} ` +
     `loginField=${REVENUE_LOGIN_FIELD} usuario=${username} ` +
     `${REVENUE_DATE_FROM_FIELD}=${fromFormatted} ${REVENUE_DATE_TO_FIELD}=${toFormatted} ` +
     `dateFormat=${REVENUE_DATE_FORMAT} tokenSource=${authInfo.source} ` +
