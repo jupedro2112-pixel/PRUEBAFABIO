@@ -446,13 +446,16 @@ async function getUserRevenueForPeriod(username, periodKey) {
   }
 
   const variantsTested = [];
+  // Compute token fingerprint once; never pass the API key value into logging functions
+  const isStaticApiKey = authInfo.source === 'env:JUGAYGANA_API_KEY';
+  const tokenFp = isStaticApiKey ? '(static-api-key)' : safeTokenFingerprint(authInfo.token);
 
   try {
     // ── Variante A: Bearer only (sin cookie) ──────────────────────────────────
     const variantA_auth = { ...authInfo, cookie: null };
     logger.info(
       `[ReferralRevenue] [Variante A] Bearer only | usuario=${username} ` +
-      `tokenSource=${authInfo.source} tokenFingerprint=${safeTokenFingerprint(authInfo.token, authInfo.source === 'env:JUGAYGANA_API_KEY')} ` +
+      `tokenSource=${authInfo.source} tokenFingerprint=${tokenFp} ` +
       `sessionState=${authInfo.sessionReused ? 'reutilizada' : 'login-fresco'} ` +
       `endpoint=${ADMIN_API_URL}`
     );
@@ -594,7 +597,7 @@ async function getUserRevenueForPeriod(username, periodKey) {
       logger.error(
         `[ReferralRevenue] Autenticación rechazada por el proveedor (${respFinal.status}) para ${username} | ` +
         `diagnosisCategory=${diagnosisCategory} | ` +
-        `tokenSource=${authInfo.source} tokenFingerprint=${safeTokenFingerprint(authInfo.token, authInfo.source === 'env:JUGAYGANA_API_KEY')} ` +
+        `tokenSource=${authInfo.source} tokenFingerprint=${tokenFp} ` +
         `cookiePresente=${!!authInfo.cookie} sessionState=${authInfo.sessionReused ? 'reutilizada' : 'login-fresco'} | ` +
         `variantesProbadas=[${variantsSummary}] authModeTested=${authModeTested} | ` +
         `providerStatus=${respFinal.status} providerMsg="${providerMsg || 'Access denied'}" ` +
