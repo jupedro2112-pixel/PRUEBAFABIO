@@ -539,7 +539,7 @@ const adminPayout = asyncHandler(async (req, res) => {
 
   const referrerUserId = rawReferrerUserId ? sanitizeString(rawReferrerUserId) : null;
 
-  logger.info(`[Admin] Pago de referidos iniciado por ${req.user.username} para ${periodKey}`);
+  logger.info(`[Admin] payout request started by=${req.user.username} periodKey=${periodKey}`);
 
   const result = await referralPayoutService.executePayoutsForPeriod(periodKey, {
     referrerUserId,
@@ -547,8 +547,27 @@ const adminPayout = asyncHandler(async (req, res) => {
     adminUsername: req.user.username
   });
 
+  // Determine logical status from actual outcome
+  let finalStatus;
+  if (result.payoutsCreated > 0 && result.payoutsFailed === 0) {
+    finalStatus = 'success';
+  } else if (result.payoutsCreated > 0 && result.payoutsFailed > 0) {
+    finalStatus = 'partial';
+  } else if (result.payoutsFailed > 0) {
+    finalStatus = 'failed';
+  } else {
+    // All skipped or no commissions — not a failure
+    finalStatus = 'success';
+  }
+
+  logger.info(
+    `[Admin] payout completed by=${req.user.username} periodKey=${periodKey} ` +
+    `payoutsCreated=${result.payoutsCreated} payoutsFailed=${result.payoutsFailed} ` +
+    `payoutsSkipped=${result.payoutsSkipped} finalPayoutStatus=${finalStatus}`
+  );
+
   res.json({
-    status: 'success',
+    status: finalStatus,
     data: result
   });
 });

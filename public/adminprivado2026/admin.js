@@ -4562,7 +4562,12 @@ async function adminReferralPayout() {
             showToast('⚠️ Pagos parciales', 'warning');
         } else if (failed > 0) {
             const errList = result.errors || [];
-            const errDetail = errList.slice(0, 3).map(e => e.referrerUsername + ': ' + e.error).join('; ');
+            const errDetail = errList.slice(0, 3).map(e => {
+                const who = e.referrer || e.referrerUsername || 'desconocido';
+                const rawMsg = e.message || e.error;
+                const msg = (rawMsg && typeof rawMsg === 'object') ? JSON.stringify(rawMsg) : (rawMsg || 'Error desconocido');
+                return `${who}: ${msg}`;
+            }).join('; ');
             const moreSuffix = errList.length > 3 ? ` (+${errList.length - 3} más)` : '';
             if (resultDiv) resultDiv.innerHTML = `<div style="color:#ff4444;padding:8px;">❌ Error al procesar pagos. ${errDetail ? errDetail + moreSuffix : 'Revisá el historial de pagos.'}</div>`;
             showToast('❌ Error en pagos', 'error');
