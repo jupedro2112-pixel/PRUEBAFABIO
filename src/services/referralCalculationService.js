@@ -144,21 +144,21 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       // Verificar si ya existe comisión para este período y usuario referido.
       // Se consulta siempre (tanto en preview como en calculate) para poder hacer upsert correcto.
-      // En modo calculate, si existe un registro previo NO pagado, se recalcula y reemplaza.
       const existing = await ReferralCommission.findOne({
         periodKey,
         referredUserId: referredUser.id
       }).lean();
 
       const existingCalculationFound = !!existing;
-      // Will replace when: not dryRun, record exists, and it is not already paid.
-      // Guard with !!existing for extra safety even though existingCalculationFound already implies it.
-      const existingCalculationWillBeReplaced = existingCalculationFound && !dryRun && !!existing && existing.status !== 'paid';
+      const existingIsPaid = existingCalculationFound && existing.status === 'paid';
+      // Will replace when: not dryRun and record exists (paid records get delta recalculation).
+      const existingCalculationWillBeReplaced = existingCalculationFound && !dryRun;
 
       logger.info(
         `[ReferralCalc] mode=${mode} period=${periodKey} referrer=${referrer.username} ` +
         `referredUser=${referredUser.username} ` +
         `existingCalculationFound=${existingCalculationFound} ` +
+        `existingIsPaid=${existingIsPaid} ` +
         `existingCalculationWillBeReplaced=${existingCalculationWillBeReplaced} ` +
         `calculationSource=fresh`
       );
@@ -267,24 +267,52 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
 
       const { totalOwnerRevenue, totalBets, totalWins, totalGgr, providers } = revenueResult;
 
+      // ── Incremental settlement: delta calculation ─────────────────────────────
+      // settledOwnerRevenue = revenue already settled in previous payouts for this record.
+      // We only generate commission on the NEW revenue since the last settlement cutoff.
+      const alreadySettledRevenue = existingIsPaid
+        ? (existing.settledOwnerRevenue != null ? existing.settledOwnerRevenue : existing.totalOwnerRevenue)
+        : 0;
+      const alreadySettledCommission = existingIsPaid
+        ? (existing.settledCommissionAmount != null ? existing.settledCommissionAmount : 0)
+        : 0;
+
+      // Revenue not yet settled
+      const newPendingRevenue = Math.max(0, totalOwnerRevenue - alreadySettledRevenue);
+      // Commission on new pending revenue only (delta)
+      const commissionAmount = newPendingRevenue > 0
+        ? newPendingRevenue * referralRate
+        : 0;
+
+      const calculationWindowStart = alreadySettledRevenue > 0
+        ? `after-settlement(${alreadySettledRevenue.toFixed(2)})`
+        : 'full-period';
+
       logger.info(
         `[ReferralCalc] Revenue obtenido | referido=${referredUser.username} referredUserId=${jugayganaUserId} ` +
         `GGR=${totalGgr?.toFixed(2)} ownerRevenue=${totalOwnerRevenue?.toFixed(2)} ` +
+        `alreadyPaidCommission=${alreadySettledCommission.toFixed(2)} ` +
+        `alreadySettledRevenue=${alreadySettledRevenue.toFixed(2)} ` +
+        `newPendingRevenue=${newPendingRevenue.toFixed(2)} ` +
+        `pendingCommission=${commissionAmount.toFixed(2)} ` +
+        `calculationWindowStart=${calculationWindowStart} ` +
+        `calculationWindowEnd=period-end ` +
         `individualRevenueFound=${revenueResult.individualRevenueFound ?? true} ` +
         `usedGlobalAggregate=${revenueResult.usedGlobalAggregate ?? false} ` +
         `revenueScope=${revenueResult.revenueScope || 'perUser'} ` +
         `revenueSourceField=${revenueResult.revenueSourceField || 'child_user_id'} ` +
-        `commissionCalculationMode=${revenueResult.commissionCalculationMode || 'individual_revenue'}`
+        `commissionCalculationMode=${existingIsPaid ? 'delta_after_settlement' : 'individual_revenue'}`
       );
+      // ─────────────────────────────────────────────────────────────────────────
 
-      // Solo revenue positivo genera comisión
-      const commissionAmount = totalOwnerRevenue > 0
-        ? totalOwnerRevenue * referralRate
-        : 0;
-
-      const status = totalOwnerRevenue <= 0 ? 'skipped' : 'calculated';
-      const reason = totalOwnerRevenue <= 0
-        ? `Revenue del período es $0 (GGR: $${(totalGgr ?? 0).toFixed(2)}, apuestas: $${(totalBets ?? 0).toFixed(2)}, ganancias: $${(totalWins ?? 0).toFixed(2)})`
+      // Status: calculated only if there is something to pay; skipped if zero
+      const status = commissionAmount > 0
+        ? 'calculated'
+        : (totalOwnerRevenue <= 0 ? 'skipped' : 'paid');
+      const reason = commissionAmount <= 0
+        ? (totalOwnerRevenue <= 0
+            ? `Revenue del período es $0 (GGR: $${(totalGgr ?? 0).toFixed(2)}, apuestas: $${(totalBets ?? 0).toFixed(2)}, ganancias: $${(totalWins ?? 0).toFixed(2)})`
+            : `Todo el revenue del período ya fue liquidado en un pago anterior (settledRevenue=$${alreadySettledRevenue.toFixed(2)})`)
         : null;
 
       const commissionData = {
@@ -301,6 +329,8 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         totalOwnerRevenue,
         referralRate,
         commissionAmount,
+        settledOwnerRevenue: alreadySettledRevenue,
+        settledCommissionAmount: alreadySettledCommission,
         providersBreakdown: providers || [],
         status,
         calculatedAt: new Date()
@@ -316,34 +346,39 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         totalWins,
         totalGgr,
         totalOwnerRevenue,
+        alreadySettledRevenue,
+        alreadySettledCommission,
+        newPendingRevenue,
         referralRate,
         commissionAmount,
         status,
-        reason: reason || undefined
+        reason: reason || undefined,
+        isDelta: existingIsPaid
       });
 
       if (!dryRun) {
         if (existing) {
-          // Never overwrite a paid commission
-          if (existing.status === 'paid') {
-            logger.info(
-              `[ReferralCalc] Comisión ya pagada para ${referredUser.username} período ${periodKey} - omitiendo | ` +
-              `mode=${mode} upsertPerformed=false calculationSource=persisted`
-            );
-            results.commissionsSkipped++;
-            continue;
-          }
           const { status: _omit, ...dataWithoutStatus } = commissionData;
           await ReferralCommission.updateOne(
             { _id: existing._id },
             { $set: { ...dataWithoutStatus, status } }
           );
-          logger.info(
-            `[ReferralCalc] Reemplazando cálculo previo | mode=${mode} period=${periodKey} ` +
-            `referrer=${referrer.username} referredUser=${referredUser.username} ` +
-            `upsertPerformed=true calculationSource=fresh existingCalculationFound=true ` +
-            `existingCalculationWillBeReplaced=true finalCommission=${commissionAmount.toFixed(2)}`
-          );
+          if (existingIsPaid && commissionAmount > 0) {
+            logger.info(
+              `[ReferralCalc] Delta commission calculated after last payment | mode=${mode} period=${periodKey} ` +
+              `referrer=${referrer.username} referredUser=${referredUser.username} ` +
+              `historicalCommission=${alreadySettledCommission.toFixed(2)} ` +
+              `newCommissionSinceLastSettlement=${commissionAmount.toFixed(2)} ` +
+              `upsertPerformed=true paymentApplied=false`
+            );
+          } else {
+            logger.info(
+              `[ReferralCalc] Reemplazando cálculo previo | mode=${mode} period=${periodKey} ` +
+              `referrer=${referrer.username} referredUser=${referredUser.username} ` +
+              `upsertPerformed=true calculationSource=fresh existingCalculationFound=true ` +
+              `finalCommission=${commissionAmount.toFixed(2)}`
+            );
+          }
         } else {
           await ReferralCommission.create(commissionData).catch(err => {
             if (err.code === 11000) {
