@@ -272,6 +272,13 @@ async function getActiveToken() {
       `tokenSource=jugayganaService sessionState=${sessionReused ? 'reutilizada' : 'login-fresco'} ` +
       `tokenFingerprint=${safeTokenFingerprint(token)}`
     );
+    if (!cookie) {
+      logger.info(
+        `[ReferralRevenue] getSessionCookie() devuelve null — ` +
+        `conclusión=El proveedor no devolvió set-cookie en el login clásico; ` +
+        `la prueba Bearer+Cookie no puede ejecutarse (variantBStatus será skipped(noCookie))`
+      );
+    }
     if (token) {
       return {
         token,
