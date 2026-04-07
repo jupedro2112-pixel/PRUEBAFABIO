@@ -370,7 +370,7 @@ async function getUserRevenueForPeriod(username, periodKey, jugayganaUserId) {
   // El endpoint royalty-statistics requiere child_user_id (ID numérico del proveedor) para filtrar
   // por usuario referido. Sin este campo, la API devuelve el agregado global del agente —
   // lo que causaba que todos los referidos mostraran los mismos valores enormes.
-  if (jugayganaUserId == null) {
+  if (jugayganaUserId === null || jugayganaUserId === undefined) {
     logger.warn(
       `[ReferralRevenue] referredUser=${username} jugayganaUserId=null | ` +
       `individualRevenueFound=false revenueScope=unknown usedGlobalAggregate=false ` +
