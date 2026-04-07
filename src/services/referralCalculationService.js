@@ -151,18 +151,25 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         continue;
       }
 
-      // Consultar revenue real en JUGAYGANA
-      // Usar jugayganaUsername si está disponible, sino caer en username
+      // Consultar revenue real en JUGAYGANA usando child_user_id (ID numérico del proveedor).
+      // El panel oficial envía { child_user_id: <numeric_id>, date_from, date_to }.
+      // Usar solo username/login en el body devuelve el agregado global del agente — ese era el bug
+      // que causaba que todos los referidos mostraran los mismos valores enormes.
+      // Si jugayganaUserId es null, el servicio retorna error explícito (revenue=0) en lugar de
+      // copiar el agregado global.
       const jugayganaUsername = referredUser.jugayganaUsername || referredUser.username;
+      const jugayganaUserId = referredUser.jugayganaUserId || null;
 
       logger.info(
-        `[ReferralCalc] Consultando revenue | referido=${referredUser.username} ` +
-        `jugayganaUsername=${jugayganaUsername} período=${periodKey}`
+        `[ReferralCalc] Consultando revenue | referido=${referredUser.username} referredUserId=${jugayganaUserId} ` +
+        `jugayganaUsername=${jugayganaUsername} período=${periodKey} ` +
+        `revenueScope=perUser commissionCalculationMode=individual_revenue`
       );
 
       const revenueResult = await referralRevenueService.getUserRevenueForPeriod(
         jugayganaUsername,
-        periodKey
+        periodKey,
+        jugayganaUserId
       );
 
       if (!revenueResult.success) {
@@ -248,8 +255,13 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       const { totalOwnerRevenue, totalBets, totalWins, totalGgr, providers } = revenueResult;
 
       logger.info(
-        `[ReferralCalc] Revenue obtenido | referido=${referredUser.username} ` +
-        `GGR=${totalGgr?.toFixed(2)} ownerRevenue=${totalOwnerRevenue?.toFixed(2)}`
+        `[ReferralCalc] Revenue obtenido | referido=${referredUser.username} referredUserId=${jugayganaUserId} ` +
+        `GGR=${totalGgr?.toFixed(2)} ownerRevenue=${totalOwnerRevenue?.toFixed(2)} ` +
+        `individualRevenueFound=${revenueResult.individualRevenueFound ?? true} ` +
+        `usedGlobalAggregate=${revenueResult.usedGlobalAggregate ?? false} ` +
+        `revenueScope=${revenueResult.revenueScope || 'perUser'} ` +
+        `revenueSourceField=${revenueResult.revenueSourceField || 'child_user_id'} ` +
+        `commissionCalculationMode=${revenueResult.commissionCalculationMode || 'individual_revenue'}`
       );
 
       // Solo revenue positivo genera comisión

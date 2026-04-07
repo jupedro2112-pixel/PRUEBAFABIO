@@ -18,7 +18,10 @@
  *   JUGAYGANA_REPORTS_USER             - (opcional) usuario para el login dedicado de reports (default: PLATFORM_USER)
  *   JUGAYGANA_REPORTS_PASS             - (opcional) contraseña para el login dedicado de reports (default: PLATFORM_PASS)
  *   JUGAYGANA_REPORTS_LOGIN_BODY_FIELD - (opcional) campo de usuario en el body del login dedicado (default: "login")
- *   JUGAYGANA_REVENUE_LOGIN_FIELD      - campo para el usuario en el body del revenue (default: "login")
+ *   JUGAYGANA_REVENUE_CHILD_USER_ID_FIELD - campo para el ID numérico del usuario referido (default: "child_user_id").
+ *                                        El panel oficial usa "child_user_id" con el ID numérico del proveedor.
+ *                                        Enviar un campo login/username devuelve el agregado global del agente.
+ *   JUGAYGANA_REVENUE_LOGIN_FIELD      - DEPRECATED: ya no se usa para identificar al usuario referido.
  *   JUGAYGANA_REVENUE_DATE_FORMAT      - formato de fechas ("iso", "epoch_ms", "epoch_s" – default: "iso")
  *   JUGAYGANA_REVENUE_DATE_FROM_FIELD  - nombre del campo fecha inicio en el body (default: "date_from")
  *   JUGAYGANA_REVENUE_DATE_TO_FIELD    - nombre del campo fecha fin en el body (default: "date_to")
@@ -61,18 +64,15 @@ const REPORTS_LOGIN_BODY_FIELD = ALLOWED_LOGIN_BODY_FIELDS.includes(REPORTS_LOGI
       return 'login';
     })();
 
-// Campo que identifica al jugador en el body de revenue ("login" es el estándar en v2 REST)
-const ALLOWED_LOGIN_FIELDS = ['login', 'username', 'player'];
-const REVENUE_LOGIN_FIELD_RAW = process.env.JUGAYGANA_REVENUE_LOGIN_FIELD || 'login';
-const REVENUE_LOGIN_FIELD = ALLOWED_LOGIN_FIELDS.includes(REVENUE_LOGIN_FIELD_RAW)
-  ? REVENUE_LOGIN_FIELD_RAW
-  : (() => {
-      logger.warn(
-        `[ReferralRevenue] JUGAYGANA_REVENUE_LOGIN_FIELD="${REVENUE_LOGIN_FIELD_RAW}" no es un valor válido ` +
-        `(permitidos: ${ALLOWED_LOGIN_FIELDS.join(', ')}). Usando "login".`
-      );
-      return 'login';
-    })();
+// Campo que identifica al usuario hijo (referido) en el body de revenue.
+// El panel oficial usa "child_user_id" con el ID numérico del proveedor.
+// Enviar solo un campo "login"/username devuelve el agregado global del agente, no datos individuales.
+const REVENUE_CHILD_USER_ID_FIELD = process.env.JUGAYGANA_REVENUE_CHILD_USER_ID_FIELD || 'child_user_id';
+
+// DEPRECATED: JUGAYGANA_REVENUE_LOGIN_FIELD ya no se usa para identificar al usuario referido.
+// El panel oficial usa child_user_id (ID numérico) — no un campo login/username.
+// Esta constante se mantiene solo para no romper configuraciones existentes, pero no se aplica al revenue.
+const REVENUE_LOGIN_FIELD = process.env.JUGAYGANA_REVENUE_LOGIN_FIELD || 'login';
 
 // Formato de fechas para el body ("iso" = "YYYY-MM-DD", "epoch_ms" = milisegundos, "epoch_s" = segundos)
 const ALLOWED_DATE_FORMATS = ['iso', 'epoch_ms', 'epoch_s'];
@@ -300,14 +300,25 @@ function formatRevenueDate(date, epochSecs) {
 
 /**
  * Ejecutar la llamada POST al endpoint de revenue con X-Token (igual que el panel oficial).
+ * Usa child_user_id (ID numérico del proveedor) para filtrar por usuario referido individual,
+ * replicando exactamente el payload que el panel oficial envía.
  * Retorna el objeto de respuesta de axios.
+ *
+ * @param {string} username - username del referido (solo para logging)
+ * @param {string|number} fromFormatted - fecha inicio
+ * @param {string|number} toFormatted - fecha fin
+ * @param {Object} authInfo - info de autenticación con token
+ * @param {number|string} jugayganaUserId - ID numérico del usuario en el proveedor (child_user_id)
  */
-async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo) {
+async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo, jugayganaUserId) {
   const { token } = authInfo;
   const headers = buildAuthHeaders(token);
 
+  // El panel oficial usa { child_user_id: <numeric_id>, date_from, date_to }.
+  // Enviar { login: username } en lugar de child_user_id devuelve el agregado global del agente,
+  // NO datos individuales del usuario referido — ese era el bug original.
   const body = {
-    [REVENUE_LOGIN_FIELD]: username,
+    [REVENUE_CHILD_USER_ID_FIELD]: jugayganaUserId,
     [REVENUE_DATE_FROM_FIELD]: fromFormatted,
     [REVENUE_DATE_TO_FIELD]: toFormatted
   };
@@ -319,10 +330,10 @@ async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInf
 
   const xTokenPresent = !!token;
   logger.info(
-    `[ReferralRevenue] POST royalty-statistics | authModeTested=X-Token authorizationBearerUsed=false ` +
-    `xTokenPresent=${xTokenPresent} ` +
-    `loginField=${REVENUE_LOGIN_FIELD} usuario=${username} ` +
-    `${REVENUE_DATE_FROM_FIELD}=${fromFormatted} ${REVENUE_DATE_TO_FIELD}=${toFormatted} ` +
+    `[ReferralRevenue] POST royalty-statistics | referredUser=${username} referredUserId=${jugayganaUserId} ` +
+    `revenueScope=perUser commissionCalculationMode=individual_revenue ` +
+    `authModeTested=X-Token authorizationBearerUsed=false xTokenPresent=${xTokenPresent} ` +
+    `childUserIdField=${REVENUE_CHILD_USER_ID_FIELD} ${REVENUE_DATE_FROM_FIELD}=${fromFormatted} ${REVENUE_DATE_TO_FIELD}=${toFormatted} ` +
     `dateFormat=${REVENUE_DATE_FORMAT} tokenSource=${authInfo.source} ` +
     `tokenEnBody=${REPORTS_TOKEN_IN_BODY} endpoint=${ADMIN_API_URL}`
   );
@@ -338,18 +349,45 @@ async function callRevenueEndpoint(username, fromFormatted, toFormatted, authInf
 }
 
 /**
- * Consultar royalty-statistics para un usuario y período.
+ * Consultar royalty-statistics para un usuario referido y período.
  * Usa X-Token igual que el panel oficial de JUGAYGANA.
+ * Usa child_user_id (ID numérico del proveedor) para obtener datos individuales del usuario referido.
  * NO usa Authorization: Bearer. NO usa Cookie.
+ * NO usa login/username como identificador de usuario (eso retorna el agregado global del agente).
  *
- * @param {string} username - username/login en JUGAYGANA
+ * @param {string} username - username del referido (para logging)
  * @param {string} periodKey - e.g. "2026-04"
+ * @param {number|string|null} jugayganaUserId - ID numérico del usuario en el proveedor (child_user_id).
+ *   Si es null, se retorna error explícito porque sin este ID la API devolvería el agregado global.
  * @returns {Object} resultado de revenue calculado
  */
-async function getUserRevenueForPeriod(username, periodKey) {
+async function getUserRevenueForPeriod(username, periodKey, jugayganaUserId) {
   const { fromEpoch, toEpoch, fromDate, toDate } = getPeriodRange(periodKey);
   const fromFormatted = formatRevenueDate(fromDate, fromEpoch);
   const toFormatted = formatRevenueDate(toDate, toEpoch);
+
+  // VERIFICACIÓN CRÍTICA: sin jugayganaUserId no es posible obtener revenue individual.
+  // El endpoint royalty-statistics requiere child_user_id (ID numérico del proveedor) para filtrar
+  // por usuario referido. Sin este campo, la API devuelve el agregado global del agente —
+  // lo que causaba que todos los referidos mostraran los mismos valores enormes.
+  if (jugayganaUserId == null) {
+    logger.warn(
+      `[ReferralRevenue] referredUser=${username} jugayganaUserId=null | ` +
+      `individualRevenueFound=false revenueScope=unknown usedGlobalAggregate=false ` +
+      `commissionCalculationMode=individual_revenue_unavailable | ` +
+      `royalty-statistics does not provide individual referred-user revenue without child_user_id. ` +
+      `El usuario no tiene jugayganaUserId asignado. Sincronizarlo con JUGAYGANA para habilitar ` +
+      `revenue individual. Revenue forzado a 0 para evitar usar el agregado global del agente.`
+    );
+    return {
+      success: false,
+      error: 'jugayganaUserId no disponible: no se puede obtener revenue individual sin child_user_id. ' +
+        'Sincronizar el usuario con JUGAYGANA para obtener su ID numérico de proveedor.',
+      individualRevenueFound: false,
+      usedGlobalAggregate: false,
+      commissionCalculationMode: 'individual_revenue_unavailable'
+    };
+  }
 
   const authInfo = await getActiveToken();
   const isStaticApiKey = authInfo.source === 'env:JUGAYGANA_API_KEY';
@@ -363,8 +401,8 @@ async function getUserRevenueForPeriod(username, periodKey) {
 
   if (!authInfo.token) {
     logger.error(
-      `[ReferralRevenue] Sin token para X-Token | usuario=${username} tokenSource=${authInfo.source} ` +
-      `xTokenPresent=false authorizationBearerUsed=false`
+      `[ReferralRevenue] Sin token para X-Token | referredUser=${username} referredUserId=${jugayganaUserId} ` +
+      `tokenSource=${authInfo.source} xTokenPresent=false authorizationBearerUsed=false`
     );
     return {
       success: false,
@@ -382,7 +420,9 @@ async function getUserRevenueForPeriod(username, periodKey) {
   }
 
   logger.info(
-    `[ReferralRevenue] Iniciando royalty-statistics con X-Token | usuario=${username} período=${periodKey} ` +
+    `[ReferralRevenue] Iniciando royalty-statistics con X-Token | ` +
+    `referredUser=${username} referredUserId=${jugayganaUserId} período=${periodKey} ` +
+    `revenueScope=perUser commissionCalculationMode=individual_revenue ` +
     `authModeTested=X-Token xTokenPresent=true xTokenFingerprint=${tokenFp} ` +
     `tokenSource=${authInfo.source} authorizationBearerUsed=false ` +
     `sessionState=${authInfo.sessionReused ? 'reutilizada' : 'login-fresco'} ` +
@@ -390,7 +430,7 @@ async function getUserRevenueForPeriod(username, periodKey) {
   );
 
   try {
-    const resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo);
+    const resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo, jugayganaUserId);
 
     const rawBody = resp.data == null
       ? '(empty)'
@@ -407,7 +447,8 @@ async function getUserRevenueForPeriod(username, periodKey) {
 
     logger.info(
       `[ReferralRevenue] royalty-statistics respuesta | authModeTested=X-Token authorizationBearerUsed=false ` +
-      `providerStatus=${resp.status} usuario=${username} ` +
+      `providerStatus=${resp.status} referredUser=${username} referredUserId=${jugayganaUserId} ` +
+      `revenueScope=perUser revenueSourceField=${REVENUE_CHILD_USER_ID_FIELD} ` +
       `providerMsg="${providerMsg || '(sin mensaje)'}" providerCode=${providerCode || '(sin código)'} | ` +
       `body=${rawBody}`
     );
@@ -418,14 +459,16 @@ async function getUserRevenueForPeriod(username, periodKey) {
       const isExplicitFailure = hasData && 'success' in resp.data && !resp.data.success;
       if (hasData && !isExplicitFailure) {
         logger.info(
-          `[ReferralRevenue] Éxito con X-Token | usuario=${username} período=${periodKey} ` +
+          `[ReferralRevenue] Éxito con X-Token | referredUser=${username} referredUserId=${jugayganaUserId} período=${periodKey} ` +
+          `individualRevenueFound=true usedGlobalAggregate=false revenueScope=perUser ` +
+          `revenueSourceField=${REVENUE_CHILD_USER_ID_FIELD} commissionCalculationMode=individual_revenue ` +
           `authModeTested=X-Token providerStatus=200 ` +
           `conclusion=El endpoint de revenue responde correctamente con X-Token como en el panel oficial`
         );
         return parseRoyaltyResponse(resp.data, username, periodKey);
       }
       logger.warn(
-        `[ReferralRevenue] Respuesta 200 pero no exitosa para ${username}: ${rawBody} | ` +
+        `[ReferralRevenue] Respuesta 200 pero no exitosa para referredUser=${username} referredUserId=${jugayganaUserId}: ${rawBody} | ` +
         `authModeTested=X-Token`
       );
       return { success: false, error: 'Respuesta no exitosa del endpoint', rawBody };
@@ -434,8 +477,8 @@ async function getUserRevenueForPeriod(username, periodKey) {
     // Error de validación
     if (resp.status === 422) {
       logger.warn(
-        `[ReferralRevenue] HTTP 422 - Validation error del proveedor para ${username} | ` +
-        `authModeTested=X-Token loginField=${REVENUE_LOGIN_FIELD} (valor="${username}"), ` +
+        `[ReferralRevenue] HTTP 422 - Validation error del proveedor para referredUser=${username} referredUserId=${jugayganaUserId} | ` +
+        `authModeTested=X-Token childUserIdField=${REVENUE_CHILD_USER_ID_FIELD} (valor=${jugayganaUserId}), ` +
         `dateFromField=${REVENUE_DATE_FROM_FIELD} (valor="${fromFormatted}"), ` +
         `dateToField=${REVENUE_DATE_TO_FIELD} (valor="${toFormatted}"), ` +
         `dateFormat=${REVENUE_DATE_FORMAT} | Respuesta proveedor: ${rawBody}`
@@ -447,7 +490,7 @@ async function getUserRevenueForPeriod(username, periodKey) {
       const conclusion = `authModeTested=X-Token providerStatus=${resp.status} ` +
         `Incluso con X-Token el endpoint fue rechazado; revisar permisos o headers/contexto adicionales del panel oficial`;
       logger.error(
-        `[ReferralRevenue] Autenticación rechazada (${resp.status}) para ${username} | ` +
+        `[ReferralRevenue] Autenticación rechazada (${resp.status}) para referredUser=${username} referredUserId=${jugayganaUserId} | ` +
         `authModeTested=X-Token xTokenPresent=true xTokenFingerprint=${tokenFp} ` +
         `authorizationBearerUsed=false tokenSource=${authInfo.source} ` +
         `sessionState=${authInfo.sessionReused ? 'reutilizada' : 'login-fresco'} ` +
@@ -478,7 +521,7 @@ async function getUserRevenueForPeriod(username, periodKey) {
 
     // Otro status de error
     logger.warn(
-      `[ReferralRevenue] HTTP ${resp.status} para ${username} | ` +
+      `[ReferralRevenue] HTTP ${resp.status} para referredUser=${username} referredUserId=${jugayganaUserId} | ` +
       `authModeTested=X-Token authorizationBearerUsed=false xTokenPresent=${!!authInfo.token} ` +
       `providerMsg="${providerMsg || '(sin mensaje)'}" providerCode=${providerCode || '(sin código)'} | ` +
       `endpoint=${ADMIN_API_URL} | respuesta=${rawBody}`
@@ -500,7 +543,7 @@ async function getUserRevenueForPeriod(username, periodKey) {
     };
 
   } catch (err) {
-    logger.error(`[ReferralRevenue] Error consultando royalty-statistics para ${username}: ${err.message}`);
+    logger.error(`[ReferralRevenue] Error consultando royalty-statistics para referredUser=${username} referredUserId=${jugayganaUserId}: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -553,7 +596,9 @@ function parseRoyaltyResponse(data, username, periodKey) {
     }
 
     logger.info(
-      `[ReferralRevenue] ${username} período ${periodKey}: ` +
+      `[ReferralRevenue] referredUser=${username} período ${periodKey}: ` +
+      `individualRevenueFound=true usedGlobalAggregate=false revenueScope=perUser ` +
+      `revenueSourceField=${REVENUE_CHILD_USER_ID_FIELD} commissionCalculationMode=individual_revenue | ` +
       `GGR=$${totalGgr.toFixed(2)}, ownerRevenue=$${totalOwnerRevenue.toFixed(2)}`
     );
 
@@ -566,7 +611,12 @@ function parseRoyaltyResponse(data, username, periodKey) {
       totalWins,
       totalGgr,
       providers: providersBreakdown,
-      totalOwnerRevenue
+      totalOwnerRevenue,
+      individualRevenueFound: true,
+      usedGlobalAggregate: false,
+      revenueScope: 'perUser',
+      revenueSourceField: REVENUE_CHILD_USER_ID_FIELD,
+      commissionCalculationMode: 'individual_revenue'
     };
   } catch (err) {
     logger.error(`[ReferralRevenue] Error parseando respuesta para ${username}:`, err.message);
