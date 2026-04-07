@@ -207,15 +207,25 @@ function classifyAuthFailure(variantsTested, tokenObtained) {
 
 /**
  * Genera la conclusión en español basada en la categoría de diagnóstico.
+ * @param {string} diagnosisCategory
+ * @param {string} tokenSource
+ * @param {Array<{variant: string, status: number}>} [variantsTested=[]]
  */
-function buildConclusion(diagnosisCategory, tokenSource) {
+function buildConclusion(diagnosisCategory, tokenSource, variantsTested = []) {
+  const variantBTested = variantsTested.some(v => v.variant === 'Bearer+Cookie');
   switch (diagnosisCategory) {
     case 'classic_token_rejected_by_endpoint':
-      return `La cuenta autenticó localmente (${tokenSource}) pero el endpoint rechaza el token en todas las variantes de auth probadas. El endpoint probablemente requiere un token de tipo diferente (API key REST o auth v2 distinta).`;
+      if (variantBTested) {
+        return `Bearer+Cookie no cambió la respuesta; el problema apunta a que este endpoint requiere otro tipo de auth o token distinto (${tokenSource}).`;
+      }
+      return `La cuenta autenticó localmente (${tokenSource}) pero el endpoint rechaza el token. Variante Bearer+Cookie no fue probada (no hay cookie de sesión). El endpoint probablemente requiere un token de tipo diferente.`;
     case 'classic_token_obtained_but_insufficient_permissions':
-      return `La cuenta autenticó localmente (${tokenSource}) pero el proveedor indica que la cuenta no tiene permisos para el endpoint royalty-statistics. Verificar permisos de la cuenta en el panel del proveedor.`;
+      if (variantBTested) {
+        return `Bearer+Cookie no cambió la respuesta; el problema apunta a permisos insuficientes de la cuenta en el proveedor (${tokenSource}). Verificar permisos en el panel del proveedor.`;
+      }
+      return `La cuenta autenticó localmente (${tokenSource}) pero el proveedor indica que la cuenta no tiene permisos para el endpoint royalty-statistics. Variante Bearer+Cookie no fue probada (no hay cookie de sesión). Verificar permisos de la cuenta en el panel del proveedor.`;
     case 'classic_token_auth_shape_mismatch':
-      return `El endpoint acepta el token clásico únicamente cuando se envía con Cookie de sesión además del Bearer. Configurar auth combinada Bearer+Cookie.`;
+      return `El endpoint requiere Bearer+Cookie: Bearer solo falló pero Bearer+Cookie tuvo éxito. Configurar auth combinada Bearer+Cookie.`;
     default:
       return `La respuesta del proveedor no permite determinar si el fallo es por tipo de token o por permisos de cuenta.`;
   }
@@ -589,7 +599,7 @@ async function getUserRevenueForPeriod(username, periodKey) {
 
     if (respFinal.status === 401 || respFinal.status === 403) {
       const diagnosisCategory = classifyAuthFailure(variantsTested, !!authInfo.token);
-      const conclusion = buildConclusion(diagnosisCategory, authInfo.source);
+      const conclusion = buildConclusion(diagnosisCategory, authInfo.source, variantsTested);
       const variantsSummary = variantsTested
         .map(v => `${v.variant}→${v.status}`)
         .join(' | ');

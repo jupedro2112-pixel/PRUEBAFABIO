@@ -193,6 +193,14 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
             reason += ` | tokenSource=${authDetail.tokenSource}`;
             reason += ` | cookiePresent=${authDetail.cookiePresente}`;
             reason += ` | authModeTested=${authDetail.authModeTested || authDetail.authScheme || 'Bearer'}`;
+            if (authDetail.variantsTested && authDetail.variantsTested.length > 0) {
+              const varA = authDetail.variantsTested.find(v => v.variant === 'Bearer');
+              const varB = authDetail.variantsTested.find(v => v.variant === 'Bearer+Cookie');
+              if (varA) reason += ` | variantAStatus=${varA.status}`;
+              if (varB) reason += ` | variantBStatus=${varB.status}`;
+              else if (!authDetail.cookiePresente) reason += ` | variantBStatus=skipped(noCookie)`;
+              else reason += ` | variantBStatus=skipped`;
+            }
             if (authDetail.sessionState) reason += ` | sessionState=${authDetail.sessionState}`;
             if (revenueResult.conclusion || authDetail.conclusion) {
               reason += ` | conclusion=${revenueResult.conclusion || authDetail.conclusion}`;
