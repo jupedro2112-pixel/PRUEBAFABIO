@@ -4101,44 +4101,62 @@ async function loadAdminReferralSummary() {
         const referrers = data.data?.topReferrers || [];
         const summary = data.data?.summary || {};
 
-        // Render global summary cards
+        // Render global dashboard cards
         if (summaryContainer) {
-            const cardStyle = 'background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;text-align:center;';
-            summaryContainer.innerHTML = `
-                <div style="${cardStyle}">
-                    <div style="font-size:24px;font-weight:bold;color:#d4af37;">${summary.totalReferrers || 0}</div>
-                    <div style="font-size:11px;color:#888;margin-top:4px;">Referidores activos</div>
-                </div>
-                <div style="${cardStyle}">
-                    <div style="font-size:24px;font-weight:bold;color:#00ff88;">${summary.totalReferred || 0}</div>
-                    <div style="font-size:11px;color:#888;margin-top:4px;">Usuarios referidos</div>
-                </div>
-            `;
+            const card = (value, label, color, bg) =>
+                `<div style="background:${bg};border:1px solid ${color}33;border-radius:10px;padding:14px 10px;text-align:center;">
+                    <div style="font-size:22px;font-weight:bold;color:${color};">${value}</div>
+                    <div style="font-size:11px;color:#888;margin-top:4px;">${label}</div>
+                 </div>`;
+            summaryContainer.innerHTML =
+                card(summary.totalReferrers || 0, 'Referidores activos', '#d4af37', 'rgba(212,175,55,0.05)') +
+                card(summary.totalReferred || 0, 'Usuarios referidos', '#00ff88', 'rgba(0,255,136,0.05)') +
+                card(fmtARS(summary.totalHistoricalPaid || 0), 'Total pagado', '#00ff88', 'rgba(0,255,136,0.05)') +
+                card(fmtARS(summary.totalPending || 0), 'Pendiente de pago', '#f7931e', 'rgba(247,147,30,0.05)') +
+                card(fmtARS(summary.totalGenerated || 0), 'Total generado', '#b0b0b0', 'rgba(255,255,255,0.03)') +
+                card(summary.totalPayouts || 0, 'Pagos realizados', '#888', 'rgba(255,255,255,0.03)') +
+                card(fmtARS(summary.currentPeriodPending || 0), `Pendiente ${summary.currentPeriodKey || ''}`, '#f7931e', 'rgba(247,147,30,0.05)');
         }
 
         if (referrers.length === 0) {
             container.innerHTML = '<span style="color:#888;">No hay referidores activos todavía.</span>';
             return;
         }
-        container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+
+        container.innerHTML = `
+        <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;min-width:700px;">
             <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                <th style="padding:6px 4px;">Usuario</th>
-                <th style="padding:6px 4px;">Código</th>
-                <th style="padding:6px 4px;">Referidos</th>
-                <th style="padding:6px 4px;">Referidos (nombres)</th>
-                <th style="padding:6px 4px;">Tier</th>
-                <th style="padding:6px 4px;">Acciones</th>
+                <th style="padding:7px 6px;">Usuario</th>
+                <th style="padding:7px 6px;">Código</th>
+                <th style="padding:7px 6px;text-align:center;">Referidos</th>
+                <th style="padding:7px 6px;text-align:right;">Total Pagado</th>
+                <th style="padding:7px 6px;text-align:right;">Pendiente</th>
+                <th style="padding:7px 6px;text-align:right;">Total Generado</th>
+                <th style="padding:7px 6px;">Último Pago</th>
+                <th style="padding:7px 6px;">Acciones</th>
             </tr></thead>
             <tbody>
-            ${referrers.map(r => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:6px 4px;color:#fff;">${r.username}</td>
-                <td style="padding:6px 4px;color:#d4af37;letter-spacing:2px;">${r.referralCode || '—'}</td>
-                <td style="padding:6px 4px;color:#00ff88;font-weight:bold;">${r.totalReferreds}</td>
-                <td style="padding:6px 4px;color:#b0b0b0;font-size:11px;">${(r.referredUsernames || []).slice(0, 5).join(', ')}${r.totalReferreds > 5 ? ` +${r.totalReferreds - 5} más` : ''}</td>
-                <td style="padding:6px 4px;color:#888;">${r.referralTier || 'default'}</td>
-                <td style="padding:6px 4px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
-            </tr>`).join('')}
-            </tbody></table>`;
+            ${referrers.map(r => {
+                const fs = r.financialStats || {};
+                const hasPending = (fs.totalPendingCommission || 0) > 0;
+                return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <td style="padding:7px 6px;color:#fff;font-weight:bold;">${r.username}${r.excludedFromReferral ? ' <span style="color:#ff4444;font-size:10px;">EXCLUIDO</span>' : ''}</td>
+                    <td style="padding:7px 6px;color:#d4af37;letter-spacing:2px;font-size:12px;">${r.referralCode || '—'}</td>
+                    <td style="padding:7px 6px;color:#00ff88;font-weight:bold;text-align:center;">${r.totalReferreds}</td>
+                    <td style="padding:7px 6px;color:#00ff88;text-align:right;">${fmtARS(fs.totalSettledCommission || 0)}</td>
+                    <td style="padding:7px 6px;text-align:right;">
+                        <span style="color:${hasPending?'#f7931e':'#888'};font-weight:${hasPending?'bold':'normal'};">${fmtARS(fs.totalPendingCommission || 0)}</span>
+                        ${hasPending ? '<span style="color:#f7931e;font-size:10px;margin-left:4px;">●</span>' : ''}
+                    </td>
+                    <td style="padding:7px 6px;color:#b0b0b0;text-align:right;">${fmtARS(fs.totalGenerated || 0)}</td>
+                    <td style="padding:7px 6px;color:#888;font-size:11px;">${fs.lastPayoutDate ? new Date(fs.lastPayoutDate).toLocaleDateString('es-AR') : '—'}</td>
+                    <td style="padding:7px 6px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
+                </tr>`;
+            }).join('')}
+            </tbody>
+        </table>
+        </div>`;
     } catch (e) {
         container.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
     }
@@ -4149,7 +4167,13 @@ async function loadAdminReferralPayouts() {
     if (!container) return;
     container.innerHTML = '<span style="color:#888;font-size:12px;">Cargando...</span>';
     try {
-        const res = await fetch(`${API_URL}/api/referrals/admin/payouts?limit=20`, {
+        const statusFilter = document.getElementById('referralPayoutFilterStatus')?.value || '';
+        const periodFilter = document.getElementById('referralPayoutFilterPeriod')?.value?.trim() || '';
+        const params = new URLSearchParams({ limit: 50 });
+        if (statusFilter) params.append('status', statusFilter);
+        if (periodFilter && /^\d{4}-\d{2}$/.test(periodFilter)) params.append('period', periodFilter);
+
+        const res = await fetch(`${API_URL}/api/referrals/admin/payouts?${params}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) {
@@ -4159,28 +4183,44 @@ async function loadAdminReferralPayouts() {
         const data = await res.json();
         const payouts = data.data?.payouts || [];
         if (payouts.length === 0) {
-            container.innerHTML = '<span style="color:#888;">No hay pagos registrados todavía.</span>';
+            container.innerHTML = '<span style="color:#888;padding:12px;display:block;">No hay pagos registrados para los filtros aplicados.</span>';
             return;
         }
-        container.innerHTML = `<table style="width:100%;border-collapse:collapse;">
+
+        const statusBadge = (s, isDelta) => {
+            const color = s === 'paid' ? '#00ff88' : s === 'failed' ? '#ff4444' : '#f7931e';
+            const label = s === 'paid' ? '✅ Pagado' : s === 'failed' ? '❌ Fallido' : '⏳ Pendiente';
+            const delta = isDelta ? '<span style="color:#888;font-size:10px;margin-left:4px;">Δ delta</span>' : '';
+            return `<span style="color:${color};font-size:11px;">${label}${delta}</span>`;
+        };
+
+        container.innerHTML = `
+        <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;min-width:600px;">
             <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                <th style="padding:6px 4px;">Período</th>
-                <th style="padding:6px 4px;">Referidor</th>
-                <th style="padding:6px 4px;">Monto</th>
-                <th style="padding:6px 4px;">Referidos</th>
-                <th style="padding:6px 4px;">Estado</th>
-                <th style="padding:6px 4px;">Fecha</th>
+                <th style="padding:7px 6px;">Período</th>
+                <th style="padding:7px 6px;">Referidor</th>
+                <th style="padding:7px 6px;text-align:right;">Monto Acreditado</th>
+                <th style="padding:7px 6px;text-align:center;">Referidos</th>
+                <th style="padding:7px 6px;text-align:center;">#</th>
+                <th style="padding:7px 6px;">Estado</th>
+                <th style="padding:7px 6px;">Fecha Pago</th>
+                <th style="padding:7px 6px;font-size:10px;">ID Pago</th>
             </tr></thead>
             <tbody>
             ${payouts.map(p => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:6px 4px;color:#b0b0b0;">${p.periodLabel || p.periodKey}</td>
-                <td style="padding:6px 4px;color:#fff;">${p.referrerUsername}</td>
-                <td style="padding:6px 4px;color:#d4af37;font-weight:bold;">$${new Intl.NumberFormat('es-AR').format(Math.round(p.totalCommissionAmount || 0))}</td>
-                <td style="padding:6px 4px;color:#00ff88;">${p.referralCount}</td>
-                <td style="padding:6px 4px;"><span style="color:${p.status==='paid'?'#00ff88':p.status==='failed'?'#ff4444':'#f7931e'}">${p.status}</span></td>
-                <td style="padding:6px 4px;color:#888;font-size:11px;">${p.creditedAt ? new Date(p.creditedAt).toLocaleDateString('es-AR') : '—'}</td>
+                <td style="padding:7px 6px;color:#b0b0b0;">${p.periodLabel || p.periodKey}</td>
+                <td style="padding:7px 6px;color:#fff;font-weight:bold;">${p.referrerUsername}</td>
+                <td style="padding:7px 6px;color:#d4af37;font-weight:bold;text-align:right;">${fmtARS(p.totalCommissionAmount || 0)}</td>
+                <td style="padding:7px 6px;color:#00ff88;text-align:center;">${p.referralCount || 0}</td>
+                <td style="padding:7px 6px;color:#888;text-align:center;font-size:11px;">${p.payoutIndex ? `#${p.payoutIndex}` : '#1'}</td>
+                <td style="padding:7px 6px;">${statusBadge(p.status, p.isDelta)}</td>
+                <td style="padding:7px 6px;color:#888;font-size:11px;">${p.creditedAt ? new Date(p.creditedAt).toLocaleString('es-AR', {dateStyle:'short',timeStyle:'short'}) : '—'}</td>
+                <td style="padding:7px 6px;color:#444;font-size:10px;font-family:monospace;">${(p.id || '').substring(0, 8)}…</td>
             </tr>`).join('')}
-            </tbody></table>`;
+            </tbody>
+        </table>
+        </div>`;
     } catch (e) {
         container.innerHTML = '<span style="color:#ff4444;font-size:12px;">Error cargando historial de pagos.</span>';
     }
@@ -4204,87 +4244,134 @@ async function loadAdminUserReferrals(userId) {
         const data = await res.json();
         const d = data.data;
         const u = d.user;
+        const fs = d.financialSummary || {};
 
         const referredRows = (d.referredUsers || []).map(ru => `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:5px 4px;color:#fff;">${ru.username}</td>
-                <td style="padding:5px 4px;color:#b0b0b0;font-size:11px;">${fmtDate(ru.referredAt)}</td>
-                <td style="padding:5px 4px;">
+                <td style="padding:5px 6px;color:#fff;">${ru.username}</td>
+                <td style="padding:5px 6px;color:#b0b0b0;font-size:11px;">${fmtDate(ru.referredAt)}</td>
+                <td style="padding:5px 6px;">
                     <span style="color:${ru.referralStatus==='active'?'#00ff88':ru.referralStatus==='referred'?'#f7931e':'#888'};font-size:11px;">${ru.referralStatus || '—'}</span>
                 </td>
-                <td style="padding:5px 4px;color:${ru.excludedFromReferral?'#ff4444':'#888'};font-size:11px;">${ru.excludedFromReferral ? '❌ Excluido' : '✅ Activo'}</td>
+                <td style="padding:5px 6px;color:${ru.excludedFromReferral?'#ff4444':'#888'};font-size:11px;">${ru.excludedFromReferral ? '❌ Excluido' : '✅ Activo'}</td>
             </tr>
         `).join('');
 
-        const commissionRows = (d.commissions || []).slice(0, 20).map(c => `
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:5px 4px;color:#b0b0b0;">${fmtPeriod(c.periodKey)}</td>
-                <td style="padding:5px 4px;color:#fff;">${c.referredUsername}</td>
-                <td style="padding:5px 4px;color:#888;">${fmtARS(c.totalBets)}</td>
-                <td style="padding:5px 4px;color:#888;">${fmtARS(c.totalGgr)}</td>
-                <td style="padding:5px 4px;color:#b0b0b0;">${fmtARS(c.totalOwnerRevenue)}</td>
-                <td style="padding:5px 4px;color:#d4af37;font-weight:bold;">${fmtARS(c.commissionAmount)}</td>
-                <td style="padding:5px 4px;">
-                    <span style="color:${c.status==='paid'?'#00ff88':c.status==='calculated'?'#f7931e':c.status==='excluded'?'#ff4444':'#888'};font-size:11px;">${c.status}</span>
+        // Enriched commission rows with paid/pending breakdown
+        const commissionRows = (d.commissions || []).slice(0, 30).map(c => {
+            const alreadyPaid = c.alreadyPaidAmount != null ? c.alreadyPaidAmount : (c.settledCommissionAmount || 0);
+            // pendingAmount from API is always commissionAmount when > 0 (status-independent)
+            const pending = c.pendingAmount != null ? c.pendingAmount : (c.commissionAmount > 0 ? c.commissionAmount : 0);
+            const isDelta = c.isDelta || alreadyPaid > 0;
+            const statusColor = c.status === 'paid' ? '#00ff88' : c.status === 'calculated' ? '#f7931e' : c.status === 'excluded' ? '#ff4444' : '#888';
+            const statusLabel = c.status === 'paid' ? '✅ Pagado' : c.status === 'calculated' ? '⏳ Pendiente' : c.status === 'excluded' ? '🚫 Excluido' : c.status;
+            return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);${isDelta?'background:rgba(212,175,55,0.03);':''}">
+                <td style="padding:5px 6px;color:#b0b0b0;">${fmtPeriod(c.periodKey)}${isDelta?'<span style="color:#d4af37;font-size:10px;margin-left:3px;">Δ</span>':''}</td>
+                <td style="padding:5px 6px;color:#fff;">${c.referredUsername}</td>
+                <td style="padding:5px 6px;color:#888;text-align:right;">${fmtARS(c.totalOwnerRevenue)}</td>
+                <td style="padding:5px 6px;color:#00ff88;text-align:right;font-size:11px;">${fmtARS(alreadyPaid)}</td>
+                <td style="padding:5px 6px;text-align:right;">
+                    <span style="color:${pending>0?'#f7931e':'#888'};font-weight:${pending>0?'bold':'normal'};">${fmtARS(pending)}</span>
                 </td>
-            </tr>
-        `).join('');
+                <td style="padding:5px 6px;color:#d4af37;font-weight:bold;text-align:right;">${fmtARS(alreadyPaid + pending)}</td>
+                <td style="padding:5px 6px;"><span style="color:${statusColor};font-size:11px;">${statusLabel}</span></td>
+            </tr>`;
+        }).join('');
+
+        const payoutRows = (d.payouts || []).map(p => {
+            const isDelta = p.isDelta;
+            const statusColor = p.status === 'paid' ? '#00ff88' : p.status === 'failed' ? '#ff4444' : '#f7931e';
+            return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:5px 6px;color:#b0b0b0;">${fmtPeriod(p.periodKey)}</td>
+                <td style="padding:5px 6px;color:#d4af37;font-weight:bold;text-align:right;">${fmtARS(p.totalCommissionAmount)}</td>
+                <td style="padding:5px 6px;color:#888;text-align:center;">${p.payoutIndex ? `#${p.payoutIndex}` : '#1'}${isDelta?' <span style="font-size:10px;color:#888;">Δ</span>':''}</td>
+                <td style="padding:5px 6px;"><span style="color:${statusColor};font-size:11px;">${p.status === 'paid' ? '✅ Pagado' : p.status === 'failed' ? '❌ Fallido' : '⏳ Pendiente'}</span></td>
+                <td style="padding:5px 6px;color:#888;font-size:11px;">${fmtDate(p.creditedAt)}</td>
+            </tr>`;
+        }).join('');
 
         if (detailContent) {
             detailContent.innerHTML = `
-                <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.1);">
-                    <div style="display:flex;gap:20px;flex-wrap:wrap;">
-                        <div><span style="color:#888;font-size:11px;">USUARIO</span><br><span style="color:#fff;font-weight:bold;">${u.username}</span></div>
-                        <div><span style="color:#888;font-size:11px;">CÓDIGO</span><br><span style="color:#d4af37;letter-spacing:2px;font-weight:bold;">${u.referralCode || '—'}</span></div>
-                        <div><span style="color:#888;font-size:11px;">TOTAL REFERIDOS</span><br><span style="color:#00ff88;font-weight:bold;font-size:20px;">${d.totalReferred}</span></div>
-                        <div><span style="color:#888;font-size:11px;">COMISIONES PAGADAS</span><br><span style="color:#d4af37;font-weight:bold;">${fmtARS(d.totalCommissionHistorical)}</span></div>
-                        ${u.excludedFromReferral ? '<div><span style="color:#ff4444;font-size:11px;">⚠️ EXCLUIDO DEL SISTEMA</span></div>' : ''}
+                <!-- Financial header -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.08);">
+                    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;text-align:center;">
+                        <div style="color:#888;font-size:10px;margin-bottom:4px;">USUARIO</div>
+                        <div style="color:#fff;font-weight:bold;">${u.username}</div>
                     </div>
+                    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;text-align:center;">
+                        <div style="color:#888;font-size:10px;margin-bottom:4px;">CÓDIGO</div>
+                        <div style="color:#d4af37;letter-spacing:2px;font-weight:bold;">${u.referralCode || '—'}</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px;text-align:center;">
+                        <div style="color:#888;font-size:10px;margin-bottom:4px;">REFERIDOS</div>
+                        <div style="color:#00ff88;font-weight:bold;font-size:20px;">${d.totalReferred}</div>
+                    </div>
+                    <div style="background:rgba(0,255,136,0.03);border:1px solid rgba(0,255,136,0.15);border-radius:8px;padding:10px;text-align:center;">
+                        <div style="color:#888;font-size:10px;margin-bottom:4px;">TOTAL PAGADO</div>
+                        <div style="color:#00ff88;font-weight:bold;">${fmtARS(fs.totalSettledCommission || d.totalCommissionHistorical || 0)}</div>
+                    </div>
+                    <div style="background:rgba(247,147,30,0.03);border:1px solid rgba(247,147,30,0.15);border-radius:8px;padding:10px;text-align:center;">
+                        <div style="color:#888;font-size:10px;margin-bottom:4px;">PENDIENTE</div>
+                        <div style="color:#f7931e;font-weight:bold;">${fmtARS(fs.totalPendingCommission || 0)}</div>
+                    </div>
+                    <div style="background:rgba(212,175,55,0.03);border:1px solid rgba(212,175,55,0.12);border-radius:8px;padding:10px;text-align:center;">
+                        <div style="color:#888;font-size:10px;margin-bottom:4px;">TOTAL GENERADO</div>
+                        <div style="color:#d4af37;font-weight:bold;">${fmtARS(fs.totalGeneratedCommission || 0)}</div>
+                    </div>
+                    ${u.excludedFromReferral ? '<div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:10px;text-align:center;grid-column:span 2;"><span style="color:#ff4444;font-size:12px;">⚠️ USUARIO EXCLUIDO DEL SISTEMA DE REFERIDOS</span></div>' : ''}
                 </div>
 
                 ${d.referredUsers && d.referredUsers.length > 0 ? `
-                <div style="margin-bottom:14px;">
-                    <h4 style="color:#d4af37;margin-bottom:8px;">👥 Usuarios Referidos (${d.referredUsers.length})</h4>
-                    <table style="width:100%;border-collapse:collapse;">
+                <div style="margin-bottom:16px;">
+                    <h4 style="color:#d4af37;margin-bottom:8px;font-size:13px;">👥 Usuarios Referidos (${d.referredUsers.length})</h4>
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;min-width:400px;">
                         <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                            <th style="padding:5px 4px;">Usuario</th>
-                            <th style="padding:5px 4px;">Registro</th>
-                            <th style="padding:5px 4px;">Estado</th>
-                            <th style="padding:5px 4px;">Acceso</th>
+                            <th style="padding:5px 6px;">Usuario</th>
+                            <th style="padding:5px 6px;">Registro</th>
+                            <th style="padding:5px 6px;">Estado</th>
+                            <th style="padding:5px 6px;">Acceso</th>
                         </tr></thead>
                         <tbody>${referredRows}</tbody>
                     </table>
+                    </div>
                 </div>` : '<div style="color:#888;font-size:12px;margin-bottom:14px;">Sin usuarios referidos en la base de datos.</div>'}
 
                 ${d.commissions && d.commissions.length > 0 ? `
-                <div style="margin-bottom:14px;">
-                    <h4 style="color:#d4af37;margin-bottom:8px;">💰 Comisiones Calculadas</h4>
-                    <table style="width:100%;border-collapse:collapse;">
+                <div style="margin-bottom:16px;">
+                    <h4 style="color:#d4af37;margin-bottom:8px;font-size:13px;">💰 Historial de Comisiones <span style="color:#888;font-size:11px;font-weight:normal;">(Δ = comisión delta tras pago previo)</span></h4>
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;min-width:600px;">
                         <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                            <th style="padding:5px 4px;">Período</th>
-                            <th style="padding:5px 4px;">Referido</th>
-                            <th style="padding:5px 4px;">Apuestas</th>
-                            <th style="padding:5px 4px;">GGR</th>
-                            <th style="padding:5px 4px;">Rev. Dueño</th>
-                            <th style="padding:5px 4px;">Comisión</th>
-                            <th style="padding:5px 4px;">Estado</th>
+                            <th style="padding:5px 6px;">Período</th>
+                            <th style="padding:5px 6px;">Referido</th>
+                            <th style="padding:5px 6px;text-align:right;">Rev. Dueño</th>
+                            <th style="padding:5px 6px;text-align:right;color:#00ff88;">Ya Pagado</th>
+                            <th style="padding:5px 6px;text-align:right;color:#f7931e;">Pendiente</th>
+                            <th style="padding:5px 6px;text-align:right;">Total</th>
+                            <th style="padding:5px 6px;">Estado</th>
                         </tr></thead>
                         <tbody>${commissionRows}</tbody>
                     </table>
+                    </div>
                 </div>` : '<div style="color:#888;font-size:12px;margin-bottom:14px;">Sin comisiones calculadas aún. Usá Preview/Calcular para generar los datos.</div>'}
 
                 ${d.payouts && d.payouts.length > 0 ? `
                 <div>
-                    <h4 style="color:#d4af37;margin-bottom:8px;">📤 Pagos Realizados</h4>
-                    ${d.payouts.map(p => `
-                        <div style="padding:8px;background:rgba(0,255,136,0.03);border:1px solid rgba(0,255,136,0.1);border-radius:6px;margin-bottom:6px;display:flex;justify-content:space-between;">
-                            <span style="color:#b0b0b0;">${fmtPeriod(p.periodKey)}</span>
-                            <span style="color:#d4af37;font-weight:bold;">${fmtARS(p.totalCommissionAmount)}</span>
-                            <span style="color:${p.status==='paid'?'#00ff88':'#f7931e'};font-size:11px;">${p.status}</span>
-                            <span style="color:#888;font-size:11px;">${fmtDate(p.creditedAt)}</span>
-                        </div>
-                    `).join('')}
-                </div>` : ''}
+                    <h4 style="color:#d4af37;margin-bottom:8px;font-size:13px;">📤 Historial de Pagos Realizados</h4>
+                    <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;min-width:400px;">
+                        <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+                            <th style="padding:5px 6px;">Período</th>
+                            <th style="padding:5px 6px;text-align:right;">Monto</th>
+                            <th style="padding:5px 6px;text-align:center;">Pago #</th>
+                            <th style="padding:5px 6px;">Estado</th>
+                            <th style="padding:5px 6px;">Fecha</th>
+                        </tr></thead>
+                        <tbody>${payoutRows}</tbody>
+                    </table>
+                    </div>
+                </div>` : '<div style="color:#888;font-size:12px;">Sin pagos realizados aún.</div>'}
             `;
         }
     } catch (e) {
@@ -4432,22 +4519,29 @@ function renderReferralCalcResult(data, container, actionLabel) {
                     <th style="padding:4px 6px;">Revenue ok</th>
                     <th style="padding:4px 6px;">GGR</th>
                     <th style="padding:4px 6px;">Rev. Dueño</th>
-                    <th style="padding:4px 6px;">Comisión</th>
+                    <th style="padding:4px 6px;color:#00ff88;">Ya Pagado</th>
+                    <th style="padding:4px 6px;color:#f7931e;">Pendiente</th>
                     <th style="padding:4px 6px;">Estado</th>
                     <th style="padding:4px 6px;">Nota</th>
                 </tr></thead>
                 <tbody>
-                ${details.map(d => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <td style="padding:4px 6px;color:#fff;font-size:12px;">${escHtml(d.referredUsername)}</td>
-                    <td style="padding:4px 6px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername != null ? d.jugayganaUsername : d.referredUsername)}</td>
-                    <td style="padding:4px 6px;color:#888;font-size:11px;">${escHtml(d.periodKey || data.periodKey || '')}</td>
-                    <td style="padding:4px 6px;">${revenueOkLabel(d)}</td>
-                    <td style="padding:4px 6px;color:#b0b0b0;font-size:12px;">${d.status !== 'error' ? fmtARS(d.totalGgr != null ? d.totalGgr : 0) : '—'}</td>
-                    <td style="padding:4px 6px;color:#b0b0b0;font-size:12px;">${d.status !== 'error' ? fmtARS(d.totalOwnerRevenue) : '—'}</td>
-                    <td style="padding:4px 6px;color:#d4af37;font-weight:bold;font-size:12px;">${fmtARS(d.commissionAmount)}</td>
-                    <td style="padding:4px 6px;"><span style="color:${statusColor(d.status)};font-size:11px;">${escHtml(d.status)}</span></td>
-                    <td style="padding:4px 6px;color:#888;font-size:10px;max-width:200px;word-break:break-word;">${escHtml(d.reason || '')}</td>
-                </tr>`).join('')}
+                ${details.map(d => {
+                    const alreadyPaid = d.alreadySettledCommission || 0;
+                    const pending = d.commissionAmount || 0;
+                    const isDelta = d.isDelta || alreadyPaid > 0;
+                    return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);${isDelta?'background:rgba(212,175,55,0.02);':''}">
+                        <td style="padding:4px 6px;color:#fff;font-size:12px;">${escHtml(d.referredUsername)}${isDelta?'<span style="color:#d4af37;font-size:10px;margin-left:3px;" title="Delta: pago incremental">Δ</span>':''}</td>
+                        <td style="padding:4px 6px;color:#aaa;font-size:11px;">${escHtml(d.jugayganaUsername != null ? d.jugayganaUsername : d.referredUsername)}</td>
+                        <td style="padding:4px 6px;color:#888;font-size:11px;">${escHtml(d.periodKey || data.periodKey || '')}</td>
+                        <td style="padding:4px 6px;">${revenueOkLabel(d)}</td>
+                        <td style="padding:4px 6px;color:#b0b0b0;font-size:12px;">${d.status !== 'error' ? fmtARS(d.totalGgr != null ? d.totalGgr : 0) : '—'}</td>
+                        <td style="padding:4px 6px;color:#b0b0b0;font-size:12px;">${d.status !== 'error' ? fmtARS(d.totalOwnerRevenue) : '—'}</td>
+                        <td style="padding:4px 6px;color:#00ff88;font-size:12px;">${fmtARS(alreadyPaid)}</td>
+                        <td style="padding:4px 6px;color:${pending>0?'#f7931e':'#888'};font-weight:${pending>0?'bold':'normal'};font-size:12px;">${fmtARS(pending)}</td>
+                        <td style="padding:4px 6px;"><span style="color:${statusColor(d.status)};font-size:11px;">${escHtml(d.status)}</span></td>
+                        <td style="padding:4px 6px;color:#888;font-size:10px;max-width:200px;word-break:break-word;">${escHtml(d.reason || '')}</td>
+                    </tr>`;
+                }).join('')}
                 </tbody>
             </table>
             </div>

@@ -1,6 +1,8 @@
 /**
  * Servicio de Pagos de Referidos
- * Fase B: agrupa comisiones calculadas, acredita fichas y marca como pagado
+ * Fase B: agrupa comisiones calculadas, acredita fichas y marca como pagado.
+ * Soporta pagos incrementales: si el referido sigue jugando después de un pago,
+ * el siguiente cálculo detecta el delta y este servicio puede pagar solo ese nuevo monto.
  */
 const { v4: uuidv4 } = require('uuid');
 const { User, Transaction, Message, ReferralCommission, ReferralPayout } = require('../models');
@@ -20,7 +22,7 @@ const { getPeriodLabel } = require('../utils/periodKey');
 async function executePayoutsForPeriod(periodKey, options = {}) {
   const { referrerUserId = null, adminId = null, adminUsername = null } = options;
 
-  logger.info(`[ReferralPayout] Iniciando pagos para período ${periodKey}`);
+  logger.info(`[ReferralPayout] payout request started period=${periodKey} admin=${adminUsername || 'system'}`);
 
   const results = {
     periodKey,
@@ -63,9 +65,14 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
     const paidReferralsCount = eligibleCommissions.length;
     const skippedReferralsCount = zeroAmountCommissions.length;
 
+    // Determine if any commission is a delta (incremental after a previous payout)
+    const isDeltaPayout = eligibleCommissions.some(c => (c.settledCommissionAmount || 0) > 0);
+    const payoutType = isDeltaPayout ? 'delta' : 'full';
+
     logger.info(
       `[ReferralPayout] payFlowStarted=true period=${periodKey} referrer=${group.referrerUsername} ` +
       `eligibleCommissionsCount=${paidReferralsCount} eligibleCommissionTotal=${totalAmount.toFixed(2)} ` +
+      `paymentType=${payoutType} ` +
       `zeroAmountReferralsExcluded=${zeroAmountReferralsExcluded} skippedReferralsCount=${skippedReferralsCount}`
     );
 
@@ -75,58 +82,48 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       continue;
     }
 
-    // Verificar si ya existe un payout pagado para este período
-    const existingPayout = await ReferralPayout.findOne({
-      periodKey,
-      referrerUserId: refId
-    }).lean();
-
-    if (existingPayout && existingPayout.status === 'paid') {
-      logger.warn(`[ReferralPayout] Payout ya pagado para ${group.referrerUsername} período ${periodKey}`);
-      results.payoutsSkipped++;
-      continue;
-    }
+    // Determine the sequence index for this payout (how many paid payouts already exist for this period+referrer)
+    // Coerce to strings to prevent any potential NoSQL injection from loosely-typed inputs
+    const safePeriodKey = String(periodKey);
+    const safeRefId = String(refId);
+    const previousPaidPayoutsCount = await ReferralPayout.countDocuments({
+      periodKey: safePeriodKey,
+      referrerUserId: safeRefId,
+      status: 'paid'
+    });
+    const payoutIndex = previousPaidPayoutsCount + 1;
 
     const periodLabel = getPeriodLabel(periodKey);
-    const description = `Ganancias por referidos - ${periodLabel}`;
+    const description = `Ganancias por referidos - ${periodLabel}${isDeltaPayout ? ` (pago #${payoutIndex})` : ''}`;
 
     let payoutDoc;
 
     try {
-      // Crear o actualizar documento de payout
-      if (existingPayout) {
-        payoutDoc = await ReferralPayout.findOneAndUpdate(
-          { _id: existingPayout._id },
-          {
-            $set: {
-              totalCommissionAmount: totalAmount,
-              referralCount: paidReferralsCount,
-              status: 'pending',
-              errorMessage: null
-            }
-          },
-          { new: true }
-        );
-      } else {
-        payoutDoc = await ReferralPayout.create({
-          id: uuidv4(),
-          periodKey,
-          referrerUserId: refId,
-          referrerUsername: group.referrerUsername,
-          currency: 'ARS',
-          totalCommissionAmount: totalAmount,
-          referralCount: paidReferralsCount,
-          status: 'pending',
-          details: { commissionIds: eligibleCommissions.map(c => c.id) }
-        });
-      }
+      // Always create a new payout document (incremental settlement support)
+      payoutDoc = await ReferralPayout.create({
+        id: uuidv4(),
+        periodKey,
+        referrerUserId: refId,
+        referrerUsername: group.referrerUsername,
+        currency: 'ARS',
+        totalCommissionAmount: totalAmount,
+        referralCount: paidReferralsCount,
+        status: 'pending',
+        payoutIndex,
+        isDelta: isDeltaPayout,
+        details: {
+          commissionIds: eligibleCommissions.map(c => c.id),
+          payoutType
+        }
+      });
 
       logger.info(
         `[ReferralPayout] historyRecordCreated=true referrer=${group.referrerUsername} ` +
-        `period=${periodKey} payoutId=${payoutDoc.id} paidReferralsCount=${paidReferralsCount}`
+        `period=${periodKey} payoutId=${payoutDoc.id} paidReferralsCount=${paidReferralsCount} ` +
+        `payoutIndex=${payoutIndex} isDelta=${isDeltaPayout}`
       );
 
-      // Acreditar fichas en JUGAYGANA usando bonus (individual_bonus)
+      // Acreditar fichas en JUGAYGANA usando CREDITBALANCE
       const referrer = await User.findOne({ id: refId }).lean();
       if (!referrer) {
         throw new Error(`Referidor ${refId} no encontrado en DB local`);
@@ -135,9 +132,10 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       const jugayganaUsername = referrer.jugayganaUsername || referrer.username;
 
       logger.info(
-        `[ReferralPayout] attemptedAction=DepositMoney deposit_type=individual_bonus ` +
+        `[ReferralPayout] attemptedAction=CREDITBALANCE ` +
         `attemptedStatusTransition=calculated->paid referrer=${group.referrerUsername} ` +
-        `jugayganaUsername=${jugayganaUsername} period=${periodKey} amount=${totalAmount.toFixed(2)}`
+        `jugayganaUsername=${jugayganaUsername} period=${periodKey} amount=${totalAmount.toFixed(2)} ` +
+        `paymentType=${payoutType} paymentApplied=false`
       );
 
       const creditResult = await jugayganaService.bonus(
@@ -179,7 +177,9 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         metadata: {
           periodKey,
           referralCount: paidReferralsCount,
-          payoutId: payoutDoc.id
+          payoutId: payoutDoc.id,
+          payoutIndex,
+          isDelta: isDeltaPayout
         }
       });
 
@@ -196,7 +196,9 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         }
       );
 
-      // Marcar solo las comisiones elegibles como pagadas (amount > 0)
+      // Mark commissions as paid (status and payoutId), then update settled amounts individually.
+      // commissionAmount is set to 0 intentionally: it represents "currently pending amount".
+      // The historical value is captured in settledCommissionAmount before being zeroed out.
       const eligibleIds = eligibleCommissions.map(c => c._id);
       await ReferralCommission.updateMany(
         { _id: { $in: eligibleIds } },
@@ -209,13 +211,41 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         }
       );
 
+      // Update each eligible commission individually to accumulate settled amounts correctly
+      for (const c of eligibleCommissions) {
+        const newSettledOwnerRevenue = c.totalOwnerRevenue;
+        const newSettledCommissionAmount = (c.settledCommissionAmount || 0) + c.commissionAmount;
+        await ReferralCommission.updateOne(
+          { _id: c._id },
+          {
+            $set: {
+              settledOwnerRevenue: newSettledOwnerRevenue,
+              settledCommissionAmount: newSettledCommissionAmount,
+              commissionAmount: 0
+            }
+          }
+        );
+        logger.info(
+          `[ReferralPayout] referral payout ledger updated successfully ` +
+          `referrer=${group.referrerUsername} referredUser=${c.referredUsername} ` +
+          `period=${periodKey} ` +
+          `historicalCommission=${(c.settledCommissionAmount || 0).toFixed(2)} ` +
+          `alreadyPaidCommission=${(c.settledCommissionAmount || 0).toFixed(2)} ` +
+          `newCommissionSinceLastSettlement=${c.commissionAmount.toFixed(2)} ` +
+          `settledOwnerRevenue=${newSettledOwnerRevenue.toFixed(2)} ` +
+          `settledCommissionAmount=${newSettledCommissionAmount.toFixed(2)} ` +
+          `paymentApplied=true paymentType=${payoutType}`
+        );
+      }
+
       // Enviar mensaje automático al usuario
-      await sendReferralCreditMessage(referrer, totalAmount, periodLabel);
+      await sendReferralCreditMessage(referrer, totalAmount, periodLabel, isDeltaPayout, payoutIndex);
 
       logger.info(
         `[ReferralPayout] paymentStatusPersisted=paid referrer=${group.referrerUsername} ` +
         `period=${periodKey} amount=${totalAmount.toFixed(2)} paidReferralsCount=${paidReferralsCount} ` +
-        `skippedReferralsCount=${skippedReferralsCount}`
+        `skippedReferralsCount=${skippedReferralsCount} payoutIndex=${payoutIndex} ` +
+        `recordsUpdated=${eligibleCommissions.length}`
       );
       logger.info(
         `[ReferralPayout] payment flow completed with persisted status=paid and uiSuccess=true ` +
@@ -227,7 +257,9 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         referrerUsername: group.referrerUsername,
         amount: totalAmount,
         referralCount: paidReferralsCount,
-        status: 'paid'
+        status: 'paid',
+        payoutIndex,
+        isDelta: isDeltaPayout
       });
     } catch (err) {
       const errMessage = typeof err.message === 'string' ? err.message : String(err.message || 'Error desconocido');
@@ -236,7 +268,8 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         `[ReferralPayout] Error pagando a ${group.referrerUsername}: ${errMessage}`
       );
       logger.error(
-        `[ReferralPayout] referrer=${group.referrerUsername} period=${periodKey} errorMessage=${errMessage}`
+        `[ReferralPayout] referrer=${group.referrerUsername} period=${periodKey} errorMessage=${errMessage} ` +
+        `finalPayoutStatus=failed paymentApplied=false`
       );
 
       // Marcar payout como fallido pero no eliminar
@@ -251,13 +284,8 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         `[ReferralPayout] paymentStatusPersisted=failed referrer=${group.referrerUsername} ` +
         `period=${periodKey} paidReferralsCount=0`
       );
-      logger.info(
-        `[ReferralPayout] payment flow completed with persisted status=failed and uiSuccess=false ` +
-        `referrer=${group.referrerUsername} period=${periodKey}`
-      );
 
       results.payoutsFailed++;
-      // Include 'referrer' and 'message' per spec; keep 'error' for frontend backward compatibility
       results.errors.push({
         referrer: group.referrerUsername,
         message: errMessage,
@@ -279,10 +307,13 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
 /**
  * Enviar mensaje automático al usuario sobre el crédito de referidos
  */
-async function sendReferralCreditMessage(user, amount, periodLabel) {
+async function sendReferralCreditMessage(user, amount, periodLabel, isDelta = false, payoutIndex = 1) {
   try {
     const amountFormatted = new Intl.NumberFormat('es-AR').format(Math.round(amount));
-    const content = `🎁 Se acreditaron $${amountFormatted} en fichas por ganancias de referidos correspondientes a ${periodLabel}.`;
+    const suffix = isDelta && payoutIndex > 1
+      ? ` (pago adicional #${payoutIndex} por actividad posterior al período)`
+      : '';
+    const content = `🎁 Se acreditaron $${amountFormatted} en fichas por ganancias de referidos correspondientes a ${periodLabel}${suffix}.`;
 
     await Message.create({
       id: uuidv4(),

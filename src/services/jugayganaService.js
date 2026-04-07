@@ -458,34 +458,25 @@ const withdraw = async (username, amount, description = '') => {
 };
 
 /**
- * Acreditar bonificación (individual_bonus)
- * Usa action=DepositMoney con childid (user_id numérico) — CREDITBALANCE no existe en esta API.
+ * Acreditar bonificación de referidos usando CREDITBALANCE
+ * Usa action=CREDITBALANCE con username — mismo mecanismo que deposit(), que está confirmado como funcional.
+ * Nota: DepositMoney fue descartado porque la API devuelve "action does not exist" para esa acción.
  */
 const bonus = async (username, amount, description = '') => {
   const ok = await ensureSession();
   if (!ok) return { success: false, error: 'No hay sesión válida' };
 
-  // Obtener el childid numérico requerido por DepositMoney
-  const userInfo = await getUserInfo(username);
-  if (!userInfo || !userInfo.id) {
-    logger.error(`[JugayganaService] bonus: usuario ${username} no encontrado en JUGAYGANA`);
-    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
-  }
-
   logger.info(
-    `[JugayganaService] bonus: attemptedAction=DepositMoney username=${username} ` +
-    `childid=${userInfo.id} deposit_type=individual_bonus amount=${amount}`
+    `[JugayganaService] bonus: attemptedAction=CREDITBALANCE username=${username} amount=${amount}`
   );
 
   try {
     const body = toFormUrlEncoded({
-      action: 'DepositMoney',
+      action: 'CREDITBALANCE',
       token: sessionToken,
-      childid: userInfo.id,
+      username,
       amount: Math.round(amount * 100),
-      currency: 'ARS',
-      deposit_type: 'individual_bonus',
-      description: description || `Bonificación - ${new Date().toLocaleString('es-AR')}`
+      description: description || `Bonificación referidos - ${new Date().toLocaleString('es-AR')}`
     });
 
     const headers = {};
@@ -512,7 +503,7 @@ const bonus = async (username, amount, description = '') => {
     
     const errMsg = data?.error || data?.message || 'Bonificación falló';
     logger.error(
-      `[JugayganaService] bonus: DepositMoney falló username=${username} error=${errMsg}`
+      `[JugayganaService] bonus: CREDITBALANCE falló username=${username} error=${errMsg}`
     );
     return { success: false, error: errMsg };
   } catch (error) {

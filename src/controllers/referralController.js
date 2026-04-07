@@ -267,6 +267,57 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
   const totalReferrers = referrerIdsAll.length;
   const totalReferred = await User.countDocuments({ referredByUserId: { $ne: null, $exists: true } });
 
+  // Global financial metrics from payout records (paid payouts = settled commissions)
+  const [globalPayoutStats] = await ReferralPayout.aggregate([
+    { $match: { status: 'paid' } },
+    {
+      $group: {
+        _id: null,
+        totalPaid: { $sum: '$totalCommissionAmount' },
+        payoutCount: { $sum: 1 }
+      }
+    }
+  ]);
+  const totalHistoricalPaid = globalPayoutStats?.totalPaid || 0;
+  const totalPayouts = globalPayoutStats?.payoutCount || 0;
+
+  // Global pending: sum of commissionAmount where status=calculated
+  const [globalPendingStats] = await ReferralCommission.aggregate([
+    { $match: { status: 'calculated' } },
+    {
+      $group: {
+        _id: null,
+        totalPending: { $sum: '$commissionAmount' }
+      }
+    }
+  ]);
+  const totalPending = globalPendingStats?.totalPending || 0;
+
+  // Global settled revenue (total ever generated via settled commissions)
+  const [globalSettledStats] = await ReferralCommission.aggregate([
+    {
+      $group: {
+        _id: null,
+        totalSettledCommission: { $sum: '$settledCommissionAmount' },
+        totalPendingCommission: { $sum: { $cond: [{ $eq: ['$status', 'calculated'] }, '$commissionAmount', 0] } }
+      }
+    }
+  ]);
+  const totalGenerated = (globalSettledStats?.totalSettledCommission || 0) + (globalSettledStats?.totalPendingCommission || 0);
+
+  // Current period stats
+  const currentPeriodKey = getCurrentPeriodKey();
+  const [currentPeriodStats] = await ReferralCommission.aggregate([
+    { $match: { periodKey: currentPeriodKey } },
+    {
+      $group: {
+        _id: null,
+        totalCommission: { $sum: '$commissionAmount' },
+        calculatedCount: { $sum: { $cond: [{ $eq: ['$status', 'calculated'] }, 1, 0] } }
+      }
+    }
+  ]);
+
   // Top referidores por todos los tiempos
   const topReferrers = await User.aggregate([
     {
@@ -300,6 +351,77 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
     { $limit: parseInt(limit) }
   ]);
 
+  // Enrich each referrer with historical paid and pending balances
+  if (topReferrers.length > 0) {
+    const referrerIds = topReferrers.map(r => r.id);
+
+    const commissionStats = await ReferralCommission.aggregate([
+      { $match: { referrerUserId: { $in: referrerIds } } },
+      {
+        $group: {
+          _id: '$referrerUserId',
+          totalSettled: { $sum: '$settledCommissionAmount' },
+          totalPending: { $sum: { $cond: [{ $eq: ['$status', 'calculated'] }, '$commissionAmount', 0] } },
+          currentPeriodCommission: {
+            $sum: { $cond: [{ $eq: ['$periodKey', currentPeriodKey] }, '$commissionAmount', 0] }
+          }
+        }
+      }
+    ]);
+    const commissionsByReferrer = new Map(commissionStats.map(c => [c._id, c]));
+
+    const lastPayoutStats = await ReferralPayout.aggregate([
+      { $match: { referrerUserId: { $in: referrerIds }, status: 'paid' } },
+      { $sort: { creditedAt: -1 } },
+      {
+        $group: {
+          _id: '$referrerUserId',
+          lastPayoutDate: { $first: '$creditedAt' },
+          lastPayoutAmount: { $first: '$totalCommissionAmount' },
+          lastPayoutPeriod: { $first: '$periodKey' }
+        }
+      }
+    ]);
+    const lastPayoutByReferrer = new Map(lastPayoutStats.map(p => [p._id, p]));
+
+    for (const r of topReferrers) {
+      const cs = commissionsByReferrer.get(r.id);
+      const lp = lastPayoutByReferrer.get(r.id);
+      r.financialStats = {
+        totalSettledCommission: cs?.totalSettled || 0,
+        totalPendingCommission: cs?.totalPending || 0,
+        totalGenerated: (cs?.totalSettled || 0) + (cs?.totalPending || 0),
+        currentPeriodCommission: cs?.currentPeriodCommission || 0,
+        lastPayoutDate: lp?.lastPayoutDate || null,
+        lastPayoutAmount: lp?.lastPayoutAmount || null,
+        lastPayoutPeriod: lp?.lastPayoutPeriod || null
+      };
+
+      // Period-specific stats if requested
+      if (period) {
+        const periodCommissionStats = await ReferralCommission.aggregate([
+          { $match: { periodKey: period, referrerUserId: r.id } },
+          {
+            $group: {
+              _id: null,
+              totalOwnerRevenue: { $sum: '$totalOwnerRevenue' },
+              totalCommission: { $sum: '$commissionAmount' },
+              totalSettled: { $sum: '$settledCommissionAmount' },
+              activeReferreds: { $sum: { $cond: [{ $gt: ['$totalOwnerRevenue', 0] }, 1, 0] } }
+            }
+          }
+        ]);
+        const ps = periodCommissionStats[0];
+        r.periodStats = ps ? {
+          totalOwnerRevenue: ps.totalOwnerRevenue,
+          estimatedCommission: ps.totalCommission,
+          settledCommission: ps.totalSettled,
+          activeReferreds: ps.activeReferreds
+        } : null;
+      }
+    }
+  }
+
   // Agregar estadísticas de comisiones por período para cada referidor
   const periodFilter = period ? { periodKey: period } : {};
   const payoutStats = await ReferralPayout.aggregate([
@@ -313,37 +435,18 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
     }
   ]);
 
-  // Comisiones calculadas del período para enriquecer los datos de referidores
-  if (topReferrers.length > 0 && period) {
-    const referrerIds = topReferrers.map(r => r.id);
-    const periodCommissions = await ReferralCommission.aggregate([
-      { $match: { periodKey: period, referrerUserId: { $in: referrerIds } } },
-      {
-        $group: {
-          _id: '$referrerUserId',
-          totalOwnerRevenue: { $sum: '$totalOwnerRevenue' },
-          totalCommission: { $sum: '$commissionAmount' },
-          activeReferreds: { $sum: { $cond: [{ $gt: ['$totalOwnerRevenue', 0] }, 1, 0] } }
-        }
-      }
-    ]);
-    const commissionsByReferrer = new Map(periodCommissions.map(c => [c._id, c]));
-    for (const r of topReferrers) {
-      const stats = commissionsByReferrer.get(r.id);
-      r.periodStats = stats ? {
-        totalOwnerRevenue: stats.totalOwnerRevenue,
-        estimatedCommission: stats.totalCommission,
-        activeReferreds: stats.activeReferreds
-      } : null;
-    }
-  }
-
   res.json({
     status: 'success',
     data: {
       summary: {
         totalReferrers,
         totalReferred,
+        totalHistoricalPaid,
+        totalPending,
+        totalGenerated,
+        totalPayouts,
+        currentPeriodKey,
+        currentPeriodPending: currentPeriodStats?.totalCommission || 0,
         period: period || null
       },
       topReferrers,
@@ -375,7 +478,7 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
 
   // Usuarios referidos por este usuario
   const referredUsers = await User.find({ referredByUserId: safeUserId })
-    .select('id username referredAt referralStatus excludedFromReferral')
+    .select('id username referredAt referralStatus excludedFromReferral jugayganaUsername jugayganaUserId')
     .lean();
 
   // Comisiones del período (o todas)
@@ -396,6 +499,24 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
 
   const frontendUrl = buildFrontendUrl(req);
 
+  // Financial summary using settled tracking fields
+  const totalSettledCommission = commissions.reduce((sum, c) => sum + (c.settledCommissionAmount || 0), 0);
+  // pendingAmount is commissionAmount when it is > 0 and status is 'calculated'.
+  // A record with status 'paid' always has commissionAmount=0 (zeroed after payout).
+  const totalPendingCommission = commissions.reduce((sum, c) => sum + (c.commissionAmount > 0 ? c.commissionAmount : 0), 0);
+  const totalGeneratedCommission = totalSettledCommission + totalPendingCommission;
+
+  // Enrich commissions with computed fields for UI clarity
+  const enrichedCommissions = commissions.map(c => ({
+    ...c,
+    periodLabel: getPeriodLabel(c.periodKey),
+    alreadyPaidAmount: c.settledCommissionAmount || 0,
+    // commissionAmount represents the current pending amount (0 after payout, delta after recalculation)
+    pendingAmount: c.commissionAmount > 0 ? c.commissionAmount : 0,
+    totalGeneratedAmount: (c.settledCommissionAmount || 0) + (c.commissionAmount > 0 ? c.commissionAmount : 0),
+    isDelta: (c.settledCommissionAmount || 0) > 0
+  }));
+
   res.json({
     status: 'success',
     data: {
@@ -409,12 +530,21 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
         excludedFromReferral: user.excludedFromReferral
       },
       referredUsers,
-      commissions: commissions.map(c => ({ ...c, periodLabel: getPeriodLabel(c.periodKey) })),
-      payouts: payouts.map(p => ({ ...p, periodLabel: getPeriodLabel(p.periodKey) })),
+      commissions: enrichedCommissions,
+      payouts: payouts.map(p => ({
+        ...p,
+        periodLabel: getPeriodLabel(p.periodKey)
+      })),
       totalReferred: referredUsers.length,
-      totalCommissionHistorical: commissions
-        .filter(c => c.status === 'paid')
-        .reduce((sum, c) => sum + c.commissionAmount, 0)
+      // Legacy field kept for backward compatibility
+      totalCommissionHistorical: totalSettledCommission,
+      // Richer financial breakdown
+      financialSummary: {
+        totalSettledCommission,
+        totalPendingCommission,
+        totalGeneratedCommission,
+        payoutCount: payouts.filter(p => p.status === 'paid').length
+      }
     }
   });
 });

@@ -750,65 +750,86 @@
                 <div class="panel-header">
                     <h2>🤝 Referidos</h2>
                 </div>
-                <div style="padding:16px;display:grid;gap:16px;max-width:1100px;">
+                <div style="padding:16px;display:grid;gap:20px;max-width:1200px;">
 
-                    <!-- Resumen global -->
-                    <div id="referralGlobalSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;"></div>
+                    <!-- ── DASHBOARD GLOBAL ── -->
+                    <div id="referralGlobalSummary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;"></div>
 
-                    <!-- Cálculo y pago -->
-                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
-                        <h3 style="margin-bottom:12px;color:#d4af37;">⚙️ Cálculo y Pago Mensual</h3>
-                        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
-                            <div>
-                                <label style="display:block;font-size:12px;color:#888;margin-bottom:4px;">Período (YYYY-MM)</label>
-                                <input type="text" id="referralPeriodInput" placeholder="2026-04" maxlength="7"
-                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:8px 12px;border-radius:6px;width:120px;">
-                            </div>
-                            <button onclick="adminReferralPreview()" class="btn-secondary" style="padding:8px 14px;border-radius:6px;cursor:pointer;">🔍 Preview</button>
-                            <button onclick="adminReferralCalculate()" class="btn-warning" style="padding:8px 14px;border-radius:6px;cursor:pointer;background:rgba(247,147,30,0.2);border:1px solid #f7931e;color:#f7931e;">📊 Calcular</button>
-                            <button onclick="adminReferralPayout()" class="btn-success" style="padding:8px 14px;border-radius:6px;cursor:pointer;background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;">💸 Pagar</button>
+                    <!-- ── CÁLCULO Y PAGO MENSUAL ── -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:18px;">
+                        <h3 style="margin-bottom:14px;color:#d4af37;font-size:15px;">⚙️ Cálculo y Pago Mensual</h3>
+                        <div style="background:rgba(247,147,30,0.05);border:1px solid rgba(247,147,30,0.15);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#b0b0b0;line-height:1.6;">
+                            <strong style="color:#f7931e;">Flujo recomendado:</strong>
+                            1) Ingresá el período → 2) <em>Preview</em> para ver estimación sin guardar →
+                            3) <em>Calcular</em> para guardar cálculo definitivo →
+                            4) <em>Pagar</em> para acreditar fichas.<br>
+                            <span style="color:#888;">Si el referido sigue jugando tras un pago, volvé a Calcular para obtener el <strong style="color:#d4af37;">delta pendiente</strong> y pagalo nuevamente.</span>
                         </div>
-                        <div id="referralActionResult" style="font-size:12px;color:#b0b0b0;max-height:400px;overflow-y:auto;"></div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+                            <div>
+                                <label style="display:block;font-size:11px;color:#888;margin-bottom:4px;">Período (YYYY-MM)</label>
+                                <input type="text" id="referralPeriodInput" placeholder="2026-04" maxlength="7"
+                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:8px 12px;border-radius:6px;width:120px;font-size:13px;">
+                            </div>
+                            <button onclick="adminReferralPreview()" style="padding:8px 16px;border-radius:6px;cursor:pointer;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);color:#ccc;font-size:13px;">🔍 Preview</button>
+                            <button onclick="adminReferralCalculate()" style="padding:8px 16px;border-radius:6px;cursor:pointer;background:rgba(247,147,30,0.15);border:1px solid #f7931e;color:#f7931e;font-size:13px;">📊 Calcular</button>
+                            <button onclick="adminReferralPayout()" style="padding:8px 16px;border-radius:6px;cursor:pointer;background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;font-size:13px;font-weight:bold;">💸 Pagar</button>
+                        </div>
+                        <div id="referralActionResult" style="font-size:12px;color:#b0b0b0;max-height:420px;overflow-y:auto;border-top:1px solid rgba(255,255,255,0.06);padding-top:10px;"></div>
                     </div>
 
-                    <!-- Top referidores -->
-                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                            <h3 style="color:#d4af37;">👑 Top Referidores</h3>
-                            <button onclick="loadAdminReferralSummary()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Actualizar</button>
+                    <!-- ── REFERIDORES ACTIVOS ── -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:18px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                            <h3 style="color:#d4af37;font-size:15px;">👑 Referidores</h3>
+                            <button onclick="loadAdminReferralSummary()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Actualizar</button>
                         </div>
                         <div id="referralTopList" style="font-size:13px;">Cargando...</div>
                     </div>
 
-                    <!-- Relaciones de referido (auditoría) -->
-                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                            <h3 style="color:#d4af37;">🔍 Relaciones de Referido (Auditoría)</h3>
+                    <!-- ── DETALLE DE REFERIDOR ── -->
+                    <div id="referralUserDetail" style="display:none;background:var(--bg-card,#1a1a2e);border:1px solid rgba(212,175,55,0.4);border-radius:12px;padding:18px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                            <h3 style="color:#d4af37;font-size:15px;">📊 Detalle de Referidor</h3>
+                            <button onclick="document.getElementById('referralUserDetail').style.display='none'" style="background:none;border:1px solid #444;color:#888;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;">✕ Cerrar</button>
+                        </div>
+                        <div id="referralUserDetailContent" style="font-size:13px;"></div>
+                    </div>
+
+                    <!-- ── HISTORIAL DE PAGOS ── -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:18px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                            <h3 style="color:#d4af37;font-size:15px;">📋 Historial de Pagos</h3>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                <select id="referralPayoutFilterStatus" style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#ccc;padding:5px 8px;border-radius:6px;font-size:12px;">
+                                    <option value="">Todos los estados</option>
+                                    <option value="paid">✅ Pagado</option>
+                                    <option value="pending">⏳ Pendiente</option>
+                                    <option value="failed">❌ Fallido</option>
+                                </select>
+                                <input type="text" id="referralPayoutFilterPeriod" placeholder="Período YYYY-MM"
+                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;width:130px;">
+                                <button onclick="loadAdminReferralPayouts()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Cargar</button>
+                            </div>
+                        </div>
+                        <div id="referralPayoutList" style="font-size:13px;">Cargando...</div>
+                    </div>
+
+                    <!-- ── RELACIONES DE REFERIDO (AUDITORÍA) ── -->
+                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:18px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                            <h3 style="color:#d4af37;font-size:15px;">🔍 Auditoría de Relaciones</h3>
                             <div style="display:flex;gap:8px;flex-wrap:wrap;">
                                 <input type="text" id="referralRelFilterReferrer" placeholder="Filtrar por referidor"
-                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:6px 10px;border-radius:6px;font-size:12px;width:160px;">
+                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:6px 10px;border-radius:6px;font-size:12px;width:150px;">
                                 <input type="text" id="referralRelFilterReferred" placeholder="Filtrar por referido"
-                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:6px 10px;border-radius:6px;font-size:12px;width:160px;">
+                                    style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:6px 10px;border-radius:6px;font-size:12px;width:150px;">
                                 <button onclick="loadAdminReferralRelationships()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Cargar</button>
                             </div>
                         </div>
                         <div id="referralRelationshipsList" style="font-size:13px;"><span style="color:#888;">Hacé clic en "Cargar" para ver las relaciones.</span></div>
                     </div>
 
-                    <!-- Detalle de un referidor -->
-                    <div id="referralUserDetail" style="display:none;background:var(--bg-card,#1a1a2e);border:1px solid rgba(212,175,55,0.3);border-radius:10px;padding:16px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                            <h3 style="color:#d4af37;">📊 Detalle de Referidor</h3>
-                            <button onclick="document.getElementById('referralUserDetail').style.display='none'" style="background:none;border:1px solid #444;color:#888;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">✕ Cerrar</button>
-                        </div>
-                        <div id="referralUserDetailContent" style="font-size:13px;"></div>
-                    </div>
-
-                    <!-- Historial de pagos -->
-                    <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:16px;">
-                        <h3 style="margin-bottom:12px;color:#d4af37;">📋 Historial de Pagos</h3>
-                        <div id="referralPayoutList" style="font-size:13px;">Cargando...</div>
-                    </div>
                 </div>
             </section>
 

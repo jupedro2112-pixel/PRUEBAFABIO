@@ -72,7 +72,22 @@ const referralCommissionSchema = new mongoose.Schema({
   commissionAmount: {
     type: Number,
     default: 0
+    // Represents the CURRENT PENDING amount not yet paid.
+    // After a payout it is set to 0; after a new delta calc it reflects the new pending amount.
   },
+  // --- Incremental settlement tracking ---
+  settledOwnerRevenue: {
+    type: Number,
+    default: 0
+    // Cumulative owner-revenue already settled in previous payouts for this record.
+    // Used to compute the delta on the next calculation window.
+  },
+  settledCommissionAmount: {
+    type: Number,
+    default: 0
+    // Cumulative commission already paid (sum across all past payouts for this record).
+  },
+  // ----------------------------------------
   providersBreakdown: {
     type: [providerBreakdownSchema],
     default: []
