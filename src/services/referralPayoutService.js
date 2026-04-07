@@ -141,7 +141,19 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       );
 
       if (!creditResult.success) {
-        throw new Error(creditResult.error || 'Error al acreditar en JUGAYGANA');
+        // Ensure the error is a plain string — creditResult.error may be an object from the API
+        const rawErr = creditResult.error;
+        const errStr =
+          typeof rawErr === 'string'
+            ? rawErr
+            : (rawErr && typeof rawErr === 'object'
+                ? (rawErr.message || rawErr.reason || rawErr.code || JSON.stringify(rawErr))
+                : 'Error al acreditar en JUGAYGANA');
+        logger.error(
+          `[ReferralPayout] errorCode=${rawErr && rawErr.code ? rawErr.code : 'n/a'} ` +
+          `errorMessage=${errStr} referrer=${group.referrerUsername} period=${periodKey}`
+        );
+        throw new Error(errStr);
       }
 
       // Registrar transacción local
@@ -212,15 +224,20 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         status: 'paid'
       });
     } catch (err) {
+      const errMessage = typeof err.message === 'string' ? err.message : String(err.message || 'Error desconocido');
+
       logger.error(
-        `[ReferralPayout] Error pagando a ${group.referrerUsername}: ${err.message}`
+        `[ReferralPayout] Error pagando a ${group.referrerUsername}: ${errMessage}`
+      );
+      logger.error(
+        `[ReferralPayout] referrer=${group.referrerUsername} period=${periodKey} errorMessage=${errMessage}`
       );
 
       // Marcar payout como fallido pero no eliminar
       if (payoutDoc) {
         await ReferralPayout.updateOne(
           { _id: payoutDoc._id },
-          { $set: { status: 'failed', errorMessage: err.message } }
+          { $set: { status: 'failed', errorMessage: errMessage } }
         ).catch(() => {});
       }
 
@@ -234,21 +251,20 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       );
 
       results.payoutsFailed++;
+      // Include 'referrer' and 'message' per spec; keep 'error' for frontend backward compatibility
       results.errors.push({
-        referrerUsername: group.referrerUsername,
-        error: err.message
+        referrer: group.referrerUsername,
+        message: errMessage,
+        error: errMessage
       });
     }
   }
 
-  const overallSuccess = results.payoutsCreated > 0 && results.payoutsFailed === 0;
-  const overallPartial = results.payoutsCreated > 0 && results.payoutsFailed > 0;
+  const finalPayoutStatus = results.payoutsFailed === 0 ? 'success' : results.payoutsCreated > 0 ? 'partial' : 'failed';
   logger.info(
-    `[ReferralPayout] Período ${periodKey}: ` +
-    `${results.payoutsCreated} pagados, ` +
-    `${results.payoutsFailed} fallidos, ` +
-    `${results.payoutsSkipped} sin cambios | ` +
-    `uiResponseSuccess=${overallSuccess} overallPartial=${overallPartial}`
+    `[ReferralPayout] periodKey=${periodKey} payoutsCreated=${results.payoutsCreated} ` +
+    `payoutsFailed=${results.payoutsFailed} payoutsSkipped=${results.payoutsSkipped} ` +
+    `finalPayoutStatus=${finalPayoutStatus}`
   );
 
   return results;
