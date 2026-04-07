@@ -205,7 +205,11 @@ async function getActiveToken() {
         validateStatus: s => s >= 200 && s < 500
       });
       let data = resp.data;
-      if (typeof data === 'string') { try { data = JSON.parse(data); } catch { /* ignore */ } }
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch {
+          logger.debug(`[ReferralRevenue] Login REST JSON (${REPORTS_LOGIN_URL}): body llegó como string no parseable (status=${resp.status})`);
+        }
+      }
 
       if (resp.status === 200 && data && typeof data === 'object') {
         const token = data?.token || data?.access_token || data?.sessionToken ||
@@ -236,7 +240,7 @@ async function getActiveToken() {
   logger.error(
     '[ReferralRevenue] No se pudo obtener token para revenue. ' +
     'Verificar PLATFORM_USER y PLATFORM_PASS (fuente primaria). ' +
-    (REPORTS_LOGIN_URL ? '' : 'JUGAYGANA_REPORTS_LOGIN_URL no configurado (fallback no disponible). ')
+    (!REPORTS_LOGIN_URL ? 'JUGAYGANA_REPORTS_LOGIN_URL no configurado (fallback no disponible). ' : '')
   );
   return { token: null, source: 'none', cookie: null };
 }
