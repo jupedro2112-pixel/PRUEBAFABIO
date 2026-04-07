@@ -198,7 +198,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
               const varB = authDetail.variantsTested.find(v => v.variant === 'Bearer+Cookie');
               if (varA) reason += ` | variantAStatus=${varA.status}`;
               if (varB) reason += ` | variantBStatus=${varB.status}`;
-              else if (!authDetail.cookiePresente) reason += ` | variantBStatus=skipped(noCookie)`;
+              else if (!authDetail.cookiePresente) reason += ` | variantBStatus=not_applicable_no_provider_cookie`;
               else reason += ` | variantBStatus=skipped`;
             }
             if (authDetail.sessionState) reason += ` | sessionState=${authDetail.sessionState}`;

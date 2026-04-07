@@ -216,14 +216,14 @@ function buildConclusion(diagnosisCategory, tokenSource, variantsTested = []) {
   switch (diagnosisCategory) {
     case 'classic_token_rejected_by_endpoint':
       if (variantBTested) {
-        return `Bearer+Cookie no cambió la respuesta; el problema apunta a que este endpoint requiere otro tipo de auth o token distinto (${tokenSource}).`;
+        return `Bearer+Cookie no cambió la respuesta; el endpoint requiere otro tipo de auth o token distinto (${tokenSource}).`;
       }
-      return `La cuenta autenticó localmente (${tokenSource}) pero el endpoint rechaza el token. Variante Bearer+Cookie no fue probada (no hay cookie de sesión). El endpoint probablemente requiere un token de tipo diferente.`;
+      return `El proveedor no entrega cookie reutilizable; Bearer+Cookie no aplica. Bearer rechazado: el endpoint requiere otro tipo de token o autenticación.`;
     case 'classic_token_obtained_but_insufficient_permissions':
       if (variantBTested) {
-        return `Bearer+Cookie no cambió la respuesta; el problema apunta a permisos insuficientes de la cuenta en el proveedor (${tokenSource}). Verificar permisos en el panel del proveedor.`;
+        return `Bearer+Cookie no cambió la respuesta; permisos insuficientes de la cuenta en el proveedor (${tokenSource}).`;
       }
-      return `La cuenta autenticó localmente (${tokenSource}) pero el proveedor indica que la cuenta no tiene permisos para el endpoint royalty-statistics. Variante Bearer+Cookie no fue probada (no hay cookie de sesión). Verificar permisos de la cuenta en el panel del proveedor.`;
+      return `El proveedor no entrega cookie reutilizable; Bearer+Cookie no aplica. Bearer rechazado con 401: permisos insuficientes o endpoint requiere otra autenticación/token.`;
     case 'classic_token_auth_shape_mismatch':
       return `El endpoint requiere Bearer+Cookie: Bearer solo falló pero Bearer+Cookie tuvo éxito. Configurar auth combinada Bearer+Cookie.`;
     default:
