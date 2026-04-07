@@ -4545,8 +4545,33 @@ async function adminReferralPayout() {
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
-        if (resultDiv) resultDiv.innerHTML = data.data ? `<div style="color:#00ff88;padding:8px;">✅ Pagos procesados correctamente. Revisá el historial de pagos.</div>` : '<span style="color:#f7931e;">Sin datos de pago.</span>';
-        showToast('✅ Pagos procesados', 'success');
+        const result = (data && data.data) || {};
+        const created = result.payoutsCreated || 0;
+        const failed = result.payoutsFailed || 0;
+        const skipped = result.payoutsSkipped || 0;
+
+        if (!res.ok) {
+            const errMsg = data?.message || data?.error || 'Error desconocido';
+            if (resultDiv) resultDiv.innerHTML = `<div style="color:#ff4444;padding:8px;">❌ Error al procesar pagos: ${errMsg}</div>`;
+            showToast('❌ Error en pagos', 'error');
+        } else if (created > 0 && failed === 0) {
+            if (resultDiv) resultDiv.innerHTML = `<div style="color:#00ff88;padding:8px;">✅ ${created} pago(s) procesado(s) correctamente. Revisá el historial de pagos.</div>`;
+            showToast('✅ Pagos procesados', 'success');
+        } else if (created > 0 && failed > 0) {
+            if (resultDiv) resultDiv.innerHTML = `<div style="color:#f7931e;padding:8px;">⚠️ ${created} pago(s) exitoso(s), ${failed} con error. Revisá el historial de pagos.</div>`;
+            showToast('⚠️ Pagos parciales', 'warning');
+        } else if (failed > 0) {
+            const errList = result.errors || [];
+            const errDetail = errList.slice(0, 3).map(e => e.referrerUsername + ': ' + e.error).join('; ');
+            const moreSuffix = errList.length > 3 ? ` (+${errList.length - 3} más)` : '';
+            if (resultDiv) resultDiv.innerHTML = `<div style="color:#ff4444;padding:8px;">❌ Error al procesar pagos. ${errDetail ? errDetail + moreSuffix : 'Revisá el historial de pagos.'}</div>`;
+            showToast('❌ Error en pagos', 'error');
+        } else if (skipped > 0 && created === 0 && failed === 0) {
+            if (resultDiv) resultDiv.innerHTML = `<div style="color:#888;padding:8px;">ℹ️ Sin pagos pendientes para ${period} (${skipped} ya procesado(s) o sin monto).</div>`;
+            showToast('ℹ️ Sin pagos pendientes', 'info');
+        } else {
+            if (resultDiv) resultDiv.innerHTML = '<span style="color:#f7931e;">Sin datos de pago para el período indicado.</span>';
+        }
         loadAdminReferralSummary();
     } catch (e) {
         if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
