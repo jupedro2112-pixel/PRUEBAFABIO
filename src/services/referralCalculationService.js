@@ -18,12 +18,14 @@ const logger = require('../utils/logger');
  */
 async function calculateCommissionsForPeriod(periodKey, options = {}) {
   const { dryRun = false, referrerUserId = null } = options;
+  const mode = dryRun ? 'preview' : 'calculate';
 
-  logger.info(`[ReferralCalc] Iniciando cálculo para período ${periodKey}${dryRun ? ' (DRY RUN)' : ''}`);
+  logger.info(`[ReferralCalc] Iniciando cálculo | period=${periodKey} mode=${mode}`);
 
   const results = {
     periodKey,
     dryRun,
+    mode,
     referrersProcessed: 0,
     referredsProcessed: 0,
     commissionsCreated: 0,
@@ -32,6 +34,8 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     errors: [],
     details: []
   };
+
+  let providerCallsCount = 0;
 
   // Armar mapa de referidores -> referidos
   // Buscar usuarios que tienen referredByUserId establecido (son los referidos)
@@ -99,11 +103,18 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         });
 
         if (!dryRun) {
+          // Find existing record first so we can preserve its id on update.
+          const excludedExisting = await ReferralCommission.findOne({
+            periodKey, referredUserId: referredUser.id
+          }).lean();
+          const excludedId = excludedExisting?.id || uuidv4();
+          // Use $set so stale excluded records are corrected (data is always refreshed).
+          // The id is included in $set to ensure it is always present, whether inserting or updating.
           await ReferralCommission.findOneAndUpdate(
             { periodKey, referredUserId: referredUser.id },
             {
-              $setOnInsert: {
-                id: uuidv4(),
+              $set: {
+                id: excludedId,
                 periodKey,
                 referrerUserId: referrerId,
                 referrerUsername: referrer.username,
@@ -131,25 +142,26 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         continue;
       }
 
-      // Verificar si ya existe comisión para este período y usuario referido
+      // Verificar si ya existe comisión para este período y usuario referido.
+      // Se consulta siempre (tanto en preview como en calculate) para poder hacer upsert correcto.
+      // En modo calculate, si existe un registro previo NO pagado, se recalcula y reemplaza.
       const existing = await ReferralCommission.findOne({
         periodKey,
         referredUserId: referredUser.id
       }).lean();
 
-      if (existing && !dryRun) {
-        logger.info(`[ReferralCalc] Comisión ya existe para ${referredUser.username} período ${periodKey}`);
-        results.commissionsSkipped++;
-        results.details.push({
-          referredUsername: referredUser.username,
-          referrerUsername: referrer.username,
-          totalOwnerRevenue: existing.totalOwnerRevenue,
-          commissionAmount: existing.commissionAmount,
-          status: existing.status,
-          reason: 'Comisión ya calculada previamente'
-        });
-        continue;
-      }
+      const existingCalculationFound = !!existing;
+      // Will replace when: not dryRun, record exists, and it is not already paid.
+      // Guard with !!existing for extra safety even though existingCalculationFound already implies it.
+      const existingCalculationWillBeReplaced = existingCalculationFound && !dryRun && !!existing && existing.status !== 'paid';
+
+      logger.info(
+        `[ReferralCalc] mode=${mode} period=${periodKey} referrer=${referrer.username} ` +
+        `referredUser=${referredUser.username} ` +
+        `existingCalculationFound=${existingCalculationFound} ` +
+        `existingCalculationWillBeReplaced=${existingCalculationWillBeReplaced} ` +
+        `calculationSource=fresh`
+      );
 
       // Consultar revenue real en JUGAYGANA usando child_user_id (ID numérico del proveedor).
       // El panel oficial envía { child_user_id: <numeric_id>, date_from, date_to }.
@@ -160,9 +172,10 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       const jugayganaUsername = referredUser.jugayganaUsername || referredUser.username;
       const jugayganaUserId = referredUser.jugayganaUserId || null;
 
+      providerCallsCount++;
       logger.info(
-        `[ReferralCalc] Consultando revenue | referido=${referredUser.username} referredUserId=${jugayganaUserId} ` +
-        `jugayganaUsername=${jugayganaUsername} período=${periodKey} ` +
+        `[ReferralCalc] Consultando revenue | mode=${mode} referido=${referredUser.username} referredUserId=${jugayganaUserId} ` +
+        `jugayganaUsername=${jugayganaUsername} período=${periodKey} providerCallsCount=${providerCallsCount} ` +
         `revenueScope=perUser commissionCalculationMode=individual_revenue`
       );
 
@@ -313,7 +326,10 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         if (existing) {
           // Never overwrite a paid commission
           if (existing.status === 'paid') {
-            logger.info(`[ReferralCalc] Comisión ya pagada para ${referredUser.username} período ${periodKey} - omitiendo`);
+            logger.info(
+              `[ReferralCalc] Comisión ya pagada para ${referredUser.username} período ${periodKey} - omitiendo | ` +
+              `mode=${mode} upsertPerformed=false calculationSource=persisted`
+            );
             results.commissionsSkipped++;
             continue;
           }
@@ -321,6 +337,12 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
           await ReferralCommission.updateOne(
             { _id: existing._id },
             { $set: { ...dataWithoutStatus, status } }
+          );
+          logger.info(
+            `[ReferralCalc] Reemplazando cálculo previo | mode=${mode} period=${periodKey} ` +
+            `referrer=${referrer.username} referredUser=${referredUser.username} ` +
+            `upsertPerformed=true calculationSource=fresh existingCalculationFound=true ` +
+            `existingCalculationWillBeReplaced=true finalCommission=${commissionAmount.toFixed(2)}`
           );
         } else {
           await ReferralCommission.create(commissionData).catch(err => {
@@ -330,6 +352,12 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
               throw err;
             }
           });
+          logger.info(
+            `[ReferralCalc] Nuevo registro guardado | mode=${mode} period=${periodKey} ` +
+            `referrer=${referrer.username} referredUser=${referredUser.username} ` +
+            `upsertPerformed=true calculationSource=fresh existingCalculationFound=false ` +
+            `finalCommission=${commissionAmount.toFixed(2)}`
+          );
         }
       }
 
@@ -342,12 +370,14 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
   }
 
   logger.info(
-    `[ReferralCalc] Período ${periodKey}: ` +
-    `${results.commissionsCreated} comisiones creadas, ` +
-    `${results.commissionsSkipped} sin revenue, ` +
-    `${results.commissionsExcluded} excluidas, ` +
-    `${results.errors.length} errores`
+    `[ReferralCalc] Período ${periodKey} | mode=${mode} providerCallsCount=${providerCallsCount} ` +
+    `commissionsCreated=${results.commissionsCreated} commissionsSkipped=${results.commissionsSkipped} ` +
+    `commissionsExcluded=${results.commissionsExcluded} errors=${results.errors.length}`
   );
+
+  if (!dryRun) {
+    logger.info(`[ReferralCalc] calculate aligned with preview for period ${periodKey}`);
+  }
 
   return results;
 }
