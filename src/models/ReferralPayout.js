@@ -114,5 +114,8 @@ referralPayoutSchema.index({ status: 1, periodKey: 1 });
 // Compound index to speed up payout-history queries in referralCalculationService
 // (find all paid payouts for a given referrer+period).
 referralPayoutSchema.index({ referrerUserId: 1, periodKey: 1, status: 1 });
+// Index to efficiently find the most recent payout of any status per referrer
+// (used by adminGetReferralsSummary to populate latestPayoutStatus for each referrer).
+referralPayoutSchema.index({ referrerUserId: 1, createdAt: -1 });
 
 module.exports = mongoose.models['ReferralPayout'] || mongoose.model('ReferralPayout', referralPayoutSchema);

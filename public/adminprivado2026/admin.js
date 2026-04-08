@@ -4086,7 +4086,7 @@ function fmtPeriod(pk) {
 }
 
 // Cached referrers for client-side quick filters
-let _cachedReferrers = [];
+let cachedReferrers = [];
 
 async function loadAdminReferralSummary() {
     const container = document.getElementById('referralTopList');
@@ -4105,7 +4105,7 @@ async function loadAdminReferralSummary() {
         const summary = data.data?.summary || {};
 
         // Cache for quick filters
-        _cachedReferrers = referrers;
+        cachedReferrers = referrers;
 
         // Render global dashboard cards
         if (summaryContainer) {
@@ -4210,13 +4210,13 @@ function filterReferrersTable(mode) {
     const activeBtn = document.getElementById(activeId);
     if (activeBtn) { activeBtn.style.opacity = '1'; activeBtn.style.fontWeight = 'bold'; }
 
-    if (!_cachedReferrers.length) return;
+    if (!cachedReferrers.length) return;
 
-    let filtered = _cachedReferrers;
+    let filtered = cachedReferrers;
     if (mode === 'pending') {
-        filtered = _cachedReferrers.filter(r => (r.financialStats?.totalPendingCommission || 0) > 0);
+        filtered = cachedReferrers.filter(r => (r.financialStats?.totalPendingCommission || 0) > 0);
     } else if (mode === 'failed') {
-        filtered = _cachedReferrers.filter(r => r.financialStats?.latestPayoutStatus === 'failed');
+        filtered = cachedReferrers.filter(r => r.financialStats?.latestPayoutStatus === 'failed');
     }
     renderReferrersTable(filtered);
 }

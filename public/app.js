@@ -2907,6 +2907,8 @@ async function loadReferralData() {
                     html += `</div>`;
 
                     for (const p of periodPayouts) {
+                        // isDelta is the authoritative flag; payoutIndex fallback covers legacy records
+                        // created before isDelta was added to the schema.
                         const isDelta = p.isDelta || (p.payoutIndex || 1) > 1;
                         const amount = p.totalCommissionAmount || 0;
                         html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;${hasMultiple ? 'padding-left:8px;' : ''}">`;
