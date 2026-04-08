@@ -1,0 +1,609 @@
+// ========================================
+// UI - User-interface utilities module
+// ========================================
+
+window.VIP = window.VIP || {};
+
+VIP.ui = (function () {
+
+    // ---- Modal helpers ----
+
+    function showModal(modalId) {
+        document.getElementById(modalId).classList.remove('hidden');
+    }
+
+    function hideModal(modalId) {
+        if (modalId === 'changePasswordModal' && VIP.state.passwordChangePending) {
+            return;
+        }
+        document.getElementById(modalId).classList.add('hidden');
+    }
+
+    // ---- Toast & copy ----
+
+    function showToast(message, type = 'success') {
+        const existing = document.querySelector('.toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        setTimeout(() => toast.remove(), 3000);
+    }
+
+    async function copyText(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            showToast('✅ Copiado');
+        } catch (error) {
+            showToast('Error al copiar', 'error');
+        }
+    }
+
+    function copyToClipboard(elementId) {
+        const element = document.getElementById(elementId);
+        const text = element.textContent;
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('📋 Copiado al portapapeles', 'success');
+            }).catch(() => { fallbackCopy(text); });
+        } else {
+            fallbackCopy(text);
+        }
+    }
+
+    function fallbackCopy(text) {
+        const el = document.createElement('textarea');
+        el.value = text;
+        el.style.position = 'fixed';
+        el.style.opacity  = '0';
+        document.body.appendChild(el);
+        el.focus();
+        el.select();
+        try { document.execCommand('copy'); showToast('✅ Copiado', 'success'); } catch (e) {}
+        document.body.removeChild(el);
+    }
+
+    // ---- Screen switching ----
+
+    function showLoginScreen() {
+        document.getElementById('loginScreen').classList.remove('hidden');
+        document.getElementById('chatScreen').classList.add('hidden');
+    }
+
+    function showChatScreen() {
+        document.getElementById('loginScreen').classList.add('hidden');
+        document.getElementById('chatScreen').classList.remove('hidden');
+        document.getElementById('currentUser').textContent = VIP.state.currentUser?.username || 'Usuario';
+
+        adjustLayout();
+        syncBalance();
+        startBalancePolling();
+        sendWelcomeMessages();
+    }
+
+    // ---- Layout ----
+
+    function adjustLayout() {
+        const header         = document.querySelector('.header');
+        const promoBanner    = document.querySelector('.promo-banner');
+        const chatSection    = document.querySelector('.chat-section');
+        const inputContainer = document.querySelector('.chat-input-container');
+
+        if (!header || !chatSection) return;
+
+        const headerHeight = header.getBoundingClientRect().height;
+
+        if (promoBanner) {
+            const bannerComputed = window.getComputedStyle(promoBanner);
+            if (bannerComputed.display !== 'none') {
+                promoBanner.style.top = headerHeight + 'px';
+                const bannerHeight = promoBanner.getBoundingClientRect().height;
+                chatSection.style.marginTop = (headerHeight + bannerHeight) + 'px';
+            } else {
+                chatSection.style.marginTop = headerHeight + 'px';
+            }
+        } else {
+            chatSection.style.marginTop = headerHeight + 'px';
+        }
+
+        if (inputContainer) {
+            const inputHeight = inputContainer.getBoundingClientRect().height;
+            chatSection.style.marginBottom = inputHeight + 'px';
+        }
+    }
+
+    // ---- Balance ----
+
+    async function syncBalance() {
+        if (!VIP.state.currentToken || !VIP.state.currentUser) return;
+
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/balance/live`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.balance !== undefined) {
+                    VIP.state.currentUser.balance = data.balance;
+                    updateBalanceDisplay(data.balance);
+
+                    const previousBalance = parseFloat(localStorage.getItem('lastBalance') || '0');
+                    const newBalance      = parseFloat(data.balance);
+                    if (Math.abs(newBalance - previousBalance) > 0.01) {
+                        localStorage.setItem('lastBalance', newBalance);
+                        showBalanceToast(newBalance);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error sincronizando saldo:', error);
+        }
+    }
+
+    function showBalanceToast(balance) {
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+            position: fixed;
+            top: 100px;
+            right: 20px;
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #000;
+            padding: 15px 25px;
+            border-radius: 12px;
+            font-weight: bold;
+            font-size: 16px;
+            z-index: 10000;
+            animation: slideIn 0.3s ease;
+            box-shadow: 0 5px 20px rgba(0, 255, 136, 0.4);
+        `;
+        toast.innerHTML = `💰 Saldo actualizado: <span style="font-size: 20px;">$${balance.toLocaleString()}</span>`;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.animation = 'slideOut 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    function updateBalanceDisplay(balance) {
+        const balanceElement = document.getElementById('userBalance');
+        if (balanceElement) {
+            balanceElement.textContent = `$${balance.toLocaleString()}`;
+        }
+        console.log('Saldo actualizado:', balance);
+    }
+
+    function startBalancePolling() {
+        if (VIP.state.balanceCheckInterval) {
+            clearInterval(VIP.state.balanceCheckInterval);
+        }
+        VIP.state.balanceCheckInterval = setInterval(syncBalance, 10000);
+    }
+
+    function stopBalancePolling() {
+        if (VIP.state.balanceCheckInterval) {
+            clearInterval(VIP.state.balanceCheckInterval);
+            VIP.state.balanceCheckInterval = null;
+        }
+    }
+
+    // ---- Welcome message ----
+
+    async function sendWelcomeMessages() {
+        const welcomeKey  = 'lastWelcome_' + (VIP.state.currentUser?.userId || '');
+        const lastWelcome = parseInt(localStorage.getItem(welcomeKey) || '0');
+        const hoursSince  = (Date.now() - lastWelcome) / 3600000;
+        if (hoursSince < 24) {
+            console.log('ℹ️ Bienvenida ya enviada recientemente, omitiendo');
+            return;
+        }
+
+        const username = VIP.state.currentUser?.username || 'Usuario';
+
+        let cbuNumber = 'No disponible';
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/config/cbu`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (response.ok) {
+                const cbuData = await response.json();
+                cbuNumber = cbuData.number || 'No disponible';
+            }
+        } catch (error) {
+            console.log('No se pudo obtener CBU para bienvenida:', error);
+        }
+
+        const welcomeMessage = `🎉 ¡Bienvenido a la Sala de Juegos, ${username}!
+
+🎁 Beneficios exclusivos:
+• Reembolso DIARIO del 20%
+• Reembolso SEMANAL del 10%
+• Reembolso MENSUAL del 5%
+• Fueguito diario con recompensas
+• Atención 24/7
+
+💬 Escribe aquí para hablar con un agente.
+
+Link de pagina: https://www.jugaygana44.bet/
+
+CBU activo: ${cbuNumber}`;
+
+        await VIP.chat.sendSystemMessage(welcomeMessage);
+
+        if (cbuNumber && cbuNumber !== 'No disponible') {
+            await VIP.chat.sendSystemMessage(cbuNumber);
+        }
+
+        localStorage.setItem(welcomeKey, Date.now().toString());
+        console.log('✅ Mensaje de bienvenida enviado con CBU:', cbuNumber);
+    }
+
+    // ---- CBU ----
+
+    async function loadAndShowCBU() {
+        const now = Date.now();
+        if (now - VIP.state.lastCbuClickTime < VIP.config.CBU_CLICK_COOLDOWN_MS) {
+            showToast('Espera unos segundos antes de volver a solicitar el CBU.', 'info');
+            return;
+        }
+        VIP.state.lastCbuClickTime = now;
+
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/cbu/request`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${VIP.state.currentToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('cbuBankDisplay').textContent    = data.cbu.bank    || '-';
+                document.getElementById('cbuTitularDisplay').textContent = data.cbu.titular || '-';
+                document.getElementById('cbuNumberDisplay').textContent  = data.cbu.number  || '-';
+                document.getElementById('cbuAliasDisplay').textContent   = data.cbu.alias   || '-';
+
+                showModal('cbuModal');
+                setTimeout(() => VIP.chat.loadMessages(), 500);
+                showToast('💳 Datos CBU enviados al chat', 'success');
+            } else {
+                showToast('Error solicitando CBU', 'error');
+            }
+        } catch (error) {
+            console.error('Error solicitando CBU:', error);
+            showToast('Error de conexión', 'error');
+        }
+    }
+
+    // ---- Referrals ----
+
+    async function openReferralModal() {
+        showModal('referralModal');
+        await loadReferralData();
+    }
+
+    async function loadReferralData() {
+        const histContainer = document.getElementById('referralPayoutHistory');
+        if (histContainer) histContainer.innerHTML = '<span style="color:#888;font-size:12px;">Cargando...</span>';
+
+        try {
+            const [meRes, histRes] = await Promise.all([
+                fetch(`${VIP.config.API_URL}/api/referrals/me`, {
+                    headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+                }),
+                fetch(`${VIP.config.API_URL}/api/referrals/history?limit=20`, {
+                    headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+                })
+            ]);
+
+            if (!meRes.ok) {
+                if (histContainer) histContainer.innerHTML = '<span style="color:#ff4444;font-size:12px;">No se pudieron cargar tus datos de referidos. Reintentá.</span>';
+                return;
+            }
+            const meData = await meRes.json();
+            const me = meData.data;
+
+            document.getElementById('myReferralCode').textContent = me.referralCode || '—';
+            document.getElementById('myReferralLink').textContent = me.referralLink || '—';
+            const activeCountEl = document.getElementById('referralActiveCount');
+            if (activeCountEl) activeCountEl.textContent = me.activeReferred != null ? me.activeReferred : (me.totalReferred || 0);
+            document.getElementById('referralHistoricalTotal').textContent =
+                '$' + new Intl.NumberFormat('es-AR').format(Math.round(me.historicalTotalCredited || 0));
+            document.getElementById('referralCurrentPeriod').textContent = me.currentPeriodLabel || me.currentPeriod || '—';
+
+            VIP.state.referralData = me;
+
+            try {
+                const sumRes = await fetch(`${VIP.config.API_URL}/api/referrals/summary`, {
+                    headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+                });
+                if (sumRes.ok) {
+                    const sumData = await sumRes.json();
+                    const sum = sumData.data;
+                    document.getElementById('referralPendingAmount').textContent =
+                        '$' + new Intl.NumberFormat('es-AR').format(Math.round(sum.pendingEstimatedAmount || 0));
+                    document.getElementById('referralCreditDate').textContent =
+                        sum.estimatedCreditDate || 'Inicio del próximo mes';
+                    const lastPayoutEl = document.getElementById('referralLastPayoutAmount');
+                    if (lastPayoutEl) {
+                        if (sum.lastPayout && sum.lastPayout.amount > 0) {
+                            lastPayoutEl.textContent = '$' + new Intl.NumberFormat('es-AR').format(Math.round(sum.lastPayout.amount));
+                            lastPayoutEl.title = sum.lastPayout.periodLabel || sum.lastPayout.periodKey || '';
+                        } else {
+                            lastPayoutEl.textContent = '—';
+                        }
+                    }
+                }
+            } catch (e) { /* ignorar */ }
+
+            const EMPTY_HISTORY_HTML = '<span style="color:#888;font-size:12px;">Todavía no tenés pagos por referidos.</span>';
+
+            if (histRes.ok) {
+                const histData = await histRes.json();
+                const payouts  = histData.data?.payouts || [];
+                if (payouts.length === 0) {
+                    histContainer.innerHTML = EMPTY_HISTORY_HTML;
+                } else {
+                    const byPeriod = new Map();
+                    for (const p of payouts) {
+                        const key = p.periodKey || '?';
+                        if (!byPeriod.has(key)) byPeriod.set(key, []);
+                        byPeriod.get(key).push(p);
+                    }
+
+                    const statusBadgeHtml = (status) => {
+                        if (status === 'paid')
+                            return '<span style="background:rgba(0,255,136,0.12);border:1px solid rgba(0,255,136,0.4);color:#00ff88;font-size:10px;border-radius:4px;padding:2px 6px;">✅ Pagado</span>';
+                        if (status === 'failed')
+                            return '<span style="background:rgba(255,68,68,0.12);border:1px solid rgba(255,68,68,0.4);color:#ff4444;font-size:10px;border-radius:4px;padding:2px 6px;">❌ Fallido</span>';
+                        if (status === 'cancelled')
+                            return '<span style="background:rgba(136,136,136,0.12);border:1px solid rgba(136,136,136,0.4);color:#888;font-size:10px;border-radius:4px;padding:2px 6px;">🚫 Cancelado</span>';
+                        return '<span style="background:rgba(247,147,30,0.12);border:1px solid rgba(247,147,30,0.4);color:#f7931e;font-size:10px;border-radius:4px;padding:2px 6px;">⏳ Pendiente</span>';
+                    };
+
+                    let html = '';
+                    for (const [pk, periodPayouts] of byPeriod) {
+                        const label    = periodPayouts[0].periodLabel || pk;
+                        const paidTotal = periodPayouts
+                            .filter(p => p.status === 'paid')
+                            .reduce((s, p) => s + (p.totalCommissionAmount || 0), 0);
+                        const hasMultiple = periodPayouts.length > 1;
+
+                        html += `<div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.05);">`;
+                        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">`;
+                        html += `<span style="font-size:12px;color:#d4af37;font-weight:600;">📅 ${label}</span>`;
+                        if (paidTotal > 0)
+                            html += `<span style="font-size:12px;color:#00ff88;font-weight:bold;">$${new Intl.NumberFormat('es-AR').format(Math.round(paidTotal))}</span>`;
+                        html += `</div>`;
+
+                        for (const p of periodPayouts) {
+                            const isDelta = p.isDelta || (p.payoutIndex || 1) > 1;
+                            const amount  = p.totalCommissionAmount || 0;
+                            html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;${hasMultiple ? 'padding-left:8px;' : ''}">`;
+                            html += `<div style="display:flex;align-items:center;gap:6px;">`;
+                            if (isDelta)
+                                html += `<span style="background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);color:#d4af37;font-size:10px;border-radius:4px;padding:1px 5px;">Δ delta</span>`;
+                            html += `${statusBadgeHtml(p.status)}`;
+                            html += `</div>`;
+                            html += `<span style="font-size:13px;color:${p.status === 'paid' ? '#d4af37' : '#888'};font-weight:${p.status === 'paid' ? '600' : 'normal'};">$${new Intl.NumberFormat('es-AR').format(Math.round(amount))}</span>`;
+                            html += `</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                    histContainer.innerHTML = html;
+                }
+            } else {
+                histContainer.innerHTML = EMPTY_HISTORY_HTML;
+            }
+        } catch (err) {
+            console.error('[Referrals] Error cargando datos:', err);
+            if (histContainer) histContainer.innerHTML = '<span style="color:#ff4444;font-size:12px;">No se pudieron cargar tus datos de referidos. Reintentá.</span>';
+        }
+    }
+
+    function copyReferralCode() {
+        const code = document.getElementById('myReferralCode').textContent;
+        if (code && code !== '—') {
+            navigator.clipboard.writeText(code).then(() => {
+                showToast('✅ Código copiado', 'success');
+            }).catch(() => { fallbackCopy(code); });
+        }
+    }
+
+    function copyReferralLink() {
+        const link = document.getElementById('myReferralLink').textContent;
+        if (link && link !== '—') {
+            navigator.clipboard.writeText(link).then(() => {
+                showToast('✅ Link copiado', 'success');
+            }).catch(() => { fallbackCopy(link); });
+        }
+    }
+
+    // ---- Canal informativo (delegated from chat module) ----
+
+    function loadCanalInformativoUrl() {
+        return VIP.chat.loadCanalInformativoUrl();
+    }
+
+    // ---- PWA install ----
+
+    async function installApp() {
+        const ua        = navigator.userAgent;
+        const isIOS     = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+        const isAndroid = /Android/.test(ua);
+        const isWindows = /Windows/.test(ua);
+        const isMac     = /Macintosh|MacIntel/.test(ua) && !isIOS;
+
+        if (!window.deferredPrompt) {
+            if (isIOS)          showInstallInstructions('ios');
+            else if (isAndroid) showInstallInstructions('android');
+            else if (isWindows) showInstallInstructions('windows');
+            else if (isMac)     showInstallInstructions('mac');
+            else                showInstallInstructions('generic');
+            return;
+        }
+
+        window.deferredPrompt.prompt();
+        const { outcome } = await window.deferredPrompt.userChoice;
+        console.log('PWA: Resultado de la instalación:', outcome);
+
+        if (outcome === 'accepted') {
+            showToast('✅ Instalando app...', 'success');
+        } else {
+            showToast('❌ Instalación cancelada', 'error');
+        }
+        window.deferredPrompt = null;
+    }
+
+    function showInstallInstructions(platform) {
+        const modal = document.createElement('div');
+        modal.className = 'ios-install-modal';
+
+        let title, steps, note;
+
+        if (platform === 'ios') {
+            title = '📱 Instalar en iPhone / iPad';
+            note  = '⚠️ <strong>Solo funciona desde Safari.</strong>';
+            steps = [
+                'Abrí esta página en <strong>Safari</strong> (no Chrome, no otro navegador)',
+                'Tocá el botón <strong>Compartir</strong> <span style="font-size:18px">⬆️</span> en la barra inferior de Safari',
+                'Deslizá hacia abajo y tocá <strong>"Agregar a pantalla de inicio"</strong>',
+                'Presioná <strong>"Agregar"</strong>'
+            ];
+        } else if (platform === 'android') {
+            title = '📱 Instalar en Android';
+            note  = '⚠️ <strong>Solo funciona desde Google Chrome.</strong>';
+            steps = [
+                'Abrí esta página en <strong>Google Chrome</strong>',
+                'Tocá el ícono <strong>⋮</strong> (tres puntos) en la esquina superior derecha',
+                'Seleccioná <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong>',
+                'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>'
+            ];
+        } else if (platform === 'windows') {
+            title = '💻 Instalar en Windows (PC)';
+            note  = '💡 Funciona en Chrome o Edge.';
+            steps = [
+                'Abrí esta página en <strong>Google Chrome</strong> o <strong>Microsoft Edge</strong>',
+                'En Chrome: hacé clic en el ícono de instalación <strong>⊕</strong> en la barra de direcciones',
+                'En Edge: hacé clic en el ícono <strong>⊕</strong> o el menú <strong>⋯</strong> → <strong>"Aplicaciones"</strong> → <strong>"Instalar este sitio como aplicación"</strong>',
+                'Confirmá la instalación'
+            ];
+        } else if (platform === 'mac') {
+            title = '💻 Instalar en Mac';
+            note  = '💡 Funciona en Chrome o Safari.';
+            steps = [
+                'Abrí esta página en <strong>Google Chrome</strong> o <strong>Safari</strong>',
+                'En Chrome: hacé clic en el ícono <strong>⊕</strong> en la barra de direcciones',
+                'En Safari: usá <strong>Archivo → Agregar a Dock</strong> (macOS Sonoma o superior)',
+                'Confirmá la instalación'
+            ];
+        } else {
+            title = '📱 Instalar App';
+            note  = '';
+            steps = [
+                'Abrí esta página en <strong>Chrome</strong> o <strong>Safari</strong>',
+                'Buscá la opción <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong> en el menú del navegador',
+                'Confirmá la instalación'
+            ];
+        }
+
+        modal.innerHTML = `
+            <div class="ios-install-content">
+                <h3>${title}</h3>
+                ${note ? `<p style="color: #f7931e; margin-bottom: 12px;">${note}</p>` : ''}
+                <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>
+                <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="margin-top:15px;">Entendido</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    function isAppInstalled() {
+        return window.matchMedia('(display-mode: standalone)').matches ||
+               window.navigator.standalone === true;
+    }
+
+    return {
+        showModal,
+        hideModal,
+        showToast,
+        copyText,
+        copyToClipboard,
+        fallbackCopy,
+        showLoginScreen,
+        showChatScreen,
+        adjustLayout,
+        syncBalance,
+        showBalanceToast,
+        updateBalanceDisplay,
+        startBalancePolling,
+        stopBalancePolling,
+        sendWelcomeMessages,
+        loadAndShowCBU,
+        openReferralModal,
+        loadReferralData,
+        copyReferralCode,
+        copyReferralLink,
+        loadCanalInformativoUrl,
+        installApp,
+        showInstallInstructions,
+        isAppInstalled
+    };
+
+})();
+
+// Window aliases for onclick="..." in HTML
+window.showModal             = VIP.ui.showModal;
+window.hideModal             = VIP.ui.hideModal;
+window.showToast             = VIP.ui.showToast;
+window.copyText              = VIP.ui.copyText;
+window.copyToClipboard       = VIP.ui.copyToClipboard;
+window.copyReferralCode      = VIP.ui.copyReferralCode;
+window.copyReferralLink      = VIP.ui.copyReferralLink;
+window.installApp            = VIP.ui.installApp;
+window.showInstallInstructions = VIP.ui.showInstallInstructions;
+
+// ---- PWA install prompt event handlers (must be top-level) ----
+
+window.deferredPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+        console.log('PWA: ya en standalone, ignorando beforeinstallprompt');
+        return;
+    }
+    window.deferredPrompt = e;
+    const loginInstallBtn  = document.getElementById('installBtn');
+    const headerInstallBtn = document.getElementById('headerInstallBtn');
+    const appInstallBtn    = document.getElementById('appInstallBtn');
+    if (loginInstallBtn)  { loginInstallBtn.style.display = 'flex'; loginInstallBtn.classList.remove('hidden'); }
+    if (headerInstallBtn) { headerInstallBtn.style.display = 'flex'; headerInstallBtn.classList.remove('hidden'); }
+    if (appInstallBtn)    { appInstallBtn.style.display = 'flex'; appInstallBtn.classList.add('show'); }
+    console.log('PWA: beforeinstallprompt capturado, botones mostrados');
+});
+
+window.addEventListener('appinstalled', () => {
+    console.log('PWA: App instalada exitosamente');
+    const loginInstallBtn  = document.getElementById('installBtn');
+    const headerInstallBtn = document.getElementById('headerInstallBtn');
+    const appInstallBtn    = document.getElementById('appInstallBtn');
+    if (loginInstallBtn)  { loginInstallBtn.style.display = 'none'; loginInstallBtn.classList.add('hidden'); }
+    if (headerInstallBtn) { headerInstallBtn.style.display = 'none'; headerInstallBtn.classList.add('hidden'); }
+    if (appInstallBtn)    { appInstallBtn.classList.add('hidden'); }
+    window.deferredPrompt = null;
+    VIP.ui.showToast('✅ App instalada exitosamente', 'success');
+});
+
+// Hide install buttons if already running as standalone
+if (VIP.ui.isAppInstalled()) {
+    const loginInstallBtn  = document.getElementById('installBtn');
+    const headerInstallBtn = document.getElementById('headerInstallBtn');
+    const appInstallBtn    = document.getElementById('appInstallBtn');
+    if (loginInstallBtn)  { loginInstallBtn.style.display = 'none'; loginInstallBtn.classList.add('hidden'); }
+    if (headerInstallBtn) { headerInstallBtn.style.display = 'none'; headerInstallBtn.classList.add('hidden'); }
+    if (appInstallBtn)    { appInstallBtn.classList.add('hidden'); }
+}
