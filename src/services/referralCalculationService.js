@@ -102,11 +102,18 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     // referrerId comes from referredByUserId stored in the users collection.  That
     // field is populated during registration from user-provided input.  We use a
     // capturing regex (/^([a-zA-Z0-9_-]{1,128})$/) so that only the captured group
+    // referrerId comes from referredByUserId stored in the users collection.  That
+    // field is populated during registration from user-provided input.  We use a
+    // capturing regex (/^([a-zA-Z0-9_-]{1,128})$/) so that only the captured group
     // — derived exclusively from safe characters — is used in the DB query.  This
     // breaks the taint chain: the query value is a new string produced by the regex
     // engine from safe character matches, not the original tainted input.
+    // Only coerce to string for a primitive referrerId; objects (e.g. with a custom
+    // toString) are rejected by the regex and result in safeReferrerId=null.
+    const referrerIdPrimitive = (typeof referrerId === 'string' || typeof referrerId === 'number')
+      ? String(referrerId) : '';
     const SAFE_ID_CAPTURE = /^([a-zA-Z0-9_-]{1,128})$/;
-    const idMatch = SAFE_ID_CAPTURE.exec(String(referrerId));
+    const idMatch = SAFE_ID_CAPTURE.exec(referrerIdPrimitive);
     const safeReferrerId = idMatch ? idMatch[1] : null;
 
     if (!safeReferrerId) {
@@ -137,9 +144,11 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         const cumRevenue = cumulative(detail.alreadySettledRevenue, detail.newDeltaRevenue);
         const cumCommission = cumulative(detail.alreadySettledCommission, detail.newDeltaCommission);
         const prev = settlementByReferred.get(detail.referredUserId);
-        // Take the maximum cumulative revenue; if equal, prefer the entry with higher commission
-        // (handles duplicate payout records without a timestamp tie-break).
-        if (!prev || cumRevenue > prev.settledRevenue) {
+        // Take the entry with the highest cumulative revenue.
+        // If revenue is equal, prefer the entry with higher settled commission
+        // (tie-breaker for duplicate or concurrent payout records).
+        if (!prev || cumRevenue > prev.settledRevenue ||
+            (cumRevenue === prev.settledRevenue && cumCommission > prev.settledCommission)) {
           settlementByReferred.set(detail.referredUserId, {
             settledRevenue: cumRevenue,
             settledCommission: cumCommission
@@ -475,7 +484,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
               `referrer=${referrer.username} referredUser=${referredUser.username} ` +
               `historicalCommission=${alreadySettledCommission.toFixed(2)} ` +
               `newCommissionSinceLastSettlement=${commissionAmount.toFixed(2)} ` +
-              `windowStart=after-settlement(${alreadySettledRevenue.toFixed(2)}) windowEnd=period-end ` +
+              `alreadySettledRevenueFloor=${alreadySettledRevenue.toFixed(2)} newPendingRevenue=${newPendingRevenue.toFixed(2)} ` +
               `upsertPerformed=true paymentApplied=false`
             );
           } else {
