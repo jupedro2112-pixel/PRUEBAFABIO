@@ -732,7 +732,7 @@ const changePassword = asyncHandler(async (req, res) => {
 
   const hashed = await bcrypt.hash(newPassword, 10);
   await User.updateOne(
-    { id: userId },
+    { _id: user._id },
     { $set: { password: hashed, passwordChangedAt: new Date() } }
   );
 
