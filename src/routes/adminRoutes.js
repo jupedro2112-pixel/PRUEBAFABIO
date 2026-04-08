@@ -34,6 +34,21 @@ router.get('/stats', authenticate, authorize('admin'), adminController.getStats)
 router.get('/transactions', authenticate, authorize('admin'), adminController.getTransactions);
 router.get('/datos', authenticate, authorize('admin'), adminController.getDatos);
 
+// Balance de usuario desde JUGAYGANA
+router.get('/balance/:username', authenticate, authorize('admin'), adminController.getAdminBalance);
+
+// Cambiar contraseña de usuario
+router.post('/change-password', authenticate, authorize('admin', 'depositor'), adminController.changePassword);
+
+// Cerrar chat
+router.post('/close-chat', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.closeChat);
+
+// Enviar CBU al usuario (via configController)
+router.post('/send-cbu', authenticate, authorize('admin'), require('../controllers/configController').adminSendCbu);
+
+// Enviar notificación push al usuario
+router.post('/send-notification', authenticate, authorize('admin'), adminController.sendNotification);
+
 // Transacciones (con permisos específicos)
 router.post('/deposit', authenticate, depositorOnly, transactionController.deposit);
 router.post('/withdrawal', authenticate, withdrawerOnly, transactionController.withdraw);
@@ -49,8 +64,9 @@ router.post('/chats/:userId/category', authenticate, authorize('admin', 'deposit
 router.post('/send-to-payments', authenticate, authorize('admin', 'depositor', 'withdrawer'), adminController.sendToPayments);
 router.post('/send-to-open', authenticate, authorize('admin', 'depositor'), adminController.sendToOpen);
 
-// Base de datos - exportar a CSV
+// Base de datos
 router.post('/database/verify', authenticate, authorize('admin'), adminController.verifyDatabaseAccess);
 router.get('/database/export/csv', authenticate, authorize('admin'), adminController.exportDatabaseCSV);
+router.get('/database/users', authenticate, authorize('admin'), adminController.getDatabaseUsers);
 
 module.exports = router;

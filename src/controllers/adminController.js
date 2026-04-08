@@ -3,7 +3,7 @@
  * Controlador de Administración
  * Maneja usuarios, configuraciones y operaciones de admin
  */
-const { User, Config, Command, Transaction } = require('../models');
+const { User, Config, Command, Transaction, Message, ChatStatus } = require('../models');
 const { transactionService } = require('../services');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError, ErrorCodes } = require('../utils/AppError');
@@ -11,7 +11,7 @@ const logger = require('../utils/logger');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 // CORREGIDO: Importar conexiones de sockets para contador online real
-const { connectedUsers } = require('../config/socket');
+const { connectedUsers } = require('../socket');
 
 /**
  * GET /api/admin/users
@@ -689,6 +689,172 @@ const exportDatabaseCSV = asyncHandler(async (req, res) => {
   res.send(csv);
 });
 
+/**
+ * GET /api/admin/balance/:username
+ * Obtener balance de usuario desde JUGAYGANA (solo admin)
+ */
+const getAdminBalance = asyncHandler(async (req, res) => {
+  const { username } = req.params;
+  const { jugayganaService } = require('../services');
+  const result = await jugayganaService.getBalance(username);
+
+  if (result.success) {
+    res.json({ balance: result.balance });
+  } else {
+    res.status(400).json({ error: result.error });
+  }
+});
+
+/**
+ * POST /api/admin/change-password
+ * Cambiar contraseña de un usuario (admin)
+ */
+const changePassword = asyncHandler(async (req, res) => {
+  const { userId, newPassword } = req.body;
+  const adminRole = req.user.role;
+
+  if (!userId || !newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Datos inválidos. La contraseña debe tener al menos 6 caracteres.' });
+  }
+
+  const user = await User.findOne({ id: userId });
+  if (!user) {
+    throw new AppError('Usuario no encontrado', 404, ErrorCodes.USER_NOT_FOUND);
+  }
+
+  if (adminRole === 'withdrawer') {
+    return res.status(403).json({ error: 'No tienes permiso para cambiar contraseñas' });
+  }
+
+  if (adminRole === 'depositor' && user.role !== 'user') {
+    return res.status(403).json({ error: 'Solo puedes cambiar contraseñas de usuarios, no de administradores' });
+  }
+
+  user.password = await bcrypt.hash(newPassword, 10);
+  user.passwordChangedAt = new Date();
+  await user.save();
+
+  await Message.create({
+    id: require('uuid').v4(),
+    senderId: req.user.userId,
+    senderUsername: req.user.username,
+    senderRole: 'admin',
+    receiverId: userId,
+    receiverRole: 'user',
+    content: `🔑 Tu contraseña ha sido cambiada por un administrador.\n\nTu nueva contraseña es: ${newPassword}\n\nPor seguridad, te recomendamos cambiarla después de iniciar sesión.`,
+    type: 'text',
+    timestamp: new Date(),
+    read: false
+  });
+
+  const userSocket = connectedUsers.get(userId);
+  if (userSocket) {
+    userSocket.emit('new_message', {
+      senderId: req.user.userId,
+      senderUsername: req.user.username,
+      content: 'Tu contraseña ha sido cambiada por un administrador.',
+      timestamp: new Date()
+    });
+  }
+
+  res.json({ success: true, message: 'Contraseña cambiada correctamente' });
+});
+
+/**
+ * POST /api/admin/close-chat
+ * Cerrar chat de un usuario (admin)
+ */
+const closeChat = asyncHandler(async (req, res) => {
+  const { userId, isPaymentsTab = false } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'Usuario no especificado' });
+  }
+
+  await ChatStatus.findOneAndUpdate(
+    { userId },
+    {
+      status: 'closed',
+      assignedTo: null,
+      closedAt: new Date(),
+      closedBy: req.user.userId,
+      updatedAt: new Date()
+    },
+    { upsert: true }
+  );
+
+  await Message.create({
+    id: require('uuid').v4(),
+    senderId: req.user.userId,
+    senderUsername: req.user.username,
+    senderRole: req.user.role || 'admin',
+    receiverId: userId,
+    receiverRole: 'user',
+    content: `Chat cerrado por: ${req.user.username}. Puedes seguir respondiendo si el usuario escribe. El chat se reabrirá automáticamente si el cliente envía un mensaje.`,
+    type: 'system',
+    adminOnly: true,
+    read: true,
+    timestamp: new Date()
+  });
+
+  // Notify admins
+  const { getIo } = require('../utils/ioSingleton');
+  const io = getIo();
+  if (io) {
+    io.to('admins').emit('chat_closed', { userId, by: req.user.username, adminId: req.user.userId, isPaymentsTab });
+  }
+
+  res.json({ success: true, message: 'Chat cerrado correctamente', closedBy: req.user.username });
+});
+
+/**
+ * GET /api/admin/database/users
+ * Obtener todos los usuarios de la base de datos (requiere db password)
+ */
+const getDatabaseUsers = asyncHandler(async (req, res) => {
+  const userRole = req.user.role;
+  const query = userRole !== 'admin' ? { role: 'user' } : {};
+  const users = await User.find(query).select('-password').sort({ role: 1, username: 1 }).lean();
+  res.json({ users, total: users.length });
+});
+
+/**
+ * POST /api/admin/send-notification
+ * Enviar notificación push a un usuario vía socket
+ */
+const sendNotification = asyncHandler(async (req, res) => {
+  const { userId, title, body, icon, badge, tag, requireInteraction, data } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ error: 'userId requerido' });
+  }
+
+  const notificationPayload = {
+    title: title || 'Nueva notificación',
+    body: body || '',
+    icon: icon || '/icons/icon-192x192.png',
+    badge: badge || '/icons/icon-72x72.png',
+    tag: tag || 'default',
+    requireInteraction: requireInteraction || false,
+    data: data || {}
+  };
+
+  const userSocket = connectedUsers.get(userId);
+  if (userSocket) {
+    userSocket.emit('push_notification', notificationPayload);
+  }
+
+  // Also emit to user room via io
+  const { getIo } = require('../utils/ioSingleton');
+  const io = getIo();
+  if (io) {
+    io.to(`user_${userId}`).emit('push_notification', notificationPayload);
+  }
+
+  logger.info(`Notificación enviada a usuario ${userId}: ${title}`);
+  res.json({ success: true, message: 'Notificación enviada' });
+});
+
 module.exports = {
   getUsers,
   getUser,
@@ -710,5 +876,10 @@ module.exports = {
   exportUsersCSV,
   verifyDatabaseAccess,
   exportDatabaseCSV,
-  getDatos
+  getDatos,
+  getAdminBalance,
+  changePassword,
+  closeChat,
+  getDatabaseUsers,
+  sendNotification
 };

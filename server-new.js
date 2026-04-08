@@ -1,5 +1,7 @@
 
 /**
+ * @deprecated Este archivo está deprecado. Usar server.js (entry point principal).
+ * La migración a server.js + /src/ está completa.
  * ============================================
  * SALA DE JUEGOS - SERVIDOR PRINCIPAL
  * Arquitectura refactorizada con /src
