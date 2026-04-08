@@ -3,7 +3,7 @@
  * Fase A: calcula comisiones por período sin pagar
  */
 const { v4: uuidv4 } = require('uuid');
-const { User, ReferralCommission } = require('../models');
+const { User, ReferralCommission, ReferralPayout } = require('../models');
 const referralRevenueService = require('./referralRevenueService');
 const { getReferralRateForUser } = require('../utils/referralRate');
 const logger = require('../utils/logger');
@@ -84,6 +84,85 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     }
 
     const referralRate = getReferralRateForUser(referrer);
+
+    // ── Load authoritative settlement state from payout history ──────────────
+    // ReferralPayout documents are the source of truth for what was already paid.
+    // Relying solely on ReferralCommission.settledOwnerRevenue was fragile: running
+    // calculate() more than once after a payout caused the field to be overwritten
+    // with 0 (because existingIsPaid was false on the second run), which made the
+    // next payout treat the already-settled slice as pending again (double payment).
+    //
+    // We query once per referrer and build a map keyed by referredUserId so the
+    // inner loop has O(1) lookup.  The maximum cumulative value across all payouts
+    // for a given referred user is taken because:
+    //   • each successive payout's alreadySettled already includes all prior payouts
+    //   • commissions are never negative, so the highest cumulative is always the
+    //     most recent and complete settlement baseline
+    //
+    // referrerId comes from referredByUserId stored in the users collection.  That
+    // field is populated during registration from user-provided input.  We use a
+    // capturing regex (/^([a-zA-Z0-9_-]{1,128})$/) so that only the captured group
+    // referrerId comes from referredByUserId stored in the users collection.  That
+    // field is populated during registration from user-provided input.  We use a
+    // capturing regex (/^([a-zA-Z0-9_-]{1,128})$/) so that only the captured group
+    // — derived exclusively from safe characters — is used in the DB query.  This
+    // breaks the taint chain: the query value is a new string produced by the regex
+    // engine from safe character matches, not the original tainted input.
+    // Only coerce to string for a primitive referrerId; objects (e.g. with a custom
+    // toString) are rejected by the regex and result in safeReferrerId=null.
+    const referrerIdPrimitive = (typeof referrerId === 'string' || typeof referrerId === 'number')
+      ? String(referrerId) : '';
+    const SAFE_ID_CAPTURE = /^([a-zA-Z0-9_-]{1,128})$/;
+    const idMatch = SAFE_ID_CAPTURE.exec(referrerIdPrimitive);
+    const safeReferrerId = idMatch ? idMatch[1] : null;
+
+    if (!safeReferrerId) {
+      logger.warn(
+        `[ReferralCalc] referrerId contains unsafe characters — skipping payout history lookup ` +
+        `referrer=${referrer.username} period=${periodKey}`
+      );
+    }
+
+    const paidPayoutsForReferrer = safeReferrerId
+      ? await ReferralPayout.find({
+          periodKey,
+          referrerUserId: safeReferrerId,
+          status: 'paid'
+        }).lean()
+      : [];
+
+    // settlementByReferred: Map<referredUserId, { settledRevenue, settledCommission }>
+    // Helper: compute cumulative settled amount from a single payout detail entry
+    const cumulative = (already, delta) => (already || 0) + (delta || 0);
+
+    const settlementByReferred = new Map();
+    for (const payout of paidPayoutsForReferrer) {
+      const perReferredDetails = payout.details?.perReferredDetails;
+      if (!Array.isArray(perReferredDetails)) continue;
+      for (const detail of perReferredDetails) {
+        if (!detail.referredUserId) continue;
+        const cumRevenue = cumulative(detail.alreadySettledRevenue, detail.newDeltaRevenue);
+        const cumCommission = cumulative(detail.alreadySettledCommission, detail.newDeltaCommission);
+        const prev = settlementByReferred.get(detail.referredUserId);
+        // Take the entry with the highest cumulative revenue.
+        // If revenue is equal, prefer the entry with higher settled commission
+        // (tie-breaker for duplicate or concurrent payout records).
+        if (!prev || cumRevenue > prev.settledRevenue ||
+            (cumRevenue === prev.settledRevenue && cumCommission > prev.settledCommission)) {
+          settlementByReferred.set(detail.referredUserId, {
+            settledRevenue: cumRevenue,
+            settledCommission: cumCommission
+          });
+        }
+      }
+    }
+
+    logger.info(
+      `[ReferralCalc] paidPayoutsLoaded=${paidPayoutsForReferrer.length} ` +
+      `referrer=${referrer.username} period=${periodKey} ` +
+      `referredsWithSettlement=${settlementByReferred.size}`
+    );
+    // ─────────────────────────────────────────────────────────────────────────
 
     for (const referredUser of usersReferredByThisReferrer) {
       results.referredsProcessed++;
@@ -268,14 +347,46 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       const { totalOwnerRevenue, totalBets, totalWins, totalGgr, providers } = revenueResult;
 
       // ── Incremental settlement: delta calculation ─────────────────────────────
-      // settledOwnerRevenue = revenue already settled in previous payouts for this record.
-      // We only generate commission on the NEW revenue since the last settlement cutoff.
-      const alreadySettledRevenue = existingIsPaid
-        ? (existing.settledOwnerRevenue != null ? existing.settledOwnerRevenue : existing.totalOwnerRevenue)
-        : 0;
-      const alreadySettledCommission = existingIsPaid
-        ? (existing.settledCommissionAmount != null ? existing.settledCommissionAmount : 0)
-        : 0;
+      // Primary source: payout history ledger (paidPayoutsForReferrer, built above).
+      // This is authoritative and resilient to multiple calculate() runs because it
+      // reads directly from persisted ReferralPayout documents rather than from
+      // the mutable ReferralCommission.settledOwnerRevenue field.
+      //
+      // Fallback: ReferralCommission.settledOwnerRevenue (for backward compatibility
+      // with payouts created before the perReferredDetails field was introduced, and
+      // for any edge case where the payout document lacks that sub-structure).
+      const historySettlement = settlementByReferred.get(referredUser.id);
+      let alreadySettledRevenue = historySettlement?.settledRevenue || 0;
+      let alreadySettledCommission = historySettlement?.settledCommission || 0;
+
+      // Fallback: if payout history has no entry for this referred user but the
+      // commission record itself carries settled amounts (e.g. old payouts without
+      // perReferredDetails, or the current record was freshly marked 'paid'), use them.
+      if (alreadySettledRevenue === 0 && existing) {
+        const fallbackRevenue = existing.settledOwnerRevenue || 0;
+        if (fallbackRevenue > 0) {
+          alreadySettledRevenue = fallbackRevenue;
+          alreadySettledCommission = existing.settledCommissionAmount || 0;
+          logger.info(
+            `[ReferralCalc] settlementFallbackUsed=true referido=${referredUser.username} ` +
+            `fallbackSettledRevenue=${fallbackRevenue.toFixed(2)} period=${periodKey}`
+          );
+        }
+      }
+
+      let settlementSource = 'none';
+      if (settlementByReferred.has(referredUser.id)) {
+        settlementSource = 'payoutLedger';
+      } else if (alreadySettledRevenue > 0) {
+        settlementSource = 'commissionFallback';
+      }
+      logger.info(
+        `[ReferralCalc] settlementBaseline referido=${referredUser.username} period=${periodKey} ` +
+        `ledgerPayouts=${paidPayoutsForReferrer.length} ` +
+        `alreadySettledRevenue=${alreadySettledRevenue.toFixed(2)} ` +
+        `alreadySettledCommission=${alreadySettledCommission.toFixed(2)} ` +
+        `settlementSource=${settlementSource}`
+      );
 
       // Revenue not yet settled
       const newPendingRevenue = Math.max(0, totalOwnerRevenue - alreadySettledRevenue);
@@ -301,7 +412,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         `usedGlobalAggregate=${revenueResult.usedGlobalAggregate ?? false} ` +
         `revenueScope=${revenueResult.revenueScope || 'perUser'} ` +
         `revenueSourceField=${revenueResult.revenueSourceField || 'child_user_id'} ` +
-        `commissionCalculationMode=${existingIsPaid ? 'delta_after_settlement' : 'individual_revenue'}`
+        `commissionCalculationMode=${alreadySettledRevenue > 0 ? 'delta_after_settlement' : 'individual_revenue'}`
       );
       // ─────────────────────────────────────────────────────────────────────────
 
@@ -357,7 +468,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         commissionAmount,
         status,
         reason: reason || undefined,
-        isDelta: existingIsPaid
+        isDelta: alreadySettledRevenue > 0
       });
 
       if (!dryRun) {
@@ -367,12 +478,13 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
             { _id: existing._id },
             { $set: { ...dataWithoutStatus, status } }
           );
-          if (existingIsPaid && commissionAmount > 0) {
+          if (alreadySettledRevenue > 0 && commissionAmount > 0) {
             logger.info(
               `[ReferralCalc] Delta commission calculated after last payment | mode=${mode} period=${periodKey} ` +
               `referrer=${referrer.username} referredUser=${referredUser.username} ` +
               `historicalCommission=${alreadySettledCommission.toFixed(2)} ` +
               `newCommissionSinceLastSettlement=${commissionAmount.toFixed(2)} ` +
+              `alreadySettledRevenueFloor=${alreadySettledRevenue.toFixed(2)} newPendingRevenue=${newPendingRevenue.toFixed(2)} ` +
               `upsertPerformed=true paymentApplied=false`
             );
           } else {
