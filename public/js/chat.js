@@ -111,6 +111,34 @@ VIP.chat = (function () {
         requestAnimationFrame(() => scrollToBottom());
     }
 
+    function getDateLabel(dateStr) {
+        const msgDate = new Date(dateStr);
+        const today = getArgentinaDate();
+        const yesterday = getArgentinaDate();
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        const msgDay = msgDate.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+        const todayStr = today.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+        const yesterdayStr = yesterday.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+
+        if (msgDay === todayStr) return 'Hoy';
+        if (msgDay === yesterdayStr) return 'Ayer';
+
+        return msgDate.toLocaleDateString('es-AR', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: 'America/Argentina/Buenos_Aires'
+        });
+    }
+
+    function createDateSeparator(label) {
+        const sep = document.createElement('div');
+        sep.className = 'chat-date-separator';
+        sep.innerHTML = `<span>${label}</span>`;
+        return sep;
+    }
+
     function renderMessages(messages) {
         const container = document.getElementById('chatMessages');
         const isInitialLoad = VIP.state.lastMessagesHash === '';
@@ -119,8 +147,14 @@ VIP.chat = (function () {
         const fragment = document.createDocumentFragment();
         VIP.state.processedMessageIds.clear();
 
+        let lastDateLabel = '';
         messages.forEach(msg => {
             if (msg.id) VIP.state.processedMessageIds.add(msg.id);
+            const dateLabel = getDateLabel(msg.timestamp);
+            if (dateLabel !== lastDateLabel) {
+                fragment.appendChild(createDateSeparator(dateLabel));
+                lastDateLabel = dateLabel;
+            }
             const wrapper = createMessageElement(msg);
             if (wrapper) fragment.appendChild(wrapper);
         });

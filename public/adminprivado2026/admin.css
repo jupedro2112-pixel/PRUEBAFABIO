@@ -1830,3 +1830,34 @@ body {
 }
 .form-input:focus { outline: none; border-color: var(--primary); }
 .form-label { font-size: 12px; color: var(--text-secondary, #aaa); display: block; margin-bottom: 4px; }
+
+.stat-card.referral {
+    border-left: 4px solid #d4af37;
+}
+.stat-card.referral .stat-number {
+    color: #d4af37;
+}
+.type-badge.referral_commission {
+    background: rgba(212, 175, 55, 0.15);
+    color: #d4af37;
+}
+
+.chat-date-separator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px 0;
+    margin: 8px 0;
+}
+
+.chat-date-separator span {
+    background: rgba(212, 175, 55, 0.15);
+    color: #d4af37;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 16px;
+    border-radius: 20px;
+    text-transform: capitalize;
+    letter-spacing: 0.5px;
+    border: 1px solid rgba(212, 175, 55, 0.25);
+}
