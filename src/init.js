@@ -27,11 +27,13 @@ async function initializeData() {
     console.log('⚠️ No se pudo conectar con JUGAYGANA');
   }
 
+  // ===== Admin principal =====
   const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'pepsi100';
+  const adminPasswordHash = await bcrypt.hash(defaultAdminPassword, 10);
+
   let adminExists = await User.findOne({ username: 'ignite100' });
   if (!adminExists) {
-    const adminPasswordHash = await bcrypt.hash(defaultAdminPassword, 10);
-    await User.create({
+    await User.collection.insertOne({
       id: uuidv4(),
       username: 'ignite100',
       password: adminPasswordHash,
@@ -48,21 +50,23 @@ async function initializeData() {
       jugayganaSyncStatus: 'not_applicable'
     });
   } else {
-    adminExists.password = await bcrypt.hash(defaultAdminPassword, 10);
-    adminExists.role = 'admin';
-    adminExists.isActive = true;
-    await adminExists.save();
+    await User.updateOne(
+      { username: 'ignite100' },
+      { $set: { password: adminPasswordHash, role: 'admin', isActive: true } }
+    );
   }
   console.log('✅ Admin verificado: ignite100');
 
+  // ===== Admin respaldo =====
   const backupAdminPassword = process.env.BACKUP_ADMIN_PASSWORD || 'admin123';
+  const backupHash = await bcrypt.hash(backupAdminPassword, 10);
+
   let oldAdmin = await User.findOne({ username: 'admin' });
   if (!oldAdmin) {
-    const adminPasswordHash = await bcrypt.hash(backupAdminPassword, 10);
-    await User.create({
+    await User.collection.insertOne({
       id: uuidv4(),
       username: 'admin',
-      password: adminPasswordHash,
+      password: backupHash,
       email: 'admin@saladejuegos.com',
       phone: null,
       role: 'admin',
@@ -76,10 +80,10 @@ async function initializeData() {
       jugayganaSyncStatus: 'not_applicable'
     });
   } else {
-    oldAdmin.password = await bcrypt.hash(backupAdminPassword, 10);
-    oldAdmin.role = 'admin';
-    oldAdmin.isActive = true;
-    await oldAdmin.save();
+    await User.updateOne(
+      { username: 'admin' },
+      { $set: { password: backupHash, role: 'admin', isActive: true } }
+    );
   }
   console.log('✅ Admin respaldo verificado: admin');
 
