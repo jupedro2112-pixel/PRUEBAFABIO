@@ -730,9 +730,11 @@ const changePassword = asyncHandler(async (req, res) => {
     return res.status(403).json({ error: 'Solo puedes cambiar contraseñas de usuarios, no de administradores' });
   }
 
-  user.password = await bcrypt.hash(newPassword, 10);
-  user.passwordChangedAt = new Date();
-  await user.save();
+  const hashed = await bcrypt.hash(newPassword, 10);
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { password: hashed, passwordChangedAt: new Date() } }
+  );
 
   await Message.create({
     id: require('uuid').v4(),

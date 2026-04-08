@@ -190,7 +190,7 @@ const login = async (credentials) => {
       user = await User.create({
         id: userId,
         username: jgUser.username.toLowerCase(),
-        password: await bcrypt.hash('asd123', 12),
+        password: 'asd123',
         email: jgUser.email || null,
         phone: jgUser.phone || null,
         role: 'user',
@@ -235,10 +235,7 @@ const login = async (credentials) => {
   
   // Si no coincide y el usuario nunca cambió su contraseña, intentar con 'asd123'
   if (!isValidPassword && !user.passwordChangedAt && user.source === 'jugaygana') {
-    const defaultHash = await bcrypt.hash('asd123', 12);
-    const isDefaultPassword = await bcrypt.compare(password, defaultHash);
-    
-    if (!isDefaultPassword) {
+    if (password !== 'asd123') {
       throw new AppError(
         ErrorMessages[ErrorCodes.AUTH_INVALID_CREDENTIALS],
         401,
