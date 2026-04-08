@@ -3219,39 +3219,47 @@
 
     <!-- Modal de Referidos -->
     <div id="referralModal" class="modal hidden" onclick="if(event.target===this)hideModal('referralModal')">
-        <div class="modal-content" style="position:relative;max-width:480px;max-height:90vh;overflow-y:auto;">
+        <div class="modal-content" style="position:relative;max-width:500px;max-height:90vh;overflow-y:auto;">
             <button onclick="hideModal('referralModal')" style="position:absolute;top:15px;right:15px;background:none;border:none;color:#888;font-size:24px;cursor:pointer;z-index:10;">✕</button>
             <div class="modal-header">
                 <h2>🤝 Mis Referidos</h2>
-                <p>Las ganancias por referidos se acreditan mensualmente en fichas</p>
+                <p>Compartí tu código y ganá una comisión mensual sobre la actividad de tus referidos</p>
             </div>
             <div id="referralContent">
                 <!-- Código y link -->
                 <div style="background:rgba(255,255,255,0.05);border:1px solid #d4af37;border-radius:12px;padding:16px;margin-bottom:16px;">
                     <div style="margin-bottom:12px;">
-                        <span style="color:#b0b0b0;font-size:12px;display:block;margin-bottom:4px;">TU CÓDIGO DE REFERIDO</span>
+                        <span style="color:#b0b0b0;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Tu código de referido</span>
                         <div style="display:flex;align-items:center;gap:8px;">
-                            <span id="myReferralCode" style="font-size:22px;font-weight:bold;color:#d4af37;letter-spacing:4px;">—</span>
+                            <span id="myReferralCode" style="font-size:24px;font-weight:bold;color:#d4af37;letter-spacing:5px;">—</span>
                             <button onclick="copyReferralCode()" style="background:rgba(212,175,55,0.2);border:1px solid #d4af37;color:#d4af37;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">📋 Copiar</button>
                         </div>
                     </div>
                     <div>
-                        <span style="color:#b0b0b0;font-size:12px;display:block;margin-bottom:4px;">TU LINK DE REFERIDO</span>
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <span id="myReferralLink" style="font-size:11px;color:#00ff88;word-break:break-all;">—</span>
-                            <button onclick="copyReferralLink()" style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;">📋 Copiar</button>
+                        <span style="color:#b0b0b0;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Tu link de referido</span>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span id="myReferralLink" style="font-size:11px;color:#00ff88;word-break:break-all;flex:1;min-width:0;">—</span>
+                            <button onclick="copyReferralLink()" style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;flex-shrink:0;">📋 Copiar</button>
                         </div>
                     </div>
                 </div>
-                <!-- Stats -->
+                <!-- Stats (4 tarjetas 2x2) -->
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
                     <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:12px;text-align:center;">
-                        <span style="font-size:22px;font-weight:bold;color:#00ff88;" id="referralTotalCount">0</span>
-                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Referidos totales</span>
+                        <span style="font-size:22px;font-weight:bold;color:#00ff88;" id="referralActiveCount">0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Referidos activos</span>
                     </div>
                     <div style="background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.2);border-radius:10px;padding:12px;text-align:center;">
                         <span style="font-size:22px;font-weight:bold;color:#d4af37;" id="referralHistoricalTotal">$0</span>
                         <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Total acreditado</span>
+                    </div>
+                    <div style="background:rgba(247,147,30,0.05);border:1px solid rgba(247,147,30,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:22px;font-weight:bold;color:#f7931e;" id="referralPendingAmount">$0</span>
+                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Pendiente del período</span>
+                    </div>
+                    <div style="background:rgba(136,136,136,0.05);border:1px solid rgba(136,136,136,0.2);border-radius:10px;padding:12px;text-align:center;">
+                        <span style="font-size:16px;font-weight:bold;color:#b0b0b0;" id="referralLastPayoutAmount">—</span>
+                        <span style="display:block;font-size:11px;color:#888;margin-top:4px;">Último pago acreditado</span>
                     </div>
                 </div>
                 <!-- Período actual -->
@@ -3260,19 +3268,21 @@
                         <span style="color:#b0b0b0;font-size:12px;">Período actual:</span>
                         <span id="referralCurrentPeriod" style="color:#fff;font-size:12px;font-weight:600;">—</span>
                     </div>
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                        <span style="color:#b0b0b0;font-size:12px;">Ganancias pendientes estimadas:</span>
-                        <span id="referralPendingAmount" style="color:#d4af37;font-size:14px;font-weight:bold;">$0</span>
-                    </div>
                     <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <span style="color:#b0b0b0;font-size:12px;">Próximo crédito estimado:</span>
+                        <span style="color:#b0b0b0;font-size:12px;">Próxima acreditación:</span>
                         <span id="referralCreditDate" style="color:#888;font-size:11px;">—</span>
                     </div>
                 </div>
-                <!-- Historial -->
+                <!-- Microcopy: cómo funcionan los referidos -->
+                <div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.15);border-radius:10px;padding:12px;margin-bottom:16px;">
+                    <p style="color:#b0b0b0;font-size:11px;margin:0;line-height:1.6;">
+                        💡 <strong style="color:#d4af37;">¿Cómo funciona?</strong> Las ganancias se calculan y acreditan al inicio de cada mes en base a la actividad del período anterior. Si un referido sigue generando movimiento después de un pago, el nuevo saldo se acredita en el siguiente corte.
+                    </p>
+                </div>
+                <!-- Historial agrupado por período -->
                 <div>
-                    <span style="color:#b0b0b0;font-size:12px;font-weight:600;display:block;margin-bottom:8px;">HISTORIAL DE PAGOS</span>
-                    <div id="referralPayoutHistory" style="max-height:200px;overflow-y:auto;">
+                    <span style="color:#b0b0b0;font-size:12px;font-weight:600;display:block;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px;">Historial de pagos</span>
+                    <div id="referralPayoutHistory" style="max-height:220px;overflow-y:auto;">
                         <span style="color:#888;font-size:12px;">Cargando...</span>
                     </div>
                 </div>

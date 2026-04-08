@@ -2815,7 +2815,7 @@ async function loadReferralData() {
             fetch(`${API_URL}/api/referrals/me`, {
                 headers: { 'Authorization': `Bearer ${currentToken}` }
             }),
-            fetch(`${API_URL}/api/referrals/history?limit=10`, {
+            fetch(`${API_URL}/api/referrals/history?limit=20`, {
                 headers: { 'Authorization': `Bearer ${currentToken}` }
             })
         ]);
@@ -2830,14 +2830,16 @@ async function loadReferralData() {
         // Actualizar UI
         document.getElementById('myReferralCode').textContent = me.referralCode || '—';
         document.getElementById('myReferralLink').textContent = me.referralLink || '—';
-        document.getElementById('referralTotalCount').textContent = me.totalReferred || 0;
+        // Referidos activos (nuevo campo) con fallback a totalReferred
+        const activeCountEl = document.getElementById('referralActiveCount');
+        if (activeCountEl) activeCountEl.textContent = me.activeReferred != null ? me.activeReferred : (me.totalReferred || 0);
         document.getElementById('referralHistoricalTotal').textContent =
             '$' + new Intl.NumberFormat('es-AR').format(Math.round(me.historicalTotalCredited || 0));
         document.getElementById('referralCurrentPeriod').textContent = me.currentPeriodLabel || me.currentPeriod || '—';
 
         referralData = me;
 
-        // Summary para pendiente
+        // Summary para pendiente y último pago
         try {
             const sumRes = await fetch(`${API_URL}/api/referrals/summary`, {
                 headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -2849,27 +2851,78 @@ async function loadReferralData() {
                     '$' + new Intl.NumberFormat('es-AR').format(Math.round(sum.pendingEstimatedAmount || 0));
                 document.getElementById('referralCreditDate').textContent =
                     sum.estimatedCreditDate || 'Inicio del próximo mes';
+                // Último pago acreditado
+                const lastPayoutEl = document.getElementById('referralLastPayoutAmount');
+                if (lastPayoutEl) {
+                    if (sum.lastPayout && sum.lastPayout.amount > 0) {
+                        lastPayoutEl.textContent = '$' + new Intl.NumberFormat('es-AR').format(Math.round(sum.lastPayout.amount));
+                        lastPayoutEl.title = sum.lastPayout.periodLabel || sum.lastPayout.periodKey || '';
+                    } else {
+                        lastPayoutEl.textContent = '—';
+                    }
+                }
             }
         } catch (e) { /* ignorar */ }
 
         const EMPTY_HISTORY_HTML = '<span style="color:#888;font-size:12px;">Todavía no tenés pagos por referidos.</span>';
 
-        // Historial
+        // Historial agrupado por período con badges de estado
         if (histRes.ok) {
             const histData = await histRes.json();
             const payouts = histData.data?.payouts || [];
             if (payouts.length === 0) {
                 histContainer.innerHTML = EMPTY_HISTORY_HTML;
             } else {
-                histContainer.innerHTML = payouts.map(p => `
-                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-                        <span style="font-size:12px;color:#b0b0b0;">${p.periodLabel || p.periodKey}</span>
-                        <span style="font-size:13px;color:${p.status === 'paid' ? '#00ff88' : '#d4af37'};font-weight:600;">
-                            $${new Intl.NumberFormat('es-AR').format(Math.round(p.totalCommissionAmount || 0))}
-                            <span style="font-size:10px;color:#888;font-weight:normal;">${p.status === 'paid' ? '✅' : '⏳'}</span>
-                        </span>
-                    </div>
-                `).join('');
+                // Agrupar por período
+                const byPeriod = new Map();
+                for (const p of payouts) {
+                    const key = p.periodKey || '?';
+                    if (!byPeriod.has(key)) byPeriod.set(key, []);
+                    byPeriod.get(key).push(p);
+                }
+
+                const statusBadgeHtml = (status) => {
+                    if (status === 'paid')
+                        return '<span style="background:rgba(0,255,136,0.12);border:1px solid rgba(0,255,136,0.4);color:#00ff88;font-size:10px;border-radius:4px;padding:2px 6px;">✅ Pagado</span>';
+                    if (status === 'failed')
+                        return '<span style="background:rgba(255,68,68,0.12);border:1px solid rgba(255,68,68,0.4);color:#ff4444;font-size:10px;border-radius:4px;padding:2px 6px;">❌ Fallido</span>';
+                    if (status === 'cancelled')
+                        return '<span style="background:rgba(136,136,136,0.12);border:1px solid rgba(136,136,136,0.4);color:#888;font-size:10px;border-radius:4px;padding:2px 6px;">🚫 Cancelado</span>';
+                    return '<span style="background:rgba(247,147,30,0.12);border:1px solid rgba(247,147,30,0.4);color:#f7931e;font-size:10px;border-radius:4px;padding:2px 6px;">⏳ Pendiente</span>';
+                };
+
+                let html = '';
+                for (const [pk, periodPayouts] of byPeriod) {
+                    const label = periodPayouts[0].periodLabel || pk;
+                    const paidTotal = periodPayouts
+                        .filter(p => p.status === 'paid')
+                        .reduce((s, p) => s + (p.totalCommissionAmount || 0), 0);
+                    const hasMultiple = periodPayouts.length > 1;
+
+                    html += `<div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.05);">`;
+                    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">`;
+                    html += `<span style="font-size:12px;color:#d4af37;font-weight:600;">📅 ${label}</span>`;
+                    if (paidTotal > 0)
+                        html += `<span style="font-size:12px;color:#00ff88;font-weight:bold;">$${new Intl.NumberFormat('es-AR').format(Math.round(paidTotal))}</span>`;
+                    html += `</div>`;
+
+                    for (const p of periodPayouts) {
+                        // isDelta is the authoritative flag; payoutIndex fallback covers legacy records
+                        // created before isDelta was added to the schema.
+                        const isDelta = p.isDelta || (p.payoutIndex || 1) > 1;
+                        const amount = p.totalCommissionAmount || 0;
+                        html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;${hasMultiple ? 'padding-left:8px;' : ''}">`;
+                        html += `<div style="display:flex;align-items:center;gap:6px;">`;
+                        if (isDelta)
+                            html += `<span style="background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);color:#d4af37;font-size:10px;border-radius:4px;padding:1px 5px;">Δ delta</span>`;
+                        html += `${statusBadgeHtml(p.status)}`;
+                        html += `</div>`;
+                        html += `<span style="font-size:13px;color:${p.status === 'paid' ? '#d4af37' : '#888'};font-weight:${p.status === 'paid' ? '600' : 'normal'};">$${new Intl.NumberFormat('es-AR').format(Math.round(amount))}</span>`;
+                        html += `</div>`;
+                    }
+                    html += `</div>`;
+                }
+                histContainer.innerHTML = html;
             }
         } else {
             histContainer.innerHTML = EMPTY_HISTORY_HTML;
