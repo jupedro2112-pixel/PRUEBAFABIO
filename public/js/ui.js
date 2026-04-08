@@ -607,3 +607,30 @@ if (VIP.ui.isAppInstalled()) {
     if (headerInstallBtn) { headerInstallBtn.style.display = 'none'; headerInstallBtn.classList.add('hidden'); }
     if (appInstallBtn)    { appInstallBtn.classList.add('hidden'); }
 }
+
+// Mobile drawer toggle
+VIP.ui.toggleDrawer = function() {
+  const drawer = document.getElementById('mobileDrawer');
+  const overlay = document.getElementById('drawerOverlay');
+  if (!drawer || !overlay) return;
+  const isOpen = drawer.classList.contains('open');
+
+  if (isOpen) {
+    drawer.classList.remove('open');
+    overlay.classList.remove('open');
+  } else {
+    // Clone buttons from header to drawer if empty
+    const content = document.getElementById('drawerContent');
+    if (content && content.children.length === 0) {
+      const buttons = document.querySelectorAll('.header-right > *:not(.user-name):not(.mobile-menu-btn), .header-left .platform-section, .header-center .refund-btn, .header-left .user-action-btns > *');
+      buttons.forEach(btn => {
+        const clone = btn.cloneNode(true);
+        clone.style.display = '';
+        content.appendChild(clone);
+      });
+    }
+    drawer.classList.add('open');
+    overlay.classList.add('open');
+  }
+};
+window.toggleDrawer = VIP.ui.toggleDrawer;
