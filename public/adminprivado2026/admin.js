@@ -4170,7 +4170,7 @@ async function loadAdminReferralPayouts() {
         const statusFilter = document.getElementById('referralPayoutFilterStatus')?.value || '';
         const periodFilter = document.getElementById('referralPayoutFilterPeriod')?.value?.trim() || '';
         const usernameFilter = document.getElementById('referralPayoutFilterUsername')?.value?.trim() || '';
-        const params = new URLSearchParams({ limit: 100 });
+        const params = new URLSearchParams({ limit: 100 }); // 100 payouts to support period-grouped display (multiple payouts per referrer/period)
         if (statusFilter) params.append('status', statusFilter);
         if (periodFilter && /^\d{4}-\d{2}$/.test(periodFilter)) params.append('period', periodFilter);
         if (usernameFilter) params.append('username', usernameFilter);
@@ -4743,7 +4743,10 @@ async function adminReferralPayout() {
                     ${errors.map(e => {
                         const who = e.referrer || e.referrerUsername || 'desconocido';
                         const rawMsg = e.message || e.error;
-                        const msg = (rawMsg && typeof rawMsg === 'object') ? JSON.stringify(rawMsg) : (rawMsg || 'Error desconocido');
+                        const msg = typeof rawMsg === 'string' ? rawMsg
+                            : (rawMsg && (rawMsg.message || rawMsg.reason || rawMsg.code))
+                                ? (rawMsg.message || rawMsg.reason || String(rawMsg.code))
+                                : 'Error desconocido';
                         return `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">• <strong>${escHtml(who)}</strong> → ${escHtml(msg)}</div>`;
                     }).join('')}
                 </div>`;
