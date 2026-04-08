@@ -78,13 +78,37 @@ const referralPayoutSchema = new mongoose.Schema({
   isDelta: {
     type: Boolean,
     default: false
+  },
+  // Admin who triggered this payout (null when executed by automated system)
+  adminId: {
+    type: String,
+    default: null
+  },
+  adminUsername: {
+    type: String,
+    default: null
+  },
+  // Settlement window boundaries for this payout
+  cutoffEnd: {
+    type: Date,
+    default: null
+    // Timestamp when this payout was executed; revenue up to this point is included.
+    // The next calculation uses ReferralCommission.settledOwnerRevenue (set during payout)
+    // as the delta baseline, so cutoffEnd is stored here purely for audit/display purposes.
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  // autoIndex is disabled here; indexes are created explicitly in connectDB() AFTER the
+  // startup migration that drops the old unique index on {periodKey, referrerUserId}.
+  // This prevents a race condition where Mongoose's automatic index creation fires before
+  // the migration and either silently fails (leaving the old unique index in place) or
+  // creates an extra non-unique index on top of the unique one.
+  autoIndex: false
 });
 
 // Multiple payouts allowed per referrer per period (incremental settlement support).
 // Unique constraint is on the 'id' field only (defined above).
+// NOTE: These indexes are created manually in connectDB() — not via autoIndex.
 referralPayoutSchema.index({ periodKey: 1, referrerUserId: 1 });
 referralPayoutSchema.index({ status: 1, periodKey: 1 });
 
