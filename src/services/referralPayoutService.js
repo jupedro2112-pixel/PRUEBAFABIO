@@ -91,7 +91,30 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       referrerUserId: safeRefId,
       status: 'paid'
     });
+    const existingPayoutFound = previousPaidPayoutsCount > 0;
     const payoutIndex = previousPaidPayoutsCount + 1;
+
+    // Aggregate settled amounts already paid to this referrer for this period
+    const alreadySettledRevenuePeriod = eligibleCommissions.reduce(
+      (sum, c) => sum + (c.settledOwnerRevenue || 0), 0
+    );
+    const alreadySettledCommissionPeriod = eligibleCommissions.reduce(
+      (sum, c) => sum + (c.settledCommissionAmount || 0), 0
+    );
+    const newPendingRevenuePeriod = eligibleCommissions.reduce(
+      (sum, c) => sum + (c.totalOwnerRevenue - (c.settledOwnerRevenue || 0)), 0
+    );
+    const newPendingCommissionPeriod = totalAmount;
+
+    logger.info(
+      `[ReferralPayout] referrerUserId=${refId} periodKey=${periodKey} ` +
+      `existingPayoutFound=${existingPayoutFound} existingPayoutCount=${previousPaidPayoutsCount} ` +
+      `alreadySettledRevenue=${alreadySettledRevenuePeriod.toFixed(2)} ` +
+      `alreadySettledCommission=${alreadySettledCommissionPeriod.toFixed(2)} ` +
+      `newPendingRevenue=${newPendingRevenuePeriod.toFixed(2)} ` +
+      `newPendingCommission=${newPendingCommissionPeriod.toFixed(2)} ` +
+      `payoutSequence=${payoutIndex} creatingDeltaPayout=${isDeltaPayout}`
+    );
 
     const periodLabel = getPeriodLabel(periodKey);
     const description = `Ganancias por referidos - ${periodLabel}${isDeltaPayout ? ` (pago #${payoutIndex})` : ''}`;
@@ -263,14 +286,24 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       });
     } catch (err) {
       const errMessage = typeof err.message === 'string' ? err.message : String(err.message || 'Error desconocido');
+      // Detect duplicate key error (e.g. old unique index still in DB)
+      const isDuplicateKey = err.code === 11000 || /E11000|duplicate key/.test(errMessage);
 
       logger.error(
         `[ReferralPayout] Error pagando a ${group.referrerUsername}: ${errMessage}`
       );
       logger.error(
-        `[ReferralPayout] referrer=${group.referrerUsername} period=${periodKey} errorMessage=${errMessage} ` +
+        `[ReferralPayout] referrer=${group.referrerUsername} referrerUserId=${refId} period=${periodKey} ` +
+        `errorMessage=${errMessage} duplicateKeyPrevented=${isDuplicateKey} ` +
         `finalPayoutStatus=failed paymentApplied=false`
       );
+      if (isDuplicateKey) {
+        logger.error(
+          `[ReferralPayout] DUPLICATE KEY detected — the old unique index on referralpayouts` +
+          ` {periodKey, referrerUserId} may still exist in MongoDB. ` +
+          `The startup migration in src/models/index.js should drop it automatically on next restart.`
+        );
+      }
 
       // Marcar payout como fallido pero no eliminar
       if (payoutDoc) {
