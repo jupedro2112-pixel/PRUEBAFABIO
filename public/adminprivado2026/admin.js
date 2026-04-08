@@ -4169,9 +4169,11 @@ async function loadAdminReferralPayouts() {
     try {
         const statusFilter = document.getElementById('referralPayoutFilterStatus')?.value || '';
         const periodFilter = document.getElementById('referralPayoutFilterPeriod')?.value?.trim() || '';
-        const params = new URLSearchParams({ limit: 50 });
+        const usernameFilter = document.getElementById('referralPayoutFilterUsername')?.value?.trim() || '';
+        const params = new URLSearchParams({ limit: 100 });
         if (statusFilter) params.append('status', statusFilter);
         if (periodFilter && /^\d{4}-\d{2}$/.test(periodFilter)) params.append('period', periodFilter);
+        if (usernameFilter) params.append('username', usernameFilter);
 
         const res = await fetch(`${API_URL}/api/referrals/admin/payouts?${params}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -4187,40 +4189,75 @@ async function loadAdminReferralPayouts() {
             return;
         }
 
-        const statusBadge = (s, isDelta) => {
+        const statusBadge = (s, isDelta, idx) => {
             const color = s === 'paid' ? '#00ff88' : s === 'failed' ? '#ff4444' : '#f7931e';
             const label = s === 'paid' ? '✅ Pagado' : s === 'failed' ? '❌ Fallido' : '⏳ Pendiente';
-            const delta = isDelta ? '<span style="color:#888;font-size:10px;margin-left:4px;">Δ delta</span>' : '';
-            return `<span style="color:${color};font-size:11px;">${label}${delta}</span>`;
+            const seqLabel = idx > 1 || isDelta
+                ? `<span style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);color:#d4af37;font-size:10px;border-radius:4px;padding:1px 5px;margin-left:5px;">Δ pago #${idx}</span>`
+                : '';
+            return `<span style="color:${color};font-size:11px;">${label}</span>${seqLabel}`;
         };
 
+        // Group by period for sectioned display
+        const byPeriod = new Map();
+        for (const p of payouts) {
+            const key = p.periodKey || '?';
+            if (!byPeriod.has(key)) byPeriod.set(key, []);
+            byPeriod.get(key).push(p);
+        }
+
+        let html = '';
+        for (const [pk, periodPayouts] of byPeriod) {
+            const periodLabel = periodPayouts[0].periodLabel || pk;
+            const periodTotal = periodPayouts.filter(p => p.status === 'paid').reduce((s, p) => s + (p.totalCommissionAmount || 0), 0);
+            const hasMultiple = periodPayouts.some(p => (p.payoutIndex || 1) > 1 || p.isDelta);
+
+            html += `
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(212,175,55,0.15);">
+                    <span style="color:#d4af37;font-weight:bold;font-size:13px;">📅 ${escHtml(periodLabel)}</span>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        ${hasMultiple ? '<span style="background:rgba(212,175,55,0.1);border:1px solid rgba(212,175,55,0.3);color:#d4af37;font-size:10px;border-radius:4px;padding:2px 7px;">múltiples pagos</span>' : ''}
+                        <span style="color:#888;font-size:11px;">Total acreditado: <strong style="color:#00ff88;">${fmtARS(periodTotal)}</strong></span>
+                    </div>
+                </div>
+                <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;min-width:600px;">
+                    <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.08);">
+                        <th style="padding:6px 6px;">Referidor</th>
+                        <th style="padding:6px 6px;text-align:right;">Monto Acreditado</th>
+                        <th style="padding:6px 6px;text-align:center;">Referidos</th>
+                        <th style="padding:6px 6px;">Estado / Liquidación</th>
+                        <th style="padding:6px 6px;">Fecha Pago</th>
+                        <th style="padding:6px 6px;font-size:10px;">ID</th>
+                    </tr></thead>
+                    <tbody>
+                    ${periodPayouts.map(p => {
+                        const rowBg = p.isDelta || (p.payoutIndex || 1) > 1 ? 'background:rgba(212,175,55,0.02);' : '';
+                        return `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);${rowBg}">
+                            <td style="padding:6px 6px;color:#fff;font-weight:bold;">
+                                ${escHtml(p.referrerUsername)}
+                                <button onclick="loadAdminUserReferrals('${escHtml(p.referrerUserId || '')}');document.getElementById('referralUserDetail')?.scrollIntoView({behavior:'smooth'})"
+                                    style="background:none;border:1px solid rgba(212,175,55,0.4);color:#d4af37;padding:1px 6px;border-radius:4px;cursor:pointer;font-size:10px;margin-left:5px;">detalle</button>
+                            </td>
+                            <td style="padding:6px 6px;color:#d4af37;font-weight:bold;text-align:right;">${fmtARS(p.totalCommissionAmount || 0)}</td>
+                            <td style="padding:6px 6px;color:#00ff88;text-align:center;">${p.referralCount || 0}</td>
+                            <td style="padding:6px 6px;">${statusBadge(p.status, p.isDelta, p.payoutIndex || 1)}</td>
+                            <td style="padding:6px 6px;color:#888;font-size:11px;">${p.creditedAt ? new Date(p.creditedAt).toLocaleString('es-AR', {dateStyle:'short',timeStyle:'short'}) : '—'}</td>
+                            <td style="padding:6px 6px;color:#444;font-size:10px;font-family:monospace;">${(p.id || '').substring(0, 8)}…</td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody>
+                </table>
+                </div>
+            </div>`;
+        }
+
         container.innerHTML = `
-        <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;min-width:600px;">
-            <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                <th style="padding:7px 6px;">Período</th>
-                <th style="padding:7px 6px;">Referidor</th>
-                <th style="padding:7px 6px;text-align:right;">Monto Acreditado</th>
-                <th style="padding:7px 6px;text-align:center;">Referidos</th>
-                <th style="padding:7px 6px;text-align:center;">#</th>
-                <th style="padding:7px 6px;">Estado</th>
-                <th style="padding:7px 6px;">Fecha Pago</th>
-                <th style="padding:7px 6px;font-size:10px;">ID Pago</th>
-            </tr></thead>
-            <tbody>
-            ${payouts.map(p => `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:7px 6px;color:#b0b0b0;">${p.periodLabel || p.periodKey}</td>
-                <td style="padding:7px 6px;color:#fff;font-weight:bold;">${p.referrerUsername}</td>
-                <td style="padding:7px 6px;color:#d4af37;font-weight:bold;text-align:right;">${fmtARS(p.totalCommissionAmount || 0)}</td>
-                <td style="padding:7px 6px;color:#00ff88;text-align:center;">${p.referralCount || 0}</td>
-                <td style="padding:7px 6px;color:#888;text-align:center;font-size:11px;">${p.payoutIndex ? `#${p.payoutIndex}` : '#1'}</td>
-                <td style="padding:7px 6px;">${statusBadge(p.status, p.isDelta)}</td>
-                <td style="padding:7px 6px;color:#888;font-size:11px;">${p.creditedAt ? new Date(p.creditedAt).toLocaleString('es-AR', {dateStyle:'short',timeStyle:'short'}) : '—'}</td>
-                <td style="padding:7px 6px;color:#444;font-size:10px;font-family:monospace;">${(p.id || '').substring(0, 8)}…</td>
-            </tr>`).join('')}
-            </tbody>
-        </table>
-        </div>`;
+            <div style="color:#888;font-size:11px;margin-bottom:12px;">
+                ${payouts.length} pago(s) — ordenado por período más reciente
+            </div>
+            ${html}`;
     } catch (e) {
         container.innerHTML = '<span style="color:#ff4444;font-size:12px;">Error cargando historial de pagos.</span>';
     }
@@ -4278,17 +4315,42 @@ async function loadAdminUserReferrals(userId) {
             </tr>`;
         }).join('');
 
-        const payoutRows = (d.payouts || []).map(p => {
-            const isDelta = p.isDelta;
-            const statusColor = p.status === 'paid' ? '#00ff88' : p.status === 'failed' ? '#ff4444' : '#f7931e';
-            return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:5px 6px;color:#b0b0b0;">${fmtPeriod(p.periodKey)}</td>
-                <td style="padding:5px 6px;color:#d4af37;font-weight:bold;text-align:right;">${fmtARS(p.totalCommissionAmount)}</td>
-                <td style="padding:5px 6px;color:#888;text-align:center;">${p.payoutIndex ? `#${p.payoutIndex}` : '#1'}${isDelta?' <span style="font-size:10px;color:#888;">Δ</span>':''}</td>
-                <td style="padding:5px 6px;"><span style="color:${statusColor};font-size:11px;">${p.status === 'paid' ? '✅ Pagado' : p.status === 'failed' ? '❌ Fallido' : '⏳ Pendiente'}</span></td>
-                <td style="padding:5px 6px;color:#888;font-size:11px;">${fmtDate(p.creditedAt)}</td>
-            </tr>`;
-        }).join('');
+        // Group payouts by period to show settlement timeline
+        const payoutsByPeriod = new Map();
+        for (const p of (d.payouts || [])) {
+            const key = p.periodKey || '?';
+            if (!payoutsByPeriod.has(key)) payoutsByPeriod.set(key, []);
+            payoutsByPeriod.get(key).push(p);
+        }
+
+        let payoutTimelineHtml = '';
+        for (const [pk, pps] of payoutsByPeriod) {
+            const periodLbl = (pps[0].periodLabel || fmtPeriod(pk));
+            const periodSum = pps.filter(p => p.status === 'paid').reduce((s, p) => s + (p.totalCommissionAmount || 0), 0);
+            const multiPayout = pps.length > 1;
+            payoutTimelineHtml += `
+            <div style="margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.06);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <span style="color:#d4af37;font-size:12px;font-weight:bold;">📅 ${escHtml(periodLbl)}</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        ${multiPayout ? `<span style="background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.35);color:#d4af37;font-size:10px;border-radius:4px;padding:1px 6px;">${pps.length} pagos en este período</span>` : ''}
+                        <span style="color:#888;font-size:11px;">Total: <strong style="color:#00ff88;">${fmtARS(periodSum)}</strong></span>
+                    </div>
+                </div>
+                ${pps.map((p, i) => {
+                    const isDelta = p.isDelta || (p.payoutIndex || 1) > 1;
+                    const statusColor = p.status === 'paid' ? '#00ff88' : p.status === 'failed' ? '#ff4444' : '#f7931e';
+                    const statusLabel = p.status === 'paid' ? '✅ Pagado' : p.status === 'failed' ? '❌ Fallido' : '⏳ Pendiente';
+                    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;${i > 0 ? 'border-top:1px solid rgba(255,255,255,0.04);' : ''}">
+                        <span style="color:#888;font-size:11px;min-width:50px;">Pago ${p.payoutIndex ? `#${p.payoutIndex}` : '#1'}</span>
+                        ${isDelta ? '<span style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);color:#d4af37;font-size:10px;border-radius:4px;padding:1px 5px;">Δ delta</span>' : '<span style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#888;font-size:10px;border-radius:4px;padding:1px 5px;">base</span>'}
+                        <span style="color:#d4af37;font-weight:bold;min-width:80px;text-align:right;">${fmtARS(p.totalCommissionAmount)}</span>
+                        <span style="color:${statusColor};font-size:11px;">${statusLabel}</span>
+                        <span style="color:#888;font-size:11px;margin-left:auto;">${fmtDate(p.creditedAt)}</span>
+                    </div>`;
+                }).join('')}
+            </div>`;
+        }
 
         if (detailContent) {
             detailContent.innerHTML = `
@@ -4358,19 +4420,8 @@ async function loadAdminUserReferrals(userId) {
 
                 ${d.payouts && d.payouts.length > 0 ? `
                 <div>
-                    <h4 style="color:#d4af37;margin-bottom:8px;font-size:13px;">📤 Historial de Pagos Realizados</h4>
-                    <div style="overflow-x:auto;">
-                    <table style="width:100%;border-collapse:collapse;min-width:400px;">
-                        <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                            <th style="padding:5px 6px;">Período</th>
-                            <th style="padding:5px 6px;text-align:right;">Monto</th>
-                            <th style="padding:5px 6px;text-align:center;">Pago #</th>
-                            <th style="padding:5px 6px;">Estado</th>
-                            <th style="padding:5px 6px;">Fecha</th>
-                        </tr></thead>
-                        <tbody>${payoutRows}</tbody>
-                    </table>
-                    </div>
+                    <h4 style="color:#d4af37;margin-bottom:8px;font-size:13px;">📤 Historial de Pagos Realizados <span style="color:#888;font-size:11px;font-weight:normal;">(Δ = pago delta, liquidación posterior al corte inicial)</span></h4>
+                    ${payoutTimelineHtml}
                 </div>` : '<div style="color:#888;font-size:12px;">Sin pagos realizados aún.</div>'}
             `;
         }
@@ -4643,27 +4694,77 @@ async function adminReferralPayout() {
         const created = result.payoutsCreated || 0;
         const failed = result.payoutsFailed || 0;
         const skipped = result.payoutsSkipped || 0;
+        const details = result.details || [];
+        const errors = result.errors || [];
+
+        const renderPayoutResult = () => {
+            const statusColor = data.status === 'success' ? '#00ff88' : data.status === 'partial' ? '#f7931e' : '#ff4444';
+            const statusIcon = data.status === 'success' ? '✅' : data.status === 'partial' ? '⚠️' : '❌';
+
+            let html = `
+            <div style="background:rgba(255,255,255,0.03);border-radius:8px;padding:12px;margin-bottom:10px;">
+                <div style="font-size:14px;font-weight:bold;color:${statusColor};margin-bottom:8px;">${statusIcon} Resultado del Pago — Período ${fmtPeriod(period)}</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px;">
+                    <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:6px;padding:8px;text-align:center;">
+                        <div style="color:#00ff88;font-size:18px;font-weight:bold;">${created}</div>
+                        <div style="color:#888;font-size:11px;">Pagos creados</div>
+                    </div>
+                    <div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:6px;padding:8px;text-align:center;">
+                        <div style="color:${failed > 0 ? '#ff4444' : '#888'};font-size:18px;font-weight:bold;">${failed}</div>
+                        <div style="color:#888;font-size:11px;">Con error</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px;text-align:center;">
+                        <div style="color:#888;font-size:18px;font-weight:bold;">${skipped}</div>
+                        <div style="color:#888;font-size:11px;">Omitidos ($0)</div>
+                    </div>
+                </div>`;
+
+            if (details.length > 0) {
+                html += `<div style="margin-top:8px;">
+                    <div style="color:#888;font-size:11px;margin-bottom:6px;font-weight:600;">DETALLE POR REFERIDOR:</div>
+                    ${details.map(d => {
+                        const isDelta = d.isDelta || (d.payoutIndex || 1) > 1;
+                        const dColor = d.status === 'paid' ? '#00ff88' : '#ff4444';
+                        return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+                            <span style="color:#fff;font-weight:bold;min-width:100px;">${escHtml(d.referrerUsername)}</span>
+                            ${isDelta ? '<span style="background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.4);color:#d4af37;font-size:10px;border-radius:4px;padding:1px 5px;">Δ delta</span>' : ''}
+                            <span style="color:#d4af37;font-weight:bold;min-width:80px;text-align:right;">${fmtARS(d.amount || 0)}</span>
+                            <span style="color:#00ff88;font-size:11px;">${d.referralCount || 0} referido(s)</span>
+                            <span style="color:#888;font-size:11px;">pago #${d.payoutIndex || 1}</span>
+                            <span style="color:${dColor};font-size:11px;margin-left:auto;">${d.status === 'paid' ? '✅ Acreditado' : '❌ Error'}</span>
+                        </div>`;
+                    }).join('')}
+                </div>`;
+            }
+
+            if (errors.length > 0) {
+                html += `<div style="background:rgba(255,68,68,0.05);border:1px solid rgba(255,68,68,0.2);border-radius:8px;padding:10px;margin-top:10px;">
+                    <div style="color:#ff4444;font-size:12px;margin-bottom:6px;font-weight:600;">ERRORES (${errors.length}):</div>
+                    ${errors.map(e => {
+                        const who = e.referrer || e.referrerUsername || 'desconocido';
+                        const rawMsg = e.message || e.error;
+                        const msg = (rawMsg && typeof rawMsg === 'object') ? JSON.stringify(rawMsg) : (rawMsg || 'Error desconocido');
+                        return `<div style="color:#ff8888;font-size:11px;margin-bottom:4px;">• <strong>${escHtml(who)}</strong> → ${escHtml(msg)}</div>`;
+                    }).join('')}
+                </div>`;
+            }
+
+            html += '</div>';
+            return html;
+        };
 
         if (!res.ok) {
             const errMsg = data?.message || data?.error || 'Error desconocido';
-            if (resultDiv) resultDiv.innerHTML = `<div style="color:#ff4444;padding:8px;">❌ Error al procesar pagos: ${errMsg}</div>`;
+            if (resultDiv) resultDiv.innerHTML = `<div style="color:#ff4444;padding:8px;">❌ Error al procesar pagos: ${escHtml(errMsg)}</div>`;
             showToast('❌ Error en pagos', 'error');
         } else if (created > 0 && failed === 0) {
-            if (resultDiv) resultDiv.innerHTML = `<div style="color:#00ff88;padding:8px;">✅ ${created} pago(s) procesado(s) correctamente. Revisá el historial de pagos.</div>`;
+            if (resultDiv) resultDiv.innerHTML = renderPayoutResult();
             showToast('✅ Pagos procesados', 'success');
         } else if (created > 0 && failed > 0) {
-            if (resultDiv) resultDiv.innerHTML = `<div style="color:#f7931e;padding:8px;">⚠️ ${created} pago(s) exitoso(s), ${failed} con error. Revisá el historial de pagos.</div>`;
+            if (resultDiv) resultDiv.innerHTML = renderPayoutResult();
             showToast('⚠️ Pagos parciales', 'warning');
         } else if (failed > 0) {
-            const errList = result.errors || [];
-            const errDetail = errList.slice(0, 3).map(e => {
-                const who = e.referrer || e.referrerUsername || 'desconocido';
-                const rawMsg = e.message || e.error;
-                const msg = (rawMsg && typeof rawMsg === 'object') ? JSON.stringify(rawMsg) : (rawMsg || 'Error desconocido');
-                return `${who}: ${msg}`;
-            }).join('; ');
-            const moreSuffix = errList.length > 3 ? ` (+${errList.length - 3} más)` : '';
-            if (resultDiv) resultDiv.innerHTML = `<div style="color:#ff4444;padding:8px;">❌ Error al procesar pagos. ${errDetail ? errDetail + moreSuffix : 'Revisá el historial de pagos.'}</div>`;
+            if (resultDiv) resultDiv.innerHTML = renderPayoutResult();
             showToast('❌ Error en pagos', 'error');
         } else if (skipped > 0 && created === 0 && failed === 0) {
             if (resultDiv) resultDiv.innerHTML = `<div style="color:#888;padding:8px;">ℹ️ Sin pagos pendientes para ${period} (${skipped} ya procesado(s) o sin monto).</div>`;
@@ -4673,7 +4774,7 @@ async function adminReferralPayout() {
         }
         loadAdminReferralSummary();
     } catch (e) {
-        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
+        if (resultDiv) resultDiv.innerHTML = '<span style="color:#ff4444;">Error: ' + escHtml(e.message) + '</span>';
         showToast('❌ Error en pagos', 'error');
     }
 }
