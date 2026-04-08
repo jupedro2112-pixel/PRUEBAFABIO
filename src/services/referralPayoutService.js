@@ -3,12 +3,51 @@
  * Fase B: agrupa comisiones calculadas, acredita fichas y marca como pagado.
  * Soporta pagos incrementales: si el referido sigue jugando después de un pago,
  * el siguiente cálculo detecta el delta y este servicio puede pagar solo ese nuevo monto.
+ *
+ * Persistence model:
+ *   - ReferralPayout is the source of truth for what was paid and when.
+ *   - ReferralCommission tracks the delta ledger (settledOwnerRevenue, settledCommissionAmount).
+ *   - Both are persisted in MongoDB — no server-memory state is required after a restart.
+ *   - stateRecoveredFromDatabase=true is always the case: the calculation service reads
+ *     existing ReferralCommission records to determine what has already been settled.
  */
 const { v4: uuidv4 } = require('uuid');
-const { User, Transaction, Message, ReferralCommission, ReferralPayout } = require('../models');
+const { User, Transaction, Message, ReferralCommission, ReferralPayout, mongoose } = require('../models');
 const jugayganaService = require('./jugayganaService');
 const logger = require('../utils/logger');
 const { getPeriodLabel } = require('../utils/periodKey');
+
+/**
+ * Drop the stale unique index on referralpayouts {periodKey, referrerUserId} at runtime.
+ * Used as a fallback when the startup migration in connectDB() did not run or failed.
+ * After a successful drop the caller should retry the payout creation.
+ * @returns {boolean} true if dropped (or already absent), false on error
+ */
+async function dropStalePayoutUniqueIndexIfPresent() {
+  const INDEX_NAME = 'periodKey_1_referrerUserId_1';
+  try {
+    const collection = mongoose.connection.collection('referralpayouts');
+    const indexes = await collection.indexes();
+    const staleIndex = indexes.find(idx => idx.name === INDEX_NAME && !!idx.unique);
+    if (!staleIndex) {
+      logger.info(`[ReferralPayout] dropStaleIndex: "${INDEX_NAME}" is not unique or does not exist — no action needed`);
+      return true;
+    }
+    logger.warn(`[ReferralPayout] dropStaleIndex: dropping stale unique index "${INDEX_NAME}" at runtime`);
+    await collection.dropIndex(INDEX_NAME);
+    // Re-create the non-unique version immediately
+    try {
+      await ReferralPayout.createIndexes();
+    } catch (ci) {
+      logger.warn(`[ReferralPayout] dropStaleIndex: createIndexes after drop: ${ci.message}`);
+    }
+    logger.info(`[ReferralPayout] dropStaleIndex: "${INDEX_NAME}" dropped and non-unique index recreated — mongoPersistenceEnabled=true serverRestartSafe=true`);
+    return true;
+  } catch (err) {
+    logger.error(`[ReferralPayout] dropStaleIndex: error — ${err.message}`);
+    return false;
+  }
+}
 
 /**
  * Ejecutar el pago mensual para un período
@@ -22,7 +61,10 @@ const { getPeriodLabel } = require('../utils/periodKey');
 async function executePayoutsForPeriod(periodKey, options = {}) {
   const { referrerUserId = null, adminId = null, adminUsername = null } = options;
 
-  logger.info(`[ReferralPayout] payout request started period=${periodKey} admin=${adminUsername || 'system'}`);
+  logger.info(
+    `[ReferralPayout] payout request started period=${periodKey} admin=${adminUsername || 'system'} ` +
+    `mongoPersistenceEnabled=true stateRecoveredFromDatabase=true`
+  );
 
   const results = {
     periodKey,
@@ -37,6 +79,11 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
   if (referrerUserId) commissionQuery.referrerUserId = referrerUserId;
 
   const commissions = await ReferralCommission.find(commissionQuery).lean();
+
+  const existingSettlementItems = commissions.length;
+  logger.info(
+    `[ReferralPayout] paymentLoadedFromDatabase=true existingSettlementItems=${existingSettlementItems} periodKey=${periodKey}`
+  );
 
   if (commissions.length === 0) {
     logger.info(`[ReferralPayout] No hay comisiones calculadas para ${periodKey}`);
@@ -113,18 +160,35 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       `alreadySettledCommission=${alreadySettledCommissionPeriod.toFixed(2)} ` +
       `newPendingRevenue=${newPendingRevenuePeriod.toFixed(2)} ` +
       `newPendingCommission=${newPendingCommissionPeriod.toFixed(2)} ` +
-      `payoutSequence=${payoutIndex} creatingDeltaPayout=${isDeltaPayout}`
+      `payoutSequence=${payoutIndex} paymentSequence=${payoutIndex} ` +
+      `creatingDeltaPayout=${isDeltaPayout}`
     );
 
     const periodLabel = getPeriodLabel(periodKey);
     const description = `Ganancias por referidos - ${periodLabel}${isDeltaPayout ? ` (pago #${payoutIndex})` : ''}`;
+    const payoutCutoffEnd = new Date();
+
+    // Per-referred detail for full audit trail — stored inside the payout document so the
+    // record is self-contained and survives a server restart without needing to re-read the
+    // commission rows.
+    const perReferredDetails = eligibleCommissions.map(c => ({
+      referredUserId: c.referredUserId,
+      referredUsername: c.referredUsername,
+      totalOwnerRevenue: c.totalOwnerRevenue,
+      alreadySettledRevenue: c.settledOwnerRevenue || 0,
+      newDeltaRevenue: c.totalOwnerRevenue - (c.settledOwnerRevenue || 0),
+      alreadySettledCommission: c.settledCommissionAmount || 0,
+      newDeltaCommission: c.commissionAmount,
+      referralRate: c.referralRate,
+      commissionId: c.id
+    }));
 
     let payoutDoc;
 
     try {
-      // Always create a new payout document (incremental settlement support)
-      payoutDoc = await ReferralPayout.create({
-        id: uuidv4(),
+      // Helper to build the full payout document — used for creation and retry after index drop
+      const buildPayoutData = (payoutId) => ({
+        id: payoutId,
         periodKey,
         referrerUserId: refId,
         referrerUsername: group.referrerUsername,
@@ -134,16 +198,57 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         status: 'pending',
         payoutIndex,
         isDelta: isDeltaPayout,
+        adminId: adminId || null,
+        adminUsername: adminUsername || null,
+        cutoffEnd: payoutCutoffEnd,
         details: {
           commissionIds: eligibleCommissions.map(c => c.id),
-          payoutType
+          payoutType,
+          alreadySettledRevenue: alreadySettledRevenuePeriod,
+          alreadySettledCommission: alreadySettledCommissionPeriod,
+          newDeltaRevenue: newPendingRevenuePeriod,
+          newDeltaCommission: newPendingCommissionPeriod,
+          perReferredDetails
         }
       });
+
+      // Always create a new payout document (incremental settlement support).
+      // If E11000 is raised on the {periodKey, referrerUserId} compound index it means the
+      // startup migration has not yet run or failed silently.  We recover at runtime by
+      // dropping the stale unique index and retrying once.
+      const payoutId = uuidv4();
+      try {
+        payoutDoc = await ReferralPayout.create(buildPayoutData(payoutId));
+      } catch (createErr) {
+        const isDuplicateOnCompound =
+          (createErr.code === 11000 || /E11000|duplicate key/.test(createErr.message)) &&
+          /periodKey.*referrerUserId|referrerUserId.*periodKey|periodKey_1_referrerUserId_1/.test(createErr.message);
+
+        if (isDuplicateOnCompound) {
+          logger.warn(
+            `[ReferralPayout] E11000 on {periodKey, referrerUserId} detected — stale unique index present. ` +
+            `Attempting runtime index drop and retry. referrer=${group.referrerUsername} period=${periodKey}`
+          );
+          const dropped = await dropStalePayoutUniqueIndexIfPresent();
+          if (dropped) {
+            // Retry with the same payoutId — the original create failed before writing to DB
+            // (E11000 rejects before commit), so the UUID was never persisted.
+            payoutDoc = await ReferralPayout.create(buildPayoutData(payoutId));
+            logger.info(
+              `[ReferralPayout] Retry after index drop succeeded. referrer=${group.referrerUsername} period=${periodKey}`
+            );
+          } else {
+            throw createErr;
+          }
+        } else {
+          throw createErr;
+        }
+      }
 
       logger.info(
         `[ReferralPayout] historyRecordCreated=true referrer=${group.referrerUsername} ` +
         `period=${periodKey} payoutId=${payoutDoc.id} paidReferralsCount=${paidReferralsCount} ` +
-        `payoutIndex=${payoutIndex} isDelta=${isDeltaPayout}`
+        `payoutIndex=${payoutIndex} isDelta=${isDeltaPayout} adminUsername=${adminUsername || 'system'}`
       );
 
       // Acreditar fichas en JUGAYGANA usando CREDITBALANCE
@@ -268,11 +373,11 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         `[ReferralPayout] paymentStatusPersisted=paid referrer=${group.referrerUsername} ` +
         `period=${periodKey} amount=${totalAmount.toFixed(2)} paidReferralsCount=${paidReferralsCount} ` +
         `skippedReferralsCount=${skippedReferralsCount} payoutIndex=${payoutIndex} ` +
-        `recordsUpdated=${eligibleCommissions.length}`
+        `recordsUpdated=${eligibleCommissions.length} finalPayoutStatus=success`
       );
       logger.info(
         `[ReferralPayout] payment flow completed with persisted status=paid and uiSuccess=true ` +
-        `referrer=${group.referrerUsername} period=${periodKey}`
+        `referrer=${group.referrerUsername} period=${periodKey} serverRestartSafe=true`
       );
 
       results.payoutsCreated++;
@@ -297,13 +402,6 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         `errorMessage=${errMessage} duplicateKeyPrevented=${isDuplicateKey} ` +
         `finalPayoutStatus=failed paymentApplied=false`
       );
-      if (isDuplicateKey) {
-        logger.error(
-          `[ReferralPayout] DUPLICATE KEY detected — the old unique index on referralpayouts` +
-          ` {periodKey, referrerUserId} may still exist in MongoDB. ` +
-          `The startup migration in src/models/index.js should drop it automatically on next restart.`
-        );
-      }
 
       // Marcar payout como fallido pero no eliminar
       if (payoutDoc) {

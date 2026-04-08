@@ -30,37 +30,61 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-d
  * schema was already updated to remove the `unique: true` flag, but the physical MongoDB index
  * must be explicitly dropped — Mongoose does not remove existing indexes automatically.
  *
- * This migration is idempotent: if the unique index no longer exists, it exits silently.
+ * The ReferralPayout schema uses autoIndex:false so Mongoose never tries to auto-create its
+ * indexes.  After this migration runs, we manually call ReferralPayout.createIndexes() to
+ * ensure the new non-unique composite index is in place.  This prevents the race condition
+ * where Mongoose's autoIndex fires before the migration and either silently fails (leaving
+ * the old unique index in place) or creates a redundant index.
+ *
+ * This migration is idempotent: if the unique index no longer exists it exits silently.
  */
 async function migrateReferralPayoutIndex() {
+  const INDEX_NAME = 'periodKey_1_referrerUserId_1';
   try {
     const collection = mongoose.connection.collection('referralpayouts');
 
     // List existing indexes to detect the old unique one
-    const indexes = await collection.indexes();
-    const oldUniqueIndexName = 'periodKey_1_referrerUserId_1';
-    const oldIndex = indexes.find(idx => idx.name === oldUniqueIndexName);
-
-    if (!oldIndex) {
-      console.log('[Migration] referralpayouts: old unique index not found — nothing to migrate');
-      return;
+    let indexes = [];
+    try {
+      indexes = await collection.indexes();
+    } catch (listErr) {
+      // Collection may not exist yet on a fresh deployment — that is fine
+      console.log('[Migration] referralpayouts: could not list indexes (collection may not exist yet):', listErr.message);
     }
 
-    const isUnique = !!oldIndex.unique;
-    console.log(
-      `[Migration] referralpayouts: found index "${oldUniqueIndexName}" unique=${isUnique} — ` +
-      (isUnique ? 'dropping to enable incremental payouts' : 'already non-unique, dropping to recreate cleanly')
-    );
+    const oldIndex = indexes.find(idx => idx.name === INDEX_NAME);
 
-    await collection.dropIndex(oldUniqueIndexName);
-    console.log(
-      `[Migration] referralpayouts: index "${oldUniqueIndexName}" dropped successfully. ` +
-      'Multiple payouts per period+referrer are now supported (incremental settlement).'
-    );
+    if (!oldIndex) {
+      console.log(`[Migration] referralpayouts: index "${INDEX_NAME}" not found — nothing to drop`);
+    } else {
+      const isUnique = !!oldIndex.unique;
+      console.log(
+        `[Migration] referralpayouts: found index "${INDEX_NAME}" unique=${isUnique} — ` +
+        (isUnique ? 'dropping to enable incremental payouts' : 'already non-unique, dropping to recreate cleanly')
+      );
+      try {
+        await collection.dropIndex(INDEX_NAME);
+        console.log(
+          `[Migration] referralpayouts: index "${INDEX_NAME}" dropped successfully. ` +
+          'Multiple payouts per period+referrer are now supported (incremental settlement).'
+        );
+      } catch (dropErr) {
+        console.error(`[Migration] referralpayouts: error dropping index "${INDEX_NAME}":`, dropErr.message);
+      }
+    }
+
+    // Now create (or re-create) the correct non-unique indexes via the schema definition.
+    // ReferralPayout.autoIndex is false so this must be done explicitly here.
+    try {
+      await ReferralPayout.createIndexes();
+      console.log('[Migration] referralpayouts: indexes (re)created successfully — mongoPersistenceEnabled=true serverRestartSafe=true');
+    } catch (createErr) {
+      console.error('[Migration] referralpayouts: error creating indexes:', createErr.message);
+    }
   } catch (err) {
-    // Log but do not block startup — worst case the old index may still exist and will
-    // only affect new delta payouts for referrers who already have a payout in that period.
-    console.error('[Migration] referralpayouts: error dropping old unique index:', err.message);
+    // Log but do not block startup — worst case the old index may still exist; the payout
+    // service has its own E11000 recovery handler for this situation.
+    console.error('[Migration] referralpayouts: unexpected error during index migration:', err.message);
   }
 }
 

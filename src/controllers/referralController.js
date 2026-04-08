@@ -499,12 +499,36 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
 
   const frontendUrl = buildFrontendUrl(req);
 
-  // Financial summary using settled tracking fields
-  const totalSettledCommission = commissions.reduce((sum, c) => sum + (c.settledCommissionAmount || 0), 0);
+  // Financial summary — use two authoritative sources:
+  //   • ReferralPayout (status=paid) → "total paid" (reliable even for pre-migration payouts
+  //     that did not populate settledCommissionAmount on ReferralCommission records)
+  //   • ReferralCommission.commissionAmount where status=calculated → "pending"
+  //
+  // This resolves the inconsistency where the global summary cards showed a non-zero "total paid"
+  // derived from ReferralPayout while the referrer detail showed $0 because it relied on
+  // settledCommissionAmount (which was 0 for payouts made before the incremental settlement
+  // feature was deployed).
+  const payoutMatchQuery = { referrerUserId: safeUserId, status: 'paid' };
+  if (period) payoutMatchQuery.periodKey = period;
+  const [paidPayoutsSummary] = await ReferralPayout.aggregate([
+    { $match: payoutMatchQuery },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: '$totalCommissionAmount' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+  const totalPaidFromPayouts = paidPayoutsSummary?.total || 0;
+  const totalPayoutsCount = paidPayoutsSummary?.count || 0;
+
   // pendingAmount is commissionAmount when it is > 0 and status is 'calculated'.
   // A record with status 'paid' always has commissionAmount=0 (zeroed after payout).
-  const totalPendingCommission = commissions.reduce((sum, c) => sum + (c.commissionAmount > 0 ? c.commissionAmount : 0), 0);
-  const totalGeneratedCommission = totalSettledCommission + totalPendingCommission;
+  const totalPendingCommission = commissions.reduce(
+    (sum, c) => sum + (c.commissionAmount > 0 ? c.commissionAmount : 0), 0
+  );
+  const totalGeneratedCommission = totalPaidFromPayouts + totalPendingCommission;
 
   // Enrich commissions with computed fields for UI clarity
   const enrichedCommissions = commissions.map(c => ({
@@ -537,13 +561,13 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
       })),
       totalReferred: referredUsers.length,
       // Legacy field kept for backward compatibility
-      totalCommissionHistorical: totalSettledCommission,
+      totalCommissionHistorical: totalPaidFromPayouts,
       // Richer financial breakdown
       financialSummary: {
-        totalSettledCommission,
+        totalSettledCommission: totalPaidFromPayouts,
         totalPendingCommission,
         totalGeneratedCommission,
-        payoutCount: payouts.filter(p => p.status === 'paid').length
+        payoutCount: totalPayoutsCount
       }
     }
   });
