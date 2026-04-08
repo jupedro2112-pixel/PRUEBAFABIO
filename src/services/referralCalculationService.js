@@ -96,19 +96,34 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     // inner loop has O(1) lookup.  The cumulative settled amounts are derived as
     //   alreadySettledRevenue    = max(alreadySettled + newDelta)  across all payouts
     //   alreadySettledCommission = corresponding commission total
-    // Taking the maximum works because each payout's "alreadySettled" already
-    // includes all prior payouts; the highest cumulative value is always the most
-    // recent (and correct) settlement baseline.
     //
-    // referrerId comes from referredByUserId stored in the users collection; coerce
-    // to a plain string to prevent any operator injection if the DB field were ever
-    // stored as an object (belt-and-suspenders defense).
-    const safeReferrerId = String(referrerId);
-    const paidPayoutsForReferrer = await ReferralPayout.find({
-      periodKey,
-      referrerUserId: safeReferrerId,
-      status: 'paid'
-    }).lean();
+    // Taking the maximum cumulative value (alreadySettled + newDelta) across all payouts
+    // for a given referred user is correct because each successive payout's alreadySettled
+    // already includes all prior payouts; the document with the highest cumulative therefore
+    // represents the most recent and complete settlement baseline.
+    //
+    // referrerId comes from referredByUserId stored in the users collection.  That field is
+    // populated during registration from user-provided input.  We validate it against a
+    // safe character set before using it in a DB query to prevent NoSQL operator injection.
+    const referrerIdStr = String(referrerId);
+    // Allow only alphanumeric characters, hyphens, and underscores (covers UUID, numeric, and slug IDs)
+    const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
+    const safeReferrerId = SAFE_ID_REGEX.test(referrerIdStr) ? referrerIdStr : null;
+
+    if (!safeReferrerId) {
+      logger.warn(
+        `[ReferralCalc] referrerId contains unsafe characters — skipping payout history lookup ` +
+        `referrer=${referrer.username} period=${periodKey}`
+      );
+    }
+
+    const paidPayoutsForReferrer = safeReferrerId
+      ? await ReferralPayout.find({
+          periodKey,
+          referrerUserId: safeReferrerId,
+          status: 'paid'
+        }).lean()
+      : [];
 
     // settlementByReferred: Map<referredUserId, { settledRevenue, settledCommission }>
     const settlementByReferred = new Map();
@@ -346,12 +361,18 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         }
       }
 
+      let settlementSource = 'none';
+      if (settlementByReferred.has(referredUser.id)) {
+        settlementSource = 'payoutLedger';
+      } else if (alreadySettledRevenue > 0) {
+        settlementSource = 'commissionFallback';
+      }
       logger.info(
         `[ReferralCalc] settlementBaseline referido=${referredUser.username} period=${periodKey} ` +
         `ledgerPayouts=${paidPayoutsForReferrer.length} ` +
         `alreadySettledRevenue=${alreadySettledRevenue.toFixed(2)} ` +
         `alreadySettledCommission=${alreadySettledCommission.toFixed(2)} ` +
-        `settlementSource=${paidPayoutsForReferrer.length > 0 && settlementByReferred.has(referredUser.id) ? 'payoutLedger' : alreadySettledRevenue > 0 ? 'commissionFallback' : 'none'}`
+        `settlementSource=${settlementSource}`
       );
 
       // Revenue not yet settled
