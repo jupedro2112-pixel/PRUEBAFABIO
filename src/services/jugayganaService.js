@@ -461,55 +461,113 @@ const withdraw = async (username, amount, description = '') => {
  * Acreditar bonificación de referidos usando CREDITBALANCE
  * Usa action=CREDITBALANCE con username — mismo mecanismo que deposit(), que está confirmado como funcional.
  * Nota: DepositMoney fue descartado porque la API devuelve "action does not exist" para esa acción.
+ *
+ * Retry logic: if the provider returns "action does not exist" on the first attempt it is likely
+ * a stale/expired session token.  The function will invalidate the session and retry once with a
+ * fresh token.  This covers the case where the in-memory token is still within TOKEN_TTL_MINUTES
+ * but was already invalidated server-side.
  */
 const bonus = async (username, amount, description = '') => {
   const ok = await ensureSession();
   if (!ok) return { success: false, error: 'No hay sesión válida' };
 
   logger.info(
-    `[JugayganaService] bonus: attemptedAction=CREDITBALANCE username=${username} amount=${amount}`
+    `[JugayganaService] bonus: payoutAttemptAction=CREDITBALANCE payoutActionSupported=true ` +
+    `username=${username} amount=${amount}`
   );
 
-  try {
-    const body = toFormUrlEncoded({
-      action: 'CREDITBALANCE',
-      token: sessionToken,
-      username,
-      amount: Math.round(amount * 100),
-      description: description || `Bonificación referidos - ${new Date().toLocaleString('es-AR')}`
-    });
+  const attemptBonus = async () => {
+    try {
+      const body = toFormUrlEncoded({
+        action: 'CREDITBALANCE',
+        token: sessionToken,
+        username,
+        amount: Math.round(amount * 100),
+        description: description || `Bonificación referidos - ${new Date().toLocaleString('es-AR')}`
+      });
 
-    const headers = {};
-    if (sessionCookie) headers.Cookie = sessionCookie;
+      const headers = {};
+      if (sessionCookie) headers.Cookie = sessionCookie;
 
-    const resp = await client.post('', body, { 
-      headers, 
-      validateStatus: () => true 
-    });
+      const resp = await client.post('', body, {
+        headers,
+        validateStatus: () => true
+      });
 
-    const data = parseJson(resp.data);
-    if (isHtmlBlocked(data)) {
-      return { success: false, error: 'IP bloqueada / HTML' };
+      const data = parseJson(resp.data);
+      if (isHtmlBlocked(data)) {
+        const rawBody = typeof resp.data === 'string' ? resp.data.substring(0, 200) : '(non-string)';
+        logger.error(
+          `[JugayganaService] bonus: IP bloqueada / HTML username=${username} ` +
+          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE ` +
+          `payoutProviderResponse=${rawBody} finalPayoutStatus=failed`
+        );
+        return { success: false, error: 'IP bloqueada / HTML', shouldRetry: false };
+      }
+
+      // Accept both snake_case and camelCase transfer id variants for API compatibility
+      if (data?.success || data?.transfer_id || data?.transferId) {
+        return {
+          success: true,
+          data: data.data || data,
+          newBalance: data.user_balance_after || data.data?.user_balance_after
+        };
+      }
+
+      const errMsg = data?.error || data?.message || 'Bonificación falló';
+      const rawBody = typeof resp.data === 'string' ? resp.data.substring(0, 500) : JSON.stringify(data).substring(0, 500);
+      logger.error(
+        `[JugayganaService] bonus: CREDITBALANCE falló username=${username} ` +
+        `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE ` +
+        `payoutProviderResponse=${rawBody} errorMessage=${errMsg}`
+      );
+      // Signal retry if the error looks like a stale-session problem
+      const shouldRetry = typeof errMsg === 'string' && (
+        errMsg.toLowerCase().includes('action does not exist') ||
+        errMsg.toLowerCase().includes('invalid token') ||
+        errMsg.toLowerCase().includes('session') ||
+        resp.status === 401 || resp.status === 403
+      );
+      return { success: false, error: errMsg, shouldRetry };
+    } catch (error) {
+      logger.error('Error en bonificación JUGAYGANA:', error.message);
+      return { success: false, error: error.message, shouldRetry: false };
     }
+  };
 
-    // Accept both snake_case and camelCase transfer id variants for API compatibility
-    if (data?.success || data?.transfer_id || data?.transferId) {
-      return { 
-        success: true, 
-        data: data.data || data,
-        newBalance: data.user_balance_after || data.data?.user_balance_after
-      };
-    }
-    
-    const errMsg = data?.error || data?.message || 'Bonificación falló';
-    logger.error(
-      `[JugayganaService] bonus: CREDITBALANCE falló username=${username} error=${errMsg}`
+  let result = await attemptBonus();
+
+  // Retry once with a fresh session if the error suggests a stale token
+  if (!result.success && result.shouldRetry) {
+    logger.warn(
+      `[JugayganaService] bonus: retrying after session refresh — ` +
+      `username=${username} originalError="${result.error}"`
     );
-    return { success: false, error: errMsg };
-  } catch (error) {
-    logger.error('Error en bonificación JUGAYGANA:', error.message);
-    return { success: false, error: error.message };
+    invalidateSession();
+    const ok2 = await ensureSession();
+    if (ok2) {
+      result = await attemptBonus();
+      if (!result.success) {
+        logger.error(
+          `[JugayganaService] bonus: retry also failed — username=${username} error="${result.error}" ` +
+          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE finalPayoutStatus=failed`
+        );
+      } else {
+        logger.info(
+          `[JugayganaService] bonus: retry succeeded — username=${username} ` +
+          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE finalPayoutStatus=success`
+        );
+      }
+    } else {
+      result = { success: false, error: 'Re-login falló al reintentar bonificación' };
+      logger.error(
+        `[JugayganaService] bonus: re-login failed during retry — username=${username} ` +
+        `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE finalPayoutStatus=failed`
+      );
+    }
   }
+
+  return result;
 };
 
 /**

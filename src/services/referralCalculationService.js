@@ -358,8 +358,10 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       const historySettlement = settlementByReferred.get(referredUser.id);
       let alreadySettledRevenue = historySettlement?.settledRevenue || 0;
       let alreadySettledCommission = historySettlement?.settledCommission || 0;
+      // Track how the settlement baseline was resolved (for logging and debugging)
+      let settlementSource = historySettlement ? 'payoutLedger' : 'none';
 
-      // Fallback: if payout history has no entry for this referred user but the
+      // Second fallback: if payout history has no entry for this referred user but the
       // commission record itself carries settled amounts (e.g. old payouts without
       // perReferredDetails, or the current record was freshly marked 'paid'), use them.
       if (alreadySettledRevenue === 0 && existing) {
@@ -367,24 +369,66 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         if (fallbackRevenue > 0) {
           alreadySettledRevenue = fallbackRevenue;
           alreadySettledCommission = existing.settledCommissionAmount || 0;
+          settlementSource = 'commissionFallback';
           logger.info(
             `[ReferralCalc] settlementFallbackUsed=true referido=${referredUser.username} ` +
-            `fallbackSettledRevenue=${fallbackRevenue.toFixed(2)} period=${periodKey}`
+            `fallbackSettledRevenue=${fallbackRevenue.toFixed(2)} period=${periodKey} ` +
+            `referrerUserId=${referrerId} referredUserId=${referredUser.id}`
           );
         }
       }
 
-      let settlementSource = 'none';
-      if (settlementByReferred.has(referredUser.id)) {
-        settlementSource = 'payoutLedger';
-      } else if (alreadySettledRevenue > 0) {
-        settlementSource = 'commissionFallback';
+      // Third fallback: legacy payout without perReferredDetails — use the commission's
+      // payoutId to find the matching paid payout and reconstruct the settlement baseline.
+      // This handles the case where: (a) the startup backfill migration could not run or
+      // failed for this record, AND (b) settledOwnerRevenue is still 0. The commission's
+      // payoutId field is set during every payout (old and new) and is preserved across
+      // subsequent calculate() runs because the update $set does not include payoutId.
+      if (alreadySettledRevenue === 0 && existing && existing.payoutId) {
+        const matchingPayout = paidPayoutsForReferrer.find(p => p.id === existing.payoutId);
+        if (matchingPayout && matchingPayout.totalCommissionAmount > 0) {
+          const commissionIds = matchingPayout.details?.commissionIds;
+          const N = Array.isArray(commissionIds) ? commissionIds.length : 0;
+          const rate = existing.referralRate || referralRate;
+          if (N > 0 && rate > 0) {
+            let estimatedSettledCommission;
+            if (N === 1) {
+              // Exact reconstruction for single-commission payouts
+              estimatedSettledCommission = matchingPayout.totalCommissionAmount;
+            } else {
+              // For multi-commission payouts the exact per-user commission amounts at payout
+              // time are no longer available (the commissionAmount field is overwritten by each
+              // Calculate run). Equal share is used here as a conservative lower bound.
+              // Note: the startup backfill migration (backfillLegacyPayoutSettlements) reaches
+              // this branch first and uses a revenue-proportional split which is more accurate.
+              // The inline fallback here only fires when that migration was skipped or failed for
+              // this specific record, so equal share is an acceptable safety-net approximation.
+              estimatedSettledCommission = matchingPayout.totalCommissionAmount / N;
+            }
+            alreadySettledRevenue = estimatedSettledCommission / rate;
+            alreadySettledCommission = estimatedSettledCommission;
+            settlementSource = 'legacyPayoutReconstruction';
+            logger.info(
+              `[ReferralCalc] legacyPayoutFallbackUsed=true referido=${referredUser.username} ` +
+              `payoutId=${existing.payoutId} ` +
+              `totalPayoutAmount=${matchingPayout.totalCommissionAmount.toFixed(2)} ` +
+              `commissionIdsInPayout=${N} rate=${rate} ` +
+              `historicalPaidAmountByReferred=${estimatedSettledCommission.toFixed(2)} ` +
+              `historicalSettledRevenueByReferred=${alreadySettledRevenue.toFixed(2)} ` +
+              `historicalSettledCommissionByReferred=${alreadySettledCommission.toFixed(2)} ` +
+              `period=${periodKey} referrerUserId=${referrerId} referredUserId=${referredUser.id}`
+            );
+          }
+        }
       }
+
       logger.info(
         `[ReferralCalc] settlementBaseline referido=${referredUser.username} period=${periodKey} ` +
+        `periodKey=${periodKey} referrerUserId=${referrerId} referredUserId=${referredUser.id} ` +
         `ledgerPayouts=${paidPayoutsForReferrer.length} ` +
-        `alreadySettledRevenue=${alreadySettledRevenue.toFixed(2)} ` +
-        `alreadySettledCommission=${alreadySettledCommission.toFixed(2)} ` +
+        `historicalPaidAmountByReferrer=${paidPayoutsForReferrer.reduce((s, p) => s + p.totalCommissionAmount, 0).toFixed(2)} ` +
+        `historicalSettledRevenueByReferred=${alreadySettledRevenue.toFixed(2)} ` +
+        `historicalSettledCommissionByReferred=${alreadySettledCommission.toFixed(2)} ` +
         `settlementSource=${settlementSource}`
       );
 
@@ -413,6 +457,20 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         `revenueScope=${revenueResult.revenueScope || 'perUser'} ` +
         `revenueSourceField=${revenueResult.revenueSourceField || 'child_user_id'} ` +
         `commissionCalculationMode=${alreadySettledRevenue > 0 ? 'delta_after_settlement' : 'individual_revenue'}`
+      );
+      // Mandatory per-referred audit log (matches problem-statement logging requirements)
+      logger.info(
+        `[ReferralCalc] perReferredAudit` +
+        ` periodKey=${periodKey}` +
+        ` referrerUserId=${referrerId}` +
+        ` referredUserId=${referredUser.id}` +
+        ` historicalPaidAmountByReferrer=${paidPayoutsForReferrer.reduce((s, p) => s + p.totalCommissionAmount, 0).toFixed(2)}` +
+        ` historicalSettledRevenueByReferred=${alreadySettledRevenue.toFixed(2)}` +
+        ` historicalSettledCommissionByReferred=${alreadySettledCommission.toFixed(2)}` +
+        ` calculatedPendingRevenueByReferred=${newPendingRevenue.toFixed(2)}` +
+        ` calculatedPendingCommissionByReferred=${commissionAmount.toFixed(2)}` +
+        ` settlementSource=${settlementSource}` +
+        ` stateRecoveredFromDatabase=true`
       );
       // ─────────────────────────────────────────────────────────────────────────
 

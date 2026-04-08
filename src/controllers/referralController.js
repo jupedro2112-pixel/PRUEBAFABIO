@@ -293,17 +293,19 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
   ]);
   const totalPending = globalPendingStats?.totalPending || 0;
 
-  // Global settled revenue (total ever generated via settled commissions)
-  const [globalSettledStats] = await ReferralCommission.aggregate([
-    {
-      $group: {
-        _id: null,
-        totalSettledCommission: { $sum: '$settledCommissionAmount' },
-        totalPendingCommission: { $sum: { $cond: [{ $eq: ['$status', 'calculated'] }, '$commissionAmount', 0] } }
-      }
-    }
-  ]);
-  const totalGenerated = (globalSettledStats?.totalSettledCommission || 0) + (globalSettledStats?.totalPendingCommission || 0);
+  // Global settled revenue: totalGenerated uses the authoritative paid-payout total (not
+  // settledCommissionAmount which is 0 for legacy payouts) plus current calculated-commission
+  // pending amounts.  After the backfill migration and a fresh Calculate run the pending figure
+  // will drop to the correct delta (e.g. $53 instead of $109), giving an accurate total.
+  // Immediately after deployment (before Calculate is re-run) totalGenerated will reflect the
+  // pre-Calculate pending amount, which is intentional — it shows paid + all-outstanding-pending.
+  const totalGenerated = totalHistoricalPaid + totalPending;
+
+  logger.info(
+    `[Referrals] adminSummary summaryTotalPaid=${totalHistoricalPaid.toFixed(2)} ` +
+    `summaryPending=${totalPending.toFixed(2)} summaryTotalGenerated=${totalGenerated.toFixed(2)} ` +
+    `totalPayouts=${totalPayouts}`
+  );
 
   // Current period stats
   const currentPeriodKey = getCurrentPeriodKey();
@@ -378,7 +380,11 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
           _id: '$referrerUserId',
           lastPayoutDate: { $first: '$creditedAt' },
           lastPayoutAmount: { $first: '$totalCommissionAmount' },
-          lastPayoutPeriod: { $first: '$periodKey' }
+          lastPayoutPeriod: { $first: '$periodKey' },
+          // Authoritative total paid per referrer — sourced from ReferralPayout (paid) records,
+          // not from ReferralCommission.settledCommissionAmount which is 0 for legacy payouts
+          // that were created before the incremental settlement feature was deployed.
+          totalPaidFromPayouts: { $sum: '$totalCommissionAmount' }
         }
       }
     ]);
@@ -387,15 +393,27 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
     for (const r of topReferrers) {
       const cs = commissionsByReferrer.get(r.id);
       const lp = lastPayoutByReferrer.get(r.id);
+      // Use paid-payout total as the authoritative "total paid" per referrer.
+      // This is consistent with the detail view (adminGetUserReferrals) and fixes the
+      // "$0 paid" inconsistency that occurred when settledCommissionAmount was 0 for
+      // old payouts (created before the perReferredDetails / incremental settlement feature).
+      const totalPaid = lp?.totalPaidFromPayouts || 0;
+      const totalPending = cs?.totalPending || 0;
       r.financialStats = {
-        totalSettledCommission: cs?.totalSettled || 0,
-        totalPendingCommission: cs?.totalPending || 0,
-        totalGenerated: (cs?.totalSettled || 0) + (cs?.totalPending || 0),
+        totalSettledCommission: totalPaid,
+        totalPendingCommission: totalPending,
+        totalGenerated: totalPaid + totalPending,
         currentPeriodCommission: cs?.currentPeriodCommission || 0,
         lastPayoutDate: lp?.lastPayoutDate || null,
         lastPayoutAmount: lp?.lastPayoutAmount || null,
         lastPayoutPeriod: lp?.lastPayoutPeriod || null
       };
+
+      logger.info(
+        `[Referrals] summaryTableRow referrerUserId=${r.id} referrerUsername=${r.username} ` +
+        `tableRowTotalPaid=${totalPaid.toFixed(2)} tableRowPending=${totalPending.toFixed(2)} ` +
+        `tableRowTotalGenerated=${(totalPaid + totalPending).toFixed(2)}`
+      );
 
       // Period-specific stats if requested
       if (period) {
@@ -529,6 +547,12 @@ const adminGetUserReferrals = asyncHandler(async (req, res) => {
     (sum, c) => sum + (c.commissionAmount > 0 ? c.commissionAmount : 0), 0
   );
   const totalGeneratedCommission = totalPaidFromPayouts + totalPendingCommission;
+
+  logger.info(
+    `[Referrals] detailView referrerUserId=${safeUserId} referrerUsername=${user.username} ` +
+    `detailTotalPaid=${totalPaidFromPayouts.toFixed(2)} detailPending=${totalPendingCommission.toFixed(2)} ` +
+    `detailTotalGenerated=${totalGeneratedCommission.toFixed(2)} payoutCount=${totalPayoutsCount}`
+  );
 
   // Enrich commissions with computed fields for UI clarity
   const enrichedCommissions = commissions.map(c => ({

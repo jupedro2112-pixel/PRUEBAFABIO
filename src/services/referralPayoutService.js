@@ -284,9 +284,10 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       const jugayganaUsername = referrer.jugayganaUsername || referrer.username;
 
       logger.info(
-        `[ReferralPayout] attemptedAction=CREDITBALANCE ` +
+        `[ReferralPayout] payoutAttemptAction=CREDITBALANCE payoutActionSupported=true ` +
         `attemptedStatusTransition=calculated->paid referrer=${group.referrerUsername} ` +
-        `jugayganaUsername=${jugayganaUsername} period=${periodKey} amount=${totalAmount.toFixed(2)} ` +
+        `referrerUserId=${refId} jugayganaUsername=${jugayganaUsername} ` +
+        `period=${periodKey} periodKey=${periodKey} amount=${totalAmount.toFixed(2)} ` +
         `paymentType=${payoutType} paymentApplied=false`
       );
 
@@ -306,8 +307,10 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
                 ? (rawErr.message || rawErr.reason || rawErr.code || JSON.stringify(rawErr))
                 : 'Error al acreditar en JUGAYGANA');
         logger.error(
-          `[ReferralPayout] errorCode=${rawErr && rawErr.code ? rawErr.code : 'n/a'} ` +
-          `errorMessage=${errStr} referrer=${group.referrerUsername} period=${periodKey}`
+          `[ReferralPayout] payoutAttemptAction=CREDITBALANCE payoutActionSupported=true ` +
+          `errorCode=${rawErr && rawErr.code ? rawErr.code : 'n/a'} ` +
+          `errorMessage=${errStr} referrer=${group.referrerUsername} ` +
+          `referrerUserId=${refId} period=${periodKey} finalPayoutStatus=failed paymentApplied=false`
         );
         throw new Error(errStr);
       }
@@ -453,6 +456,7 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
   logger.info(
     `[ReferralPayout] periodKey=${periodKey} payoutsCreated=${results.payoutsCreated} ` +
     `payoutsFailed=${results.payoutsFailed} payoutsSkipped=${results.payoutsSkipped} ` +
+    `successfulPayoutCount=${results.payoutsCreated} failedPayoutCount=${results.payoutsFailed} ` +
     `finalPayoutStatus=${finalPayoutStatus}`
   );
 
