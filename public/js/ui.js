@@ -619,16 +619,52 @@ VIP.ui.toggleDrawer = function() {
     drawer.classList.remove('open');
     overlay.classList.remove('open');
   } else {
-    // Clone buttons from header to drawer if empty
     const content = document.getElementById('drawerContent');
-    if (content && content.children.length === 0) {
-      const buttons = document.querySelectorAll('.header-right > *:not(.user-name):not(.mobile-menu-btn), .header-left .platform-section, .header-center .refund-btn, .header-left .user-action-btns > *');
-      buttons.forEach(btn => {
-        const clone = btn.cloneNode(true);
-        clone.style.display = '';
-        content.appendChild(clone);
-      });
-    }
+    content.innerHTML = '';
+
+    const username = VIP.state.currentUser?.username || 'Usuario';
+
+    const items = [
+      { emoji: '👤', text: username, action: null, style: 'drawer-user' },
+      { emoji: '🔥', text: 'Fueguito Diario', action: () => VIP.fire.showFireModal() },
+      { emoji: '📅', text: 'Reembolso Diario', action: () => VIP.refunds.showRefundModal('daily') },
+      { emoji: '📆', text: 'Reembolso Semanal', action: () => VIP.refunds.showRefundModal('weekly') },
+      { emoji: '🗓️', text: 'Reembolso Mensual', action: () => VIP.refunds.showRefundModal('monthly') },
+      { emoji: '🎰', text: 'Plataforma', action: () => window.open('https://www.jugaygana44.bet', '_blank') },
+      { emoji: '📢', text: 'Canal Informativo', action: () => {
+        const btn = document.getElementById('canalInformativoBtn');
+        if (btn && btn.href && btn.href !== '#' && btn.href !== window.location.href) {
+          window.open(btn.href, '_blank');
+        } else {
+          VIP.ui.showToast('Canal informativo no disponible', 'info');
+        }
+      }},
+      { emoji: '🤝', text: 'Mis Referidos', action: () => VIP.ui.openReferralModal() },
+      { emoji: '💬', text: 'Soporte WhatsApp', action: () => window.open('https://wa.link/metawin2026', '_blank') },
+      { emoji: 'ℹ️', text: 'Información', action: () => VIP.ui.showModal('infoModal') },
+      { emoji: '🔔', text: 'Notificaciones', action: () => VIP.notifications.requestNotificationPermission(), pwaOnly: true },
+      { emoji: '⬇️', text: 'Instalar App', action: () => VIP.ui.installApp(), hideStandalone: true },
+      { emoji: '⚙️', text: 'Configuración', action: () => VIP.ui.showModal('settingsModal') },
+      { emoji: '🚪', text: 'Cerrar Sesión', action: () => VIP.auth.handleLogout(), style: 'drawer-logout' },
+    ];
+
+    items.forEach(item => {
+      if (item.pwaOnly && !VIP.ui.isAppInstalled()) return;
+      if (item.hideStandalone && VIP.ui.isAppInstalled()) return;
+
+      const btn = document.createElement('button');
+      btn.className = 'drawer-item' + (item.style ? ' ' + item.style : '');
+      btn.innerHTML = `<span class="drawer-item-emoji">${item.emoji}</span> ${item.text}`;
+
+      if (item.action) {
+        btn.addEventListener('click', () => {
+          VIP.ui.toggleDrawer();
+          setTimeout(item.action, 150);
+        });
+      }
+      content.appendChild(btn);
+    });
+
     drawer.classList.add('open');
     overlay.classList.add('open');
   }

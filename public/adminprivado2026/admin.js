@@ -1203,10 +1203,33 @@ function renderMessages(messages) {
     // Usar DocumentFragment para mínimo reflow DOM
     const fragment = document.createDocumentFragment();
     processedMessageIds.clear();
-    
+
+    function getAdminDateLabel(dateStr) {
+        const d = new Date(dateStr);
+        const today = new Date();
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const opts = { timeZone: 'America/Argentina/Buenos_Aires' };
+        const dStr = d.toLocaleDateString('es-AR', opts);
+        const todayStr = today.toLocaleDateString('es-AR', opts);
+        const yesterdayStr = yesterday.toLocaleDateString('es-AR', opts);
+        if (dStr === todayStr) return 'Hoy';
+        if (dStr === yesterdayStr) return 'Ayer';
+        return d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Argentina/Buenos_Aires' });
+    }
+
+    let lastDateLabel = '';
     messages.forEach(msg => {
         if (msg.id) {
             processedMessageIds.add(msg.id);
+        }
+        const dateLabel = getAdminDateLabel(msg.timestamp || new Date());
+        if (dateLabel !== lastDateLabel) {
+            const sep = document.createElement('div');
+            sep.className = 'chat-date-separator';
+            sep.innerHTML = `<span>${dateLabel}</span>`;
+            fragment.appendChild(sep);
+            lastDateLabel = dateLabel;
         }
         const msgDiv = createMessageElement(msg);
         fragment.appendChild(msgDiv);
@@ -2772,7 +2795,26 @@ function formatTime(date) {
 function formatDateTime(date) {
     if (!date) return '';
     const d = new Date(date);
-    return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const dateOpts = { timeZone: 'America/Argentina/Buenos_Aires' };
+    const dStr = d.toLocaleDateString('es-AR', dateOpts);
+    const todayStr = today.toLocaleDateString('es-AR', dateOpts);
+    const yesterdayStr = yesterday.toLocaleDateString('es-AR', dateOpts);
+
+    const time = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+
+    if (dStr === todayStr) return `Hoy ${time}`;
+    if (dStr === yesterdayStr) return `Ayer ${time}`;
+
+    return d.toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: '2-digit',
+        timeZone: 'America/Argentina/Buenos_Aires'
+    }) + ' ' + time;
 }
 
 function debounce(func, wait) {
@@ -2914,6 +2956,11 @@ function renderTransactionStats(summary) {
                 <span class="icon icon-undo"></span>
                 <span class="stat-number">${formatMoney(summary.refunds || 0)}</span>
                 <span class="stat-label">Reembolsos</span>
+            </div>
+            <div class="stat-card referral">
+                <span class="icon icon-users"></span>
+                <span class="stat-number">${formatMoney(summary.referrals || 0)}</span>
+                <span class="stat-label">Referidos</span>
             </div>
             <div class="stat-card net-balance ${netBalanceClass}">
                 <span class="icon icon-balance"></span>
@@ -3064,7 +3111,8 @@ function getTransactionTypeLabel(type) {
         deposit: 'Depósito',
         withdrawal: 'Retiro',
         bonus: 'Bonificación',
-        refund: 'Reembolso'
+        refund: 'Reembolso',
+        referral_commission: '🤝 Referido'
     };
     return labels[type] || type;
 }

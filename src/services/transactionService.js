@@ -205,6 +205,7 @@ const getTransactions = async (filters = {}) => {
   let withdrawals = 0;
   let bonuses = 0;
   let refunds = 0;
+  let referrals = 0;
   
   transactions.forEach(t => {
     const amount = t.amount || 0;
@@ -213,6 +214,7 @@ const getTransactions = async (filters = {}) => {
       case 'withdrawal': withdrawals += amount; break;
       case 'bonus': bonuses += amount; break;
       case 'refund': refunds += amount; break;
+      case 'referral_commission': referrals += amount; break;
     }
   });
   
@@ -223,6 +225,7 @@ const getTransactions = async (filters = {}) => {
       withdrawals,
       bonuses,
       refunds,
+      referrals,
       netBalance: deposits - withdrawals,
       totalTransactions: transactions.length
     }
