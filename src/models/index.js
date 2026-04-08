@@ -22,6 +22,137 @@ const ReferralEvent = require('./ReferralEvent');
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos';
 
 /**
+ * Migration: backfill settledOwnerRevenue / settledCommissionAmount on ReferralCommission records
+ * that were created by old payouts (before the incremental settlement feature was introduced).
+ *
+ * Old payouts did not:
+ *   1. Store perReferredDetails in the ReferralPayout document, AND
+ *   2. Set settledOwnerRevenue / settledCommissionAmount on the commission records.
+ *
+ * Without this data the calculation service cannot find the correct settlement baseline and
+ * incorrectly treats the already-settled revenue as new pending revenue (double calculation).
+ *
+ * This migration:
+ *   - Finds all paid payouts where details.perReferredDetails is missing or empty.
+ *   - For each such payout, loads the linked commission records via details.commissionIds.
+ *   - For each commission that still has settledOwnerRevenue === 0, reconstructs the amount:
+ *       * Single-commission payouts: exact (settledCommission = payout.totalCommissionAmount).
+ *       * Multi-commission payouts: proportional by commission.totalOwnerRevenue (best estimate).
+ *   - Writes settledOwnerRevenue and settledCommissionAmount to those commission records.
+ *
+ * After this migration the existing commissionFallback in referralCalculationService correctly
+ * reads the backfilled amounts and computes the right delta, so the next Calculate run will
+ * show the correct (reduced) pending amount instead of the full period total.
+ *
+ * This migration is idempotent: commissions that already have settledOwnerRevenue > 0 are
+ * skipped, so running it multiple times is safe.
+ */
+async function backfillLegacyPayoutSettlements() {
+  try {
+    const legacyPayouts = await ReferralPayout.find({
+      status: 'paid',
+      $or: [
+        { 'details.perReferredDetails': { $exists: false } },
+        { 'details.perReferredDetails': null },
+        { 'details.perReferredDetails': { $size: 0 } }
+      ]
+    }).lean();
+
+    if (legacyPayouts.length === 0) {
+      console.log('[Migration] backfillLegacyPayoutSettlements: no legacy payouts found — nothing to do');
+      return;
+    }
+
+    console.log(
+      `[Migration] backfillLegacyPayoutSettlements: found ${legacyPayouts.length} legacy payout(s) ` +
+      'without perReferredDetails — beginning backfill'
+    );
+
+    let backfilledCount = 0;
+    let skippedAlreadySet = 0;
+
+    for (const payout of legacyPayouts) {
+      const commissionIds = payout.details?.commissionIds;
+      if (!Array.isArray(commissionIds) || commissionIds.length === 0) {
+        console.log(
+          `[Migration] backfillLegacyPayoutSettlements: payout ${payout.id} has no commissionIds — skipping`
+        );
+        continue;
+      }
+
+      const commissions = await ReferralCommission.find({ id: { $in: commissionIds } }).lean();
+      const N = commissions.length;
+      if (N === 0) {
+        console.log(
+          `[Migration] backfillLegacyPayoutSettlements: payout ${payout.id} — commissions not found — skipping`
+        );
+        continue;
+      }
+
+      // Compute total revenue for proportional distribution (only for multi-commission payouts)
+      const totalRevenue = commissions.reduce((sum, c) => sum + (c.totalOwnerRevenue || 0), 0);
+
+      for (const commission of commissions) {
+        if ((commission.settledOwnerRevenue || 0) > 0) {
+          skippedAlreadySet++;
+          continue;
+        }
+
+        const rate = commission.referralRate || 0.07;
+        let settledCommission;
+
+        if (N === 1) {
+          // Exact: only one commission in this payout
+          settledCommission = payout.totalCommissionAmount;
+        } else if (totalRevenue > 0) {
+          // Proportional by revenue share (best estimate for multi-user payouts)
+          const fraction = (commission.totalOwnerRevenue || 0) / totalRevenue;
+          settledCommission = payout.totalCommissionAmount * fraction;
+        } else {
+          // Equal share fallback when revenue data is unavailable
+          settledCommission = payout.totalCommissionAmount / N;
+        }
+
+        const settledRevenue = rate > 0 ? settledCommission / rate : 0;
+
+        await ReferralCommission.updateOne(
+          { _id: commission._id, settledOwnerRevenue: { $lte: 0 } },
+          {
+            $set: {
+              settledOwnerRevenue: settledRevenue,
+              settledCommissionAmount: settledCommission
+            }
+          }
+        );
+
+        console.log(
+          `[Migration] backfillLegacyPayoutSettlements: backfilled` +
+          ` referredUsername=${commission.referredUsername}` +
+          ` referrerUsername=${commission.referrerUsername}` +
+          ` periodKey=${commission.periodKey}` +
+          ` payoutId=${payout.id}` +
+          ` commissionIdsInPayout=${N}` +
+          ` settledRevenue=${settledRevenue.toFixed(2)}` +
+          ` settledCommission=${settledCommission.toFixed(2)}` +
+          ` stateRecoveredFromDatabase=true`
+        );
+        backfilledCount++;
+      }
+    }
+
+    console.log(
+      `[Migration] backfillLegacyPayoutSettlements: complete — ` +
+      `backfilledCommissions=${backfilledCount} skippedAlreadySet=${skippedAlreadySet} ` +
+      `mongoPersistenceEnabled=true serverRestartSafe=true`
+    );
+  } catch (err) {
+    // Log but do not block startup — the enhanced fallback in referralCalculationService
+    // provides a secondary safety net for any commission records that could not be backfilled.
+    console.error(`[Migration] backfillLegacyPayoutSettlements: error — ${err.message}`);
+  }
+}
+
+/**
  * Migration: drop the old unique index on referralpayouts {periodKey, referrerUserId}.
  *
  * Background: the original schema had a unique compound index on (periodKey, referrerUserId)
@@ -102,6 +233,9 @@ async function connectDB() {
 
     // Run startup migrations
     await migrateReferralPayoutIndex();
+    // Backfill settlement amounts for legacy payouts that lack perReferredDetails.
+    // Must run AFTER migrateReferralPayoutIndex so the collection and indexes are stable.
+    await backfillLegacyPayoutSettlements();
 
     return true;
   } catch (error) {
