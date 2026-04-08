@@ -275,7 +275,8 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         `payoutIndex=${payoutIndex} isDelta=${isDeltaPayout} adminUsername=${adminUsername || 'system'}`
       );
 
-      // Acreditar fichas en JUGAYGANA usando CREDITBALANCE
+      // Acreditar fichas en JUGAYGANA usando DepositMoney + childid
+      // (restaurado al comportamiento correcto de PR #189 — CREDITBALANCE causa "action does not exist")
       const referrer = await User.findOne({ id: refId }).lean();
       if (!referrer) {
         throw new Error(`Referidor ${refId} no encontrado en DB local`);
@@ -284,11 +285,13 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
       const jugayganaUsername = referrer.jugayganaUsername || referrer.username;
 
       logger.info(
-        `[ReferralPayout] payoutAttemptAction=CREDITBALANCE payoutActionSupported=true ` +
-        `attemptedStatusTransition=calculated->paid referrer=${group.referrerUsername} ` +
-        `referrerUserId=${refId} jugayganaUsername=${jugayganaUsername} ` +
-        `period=${periodKey} periodKey=${periodKey} amount=${totalAmount.toFixed(2)} ` +
-        `paymentType=${payoutType} paymentApplied=false`
+        `[ReferralPayout] referralPayoutProviderAction=DepositMoney ` +
+        `referralPayoutProviderPayloadShape=childid+amount+currency+deposit_type ` +
+        `usesChildId=true usesUsername=false ` +
+        `providerCallSource=referralPayoutService/executePayoutsForPeriod ` +
+        `isDeltaPayout=${isDeltaPayout} periodKey=${periodKey} referrer=${group.referrerUsername} ` +
+        `commissionToPay=${totalAmount.toFixed(2)} jugayganaUsername=${jugayganaUsername} ` +
+        `referrerUserId=${refId} paymentType=${payoutType} paymentApplied=false`
       );
 
       const creditResult = await jugayganaService.bonus(
@@ -307,13 +310,23 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
                 ? (rawErr.message || rawErr.reason || rawErr.code || JSON.stringify(rawErr))
                 : 'Error al acreditar en JUGAYGANA');
         logger.error(
-          `[ReferralPayout] payoutAttemptAction=CREDITBALANCE payoutActionSupported=true ` +
+          `[ReferralPayout] referralPayoutProviderAction=DepositMoney usesChildId=true ` +
+          `providerResponse=${errStr} ` +
           `errorCode=${rawErr && rawErr.code ? rawErr.code : 'n/a'} ` +
           `errorMessage=${errStr} referrer=${group.referrerUsername} ` +
-          `referrerUserId=${refId} period=${periodKey} finalPayoutStatus=failed paymentApplied=false`
+          `referrerUserId=${refId} period=${periodKey} ` +
+          `isDeltaPayout=${isDeltaPayout} commissionToPay=${totalAmount.toFixed(2)} ` +
+          `finalPayoutStatus=failed paymentApplied=false`
         );
         throw new Error(errStr);
       }
+
+      logger.info(
+        `[ReferralPayout] providerResponse=success referralPayoutProviderAction=DepositMoney ` +
+        `usesChildId=true referrer=${group.referrerUsername} period=${periodKey} ` +
+        `isDeltaPayout=${isDeltaPayout} commissionToPay=${totalAmount.toFixed(2)} ` +
+        `finalPayoutStatus=success paymentApplied=true`
+      );
 
       // Registrar transacción local
       const tx = await Transaction.create({

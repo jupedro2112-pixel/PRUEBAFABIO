@@ -458,31 +458,52 @@ const withdraw = async (username, amount, description = '') => {
 };
 
 /**
- * Acreditar bonificación de referidos usando CREDITBALANCE
- * Usa action=CREDITBALANCE con username — mismo mecanismo que deposit(), que está confirmado como funcional.
- * Nota: DepositMoney fue descartado porque la API devuelve "action does not exist" para esa acción.
+ * Acreditar bonificación de referidos usando DepositMoney + childid
  *
- * Retry logic: if the provider returns "action does not exist" on the first attempt it is likely
- * a stale/expired session token.  The function will invalidate the session and retry once with a
- * fresh token.  This covers the case where the in-memory token is still within TOKEN_TTL_MINUTES
- * but was already invalidated server-side.
+ * Regresión: PR #190 cambió esto de DepositMoney+childid (fix correcto de PR #189) a
+ * CREDITBALANCE+username, lo que causa "action does not exist" en la API del proveedor.
+ * Esta función restaura el comportamiento correcto: DepositMoney con el numeric childid,
+ * idéntico a jugaygana.js::creditUserBalance() que es la integración validada.
+ *
+ * Retry logic: retry once with a fresh session on HTTP 401/403 or "invalid token".
+ * NOTE: "action does not exist" is NOT retried — it is a real provider API error
+ * indicating a wrong action, not a stale-session issue.
  */
 const bonus = async (username, amount, description = '') => {
   const ok = await ensureSession();
   if (!ok) return { success: false, error: 'No hay sesión válida' };
 
+  // Look up the numeric JUGAYGANA user ID (childid) — required by DepositMoney
+  const userInfo = await getUserInfo(username);
+  if (!userInfo || !userInfo.id) {
+    logger.error(
+      `[JugayganaService] bonus: usuario no encontrado en JUGAYGANA ` +
+      `username=${username} usesChildId=true usesUsername=false ` +
+      `referralPayoutProviderAction=DepositMoney providerCallSource=jugayganaService/bonus ` +
+      `finalPayoutStatus=failed`
+    );
+    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
+  }
+
+  const childid = userInfo.id;
+
   logger.info(
-    `[JugayganaService] bonus: payoutAttemptAction=CREDITBALANCE payoutActionSupported=true ` +
-    `username=${username} amount=${amount}`
+    `[JugayganaService] bonus: referralPayoutProviderAction=DepositMoney ` +
+    `referralPayoutProviderPayloadShape=childid+amount+currency+deposit_type ` +
+    `usesChildId=true usesUsername=false ` +
+    `providerCallSource=jugayganaService/bonus ` +
+    `username=${username} childid=${childid} amount=${amount}`
   );
 
   const attemptBonus = async () => {
     try {
       const body = toFormUrlEncoded({
-        action: 'CREDITBALANCE',
+        action: 'DepositMoney',
         token: sessionToken,
-        username,
+        childid,
         amount: Math.round(amount * 100),
+        currency: 'ARS',
+        deposit_type: 'individual_bonus',
         description: description || `Bonificación referidos - ${new Date().toLocaleString('es-AR')}`
       });
 
@@ -498,15 +519,22 @@ const bonus = async (username, amount, description = '') => {
       if (isHtmlBlocked(data)) {
         const rawBody = typeof resp.data === 'string' ? resp.data.substring(0, 200) : '(non-string)';
         logger.error(
-          `[JugayganaService] bonus: IP bloqueada / HTML username=${username} ` +
-          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE ` +
+          `[JugayganaService] bonus: IP bloqueada / HTML username=${username} childid=${childid} ` +
+          `referralPayoutProviderAction=DepositMoney usesChildId=true ` +
           `payoutProviderResponse=${rawBody} finalPayoutStatus=failed`
         );
         return { success: false, error: 'IP bloqueada / HTML', shouldRetry: false };
       }
 
+      const rawBody = typeof resp.data === 'string' ? resp.data.substring(0, 500) : JSON.stringify(data).substring(0, 500);
+
       // Accept both snake_case and camelCase transfer id variants for API compatibility
       if (data?.success || data?.transfer_id || data?.transferId) {
+        logger.info(
+          `[JugayganaService] bonus: DepositMoney succeeded username=${username} childid=${childid} ` +
+          `referralPayoutProviderAction=DepositMoney usesChildId=true ` +
+          `providerResponse=${rawBody} finalPayoutStatus=success`
+        );
         return {
           success: true,
           data: data.data || data,
@@ -515,15 +543,14 @@ const bonus = async (username, amount, description = '') => {
       }
 
       const errMsg = data?.error || data?.message || 'Bonificación falló';
-      const rawBody = typeof resp.data === 'string' ? resp.data.substring(0, 500) : JSON.stringify(data).substring(0, 500);
       logger.error(
-        `[JugayganaService] bonus: CREDITBALANCE falló username=${username} ` +
-        `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE ` +
+        `[JugayganaService] bonus: DepositMoney falló username=${username} childid=${childid} ` +
+        `referralPayoutProviderAction=DepositMoney usesChildId=true ` +
         `payoutProviderResponse=${rawBody} errorMessage=${errMsg}`
       );
-      // Signal retry if the error looks like a stale-session problem
+      // Only retry for real session/auth errors — NOT for "action does not exist"
+      // which is a provider API contract error, not a stale-token error.
       const shouldRetry = typeof errMsg === 'string' && (
-        errMsg.toLowerCase().includes('action does not exist') ||
         errMsg.toLowerCase().includes('invalid token') ||
         errMsg.toLowerCase().includes('session') ||
         resp.status === 401 || resp.status === 403
@@ -537,11 +564,11 @@ const bonus = async (username, amount, description = '') => {
 
   let result = await attemptBonus();
 
-  // Retry once with a fresh session if the error suggests a stale token
+  // Retry once with a fresh session only for auth/session failures
   if (!result.success && result.shouldRetry) {
     logger.warn(
       `[JugayganaService] bonus: retrying after session refresh — ` +
-      `username=${username} originalError="${result.error}"`
+      `username=${username} childid=${childid} originalError="${result.error}"`
     );
     invalidateSession();
     const ok2 = await ensureSession();
@@ -549,20 +576,21 @@ const bonus = async (username, amount, description = '') => {
       result = await attemptBonus();
       if (!result.success) {
         logger.error(
-          `[JugayganaService] bonus: retry also failed — username=${username} error="${result.error}" ` +
-          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE finalPayoutStatus=failed`
+          `[JugayganaService] bonus: retry also failed — username=${username} childid=${childid} ` +
+          `error="${result.error}" referralPayoutProviderAction=DepositMoney usesChildId=true ` +
+          `finalPayoutStatus=failed`
         );
       } else {
         logger.info(
-          `[JugayganaService] bonus: retry succeeded — username=${username} ` +
-          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE finalPayoutStatus=success`
+          `[JugayganaService] bonus: retry succeeded — username=${username} childid=${childid} ` +
+          `referralPayoutProviderAction=DepositMoney usesChildId=true finalPayoutStatus=success`
         );
       }
     } else {
       result = { success: false, error: 'Re-login falló al reintentar bonificación' };
       logger.error(
-        `[JugayganaService] bonus: re-login failed during retry — username=${username} ` +
-        `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE finalPayoutStatus=failed`
+        `[JugayganaService] bonus: re-login failed during retry — username=${username} childid=${childid} ` +
+        `referralPayoutProviderAction=DepositMoney usesChildId=true finalPayoutStatus=failed`
       );
     }
   }
