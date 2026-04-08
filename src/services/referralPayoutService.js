@@ -240,7 +240,10 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
           try {
             dropped = await dropStalePayoutUniqueIndexIfPresent();
           } catch (dropErr) {
-            logger.error(`[ReferralPayout] Index drop threw unexpectedly: ${dropErr.message}`);
+            logger.error(
+              `[ReferralPayout] Index drop for 'periodKey_1_referrerUserId_1' threw unexpectedly: ` +
+              `${dropErr.message} referrer=${group.referrerUsername} period=${periodKey}`
+            );
           }
           if (dropped) {
             // Retry with the same payoutId — the original create failed before writing to DB

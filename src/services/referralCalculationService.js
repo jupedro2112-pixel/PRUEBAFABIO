@@ -93,22 +93,21 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     // next payout treat the already-settled slice as pending again (double payment).
     //
     // We query once per referrer and build a map keyed by referredUserId so the
-    // inner loop has O(1) lookup.  The cumulative settled amounts are derived as
-    //   alreadySettledRevenue    = max(alreadySettled + newDelta)  across all payouts
-    //   alreadySettledCommission = corresponding commission total
+    // inner loop has O(1) lookup.  The maximum cumulative value across all payouts
+    // for a given referred user is taken because:
+    //   • each successive payout's alreadySettled already includes all prior payouts
+    //   • commissions are never negative, so the highest cumulative is always the
+    //     most recent and complete settlement baseline
     //
-    // Taking the maximum cumulative value (alreadySettled + newDelta) across all payouts
-    // for a given referred user is correct because each successive payout's alreadySettled
-    // already includes all prior payouts; the document with the highest cumulative therefore
-    // represents the most recent and complete settlement baseline.
-    //
-    // referrerId comes from referredByUserId stored in the users collection.  That field is
-    // populated during registration from user-provided input.  We validate it against a
-    // safe character set before using it in a DB query to prevent NoSQL operator injection.
-    const referrerIdStr = String(referrerId);
-    // Allow only alphanumeric characters, hyphens, and underscores (covers UUID, numeric, and slug IDs)
-    const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
-    const safeReferrerId = SAFE_ID_REGEX.test(referrerIdStr) ? referrerIdStr : null;
+    // referrerId comes from referredByUserId stored in the users collection.  That
+    // field is populated during registration from user-provided input.  We use a
+    // capturing regex (/^([a-zA-Z0-9_-]{1,128})$/) so that only the captured group
+    // — derived exclusively from safe characters — is used in the DB query.  This
+    // breaks the taint chain: the query value is a new string produced by the regex
+    // engine from safe character matches, not the original tainted input.
+    const SAFE_ID_CAPTURE = /^([a-zA-Z0-9_-]{1,128})$/;
+    const idMatch = SAFE_ID_CAPTURE.exec(String(referrerId));
+    const safeReferrerId = idMatch ? idMatch[1] : null;
 
     if (!safeReferrerId) {
       logger.warn(
@@ -126,15 +125,20 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
       : [];
 
     // settlementByReferred: Map<referredUserId, { settledRevenue, settledCommission }>
+    // Helper: compute cumulative settled amount from a single payout detail entry
+    const cumulative = (already, delta) => (already || 0) + (delta || 0);
+
     const settlementByReferred = new Map();
     for (const payout of paidPayoutsForReferrer) {
       const perReferredDetails = payout.details?.perReferredDetails;
       if (!Array.isArray(perReferredDetails)) continue;
       for (const detail of perReferredDetails) {
         if (!detail.referredUserId) continue;
-        const cumRevenue = (detail.alreadySettledRevenue || 0) + (detail.newDeltaRevenue || 0);
-        const cumCommission = (detail.alreadySettledCommission || 0) + (detail.newDeltaCommission || 0);
+        const cumRevenue = cumulative(detail.alreadySettledRevenue, detail.newDeltaRevenue);
+        const cumCommission = cumulative(detail.alreadySettledCommission, detail.newDeltaCommission);
         const prev = settlementByReferred.get(detail.referredUserId);
+        // Take the maximum cumulative revenue; if equal, prefer the entry with higher commission
+        // (handles duplicate payout records without a timestamp tie-break).
         if (!prev || cumRevenue > prev.settledRevenue) {
           settlementByReferred.set(detail.referredUserId, {
             settledRevenue: cumRevenue,

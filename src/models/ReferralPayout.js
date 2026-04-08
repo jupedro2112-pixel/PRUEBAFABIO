@@ -111,5 +111,8 @@ const referralPayoutSchema = new mongoose.Schema({
 // NOTE: These indexes are created manually in connectDB() — not via autoIndex.
 referralPayoutSchema.index({ periodKey: 1, referrerUserId: 1 });
 referralPayoutSchema.index({ status: 1, periodKey: 1 });
+// Compound index to speed up payout-history queries in referralCalculationService
+// (find all paid payouts for a given referrer+period).
+referralPayoutSchema.index({ referrerUserId: 1, periodKey: 1, status: 1 });
 
 module.exports = mongoose.models['ReferralPayout'] || mongoose.model('ReferralPayout', referralPayoutSchema);
