@@ -396,11 +396,13 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
               // Exact reconstruction for single-commission payouts
               estimatedSettledCommission = matchingPayout.totalCommissionAmount;
             } else {
-              // For multi-commission payouts we cannot know the exact per-user split without
-              // the original amounts. Use an equal share as a conservative lower bound.
-              // The proportional-by-revenue approach is used in the startup backfill migration
-              // which runs before this code; reaching this branch means the migration was
-              // skipped or failed for this specific record.
+              // For multi-commission payouts the exact per-user commission amounts at payout
+              // time are no longer available (the commissionAmount field is overwritten by each
+              // Calculate run). Equal share is used here as a conservative lower bound.
+              // Note: the startup backfill migration (backfillLegacyPayoutSettlements) reaches
+              // this branch first and uses a revenue-proportional split which is more accurate.
+              // The inline fallback here only fires when that migration was skipped or failed for
+              // this specific record, so equal share is an acceptable safety-net approximation.
               estimatedSettledCommission = matchingPayout.totalCommissionAmount / N;
             }
             alreadySettledRevenue = estimatedSettledCommission / rate;
@@ -463,7 +465,6 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         ` referrerUserId=${referrerId}` +
         ` referredUserId=${referredUser.id}` +
         ` historicalPaidAmountByReferrer=${paidPayoutsForReferrer.reduce((s, p) => s + p.totalCommissionAmount, 0).toFixed(2)}` +
-        ` historicalPaidAmountByReferred=${alreadySettledCommission.toFixed(2)}` +
         ` historicalSettledRevenueByReferred=${alreadySettledRevenue.toFixed(2)}` +
         ` historicalSettledCommissionByReferred=${alreadySettledCommission.toFixed(2)}` +
         ` calculatedPendingRevenueByReferred=${newPendingRevenue.toFixed(2)}` +

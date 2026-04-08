@@ -295,8 +295,10 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
 
   // Global settled revenue: totalGenerated uses the authoritative paid-payout total (not
   // settledCommissionAmount which is 0 for legacy payouts) plus current calculated-commission
-  // pending amounts.  This resolves the "$109 totalGenerated" inconsistency when $56 was already
-  // paid — the correct value is $56 + $109 = $165 (paid + pending).
+  // pending amounts.  After the backfill migration and a fresh Calculate run the pending figure
+  // will drop to the correct delta (e.g. $53 instead of $109), giving an accurate total.
+  // Immediately after deployment (before Calculate is re-run) totalGenerated will reflect the
+  // pre-Calculate pending amount, which is intentional — it shows paid + all-outstanding-pending.
   const totalGenerated = totalHistoricalPaid + totalPending;
 
   logger.info(

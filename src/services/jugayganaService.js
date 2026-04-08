@@ -496,6 +496,12 @@ const bonus = async (username, amount, description = '') => {
 
       const data = parseJson(resp.data);
       if (isHtmlBlocked(data)) {
+        const rawBody = typeof resp.data === 'string' ? resp.data.substring(0, 200) : '(non-string)';
+        logger.error(
+          `[JugayganaService] bonus: IP bloqueada / HTML username=${username} ` +
+          `payoutActionSupported=true payoutAttemptAction=CREDITBALANCE ` +
+          `payoutProviderResponse=${rawBody} finalPayoutStatus=failed`
+        );
         return { success: false, error: 'IP bloqueada / HTML', shouldRetry: false };
       }
 

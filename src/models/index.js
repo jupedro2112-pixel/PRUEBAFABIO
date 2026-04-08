@@ -116,7 +116,9 @@ async function backfillLegacyPayoutSettlements() {
         const settledRevenue = rate > 0 ? settledCommission / rate : 0;
 
         await ReferralCommission.updateOne(
-          { _id: commission._id, settledOwnerRevenue: { $lte: 0 } },
+          // Extra guard: only write if settledOwnerRevenue is still exactly 0 to prevent
+          // overwriting a value that was set by a concurrent process since the in-memory check.
+          { _id: commission._id, settledOwnerRevenue: { $eq: 0 } },
           {
             $set: {
               settledOwnerRevenue: settledRevenue,
