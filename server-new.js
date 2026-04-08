@@ -130,20 +130,8 @@ async function initializeApp() {
 🎮 ============================================
 🎮  SALA DE JUEGOS - SERVIDOR INICIADO
 🎮 ============================================
-🎮  
 🎮  🌐 URL: http://localhost:${PORT}
 🎮  📦 Modo: ${process.env.NODE_ENV || 'development'}
-🎮  
-🎮  📊 Endpoints principales:
-🎮  • POST /api/auth/login        - Login
-🎮  • POST /api/auth/register     - Registro
-🎮  • GET  /api/admin/conversations - Conversaciones (admin)
-🎮  • GET  /api/messages/:userId  - Mensajes
-🎮  
-🎮  🔑 Credenciales Admin:
-🎮  • Usuario: ignite100
-🎮  • Contraseña: pepsi100
-🎮  
 🎮 ============================================
     `);
   });

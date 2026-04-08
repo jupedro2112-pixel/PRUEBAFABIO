@@ -166,3 +166,40 @@ REDIS_URL=redis://tu-redis.xxxxx.cache.amazonaws.com:6379
 ```
 
 Para más información sobre AWS ElastiCache: https://docs.aws.amazon.com/elasticache/latest/red-ug/WhatIs.html
+
+---
+
+# Deployment en AWS — Configuración ALB y Variables de Entorno
+
+## Configuración del ALB (Application Load Balancer)
+
+### Sticky Sessions
+- Habilitar en el Target Group
+- Cookie: `AWSALB`
+- Duración: 86400 segundos (1 día)
+
+### Idle Timeout
+- Configurar a **300 segundos** (necesario para WebSocket/Socket.IO)
+- Default de AWS es 60s, que es muy corto para chat en tiempo real
+
+### Health Check
+- Path: `/api/health`
+- Protocolo: HTTP
+- Puerto: 3000
+- Intervalo: 30s
+- Threshold saludable: 2
+- Threshold no saludable: 3
+
+## Variables de entorno requeridas
+- `JWT_SECRET` — Secreto para tokens JWT (obligatorio en producción)
+- `MONGODB_URI` — URI de conexión a MongoDB
+- `REDIS_URL` o `REDIS_HOST` + `REDIS_PORT` — Conexión a ElastiCache Redis
+- `DB_PASSWORD` — Contraseña para acceso a base de datos del panel admin
+- `NODE_ENV` — Establecer a `production`
+
+## Variables opcionales
+- `S3_BUCKET` — Nombre del bucket S3 para uploads de imágenes
+- `AWS_REGION` — Región AWS (default: us-east-1)
+- `ALLOWED_ORIGINS` — Orígenes permitidos para CORS (separados por coma)
+- `LOG_LEVEL` — Nivel de log (default: info en producción)
+

@@ -1,3 +1,7 @@
+// ⚠️ ARCHIVO EN PROCESO DE MIGRACIÓN
+// La arquitectura modular refactorizada está en server-new.js + /src/
+// Este archivo se mantiene como entry point principal hasta completar la migración.
+// NO agregar funcionalidad nueva aquí — usar /src/controllers/ y /src/routes/
 
 const express = require('express');
 const http = require('http');
@@ -52,6 +56,7 @@ const {
 // Importar modelos de referidos (usados por el handler de registro inline)
 const ReferralEvent = require('./src/models/ReferralEvent');
 const { generateReferralCode } = require('./src/utils/referralCode');
+const { setRedisClient, getRedisClient } = require('./src/utils/redisClient');
 
 // ============================================
 // SEGURIDAD - RATE LIMITING
@@ -123,27 +128,45 @@ const refunds = require('./models/refunds');
 // ============================================
 // BLOQUEO DE REEMBOLSOS
 // ============================================
-const refundLocks = new Map();
+// Maps de fallback (se mantienen para cuando Redis no está disponible)
+const refundLocksMemory = new Map();
+const cbuRequestTimestampsMemory = new Map();
 
-function acquireRefundLock(userId, type) {
-  const key = `${userId}-${type}`;
-  if (refundLocks.has(key)) {
-    return false;
+// Mantener referencias de compatibilidad (usadas por el cleanup interval)
+const refundLocks = refundLocksMemory;
+const cbuRequestTimestamps = cbuRequestTimestampsMemory;
+
+async function acquireRefundLock(userId, type) {
+  const key = `refund-lock:${userId}:${type}`;
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const result = await redis.set(key, '1', { NX: true, EX: 300 });
+      return result === 'OK';
+    } catch (err) {
+      logger.warn(`Redis lock error, usando fallback en memoria: ${err.message}`);
+    }
   }
-  refundLocks.set(key, Date.now());
+  // Fallback en memoria
+  if (refundLocksMemory.has(key)) return false;
+  refundLocksMemory.set(key, Date.now());
   return true;
 }
 
-function releaseRefundLock(userId, type) {
-  const key = `${userId}-${type}`;
-  refundLocks.delete(key);
+async function releaseRefundLock(userId, type) {
+  const key = `refund-lock:${userId}:${type}`;
+  const redis = getRedisClient();
+  if (redis) {
+    try { await redis.del(key); } catch (err) { /* fallback */ }
+  }
+  refundLocksMemory.delete(key);
 }
 
 setInterval(() => {
   const now = Date.now();
-  for (const [key, timestamp] of refundLocks.entries()) {
+  for (const [key, timestamp] of refundLocksMemory.entries()) {
     if (now - timestamp > 5 * 60 * 1000) {
-      refundLocks.delete(key);
+      refundLocksMemory.delete(key);
     }
   }
 }, 60 * 1000);
@@ -152,23 +175,28 @@ setInterval(() => {
 // RATE LIMITING POR USUARIO (CBU requests)
 // Máximo 1 solicitud de CBU cada 10 segundos por usuario
 // ============================================
-const cbuRequestTimestamps = new Map(); // userId -> timestamp
 const CBU_RATE_WINDOW_MS = 10000;
 
 function checkCbuRateLimit(userId) {
-  const last = cbuRequestTimestamps.get(userId);
+  // TODO: Convertir a async en una futura refactorización para usar Redis
+  const redis = getRedisClient();
+  if (redis) {
+    // Async no se puede usar aquí directamente, usar fallback en memoria
+  }
+  // Fallback en memoria
+  const last = cbuRequestTimestampsMemory.get(userId);
   const now = Date.now();
   if (last && now - last < CBU_RATE_WINDOW_MS) {
     return false; // Bloqueado
   }
-  cbuRequestTimestamps.set(userId, now);
+  cbuRequestTimestampsMemory.set(userId, now);
   return true;
 }
 
 setInterval(() => {
   const cutoff = Date.now() - CBU_RATE_WINDOW_MS * 2;
-  for (const [userId, ts] of cbuRequestTimestamps.entries()) {
-    if (ts < cutoff) cbuRequestTimestamps.delete(userId);
+  for (const [userId, ts] of cbuRequestTimestampsMemory.entries()) {
+    if (ts < cutoff) cbuRequestTimestampsMemory.delete(userId);
   }
 }, 60000);
 
@@ -228,6 +256,7 @@ async function setupRedisAdapter() {
     await Promise.all([pubClient.connect(), subClient.connect()]);
 
     io.adapter(createAdapter(pubClient, subClient));
+    setRedisClient(pubClient);
     logger.info('Socket.IO Redis adapter initialized — multi-instance mode active');
   } catch (err) {
     logger.error(`Failed to initialize Redis adapter: ${err.message}. Falling back to single-instance mode.`);
@@ -236,25 +265,28 @@ async function setupRedisAdapter() {
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
+if (!process.env.JWT_SECRET) {
+  logger.warn('⚠️ ADVERTENCIA: JWT_SECRET no configurado en variables de entorno. Usando valor por defecto. Configurar en producción.');
+}
 
 // ============================================
 // MIDDLEWARE DE SEGURIDAD
 // ============================================
+const compression = require('compression');
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) return false;
+    return compression.filter(req, res);
+  }
+}));
 app.use(securityHeaders);
 app.use(generalLimiter);
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
   credentials: true
 }));
-app.use(express.json({ 
-  limit: '150mb',
-  verify: (req, res, buf) => {
-    const body = buf.toString();
-    if (body.length > 150 * 1024 * 1024) {
-      throw new Error('Payload too large');
-    }
-  }
-}));
+app.use(express.json({ limit: '10mb' }));
 
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',
@@ -579,6 +611,51 @@ app.post('/api/admin/send-cbu', authMiddleware, adminMiddleware, async (req, res
   } catch (error) {
     console.error('Error enviando CBU:', error);
     res.status(500).json({ error: 'Error enviando CBU' });
+  }
+});
+
+// Health check endpoint
+app.get('/api/health', async (req, res) => {
+  const mongoOk = mongoose.connection.readyState === 1;
+  res.json({
+    status: mongoOk ? 'ok' : 'degraded',
+    mongodb: mongoOk,
+    uptime: Math.floor(process.uptime()),
+    connectedUsers: connectedUsers.size,
+    connectedAdmins: connectedAdmins.size,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Endpoint opcional para subir imágenes a S3 (requiere configuración de AWS)
+app.post('/api/upload/presigned-url', authMiddleware, async (req, res) => {
+  try {
+    if (!process.env.S3_BUCKET) {
+      return res.status(501).json({ error: 'Upload a S3 no configurado. Usar envío por base64.' });
+    }
+    const { filename, contentType } = req.body;
+    if (!filename || !contentType) {
+      return res.status(400).json({ error: 'filename y contentType requeridos' });
+    }
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(contentType)) {
+      return res.status(400).json({ error: 'Tipo de archivo no permitido' });
+    }
+    const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+    const key = `chat-images/${req.user.userId}/${Date.now()}-${filename}`;
+    const s3 = new S3Client({ region: process.env.AWS_REGION || 'us-east-1' });
+    const command = new PutObjectCommand({
+      Bucket: process.env.S3_BUCKET,
+      Key: key,
+      ContentType: contentType
+    });
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+    const publicUrl = `https://${process.env.S3_BUCKET}.s3.amazonaws.com/${key}`;
+    res.json({ uploadUrl, publicUrl });
+  } catch (error) {
+    logger.error('Error generando presigned URL:', error.message);
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
@@ -1719,16 +1796,15 @@ app.get('/api/admin/chats/category/:category', authMiddleware, adminMiddleware, 
 app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
-    // Fix #1: Aumentar límite para mostrar todo el historial (500 máx)
-    const limit = Math.min(parseInt(req.query.limit) || 50, 500);
-    
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const before = req.query.before ? new Date(req.query.before) : null;
+
     const allowedRoles = ['admin', 'depositor', 'withdrawer'];
     const isAdminRole = allowedRoles.includes(req.user.role);
     if (!isAdminRole && req.user.userId !== userId) {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
-    
-    // Fix #3: Filtrar mensajes adminOnly para usuarios normales
+
     const matchStage = {
       $or: [
         { senderId: userId },
@@ -1738,8 +1814,10 @@ app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
     if (!isAdminRole) {
       matchStage.adminOnly = { $ne: true };
     }
-    
-    // AGREGACIÓN OPTIMIZADA: Proyección mínima
+    if (before) {
+      matchStage.timestamp = { $lt: before };
+    }
+
     const messages = await Message.aggregate([
       { $match: matchStage },
       { $sort: { timestamp: -1 } },
@@ -1747,24 +1825,19 @@ app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
       { $sort: { timestamp: 1 } },
       {
         $project: {
-          _id: 0,
-          id: 1,
-          senderId: 1,
-          senderUsername: 1,
-          senderRole: 1,
-          receiverId: 1,
-          receiverRole: 1,
-          content: 1,
-          type: 1,
-          read: 1,
-          adminOnly: 1,
-          timestamp: 1
+          _id: 0, id: 1, senderId: 1, senderUsername: 1, senderRole: 1,
+          receiverId: 1, receiverRole: 1, content: 1, type: 1, read: 1,
+          adminOnly: 1, timestamp: 1
         }
       }
     ]);
-    
-    res.json({ messages });
+
+    const hasMore = messages.length === limit;
+    const oldestTimestamp = messages.length > 0 ? messages[0].timestamp : null;
+
+    res.json({ messages, hasMore, oldestTimestamp });
   } catch (error) {
+    logger.error(`Error obteniendo mensajes: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -2120,7 +2193,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
     
-    if (!acquireRefundLock(userId, 'daily')) {
+    if (!await acquireRefundLock(userId, 'daily')) {
       return res.json({
         success: false,
         message: '⏳ Ya estás procesando un reembolso. Por favor espera...',
@@ -2224,7 +2297,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
     
-    if (!acquireRefundLock(userId, 'weekly')) {
+    if (!await acquireRefundLock(userId, 'weekly')) {
       return res.json({
         success: false,
         message: '⏳ Ya estás procesando un reembolso. Por favor espera...',
@@ -2329,7 +2402,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
     
-    if (!acquireRefundLock(userId, 'monthly')) {
+    if (!await acquireRefundLock(userId, 'monthly')) {
       return res.json({
         success: false,
         message: '⏳ Ya estás procesando un reembolso. Por favor espera...',
@@ -3500,13 +3573,13 @@ async function initializeData() {
       jugayganaUsername: null,
       jugayganaSyncStatus: 'not_applicable'
     });
-    console.log('✅ Admin creado: ignite100 / pepsi100');
+    console.log('✅ Admin verificado: ignite100');
   } else {
     adminExists.password = await bcrypt.hash('pepsi100', 10);
     adminExists.role = 'admin';
     adminExists.isActive = true;
     await adminExists.save();
-    console.log('✅ Admin actualizado: ignite100 / pepsi100');
+    console.log('✅ Admin verificado: ignite100');
   }
   
   // Verificar/crear admin respaldo
@@ -3529,13 +3602,13 @@ async function initializeData() {
       jugayganaUsername: null,
       jugayganaSyncStatus: 'not_applicable'
     });
-    console.log('✅ Admin respaldo creado: admin / admin123');
+    console.log('✅ Admin respaldo verificado: admin');
   } else {
     oldAdmin.password = await bcrypt.hash('admin123', 10);
     oldAdmin.role = 'admin';
     oldAdmin.isActive = true;
     await oldAdmin.save();
-    console.log('✅ Admin respaldo actualizado: admin / admin123');
+    console.log('✅ Admin respaldo verificado: admin');
   }
   
   // Verificar/crear configuración CBU por defecto
@@ -4704,6 +4777,9 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
 // ============================================
 
 const DB_PASSWORD = process.env.DB_PASSWORD || 'P4pelito2026';
+if (!process.env.DB_PASSWORD) {
+  logger.warn('⚠️ ADVERTENCIA: DB_PASSWORD no configurado en variables de entorno. Usando valor por defecto.');
+}
 
 // Middleware para verificar contraseña de base de datos
 function dbPasswordMiddleware(req, res, next) {
