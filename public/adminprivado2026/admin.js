@@ -2567,7 +2567,7 @@ async function loadUsers() {
         if (!response.ok) throw new Error('Failed to load users');
         
         const data = await response.json();
-        renderUsers(data.users || []);
+        renderUsers(data.data?.users || data.users || []);
     } catch (error) {
         console.error('Error loading users:', error);
     }
