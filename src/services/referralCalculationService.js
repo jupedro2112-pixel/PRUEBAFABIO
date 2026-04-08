@@ -99,9 +99,14 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     // Taking the maximum works because each payout's "alreadySettled" already
     // includes all prior payouts; the highest cumulative value is always the most
     // recent (and correct) settlement baseline.
+    //
+    // referrerId comes from referredByUserId stored in the users collection; coerce
+    // to a plain string to prevent any operator injection if the DB field were ever
+    // stored as an object (belt-and-suspenders defense).
+    const safeReferrerId = String(referrerId);
     const paidPayoutsForReferrer = await ReferralPayout.find({
       periodKey,
-      referrerUserId: referrerId,
+      referrerUserId: safeReferrerId,
       status: 'paid'
     }).lean();
 
@@ -127,8 +132,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
     logger.info(
       `[ReferralCalc] paidPayoutsLoaded=${paidPayoutsForReferrer.length} ` +
       `referrer=${referrer.username} period=${periodKey} ` +
-      `referredsWithSettlement=${settlementByReferred.size} ` +
-      `stateRecoveredFromDatabase=true`
+      `referredsWithSettlement=${settlementByReferred.size}`
     );
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -347,7 +351,7 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
         `ledgerPayouts=${paidPayoutsForReferrer.length} ` +
         `alreadySettledRevenue=${alreadySettledRevenue.toFixed(2)} ` +
         `alreadySettledCommission=${alreadySettledCommission.toFixed(2)} ` +
-        `snapshotCreated=true ledgerEntryCreated=true stateRecoveredFromDatabase=true`
+        `settlementSource=${paidPayoutsForReferrer.length > 0 && settlementByReferred.has(referredUser.id) ? 'payoutLedger' : alreadySettledRevenue > 0 ? 'commissionFallback' : 'none'}`
       );
 
       // Revenue not yet settled
