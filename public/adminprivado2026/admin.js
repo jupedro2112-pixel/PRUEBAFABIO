@@ -4085,6 +4085,9 @@ function fmtPeriod(pk) {
     return `${m}/${y}`;
 }
 
+// Cached referrers for client-side quick filters
+let _cachedReferrers = [];
+
 async function loadAdminReferralSummary() {
     const container = document.getElementById('referralTopList');
     const summaryContainer = document.getElementById('referralGlobalSummary');
@@ -4100,6 +4103,9 @@ async function loadAdminReferralSummary() {
         const data = await res.json();
         const referrers = data.data?.topReferrers || [];
         const summary = data.data?.summary || {};
+
+        // Cache for quick filters
+        _cachedReferrers = referrers;
 
         // Render global dashboard cards
         if (summaryContainer) {
@@ -4123,43 +4129,96 @@ async function loadAdminReferralSummary() {
             return;
         }
 
-        container.innerHTML = `
-        <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;min-width:700px;">
-            <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
-                <th style="padding:7px 6px;">Usuario</th>
-                <th style="padding:7px 6px;">Código</th>
-                <th style="padding:7px 6px;text-align:center;">Referidos</th>
-                <th style="padding:7px 6px;text-align:right;">Total Pagado</th>
-                <th style="padding:7px 6px;text-align:right;">Pendiente</th>
-                <th style="padding:7px 6px;text-align:right;">Total Generado</th>
-                <th style="padding:7px 6px;">Último Pago</th>
-                <th style="padding:7px 6px;">Acciones</th>
-            </tr></thead>
-            <tbody>
-            ${referrers.map(r => {
-                const fs = r.financialStats || {};
-                const hasPending = (fs.totalPendingCommission || 0) > 0;
-                return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <td style="padding:7px 6px;color:#fff;font-weight:bold;">${r.username}${r.excludedFromReferral ? ' <span style="color:#ff4444;font-size:10px;">EXCLUIDO</span>' : ''}</td>
-                    <td style="padding:7px 6px;color:#d4af37;letter-spacing:2px;font-size:12px;">${r.referralCode || '—'}</td>
-                    <td style="padding:7px 6px;color:#00ff88;font-weight:bold;text-align:center;">${r.totalReferreds}</td>
-                    <td style="padding:7px 6px;color:#00ff88;text-align:right;">${fmtARS(fs.totalSettledCommission || 0)}</td>
-                    <td style="padding:7px 6px;text-align:right;">
-                        <span style="color:${hasPending?'#f7931e':'#888'};font-weight:${hasPending?'bold':'normal'};">${fmtARS(fs.totalPendingCommission || 0)}</span>
-                        ${hasPending ? '<span style="color:#f7931e;font-size:10px;margin-left:4px;">●</span>' : ''}
-                    </td>
-                    <td style="padding:7px 6px;color:#b0b0b0;text-align:right;">${fmtARS(fs.totalGenerated || 0)}</td>
-                    <td style="padding:7px 6px;color:#888;font-size:11px;">${fs.lastPayoutDate ? new Date(fs.lastPayoutDate).toLocaleDateString('es-AR') : '—'}</td>
-                    <td style="padding:7px 6px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
-                </tr>`;
-            }).join('')}
-            </tbody>
-        </table>
-        </div>`;
+        renderReferrersTable(referrers);
     } catch (e) {
         container.innerHTML = '<span style="color:#ff4444;">Error: ' + e.message + '</span>';
     }
+}
+
+/**
+ * Render the referrers table with an optional client-side filter.
+ * filter: 'all' | 'pending' | 'failed'
+ */
+function renderReferrersTable(referrers) {
+    const container = document.getElementById('referralTopList');
+    if (!container) return;
+
+    if (referrers.length === 0) {
+        container.innerHTML = '<span style="color:#888;">No hay referidores que coincidan con el filtro.</span>';
+        return;
+    }
+
+    const payoutStatusBadge = (status) => {
+        if (!status) return '<span style="color:#444;font-size:10px;">—</span>';
+        if (status === 'paid') return '<span style="background:rgba(0,255,136,0.12);border:1px solid rgba(0,255,136,0.35);color:#00ff88;font-size:10px;border-radius:4px;padding:2px 6px;">✅ Pagado</span>';
+        if (status === 'failed') return '<span style="background:rgba(255,68,68,0.12);border:1px solid rgba(255,68,68,0.35);color:#ff4444;font-size:10px;border-radius:4px;padding:2px 6px;">❌ Fallido</span>';
+        if (status === 'pending') return '<span style="background:rgba(247,147,30,0.12);border:1px solid rgba(247,147,30,0.35);color:#f7931e;font-size:10px;border-radius:4px;padding:2px 6px;">⏳ Pendiente</span>';
+        return `<span style="color:#888;font-size:10px;">${escHtml(status)}</span>`;
+    };
+
+    container.innerHTML = `
+    <div style="overflow-x:auto;">
+    <table id="referrersTableEl" style="width:100%;border-collapse:collapse;min-width:780px;">
+        <thead><tr style="color:#888;font-size:11px;text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
+            <th style="padding:7px 6px;">Usuario</th>
+            <th style="padding:7px 6px;">Código</th>
+            <th style="padding:7px 6px;text-align:center;">Referidos</th>
+            <th style="padding:7px 6px;text-align:right;">Total Pagado</th>
+            <th style="padding:7px 6px;text-align:right;">Pendiente</th>
+            <th style="padding:7px 6px;text-align:right;">Total Generado</th>
+            <th style="padding:7px 6px;">Último Pago</th>
+            <th style="padding:7px 6px;">Último Estado</th>
+            <th style="padding:7px 6px;">Acciones</th>
+        </tr></thead>
+        <tbody>
+        ${referrers.map(r => {
+            const fs = r.financialStats || {};
+            const hasPending = (fs.totalPendingCommission || 0) > 0;
+            return `<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:7px 6px;color:#fff;font-weight:bold;">${r.username}${r.excludedFromReferral ? ' <span style="color:#ff4444;font-size:10px;">EXCLUIDO</span>' : ''}</td>
+                <td style="padding:7px 6px;color:#d4af37;letter-spacing:2px;font-size:12px;">${r.referralCode || '—'}</td>
+                <td style="padding:7px 6px;color:#00ff88;font-weight:bold;text-align:center;">${r.totalReferreds}</td>
+                <td style="padding:7px 6px;color:#00ff88;text-align:right;">${fmtARS(fs.totalSettledCommission || 0)}</td>
+                <td style="padding:7px 6px;text-align:right;">
+                    <span style="color:${hasPending?'#f7931e':'#888'};font-weight:${hasPending?'bold':'normal'};">${fmtARS(fs.totalPendingCommission || 0)}</span>
+                    ${hasPending ? '<span style="color:#f7931e;font-size:10px;margin-left:4px;">●</span>' : ''}
+                </td>
+                <td style="padding:7px 6px;color:#b0b0b0;text-align:right;">${fmtARS(fs.totalGenerated || 0)}</td>
+                <td style="padding:7px 6px;color:#888;font-size:11px;">${fs.lastPayoutDate ? new Date(fs.lastPayoutDate).toLocaleDateString('es-AR') : '—'}</td>
+                <td style="padding:7px 6px;">${payoutStatusBadge(fs.latestPayoutStatus)}</td>
+                <td style="padding:7px 6px;"><button onclick="loadAdminUserReferrals('${r.id}')" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:11px;">Ver detalle</button></td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>
+    </div>`;
+}
+
+/**
+ * Filter the referrers table client-side (no extra API call).
+ * mode: 'all' | 'pending' | 'failed'
+ */
+function filterReferrersTable(mode) {
+    // Highlight active filter button
+    ['referralFilterAll', 'referralFilterPending', 'referralFilterFailed'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.style.opacity = '0.5';
+        btn.style.fontWeight = 'normal';
+    });
+    const activeId = mode === 'pending' ? 'referralFilterPending' : mode === 'failed' ? 'referralFilterFailed' : 'referralFilterAll';
+    const activeBtn = document.getElementById(activeId);
+    if (activeBtn) { activeBtn.style.opacity = '1'; activeBtn.style.fontWeight = 'bold'; }
+
+    if (!_cachedReferrers.length) return;
+
+    let filtered = _cachedReferrers;
+    if (mode === 'pending') {
+        filtered = _cachedReferrers.filter(r => (r.financialStats?.totalPendingCommission || 0) > 0);
+    } else if (mode === 'failed') {
+        filtered = _cachedReferrers.filter(r => r.financialStats?.latestPayoutStatus === 'failed');
+    }
+    renderReferrersTable(filtered);
 }
 
 async function loadAdminReferralPayouts() {
@@ -4168,10 +4227,12 @@ async function loadAdminReferralPayouts() {
     container.innerHTML = '<span style="color:#888;font-size:12px;">Cargando...</span>';
     try {
         const statusFilter = document.getElementById('referralPayoutFilterStatus')?.value || '';
+        const deltaFilter = document.getElementById('referralPayoutFilterDelta')?.value || '';
         const periodFilter = document.getElementById('referralPayoutFilterPeriod')?.value?.trim() || '';
         const usernameFilter = document.getElementById('referralPayoutFilterUsername')?.value?.trim() || '';
         const params = new URLSearchParams({ limit: 100 }); // 100 payouts to support period-grouped display (multiple payouts per referrer/period)
         if (statusFilter) params.append('status', statusFilter);
+        if (deltaFilter) params.append('isDelta', deltaFilter);
         if (periodFilter && /^\d{4}-\d{2}$/.test(periodFilter)) params.append('period', periodFilter);
         if (usernameFilter) params.append('username', usernameFilter);
 

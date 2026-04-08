@@ -390,9 +390,24 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
     ]);
     const lastPayoutByReferrer = new Map(lastPayoutStats.map(p => [p._id, p]));
 
+    // Most-recent payout of ANY status per referrer — used to show "último estado" in admin table
+    const latestAnyStatusPayout = await ReferralPayout.aggregate([
+      { $match: { referrerUserId: { $in: referrerIds } } },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: '$referrerUserId',
+          latestPayoutStatus: { $first: '$status' },
+          latestPayoutPeriod: { $first: '$periodKey' }
+        }
+      }
+    ]);
+    const latestAnyStatusByReferrer = new Map(latestAnyStatusPayout.map(p => [p._id, p]));
+
     for (const r of topReferrers) {
       const cs = commissionsByReferrer.get(r.id);
       const lp = lastPayoutByReferrer.get(r.id);
+      const lap = latestAnyStatusByReferrer.get(r.id);
       // Use paid-payout total as the authoritative "total paid" per referrer.
       // This is consistent with the detail view (adminGetUserReferrals) and fixes the
       // "$0 paid" inconsistency that occurred when settledCommissionAmount was 0 for
@@ -406,7 +421,10 @@ const adminGetReferralsSummary = asyncHandler(async (req, res) => {
         currentPeriodCommission: cs?.currentPeriodCommission || 0,
         lastPayoutDate: lp?.lastPayoutDate || null,
         lastPayoutAmount: lp?.lastPayoutAmount || null,
-        lastPayoutPeriod: lp?.lastPayoutPeriod || null
+        lastPayoutPeriod: lp?.lastPayoutPeriod || null,
+        // Status of the most recent payout attempt (any status — used for "Último estado" badge)
+        latestPayoutStatus: lap?.latestPayoutStatus || null,
+        latestPayoutPeriod: lap?.latestPayoutPeriod || null
       };
 
       logger.info(
@@ -607,6 +625,7 @@ const adminGetPayouts = asyncHandler(async (req, res) => {
   const rawPeriod = req.query.period;
   const rawStatus = req.query.status;
   const rawUsername = req.query.username;
+  const rawIsDelta = req.query.isDelta;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const period = sanitizePeriodKey(rawPeriod);
@@ -621,6 +640,8 @@ const adminGetPayouts = asyncHandler(async (req, res) => {
   const query = {};
   if (period) query.periodKey = period;
   if (status) query.status = status;
+  if (rawIsDelta === 'true') query.isDelta = true;
+  if (rawIsDelta === 'false') query.isDelta = { $ne: true };
   if (safeUsername) {
     // Escape special regex chars to prevent ReDoS
     const escaped = safeUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

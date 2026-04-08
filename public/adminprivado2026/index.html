@@ -780,9 +780,15 @@
 
                     <!-- ── REFERIDORES ACTIVOS ── -->
                     <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:18px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
                             <h3 style="color:#d4af37;font-size:15px;">👑 Referidores</h3>
-                            <button onclick="loadAdminReferralSummary()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Actualizar</button>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                                <!-- Filtros rápidos para la tabla -->
+                                <button id="referralFilterAll" onclick="filterReferrersTable('all')" style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#fff;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;">Todos</button>
+                                <button id="referralFilterPending" onclick="filterReferrersTable('pending')" style="background:rgba(247,147,30,0.1);border:1px solid rgba(247,147,30,0.3);color:#f7931e;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;">⏳ Con pendiente</button>
+                                <button id="referralFilterFailed" onclick="filterReferrersTable('failed')" style="background:rgba(255,68,68,0.1);border:1px solid rgba(255,68,68,0.3);color:#ff8080;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;">❌ Último fallido</button>
+                                <button onclick="loadAdminReferralSummary()" style="background:rgba(212,175,55,0.1);border:1px solid #d4af37;color:#d4af37;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;">🔄 Actualizar</button>
+                            </div>
                         </div>
                         <div id="referralTopList" style="font-size:13px;">Cargando...</div>
                     </div>
@@ -798,7 +804,7 @@
 
                     <!-- ── HISTORIAL DE PAGOS ── -->
                     <div style="background:var(--bg-card,#1a1a2e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:18px;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
                             <h3 style="color:#d4af37;font-size:15px;">📋 Historial de Pagos</h3>
                             <div style="display:flex;gap:8px;flex-wrap:wrap;">
                                 <select id="referralPayoutFilterStatus" style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#ccc;padding:5px 8px;border-radius:6px;font-size:12px;">
@@ -806,6 +812,11 @@
                                     <option value="paid">✅ Pagado</option>
                                     <option value="pending">⏳ Pendiente</option>
                                     <option value="failed">❌ Fallido</option>
+                                </select>
+                                <select id="referralPayoutFilterDelta" style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#ccc;padding:5px 8px;border-radius:6px;font-size:12px;">
+                                    <option value="">Todos los tipos</option>
+                                    <option value="true">Δ Solo delta</option>
+                                    <option value="false">Solo base</option>
                                 </select>
                                 <input type="text" id="referralPayoutFilterPeriod" placeholder="Período YYYY-MM"
                                     style="background:#0d0d1a;border:1px solid rgba(255,255,255,0.2);color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;width:130px;">
