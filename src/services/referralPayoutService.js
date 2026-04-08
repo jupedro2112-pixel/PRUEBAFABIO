@@ -28,12 +28,19 @@ async function dropStalePayoutUniqueIndexIfPresent() {
   try {
     const collection = mongoose.connection.collection('referralpayouts');
     const indexes = await collection.indexes();
-    const staleIndex = indexes.find(idx => idx.name === INDEX_NAME && !!idx.unique);
+    const staleIndex = indexes.find(idx => idx.name === INDEX_NAME);
     if (!staleIndex) {
-      logger.info(`[ReferralPayout] dropStaleIndex: "${INDEX_NAME}" is not unique or does not exist — no action needed`);
+      logger.info(`[ReferralPayout] dropStaleIndex: "${INDEX_NAME}" does not exist — no action needed`);
       return true;
     }
-    logger.warn(`[ReferralPayout] dropStaleIndex: dropping stale unique index "${INDEX_NAME}" at runtime`);
+    // Drop unconditionally (whether unique or not) so we can recreate the correct non-unique version.
+    // The unique=false check was fragile: on some MongoDB drivers the flag is absent even for
+    // unique indexes, causing the function to return true without dropping and leaving the
+    // constraint in place, which made the retry also fail with E11000.
+    logger.warn(
+      `[ReferralPayout] dropStaleIndex: dropping index "${INDEX_NAME}" (unique=${!!staleIndex.unique}) ` +
+      `to allow multiple payouts per period+referrer (incremental settlement)`
+    );
     await collection.dropIndex(INDEX_NAME);
     // Re-create the non-unique version immediately
     try {
@@ -229,14 +236,28 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
             `[ReferralPayout] E11000 on {periodKey, referrerUserId} detected — stale unique index present. ` +
             `Attempting runtime index drop and retry. referrer=${group.referrerUsername} period=${periodKey}`
           );
-          const dropped = await dropStalePayoutUniqueIndexIfPresent();
+          let dropped = false;
+          try {
+            dropped = await dropStalePayoutUniqueIndexIfPresent();
+          } catch (dropErr) {
+            logger.error(`[ReferralPayout] Index drop threw unexpectedly: ${dropErr.message}`);
+          }
           if (dropped) {
             // Retry with the same payoutId — the original create failed before writing to DB
             // (E11000 rejects before commit), so the UUID was never persisted.
-            payoutDoc = await ReferralPayout.create(buildPayoutData(payoutId));
-            logger.info(
-              `[ReferralPayout] Retry after index drop succeeded. referrer=${group.referrerUsername} period=${periodKey}`
-            );
+            try {
+              payoutDoc = await ReferralPayout.create(buildPayoutData(payoutId));
+              logger.info(
+                `[ReferralPayout] Retry after index drop succeeded. referrer=${group.referrerUsername} period=${periodKey} ` +
+                `actionSupported=true`
+              );
+            } catch (retryErr) {
+              logger.error(
+                `[ReferralPayout] Retry after index drop also failed: ${retryErr.message} ` +
+                `referrer=${group.referrerUsername} period=${periodKey}`
+              );
+              throw retryErr;
+            }
           } else {
             throw createErr;
           }
