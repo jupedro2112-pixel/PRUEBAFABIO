@@ -301,7 +301,7 @@ async function syncUserToPlatform(localUser) {
   // 2. Crear en JUGAYGANA
   const result = await createPlatformUser({
     username: localUser.username,
-    password: localUser.password || 'asd123',
+    password: localUser.password || process.env.JG_DEFAULT_PASSWORD || 'asd123',
     userrole: 'player',
     currency: 'ARS'
   });
@@ -552,7 +552,7 @@ async function depositToUser(username, amount, description = '') {
       console.log(`🔄 Intento ${attempt}/3 de crear usuario: ${username}`);
       const createResult = await createPlatformUser({
         username: username,
-        password: 'asd123',
+        password: process.env.JG_DEFAULT_PASSWORD || 'asd123',
         userrole: 'player',
         currency: 'ARS'
       });
@@ -648,7 +648,7 @@ async function withdrawFromUser(username, amount, description = '') {
       console.log(`🔄 Intento ${attempt}/3 de crear usuario: ${username}`);
       const createResult = await createPlatformUser({
         username: username,
-        password: 'asd123',
+        password: process.env.JG_DEFAULT_PASSWORD || 'asd123',
         userrole: 'player',
         currency: 'ARS'
       });
