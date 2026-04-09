@@ -4,11 +4,13 @@
  * Gestiona la comunicación con la API de JUGAYGANA
  */
 const axios = require('axios');
+const FormData = require('form-data');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const logger = require('../utils/logger');
 
 // Configuración
 const API_URL = process.env.JUGAYGANA_API_URL || 'https://admin.agentesadmin.bet/api/admin/';
+const APP_API_URL = process.env.JUGAYGANA_APP_API_URL || 'https://jugaygana44.bet/api/app/';
 const PROXY_URL = process.env.PROXY_URL || '';
 const PLATFORM_USER = process.env.PLATFORM_USER;
 const PLATFORM_PASS = process.env.PLATFORM_PASS;
@@ -607,55 +609,107 @@ const creditBalance = async (username, amount, description = '') => {
 
 /**
  * Cambiar contraseña de usuario en JUGAYGANA
+ *
+ * Flujo correcto (replicando el request real del navegador):
+ *   1. POST a APP_API_URL (jugaygana44.bet/api/app/) con action=LOGIN como el usuario
+ *      para obtener el token del USUARIO (no el token admin).
+ *   2. POST a APP_API_URL con action=ChangePassword usando el token del usuario.
+ *
+ * Ambas requests usan multipart/form-data, igual que el navegador real.
+ *
  * @param {string} username - Nombre de usuario en JUGAYGANA
- * @param {string|null} currentPassword - Contraseña actual (null en reset por teléfono; la API puede rechazarlo)
+ * @param {string|null} currentPassword - Contraseña actual (null en reset por teléfono; la API la requiere)
  * @param {string} newPassword - Nueva contraseña
  */
 const changeUserPassword = async (username, currentPassword, newPassword) => {
   if (!currentPassword) {
-    return { success: false, error: 'Contraseña actual requerida por la API de JUGAYGANA' };
+    logger.warn(`⚠️ changeUserPassword: contraseña actual no disponible para ${username} (reset por teléfono). No se puede sincronizar con JUGAYGANA sin la contraseña actual del usuario.`);
+    return { success: false, error: 'Contraseña actual requerida para autenticarse en la API de JUGAYGANA' };
   }
 
-  const ok = await ensureSession();
-  if (!ok) return { success: false, error: 'No hay sesión válida' };
+  logger.info(`[changeUserPassword] Iniciando cambio de contraseña en JUGAYGANA para: ${username} — URL: ${APP_API_URL}`);
 
-  const userInfo = await getUserInfo(username);
-  if (!userInfo) {
-    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
-  }
+  // Configurar agente proxy para las requests a la app API (igual que el cliente admin)
+  const appAxiosConfig = {
+    timeout: 20000,
+    httpsAgent,
+    proxy: false,
+    validateStatus: () => true,
+    maxRedirects: 0,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Origin': 'https://jugaygana44.bet',
+      'Referer': 'https://jugaygana44.bet/',
+      'Accept-Language': 'es-419,es;q=0.9'
+    }
+  };
 
+  // ── Paso 1: Login como el usuario para obtener su propio token ────────────────
+  let userToken;
   try {
-    const body = toFormUrlEncoded({
-      action: 'ChangePassword',
-      token: sessionToken,
-      password: currentPassword,
-      newpassword: newPassword
+    const loginForm = new FormData();
+    loginForm.append('action', 'LOGIN');
+    loginForm.append('username', username);
+    loginForm.append('password', currentPassword);
+
+    const loginResp = await axios.post(APP_API_URL, loginForm, {
+      ...appAxiosConfig,
+      headers: { ...appAxiosConfig.headers, ...loginForm.getHeaders() }
     });
 
-    const headers = {};
-    if (sessionCookie) headers.Cookie = sessionCookie;
+    logger.info(`[changeUserPassword] Login como usuario HTTP ${loginResp.status}`);
 
-    const resp = await client.post('', body, {
-      headers,
-      validateStatus: () => true,
-      maxRedirects: 0
-    });
-
-    const data = parseJson(resp.data);
-    if (isHtmlBlocked(data)) {
-      return { success: false, error: 'IP bloqueada / HTML' };
+    const loginData = parseJson(loginResp.data);
+    if (isHtmlBlocked(loginData)) {
+      logger.warn(`[changeUserPassword] Login usuario bloqueado (HTML/CloudFront) para: ${username}`);
+      return { success: false, error: 'IP bloqueada / HTML en login de usuario' };
     }
 
-    if (data?.success) {
+    userToken = loginData?.token || loginData?.data?.token;
+    if (!userToken) {
+      const errMsg = loginData?.message || loginData?.error || JSON.stringify(loginData);
+      logger.warn(`[changeUserPassword] No se obtuvo token de usuario para ${username}: ${errMsg}`);
+      return { success: false, error: `Login de usuario fallido: ${errMsg}` };
+    }
+
+    logger.info(`[changeUserPassword] Token de usuario obtenido para: ${username}`);
+  } catch (err) {
+    logger.error(`[changeUserPassword] Error en login de usuario para ${username}: ${err.message}`);
+    return { success: false, error: `Error en login de usuario: ${err.message}` };
+  }
+
+  // ── Paso 2: Cambiar contraseña usando el token del usuario ────────────────────
+  try {
+    const changeForm = new FormData();
+    changeForm.append('action', 'ChangePassword');
+    changeForm.append('token', userToken);
+    changeForm.append('password', currentPassword);
+    changeForm.append('newpassword', newPassword);
+
+    const changeResp = await axios.post(APP_API_URL, changeForm, {
+      ...appAxiosConfig,
+      headers: { ...appAxiosConfig.headers, ...changeForm.getHeaders() }
+    });
+
+    logger.info(`[changeUserPassword] ChangePassword HTTP ${changeResp.status} para: ${username}`);
+
+    const changeData = parseJson(changeResp.data);
+    if (isHtmlBlocked(changeData)) {
+      logger.warn(`[changeUserPassword] ChangePassword bloqueado (HTML/CloudFront) para: ${username}`);
+      return { success: false, error: 'IP bloqueada / HTML en ChangePassword' };
+    }
+
+    if (changeData?.success) {
       logger.info(`✅ Contraseña cambiada en JUGAYGANA para: ${username}`);
       return { success: true };
     }
 
-    const errMsg = data?.message || data?.error || JSON.stringify(data);
+    const errMsg = changeData?.message || changeData?.error || JSON.stringify(changeData);
     logger.error(`❌ Error al cambiar contraseña en JUGAYGANA para ${username}: ${errMsg}`);
     return { success: false, error: errMsg };
   } catch (err) {
-    logger.error(`❌ Error en changeUserPassword JUGAYGANA: ${err.message}`);
+    logger.error(`[changeUserPassword] Error en ChangePassword para ${username}: ${err.message}`);
     return { success: false, error: err.message };
   }
 };
