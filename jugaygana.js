@@ -5,6 +5,7 @@
 
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const FormData = require('form-data');
 
 const API_URL = process.env.JUGAYGANA_API_URL || 'https://admin.agentesadmin.bet/api/admin/';
 const PROXY_URL = process.env.PROXY_URL || '';
@@ -934,46 +935,84 @@ async function getUserNetLastMonth(username) {
 
 // ============================================
 // ChangePassword - Cambiar contraseña de usuario en JUGAYGANA
+// Usa la API de usuario (jugaygana44.bet/api/app/) con multipart/form-data
+// y el token del propio usuario (no el token admin).
 // ============================================
 
-async function changeUserPassword(username, currentPassword, newPassword) {
-  const ok = await ensureSession();
-  if (!ok) return { success: false, error: 'No hay sesión válida' };
+const APP_API_URL = process.env.JUGAYGANA_APP_API_URL || 'https://jugaygana44.bet/api/app/';
 
-  const userInfo = await getUserInfoByName(username);
-  if (!userInfo) {
-    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
+async function changeUserPassword(username, currentPassword, newPassword) {
+  if (!currentPassword) {
+    console.warn(`[changeUserPassword] Contraseña actual no disponible para ${username} (reset por teléfono). No se puede sincronizar sin contraseña actual.`);
+    return { success: false, error: 'Contraseña actual requerida para autenticarse en la API de JUGAYGANA' };
   }
 
+  // Cliente dedicado para la API de usuario (jugaygana44.bet/api/app/)
+  const appClient = axios.create({
+    baseURL: APP_API_URL,
+    timeout: 20000,
+    httpsAgent,
+    proxy: false,
+    validateStatus: () => true,
+    maxRedirects: 0,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Origin': 'https://jugaygana44.bet',
+      'Referer': 'https://jugaygana44.bet/user/password',
+      'Accept-Language': 'es-419,es;q=0.9'
+    }
+  });
+
   try {
-    const body = toFormUrlEncoded({
-      action: 'ChangePassword',
-      token: SESSION_TOKEN,
-      password: currentPassword,
-      newpassword: newPassword
+    // Paso 1: Login como el usuario para obtener SU token
+    const loginForm = new FormData();
+    loginForm.append('action', 'LOGIN');
+    loginForm.append('username', username);
+    loginForm.append('password', currentPassword);
+
+    console.log(`[changeUserPassword] Paso 1: login como ${username} en ${APP_API_URL}`);
+    const loginResp = await appClient.post('', loginForm, {
+      headers: loginForm.getHeaders()
     });
 
-    const headers = {};
-    if (SESSION_COOKIE) headers.Cookie = SESSION_COOKIE;
-
-    const resp = await client.post('', body, {
-      headers,
-      validateStatus: () => true,
-      maxRedirects: 0
-    });
-
-    const data = parsePossiblyWrappedJson(resp.data);
-    if (isHtmlBlocked(data)) {
-      return { success: false, error: 'IP bloqueada / HTML' };
+    const loginData = parsePossiblyWrappedJson(loginResp.data);
+    if (isHtmlBlocked(loginData)) {
+      return { success: false, error: 'IP bloqueada / HTML en login' };
     }
 
-    if (data?.success) {
+    const userToken = loginData?.token || loginData?.data?.token;
+    if (!userToken) {
+      const errMsg = loginData?.message || loginData?.error || JSON.stringify(loginData);
+      console.error(`[changeUserPassword] Login fallido para ${username}: ${errMsg}`);
+      return { success: false, error: `Login fallido: ${errMsg}` };
+    }
+
+    console.log(`[changeUserPassword] Login OK para ${username}, procediendo a cambiar contraseña`);
+
+    // Paso 2: Cambiar contraseña usando el token del usuario
+    const changeForm = new FormData();
+    changeForm.append('action', 'ChangePassword');
+    changeForm.append('token', userToken);
+    changeForm.append('password', currentPassword);
+    changeForm.append('newpassword', newPassword);
+
+    const changeResp = await appClient.post('', changeForm, {
+      headers: changeForm.getHeaders()
+    });
+
+    const changeData = parsePossiblyWrappedJson(changeResp.data);
+    if (isHtmlBlocked(changeData)) {
+      return { success: false, error: 'IP bloqueada / HTML en cambio de contraseña' };
+    }
+
+    if (changeData?.success) {
       console.log(`✅ Contraseña cambiada en JUGAYGANA para: ${username}`);
       return { success: true };
     }
 
-    const errMsg = data?.message || data?.error || JSON.stringify(data);
-    console.error(`❌ Error al cambiar contraseña en JUGAYGANA para ${username}:`, errMsg);
+    const errMsg = changeData?.message || changeData?.error || JSON.stringify(changeData);
+    console.error(`❌ Error al cambiar contraseña en JUGAYGANA para ${username}: ${errMsg}`);
     return { success: false, error: errMsg };
   } catch (err) {
     console.error('❌ Error en changeUserPassword JUGAYGANA:', err.message);

@@ -1073,7 +1073,7 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
       if (jgResult.success) {
         console.log(`✅ Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
       } else {
-        console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA: ${jgResult.error}`);
+        console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
       }
     } catch (jgError) {
       console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
@@ -1136,6 +1136,19 @@ app.post('/api/auth/reset-password-by-phone', async (req, res) => {
     const result = await changePasswordByPhone(phone.trim(), newPassword);
     
     if (result.success) {
+      // Best-effort sync with JUGAYGANA (no currentPassword available for phone reset)
+      try {
+        const jugayganaSync = require('./jugaygana');
+        const jgResult = await jugayganaSync.changeUserPassword(result.username, null, newPassword);
+        if (jgResult.success) {
+          console.log(`✅ Contraseña sincronizada con JUGAYGANA para: ${result.username}`);
+        } else {
+          console.warn(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${result.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
+        }
+      } catch (jgError) {
+        console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
+      }
+
       res.json({ 
         success: true, 
         username: result.username,
