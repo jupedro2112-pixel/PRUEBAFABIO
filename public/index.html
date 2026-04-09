@@ -88,17 +88,20 @@
             <!-- Sección centro: Reembolsos -->
             <div class="header-center">
                 <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 20%">
-                    📅 REEMBOLSO<br>DIARIO
+                    <span class="refund-label-full">📅 REEMBOLSO<br>DIARIO</span>
+                    <span class="refund-label-short">📅</span>
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
                 <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (Lun-Mar)">
-                    📆 REEMBOLSO<br>SEMANAL
+                    <span class="refund-label-full">📆 REEMBOLSO<br>SEMANAL</span>
+                    <span class="refund-label-short">📆</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
                 <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
-                    🗓️ REEMBOLSO<br>MENSUAL
+                    <span class="refund-label-full">🗓️ REEMBOLSO<br>MENSUAL</span>
+                    <span class="refund-label-short">🗓️</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
                     <span class="refund-timer" id="monthlyRefundTimer"></span>
                 </button>
@@ -191,14 +194,20 @@
       </div>
     </div>
 
-    <!-- Modal Plataforma (fullscreen iframe) -->
-    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;flex-direction:column;background:#000;">
-        <div id="platformModalHeader" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border-bottom:2px solid #d4af37;gap:10px;flex-shrink:0;">
-            <span id="platformModalUser" style="color:#d4af37;font-weight:bold;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:35%;">Usuario</span>
-            <button id="platformCopyPassBtn" onclick="VIP.ui.copyPlatformPassword()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:6px 12px;border-radius:20px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0;">🔑 Info Contraseña</button>
-            <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.2);border:1px solid #ff4444;color:#ff6666;padding:6px 14px;border-radius:20px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;flex-shrink:0;">✕ Cerrar</button>
+    <!-- Modal Plataforma (popup pequeño, sin iframe) -->
+    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:16px;padding:24px 20px;max-width:340px;width:90%;box-shadow:0 0 40px rgba(212,175,55,0.4);text-align:center;">
+            <div style="font-size:32px;margin-bottom:8px;">🎰</div>
+            <h3 style="color:#d4af37;margin:0 0 16px;font-size:18px;">Vas a ingresar a la plataforma</h3>
+            <p style="color:#ccc;margin:0 0 8px;font-size:14px;">Tu usuario es:</p>
+            <p id="platformModalUser" style="color:#ffd700;font-weight:bold;font-size:16px;margin:0 0 12px;word-break:break-all;">Usuario</p>
+            <p style="color:#ccc;margin:0 0 20px;font-size:13px;">Tu contraseña es la misma que usás en VipCargas</p>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <button onclick="VIP.ui.copyPlatformUsername()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">📋 Copiar Usuario</button>
+                <button onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🎰 Ir a la Plataforma</button>
+                <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.15);border:1px solid #ff4444;color:#ff6666;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">✕ Cerrar</button>
+            </div>
         </div>
-        <iframe id="platformIframe" src="" style="flex:1;width:100%;border:none;background:#000;" allow="fullscreen" referrerpolicy="no-referrer"></iframe>
     </div>
 
     <!-- Modal Registro -->

@@ -159,6 +159,15 @@
     min-width: 70px;
 }
 
+.refund-label-short {
+    display: none;
+}
+
+.refund-label-full {
+    display: block;
+    text-align: center;
+}
+
 .refund-btn.daily {
     background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
     color: #000;
