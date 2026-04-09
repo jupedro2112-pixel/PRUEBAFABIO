@@ -144,6 +144,7 @@ VIP.auth = (function () {
 
                 if (data.user.needsPasswordChange) {
                     VIP.state.passwordChangePending = true;
+                    prepareChangePasswordModal();
                     VIP.ui.showModal('changePasswordModal');
                 }
 
@@ -287,14 +288,39 @@ VIP.auth = (function () {
         return userLoaded;
     }
 
+    function prepareChangePasswordModal() {
+        const whatsappGroup = document.getElementById('changePasswordWhatsAppGroup');
+        const whatsappInfo = document.getElementById('changePasswordWhatsAppInfo');
+        const whatsappInput = document.getElementById('changePasswordWhatsApp');
+        const existingPhone = VIP.state.currentUser && (VIP.state.currentUser.whatsapp || VIP.state.currentUser.phone);
+
+        if (whatsappGroup) {
+            if (existingPhone) {
+                whatsappGroup.style.display = 'none';
+                if (whatsappInput) whatsappInput.removeAttribute('required');
+            } else {
+                whatsappGroup.style.display = '';
+                if (whatsappInput) whatsappInput.setAttribute('required', '');
+            }
+        }
+        if (whatsappInfo) {
+            whatsappInfo.style.display = existingPhone ? 'block' : 'none';
+            whatsappInfo.textContent = existingPhone ? `✅ Teléfono ya registrado: ${existingPhone}` : '';
+        }
+    }
+
     async function handleChangePassword(e) {
         e.preventDefault();
 
         const currentPassword = document.getElementById('currentPasswordInput').value;
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
-        const whatsapp = document.getElementById('changePasswordWhatsApp').value.trim();
+        const whatsappInput = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
         const errorDiv = document.getElementById('passwordError');
+
+        // Si el usuario ya tiene número vinculado, no pedir uno nuevo
+        const existingPhone = VIP.state.currentUser && (VIP.state.currentUser.whatsapp || VIP.state.currentUser.phone);
+        const whatsapp = whatsappInput || existingPhone || '';
 
         if (newPassword !== confirmPassword) {
             errorDiv.textContent = 'Las contraseñas no coinciden';
@@ -306,7 +332,7 @@ VIP.auth = (function () {
             errorDiv.classList.add('show');
             return;
         }
-        if (!whatsapp || whatsapp.length < 8) {
+        if (!existingPhone && (!whatsappInput || whatsappInput.length < 8)) {
             errorDiv.textContent = 'El número de WhatsApp es obligatorio (mínimo 8 dígitos)';
             errorDiv.classList.add('show');
             return;
