@@ -3040,6 +3040,7 @@ function fallbackCopy(text) {
     document.body.removeChild(el);
 }
 
-// Exponer helpers para uso desde ui.js (cambio voluntario de contraseña desde PLATAFORMA)
+// Exponer helpers para uso desde ui.js (cambio voluntario de contraseña desde PLATAFORMA).
+// Este patrón global es consistente con window.toggleDrawer y otros helpers en este archivo.
 window.setPasswordChangePending = function(value) { passwordChangePending = value; };
 window.prepareChangePasswordModal = prepareChangePasswordModal;

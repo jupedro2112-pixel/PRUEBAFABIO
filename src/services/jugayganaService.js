@@ -607,8 +607,15 @@ const creditBalance = async (username, amount, description = '') => {
 
 /**
  * Cambiar contraseña de usuario en JUGAYGANA
+ * @param {string} username - Nombre de usuario en JUGAYGANA
+ * @param {string|null} currentPassword - Contraseña actual (null en reset por teléfono; la API puede rechazarlo)
+ * @param {string} newPassword - Nueva contraseña
  */
 const changeUserPassword = async (username, currentPassword, newPassword) => {
+  if (!currentPassword) {
+    return { success: false, error: 'Contraseña actual requerida por la API de JUGAYGANA' };
+  }
+
   const ok = await ensureSession();
   if (!ok) return { success: false, error: 'No hay sesión válida' };
 
