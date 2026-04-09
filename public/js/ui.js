@@ -689,11 +689,15 @@ VIP.ui.closePlatformModal = function() {
 VIP.ui.copyPlatformUsername = function() {
   const username = VIP.state.currentUser?.username || '';
   if (!username) return;
-  navigator.clipboard.writeText(username).then(() => {
-    VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
-  }).catch(() => {
-    VIP.ui.showToast('Tu usuario es: ' + username, 'info');
-  });
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(username).then(() => {
+      VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
+    }).catch(() => {
+      VIP.ui.showToast('Tu usuario es: ' + username + ' — seleccionalo del popup para copiar', 'info');
+    });
+  } else {
+    VIP.ui.showToast('Tu usuario es: ' + username + ' — seleccionalo del popup para copiar', 'info');
+  }
 };
 
 VIP.ui.goToPlatform = function() {
