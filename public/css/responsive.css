@@ -142,17 +142,29 @@
         position: static;
         transform: none;
         margin: 0 5px;
+        flex-shrink: 1;
+        min-width: 0;
     }
 
     .refund-btn {
-        padding: 8px 8px;
-        min-width: 68px;
+        padding: 4px 6px;
+        min-width: 0;
         font-size: 9px;
         border-radius: 8px;
+        flex-shrink: 1;
+    }
+
+    .refund-label-full {
+        display: none;
+    }
+
+    .refund-label-short {
+        display: block;
+        font-size: 14px;
     }
 
     .refund-amount {
-        font-size: 11px;
+        font-size: 10px;
     }
 
     .refund-timer {
@@ -273,9 +285,13 @@
     }
 
     .refund-btn {
-        padding: 6px 7px;
-        min-width: 60px;
+        padding: 4px 5px;
+        min-width: 0;
         font-size: 8px;
+    }
+
+    .refund-label-short {
+        font-size: 13px;
     }
 
     .refund-amount {

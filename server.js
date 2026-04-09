@@ -217,7 +217,8 @@ const io = socketIo(server, {
   // Clients in public/app.js already request ['websocket'] so this is consistent.
   transports: ['websocket', 'polling'],
   pingInterval: 25000,
-  pingTimeout: 60000
+  pingTimeout: 60000,
+  maxHttpBufferSize: 50 * 1024 * 1024 // 50MB para permitir envío de imágenes/videos
 });
 
 // ============================================
@@ -286,7 +287,8 @@ app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
   credentials: true
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',

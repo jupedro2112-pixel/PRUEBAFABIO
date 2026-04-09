@@ -677,15 +677,8 @@ VIP.ui.openPlatformModal = function() {
   if (!modal) return;
   const username = VIP.state.currentUser?.username || '';
   const userEl = document.getElementById('platformModalUser');
-  if (userEl) userEl.textContent = '🎰 ' + (username || 'Usuario');
-  const iframe = document.getElementById('platformIframe');
-  if (iframe && !iframe.src) {
-    iframe.src = 'https://www.jugaygana44.bet';
-  }
+  if (userEl) userEl.textContent = username || 'Usuario';
   modal.style.display = 'flex';
-  if (username) {
-    VIP.ui.showToast('Tu usuario es: ' + username + '. Tu contraseña es la misma que usás en VipCargas', 'info');
-  }
 };
 
 VIP.ui.closePlatformModal = function() {
@@ -693,8 +686,21 @@ VIP.ui.closePlatformModal = function() {
   if (modal) modal.style.display = 'none';
 };
 
+VIP.ui.copyPlatformUsername = function() {
+  const username = VIP.state.currentUser?.username || '';
+  if (!username) return;
+  navigator.clipboard.writeText(username).then(() => {
+    VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
+  }).catch(() => {
+    VIP.ui.showToast('Tu usuario es: ' + username, 'info');
+  });
+};
+
+VIP.ui.goToPlatform = function() {
+  window.open('https://www.jugaygana44.bet', '_blank');
+};
+
 VIP.ui.showPlatformPasswordInfo = function() {
-  // Remind the user that the platform password matches their VipCargas password
   VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a VipCargas', 'info');
 };
 // Alias kept for backward compatibility with the onclick handler
