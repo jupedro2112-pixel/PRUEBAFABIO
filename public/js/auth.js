@@ -312,8 +312,7 @@ VIP.auth = (function () {
         }
 
         // Solo pedir WhatsApp si el usuario no tiene uno ya vinculado
-        const userHasPhone = !!(VIP.state.currentUser && (VIP.state.currentUser.whatsapp || VIP.state.currentUser.phone));
-        if (!userHasPhone && (!whatsapp || whatsapp.length < 8)) {
+        if (!currentUserHasPhone() && (!whatsapp || whatsapp.length < 8)) {
             errorDiv.textContent = 'El número de WhatsApp es obligatorio (mínimo 8 dígitos)';
             errorDiv.classList.add('show');
             return;
@@ -481,17 +480,21 @@ VIP.auth = (function () {
         }
     }
 
+    function currentUserHasPhone() {
+        const user = VIP.state.currentUser;
+        return !!(user && (user.whatsapp || user.phone));
+    }
+
     function updateChangePasswordWhatsAppField() {
         const group = document.getElementById('changePasswordWhatsAppGroup');
         if (!group) return;
-        const user = VIP.state.currentUser;
-        const userHasPhone = !!(user && (user.whatsapp || user.phone));
-        group.style.display = userHasPhone ? 'none' : '';
+        group.style.display = currentUserHasPhone() ? 'none' : '';
     }
 
     function showNotificationBannerIfNeeded() {
         if (!('Notification' in window)) return;
         if (Notification.permission === 'granted') return;
+        if (Notification.permission === 'denied') return;
         if (localStorage.getItem('notifBannerDismissed')) return;
 
         const existing = document.getElementById('notifBanner');
@@ -525,7 +528,9 @@ VIP.auth = (function () {
         document.body.appendChild(banner);
 
         document.getElementById('notifBannerActivate').addEventListener('click', () => {
-            VIP.notifications.requestNotificationPermission();
+            Notification.requestPermission().then(permission => {
+                console.log('🔔 Permiso de notificación:', permission);
+            });
             banner.remove();
         });
         document.getElementById('notifBannerClose').addEventListener('click', () => {
