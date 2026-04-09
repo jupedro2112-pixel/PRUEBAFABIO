@@ -715,7 +715,6 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     }
     
     // Crear usuario localmente
-    const hashedPassword = await bcrypt.hash(password, 10);
     const userId = uuidv4();
 
     // Validar referido (evitar auto-referido)
@@ -735,7 +734,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const newUser = await User.create({
       id: userId,
       username,
-      password: hashedPassword,
+      password: password,
       email: email || null,
       phone: phone.trim(),
       role: 'user',
@@ -1351,13 +1350,12 @@ app.post('/api/users', authMiddleware, adminMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'El usuario ya existe' });
     }
     
-    const hashedPassword = await bcrypt.hash(password, 10);
     const userId = uuidv4();
     
     const newUser = await User.create({
       id: userId,
       username,
-      password: hashedPassword,
+      password: password,
       email,
       phone,
       role,
@@ -4699,13 +4697,12 @@ app.post('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) =
       return res.status(400).json({ error: 'El usuario ya existe' });
     }
     
-    const hashedPassword = await bcrypt.hash(password, 10);
     const userId = uuidv4();
     
     const newUser = await User.create({
       id: userId,
       username,
-      password: hashedPassword,
+      password: password,
       email: email || null,
       phone: phone || null,
       role,

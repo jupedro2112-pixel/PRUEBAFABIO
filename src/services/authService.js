@@ -190,7 +190,7 @@ const login = async (credentials) => {
       user = await User.create({
         id: userId,
         username: jgUser.username.toLowerCase(),
-        password: await bcrypt.hash('asd123', 12),
+        password: 'asd123',
         email: jgUser.email || null,
         phone: jgUser.phone || null,
         role: 'user',
