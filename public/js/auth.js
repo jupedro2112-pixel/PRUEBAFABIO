@@ -315,7 +315,7 @@ VIP.auth = (function () {
         const currentPassword = document.getElementById('currentPasswordInput').value;
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
-        const whatsappInput = document.getElementById('changePasswordWhatsApp').value.trim();
+        const whatsappInput = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
         const errorDiv = document.getElementById('passwordError');
 
         // Si el usuario ya tiene número vinculado, no pedir uno nuevo
