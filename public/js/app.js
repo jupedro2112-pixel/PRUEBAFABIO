@@ -140,12 +140,19 @@ function setupEventListeners() {
     document.getElementById('closeSettingsModal').addEventListener('click', () => VIP.ui.hideModal('settingsModal'));
     document.getElementById('changePasswordSettingsBtn').addEventListener('click', () => {
         VIP.ui.hideModal('settingsModal');
+        VIP.auth.updateChangePasswordWhatsAppField();
         VIP.ui.showModal('changePasswordModal');
     });
 
     // Find user by phone
     document.getElementById('findUserBtn').addEventListener('click', () => VIP.ui.showModal('findUserModal'));
     document.getElementById('findUserForm').addEventListener('submit', VIP.auth.handleFindUserByPhone);
+
+    // Forgot password (on login screen)
+    const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+    if (forgotPasswordBtn) {
+        forgotPasswordBtn.addEventListener('click', () => VIP.ui.showModal('resetPassModal'));
+    }
 
     // Reset password by phone
     document.getElementById('resetPassForm').addEventListener('submit', VIP.auth.handleResetPasswordByPhone);
