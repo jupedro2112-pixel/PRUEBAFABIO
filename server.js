@@ -1060,6 +1060,19 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
     }
     
     await user.save();
+
+    // Sync password with jugaygana platform (best-effort)
+    try {
+      const jugayganaSync = require('./jugaygana');
+      const jgResult = await jugayganaSync.changeUserPassword(user.username, currentPassword, newPassword);
+      if (jgResult.success) {
+        console.log(`✅ Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+      } else {
+        console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA: ${jgResult.error}`);
+      }
+    } catch (jgError) {
+      console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
+    }
     
     res.json({ 
       message: 'Contraseña cambiada exitosamente',

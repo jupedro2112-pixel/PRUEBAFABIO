@@ -604,11 +604,28 @@
 }
 
 @media (max-width: 768px) {
-    .mobile-menu-btn { display: flex; align-items: center; justify-content: center; }
-    .header-right > *:not(.user-name):not(.mobile-menu-btn) { display: none; }
-    .header-left .platform-section { display: none; }
+    .mobile-menu-btn { display: flex; align-items: center; justify-content: center; font-size: 22px; padding: 8px 12px; }
+    /* Hide everything in header-right except plataforma button and hamburger */
+    .header-right > *:not(#plataformaBtn):not(.mobile-menu-btn) { display: none !important; }
+    /* Show plataforma button prominently on mobile */
+    #plataformaBtn { display: inline-flex !important; font-size: 12px; padding: 8px 14px; font-weight: 900; }
+    /* Hide user-action-btns (settings/referral/logout) on mobile */
     .header-left .user-action-btns { display: none; }
-    .header-center .refund-btn { display: none; }
+    /* Show refund buttons on mobile (they are in header-center) */
+    .header-center .refund-btn { display: flex !important; font-size: 8px; padding: 5px 6px; min-width: 58px; }
+    /* Make header a single row on mobile: fire | plataforma | refunds | hamburger */
+    .header {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 6px;
+        padding: 8px 8px;
+        min-height: 60px;
+    }
+    .header-left { flex-shrink: 0; }
+    .header-center { flex: 1; display: flex; justify-content: center; gap: 4px; overflow: hidden; }
+    .header-right { flex-shrink: 0; display: flex; align-items: center; gap: 4px; margin-left: auto; }
 }
 
 .drawer-item {

@@ -107,9 +107,9 @@
             <!-- Sección derecha: Usuario y acciones -->
             <div class="header-right">
                 <!-- BOTÓN PLATAFORMA - Solo usuario -->
-                <a href="https://www.jugaygana44.bet" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Ir a la Plataforma">
+                <button id="plataformaBtn" class="plataforma-btn" title="Ir a la Plataforma" onclick="VIP.ui.openPlatformModal()">
                     🎰 PLATAFORMA
-                </a>
+                </button>
                 <!-- BOTÓN CANAL INFORMATIVO - URL configurable desde admin -->
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
                     📢 CANAL INFORMATIVO
@@ -189,6 +189,16 @@
           <!-- Los botones se clonan aquí dinámicamente desde el header -->
         </div>
       </div>
+    </div>
+
+    <!-- Modal Plataforma (fullscreen iframe) -->
+    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;flex-direction:column;background:#000;">
+        <div id="platformModalHeader" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border-bottom:2px solid #d4af37;gap:10px;flex-shrink:0;">
+            <span id="platformModalUser" style="color:#d4af37;font-weight:bold;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:35%;">Usuario</span>
+            <button id="platformCopyPassBtn" onclick="VIP.ui.copyPlatformPassword()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:6px 12px;border-radius:20px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0;">🔑 Info Contraseña</button>
+            <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.2);border:1px solid #ff4444;color:#ff6666;padding:6px 14px;border-radius:20px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap;flex-shrink:0;">✕ Cerrar</button>
+        </div>
+        <iframe id="platformIframe" src="" style="flex:1;width:100%;border:none;background:#000;" allow="fullscreen" referrerpolicy="no-referrer"></iframe>
     </div>
 
     <!-- Modal Registro -->

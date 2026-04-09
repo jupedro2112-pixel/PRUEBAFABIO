@@ -933,6 +933,55 @@ async function getUserNetLastMonth(username) {
 }
 
 // ============================================
+// ChangePassword - Cambiar contraseña de usuario en JUGAYGANA
+// ============================================
+
+async function changeUserPassword(username, currentPassword, newPassword) {
+  const ok = await ensureSession();
+  if (!ok) return { success: false, error: 'No hay sesión válida' };
+
+  const userInfo = await getUserInfoByName(username);
+  if (!userInfo) {
+    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
+  }
+
+  try {
+    const body = toFormUrlEncoded({
+      action: 'ChangePassword',
+      token: SESSION_TOKEN,
+      password: currentPassword,
+      newpassword: newPassword
+    });
+
+    const headers = {};
+    if (SESSION_COOKIE) headers.Cookie = SESSION_COOKIE;
+
+    const resp = await client.post('', body, {
+      headers,
+      validateStatus: () => true,
+      maxRedirects: 0
+    });
+
+    const data = parsePossiblyWrappedJson(resp.data);
+    if (isHtmlBlocked(data)) {
+      return { success: false, error: 'IP bloqueada / HTML' };
+    }
+
+    if (data?.success) {
+      console.log(`✅ Contraseña cambiada en JUGAYGANA para: ${username}`);
+      return { success: true };
+    }
+
+    const errMsg = data?.message || data?.error || JSON.stringify(data);
+    console.error(`❌ Error al cambiar contraseña en JUGAYGANA para ${username}:`, errMsg);
+    return { success: false, error: errMsg };
+  } catch (err) {
+    console.error('❌ Error en changeUserPassword JUGAYGANA:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================
 // Exportar funciones
 // ============================================
 
@@ -950,5 +999,6 @@ module.exports = {
   checkClaimedToday,
   creditUserBalance,
   depositToUser,
-  withdrawFromUser
+  withdrawFromUser,
+  changeUserPassword
 };

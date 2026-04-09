@@ -630,7 +630,7 @@ VIP.ui.toggleDrawer = function() {
       { emoji: '📅', text: 'Reembolso Diario', action: () => VIP.refunds.showRefundModal('daily') },
       { emoji: '📆', text: 'Reembolso Semanal', action: () => VIP.refunds.showRefundModal('weekly') },
       { emoji: '🗓️', text: 'Reembolso Mensual', action: () => VIP.refunds.showRefundModal('monthly') },
-      { emoji: '🎰', text: 'Plataforma', action: () => window.open('https://www.jugaygana44.bet', '_blank') },
+      { emoji: '🎰', text: 'Plataforma', action: () => VIP.ui.openPlatformModal() },
       { emoji: '📢', text: 'Canal Informativo', action: () => {
         const btn = document.getElementById('canalInformativoBtn');
         if (btn && btn.href && btn.href !== '#' && btn.href !== window.location.href) {
@@ -670,3 +670,32 @@ VIP.ui.toggleDrawer = function() {
   }
 };
 window.toggleDrawer = VIP.ui.toggleDrawer;
+
+// Platform modal
+VIP.ui.openPlatformModal = function() {
+  const modal = document.getElementById('platformModal');
+  if (!modal) return;
+  const username = VIP.state.currentUser?.username || '';
+  const userEl = document.getElementById('platformModalUser');
+  if (userEl) userEl.textContent = '🎰 ' + (username || 'Usuario');
+  const iframe = document.getElementById('platformIframe');
+  if (iframe && !iframe.src) {
+    iframe.src = 'https://www.jugaygana44.bet';
+  }
+  modal.style.display = 'flex';
+  if (username) {
+    VIP.ui.showToast('Tu usuario es: ' + username + '. Tu contraseña es la misma que usás en VipCargas', 'info');
+  }
+};
+
+VIP.ui.closePlatformModal = function() {
+  const modal = document.getElementById('platformModal');
+  if (modal) modal.style.display = 'none';
+};
+
+VIP.ui.showPlatformPasswordInfo = function() {
+  // Remind the user that the platform password matches their VipCargas password
+  VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a VipCargas', 'info');
+};
+// Alias kept for backward compatibility with the onclick handler
+VIP.ui.copyPlatformPassword = VIP.ui.showPlatformPasswordInfo;
