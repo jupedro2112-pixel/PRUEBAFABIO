@@ -693,7 +693,9 @@ VIP.ui.closePlatformModal = function() {
   if (modal) modal.style.display = 'none';
 };
 
-VIP.ui.copyPlatformPassword = function() {
-  // Prompt the user to copy their password (we don't store it in plain text)
+VIP.ui.showPlatformPasswordInfo = function() {
+  // Remind the user that the platform password matches their VipCargas password
   VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a VipCargas', 'info');
 };
+// Alias kept for backward compatibility with the onclick handler
+VIP.ui.copyPlatformPassword = VIP.ui.showPlatformPasswordInfo;
