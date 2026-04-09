@@ -795,9 +795,7 @@ function prepareChangePasswordModal() {
     }
     if (whatsappInfo) {
         whatsappInfo.style.display = existingPhone ? 'block' : 'none';
-        if (existingPhone && whatsappInfo) {
-            whatsappInfo.textContent = `✅ Teléfono ya registrado: ${existingPhone}`;
-        }
+        whatsappInfo.textContent = existingPhone ? `✅ Teléfono ya registrado: ${existingPhone}` : '';
     }
 }
 
@@ -2418,7 +2416,7 @@ function showChatScreen() {
 function showNotificationBannerIfNeeded() {
     if (!('Notification' in window)) return;
     if (Notification.permission === 'granted') return;
-    if (localStorage.getItem('notifBannerDismissed') === '1') return;
+    if (localStorage.getItem('notifBannerDismissed') === 'true') return;
 
     const banner = document.getElementById('notifBanner');
     if (!banner) return;
@@ -2430,15 +2428,13 @@ function showNotificationBannerIfNeeded() {
     if (activateBtn) {
         activateBtn.onclick = async () => {
             banner.style.display = 'none';
-            localStorage.setItem('notifBannerDismissed', '1');
-            if ('Notification' in window) {
-                const permission = await Notification.requestPermission();
-                if (permission === 'granted') {
-                    showToast('✅ ¡Notificaciones activadas! Recibirás regalos y promociones.', 'success');
-                    sendFcmTokenAfterLogin();
-                } else {
-                    showToast('⚠️ No se pudo activar las notificaciones', 'info');
-                }
+            localStorage.setItem('notifBannerDismissed', 'true');
+            const permission = await Notification.requestPermission();
+            if (permission === 'granted') {
+                showToast('✅ ¡Notificaciones activadas! Recibirás regalos y promociones.', 'success');
+                sendFcmTokenAfterLogin();
+            } else {
+                showToast('⚠️ No se pudo activar las notificaciones', 'info');
             }
         };
     }
@@ -2446,7 +2442,7 @@ function showNotificationBannerIfNeeded() {
     if (closeBtn) {
         closeBtn.onclick = () => {
             banner.style.display = 'none';
-            localStorage.setItem('notifBannerDismissed', '1');
+            localStorage.setItem('notifBannerDismissed', 'true');
         };
     }
 }
