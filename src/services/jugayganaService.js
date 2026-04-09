@@ -606,6 +606,54 @@ const creditBalance = async (username, amount, description = '') => {
 };
 
 /**
+ * Cambiar contraseña de usuario en JUGAYGANA
+ */
+const changeUserPassword = async (username, currentPassword, newPassword) => {
+  const ok = await ensureSession();
+  if (!ok) return { success: false, error: 'No hay sesión válida' };
+
+  const userInfo = await getUserInfo(username);
+  if (!userInfo) {
+    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
+  }
+
+  try {
+    const body = toFormUrlEncoded({
+      action: 'ChangePassword',
+      token: sessionToken,
+      password: currentPassword,
+      newpassword: newPassword
+    });
+
+    const headers = {};
+    if (sessionCookie) headers.Cookie = sessionCookie;
+
+    const resp = await client.post('', body, {
+      headers,
+      validateStatus: () => true,
+      maxRedirects: 0
+    });
+
+    const data = parseJson(resp.data);
+    if (isHtmlBlocked(data)) {
+      return { success: false, error: 'IP bloqueada / HTML' };
+    }
+
+    if (data?.success) {
+      logger.info(`✅ Contraseña cambiada en JUGAYGANA para: ${username}`);
+      return { success: true };
+    }
+
+    const errMsg = data?.message || data?.error || JSON.stringify(data);
+    logger.error(`❌ Error al cambiar contraseña en JUGAYGANA para ${username}: ${errMsg}`);
+    return { success: false, error: errMsg };
+  } catch (err) {
+    logger.error(`❌ Error en changeUserPassword JUGAYGANA: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+};
+
+/**
  * Obtener token y cookie de la sesión actual (para compartir con otros servicios)
  */
 const getSessionToken = () => sessionToken;
@@ -632,5 +680,6 @@ module.exports = {
   deposit,
   withdraw,
   bonus,
-  creditBalance
+  creditBalance,
+  changeUserPassword
 };

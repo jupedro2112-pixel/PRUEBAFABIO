@@ -3039,3 +3039,7 @@ function fallbackCopy(text) {
     try { document.execCommand('copy'); showToast('✅ Copiado', 'success'); } catch (e) {}
     document.body.removeChild(el);
 }
+
+// Exponer helpers para uso desde ui.js (cambio voluntario de contraseña desde PLATAFORMA)
+window.setPasswordChangePending = function(value) { passwordChangePending = value; };
+window.prepareChangePasswordModal = prepareChangePasswordModal;
