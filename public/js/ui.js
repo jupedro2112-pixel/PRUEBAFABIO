@@ -709,3 +709,18 @@ VIP.ui.showPlatformPasswordInfo = function() {
 };
 // Alias kept for backward compatibility with the onclick handler
 VIP.ui.copyPlatformPassword = VIP.ui.showPlatformPasswordInfo;
+
+VIP.ui.showPlatformPasswordChange = function() {
+  // Cerrar el modal de plataforma
+  VIP.ui.closePlatformModal();
+  // Asegurarse de que el cambio sea voluntario (no obligatorio)
+  if (typeof window.setPasswordChangePending === 'function') {
+    window.setPasswordChangePending(false);
+  }
+  // Preparar y abrir el modal de cambio de contraseña
+  if (typeof window.prepareChangePasswordModal === 'function') {
+    window.prepareChangePasswordModal();
+  }
+  const modal = document.getElementById('changePasswordModal');
+  if (modal) modal.classList.remove('hidden');
+};

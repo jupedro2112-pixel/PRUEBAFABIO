@@ -56,10 +56,6 @@
                 <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
                 <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
             </div>
-
-            <div style="margin: 8px 0; text-align: center;">
-                <button id="forgotPasswordBtn" class="btn btn-secondary" style="width: 100%; font-size: 13px; background: transparent; border: 1px solid #555; color: #aaa;">🔑 ¿Olvidaste tu contraseña?</button>
-            </div>
             
             <div style="margin: 10px 0; display: flex; gap: 8px;">
                 <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;">🔍 Buscar Usuario</button>
@@ -222,6 +218,7 @@
             <p style="color:#ccc;margin:0 0 20px;font-size:13px;">Tu contraseña es la misma que usás en VipCargas</p>
             <div style="display:flex;flex-direction:column;gap:10px;">
                 <button onclick="VIP.ui.copyPlatformUsername()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">📋 Copiar Usuario</button>
+                <button onclick="VIP.ui.showPlatformPasswordChange()" style="background:linear-gradient(135deg,#2d6a4f 0%,#40916c 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🔐 Cambiar Contraseña</button>
                 <button onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🎰 Ir a la Plataforma</button>
                 <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.15);border:1px solid #ff4444;color:#ff6666;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">✕ Cerrar</button>
             </div>

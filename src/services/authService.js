@@ -313,6 +313,18 @@ const changePassword = async (userId, currentPassword, newPassword, options = {}
   
   logger.info(`Contraseña cambiada para usuario: ${user.username}`);
   
+  // Sincronizar contraseña con JUGAYGANA (best-effort)
+  try {
+    const jgResult = await jugayganaService.changeUserPassword(user.username, currentPassword, newPassword);
+    if (jgResult.success) {
+      logger.info(`✅ Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+    } else {
+      logger.warn(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+    }
+  } catch (jgError) {
+    logger.warn(`⚠️ Error sincronizando contraseña con JUGAYGANA para ${user.username}: ${jgError.message}`);
+  }
+  
   return {
     success: true,
     sessionsClosed: closeAllSessions
@@ -380,6 +392,20 @@ const resetPasswordByPhone = async (phone, newPassword) => {
   await user.changePassword(newPassword);
   
   logger.info(`Contraseña reseteada por teléfono para: ${user.username}`);
+  
+  // Sincronizar contraseña con JUGAYGANA (best-effort)
+  // Nota: no tenemos la contraseña actual del usuario, por lo que la sincronización
+  // puede fallar si la API de JUGAYGANA la requiere. Se loguea para diagnóstico.
+  try {
+    const jgResult = await jugayganaService.changeUserPassword(user.username, null, newPassword);
+    if (jgResult.success) {
+      logger.info(`✅ Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+    } else {
+      logger.warn(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username} (reset por teléfono, sin contraseña actual): ${jgResult.error}`);
+    }
+  } catch (jgError) {
+    logger.warn(`⚠️ Error sincronizando contraseña con JUGAYGANA para ${user.username}: ${jgError.message}`);
+  }
   
   return {
     success: true,
