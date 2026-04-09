@@ -105,6 +105,12 @@ function setupEventListeners() {
         window.open('https://wa.link/metawin2026', '_blank');
     });
     document.getElementById('installBtn').addEventListener('click', installApp);
+
+    // ¿Olvidaste tu contraseña?
+    const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+    if (forgotPasswordBtn) {
+        forgotPasswordBtn.addEventListener('click', () => showModal('resetPassModal'));
+    }
     
     // Botón de instalar en el header (si existe)
     const headerInstallBtn = document.getElementById('headerInstallBtn');
@@ -195,6 +201,8 @@ function setupEventListeners() {
     document.getElementById('closeSettingsModal').addEventListener('click', () => hideModal('settingsModal'));
     document.getElementById('changePasswordSettingsBtn').addEventListener('click', () => {
         hideModal('settingsModal');
+        // Mostrar u ocultar el campo WhatsApp según si ya tiene número vinculado
+        prepareChangePasswordModal();
         showModal('changePasswordModal');
     });
     
@@ -395,6 +403,7 @@ async function handleLogin(e) {
             
             if (data.user.needsPasswordChange) {
                 passwordChangePending = true;
+                prepareChangePasswordModal();
                 showModal('changePasswordModal');
             }
             
@@ -768,14 +777,42 @@ function playNotificationSound() {
 // CAMBIO DE CONTRASEÑA
 // ========================================
 
+// Preparar el modal de cambio de contraseña según si el usuario ya tiene teléfono
+function prepareChangePasswordModal() {
+    const whatsappGroup = document.getElementById('changePasswordWhatsAppGroup');
+    const whatsappInfo = document.getElementById('changePasswordWhatsAppInfo');
+    const whatsappInput = document.getElementById('changePasswordWhatsApp');
+    const existingPhone = currentUser && (currentUser.whatsapp || currentUser.phone);
+
+    if (whatsappGroup) {
+        if (existingPhone) {
+            whatsappGroup.style.display = 'none';
+            if (whatsappInput) whatsappInput.removeAttribute('required');
+        } else {
+            whatsappGroup.style.display = '';
+            if (whatsappInput) whatsappInput.setAttribute('required', '');
+        }
+    }
+    if (whatsappInfo) {
+        whatsappInfo.style.display = existingPhone ? 'block' : 'none';
+        if (existingPhone && whatsappInfo) {
+            whatsappInfo.textContent = `✅ Teléfono ya registrado: ${existingPhone}`;
+        }
+    }
+}
+
 async function handleChangePassword(e) {
     e.preventDefault();
     
     const currentPassword = document.getElementById('currentPasswordInput').value;
     const newPassword = document.getElementById('newPasswordInput').value;
     const confirmPassword = document.getElementById('confirmPasswordInput').value;
-    const whatsapp = document.getElementById('changePasswordWhatsApp').value.trim();
+    const whatsappInput = document.getElementById('changePasswordWhatsApp').value.trim();
     const errorDiv = document.getElementById('passwordError');
+
+    // Si el usuario ya tiene número vinculado, no pedir uno nuevo
+    const existingPhone = currentUser && (currentUser.whatsapp || currentUser.phone);
+    const whatsapp = whatsappInput || existingPhone || '';
     
     if (newPassword !== confirmPassword) {
         errorDiv.textContent = 'Las contraseñas no coinciden';
@@ -789,7 +826,7 @@ async function handleChangePassword(e) {
         return;
     }
     
-    if (!whatsapp || whatsapp.length < 8) {
+    if (!existingPhone && (!whatsappInput || whatsappInput.length < 8)) {
         errorDiv.textContent = 'El número de WhatsApp es obligatorio (mínimo 8 dígitos)';
         errorDiv.classList.add('show');
         return;
@@ -2372,6 +2409,46 @@ function showChatScreen() {
     
     // Enviar mensaje de bienvenida
     sendWelcomeMessages();
+
+    // Mostrar banner de notificaciones si corresponde
+    showNotificationBannerIfNeeded();
+}
+
+// Mostrar banner para activar notificaciones (solo si no están activadas ni fue descartado)
+function showNotificationBannerIfNeeded() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'granted') return;
+    if (localStorage.getItem('notifBannerDismissed') === '1') return;
+
+    const banner = document.getElementById('notifBanner');
+    if (!banner) return;
+    banner.style.display = 'block';
+
+    const activateBtn = document.getElementById('notifBannerActivate');
+    const closeBtn = document.getElementById('notifBannerClose');
+
+    if (activateBtn) {
+        activateBtn.onclick = async () => {
+            banner.style.display = 'none';
+            localStorage.setItem('notifBannerDismissed', '1');
+            if ('Notification' in window) {
+                const permission = await Notification.requestPermission();
+                if (permission === 'granted') {
+                    showToast('✅ ¡Notificaciones activadas! Recibirás regalos y promociones.', 'success');
+                    sendFcmTokenAfterLogin();
+                } else {
+                    showToast('⚠️ No se pudo activar las notificaciones', 'info');
+                }
+            }
+        };
+    }
+
+    if (closeBtn) {
+        closeBtn.onclick = () => {
+            banner.style.display = 'none';
+            localStorage.setItem('notifBannerDismissed', '1');
+        };
+    }
 }
 
 // CORREGIDO: Enviar mensaje de bienvenida solo una vez por usuario (máximo 1 vez cada 24h)

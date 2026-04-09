@@ -643,7 +643,7 @@ VIP.ui.toggleDrawer = function() {
       { emoji: '💬', text: 'Soporte WhatsApp', action: () => window.open('https://wa.link/metawin2026', '_blank') },
       { emoji: 'ℹ️', text: 'Información', action: () => VIP.ui.showModal('infoModal') },
       { emoji: '🔔', text: 'Notificaciones', action: () => VIP.notifications.requestNotificationPermission(), pwaOnly: true },
-      { emoji: '⬇️', text: 'Instalar App', action: () => VIP.ui.installApp(), hideStandalone: true },
+      { emoji: '📱', text: 'APP', action: () => VIP.ui.installApp(), hideStandalone: true },
       { emoji: '⚙️', text: 'Configuración', action: () => VIP.ui.showModal('settingsModal') },
       { emoji: '🚪', text: 'Cerrar Sesión', action: () => VIP.auth.handleLogout(), style: 'drawer-logout' },
     ];
