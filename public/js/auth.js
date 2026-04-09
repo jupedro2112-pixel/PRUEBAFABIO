@@ -144,11 +144,13 @@ VIP.auth = (function () {
 
                 if (data.user.needsPasswordChange) {
                     VIP.state.passwordChangePending = true;
+                    updateChangePasswordWhatsAppField();
                     VIP.ui.showModal('changePasswordModal');
                 }
 
                 VIP.notifications.requestNotificationPermission();
                 VIP.notifications.sendFcmTokenAfterLogin();
+                showNotificationBannerIfNeeded();
             } else {
                 errorDiv.textContent = data.error || 'Error de autenticación';
                 errorDiv.classList.add('show');
@@ -211,6 +213,7 @@ VIP.auth = (function () {
                 VIP.notifications.sendFcmTokenAfterLogin().catch(function (e) {
                     console.warn('[FCM] Error al re-sincronizar token en verifyToken:', e);
                 });
+                showNotificationBannerIfNeeded();
             } else {
                 localStorage.removeItem('userToken');
             }
@@ -293,7 +296,8 @@ VIP.auth = (function () {
         const currentPassword = document.getElementById('currentPasswordInput').value;
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
-        const whatsapp = document.getElementById('changePasswordWhatsApp').value.trim();
+        const whatsappInput = document.getElementById('changePasswordWhatsApp');
+        const whatsapp = whatsappInput ? whatsappInput.value.trim() : '';
         const errorDiv = document.getElementById('passwordError');
 
         if (newPassword !== confirmPassword) {
@@ -306,7 +310,9 @@ VIP.auth = (function () {
             errorDiv.classList.add('show');
             return;
         }
-        if (!whatsapp || whatsapp.length < 8) {
+
+        // Solo pedir WhatsApp si el usuario no tiene uno ya vinculado
+        if (!currentUserHasPhone() && (!whatsapp || whatsapp.length < 8)) {
             errorDiv.textContent = 'El número de WhatsApp es obligatorio (mínimo 8 dígitos)';
             errorDiv.classList.add('show');
             return;
@@ -327,11 +333,11 @@ VIP.auth = (function () {
             if (response.ok) {
                 VIP.state.passwordChangePending = false;
                 VIP.ui.hideModal('changePasswordModal');
-                VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
+                VIP.ui.showToast('✅ Contraseña guardada exitosamente', 'success');
                 document.getElementById('currentPasswordInput').value = '';
                 document.getElementById('newPasswordInput').value = '';
                 document.getElementById('confirmPasswordInput').value = '';
-                document.getElementById('changePasswordWhatsApp').value = '';
+                if (whatsappInput) whatsappInput.value = '';
                 document.getElementById('closeAllSessions').checked = false;
 
                 if (closeAllSessions) {
@@ -474,6 +480,65 @@ VIP.auth = (function () {
         }
     }
 
+    function currentUserHasPhone() {
+        const user = VIP.state.currentUser;
+        return !!(user && (user.whatsapp || user.phone));
+    }
+
+    function updateChangePasswordWhatsAppField() {
+        const group = document.getElementById('changePasswordWhatsAppGroup');
+        if (!group) return;
+        group.style.display = currentUserHasPhone() ? 'none' : '';
+    }
+
+    function showNotificationBannerIfNeeded() {
+        if (!('Notification' in window)) return;
+        if (Notification.permission === 'granted') return;
+        if (Notification.permission === 'denied') return;
+        if (localStorage.getItem('notifBannerDismissed')) return;
+
+        const existing = document.getElementById('notifBanner');
+        if (existing) return;
+
+        const banner = document.createElement('div');
+        banner.id = 'notifBanner';
+        banner.style.cssText = [
+            'position:fixed', 'bottom:20px', 'left:50%', 'transform:translateX(-50%)',
+            'background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%)',
+            'border:2px solid #d4af37', 'border-radius:16px', 'padding:16px 20px',
+            'max-width:360px', 'width:90%', 'z-index:99999',
+            'box-shadow:0 0 30px rgba(212,175,55,0.5)', 'text-align:center',
+            'animation:notifBannerIn 0.4s ease'
+        ].join(';');
+        banner.innerHTML = `
+            <style>
+                @keyframes notifBannerIn {
+                    from { opacity:0; transform:translateX(-50%) translateY(30px); }
+                    to   { opacity:1; transform:translateX(-50%) translateY(0); }
+                }
+            </style>
+            <div style="font-size:28px;margin-bottom:6px;">🔔</div>
+            <p style="color:#d4af37;font-weight:bold;font-size:15px;margin:0 0 6px;">¡Activa las notificaciones!</p>
+            <p style="color:#ccc;font-size:13px;margin:0 0 14px;">Recibe regalos y promociones exclusivas al instante.</p>
+            <div style="display:flex;gap:10px;justify-content:center;">
+                <button id="notifBannerActivate" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:9px 18px;border-radius:20px;font-weight:700;font-size:13px;cursor:pointer;">🔔 Activar</button>
+                <button id="notifBannerClose" style="background:rgba(255,255,255,0.1);color:#888;border:1px solid #444;padding:9px 14px;border-radius:20px;font-size:13px;cursor:pointer;">Ahora no</button>
+            </div>
+        `;
+        document.body.appendChild(banner);
+
+        document.getElementById('notifBannerActivate').addEventListener('click', () => {
+            Notification.requestPermission().then(permission => {
+                console.log('🔔 Permiso de notificación:', permission);
+            });
+            banner.remove();
+        });
+        document.getElementById('notifBannerClose').addEventListener('click', () => {
+            localStorage.setItem('notifBannerDismissed', '1');
+            banner.remove();
+        });
+    }
+
     return {
         checkUsernameAvailability,
         handleRegister,
@@ -484,7 +549,8 @@ VIP.auth = (function () {
         initializeSession,
         handleChangePassword,
         handleFindUserByPhone,
-        handleResetPasswordByPhone
+        handleResetPasswordByPhone,
+        updateChangePasswordWhatsAppField
     };
 
 })();
