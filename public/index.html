@@ -56,6 +56,10 @@
                 <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
                 <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
             </div>
+
+            <div style="margin: 8px 0; text-align: center;">
+                <button id="forgotPasswordBtn" class="btn btn-secondary" style="width: 100%; font-size: 13px; background: transparent; border: 1px solid #555; color: #aaa;">🔑 ¿Olvidaste tu contraseña?</button>
+            </div>
             
             <div style="margin: 10px 0; display: flex; gap: 8px;">
                 <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;">🔍 Buscar Usuario</button>
@@ -88,19 +92,19 @@
             <!-- Sección centro: Reembolsos -->
             <div class="header-center">
                 <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 20%">
-                    <span class="refund-label-full">📅 REEMBOLSO<br>DIARIO</span>
+                    <span class="refund-label-full">📅 Reembolso<br>Diario</span>
                     <span class="refund-label-short">📅</span>
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
                 <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (Lun-Mar)">
-                    <span class="refund-label-full">📆 REEMBOLSO<br>SEMANAL</span>
+                    <span class="refund-label-full">📆 Reembolso<br>Semanal</span>
                     <span class="refund-label-short">📆</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
                 <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
-                    <span class="refund-label-full">🗓️ REEMBOLSO<br>MENSUAL</span>
+                    <span class="refund-label-full">🗓️ Reembolso<br>Mensual</span>
                     <span class="refund-label-short">🗓️</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
                     <span class="refund-timer" id="monthlyRefundTimer"></span>
@@ -117,9 +121,9 @@
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
                     📢 CANAL INFORMATIVO
                 </a>
-                <!-- BOTÓN APP - Instalar PWA (visible solo cuando beforeinstallprompt dispara y no estamos en standalone) -->
+                <!-- BOTÓN APP - Instalar PWA (siempre visible; se oculta cuando la app ya está instalada) -->
                 <button class="app-install-btn" id="appInstallBtn" title="Instalar App">
-                    ⬇️ APP
+                    📱 APP
                 </button>
                 <!-- BOTÓN NOTIFICACIONES - Solo visible en modo standalone/PWA instalada -->
                 <button class="notification-btn" id="notificationBtn" title="Activar Notificaciones">
@@ -156,6 +160,20 @@
                 <span class="promo-separator">★</span>
                 <span class="promo-item">💎 VIP 💎</span>
                 <span class="promo-separator">★</span>
+            </div>
+        </div>
+
+        <!-- Banner de Notificaciones -->
+        <div id="notifBanner" style="display:none; background: linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%); color: #fff; padding: 12px 16px; border-radius: 12px; margin: 8px 12px; box-shadow: 0 4px 15px rgba(157,78,221,0.5); border: 1px solid rgba(255,255,255,0.2);">
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <span style="font-size: 22px;">🔔</span>
+                <div style="flex: 1; min-width: 0;">
+                    <strong style="font-size: 13px; display: block;">¡Activa las notificaciones para recibir regalos y promociones exclusivas!</strong>
+                </div>
+                <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                    <button id="notifBannerActivate" style="background: #fff; color: #6a0dad; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 700; font-size: 12px; cursor: pointer;">🔔 Activar Notificaciones</button>
+                    <button id="notifBannerClose" style="background: rgba(255,255,255,0.2); color: #fff; border: none; border-radius: 8px; padding: 8px 12px; font-weight: 600; font-size: 12px; cursor: pointer;">✕</button>
+                </div>
             </div>
         </div>
 
@@ -276,11 +294,12 @@
                     <label>Repetir Contraseña</label>
                     <input type="password" id="confirmPasswordInput" name="confirm-password" placeholder="Repite tu contraseña" required minlength="6" autocomplete="new-password">
                 </div>
-                <div class="input-group">
+                <div class="input-group" id="changePasswordWhatsAppGroup">
                     <label>Número de WhatsApp *</label>
                     <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="+54 9 11 1234-5678" required minlength="8" autocomplete="tel">
                     <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta</span>
                 </div>
+                <div id="changePasswordWhatsAppInfo" style="display:none; font-size: 12px; color: #00ff88; padding: 8px 0; margin-bottom: 8px;"></div>
                 <div class="input-group" style="display: flex; align-items: center; gap: 10px;">
                     <input type="checkbox" id="closeAllSessions" style="width: auto;">
                     <label for="closeAllSessions" style="margin: 0; font-size: 14px;">Cerrar todas las sesiones activas</label>

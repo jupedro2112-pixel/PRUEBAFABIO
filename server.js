@@ -361,7 +361,7 @@ async function changePasswordByPhone(phone, newPassword) {
     return { success: false, error: 'Usuario no encontrado con ese número de teléfono' };
   }
   
-  user.password = await bcrypt.hash(newPassword, 10);
+  user.password = newPassword;
   user.passwordChangedAt = new Date();
   await user.save();
   
@@ -841,13 +841,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       if (jgUser) {
         logger.debug(`User found in JUGAYGANA, creating locally...`);
         
-        const hashedPassword = await bcrypt.hash('asd123', 10);
         const userId = uuidv4();
         
         user = await User.create({
           id: userId,
           username: jgUser.username,
-          password: hashedPassword,
+          password: 'asd123',
           email: jgUser.email || null,
           phone: jgUser.phone || null,
           role: 'user',
@@ -1044,12 +1043,17 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'El número de WhatsApp debe tener al menos 8 dígitos' });
     }
     
-    const isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    let isValidPassword = await bcrypt.compare(currentPassword, user.password);
+    // Fallback para usuarios con contraseña por defecto (auto-creados desde JUGAYGANA)
+    if (!isValidPassword && !user.passwordChangedAt) {
+      isValidPassword = (currentPassword === 'asd123');
+    }
     if (!isValidPassword) {
       return res.status(401).json({ error: 'Contraseña actual incorrecta' });
     }
     
-    user.password = await bcrypt.hash(newPassword, 10);
+    // Asignar contraseña en texto plano; el middleware pre-save del modelo la hasheará
+    user.password = newPassword;
     user.passwordChangedAt = new Date();
     
     if (whatsapp && whatsapp.trim()) {
@@ -1165,7 +1169,7 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
     
-    user.password = await bcrypt.hash(newPassword, 10);
+    user.password = newPassword;
     user.passwordChangedAt = new Date();
     await user.save();
     
