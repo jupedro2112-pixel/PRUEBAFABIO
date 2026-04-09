@@ -361,7 +361,7 @@ async function changePasswordByPhone(phone, newPassword) {
     return { success: false, error: 'Usuario no encontrado con ese número de teléfono' };
   }
   
-  user.password = newPassword;
+  user.password = await bcrypt.hash(newPassword, 10);
   user.passwordChangedAt = new Date();
   await user.save();
   
@@ -1049,7 +1049,7 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
       return res.status(401).json({ error: 'Contraseña actual incorrecta' });
     }
     
-    user.password = newPassword;
+    user.password = await bcrypt.hash(newPassword, 10);
     user.passwordChangedAt = new Date();
     
     if (whatsapp && whatsapp.trim()) {

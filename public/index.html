@@ -57,10 +57,6 @@
                 <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
             </div>
             
-            <div style="margin: 10px 0; text-align: center;">
-                <button id="forgotPasswordBtn" class="btn btn-secondary" style="width: 100%; font-size: 13px; background: rgba(212,175,55,0.1); border-color: #d4af37; color: #d4af37;">🔑 ¿Olvidaste tu contraseña?</button>
-            </div>
-            
             <div style="margin: 10px 0; display: flex; gap: 8px;">
                 <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;">🔍 Buscar Usuario</button>
             </div>
@@ -93,19 +89,19 @@
             <div class="header-center">
                 <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 20%">
                     <span class="refund-label-full">📅 REEMBOLSO<br>DIARIO</span>
-                    <span class="refund-label-short">📅 DIARIO</span>
+                    <span class="refund-label-short">📅</span>
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
                 <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (Lun-Mar)">
                     <span class="refund-label-full">📆 REEMBOLSO<br>SEMANAL</span>
-                    <span class="refund-label-short">📆 SEMANAL</span>
+                    <span class="refund-label-short">📆</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
                 <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
                     <span class="refund-label-full">🗓️ REEMBOLSO<br>MENSUAL</span>
-                    <span class="refund-label-short">🗓️ MENSUAL</span>
+                    <span class="refund-label-short">🗓️</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
                     <span class="refund-timer" id="monthlyRefundTimer"></span>
                 </button>
@@ -121,7 +117,7 @@
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
                     📢 CANAL INFORMATIVO
                 </a>
-                <!-- BOTÓN APP - Instalar PWA (siempre visible, instala la app o muestra instrucciones) -->
+                <!-- BOTÓN APP - Instalar PWA (visible solo cuando beforeinstallprompt dispara y no estamos en standalone) -->
                 <button class="app-install-btn" id="appInstallBtn" title="Instalar App">
                     ⬇️ APP
                 </button>
@@ -280,9 +276,9 @@
                     <label>Repetir Contraseña</label>
                     <input type="password" id="confirmPasswordInput" name="confirm-password" placeholder="Repite tu contraseña" required minlength="6" autocomplete="new-password">
                 </div>
-                <div class="input-group" id="changePasswordWhatsAppGroup">
+                <div class="input-group">
                     <label>Número de WhatsApp *</label>
-                    <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="+54 9 11 1234-5678" minlength="8" autocomplete="tel">
+                    <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="+54 9 11 1234-5678" required minlength="8" autocomplete="tel">
                     <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta</span>
                 </div>
                 <div class="input-group" style="display: flex; align-items: center; gap: 10px;">
