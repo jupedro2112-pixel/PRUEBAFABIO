@@ -15,6 +15,7 @@ let SESSION_TOKEN = null;
 let SESSION_COOKIE = null;
 let SESSION_PARENT_ID = null;
 let SESSION_LAST_LOGIN = 0;
+let loginInProgress = null;
 
 const PLATFORM_USER = process.env.PLATFORM_USER;
 const PLATFORM_PASS = process.env.PLATFORM_PASS;
@@ -66,6 +67,27 @@ function parsePossiblyWrappedJson(data) {
 // Detectar bloqueo por HTML
 function isHtmlBlocked(data) {
   return typeof data === 'string' && data.trim().startsWith('<');
+}
+
+// Detectar si una respuesta indica sesión inválida/expirada
+function isSessionError(data, httpStatus) {
+  if (httpStatus === 401 || httpStatus === 403) return true;
+  if (isHtmlBlocked(data)) return true;
+  if (typeof data?.error === 'string') {
+    const errLower = data.error.toLowerCase();
+    return errLower.includes('token') || errLower.includes('session') ||
+           errLower.includes('expired') || errLower.includes('invalid') ||
+           errLower.includes('unauthorized') || errLower.includes('auth');
+  }
+  return false;
+}
+
+// Invalidar sesión actual para forzar re-login
+function invalidateSession() {
+  SESSION_TOKEN = null;
+  SESSION_COOKIE = null;
+  SESSION_PARENT_ID = null;
+  SESSION_LAST_LOGIN = 0;
 }
 
 // Verificar IP pública
@@ -148,15 +170,41 @@ async function loginAndGetToken() {
   }
 }
 
-// Asegurar sesión válida
+// Asegurar sesión válida (con reintentos y mutex anti-colisión)
 async function ensureSession() {
   if (PLATFORM_USER && PLATFORM_PASS) {
     const expired = Date.now() - SESSION_LAST_LOGIN > TOKEN_TTL_MINUTES * 60 * 1000;
     if (!SESSION_TOKEN || expired) {
-      SESSION_TOKEN = null;
-      SESSION_COOKIE = null;
-      SESSION_PARENT_ID = null;
-      return await loginAndGetToken();
+      // Si ya hay un login en curso, esperar a que termine
+      if (loginInProgress) {
+        await loginInProgress;
+        return !!SESSION_TOKEN;
+      }
+
+      loginInProgress = (async () => {
+        SESSION_TOKEN = null;
+        SESSION_COOKIE = null;
+        SESSION_PARENT_ID = null;
+
+        // Reintentar login hasta 3 veces con espera progresiva
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const ok = await loginAndGetToken();
+          if (ok) return true;
+          console.error(`❌ ensureSession: login intento ${attempt}/3 falló`);
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, attempt * 1500));
+          }
+        }
+        console.error('❌ ensureSession: no se pudo renovar sesión después de 3 intentos');
+        return false;
+      })();
+
+      try {
+        const result = await loginInProgress;
+        return result;
+      } finally {
+        loginInProgress = null;
+      }
     }
     return true;
   }
@@ -247,6 +295,29 @@ async function getUserInfoByName(username) {
 
     let data = parsePossiblyWrappedJson(resp.data);
     if (isHtmlBlocked(data)) return null;
+
+    // Detectar sesión inválida y reintentar una vez
+    if (isSessionError(data, resp.status)) {
+      console.error('🔄 getUserInfoByName: sesión inválida detectada, renovando...');
+      invalidateSession();
+      const renewed = await ensureSession();
+      if (!renewed) return null;
+      const retryBody = toFormUrlEncoded({
+        action: 'ShowUsers',
+        token: SESSION_TOKEN,
+        page: 1,
+        pagesize: 50,
+        viewtype: 'tree',
+        username,
+        showhidden: 'false',
+        parentid: SESSION_PARENT_ID || undefined
+      });
+      const retryHeaders = {};
+      if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders, validateStatus: () => true, maxRedirects: 0 });
+      data = parsePossiblyWrappedJson(retryResp.data);
+      if (isHtmlBlocked(data)) return null;
+    }
 
     const list = data.users || data.data || (Array.isArray(data) ? data : []);
     const found = list.find(u => 
@@ -517,6 +588,29 @@ async function creditUserBalance(username, amount) {
       return { success: false, error: 'IP Bloqueada (HTML)' };
     }
 
+    // Detectar sesión inválida y reintentar una vez
+    if (isSessionError(data, resp.status)) {
+      console.error('🔄 creditUserBalance: sesión inválida detectada, renovando...');
+      invalidateSession();
+      const renewed = await ensureSession();
+      if (!renewed) return { success: false, error: 'No se pudo renovar la sesión' };
+      const retryUserInfo = await getUserInfoByName(username);
+      if (!retryUserInfo) return { success: false, error: 'Usuario no encontrado tras renovar sesión' };
+      const retryBody = toFormUrlEncoded({
+        action: 'DepositMoney',
+        token: SESSION_TOKEN,
+        childid: retryUserInfo.id,
+        amount: amountCents,
+        currency: 'ARS',
+        deposit_type: 'individual_bonus'
+      });
+      const retryHeaders = {};
+      if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders });
+      data = parsePossiblyWrappedJson(retryResp.data);
+      if (isHtmlBlocked(data)) return { success: false, error: 'IP Bloqueada (HTML)' };
+    }
+
     console.log("📩 Resultado DepositMoney:", JSON.stringify(data));
 
     if (data && data.success) {
@@ -563,7 +657,9 @@ async function depositToUser(username, amount, description = '') {
         console.log(`✅ Usuario creado exitosamente en intento ${attempt}`);
         break;
       } else {
-        createError = createResult.error || 'Error desconocido';
+        createError = typeof createResult.error === 'string'
+          ? createResult.error
+          : (createResult.error?.message || JSON.stringify(createResult.error) || 'Error desconocido');
         console.log(`❌ Intento ${attempt} falló: ${createError}`);
         if (attempt < 3) {
           await new Promise(r => setTimeout(r, 2000 * attempt)); // Espera progresiva
@@ -613,6 +709,30 @@ async function depositToUser(username, amount, description = '') {
       return { success: false, error: 'IP Bloqueada (HTML)' };
     }
 
+    // Detectar sesión inválida y reintentar una vez
+    if (isSessionError(data, resp.status)) {
+      console.error('🔄 depositToUser: sesión inválida detectada, renovando...');
+      invalidateSession();
+      const renewed = await ensureSession();
+      if (!renewed) return { success: false, error: 'No se pudo renovar la sesión' };
+      const retryUserInfo = await getUserInfoByName(username);
+      if (!retryUserInfo) return { success: false, error: 'Usuario no encontrado tras renovar sesión' };
+      const retryBody = toFormUrlEncoded({
+        action: 'DepositMoney',
+        token: SESSION_TOKEN,
+        childid: retryUserInfo.id,
+        amount: amountCents,
+        currency: 'ARS',
+        deposit_type: 'deposit',
+        description: description || 'Depósito desde Sala de Juegos'
+      });
+      const retryHeaders = {};
+      if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders });
+      data = parsePossiblyWrappedJson(retryResp.data);
+      if (isHtmlBlocked(data)) return { success: false, error: 'IP Bloqueada (HTML)' };
+    }
+
     console.log("📩 Resultado DepositMoney:", JSON.stringify(data));
 
     if (data && (data.success || data.transfer_id || data.transferId)) {
@@ -659,7 +779,9 @@ async function withdrawFromUser(username, amount, description = '') {
         console.log(`✅ Usuario creado exitosamente en intento ${attempt}`);
         break;
       } else {
-        createError = createResult.error || 'Error desconocido';
+        createError = typeof createResult.error === 'string'
+          ? createResult.error
+          : (createResult.error?.message || JSON.stringify(createResult.error) || 'Error desconocido');
         console.log(`❌ Intento ${attempt} falló: ${createError}`);
         if (attempt < 3) {
           await new Promise(r => setTimeout(r, 2000 * attempt)); // Espera progresiva
@@ -706,6 +828,29 @@ async function withdrawFromUser(username, amount, description = '') {
     let data = parsePossiblyWrappedJson(resp.data);
     if (isHtmlBlocked(data)) {
       return { success: false, error: 'IP Bloqueada (HTML)' };
+    }
+
+    // Detectar sesión inválida y reintentar una vez
+    if (isSessionError(data, resp.status)) {
+      console.error('🔄 withdrawFromUser: sesión inválida detectada, renovando...');
+      invalidateSession();
+      const renewed = await ensureSession();
+      if (!renewed) return { success: false, error: 'No se pudo renovar la sesión' };
+      const retryUserInfo = await getUserInfoByName(username);
+      if (!retryUserInfo) return { success: false, error: 'Usuario no encontrado tras renovar sesión' };
+      const retryBody = toFormUrlEncoded({
+        action: 'WithdrawMoney',
+        token: SESSION_TOKEN,
+        childid: retryUserInfo.id,
+        amount: amountCents,
+        currency: 'ARS',
+        description: description || 'Retiro desde Sala de Juegos'
+      });
+      const retryHeaders = {};
+      if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders });
+      data = parsePossiblyWrappedJson(retryResp.data);
+      if (isHtmlBlocked(data)) return { success: false, error: 'IP Bloqueada (HTML)' };
     }
 
     console.log("📩 Resultado WithdrawMoney:", JSON.stringify(data));
