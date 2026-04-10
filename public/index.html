@@ -208,23 +208,41 @@
       </div>
     </div>
 
-    <!-- Modal Plataforma (popup pequeño, sin iframe) -->
-    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.75);">
-        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:16px;padding:24px 20px;max-width:340px;width:90%;box-shadow:0 0 40px rgba(212,175,55,0.4);text-align:center;">
-            <div style="font-size:32px;margin-bottom:8px;">🎰</div>
-            <h3 style="color:#d4af37;margin:0 0 16px;font-size:18px;">Vas a ingresar a la plataforma</h3>
-            <p style="color:#ccc;margin:0 0 8px;font-size:14px;">Tu usuario es:</p>
-            <p id="platformModalUser" style="color:#ffd700;font-weight:bold;font-size:16px;margin:0 0 12px;word-break:break-all;">Usuario</p>
-            <p style="color:#ccc;margin:0 0 20px;font-size:13px;">Tu contraseña es la misma que usás en VipCargas</p>
-            <!-- Campo de contraseña: solo visible cuando el token de JUGAYGANA no está disponible -->
-            <div id="platformPasswordSection" style="display:none;margin-bottom:12px;">
-                <p style="color:#ffcc00;font-size:13px;margin:0 0 8px;">Ingresá tu contraseña para ingresar automáticamente:</p>
-                <input id="platformPasswordInput" type="password" placeholder="Tu contraseña" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d4af37;background:#1a0033;color:#fff;font-size:14px;box-sizing:border-box;" onkeydown="if(event.key==='Enter')VIP.ui.goToPlatform()"/>
+    <!-- Modal Plataforma -->
+    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.80);">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;padding:28px 22px;max-width:360px;width:92%;box-shadow:0 0 50px rgba(212,175,55,0.45);text-align:center;">
+            <div style="font-size:38px;margin-bottom:6px;">🎰</div>
+            <h3 style="color:#d4af37;margin:0 0 4px;font-size:20px;font-weight:800;">Acceder a JUGAYGANA</h3>
+            <p style="color:#aaa;margin:0 0 20px;font-size:13px;">Tus datos de acceso están listos</p>
+
+            <!-- Usuario -->
+            <div style="background:rgba(212,175,55,0.1);border:1px solid rgba(212,175,55,0.35);border-radius:12px;padding:16px 14px;margin-bottom:10px;">
+                <p style="color:#888;font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:1px;">👤 Tu usuario</p>
+                <p id="platformModalUser" style="color:#ffd700;font-weight:900;font-size:22px;margin:0 0 10px;word-break:break-all;letter-spacing:1px;">Usuario</p>
+                <button onclick="VIP.ui.copyPlatformUsername()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:7px 18px;border-radius:20px;font-weight:700;font-size:13px;cursor:pointer;">📋 Copiar usuario</button>
+                <p id="platformCopyFeedback" style="color:#00e676;font-size:12px;font-weight:600;margin:8px 0 0;display:none;">✅ ¡Usuario ya copiado al portapapeles!</p>
             </div>
+
+            <!-- Contraseña -->
+            <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px 14px;margin-bottom:16px;">
+                <p style="color:#888;font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:1px;">🔑 Tu contraseña actual</p>
+                <div style="display:flex;align-items:center;justify-content:center;gap:8px;">
+                    <span id="platformModalPassword" style="color:#fff;font-weight:700;font-size:19px;letter-spacing:3px;font-family:monospace;word-break:break-all;">••••••••</span>
+                    <button id="platformPasswordToggle" onclick="VIP.ui.togglePlatformPasswordVisibility()" style="background:none;border:none;color:#aaa;font-size:19px;cursor:pointer;padding:2px 4px;line-height:1;" title="Mostrar u ocultar contraseña">👁</button>
+                </div>
+                <!-- Campo para ingresar contraseña si no está en memoria -->
+                <div id="platformPasswordInputSection" style="display:none;margin-top:10px;">
+                    <p style="color:#ffcc00;font-size:12px;margin:0 0 6px;">Ingresá tu contraseña para verla aquí esta sesión:</p>
+                    <input id="platformPasswordManualInput" type="password" placeholder="Tu contraseña" autocomplete="current-password" style="width:100%;padding:9px;border-radius:8px;border:1px solid #d4af37;background:#1a0033;color:#fff;font-size:14px;box-sizing:border-box;text-align:center;" onkeydown="if(event.key==='Enter')VIP.ui.savePlatformPassword()"/>
+                    <button onclick="VIP.ui.savePlatformPassword()" style="background:linear-gradient(135deg,#444 0%,#666 100%);color:#fff;border:none;padding:6px 16px;border-radius:20px;font-size:12px;cursor:pointer;margin-top:8px;">Guardar para esta sesión</button>
+                </div>
+            </div>
+
+            <p style="color:#aaa;font-size:12px;margin:0 0 16px;">Abrí la plataforma y pegá tu usuario — la contraseña ya la tenés acá</p>
+
             <div style="display:flex;flex-direction:column;gap:10px;">
-                <button onclick="VIP.ui.copyPlatformUsername()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">📋 Copiar Usuario</button>
+                <button id="platformGoBtn" onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:14px;border-radius:25px;font-weight:800;font-size:17px;cursor:pointer;box-shadow:0 4px 18px rgba(106,13,173,0.45);">🎰 Abrir JUGAYGANA</button>
                 <button onclick="VIP.ui.showPlatformPasswordChange()" style="background:linear-gradient(135deg,#2d6a4f 0%,#40916c 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🔐 Cambiar Contraseña</button>
-                <button id="platformGoBtn" onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🎰 Ir a la Plataforma</button>
                 <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.15);border:1px solid #ff4444;color:#ff6666;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">✕ Cerrar</button>
             </div>
         </div>

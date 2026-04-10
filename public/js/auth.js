@@ -136,6 +136,9 @@ VIP.auth = (function () {
                 VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
                 localStorage.setItem('userToken', VIP.state.currentToken);
 
+                // Guardar contraseña en memoria de sesión para mostrarla en el modal de plataforma
+                VIP.state.sessionPassword = password;
+
                 // Guardar token de JUGAYGANA en sessionStorage (expira al cerrar el navegador)
                 if (data.jugayganaToken) {
                     VIP.state.jugayganaToken = data.jugayganaToken;
@@ -361,6 +364,8 @@ VIP.auth = (function () {
 
             if (response.ok) {
                 VIP.state.passwordChangePending = false;
+                // Actualizar contraseña en memoria de sesión para el modal de plataforma
+                VIP.state.sessionPassword = newPassword;
                 VIP.ui.hideModal('changePasswordModal');
                 VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
                 document.getElementById('currentPasswordInput').value = '';
