@@ -140,6 +140,10 @@ function setupEventListeners() {
     document.getElementById('closeSettingsModal').addEventListener('click', () => VIP.ui.hideModal('settingsModal'));
     document.getElementById('changePasswordSettingsBtn').addEventListener('click', () => {
         VIP.ui.hideModal('settingsModal');
+        VIP.state.passwordChangePending = false;
+        if (typeof VIP.auth.prepareChangePasswordModal === 'function') {
+            VIP.auth.prepareChangePasswordModal();
+        }
         VIP.ui.showModal('changePasswordModal');
     });
 

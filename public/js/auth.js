@@ -136,8 +136,9 @@ VIP.auth = (function () {
                 VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
                 localStorage.setItem('userToken', VIP.state.currentToken);
 
-                // Guardar contraseña en memoria de sesión para mostrarla en el modal de plataforma
+                // Guardar contraseña en memoria y sessionStorage para mostrarla en el modal de plataforma
                 VIP.state.sessionPassword = password;
+                sessionStorage.setItem('sessionPassword', password);
 
                 // Guardar token de JUGAYGANA en sessionStorage (expira al cerrar el navegador)
                 if (data.jugayganaToken) {
@@ -238,7 +239,9 @@ VIP.auth = (function () {
         VIP.ui.stopBalancePolling();
         VIP.state.currentToken = null;
         VIP.state.currentUser = null;
+        VIP.state.sessionPassword = '';
         localStorage.removeItem('userToken');
+        sessionStorage.removeItem('sessionPassword');
         VIP.ui.showLoginScreen();
     }
 
@@ -319,6 +322,20 @@ VIP.auth = (function () {
             whatsappInfo.style.display = existingPhone ? 'block' : 'none';
             whatsappInfo.textContent = existingPhone ? `✅ Teléfono ya registrado: ${existingPhone}` : '';
         }
+
+        // Actualizar título, subtítulo y botón de cierre según si el cambio es obligatorio
+        const closeBtn = document.getElementById('changePasswordCloseBtn');
+        const title = document.getElementById('changePasswordTitle');
+        const subtitle = document.getElementById('changePasswordSubtitle');
+        if (VIP.state.passwordChangePending) {
+            if (closeBtn) closeBtn.style.display = 'none';
+            if (title) title.textContent = '🔐 Cambio de Contraseña Obligatorio';
+            if (subtitle) subtitle.innerHTML = 'Por seguridad, <strong>debés cambiar tu contraseña</strong> antes de continuar. No podés omitir este paso.';
+        } else {
+            if (closeBtn) closeBtn.style.display = '';
+            if (title) title.textContent = '🔐 Cambiar Contraseña';
+            if (subtitle) subtitle.textContent = 'Ingresá tu contraseña actual y la nueva para cambiarla.';
+        }
     }
 
     async function handleChangePassword(e) {
@@ -364,8 +381,9 @@ VIP.auth = (function () {
 
             if (response.ok) {
                 VIP.state.passwordChangePending = false;
-                // Actualizar contraseña en memoria de sesión para el modal de plataforma
+                // Actualizar contraseña en memoria y sessionStorage para el modal de plataforma
                 VIP.state.sessionPassword = newPassword;
+                sessionStorage.setItem('sessionPassword', newPassword);
                 VIP.ui.hideModal('changePasswordModal');
                 VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
                 document.getElementById('currentPasswordInput').value = '';
@@ -524,7 +542,8 @@ VIP.auth = (function () {
         initializeSession,
         handleChangePassword,
         handleFindUserByPhone,
-        handleResetPasswordByPhone
+        handleResetPasswordByPhone,
+        prepareChangePasswordModal
     };
 
 })();

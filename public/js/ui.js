@@ -782,11 +782,14 @@ VIP.ui.showPlatformPasswordChange = function() {
   // Cerrar el modal de plataforma
   VIP.ui.closePlatformModal();
   // Asegurarse de que el cambio sea voluntario (no obligatorio)
+  VIP.state.passwordChangePending = false;
   if (typeof window.setPasswordChangePending === 'function') {
     window.setPasswordChangePending(false);
   }
   // Preparar y abrir el modal de cambio de contraseña
-  if (typeof window.prepareChangePasswordModal === 'function') {
+  if (typeof VIP.auth.prepareChangePasswordModal === 'function') {
+    VIP.auth.prepareChangePasswordModal();
+  } else if (typeof window.prepareChangePasswordModal === 'function') {
     window.prepareChangePasswordModal();
   }
   const modal = document.getElementById('changePasswordModal');
