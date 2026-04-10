@@ -715,6 +715,73 @@ const changeUserPassword = async (username, currentPassword, newPassword) => {
 };
 
 /**
+ * Cambiar contraseña de usuario en JUGAYGANA usando el flujo de ADMIN.
+ *
+ * Usa la sesión admin (token del panel agentesadmin.bet) para cambiar la contraseña
+ * sin necesidad de conocer la contraseña actual del usuario.
+ * Payload: action=ChangePassword, token=<admin>, password=default, newpassword=<nueva>, childid=<id>
+ *
+ * @param {string} username - Nombre de usuario en JUGAYGANA
+ * @param {string} newPassword - Nueva contraseña
+ */
+const changeUserPasswordAsAdmin = async (username, newPassword) => {
+  const ok = await ensureSession();
+  if (!ok) {
+    logger.error(`[changeUserPasswordAsAdmin] No hay sesión válida con JUGAYGANA admin para: ${username}`);
+    return { success: false, error: 'No hay sesión válida con JUGAYGANA admin' };
+  }
+
+  // Obtener el childid numérico del usuario
+  const userInfo = await getUserInfo(username);
+  if (!userInfo || !userInfo.id) {
+    logger.error(`[changeUserPasswordAsAdmin] Usuario no encontrado en JUGAYGANA: ${username}`);
+    return { success: false, error: `Usuario ${username} no encontrado en JUGAYGANA` };
+  }
+
+  const childid = userInfo.id;
+  logger.info(`[changeUserPasswordAsAdmin] Cambiando contraseña via admin para: ${username} childid=${childid}`);
+
+  try {
+    const body = toFormUrlEncoded({
+      action: 'ChangePassword',
+      token: sessionToken,
+      // 'password=default' es el valor requerido por el flujo admin de la API externa
+      // (confirmado en el request real del navegador contra admin.agentesadmin.bet).
+      // No es una contraseña de usuario sino un campo fijo exigido por el endpoint admin.
+      password: 'default',
+      newpassword: newPassword,
+      childid
+    });
+
+    const headers = {};
+    if (sessionCookie) headers.Cookie = sessionCookie;
+
+    const resp = await client.post('', body, {
+      headers,
+      validateStatus: () => true
+    });
+
+    const data = parseJson(resp.data);
+    if (isHtmlBlocked(data)) {
+      logger.warn(`[changeUserPasswordAsAdmin] Bloqueado por HTML/CloudFront para: ${username}`);
+      return { success: false, error: 'IP bloqueada / HTML en ChangePassword admin' };
+    }
+
+    if (data?.success) {
+      logger.info(`✅ Contraseña cambiada via admin en JUGAYGANA para: ${username} childid=${childid}`);
+      return { success: true };
+    }
+
+    const errMsg = data?.message || data?.error || JSON.stringify(data);
+    logger.error(`❌ Error cambiando contraseña via admin en JUGAYGANA para ${username}: ${errMsg}`);
+    return { success: false, error: errMsg };
+  } catch (err) {
+    logger.error(`[changeUserPasswordAsAdmin] Error al llamar API admin para ${username}: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+};
+
+/**
  * Login como un usuario específico de JUGAYGANA y devolver su token de sesión.
  * Se usa para el auto-login en la plataforma desde paginacopia.
  */
@@ -782,5 +849,6 @@ module.exports = {
   bonus,
   creditBalance,
   changeUserPassword,
+  changeUserPasswordAsAdmin,
   loginAsUser
 };

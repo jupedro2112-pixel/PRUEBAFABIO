@@ -12,6 +12,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 // CORREGIDO: Importar conexiones de sockets para contador online real
 const { connectedUsers } = require('../config/socket');
+const jugayganaService = require('../services/jugayganaService');
 
 /**
  * GET /api/admin/users
@@ -163,6 +164,18 @@ const resetPassword = asyncHandler(async (req, res) => {
   await user.changePassword(newPassword);
   
   logger.info(`Contraseña reseteada por admin ${req.user.username} para ${user.username}`);
+
+  // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
+  try {
+    const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+    if (jgResult.success) {
+      logger.info(`✅ [AdminController] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+    } else {
+      logger.warn(`⚠️ [AdminController] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+    }
+  } catch (jgError) {
+    logger.error(`⚠️ [AdminController] Error sincronizando contraseña con JUGAYGANA: ${jgError.message}`);
+  }
   
   res.json({
     status: 'success',
