@@ -123,6 +123,7 @@ function validatePassword(password) {
 // Integración JUGAYGANA
 const jugaygana = require('./jugaygana');
 const jugayganaMovements = require('./jugaygana-movements');
+const jugayganaService = require('./src/services/jugayganaService');
 const refunds = require('./models/refunds');
 
 // ============================================
@@ -947,9 +948,24 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       { expiresIn: '90d' }
     );
     
+    // Intentar login en JUGAYGANA para obtener token de sesión (best-effort)
+    let jugayganaToken = null;
+    try {
+      const jgLogin = await jugayganaService.loginAsUser(userObj.username, password);
+      if (jgLogin.success) {
+        jugayganaToken = jgLogin.token;
+        logger.info(`Token JUGAYGANA obtenido para: ${username}`);
+      } else {
+        logger.warn(`No se pudo obtener token JUGAYGANA para ${username}: ${jgLogin.error}`);
+      }
+    } catch (jgErr) {
+      logger.warn(`Error obteniendo token JUGAYGANA para ${username}: ${jgErr.message}`);
+    }
+    
     res.json({
       message: 'Login exitoso',
       token,
+      jugayganaToken,
       user: {
         id: userId,
         username: userObj.username,
@@ -1083,6 +1099,40 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
       sessionsClosed: closeAllSessions || false
     });
   } catch (error) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Platform login: obtener token de JUGAYGANA para auto-login
+app.post('/api/auth/platform-login', authMiddleware, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Contraseña requerida' });
+    }
+
+    const user = await User.findOne({ id: req.user.userId });
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Contraseña incorrecta' });
+    }
+
+    const jgLogin = await jugayganaService.loginAsUser(user.username, password);
+    if (!jgLogin.success) {
+      return res.status(502).json({ error: `No se pudo iniciar sesión en la plataforma: ${jgLogin.error}` });
+    }
+
+    res.json({
+      success: true,
+      jugayganaToken: jgLogin.token,
+      platformUrl: 'https://www.jugaygana44.bet'
+    });
+  } catch (error) {
+    logger.error(`Error en platform-login: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

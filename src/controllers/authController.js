@@ -200,6 +200,48 @@ const checkUsername = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * POST /api/auth/platform-login
+ * Obtener token de JUGAYGANA para auto-login en la plataforma.
+ * Fallback para cuando el token del login inicial ya expiró.
+ */
+const platformLogin = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password) {
+    throw new AppError('Contraseña requerida', 400, ErrorCodes.VALIDATION_ERROR);
+  }
+
+  const { User } = require('../models');
+  const { jugayganaService } = require('../services');
+
+  const user = await User.findOne({ id: req.user.userId });
+  if (!user) {
+    throw new AppError('Usuario no encontrado', 404, ErrorCodes.USER_NOT_FOUND);
+  }
+
+  const isValidPassword = await user.comparePassword(password);
+  if (!isValidPassword) {
+    throw new AppError('Contraseña incorrecta', 401, ErrorCodes.AUTH_INVALID_CREDENTIALS);
+  }
+
+  const jgLogin = await jugayganaService.loginAsUser(user.username, password);
+  if (!jgLogin.success) {
+    throw new AppError(
+      `No se pudo iniciar sesión en la plataforma: ${jgLogin.error}`,
+      502,
+      'JUGAYGANA_LOGIN_FAILED'
+    );
+  }
+
+  res.json({
+    status: 'success',
+    data: {
+      jugayganaToken: jgLogin.token,
+      platformUrl: 'https://www.jugaygana44.bet'
+    }
+  });
+});
+
 module.exports = {
   register,
   login,
@@ -209,5 +251,6 @@ module.exports = {
   refreshToken,
   findUserByPhone,
   resetPasswordByPhone,
-  checkUsername
+  checkUsername,
+  platformLogin
 };

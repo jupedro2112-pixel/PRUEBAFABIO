@@ -678,6 +678,17 @@ VIP.ui.openPlatformModal = function() {
   const username = VIP.state.currentUser?.username || '';
   const userEl = document.getElementById('platformModalUser');
   if (userEl) userEl.textContent = username || 'Usuario';
+
+  // Resetear la sección de contraseña
+  const pwdSection = document.getElementById('platformPasswordSection');
+  const pwdInput = document.getElementById('platformPasswordInput');
+  if (pwdSection) pwdSection.style.display = 'none';
+  if (pwdInput) pwdInput.value = '';
+
+  // Si no hay token guardado, mostrar la sección de contraseña de inmediato
+  const token = VIP.state.jugayganaToken || sessionStorage.getItem('jugayganaToken');
+  if (!token && pwdSection) pwdSection.style.display = 'block';
+
   modal.style.display = 'flex';
 };
 
@@ -700,8 +711,56 @@ VIP.ui.copyPlatformUsername = function() {
   }
 };
 
-VIP.ui.goToPlatform = function() {
-  window.open('https://www.jugaygana44.bet', '_blank');
+VIP.ui.goToPlatform = async function(password) {
+  const token = VIP.state.jugayganaToken || sessionStorage.getItem('jugayganaToken');
+
+  if (token) {
+    // Abrir plataforma con token de sesión
+    const url = 'https://www.jugaygana44.bet/?token=' + encodeURIComponent(token);
+    window.open(url, '_blank');
+    return;
+  }
+
+  // Sin token: usar contraseña proporcionada o pedir al usuario
+  const pwd = password || document.getElementById('platformPasswordInput')?.value;
+  if (!pwd) {
+    // Mostrar campo de contraseña en el modal
+    const pwdSection = document.getElementById('platformPasswordSection');
+    if (pwdSection) pwdSection.style.display = 'block';
+    VIP.ui.showToast('Ingresá tu contraseña para ingresar a la plataforma', 'info');
+    return;
+  }
+
+  const goBtn = document.getElementById('platformGoBtn');
+  if (goBtn) { goBtn.textContent = '⏳ Ingresando...'; goBtn.disabled = true; }
+
+  try {
+    const response = await fetch(`${VIP.config.API_URL}/api/auth/platform-login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${VIP.state.currentToken}`
+      },
+      body: JSON.stringify({ password: pwd })
+    });
+
+    const data = await response.json();
+
+    if (response.ok && (data.jugayganaToken || (data.data && data.data.jugayganaToken))) {
+      const newToken = data.jugayganaToken || data.data.jugayganaToken;
+      VIP.state.jugayganaToken = newToken;
+      sessionStorage.setItem('jugayganaToken', newToken);
+      const url = 'https://www.jugaygana44.bet/?token=' + encodeURIComponent(newToken);
+      window.open(url, '_blank');
+      VIP.ui.closePlatformModal();
+    } else {
+      VIP.ui.showToast(data.error || 'No se pudo iniciar sesión en la plataforma', 'error');
+    }
+  } catch (err) {
+    VIP.ui.showToast('Error de conexión', 'error');
+  } finally {
+    if (goBtn) { goBtn.textContent = '🎰 Ir a la Plataforma'; goBtn.disabled = false; }
+  }
 };
 
 VIP.ui.showPlatformPasswordInfo = function() {

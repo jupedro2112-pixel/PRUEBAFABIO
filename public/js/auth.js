@@ -136,6 +136,15 @@ VIP.auth = (function () {
                 VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
                 localStorage.setItem('userToken', VIP.state.currentToken);
 
+                // Guardar token de JUGAYGANA en sessionStorage (expira al cerrar el navegador)
+                if (data.jugayganaToken) {
+                    VIP.state.jugayganaToken = data.jugayganaToken;
+                    sessionStorage.setItem('jugayganaToken', data.jugayganaToken);
+                } else {
+                    VIP.state.jugayganaToken = null;
+                    sessionStorage.removeItem('jugayganaToken');
+                }
+
                 try {
                     await initializeSession(false);
                 } catch (initError) {

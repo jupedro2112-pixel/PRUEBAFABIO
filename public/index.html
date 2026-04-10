@@ -216,10 +216,15 @@
             <p style="color:#ccc;margin:0 0 8px;font-size:14px;">Tu usuario es:</p>
             <p id="platformModalUser" style="color:#ffd700;font-weight:bold;font-size:16px;margin:0 0 12px;word-break:break-all;">Usuario</p>
             <p style="color:#ccc;margin:0 0 20px;font-size:13px;">Tu contraseña es la misma que usás en VipCargas</p>
+            <!-- Campo de contraseña: solo visible cuando el token de JUGAYGANA no está disponible -->
+            <div id="platformPasswordSection" style="display:none;margin-bottom:12px;">
+                <p style="color:#ffcc00;font-size:13px;margin:0 0 8px;">Ingresá tu contraseña para ingresar automáticamente:</p>
+                <input id="platformPasswordInput" type="password" placeholder="Tu contraseña" style="width:100%;padding:10px;border-radius:8px;border:1px solid #d4af37;background:#1a0033;color:#fff;font-size:14px;box-sizing:border-box;" onkeydown="if(event.key==='Enter')VIP.ui.goToPlatform()"/>
+            </div>
             <div style="display:flex;flex-direction:column;gap:10px;">
                 <button onclick="VIP.ui.copyPlatformUsername()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">📋 Copiar Usuario</button>
                 <button onclick="VIP.ui.showPlatformPasswordChange()" style="background:linear-gradient(135deg,#2d6a4f 0%,#40916c 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🔐 Cambiar Contraseña</button>
-                <button onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🎰 Ir a la Plataforma</button>
+                <button id="platformGoBtn" onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🎰 Ir a la Plataforma</button>
                 <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.15);border:1px solid #ff4444;color:#ff6666;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">✕ Cerrar</button>
             </div>
         </div>
