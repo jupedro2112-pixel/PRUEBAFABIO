@@ -209,7 +209,7 @@
     </div>
 
     <!-- Modal Plataforma -->
-    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.80);" onclick="if(event.target===this)VIP.ui.closePlatformModal()">
+    <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.80);" onclick="if(event.target===event.currentTarget)VIP.ui.closePlatformModal()">
         <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;padding:28px 22px;max-width:360px;width:92%;box-shadow:0 0 50px rgba(212,175,55,0.45);text-align:center;position:relative;">
             <button onclick="VIP.ui.closePlatformModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>
             <div style="font-size:38px;margin-bottom:6px;">🎰</div>
@@ -295,7 +295,7 @@
     </div>
 
     <!-- Modal Cambio de Contraseña Obligatorio -->
-    <div id="changePasswordModal" class="modal hidden" onclick="if(event.target===this)VIP.ui.hideModal('changePasswordModal')">
+    <div id="changePasswordModal" class="modal hidden" onclick="if(event.target===event.currentTarget)VIP.ui.hideModal('changePasswordModal')">
         <div class="modal-content" style="position: relative;">
             <button id="changePasswordCloseBtn" onclick="VIP.ui.hideModal('changePasswordModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
             <div class="modal-header">
