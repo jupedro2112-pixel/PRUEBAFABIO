@@ -679,17 +679,38 @@ VIP.ui.openPlatformModal = function() {
   const userEl = document.getElementById('platformModalUser');
   if (userEl) userEl.textContent = username || 'Usuario';
 
-  // Resetear la sección de contraseña
-  const pwdSection = document.getElementById('platformPasswordSection');
-  const pwdInput = document.getElementById('platformPasswordInput');
-  if (pwdSection) pwdSection.style.display = 'none';
-  if (pwdInput) pwdInput.value = '';
+  // Mostrar contraseña si está disponible en memoria de sesión
+  const pwd = VIP.state.sessionPassword || '';
+  const pwdEl = document.getElementById('platformModalPassword');
+  const pwdInputSection = document.getElementById('platformPasswordInputSection');
+  const pwdToggle = document.getElementById('platformPasswordToggle');
+  if (pwdEl) {
+    pwdEl.dataset.plain = pwd;
+    pwdEl.dataset.visible = 'false';
+    pwdEl.textContent = pwd ? '••••••••' : '—';
+    if (pwdToggle) pwdToggle.textContent = '👁';
+  }
+  if (pwdInputSection) pwdInputSection.style.display = pwd ? 'none' : 'block';
 
-  // Si no hay token guardado, mostrar la sección de contraseña de inmediato
-  const token = VIP.state.jugayganaToken || sessionStorage.getItem('jugayganaToken');
-  if (!token && pwdSection) pwdSection.style.display = 'block';
+  // Resetear feedback de copia
+  const feedback = document.getElementById('platformCopyFeedback');
+  if (feedback) feedback.style.display = 'none';
 
   modal.style.display = 'flex';
+
+  // Auto-copiar usuario al abrir el modal
+  if (username) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(username).then(() => {
+        if (feedback) feedback.style.display = 'block';
+        VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
+      }).catch(() => {
+        VIP.ui.showToast('👤 Tu usuario: ' + username, 'info');
+      });
+    } else {
+      VIP.ui.showToast('👤 Tu usuario: ' + username, 'info');
+    }
+  }
 };
 
 VIP.ui.closePlatformModal = function() {
@@ -700,8 +721,10 @@ VIP.ui.closePlatformModal = function() {
 VIP.ui.copyPlatformUsername = function() {
   const username = VIP.state.currentUser?.username || '';
   if (!username) return;
+  const feedback = document.getElementById('platformCopyFeedback');
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(username).then(() => {
+      if (feedback) feedback.style.display = 'block';
       VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
     }).catch(() => {
       VIP.ui.showToast('Tu usuario es: ' + username + ' — seleccionalo del popup para copiar', 'info');
@@ -711,56 +734,9 @@ VIP.ui.copyPlatformUsername = function() {
   }
 };
 
-VIP.ui.goToPlatform = async function(password) {
-  const token = VIP.state.jugayganaToken || sessionStorage.getItem('jugayganaToken');
-
-  if (token) {
-    // Abrir plataforma con token de sesión
-    const url = 'https://www.jugaygana44.bet/?token=' + encodeURIComponent(token);
-    window.open(url, '_blank');
-    return;
-  }
-
-  // Sin token: usar contraseña proporcionada o pedir al usuario
-  const pwd = password || document.getElementById('platformPasswordInput')?.value;
-  if (!pwd) {
-    // Mostrar campo de contraseña en el modal
-    const pwdSection = document.getElementById('platformPasswordSection');
-    if (pwdSection) pwdSection.style.display = 'block';
-    VIP.ui.showToast('Ingresá tu contraseña para ingresar a la plataforma', 'info');
-    return;
-  }
-
-  const goBtn = document.getElementById('platformGoBtn');
-  if (goBtn) { goBtn.textContent = '⏳ Ingresando...'; goBtn.disabled = true; }
-
-  try {
-    const response = await fetch(`${VIP.config.API_URL}/api/auth/platform-login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${VIP.state.currentToken}`
-      },
-      body: JSON.stringify({ password: pwd })
-    });
-
-    const data = await response.json();
-
-    if (response.ok && (data.jugayganaToken || (data.data && data.data.jugayganaToken))) {
-      const newToken = data.jugayganaToken || data.data.jugayganaToken;
-      VIP.state.jugayganaToken = newToken;
-      sessionStorage.setItem('jugayganaToken', newToken);
-      const url = 'https://www.jugaygana44.bet/?token=' + encodeURIComponent(newToken);
-      window.open(url, '_blank');
-      VIP.ui.closePlatformModal();
-    } else {
-      VIP.ui.showToast(data.error || 'No se pudo iniciar sesión en la plataforma', 'error');
-    }
-  } catch (err) {
-    VIP.ui.showToast('Error de conexión', 'error');
-  } finally {
-    if (goBtn) { goBtn.textContent = '🎰 Ir a la Plataforma'; goBtn.disabled = false; }
-  }
+VIP.ui.goToPlatform = function() {
+  window.open('https://www.jugaygana44.bet', '_blank');
+  VIP.ui.closePlatformModal();
 };
 
 VIP.ui.showPlatformPasswordInfo = function() {
@@ -768,6 +744,43 @@ VIP.ui.showPlatformPasswordInfo = function() {
 };
 // Alias kept for backward compatibility with the onclick handler
 VIP.ui.copyPlatformPassword = VIP.ui.showPlatformPasswordInfo;
+
+VIP.ui.togglePlatformPasswordVisibility = function() {
+  const pwdEl = document.getElementById('platformModalPassword');
+  const toggle = document.getElementById('platformPasswordToggle');
+  if (!pwdEl) return;
+  const plain = pwdEl.dataset.plain || '';
+  if (!plain) return;
+  const isVisible = pwdEl.dataset.visible === 'true';
+  if (isVisible) {
+    pwdEl.textContent = '••••••••';
+    pwdEl.dataset.visible = 'false';
+    if (toggle) toggle.textContent = '👁';
+  } else {
+    pwdEl.textContent = plain;
+    pwdEl.dataset.visible = 'true';
+    if (toggle) toggle.textContent = '🙈';
+  }
+};
+
+VIP.ui.savePlatformPassword = function() {
+  const input = document.getElementById('platformPasswordManualInput');
+  if (!input || !input.value.trim()) return;
+  const pwd = input.value.trim();
+  VIP.state.sessionPassword = pwd;
+  const pwdEl = document.getElementById('platformModalPassword');
+  const pwdInputSection = document.getElementById('platformPasswordInputSection');
+  const pwdToggle = document.getElementById('platformPasswordToggle');
+  if (pwdEl) {
+    pwdEl.dataset.plain = pwd;
+    pwdEl.dataset.visible = 'false';
+    pwdEl.textContent = '••••••••';
+    if (pwdToggle) pwdToggle.textContent = '👁';
+  }
+  if (pwdInputSection) pwdInputSection.style.display = 'none';
+  input.value = '';
+  VIP.ui.showToast('✅ Contraseña guardada para esta sesión', 'success');
+};
 
 VIP.ui.showPlatformPasswordChange = function() {
   // Cerrar el modal de plataforma
