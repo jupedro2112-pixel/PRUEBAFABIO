@@ -343,12 +343,15 @@ VIP.auth = (function () {
 
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
-        const whatsappInput = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
+        const whatsappRaw = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
+        const whatsappPrefix = (document.getElementById('changePasswordWhatsAppPrefix')?.value || '+54').trim();
         const errorDiv = document.getElementById('passwordError');
 
         // Si el usuario ya tiene número vinculado, no pedir uno nuevo
         const existingPhone = VIP.state.currentUser && (VIP.state.currentUser.whatsapp || VIP.state.currentUser.phone);
-        const whatsapp = whatsappInput || existingPhone || '';
+        // Construir número completo solo si se ingresó uno nuevo
+        const whatsappFull = whatsappRaw ? (whatsappPrefix + whatsappRaw.replace(/^0+/, '')) : '';
+        const whatsapp = whatsappFull || existingPhone || '';
 
         if (newPassword !== confirmPassword) {
             errorDiv.textContent = 'Las contraseñas no coinciden';
@@ -360,10 +363,13 @@ VIP.auth = (function () {
             errorDiv.classList.add('show');
             return;
         }
-        if (!existingPhone && (!whatsappInput || whatsappInput.length < 8)) {
-            errorDiv.textContent = 'El número de WhatsApp es obligatorio (mínimo 8 dígitos)';
-            errorDiv.classList.add('show');
-            return;
+        if (!existingPhone) {
+            const digits = (whatsappFull || '').replace(/\D/g, '');
+            if (!whatsappRaw || digits.length <= 10) {
+                errorDiv.textContent = 'El número de WhatsApp es obligatorio (más de 10 dígitos con prefijo internacional)';
+                errorDiv.classList.add('show');
+                return;
+            }
         }
 
         const closeAllSessions = document.getElementById('closeAllSessions').checked;
@@ -387,7 +393,10 @@ VIP.auth = (function () {
                 VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
                 document.getElementById('newPasswordInput').value = '';
                 document.getElementById('confirmPasswordInput').value = '';
-                document.getElementById('changePasswordWhatsApp').value = '';
+                const wpInput = document.getElementById('changePasswordWhatsApp');
+                if (wpInput) wpInput.value = '';
+                const wpPrefix = document.getElementById('changePasswordWhatsAppPrefix');
+                if (wpPrefix) wpPrefix.value = '+54';
                 document.getElementById('closeAllSessions').checked = false;
 
                 if (closeAllSessions) {
