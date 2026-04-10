@@ -3,11 +3,12 @@
  * Servicio de Reembolsos
  * Gestiona reembolsos diarios, semanales y mensuales
  */
-const { RefundClaim, Transaction, User } = require('../models');
+const { RefundClaim, Transaction } = require('../models');
 const jugayganaService = require('./jugayganaService');
 const jugaygana = require('../../jugaygana');
 const referralRevenueService = require('./referralRevenueService');
 const refundsModel = require('../../models/refunds');
+const { resolveJugayganaUserId } = require('./jugayganaUserLinkService');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 
@@ -127,9 +128,9 @@ const getStatus = async (userId, username) => {
   const userInfo = await jugayganaService.getUserInfo(username);
   const currentBalance = userInfo ? userInfo.balance : 0;
   
-  // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-  const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-  const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+  // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+  // Si falta, se intenta completar automáticamente (backfill al vuelo).
+  const jugayganaUserId = await resolveJugayganaUserId(userId, username);
   
   // Rangos de fechas (zona horaria Argentina)
   const dailyRange = getYesterdayRange();
@@ -204,9 +205,9 @@ const claimDaily = async (userId, username) => {
       };
     }
     
-    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-    const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-    const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+    // Si falta, se intenta completar automáticamente (backfill al vuelo).
+    const jugayganaUserId = await resolveJugayganaUserId(userId, username);
     
     if (!jugayganaUserId) {
       return {
@@ -318,9 +319,9 @@ const claimWeekly = async (userId, username) => {
       };
     }
     
-    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-    const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-    const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+    // Si falta, se intenta completar automáticamente (backfill al vuelo).
+    const jugayganaUserId = await resolveJugayganaUserId(userId, username);
     
     if (!jugayganaUserId) {
       return {
@@ -428,9 +429,9 @@ const claimMonthly = async (userId, username) => {
       };
     }
     
-    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-    const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-    const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+    // Si falta, se intenta completar automáticamente (backfill al vuelo).
+    const jugayganaUserId = await resolveJugayganaUserId(userId, username);
     
     if (!jugayganaUserId) {
       return {

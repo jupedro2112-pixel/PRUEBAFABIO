@@ -126,6 +126,7 @@ const jugayganaMovements = require('./jugaygana-movements');
 const jugayganaService = require('./src/services/jugayganaService');
 const refunds = require('./models/refunds');
 const referralRevenueService = require('./src/services/referralRevenueService');
+const { resolveJugayganaUserId } = require('./src/services/jugayganaUserLinkService');
 
 // ============================================
 // BLOQUEO DE REEMBOLSOS
@@ -2212,9 +2213,9 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     const userInfo = await jugaygana.getUserInfoByName(username);
     const currentBalance = userInfo ? userInfo.balance : 0;
     
-    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-    const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-    const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+    // Si falta, se intenta completar automáticamente (backfill al vuelo).
+    const jugayganaUserId = await resolveJugayganaUserId(userId, username);
     
     // Rangos de fechas (zona horaria Argentina)
     const yesterdayRange = jugaygana.getYesterdayRangeArgentinaEpoch();
@@ -2294,9 +2295,9 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         });
       }
       
-      // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-      const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-      const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+      // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+      // Si falta, se intenta completar automáticamente (backfill al vuelo).
+      const jugayganaUserId = await resolveJugayganaUserId(userId, username);
       
       if (!jugayganaUserId) {
         return res.json({
@@ -2409,9 +2410,9 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       }
       
-      // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-      const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-      const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+      // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+      // Si falta, se intenta completar automáticamente (backfill al vuelo).
+      const jugayganaUserId = await resolveJugayganaUserId(userId, username);
       
       if (!jugayganaUserId) {
         return res.json({
@@ -2524,9 +2525,9 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       }
       
-      // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos)
-      const userDoc = await User.findOne({ id: userId }).select('jugayganaUserId').lean();
-      const jugayganaUserId = userDoc?.jugayganaUserId ?? null;
+      // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
+      // Si falta, se intenta completar automáticamente (backfill al vuelo).
+      const jugayganaUserId = await resolveJugayganaUserId(userId, username);
       
       if (!jugayganaUserId) {
         return res.json({
