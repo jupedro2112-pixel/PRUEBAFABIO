@@ -624,6 +624,80 @@ function parseRoyaltyResponse(data, username, periodKey) {
   }
 }
 
+/**
+ * Obtener NETWIN (GGR) de un usuario para un rango de fechas arbitrario.
+ * Reutiliza la misma autenticación y lógica que getUserRevenueForPeriod.
+ * Usado por el sistema de reembolsos diario, semanal y mensual.
+ *
+ * @param {string} username - username del usuario
+ * @param {number|string|null} jugayganaUserId - ID numérico del usuario en la plataforma (child_user_id)
+ * @param {Date} fromDate - fecha inicio (objeto Date)
+ * @param {Date} toDate - fecha fin (objeto Date)
+ * @param {string} [periodLabel='custom'] - etiqueta del período (solo para logging)
+ * @returns {Object} { success, totalGgr, totalBets, totalWins, ... } o { success: false, error, totalGgr: 0 }
+ */
+async function getUserNetwinForDateRange(username, jugayganaUserId, fromDate, toDate, periodLabel = 'custom') {
+  if (jugayganaUserId === null || jugayganaUserId === undefined) {
+    logger.warn(
+      `[ReferralRevenue] [Refund] referredUser=${username} jugayganaUserId=null | ` +
+      `No se puede obtener NETWIN sin jugayganaUserId. Período: ${periodLabel}`
+    );
+    return {
+      success: false,
+      error: 'jugayganaUserId no disponible: no se puede obtener NETWIN individual sin child_user_id.',
+      totalGgr: 0
+    };
+  }
+
+  const fromEpoch = Math.floor(fromDate.getTime() / 1000);
+  const toEpoch = Math.floor(toDate.getTime() / 1000);
+  const fromFormatted = formatRevenueDate(fromDate, fromEpoch);
+  const toFormatted = formatRevenueDate(toDate, toEpoch);
+
+  const authInfo = await getActiveToken();
+  if (!authInfo.token) {
+    logger.error(
+      `[ReferralRevenue] [Refund] Sin token para NETWIN | user=${username} userId=${jugayganaUserId} período=${periodLabel}`
+    );
+    return { success: false, error: 'No hay sesión válida en JUGAYGANA.', totalGgr: 0 };
+  }
+
+  try {
+    const resp = await callRevenueEndpoint(username, fromFormatted, toFormatted, authInfo, jugayganaUserId);
+
+    if (resp.status === 200) {
+      const hasData = resp.data && typeof resp.data === 'object' && !Array.isArray(resp.data);
+      const isExplicitFailure = hasData && 'success' in resp.data && !resp.data.success;
+      if (hasData && !isExplicitFailure) {
+        const parsed = parseRoyaltyResponse(resp.data, username, periodLabel);
+        if (parsed.success) {
+          logger.info(
+            `[ReferralRevenue] [Refund] NETWIN obtenido | user=${username} userId=${jugayganaUserId} ` +
+            `período=${periodLabel} GGR=$${parsed.totalGgr.toFixed(2)}`
+          );
+        }
+        return parsed;
+      }
+    }
+
+    const rawBody = typeof resp.data === 'string'
+      ? resp.data.substring(0, 300)
+      : JSON.stringify(resp.data || '').substring(0, 300);
+    logger.warn(
+      `[ReferralRevenue] [Refund] Error obteniendo NETWIN | user=${username} userId=${jugayganaUserId} ` +
+      `período=${periodLabel} status=${resp.status} body=${rawBody}`
+    );
+    return { success: false, error: `HTTP ${resp.status}`, totalGgr: 0 };
+  } catch (err) {
+    logger.error(
+      `[ReferralRevenue] [Refund] Excepción obteniendo NETWIN | user=${username} userId=${jugayganaUserId} ` +
+      `período=${periodLabel}: ${err.message}`
+    );
+    return { success: false, error: err.message, totalGgr: 0 };
+  }
+}
+
 module.exports = {
-  getUserRevenueForPeriod
+  getUserRevenueForPeriod,
+  getUserNetwinForDateRange
 };

@@ -182,6 +182,16 @@ function calculateRefund(deposits, withdrawals, percentage) {
   };
 }
 
+// Calcular reembolso basado en NETWIN (GGR)
+function calculateRefundFromNetwin(netwin, percentage) {
+  const refundAmount = netwin > 0 ? Math.round(netwin * (percentage / 100)) : 0;
+  return {
+    netAmount: netwin,
+    refundAmount,
+    percentage
+  };
+}
+
 module.exports = {
   getUserRefunds,
   getAllRefunds,
@@ -189,5 +199,6 @@ module.exports = {
   canClaimWeeklyRefund,
   canClaimMonthlyRefund,
   recordRefund,
-  calculateRefund
+  calculateRefund,
+  calculateRefundFromNetwin
 };

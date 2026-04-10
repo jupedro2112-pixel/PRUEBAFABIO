@@ -1039,5 +1039,8 @@ module.exports = {
   creditUserBalance,
   depositToUser,
   withdrawFromUser,
-  changeUserPassword
+  changeUserPassword,
+  getYesterdayRangeArgentinaEpoch,
+  getLastWeekRangeArgentinaEpoch,
+  getLastMonthRangeArgentinaEpoch
 };
