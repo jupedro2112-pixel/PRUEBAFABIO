@@ -227,13 +227,13 @@
             <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px 14px;margin-bottom:16px;">
                 <p style="color:#888;font-size:11px;margin:0 0 5px;text-transform:uppercase;letter-spacing:1px;">🔑 Tu contraseña actual</p>
                 <div style="display:flex;align-items:center;justify-content:center;gap:8px;">
-                    <span id="platformModalPassword" data-plain="" style="color:#fff;font-weight:700;font-size:19px;letter-spacing:3px;font-family:monospace;word-break:break-all;">••••••••</span>
+                    <span id="platformModalPassword" style="color:#fff;font-weight:700;font-size:19px;letter-spacing:3px;font-family:monospace;word-break:break-all;">••••••••</span>
                     <button id="platformPasswordToggle" onclick="VIP.ui.togglePlatformPasswordVisibility()" style="background:none;border:none;color:#aaa;font-size:19px;cursor:pointer;padding:2px 4px;line-height:1;" title="Mostrar u ocultar contraseña">👁</button>
                 </div>
                 <!-- Campo para ingresar contraseña si no está en memoria -->
                 <div id="platformPasswordInputSection" style="display:none;margin-top:10px;">
                     <p style="color:#ffcc00;font-size:12px;margin:0 0 6px;">Ingresá tu contraseña para verla aquí esta sesión:</p>
-                    <input id="platformPasswordManualInput" type="password" placeholder="Tu contraseña" style="width:100%;padding:9px;border-radius:8px;border:1px solid #d4af37;background:#1a0033;color:#fff;font-size:14px;box-sizing:border-box;text-align:center;" onkeydown="if(event.key==='Enter')VIP.ui.savePlatformPassword()"/>
+                    <input id="platformPasswordManualInput" type="password" placeholder="Tu contraseña" autocomplete="current-password" style="width:100%;padding:9px;border-radius:8px;border:1px solid #d4af37;background:#1a0033;color:#fff;font-size:14px;box-sizing:border-box;text-align:center;" onkeydown="if(event.key==='Enter')VIP.ui.savePlatformPassword()"/>
                     <button onclick="VIP.ui.savePlatformPassword()" style="background:linear-gradient(135deg,#444 0%,#666 100%);color:#fff;border:none;padding:6px 16px;border-radius:20px;font-size:12px;cursor:pointer;margin-top:8px;">Guardar para esta sesión</button>
                 </div>
             </div>

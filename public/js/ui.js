@@ -671,7 +671,19 @@ VIP.ui.toggleDrawer = function() {
 };
 window.toggleDrawer = VIP.ui.toggleDrawer;
 
-// Platform modal
+// Platform modal — private state (no DOM exposure for sensitive data)
+VIP.ui._platformPasswordVisible = false;
+
+VIP.ui._copyUsernameToClipboard = function(username, onSuccess) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(username).then(onSuccess).catch(function() {
+      VIP.ui.showToast('👤 Tu usuario: ' + username, 'info');
+    });
+  } else {
+    VIP.ui.showToast('👤 Tu usuario: ' + username, 'info');
+  }
+};
+
 VIP.ui.openPlatformModal = function() {
   const modal = document.getElementById('platformModal');
   if (!modal) return;
@@ -679,14 +691,13 @@ VIP.ui.openPlatformModal = function() {
   const userEl = document.getElementById('platformModalUser');
   if (userEl) userEl.textContent = username || 'Usuario';
 
-  // Mostrar contraseña si está disponible en memoria de sesión
+  // Mostrar contraseña si está disponible en memoria de sesión (sin exponerla en el DOM)
   const pwd = VIP.state.sessionPassword || '';
+  VIP.ui._platformPasswordVisible = false;
   const pwdEl = document.getElementById('platformModalPassword');
   const pwdInputSection = document.getElementById('platformPasswordInputSection');
   const pwdToggle = document.getElementById('platformPasswordToggle');
   if (pwdEl) {
-    pwdEl.dataset.plain = pwd;
-    pwdEl.dataset.visible = 'false';
     pwdEl.textContent = pwd ? '••••••••' : '—';
     if (pwdToggle) pwdToggle.textContent = '👁';
   }
@@ -700,16 +711,10 @@ VIP.ui.openPlatformModal = function() {
 
   // Auto-copiar usuario al abrir el modal
   if (username) {
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(username).then(() => {
-        if (feedback) feedback.style.display = 'block';
-        VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
-      }).catch(() => {
-        VIP.ui.showToast('👤 Tu usuario: ' + username, 'info');
-      });
-    } else {
-      VIP.ui.showToast('👤 Tu usuario: ' + username, 'info');
-    }
+    VIP.ui._copyUsernameToClipboard(username, function() {
+      if (feedback) feedback.style.display = 'block';
+      VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
+    });
   }
 };
 
@@ -722,16 +727,10 @@ VIP.ui.copyPlatformUsername = function() {
   const username = VIP.state.currentUser?.username || '';
   if (!username) return;
   const feedback = document.getElementById('platformCopyFeedback');
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(username).then(() => {
-      if (feedback) feedback.style.display = 'block';
-      VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
-    }).catch(() => {
-      VIP.ui.showToast('Tu usuario es: ' + username + ' — seleccionalo del popup para copiar', 'info');
-    });
-  } else {
-    VIP.ui.showToast('Tu usuario es: ' + username + ' — seleccionalo del popup para copiar', 'info');
-  }
+  VIP.ui._copyUsernameToClipboard(username, function() {
+    if (feedback) feedback.style.display = 'block';
+    VIP.ui.showToast('✅ Usuario copiado: ' + username, 'success');
+  });
 };
 
 VIP.ui.goToPlatform = function() {
@@ -749,17 +748,15 @@ VIP.ui.togglePlatformPasswordVisibility = function() {
   const pwdEl = document.getElementById('platformModalPassword');
   const toggle = document.getElementById('platformPasswordToggle');
   if (!pwdEl) return;
-  const plain = pwdEl.dataset.plain || '';
+  const plain = VIP.state.sessionPassword || '';
   if (!plain) return;
-  const isVisible = pwdEl.dataset.visible === 'true';
-  if (isVisible) {
-    pwdEl.textContent = '••••••••';
-    pwdEl.dataset.visible = 'false';
-    if (toggle) toggle.textContent = '👁';
-  } else {
+  VIP.ui._platformPasswordVisible = !VIP.ui._platformPasswordVisible;
+  if (VIP.ui._platformPasswordVisible) {
     pwdEl.textContent = plain;
-    pwdEl.dataset.visible = 'true';
     if (toggle) toggle.textContent = '🙈';
+  } else {
+    pwdEl.textContent = '••••••••';
+    if (toggle) toggle.textContent = '👁';
   }
 };
 
@@ -768,12 +765,11 @@ VIP.ui.savePlatformPassword = function() {
   if (!input || !input.value.trim()) return;
   const pwd = input.value.trim();
   VIP.state.sessionPassword = pwd;
+  VIP.ui._platformPasswordVisible = false;
   const pwdEl = document.getElementById('platformModalPassword');
   const pwdInputSection = document.getElementById('platformPasswordInputSection');
   const pwdToggle = document.getElementById('platformPasswordToggle');
   if (pwdEl) {
-    pwdEl.dataset.plain = pwd;
-    pwdEl.dataset.visible = 'false';
     pwdEl.textContent = '••••••••';
     if (pwdToggle) pwdToggle.textContent = '👁';
   }
