@@ -20,5 +20,6 @@ router.post('/logout', authenticate, authController.logout);
 router.get('/verify', authenticate, authController.verify);
 router.post('/change-password', authenticate, authController.changePassword);
 router.post('/refresh-token', authenticate, authController.refreshToken);
+router.post('/platform-login', authenticate, authController.platformLogin);
 
 module.exports = router;

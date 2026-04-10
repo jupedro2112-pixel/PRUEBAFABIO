@@ -266,6 +266,20 @@ const login = async (credentials) => {
   const needsPasswordChange = (!user.passwordChangedAt && user.source === 'jugaygana') || 
     password === 'asd123';
   
+  // Intentar login en JUGAYGANA para obtener token de sesión (best-effort)
+  let jugayganaToken = null;
+  try {
+    const jgLogin = await jugayganaService.loginAsUser(user.username, password);
+    if (jgLogin.success) {
+      jugayganaToken = jgLogin.token;
+      logger.info(`Token de JUGAYGANA obtenido para: ${username}`);
+    } else {
+      logger.warn(`No se pudo obtener token JUGAYGANA para ${username}: ${jgLogin.error}`);
+    }
+  } catch (jgError) {
+    logger.warn(`Error obteniendo token JUGAYGANA para ${username}: ${jgError.message}`);
+  }
+  
   return {
     user: {
       id: user.id,
@@ -278,7 +292,8 @@ const login = async (credentials) => {
       jugayganaLinked: !!user.jugayganaUserId,
       needsPasswordChange
     },
-    tokens
+    tokens,
+    jugayganaToken
   };
 };
 

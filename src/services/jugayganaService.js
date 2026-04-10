@@ -715,6 +715,45 @@ const changeUserPassword = async (username, currentPassword, newPassword) => {
 };
 
 /**
+ * Login como un usuario específico de JUGAYGANA y devolver su token de sesión.
+ * Se usa para el auto-login en la plataforma desde paginacopia.
+ */
+const loginAsUser = async (username, password) => {
+  try {
+    const loginForm = new FormData();
+    loginForm.append('action', 'LOGIN');
+    loginForm.append('username', username);
+    loginForm.append('password', password);
+
+    const resp = await axios.post(APP_API_URL, loginForm, {
+      timeout: 20000,
+      httpsAgent,
+      proxy: false,
+      validateStatus: () => true,
+      maxRedirects: 0,
+      headers: {
+        ...loginForm.getHeaders(),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Origin': 'https://jugaygana44.bet',
+        'Referer': 'https://jugaygana44.bet/',
+      }
+    });
+
+    const data = parseJson(resp.data);
+    if (isHtmlBlocked(data)) return { success: false, error: 'IP bloqueada' };
+
+    const token = data?.token || data?.data?.token;
+    if (!token) return { success: false, error: data?.error || data?.message || 'Login failed' };
+
+    return { success: true, token };
+  } catch (error) {
+    logger.error('Error en loginAsUser JUGAYGANA:', error.message);
+    return { success: false, error: error.message };
+  }
+};
+
+/**
  * Obtener token y cookie de la sesión actual (para compartir con otros servicios)
  */
 const getSessionToken = () => sessionToken;
@@ -742,5 +781,6 @@ module.exports = {
   withdraw,
   bonus,
   creditBalance,
-  changeUserPassword
+  changeUserPassword,
+  loginAsUser
 };
