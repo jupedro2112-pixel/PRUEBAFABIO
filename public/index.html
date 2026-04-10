@@ -81,7 +81,7 @@
                 <div class="user-action-btns">
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
-                    <button class="logout-btn" id="logoutBtn">🚪</button>
+                    <button class="logout-btn" id="logoutBtn" style="display:none;">🚪</button>
                 </div>
             </div>
             
@@ -313,8 +313,31 @@
                 </div>
                 <div class="input-group" id="changePasswordWhatsAppGroup">
                     <label>Número de WhatsApp *</label>
-                    <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="+54 9 11 1234-5678" required minlength="8" autocomplete="tel">
-                    <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta</span>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="changePasswordWhatsAppPrefix" style="flex-shrink:0; width: 110px; padding: 8px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+58">🇻🇪 +58</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+1">🇩🇴 +1</option>
+                        </select>
+                        <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="9 11 1234-5678" autocomplete="tel" style="flex: 1;">
+                    </div>
+                    <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta (más de 10 dígitos)</span>
                 </div>
                 <div id="changePasswordWhatsAppInfo" style="display:none; font-size: 12px; color: #00ff88; padding: 8px 0; margin-bottom: 8px;"></div>
                 <div class="input-group" style="display: flex; align-items: center; gap: 10px;">

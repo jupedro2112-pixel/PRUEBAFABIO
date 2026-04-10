@@ -4396,7 +4396,7 @@ app.post('/api/admin/change-password', authMiddleware, adminMiddleware, async (r
       return res.status(403).json({ error: 'Solo puedes cambiar contraseñas de usuarios, no de administradores' });
     }
     
-    user.password = await bcrypt.hash(newPassword, 10);
+    user.password = newPassword;
     user.passwordChangedAt = new Date();
     await user.save();
     
