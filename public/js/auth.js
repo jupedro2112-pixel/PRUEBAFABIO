@@ -334,14 +334,13 @@ VIP.auth = (function () {
         } else {
             if (closeBtn) closeBtn.style.display = '';
             if (title) title.textContent = '🔐 Cambiar Contraseña';
-            if (subtitle) subtitle.textContent = 'Ingresá tu contraseña actual y la nueva para cambiarla.';
+            if (subtitle) subtitle.textContent = 'Ingresá tu nueva contraseña para actualizarla.';
         }
     }
 
     async function handleChangePassword(e) {
         e.preventDefault();
 
-        const currentPassword = document.getElementById('currentPasswordInput').value;
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
         const whatsappInput = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
@@ -376,7 +375,7 @@ VIP.auth = (function () {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${VIP.state.currentToken}`
                 },
-                body: JSON.stringify({ currentPassword, newPassword, whatsapp, closeAllSessions })
+                body: JSON.stringify({ newPassword, whatsapp, closeAllSessions })
             });
 
             if (response.ok) {
@@ -386,7 +385,6 @@ VIP.auth = (function () {
                 sessionStorage.setItem('sessionPassword', newPassword);
                 VIP.ui.hideModal('changePasswordModal');
                 VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
-                document.getElementById('currentPasswordInput').value = '';
                 document.getElementById('newPasswordInput').value = '';
                 document.getElementById('confirmPasswordInput').value = '';
                 document.getElementById('changePasswordWhatsApp').value = '';

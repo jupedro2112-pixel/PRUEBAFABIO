@@ -1037,7 +1037,7 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
 // Cambiar contraseña
 app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
   try {
-    const { currentPassword, newPassword, whatsapp, closeAllSessions } = req.body;
+    const { newPassword, whatsapp, closeAllSessions } = req.body;
     
     // Buscar por 'id' primero, luego por '_id' como fallback
     let user = await User.findOne({ id: req.user.userId });
@@ -1053,20 +1053,16 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
     
     if (whatsapp && whatsapp.trim().length < 8) {
       return res.status(400).json({ error: 'El número de WhatsApp debe tener al menos 8 dígitos' });
     }
     
-    let isValidPassword = await bcrypt.compare(currentPassword, user.password);
-    // Fallback para usuarios con contraseña por defecto (auto-creados desde JUGAYGANA)
-    if (!isValidPassword && !user.passwordChangedAt) {
-      isValidPassword = (currentPassword === 'asd123');
-    }
-    if (!isValidPassword) {
-      return res.status(401).json({ error: 'Contraseña actual incorrecta' });
-    }
-    
+    // El usuario ya está autenticado (JWT válido), no se requiere contraseña anterior
     // Asignar contraseña en texto plano; el middleware pre-save del modelo la hasheará
     user.password = newPassword;
     user.passwordChangedAt = new Date();
@@ -1081,12 +1077,11 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
     
     await user.save();
 
-    // Sync password with jugaygana platform (best-effort)
+    // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
     try {
-      const jugayganaSync = require('./jugaygana');
-      const jgResult = await jugayganaSync.changeUserPassword(user.username, currentPassword, newPassword);
+      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
       if (jgResult.success) {
-        console.log(`✅ Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+        console.log(`✅ Contraseña sincronizada con JUGAYGANA (admin) para: ${user.username}`);
       } else {
         console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
       }
@@ -1236,6 +1231,18 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
     await user.save();
     
     logger.info(`Admin ${req.user.username} reset password for ${user.username}`);
+
+    // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
+    try {
+      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+      if (jgResult.success) {
+        console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+      } else {
+        console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+      }
+    } catch (jgError) {
+      console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
+    }
     
     res.json({ 
       success: true, 
@@ -4416,6 +4423,18 @@ app.post('/api/admin/change-password', authMiddleware, adminMiddleware, async (r
         content: 'Tu contraseña ha sido cambiada por un administrador.',
         timestamp: new Date()
       });
+    }
+
+    // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
+    try {
+      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+      if (jgResult.success) {
+        console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+      } else {
+        console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+      }
+    } catch (jgError) {
+      console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
     }
     
     res.json({ success: true, message: 'Contraseña cambiada correctamente' });

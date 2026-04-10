@@ -300,13 +300,9 @@
             <button id="changePasswordCloseBtn" onclick="VIP.ui.hideModal('changePasswordModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
             <div class="modal-header">
                 <h2 id="changePasswordTitle">🔐 Cambiar Contraseña</h2>
-                <p id="changePasswordSubtitle">Ingresá tu contraseña actual y la nueva para cambiarla.</p>
+                <p id="changePasswordSubtitle">Ingresá tu nueva contraseña para actualizarla.</p>
             </div>
             <form id="changePasswordForm" autocomplete="on">
-                <div class="input-group">
-                    <label>Contraseña Actual</label>
-                    <input type="password" id="currentPasswordInput" name="current-password" placeholder="Contraseña actual" required autocomplete="current-password">
-                </div>
                 <div class="input-group">
                     <label>Nueva Contraseña</label>
                     <input type="password" id="newPasswordInput" name="new-password" placeholder="Mínimo 6 caracteres" required minlength="6" autocomplete="new-password">
