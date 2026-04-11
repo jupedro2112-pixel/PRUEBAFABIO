@@ -50,6 +50,8 @@ function getYesterdayNoonArgentinaAsUTC() {
 }
 
 // Verificar que el lastClaim calculado cae en "ayer" para Argentina
+// Las siguientes helpers son copias exactas de fireController.js para garantizar
+// que la verificación use la misma lógica que el controlador real.
 function getArgentinaDateString(date) {
   const argentinaTime = new Date(date.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
   return argentinaTime.toDateString();
@@ -71,7 +73,9 @@ async function main() {
   await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 15000 });
   console.log('✅ Conectado a MongoDB\n');
 
-  // Usar strict:false para acceder a los modelos sin re-definir los schemas completos
+  // strict:false permite operar sobre las colecciones existentes sin redefinir los schemas
+  // completos (evita conflictos con los modelos ya registrados en src/models/).
+  // Es el mismo patrón usado en scripts/backfill-jugaygana-userid.js.
   const User = mongoose.models['User'] || mongoose.model('User', new mongoose.Schema({}, { strict: false }));
   const FireStreak = mongoose.models['FireStreak'] || mongoose.model('FireStreak', new mongoose.Schema({}, { strict: false }));
 
