@@ -179,7 +179,10 @@ const claim = asyncHandler(async (req, res) => {
     );
     
     if (!bonusResult.success) {
-      throw new AppError('Error al acreditar recompensa: ' + bonusResult.error, 400, ErrorCodes.TX_FAILED);
+      const creditError = typeof bonusResult.error === 'string'
+        ? bonusResult.error
+        : (bonusResult.error?.message || JSON.stringify(bonusResult.error) || 'Error desconocido al acreditar recompensa');
+      throw new AppError('Error al acreditar recompensa: ' + creditError, 400, ErrorCodes.TX_FAILED);
     }
     
     await Transaction.create({
@@ -214,7 +217,10 @@ const claim = asyncHandler(async (req, res) => {
       );
       
       if (!bonusResult20.success) {
-        throw new AppError('Error al acreditar recompensa: ' + bonusResult20.error, 400, ErrorCodes.TX_FAILED);
+        const creditError20 = typeof bonusResult20.error === 'string'
+          ? bonusResult20.error
+          : (bonusResult20.error?.message || JSON.stringify(bonusResult20.error) || 'Error desconocido al acreditar recompensa');
+        throw new AppError('Error al acreditar recompensa: ' + creditError20, 400, ErrorCodes.TX_FAILED);
       }
       
       await Transaction.create({
@@ -244,7 +250,10 @@ const claim = asyncHandler(async (req, res) => {
       );
       
       if (!bonusResult30.success) {
-        throw new AppError('Error al acreditar recompensa: ' + bonusResult30.error, 400, ErrorCodes.TX_FAILED);
+        const creditError30 = typeof bonusResult30.error === 'string'
+          ? bonusResult30.error
+          : (bonusResult30.error?.message || JSON.stringify(bonusResult30.error) || 'Error desconocido al acreditar recompensa');
+        throw new AppError('Error al acreditar recompensa: ' + creditError30, 400, ErrorCodes.TX_FAILED);
       }
       
       await Transaction.create({
