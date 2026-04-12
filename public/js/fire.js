@@ -52,26 +52,12 @@ VIP.fire = (function () {
             ? new Date(VIP.state.fireStatus.lastClaim).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
             : 'Nunca';
 
-        // Determinar el próximo hito no completado para mostrar progreso correcto
-        const milestones = VIP.state.fireStatus.milestones || [];
-        const nextMilestone = milestones.find(m => m.status === 'next' || m.status === 'locked');
-        const progressTarget = nextMilestone ? nextMilestone.day : 10;
-        const lastCompletedMilestoneDay = (() => {
-            // El día de inicio del tramo actual
-            const completed = milestones.filter(m => m.status === 'completed');
-            return completed.length > 0 ? completed[completed.length - 1].day : 0;
-        })();
-        const progressInSegment = streak - lastCompletedMilestoneDay;
-        const segmentLength = progressTarget - lastCompletedMilestoneDay;
-        const progressPercent = Math.min((progressInSegment / segmentLength) * 100, 100);
+        // Req 2: Progreso visual hasta 100 días
+        const maxDays = 100;
+        const progressPercent = Math.min((streak / maxDays) * 100, 100);
         document.getElementById('fireProgressBar').style.width = progressPercent + '%';
         document.getElementById('fireProgressBar').textContent = Math.round(progressPercent) + '%';
-        // Mostrar "X/Y días" sin superar el máximo; si no hay próximo hito mostrar racha total
-        if (nextMilestone) {
-            document.getElementById('fireProgressText').textContent = `${Math.min(streak, progressTarget)}/${progressTarget} días`;
-        } else {
-            document.getElementById('fireProgressText').textContent = `${streak} días ✅`;
-        }
+        document.getElementById('fireProgressText').textContent = `${Math.min(streak, maxDays)}/${maxDays} días`;
 
         const claimBtn  = document.getElementById('claimFireBtn');
         const condition = document.getElementById('fireCondition');
@@ -261,7 +247,8 @@ VIP.fire = (function () {
                 await loadFireStatus();
                 setTimeout(() => { VIP.ui.hideModal('fireModal'); }, 1500);
             } else {
-                VIP.ui.showToast(data.error || 'Error al reclamar recompensa', 'error');
+                const errMsg = data.error || 'Error al reclamar recompensa';
+                VIP.ui.showToast('⚠️ ' + errMsg, 'error');
                 if (btn) { btn.disabled = false; btn.textContent = `💰 Reclamar`; }
             }
         } catch (error) {

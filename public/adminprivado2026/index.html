@@ -622,6 +622,37 @@
                     <strong>Recurrentes</strong>: usuarios que ya tenían al menos una carga anterior al período. &nbsp;
                     <strong>Registrados</strong>: cuentas creadas en el período (independiente de si cargaron).
                 </p>
+
+                <!-- BLOQUE E — RETENCIÓN (siempre en tiempo real, independiente del período) -->
+                <div style="border-left:3px solid #00bcd4;padding-left:14px;margin-top:18px;">
+                    <h4 style="margin:0 0 4px;font-size:0.8em;text-transform:uppercase;letter-spacing:.07em;color:#00bcd4;">E — Retención de usuarios <span style="font-size:0.8em;color:#aaa;font-weight:400;">(usuarios únicos con cargas en los últimos N días · tiempo real)</span></h4>
+                    <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:10px;">
+                        <div class="stat-card" style="border-color:#00bcd4">
+                            <span style="font-size:1.3rem">📅</span>
+                            <span id="datosRetention3d" class="stat-number" style="color:#00bcd4">—</span>
+                            <span class="stat-label">Últimos 3 días</span>
+                            <span style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">usuarios que cargaron en los últimos 3 días</span>
+                        </div>
+                        <div class="stat-card" style="border-color:#26c6da">
+                            <span style="font-size:1.3rem">📆</span>
+                            <span id="datosRetention7d" class="stat-number" style="color:#26c6da">—</span>
+                            <span class="stat-label">Últimos 7 días</span>
+                            <span style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">usuarios que cargaron en los últimos 7 días</span>
+                        </div>
+                        <div class="stat-card" style="border-color:#4dd0e1">
+                            <span style="font-size:1.3rem">🗓️</span>
+                            <span id="datosRetention15d" class="stat-number" style="color:#4dd0e1">—</span>
+                            <span class="stat-label">Últimos 15 días</span>
+                            <span style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">usuarios que cargaron en los últimos 15 días</span>
+                        </div>
+                        <div class="stat-card" style="border-color:#80deea">
+                            <span style="font-size:1.3rem">📊</span>
+                            <span id="datosRetention30d" class="stat-number" style="color:#80deea">—</span>
+                            <span class="stat-label">Últimos 30 días</span>
+                            <span style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">usuarios que cargaron en los últimos 30 días</span>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <section id="statsSection" class="section">
@@ -705,6 +736,7 @@
                             <select id="notifSegment" class="form-input" style="min-width:200px">
                                 <option value="all">Todos con app instalada</option>
                                 <option value="active">Activos (login últimos 30 días)</option>
+                                <option value="inactive_7d">Inactivos últimos 7 días</option>
                                 <option value="inactive">Inactivos (+30 días sin login)</option>
                                 <option value="with_balance">Con saldo &gt; 0</option>
                                 <option value="specific">Usuarios específicos</option>

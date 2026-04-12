@@ -2557,6 +2557,13 @@ async function loadDatos() {
         set('datosMultipleUsers',    r.multipleDepositUsers);
         setPct('datosRepeatRate',    r.repeatRate);
 
+        // Bloque E — Retención (tiempo real)
+        const e = d.retention || {};
+        set('datosRetention3d',  e.users3d);
+        set('datosRetention7d',  e.users7d);
+        set('datosRetention15d', e.users15d);
+        set('datosRetention30d', e.users30d);
+
     } catch (error) {
         console.error('Error loading datos:', error);
     }
@@ -3034,6 +3041,12 @@ function renderTransactionStats(summary) {
                 <span class="stat-number">${formatMoney(summary.referrals || 0)}</span>
                 <span class="stat-label">Referidos</span>
             </div>
+            ${summary.fireRewards > 0 ? `
+            <div class="stat-card bonus" style="border-color:#f97316">
+                <span style="font-size:1.2rem">🔥</span>
+                <span class="stat-number" style="color:#f97316">${formatMoney(summary.fireRewards || 0)}</span>
+                <span class="stat-label">Fueguito</span>
+            </div>` : ''}
             <div class="stat-card net-balance ${netBalanceClass}">
                 <span class="icon icon-balance"></span>
                 <span class="stat-number">${formatMoney(netBalance)}</span>
