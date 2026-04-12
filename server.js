@@ -330,6 +330,12 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // ============================================
 const notificationRoutes = require('./src/routes/notificationRoutes');
 app.use('/api/notifications', notificationRoutes);
+
+// ============================================
+// RUTAS DEL FUEGUITO (racha diaria)
+// ============================================
+const fireRoutes = require('./src/routes/fireRoutes');
+app.use('/api', fireRoutes);
 notificationRoutes.setIo(io);
 
 // ============================================
@@ -3877,118 +3883,6 @@ app.get('/api/movements/balance', authMiddleware, async (req, res) => {
 // ============================================
 // SISTEMA DE FUEGUITO (RACHA DIARIA)
 // ============================================
-
-app.get('/api/fire/status', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    
-    let fireStreak = await FireStreak.findOne({ userId }).lean();
-    
-    if (!fireStreak) {
-      fireStreak = { streak: 0, lastClaim: null, totalClaimed: 0 };
-    }
-    
-    const todayArgentina = getArgentinaDateString();
-    const lastClaim = fireStreak.lastClaim ? getArgentinaDateString(new Date(fireStreak.lastClaim)) : null;
-    
-    const canClaim = lastClaim !== todayArgentina;
-    
-    const yesterdayArgentina = getArgentinaYesterday();
-    
-    if (lastClaim !== yesterdayArgentina && lastClaim !== todayArgentina && fireStreak.streak > 0) {
-      await FireStreak.updateOne(
-        { userId },
-        { streak: 0, lastReset: new Date() },
-        { upsert: true }
-      );
-      fireStreak.streak = 0;
-    }
-    
-    res.json({
-      streak: fireStreak.streak || 0,
-      lastClaim: fireStreak.lastClaim,
-      totalClaimed: fireStreak.totalClaimed || 0,
-      canClaim: canClaim,
-      hasActivityToday: true,
-      nextReward: fireStreak.streak >= 9 ? 10000 : 0
-    });
-  } catch (error) {
-    console.error('Error obteniendo estado del fueguito:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-app.post('/api/fire/claim', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const username = req.user.username;
-    
-    let fireStreak = await FireStreak.findOne({ userId });
-    
-    if (!fireStreak) {
-      fireStreak = new FireStreak({ userId, username, streak: 0, totalClaimed: 0 });
-    }
-    
-    const todayArgentina = getArgentinaDateString();
-    const lastClaim = fireStreak.lastClaim ? getArgentinaDateString(new Date(fireStreak.lastClaim)) : null;
-    
-    if (lastClaim === todayArgentina) {
-      return res.status(400).json({ error: 'Ya reclamaste tu fueguito hoy' });
-    }
-    
-    const yesterdayArgentina = getArgentinaYesterday();
-    
-    if (lastClaim !== yesterdayArgentina && fireStreak.streak > 0) {
-      fireStreak.streak = 0;
-      fireStreak.lastReset = new Date();
-    }
-    
-    fireStreak.streak += 1;
-    fireStreak.lastClaim = new Date();
-    
-    let reward = 0;
-    let message = `Día ${fireStreak.streak} de racha!`;
-    
-    if (fireStreak.streak === 10) {
-      reward = 10000;
-      fireStreak.totalClaimed += reward;
-      
-      const bonusResult = await jugayganaMovements.makeBonus(
-        username,
-        reward,
-        `Recompensa racha 10 días - Sala de Juegos`
-      );
-      
-      if (!bonusResult.success) {
-        return res.status(400).json({ 
-          error: 'Error al acreditar recompensa: ' + bonusResult.error 
-        });
-      }
-      
-      message = `¡Felicidades! 10 días de racha! Recompensa: $${reward.toLocaleString()}`;
-    }
-    
-    fireStreak.history = fireStreak.history || [];
-    fireStreak.history.push({
-      date: new Date(),
-      reward,
-      streakDay: fireStreak.streak
-    });
-    
-    await fireStreak.save();
-    
-    res.json({
-      success: true,
-      streak: fireStreak.streak,
-      reward,
-      message,
-      totalClaimed: fireStreak.totalClaimed
-    });
-  } catch (error) {
-    console.error('Error reclamando fueguito:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
 
 // ============================================
 // CONFIGURACIÓN DEL SISTEMA (CBU, COMANDOS)
