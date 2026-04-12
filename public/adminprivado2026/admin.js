@@ -251,11 +251,31 @@ function setupEventListeners() {
     
     // Action buttons
     elements.btnCBU.addEventListener('click', sendCBU);
-    elements.btnDeposit.addEventListener('click', () => showModal('depositModal'));
+    elements.btnDeposit.addEventListener('click', () => {
+        // Limpiar formulario antes de abrir
+        document.getElementById('depositAmount').value = '';
+        document.querySelectorAll('.quick-amounts button').forEach(b => b.classList.remove('active'));
+        const bonusInfoEl = document.getElementById('bonusInfo');
+        if (bonusInfoEl) bonusInfoEl.textContent = '';
+        showModal('depositModal');
+    });
     if (elements.btnBonus) {
-        elements.btnBonus.addEventListener('click', () => showModal('bonusModal'));
+        elements.btnBonus.addEventListener('click', () => {
+            // Limpiar formulario de bonus antes de abrir
+            const bonusAmountEl = document.getElementById('bonusAmount');
+            const bonusDescEl = document.getElementById('bonusDesc');
+            if (bonusAmountEl) bonusAmountEl.value = '';
+            if (bonusDescEl) bonusDescEl.value = '';
+            document.querySelectorAll('.bonus-options button').forEach(b => b.classList.remove('active'));
+            showModal('bonusModal');
+        });
     }
-    elements.btnWithdraw.addEventListener('click', () => showModal('withdrawModal'));
+    elements.btnWithdraw.addEventListener('click', () => {
+        // Limpiar formulario de retiro antes de abrir
+        const withdrawAmountEl = document.getElementById('withdrawAmount');
+        if (withdrawAmountEl) withdrawAmountEl.value = '';
+        showModal('withdrawModal');
+    });
     elements.btnPassword.addEventListener('click', () => showModal('passwordModal'));
     elements.btnPayments.addEventListener('click', sendToPayments);
     elements.btnClose.addEventListener('click', closeChat);

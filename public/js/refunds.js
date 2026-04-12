@@ -260,13 +260,18 @@ VIP.refunds = (function () {
         }
     }
 
+    function showUnifiedRefundModal() {
+        VIP.ui.showModal('unifiedRefundModal');
+    }
+
     return {
         loadRefundStatus,
         updateRefundButtons,
         updateRefundButton,
         startCountdown,
         showRefundModal,
-        claimRefund
+        claimRefund,
+        showUnifiedRefundModal
     };
 
 })();

@@ -830,9 +830,34 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     logger.debug(`Login attempt for: ${username}`);
     
     // Buscar usuario case-insensitive (para soportar usernames con mayúsculas/minúsculas)
-    let user = await User.findOne({ 
-      username: { $regex: new RegExp('^' + escapeRegex(username) + '$', 'i') } 
-    });
+    let user;
+    let dbReadFailed = false;
+    try {
+      user = await User.findOne({ 
+        username: { $regex: new RegExp('^' + escapeRegex(username) + '$', 'i') } 
+      });
+    } catch (dbErr) {
+      logger.error(`[Login] MongoDB read failed for ${username}: ${dbErr.message}`);
+      dbReadFailed = true;
+    }
+
+    // Fallback controlado si MongoDB no está disponible: solo ignite100/pepsi100
+    if (dbReadFailed) {
+      const isAdminFallback = username === 'ignite100' && password === 'pepsi100';
+      if (!isAdminFallback) {
+        return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intenta más tarde.' });
+      }
+      const fallbackToken = jwt.sign(
+        { userId: 'fallback-admin', username: 'ignite100', role: 'admin', tokenVersion: 0 },
+        JWT_SECRET,
+        { expiresIn: '4h' }
+      );
+      logger.warn(`[Login] Fallback admin login used (ignite100) - MongoDB was unavailable`);
+      return res.json({
+        token: fallbackToken,
+        user: { id: 'fallback-admin', username: 'ignite100', role: 'admin', balance: 0, needsPasswordChange: false }
+      });
+    }
     
     // Si no existe localmente, verificar en JUGAYGANA
     if (!user) {
@@ -3693,35 +3718,6 @@ async function initializeData() {
     console.log('✅ Admin verificado: ignite100');
   }
   
-  // Verificar/crear admin respaldo
-  let oldAdmin = await User.findOne({ username: 'admin' });
-  if (!oldAdmin) {
-    const adminPassword = await bcrypt.hash('admin123', 10);
-    await User.create({
-      id: uuidv4(),
-      username: 'admin',
-      password: adminPassword,
-      email: 'admin@saladejuegos.com',
-      phone: null,
-      role: 'admin',
-      accountNumber: 'ADMIN002',
-      balance: 0,
-      createdAt: new Date(),
-      lastLogin: null,
-      isActive: true,
-      jugayganaUserId: null,
-      jugayganaUsername: null,
-      jugayganaSyncStatus: 'not_applicable'
-    });
-    console.log('✅ Admin respaldo verificado: admin');
-  } else {
-    oldAdmin.password = await bcrypt.hash('admin123', 10);
-    oldAdmin.role = 'admin';
-    oldAdmin.isActive = true;
-    await oldAdmin.save();
-    console.log('✅ Admin respaldo verificado: admin');
-  }
-  
   // Verificar/crear configuración CBU por defecto
   const cbuConfig = await getConfig('cbu');
   if (!cbuConfig) {
@@ -3878,6 +3874,29 @@ app.get('/api/movements/balance', authMiddleware, async (req, res) => {
 // SISTEMA DE FUEGUITO (RACHA DIARIA)
 // ============================================
 
+// Helper: obtener total de depósitos del usuario en los últimos N días
+const getDepositsInPeriod = async (username, daysBack) => {
+  const since = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000);
+  try {
+    const result = await Transaction.aggregate([
+      { $match: { username, type: 'deposit', createdAt: { $gte: since } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } }
+    ]);
+    return result[0]?.total || 0;
+  } catch (err) {
+    logger.error(`Error calculando depósitos de ${username}: ${err.message}`);
+    return 0;
+  }
+};
+
+// Hitos/milestones del Fueguito
+const FIRE_MILESTONES = [
+  { day: 10, reward: 10000,  type: 'cash',           requireDeposits: 0,      desc: 'Recompensa Fueguito 10 días' },
+  { day: 15, reward: 0,      type: 'next_load_bonus', requireDeposits: 0,      desc: '100% en próxima carga' },
+  { day: 20, reward: 50000,  type: 'cash',           requireDeposits: 100000, desc: 'Recompensa Fueguito 20 días' },
+  { day: 30, reward: 200000, type: 'cash',           requireDeposits: 300000, desc: 'Recompensa Fueguito 30 días' }
+];
+
 app.get('/api/fire/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -3903,14 +3922,39 @@ app.get('/api/fire/status', authMiddleware, async (req, res) => {
       );
       fireStreak.streak = 0;
     }
+
+    const currentStreak = fireStreak.streak || 0;
+
+    // Construir lista de milestones con estado para la UI
+    const milestones = FIRE_MILESTONES.map(m => {
+      let status;
+      if (currentStreak >= m.day) {
+        status = 'completed';
+      } else if (currentStreak === m.day - 1) {
+        status = 'next';
+      } else {
+        status = 'locked';
+      }
+      return {
+        day: m.day,
+        type: m.type,
+        reward: m.type === 'cash' ? m.reward : null,
+        hasDepositRequirement: m.requireDeposits > 0,
+        status
+      };
+    });
     
     res.json({
-      streak: fireStreak.streak || 0,
+      streak: currentStreak,
       lastClaim: fireStreak.lastClaim,
       totalClaimed: fireStreak.totalClaimed || 0,
-      canClaim: canClaim,
-      hasActivityToday: true,
-      nextReward: fireStreak.streak >= 9 ? 10000 : 0
+      canClaim,
+      pendingNextLoadBonus: fireStreak.pendingNextLoadBonus || false,
+      pendingCashReward: fireStreak.pendingCashReward || 0,
+      pendingCashRewardDay: fireStreak.pendingCashRewardDay || 0,
+      pendingCashRewardDesc: fireStreak.pendingCashRewardDesc || '',
+      milestones,
+      nextReward: currentStreak >= 9 ? 10000 : 0
     });
   } catch (error) {
     console.error('Error obteniendo estado del fueguito:', error);
@@ -3935,6 +3979,12 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
     if (lastClaim === todayArgentina) {
       return res.status(400).json({ error: 'Ya reclamaste tu fueguito hoy' });
     }
+
+    // Verificar depósito mínimo del mes (20.000 ARS)
+    const monthlyDeposits = await getDepositsInPeriod(username, 30);
+    if (monthlyDeposits < 20000) {
+      return res.status(400).json({ error: 'Para acceder al Fueguito diario necesitás tener movimientos de cargas durante el mes.' });
+    }
     
     const yesterdayArgentina = getArgentinaYesterday();
     
@@ -3947,45 +3997,42 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
     fireStreak.lastClaim = new Date();
     
     let reward = 0;
-    let message = `Día ${fireStreak.streak} de racha!`;
-    
-    if (fireStreak.streak === 10) {
-      reward = 10000;
-      fireStreak.totalClaimed += reward;
-      
-      const bonusResult = await jugayganaMovements.makeBonus(
-        username,
-        reward,
-        `Recompensa racha 10 días - Sala de Juegos`
-      );
-      
-      if (!bonusResult.success) {
-        const serializeErrorPart = (value) => {
-          if (typeof value === 'string') return value;
-          if (value instanceof Error) {
-            return JSON.stringify({ name: value.name, message: value.message, stack: value.stack });
-          }
-          try { return JSON.stringify(value); } catch { return String(value); }
-        };
-        const creditError = typeof bonusResult.error === 'string'
-          ? bonusResult.error
-          : (bonusResult.error?.message || bonusResult.error?.error || bonusResult.error?.details || JSON.stringify(bonusResult.error) || 'Error desconocido al acreditar recompensa');
-        logger.error(
-          `[FIRE_REWARD] creditBalance failed userId=${userId} username=${username} ` +
-          `bonusResult=${serializeErrorPart(bonusResult)} bonusError=${serializeErrorPart(bonusResult?.error)}`
-        );
-        return res.status(400).json({ 
-          error: 'Error al acreditar recompensa: ' + creditError 
-        });
+    let rewardType = 'none';
+    let message = `¡Día ${fireStreak.streak} de racha! Seguí así 🔥`;
+
+    // Determinar si se alcanza un hito
+    const milestone = FIRE_MILESTONES.find(m => m.day === fireStreak.streak);
+    if (milestone) {
+      if (milestone.type === 'next_load_bonus') {
+        // Día 15: 100% en próxima carga (se marca como pendiente para operador)
+        rewardType = 'next_load_bonus';
+        fireStreak.pendingNextLoadBonus = true;
+        message = '🎉 ¡15 días de racha! Tenés 100% en tu próxima carga. Un operador te lo aplicará cuando quieras reclamar.';
+      } else if (milestone.type === 'cash') {
+        // Verificar depósitos si el hito lo requiere
+        let meetsDepositReq = true;
+        if (milestone.requireDeposits > 0) {
+          const deposits = await getDepositsInPeriod(username, 45);
+          meetsDepositReq = deposits >= milestone.requireDeposits;
+        }
+        if (meetsDepositReq) {
+          // Guardar como recompensa pendiente (el usuario la reclama explícitamente)
+          rewardType = 'cash_pending';
+          reward = milestone.reward;
+          fireStreak.pendingCashReward = (fireStreak.pendingCashReward || 0) + milestone.reward;
+          fireStreak.pendingCashRewardDay = fireStreak.streak;
+          fireStreak.pendingCashRewardDesc = milestone.desc;
+          message = `🔥 ¡${fireStreak.streak} días de racha! Tenés una recompensa de $${milestone.reward.toLocaleString()} para reclamar en el recuadro de Fueguito.`;
+        } else {
+          message = `🔥 ¡${fireStreak.streak} días de racha! Recompensa disponible cuando cumplas el requisito de actividad del mes.`;
+        }
       }
-      
-      message = `¡Felicidades! 10 días de racha! Recompensa: $${reward.toLocaleString()}`;
     }
     
     fireStreak.history = fireStreak.history || [];
     fireStreak.history.push({
       date: new Date(),
-      reward,
+      reward: rewardType === 'cash_pending' ? reward : 0,
       streakDay: fireStreak.streak
     });
     
@@ -3994,12 +4041,79 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
     res.json({
       success: true,
       streak: fireStreak.streak,
-      reward,
+      reward: rewardType === 'cash_pending' ? reward : 0,
+      rewardType,
       message,
-      totalClaimed: fireStreak.totalClaimed
+      totalClaimed: fireStreak.totalClaimed,
+      pendingNextLoadBonus: fireStreak.pendingNextLoadBonus || false,
+      pendingCashReward: fireStreak.pendingCashReward || 0,
+      pendingCashRewardDay: fireStreak.pendingCashRewardDay || 0
     });
   } catch (error) {
     console.error('Error reclamando fueguito:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Reclamar recompensa pendiente de Fueguito (efectivo)
+app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+
+    const fireStreak = await FireStreak.findOne({ userId });
+    if (!fireStreak || !fireStreak.pendingCashReward || fireStreak.pendingCashReward <= 0) {
+      return res.status(400).json({ error: 'No hay recompensa pendiente para reclamar.' });
+    }
+
+    const rewardAmount = fireStreak.pendingCashReward;
+    const rewardDesc = fireStreak.pendingCashRewardDesc || `Recompensa Fueguito día ${fireStreak.pendingCashRewardDay}`;
+
+    const serializeErrorPart = (value) => {
+      if (typeof value === 'string') return value;
+      if (value instanceof Error) {
+        return JSON.stringify({ name: value.name, message: value.message, stack: value.stack });
+      }
+      try { return JSON.stringify(value); } catch { return String(value); }
+    };
+
+    const bonusResult = await jugayganaMovements.makeBonus(username, rewardAmount, rewardDesc + ' - Sala de Juegos');
+    
+    if (!bonusResult.success) {
+      const creditError = typeof bonusResult.error === 'string'
+        ? bonusResult.error
+        : (bonusResult.error?.message || bonusResult.error?.error || bonusResult.error?.details || JSON.stringify(bonusResult.error) || 'Error al acreditar recompensa');
+      logger.error(
+        `[FIRE_REWARD] claim-reward failed userId=${userId} username=${username} ` +
+        `bonusResult=${serializeErrorPart(bonusResult)} bonusError=${serializeErrorPart(bonusResult?.error)}`
+      );
+      return res.status(400).json({ error: 'Error al acreditar recompensa: ' + creditError });
+    }
+
+    // Limpiar pending reward y sumar al total
+    fireStreak.totalClaimed = (fireStreak.totalClaimed || 0) + rewardAmount;
+    fireStreak.pendingCashReward = 0;
+    fireStreak.pendingCashRewardDay = 0;
+    fireStreak.pendingCashRewardDesc = '';
+    await fireStreak.save();
+
+    await Transaction.create({
+      id: uuidv4(),
+      type: 'fire_reward',
+      amount: rewardAmount,
+      username,
+      description: rewardDesc
+    }).catch(() => {});
+
+    logger.info(`[FIRE_REWARD] claim-reward OK userId=${userId} username=${username} amount=${rewardAmount}`);
+
+    res.json({
+      success: true,
+      reward: rewardAmount,
+      message: `🎉 ¡$${rewardAmount.toLocaleString()} acreditados en tu cuenta!`
+    });
+  } catch (error) {
+    console.error('Error reclamando recompensa Fueguito:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
