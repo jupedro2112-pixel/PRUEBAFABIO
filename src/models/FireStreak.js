@@ -44,6 +44,20 @@ const fireStreakSchema = new mongoose.Schema({
   pendingNextLoadBonus: {
     type: Boolean,
     default: false
+  },
+  // Premio en efectivo pendiente de reclamo (días 10, 20, 30)
+  pendingCashReward: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  pendingCashRewardDay: {
+    type: Number,
+    default: 0
+  },
+  pendingCashRewardDesc: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true

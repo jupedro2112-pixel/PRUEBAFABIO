@@ -472,7 +472,8 @@ CBU activo: ${cbuNumber}`;
                 'Abrí esta página en <strong>Safari</strong> (no Chrome, no otro navegador)',
                 'Tocá el botón <strong>Compartir</strong> <span style="font-size:18px">⬆️</span> en la barra inferior de Safari',
                 'Deslizá hacia abajo y tocá <strong>"Agregar a pantalla de inicio"</strong>',
-                'Presioná <strong>"Agregar"</strong>'
+                'Presioná <strong>"Agregar"</strong>',
+                '🔔 <strong>MUY IMPORTANTE:</strong> Después de instalarla, abrí la app y <strong>activá las notificaciones</strong> cuando te lo pida. Sin esto, <u>no te van a llegar las notificaciones push</u>.'
             ];
         } else if (platform === 'android') {
             title = '📱 Instalar en Android';
@@ -481,7 +482,8 @@ CBU activo: ${cbuNumber}`;
                 'Abrí esta página en <strong>Google Chrome</strong>',
                 'Tocá el ícono <strong>⋮</strong> (tres puntos) en la esquina superior derecha',
                 'Seleccioná <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong>',
-                'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>'
+                'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>',
+                '🔔 <strong>MUY IMPORTANTE:</strong> Después de instalarla, abrí la app y <strong>activá las notificaciones</strong> cuando te lo pida. Sin esto, <u>no te van a llegar las notificaciones push</u>.'
             ];
         } else if (platform === 'windows') {
             title = '💻 Instalar en Windows (PC)';
@@ -523,6 +525,15 @@ CBU activo: ${cbuNumber}`;
     }
 
     function isAppInstalled() {
+        const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                           window.navigator.standalone === true;
+        if (!standalone) return false;
+        // Also require notification permission to be granted
+        const notifGranted = ('Notification' in window) && Notification.permission === 'granted';
+        return notifGranted;
+    }
+
+    function isAppStandalone() {
         return window.matchMedia('(display-mode: standalone)').matches ||
                window.navigator.standalone === true;
     }
@@ -551,7 +562,8 @@ CBU activo: ${cbuNumber}`;
         loadCanalInformativoUrl,
         installApp,
         showInstallInstructions,
-        isAppInstalled
+        isAppInstalled,
+        isAppStandalone
     };
 
 })();
@@ -599,7 +611,7 @@ window.addEventListener('appinstalled', () => {
 });
 
 // Hide install buttons if already running as standalone
-if (VIP.ui.isAppInstalled()) {
+if (VIP.ui.isAppStandalone()) {
     const loginInstallBtn  = document.getElementById('installBtn');
     const headerInstallBtn = document.getElementById('headerInstallBtn');
     const appInstallBtn    = document.getElementById('appInstallBtn');

@@ -620,8 +620,9 @@
     #plataformaBtn { display: inline-flex !important; font-size: 12px; padding: 8px 14px; font-weight: 900; }
     /* Hide user-action-btns (settings/referral/logout) on mobile */
     .header-left .user-action-btns { display: none; }
-    /* Show refund buttons on mobile (they are in header-center) */
-    .header-center .refund-btn { display: flex !important; font-size: 8px; padding: 5px 6px; min-width: 58px; }
+    /* Hide individual refund buttons on mobile, show unified one instead */
+    .header-center .refund-btn:not(.unified-refund-btn) { display: none !important; }
+    .header-center .unified-refund-btn { display: flex !important; font-size: 11px; padding: 7px 10px; font-weight: 700; align-items: center; justify-content: center; background: linear-gradient(135deg, #c0392b, #e74c3c); color: #fff; border-radius: 10px; border: none; cursor: pointer; }
     /* Make header a single row on mobile: fire | plataforma | refunds | hamburger */
     .header {
         display: flex;
