@@ -498,6 +498,15 @@ const bonus = async (username, amount, description = '') => {
   );
 
   const attemptBonus = async () => {
+    // Guard: if sessionToken is null at call time, force retry with fresh login
+    if (!sessionToken) {
+      logger.warn(
+        `[JugayganaService] bonus: sessionToken nulo antes de llamada API, forzando re-login ` +
+        `username=${username} childid=${childid}`
+      );
+      return { success: false, error: { code: 17, message: 'token missing' }, shouldRetry: true };
+    }
+
     try {
       const body = toFormUrlEncoded({
         action: 'DepositMoney',
@@ -548,13 +557,24 @@ const bonus = async (username, amount, description = '') => {
       logger.error(
         `[JugayganaService] bonus: DepositMoney falló username=${username} childid=${childid} ` +
         `referralPayoutProviderAction=DepositMoney usesChildId=true ` +
-        `payoutProviderResponse=${rawBody} errorMessage=${errMsg}`
+        `payoutProviderResponse=${rawBody} errorMessage=${JSON.stringify(errMsg)}`
       );
+
+      // Extract string representation for auth-error detection.
+      // data.error may be an object like {code:17, message:'token missing'} — handle both.
+      const errMsgStr = typeof errMsg === 'string'
+        ? errMsg
+        : (errMsg?.message || errMsg?.error || '');
+      const errCode = (typeof errMsg === 'object' && errMsg !== null) ? errMsg.code : null;
+
       // Only retry for real session/auth errors — NOT for "action does not exist"
       // which is a provider API contract error, not a stale-token error.
-      const shouldRetry = typeof errMsg === 'string' && (
-        errMsg.toLowerCase().includes('invalid token') ||
-        errMsg.toLowerCase().includes('session') ||
+      // JUGAYGANA auth error codes: 12 = token invalid, 17 = token missing.
+      const shouldRetry = (errCode === 12 || errCode === 17) || (
+        errMsgStr.toLowerCase().includes('invalid token') ||
+        errMsgStr.toLowerCase().includes('token missing') ||
+        errMsgStr.toLowerCase().includes('login again') ||
+        errMsgStr.toLowerCase().includes('session') ||
         resp.status === 401 || resp.status === 403
       );
       return { success: false, error: errMsg, shouldRetry };

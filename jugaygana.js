@@ -73,11 +73,21 @@ function isHtmlBlocked(data) {
 function isSessionError(data, httpStatus) {
   if (httpStatus === 401 || httpStatus === 403) return true;
   if (isHtmlBlocked(data)) return true;
-  if (typeof data?.error === 'string') {
-    const errLower = data.error.toLowerCase();
+  const err = data?.error;
+  if (typeof err === 'string') {
+    const errLower = err.toLowerCase();
     return errLower.includes('token') || errLower.includes('session') ||
            errLower.includes('expired') || errLower.includes('invalid') ||
            errLower.includes('unauthorized') || errLower.includes('auth');
+  }
+  // Handle object-type error (e.g. {code:12, message:'Your token is not valid'} or {code:17, message:'token missing'})
+  if (typeof err === 'object' && err !== null) {
+    const code = err.code;
+    if (code === 12 || code === 17) return true;
+    const msgLower = (err.message || '').toLowerCase();
+    return msgLower.includes('token') || msgLower.includes('session') ||
+           msgLower.includes('expired') || msgLower.includes('invalid') ||
+           msgLower.includes('unauthorized') || msgLower.includes('auth');
   }
   return false;
 }
@@ -1187,5 +1197,7 @@ module.exports = {
   changeUserPassword,
   getYesterdayRangeArgentinaEpoch,
   getLastWeekRangeArgentinaEpoch,
-  getLastMonthRangeArgentinaEpoch
+  getLastMonthRangeArgentinaEpoch,
+  getSessionToken: () => SESSION_TOKEN,
+  getSessionCookie: () => SESSION_COOKIE
 };
