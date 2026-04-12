@@ -4185,9 +4185,107 @@ function resetNotifBatch() {
 }
 
 function updateNotifNextBatchVisibility() {
+    const mode = document.querySelector('input[name="notifMode"]:checked')?.value || 'batch';
+    if (mode === 'all_app') return; // handled by updateNotifModeUI
     const segment = document.getElementById('notifSegment')?.value || 'all';
     const offsetDiv = document.getElementById('notifOffsetDiv');
     if (offsetDiv) offsetDiv.style.display = (segment !== 'specific') ? 'block' : 'none';
+}
+
+function updateNotifModeUI() {
+    const mode = document.querySelector('input[name="notifMode"]:checked')?.value || 'batch';
+    const batchControls = document.getElementById('notifBatchControls');
+    const allAppControls = document.getElementById('notifAllAppControls');
+    const modeInfo = document.getElementById('notifModeInfo');
+
+    if (mode === 'all_app') {
+        if (batchControls) batchControls.style.display = 'none';
+        if (allAppControls) allAppControls.style.display = '';
+        if (modeInfo) {
+            modeInfo.style.display = 'block';
+            modeInfo.textContent = '📱 Se enviará a todos los usuarios que tengan la app instalada, automáticamente por lotes de 200.';
+        }
+    } else {
+        if (batchControls) batchControls.style.display = 'flex';
+        if (allAppControls) allAppControls.style.display = 'none';
+        if (modeInfo) modeInfo.style.display = 'none';
+        updateNotifNextBatchVisibility();
+    }
+}
+
+async function sendAllWithApp() {
+    const title = document.getElementById('notifTitle')?.value?.trim();
+    const body = document.getElementById('notifBody')?.value?.trim();
+    if (!title || !body) {
+        showToast('❌ El título y el mensaje son obligatorios', 'error');
+        return;
+    }
+
+    const sendBtn = document.getElementById('notifSendAllBtn');
+    const progressEl = document.getElementById('notifAllAppProgress');
+    const resultEl = document.getElementById('notifResult');
+    const resultContent = document.getElementById('notifResultContent');
+
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '⏳ Enviando...'; }
+    if (progressEl) { progressEl.style.display = 'block'; progressEl.textContent = 'Iniciando envío...'; }
+
+    let offset = 0;
+    let totalSent = 0;
+    let totalFailed = 0;
+    let totalSegment = 0;
+    let batchNum = 0;
+
+    try {
+        while (true) {
+            batchNum++;
+            if (progressEl) progressEl.textContent = `Lote ${batchNum}: enviando desde usuario ${offset}...`;
+
+            const res = await fetch(`${API_URL}/api/notifications/send-batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+                body: JSON.stringify({ title, body, batchSize: 200, segment: 'all', batchOffset: offset })
+            });
+            const data = await res.json();
+
+            if (!data.success) {
+                showToast(`❌ Error en lote ${batchNum}: ${data.error || 'Error desconocido'}`, 'error');
+                break;
+            }
+
+            totalSent += data.successCount || 0;
+            totalFailed += data.failureCount || 0;
+            totalSegment = data.totalSegmentUsers || totalSegment;
+
+            if (progressEl) {
+                progressEl.textContent = `Lote ${batchNum} OK — Enviados: ${totalSent} / ${totalSegment} | Fallidos acumulados: ${totalFailed}`;
+            }
+
+            if (!data.remaining || data.remaining <= 0) {
+                break;
+            }
+            offset = data.nextOffset;
+        }
+
+        if (resultEl) resultEl.style.display = 'block';
+        if (resultContent) {
+            resultContent.innerHTML = `
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1rem">
+                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${totalSent}</div><div style="color:#aaa;font-size:.8rem">Enviados</div></div>
+                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#f87171">${totalFailed}</div><div style="color:#aaa;font-size:.8rem">Fallidos</div></div>
+                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${totalSegment}</div><div style="color:#aaa;font-size:.8rem">Total con app</div></div>
+                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${batchNum}</div><div style="color:#aaa;font-size:.8rem">Lotes usados</div></div>
+                </div>`;
+        }
+        if (progressEl) progressEl.textContent = `✅ Envío completo: ${totalSent} enviados de ${totalSegment} con app.`;
+        showToast(`✅ Enviado a ${totalSent} usuarios con app`, 'success');
+        loadNotificationsPanel();
+    } catch (e) {
+        showToast('❌ Error de conexión durante el envío masivo', 'error');
+        console.error('[Notif Panel] Error en sendAllWithApp:', e);
+        if (progressEl) progressEl.textContent = `❌ Error en lote ${batchNum}. Enviados hasta ahora: ${totalSent}.`;
+    } finally {
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📤 Enviar a TODOS con app'; }
+    }
 }
 
 async function cleanInvalidTokens() {
@@ -4231,6 +4329,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Inicializar UI de modo de notificaciones
+    updateNotifModeUI();
+
     // Búsqueda de usuarios en la sección Usuarios
     const searchUsersInput = document.getElementById('searchUsers');
     if (searchUsersInput) {
@@ -4247,6 +4348,8 @@ window.sendBatchNotification = sendBatchNotification;
 window.sendNextBatch = sendNextBatch;
 window.resetNotifBatch = resetNotifBatch;
 window.cleanInvalidTokens = cleanInvalidTokens;
+window.updateNotifModeUI = updateNotifModeUI;
+window.sendAllWithApp = sendAllWithApp;
 window.applyDatosRange = applyDatosRange;
 
 // =============================================
