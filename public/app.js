@@ -1252,7 +1252,7 @@ function initSocket() {
         const message = data.message || data;
 
         // No mostrar mensajes internos/admin al usuario final
-        if (message.adminOnly || message.type === 'system') return;
+        if (message.adminOnly) return;
         
         // CORREGIDO: Verificar si el mensaje ya fue procesado (evitar duplicados)
         if (message.id && processedMessageIds.has(message.id)) {
@@ -1478,7 +1478,7 @@ function renderMessages(messages) {
 // Crea el elemento DOM de un mensaje (sin agregarlo al contenedor)
 function createMessageElement(message) {
     // No mostrar mensajes internos/admin al usuario final
-    if (message.adminOnly || message.type === 'system') return null;
+    if (message.adminOnly) return null;
 
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     const isFromUser = message.senderRole === 'user';
