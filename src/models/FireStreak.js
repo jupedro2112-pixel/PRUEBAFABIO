@@ -63,7 +63,7 @@ const fireStreakSchema = new mongoose.Schema({
   // Se usa para expirarla automáticamente si no se reclama el mismo día
   pendingCashRewardDate: {
     type: String,
-    default: null
+    default: ''
   }
 }, {
   timestamps: true

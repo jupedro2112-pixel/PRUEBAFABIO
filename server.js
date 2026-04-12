@@ -3932,12 +3932,12 @@ app.get('/api/fire/status', authMiddleware, async (req, res) => {
     let pendingCashRewardDay = fireStreak.pendingCashRewardDay || 0;
     let pendingCashRewardDesc = fireStreak.pendingCashRewardDesc || '';
     if (pendingCashReward > 0) {
-      const rewardDate = fireStreak.pendingCashRewardDate || null;
+      const rewardDate = fireStreak.pendingCashRewardDate || '';
       if (rewardDate !== todayArgentina) {
         // La recompensa expiró — limpiarla silenciosamente
         await FireStreak.updateOne(
           { userId },
-          { pendingCashReward: 0, pendingCashRewardDay: 0, pendingCashRewardDesc: '', pendingCashRewardDate: null }
+          { pendingCashReward: 0, pendingCashRewardDay: 0, pendingCashRewardDesc: '', pendingCashRewardDate: '' }
         );
         pendingCashReward = 0;
         pendingCashRewardDay = 0;
@@ -4028,14 +4028,23 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
       } else if (milestone.type === 'cash') {
         // Req 6: Siempre setear la recompensa como pendiente, sin verificar depósitos aquí.
         // La verificación de actividad ocurre al reclamar la recompensa (/api/fire/claim-reward).
-        rewardType = 'cash_pending';
-        reward = milestone.reward;
-        fireStreak.pendingCashReward = milestone.reward;
-        fireStreak.pendingCashRewardDay = fireStreak.streak;
-        fireStreak.pendingCashRewardDesc = milestone.desc;
-        // Req 1: Guardar la fecha Argentina en que se desbloqueó para auto-expirar al día siguiente
-        fireStreak.pendingCashRewardDate = todayArgentina;
-        message = `🔥 ¡${fireStreak.streak} días de racha! Tenés una recompensa de $${milestone.reward.toLocaleString()} para reclamar en el recuadro de Fueguito.`;
+        // Solo setear si no hay ya una recompensa pendiente vigente del mismo día para no sobreescribir.
+        const existingDate = fireStreak.pendingCashRewardDate || '';
+        if (!fireStreak.pendingCashReward || existingDate !== todayArgentina) {
+          rewardType = 'cash_pending';
+          reward = milestone.reward;
+          fireStreak.pendingCashReward = milestone.reward;
+          fireStreak.pendingCashRewardDay = fireStreak.streak;
+          fireStreak.pendingCashRewardDesc = milestone.desc;
+          // Req 1: Guardar la fecha Argentina en que se desbloqueó para auto-expirar al día siguiente
+          fireStreak.pendingCashRewardDate = todayArgentina;
+          message = `🔥 ¡${fireStreak.streak} días de racha! Tenés una recompensa de $${milestone.reward.toLocaleString()} para reclamar en el recuadro de Fueguito.`;
+        } else {
+          // Ya hay una recompensa pendiente del mismo día: no sobreescribir
+          rewardType = 'cash_pending';
+          reward = fireStreak.pendingCashReward;
+          message = `🔥 ¡${fireStreak.streak} días de racha! Tenés una recompensa de $${fireStreak.pendingCashReward.toLocaleString()} para reclamar en el recuadro de Fueguito.`;
+        }
       }
     }
     
@@ -4078,12 +4087,13 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
 
     // Req 1: Verificar que la recompensa no expiró (solo reclamable el mismo día)
     const todayArg = getArgentinaDateString();
-    if (fireStreak.pendingCashRewardDate && fireStreak.pendingCashRewardDate !== todayArg) {
+    const rewardDateStr = fireStreak.pendingCashRewardDate || '';
+    if (rewardDateStr && rewardDateStr !== todayArg) {
       // Limpiar recompensa expirada
       fireStreak.pendingCashReward = 0;
       fireStreak.pendingCashRewardDay = 0;
       fireStreak.pendingCashRewardDesc = '';
-      fireStreak.pendingCashRewardDate = null;
+      fireStreak.pendingCashRewardDate = '';
       await fireStreak.save();
       return res.status(400).json({ error: 'La recompensa expiró. Solo podés reclamarla el mismo día que llegaste al hito.' });
     }
@@ -4131,7 +4141,7 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
     fireStreak.pendingCashReward = 0;
     fireStreak.pendingCashRewardDay = 0;
     fireStreak.pendingCashRewardDesc = '';
-    fireStreak.pendingCashRewardDate = null;
+    fireStreak.pendingCashRewardDate = '';
     await fireStreak.save();
 
     await Transaction.create({
@@ -4280,8 +4290,9 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
 
     // Req 8: Filtrar por username si se especifica
     if (username && username.trim()) {
-      // Escapar caracteres especiales de regex para evitar ReDoS
-      const safeUsername = username.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Limitar longitud y escapar caracteres especiales de regex para evitar ReDoS / injection
+      const rawUsername = username.trim().substring(0, 100);
+      const safeUsername = rawUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.username = { $regex: safeUsername, $options: 'i' };
     }
     
