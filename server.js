@@ -3889,6 +3889,9 @@ const getDepositsInPeriod = async (username, daysBack) => {
   }
 };
 
+// Mínimo de depósitos mensuales para acceder al Fueguito diario
+const FIRE_MIN_MONTHLY_DEPOSIT = 20000;
+
 // Hitos/milestones del Fueguito
 const FIRE_MILESTONES = [
   { day: 10, reward: 10000,  type: 'cash',           requireDeposits: 0,      desc: 'Recompensa Fueguito 10 días' },
@@ -3982,7 +3985,7 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
 
     // Verificar depósito mínimo del mes (20.000 ARS)
     const monthlyDeposits = await getDepositsInPeriod(username, 30);
-    if (monthlyDeposits < 20000) {
+    if (monthlyDeposits < FIRE_MIN_MONTHLY_DEPOSIT) {
       return res.status(400).json({ error: 'Para acceder al Fueguito diario necesitás tener movimientos de cargas durante el mes.' });
     }
     

@@ -56,13 +56,13 @@ VIP.fire = (function () {
         const milestones = VIP.state.fireStatus.milestones || [];
         const nextMilestone = milestones.find(m => m.status === 'next' || m.status === 'locked');
         const progressTarget = nextMilestone ? nextMilestone.day : 10;
-        const prevMilestoneDay = (() => {
+        const lastCompletedMilestoneDay = (() => {
             // El día de inicio del tramo actual
             const completed = milestones.filter(m => m.status === 'completed');
             return completed.length > 0 ? completed[completed.length - 1].day : 0;
         })();
-        const progressInSegment = streak - prevMilestoneDay;
-        const segmentLength = progressTarget - prevMilestoneDay;
+        const progressInSegment = streak - lastCompletedMilestoneDay;
+        const segmentLength = progressTarget - lastCompletedMilestoneDay;
         const progressPercent = Math.min((progressInSegment / segmentLength) * 100, 100);
         document.getElementById('fireProgressBar').style.width = progressPercent + '%';
         document.getElementById('fireProgressBar').textContent = Math.round(progressPercent) + '%';
