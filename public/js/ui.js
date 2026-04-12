@@ -453,6 +453,10 @@ CBU activo: ${cbuNumber}`;
 
         if (outcome === 'accepted') {
             showToast('✅ Instalando app...', 'success');
+            // Recordatorio de notificaciones para Android (flujo directo via deferredPrompt)
+            setTimeout(() => {
+                showInstallInstructions('android-notif');
+            }, 2000);
         } else {
             showToast('❌ Instalación cancelada', 'error');
         }
@@ -464,6 +468,36 @@ CBU activo: ${cbuNumber}`;
         modal.className = 'ios-install-modal';
 
         let title, steps, note;
+        // Plataformas móviles: se muestra el aviso de notificaciones
+        const isMobilePlatform = platform === 'ios' || platform === 'android' || platform === 'android-notif';
+
+        // Pantalla dedicada de recordatorio de notificaciones post-instalación (Android nativo)
+        if (platform === 'android-notif') {
+            modal.innerHTML = `
+                <div class="ios-install-content">
+                    <h3>🔔 Un paso más</h3>
+                    <div style="
+                        background: rgba(255, 107, 53, 0.15);
+                        border: 2px solid #ff6b35;
+                        border-radius: 10px;
+                        padding: 14px 16px;
+                        text-align: left;
+                    ">
+                        <p style="margin: 0; color: #ff6b35; font-weight: bold; font-size: 15px;">
+                            🔔 LO MÁS IMPORTANTE: PERMITIR NOTIFICACIONES
+                        </p>
+                        <p style="margin: 10px 0 0; color: #fff; font-size: 13px;">
+                            Cuando abras la app instalada y te pida acceso,
+                            <strong>aceptá y permitir notificaciones</strong>.<br>
+                            Sin esto, <u>no te van a llegar los avisos importantes</u>.
+                        </p>
+                    </div>
+                    <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="margin-top:15px;">Entendido</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            return;
+        }
 
         if (platform === 'ios') {
             title = '📱 Instalar en iPhone / iPad';
@@ -472,8 +506,7 @@ CBU activo: ${cbuNumber}`;
                 'Abrí esta página en <strong>Safari</strong> (no Chrome, no otro navegador)',
                 'Tocá el botón <strong>Compartir</strong> <span style="font-size:18px">⬆️</span> en la barra inferior de Safari',
                 'Deslizá hacia abajo y tocá <strong>"Agregar a pantalla de inicio"</strong>',
-                'Presioná <strong>"Agregar"</strong>',
-                '🔔 <strong>MUY IMPORTANTE:</strong> Después de instalarla, abrí la app y <strong>activá las notificaciones</strong> cuando te lo pida. Sin esto, <u>no te van a llegar las notificaciones push</u>.'
+                'Presioná <strong>"Agregar"</strong>'
             ];
         } else if (platform === 'android') {
             title = '📱 Instalar en Android';
@@ -482,8 +515,7 @@ CBU activo: ${cbuNumber}`;
                 'Abrí esta página en <strong>Google Chrome</strong>',
                 'Tocá el ícono <strong>⋮</strong> (tres puntos) en la esquina superior derecha',
                 'Seleccioná <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong>',
-                'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>',
-                '🔔 <strong>MUY IMPORTANTE:</strong> Después de instalarla, abrí la app y <strong>activá las notificaciones</strong> cuando te lo pida. Sin esto, <u>no te van a llegar las notificaciones push</u>.'
+                'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>'
             ];
         } else if (platform === 'windows') {
             title = '💻 Instalar en Windows (PC)';
@@ -513,11 +545,31 @@ CBU activo: ${cbuNumber}`;
             ];
         }
 
+        // Aviso de notificaciones destacado para iOS y Android
+        const notifWarning = isMobilePlatform ? `
+            <div style="
+                background: rgba(255, 107, 53, 0.15);
+                border: 2px solid #ff6b35;
+                border-radius: 10px;
+                padding: 12px 15px;
+                margin-top: 15px;
+                text-align: left;
+            ">
+                <p style="margin: 0; color: #ff6b35; font-weight: bold; font-size: 14px;">
+                    🔔 LO MÁS IMPORTANTE: PERMITIR NOTIFICACIONES
+                </p>
+                <p style="margin: 8px 0 0; color: #fff; font-size: 13px;">
+                    Una vez instalada, cuando la app te pida acceso, <strong>aceptá y permitir notificaciones</strong>.
+                    Sin esto, <u>no te van a llegar los avisos importantes</u>.
+                </p>
+            </div>` : '';
+
         modal.innerHTML = `
             <div class="ios-install-content">
                 <h3>${title}</h3>
                 ${note ? `<p style="color: #f7931e; margin-bottom: 12px;">${note}</p>` : ''}
                 <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>
+                ${notifWarning}
                 <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="margin-top:15px;">Entendido</button>
             </div>
         `;

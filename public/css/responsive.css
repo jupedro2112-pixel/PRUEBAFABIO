@@ -28,6 +28,7 @@
 @media (min-width: 1025px) and (max-width: 1440px) {
     .header {
         padding: 10px 15px;
+        padding-top: calc(10px + env(safe-area-inset-top, 0px));
         min-height: 75px;
     }
 
@@ -53,6 +54,7 @@
 @media (max-width: 1024px) {
     .header {
         padding: 10px;
+        padding-top: calc(10px + env(safe-area-inset-top, 0px));
         min-height: 70px;
     }
 
@@ -450,6 +452,7 @@
     .header {
         min-height: auto;
         padding: 4px 8px;
+        padding-top: calc(4px + env(safe-area-inset-top, 0px));
         flex-direction: row;
         flex-wrap: nowrap;
         row-gap: 0;
@@ -526,5 +529,52 @@
 
     .btn {
         border: 2px solid currentColor;
+    }
+}
+
+/* ================================================
+   PWA STANDALONE (instalada): ajuste para safe area
+   Compensa el crecimiento del header en iPhone/iPad
+   cuando la app está instalada y el notch/isla
+   dinámica añade espacio al safe-area-inset-top.
+   ================================================ */
+@media (display-mode: standalone) {
+    /* banner de promociones: se ancla justo debajo del header real */
+    .promo-banner {
+        top: calc(80px + env(safe-area-inset-top, 0px));
+    }
+    /* sección de chat: margen superior incluye la safe area */
+    .chat-section {
+        margin-top: calc(125px + env(safe-area-inset-top, 0px));
+    }
+}
+
+@media (display-mode: standalone) and (max-width: 1024px) {
+    .promo-banner {
+        top: calc(70px + env(safe-area-inset-top, 0px));
+    }
+    .chat-section {
+        margin-top: calc(115px + env(safe-area-inset-top, 0px));
+    }
+}
+
+@media (display-mode: standalone) and (max-width: 768px) {
+    .chat-section {
+        margin-top: calc(100px + env(safe-area-inset-top, 0px));
+    }
+}
+
+@media (display-mode: standalone) and (max-width: 480px) {
+    .promo-banner {
+        top: calc(60px + env(safe-area-inset-top, 0px));
+    }
+    .chat-section {
+        margin-top: calc(95px + env(safe-area-inset-top, 0px));
+    }
+}
+
+@media (display-mode: standalone) and (max-width: 375px) {
+    .chat-section {
+        margin-top: calc(92px + env(safe-area-inset-top, 0px));
     }
 }

@@ -4144,13 +4144,19 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
     fireStreak.pendingCashRewardDate = '';
     await fireStreak.save();
 
-    await Transaction.create({
-      id: uuidv4(),
-      type: 'fire_reward',
-      amount: rewardAmount,
-      username,
-      description: rewardDesc
-    }).catch(() => {});
+    try {
+      await Transaction.create({
+        id: uuidv4(),
+        type: 'fire_reward',
+        userId,
+        username,
+        amount: rewardAmount,
+        description: `Fueguito - ${rewardDesc}`,
+        timestamp: new Date()
+      });
+    } catch (txErr) {
+      logger.error(`[FIRE_REWARD] Error al guardar transacción userId=${userId} username=${username}: ${txErr.message}`);
+    }
 
     logger.info(`[FIRE_REWARD] claim-reward OK userId=${userId} username=${username} amount=${rewardAmount}`);
 
