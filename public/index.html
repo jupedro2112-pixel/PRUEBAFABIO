@@ -441,9 +441,6 @@
         </div>
     </div>
 
-    <!-- Modal Reembolso -->
-    <div id="refundModal" class="modal hidden" onclick="if(event.target===this)hideModal('refundModal')">
-
     <!-- Modal Picker de Reembolsos (solo móvil) -->
     <div id="unifiedRefundModal" class="modal hidden" onclick="if(event.target===this)hideModal('unifiedRefundModal')">
         <div class="modal-content" style="max-width:380px;position:relative;" onclick="event.stopPropagation()">
@@ -466,6 +463,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Modal Reembolso -->
+    <div id="refundModal" class="modal hidden" onclick="if(event.target===this)hideModal('refundModal')">
         <div class="modal-content" style="max-width: 500px; position: relative;" onclick="event.stopPropagation()">
             <button onclick="hideModal('refundModal')" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: #888; font-size: 22px; cursor: pointer; z-index: 10; line-height: 1;">✕</button>
             <div class="modal-header">

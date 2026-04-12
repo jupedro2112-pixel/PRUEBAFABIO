@@ -729,9 +729,27 @@
                         <textarea id="notifBody" class="form-input" rows="3" placeholder="Ej: Ingresá ahora y reclamá tu bono de reactivación." maxlength="250" style="resize:vertical"></textarea>
                     </div>
 
-                    <div style="display:flex;gap:1rem;margin-top:1rem;flex-wrap:wrap;align-items:center">
+                    <!-- Modo de envío -->
+                    <div style="margin-top:1rem;padding:1rem;background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.2);border-radius:10px">
+                        <label class="form-label" style="display:block;margin-bottom:.5rem;font-weight:600">📡 Modo de envío</label>
+                        <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+                            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;padding:.5rem .9rem;border-radius:8px;border:1px solid rgba(99,102,241,.4);background:rgba(99,102,241,.15)">
+                                <input type="radio" name="notifMode" id="notifModeAllApp" value="all_app" onchange="updateNotifModeUI()" style="accent-color:#6366f1">
+                                <span>📱 Todos con app <small style="color:#aaa">(de una sola vez)</small></span>
+                            </label>
+                            <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;padding:.5rem .9rem;border-radius:8px;border:1px solid rgba(255,255,255,.1)">
+                                <input type="radio" name="notifMode" id="notifModeBatch" value="batch" checked onchange="updateNotifModeUI()" style="accent-color:#6366f1">
+                                <span>📦 Por lote <small style="color:#aaa">(segmentado)</small></span>
+                            </label>
+                        </div>
+                        <!-- Info del modo seleccionado -->
+                        <div id="notifModeInfo" style="margin-top:.6rem;font-size:.82rem;color:#a5b4fc;display:none"></div>
+                    </div>
+
+                    <!-- Controles modo lote -->
+                    <div id="notifBatchControls" style="display:flex;gap:1rem;margin-top:1rem;flex-wrap:wrap;align-items:center">
                         <!-- Segmento -->
-                        <div>
+                        <div id="notifSegmentDiv">
                             <label class="form-label" style="display:block;margin-bottom:.3rem">Segmento</label>
                             <select id="notifSegment" class="form-input" style="min-width:200px">
                                 <option value="all">Todos con app instalada</option>
@@ -743,7 +761,7 @@
                             </select>
                         </div>
                         <!-- Tamaño de lote -->
-                        <div>
+                        <div id="notifBatchSizeDiv">
                             <label class="form-label" style="display:block;margin-bottom:.3rem">Tamaño de lote</label>
                             <select id="notifBatchSize" class="form-input" style="min-width:120px">
                                 <option value="50">50</option>
@@ -756,13 +774,25 @@
                             <label class="form-label" style="display:block;margin-bottom:.3rem">Desde usuario N°</label>
                             <input type="number" id="notifBatchOffset" class="form-input" value="0" min="0" style="min-width:90px">
                         </div>
-                        <!-- Botones enviar -->
+                        <!-- Botones enviar modo lote -->
                         <div style="align-self:flex-end;display:flex;gap:.5rem;flex-wrap:wrap">
                             <button id="notifSendBtn" class="btn btn-primary" onclick="sendBatchNotification()">🚀 Enviar lote</button>
                             <button id="notifNextBatchBtn" class="btn btn-secondary" onclick="sendNextBatch()" style="display:none" title="Continúa desde donde terminó el último envío">➡️ Siguiente lote</button>
                             <button class="btn btn-secondary btn-sm" onclick="resetNotifBatch()" title="Reiniciar offset a 0">🔄 Reiniciar lote</button>
                         </div>
                     </div>
+
+                    <!-- Controles modo todos con app -->
+                    <div id="notifAllAppControls" style="display:none;margin-top:1rem">
+                        <div style="padding:.75rem 1rem;background:rgba(0,255,136,.07);border:1px solid rgba(0,255,136,.2);border-radius:8px;margin-bottom:.75rem;font-size:.85rem;color:#86efac">
+                            📱 Se enviará a <strong>TODOS</strong> los usuarios que tengan la app instalada, en lotes automáticos de 200.
+                        </div>
+                        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+                            <button id="notifSendAllBtn" class="btn btn-primary" onclick="sendAllWithApp()" style="background:linear-gradient(135deg,#059669,#10b981)">📤 Enviar a TODOS con app</button>
+                        </div>
+                        <div id="notifAllAppProgress" style="display:none;margin-top:.75rem;padding:.6rem 1rem;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);border-radius:8px;font-size:.85rem;color:#6ee7b7"></div>
+                    </div>
+
                     <!-- Estado del lote -->
                     <div id="notifBatchStatus" style="display:none;margin-top:.75rem;padding:.6rem 1rem;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:8px;font-size:.85rem;color:#a5b4fc;"></div>
 
