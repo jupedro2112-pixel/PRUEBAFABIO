@@ -3960,15 +3960,20 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
       );
       
       if (!bonusResult.success) {
+        const serializeErrorPart = (value) => {
+          if (typeof value === 'string') return value;
+          if (value instanceof Error) {
+            return JSON.stringify({ name: value.name, message: value.message, stack: value.stack });
+          }
+          try { return JSON.stringify(value); } catch { return String(value); }
+        };
         const creditError = typeof bonusResult.error === 'string'
           ? bonusResult.error
           : (bonusResult.error?.message || bonusResult.error?.error || bonusResult.error?.details || JSON.stringify(bonusResult.error) || 'Error desconocido al acreditar recompensa');
-        logger.error('[FIRE_REWARD] creditBalance failed', {
-          userId,
-          username,
-          bonusResult,
-          error: bonusResult?.error
-        });
+        logger.error(
+          `[FIRE_REWARD] creditBalance failed userId=${userId} username=${username} ` +
+          `bonusResult=${serializeErrorPart(bonusResult)} bonusError=${serializeErrorPart(bonusResult?.error)}`
+        );
         return res.status(400).json({ 
           error: 'Error al acreditar recompensa: ' + creditError 
         });
