@@ -3960,8 +3960,17 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
       );
       
       if (!bonusResult.success) {
+        const creditError = typeof bonusResult.error === 'string'
+          ? bonusResult.error
+          : (bonusResult.error?.message || bonusResult.error?.error || bonusResult.error?.details || JSON.stringify(bonusResult.error) || 'Error desconocido al acreditar recompensa');
+        logger.error('[FIRE_REWARD] creditBalance failed', {
+          userId,
+          username,
+          bonusResult,
+          error: bonusResult?.error
+        });
         return res.status(400).json({ 
-          error: 'Error al acreditar recompensa: ' + bonusResult.error 
+          error: 'Error al acreditar recompensa: ' + creditError 
         });
       }
       

@@ -181,7 +181,13 @@ const claim = asyncHandler(async (req, res) => {
     if (!bonusResult.success) {
       const creditError = typeof bonusResult.error === 'string'
         ? bonusResult.error
-        : (bonusResult.error?.message || JSON.stringify(bonusResult.error) || 'Error desconocido al acreditar recompensa');
+        : (bonusResult.error?.message || bonusResult.error?.error || bonusResult.error?.details || JSON.stringify(bonusResult.error) || 'Error desconocido al acreditar recompensa');
+      logger.error('[FIRE_REWARD] creditBalance failed (day 10)', {
+        userId,
+        username,
+        bonusResult,
+        error: bonusResult?.error
+      });
       throw new AppError('Error al acreditar recompensa: ' + creditError, 400, ErrorCodes.TX_FAILED);
     }
     
@@ -219,7 +225,13 @@ const claim = asyncHandler(async (req, res) => {
       if (!bonusResult20.success) {
         const creditError20 = typeof bonusResult20.error === 'string'
           ? bonusResult20.error
-          : (bonusResult20.error?.message || JSON.stringify(bonusResult20.error) || 'Error desconocido al acreditar recompensa');
+          : (bonusResult20.error?.message || bonusResult20.error?.error || bonusResult20.error?.details || JSON.stringify(bonusResult20.error) || 'Error desconocido al acreditar recompensa');
+        logger.error('[FIRE_REWARD] creditBalance failed (day 20)', {
+          userId,
+          username,
+          bonusResult: bonusResult20,
+          error: bonusResult20?.error
+        });
         throw new AppError('Error al acreditar recompensa: ' + creditError20, 400, ErrorCodes.TX_FAILED);
       }
       
@@ -252,7 +264,13 @@ const claim = asyncHandler(async (req, res) => {
       if (!bonusResult30.success) {
         const creditError30 = typeof bonusResult30.error === 'string'
           ? bonusResult30.error
-          : (bonusResult30.error?.message || JSON.stringify(bonusResult30.error) || 'Error desconocido al acreditar recompensa');
+          : (bonusResult30.error?.message || bonusResult30.error?.error || bonusResult30.error?.details || JSON.stringify(bonusResult30.error) || 'Error desconocido al acreditar recompensa');
+        logger.error('[FIRE_REWARD] creditBalance failed (day 30)', {
+          userId,
+          username,
+          bonusResult: bonusResult30,
+          error: bonusResult30?.error
+        });
         throw new AppError('Error al acreditar recompensa: ' + creditError30, 400, ErrorCodes.TX_FAILED);
       }
       
