@@ -98,9 +98,9 @@ VIP.refunds = (function () {
             monthly: '🗓️ Reembolso Mensual (5%)'
         };
         const periodLabels = {
-            daily:   '📊 MOVIMIENTOS DE AYER',
-            weekly:  '📊 MOVIMIENTOS DE LA SEMANA PASADA (Lun-Dom)',
-            monthly: '📊 MOVIMIENTOS DEL MES PASADO'
+            daily:   '📊 PÉRDIDAS DE AYER',
+            weekly:  '📊 PÉRDIDAS DE LA SEMANA PASADA (Lun-Dom)',
+            monthly: '📊 PÉRDIDAS DEL MES PASADO'
         };
 
         document.getElementById('refundModalTitle').textContent = titles[type];
@@ -109,8 +109,6 @@ VIP.refunds = (function () {
         const currentBalance = VIP.state.refundStatus.user?.currentBalance || 0;
         document.getElementById('refundCurrentBalance').textContent = `$${currentBalance.toLocaleString()}`;
         document.getElementById('refundPeriod').textContent = typeData.period || '-';
-        document.getElementById('refundDeposits').textContent = `$${(typeData.deposits || 0).toLocaleString()}`;
-        document.getElementById('refundWithdrawals').textContent = `$${(typeData.withdrawals || 0).toLocaleString()}`;
         document.getElementById('refundNetAmount').textContent = `$${(typeData.netAmount || 0).toLocaleString()}`;
         document.getElementById('refundAmount').textContent = `$${(typeData.potentialAmount || 0).toLocaleString()}`;
 

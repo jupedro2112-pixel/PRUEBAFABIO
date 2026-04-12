@@ -207,7 +207,7 @@ const claim = asyncHandler(async (req, res) => {
     
     await Transaction.create({
       id: uuidv4(),
-      type: 'bonus',
+      type: 'fire_reward',
       amount: reward,
       username,
       description: 'Recompensa Fueguito 10 días'
@@ -249,7 +249,7 @@ const claim = asyncHandler(async (req, res) => {
       
       await Transaction.create({
         id: uuidv4(),
-        type: 'bonus',
+        type: 'fire_reward',
         amount: reward,
         username,
         description: 'Recompensa Fueguito 20 días'
@@ -286,7 +286,7 @@ const claim = asyncHandler(async (req, res) => {
       
       await Transaction.create({
         id: uuidv4(),
-        type: 'bonus',
+        type: 'fire_reward',
         amount: reward,
         username,
         description: 'Recompensa Fueguito 30 días'

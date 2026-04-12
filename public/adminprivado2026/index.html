@@ -104,6 +104,9 @@
                     <button id="installAppBtn" class="install-app-btn hidden" title="Instalar App">
                         <span class="icon icon-download"></span> APP
                     </button>
+                    <button onclick="showChangeOwnPasswordModal()" class="logout-btn" title="Cambiar mi contraseña" style="background:transparent;color:#aaa;font-size:11px;border:1px solid rgba(255,255,255,0.15);">
+                        🔑 Contraseña
+                    </button>
                     <button id="logoutBtn" class="logout-btn">
                         <span class="icon icon-sign-out"></span> Salir
                     </button>
@@ -361,6 +364,7 @@
                     <button class="filter-btn" data-filter="deposit" onclick="filterTransactions('deposit')">Depósitos</button>
                     <button class="filter-btn" data-filter="withdrawal" onclick="filterTransactions('withdrawal')">Retiros</button>
                     <button class="filter-btn" data-filter="bonus" onclick="filterTransactions('bonus')">Bonificaciones</button>
+                    <button class="filter-btn" data-filter="fire_reward" onclick="filterTransactions('fire_reward')">🔥 Fueguito</button>
                     <button class="filter-btn" data-filter="refund" onclick="filterTransactions('refund')">Reembolsos</button>
                     <button class="filter-btn" data-filter="referral_commission" onclick="filterTransactions('referral_commission')">Referidos</button>
                 </div>
@@ -456,6 +460,11 @@
                     <button class="btn btn-secondary btn-sm datos-period-btn"        data-period="last30"    onclick="setDatosPeriod('last30')">30 días</button>
                     <span style="color:var(--text-secondary,#aaa);font-size:0.8em;margin-left:4px;">o fecha exacta:</span>
                     <input type="date" id="datosFecha" onchange="setDatosDate(this.value)" style="background:var(--darker,#1a1a2e);color:var(--light,#fff);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:4px 8px;font-size:0.85em;">
+                    <span style="color:var(--text-secondary,#aaa);font-size:0.8em;margin-left:8px;">o rango:</span>
+                    <input type="date" id="datosDesde" placeholder="Desde" style="background:var(--darker,#1a1a2e);color:var(--light,#fff);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:4px 8px;font-size:0.85em;">
+                    <span style="color:var(--text-secondary,#aaa);font-size:0.8em;">→</span>
+                    <input type="date" id="datosHasta" placeholder="Hasta" style="background:var(--darker,#1a1a2e);color:var(--light,#fff);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:4px 8px;font-size:0.85em;">
+                    <button class="btn btn-secondary btn-sm" onclick="applyDatosRange()">Aplicar rango</button>
                     <span id="datosPeriodLabel" style="font-size:0.82em;color:var(--text-secondary,#aaa);margin-left:4px;font-style:italic;"></span>
                 </div>
 
@@ -693,8 +702,11 @@
                         <!-- Segmento -->
                         <div>
                             <label class="form-label" style="display:block;margin-bottom:.3rem">Segmento</label>
-                            <select id="notifSegment" class="form-input" style="min-width:180px">
+                            <select id="notifSegment" class="form-input" style="min-width:200px">
                                 <option value="all">Todos con app instalada</option>
+                                <option value="active">Activos (login últimos 30 días)</option>
+                                <option value="inactive">Inactivos (+30 días sin login)</option>
+                                <option value="with_balance">Con saldo &gt; 0</option>
                                 <option value="specific">Usuarios específicos</option>
                             </select>
                         </div>
@@ -707,11 +719,20 @@
                                 <option value="200">200</option>
                             </select>
                         </div>
-                        <!-- Botón enviar -->
-                        <div style="align-self:flex-end">
-                            <button id="notifSendBtn" class="btn btn-primary" onclick="sendBatchNotification()">🚀 Enviar notificación</button>
+                        <!-- Offset (seguimiento) -->
+                        <div id="notifOffsetDiv" style="display:none">
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Desde usuario N°</label>
+                            <input type="number" id="notifBatchOffset" class="form-input" value="0" min="0" style="min-width:90px">
+                        </div>
+                        <!-- Botones enviar -->
+                        <div style="align-self:flex-end;display:flex;gap:.5rem;flex-wrap:wrap">
+                            <button id="notifSendBtn" class="btn btn-primary" onclick="sendBatchNotification()">🚀 Enviar lote</button>
+                            <button id="notifNextBatchBtn" class="btn btn-secondary" onclick="sendNextBatch()" style="display:none" title="Continúa desde donde terminó el último envío">➡️ Siguiente lote</button>
+                            <button class="btn btn-secondary btn-sm" onclick="resetNotifBatch()" title="Reiniciar offset a 0">🔄 Reiniciar lote</button>
                         </div>
                     </div>
+                    <!-- Estado del lote -->
+                    <div id="notifBatchStatus" style="display:none;margin-top:.75rem;padding:.6rem 1rem;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:8px;font-size:.85rem;color:#a5b4fc;"></div>
 
                     <!-- Selección de usuarios específicos (oculto por defecto) -->
                     <div id="notifSpecificUsers" style="display:none;margin-top:1rem">
@@ -848,6 +869,36 @@
             </section>
 
         </main>
+    </div>
+
+    <!-- Modal Cambiar Contraseña Propia (Admin) -->
+    <div id="changeOwnPasswordModal" class="modal hidden" onclick="if(event.target===this)hideModal('changeOwnPasswordModal')">
+        <div class="modal-content" style="max-width:400px" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3>🔑 Cambiar mi contraseña</h3>
+                <button class="close-modal" onclick="hideModal('changeOwnPasswordModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Contraseña actual:</label>
+                    <input type="password" id="ownCurrentPassword" class="form-input" placeholder="Contraseña actual">
+                </div>
+                <div class="form-group" style="margin-top:.75rem">
+                    <label>Nueva contraseña:</label>
+                    <input type="password" id="ownNewPassword" class="form-input" placeholder="Mínimo 6 caracteres">
+                </div>
+                <div class="form-group" style="margin-top:.75rem">
+                    <label>Confirmar nueva contraseña:</label>
+                    <input type="password" id="ownConfirmPassword" class="form-input" placeholder="Repetir nueva contraseña">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal" onclick="hideModal('changeOwnPasswordModal')">Cancelar</button>
+                <button id="confirmOwnPasswordBtn" class="btn-primary" onclick="handleChangeOwnPassword()">
+                    🔑 Cambiar contraseña
+                </button>
+            </div>
+        </div>
     </div>
 
     <!-- Deposit Modal -->
