@@ -1198,6 +1198,8 @@ module.exports = {
   getYesterdayRangeArgentinaEpoch,
   getLastWeekRangeArgentinaEpoch,
   getLastMonthRangeArgentinaEpoch,
+  /** Returns the current session token, or null if no session is active. */
   getSessionToken: () => SESSION_TOKEN,
+  /** Returns the current session cookie string, or null if no session is active. */
   getSessionCookie: () => SESSION_COOKIE
 };
