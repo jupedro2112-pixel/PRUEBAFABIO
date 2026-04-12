@@ -67,6 +67,11 @@ const messageSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  adminOnly: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
   metadata: {
     type: mongoose.Schema.Types.Mixed,
     default: null
