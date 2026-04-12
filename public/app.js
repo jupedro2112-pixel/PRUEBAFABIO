@@ -1250,6 +1250,9 @@ function initSocket() {
         console.log('📨 Message content:', data.message?.content?.substring(0, 50) || data.content?.substring(0, 50));
         console.log('📨 Sender role:', data.message?.senderRole || data.senderRole);
         const message = data.message || data;
+
+        // No mostrar mensajes internos/admin al usuario final
+        if (message.adminOnly) return;
         
         // CORREGIDO: Verificar si el mensaje ya fue procesado (evitar duplicados)
         if (message.id && processedMessageIds.has(message.id)) {
@@ -1474,6 +1477,9 @@ function renderMessages(messages) {
 
 // Crea el elemento DOM de un mensaje (sin agregarlo al contenedor)
 function createMessageElement(message) {
+    // No mostrar mensajes internos/admin al usuario final
+    if (message.adminOnly) return null;
+
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     const isFromUser = message.senderRole === 'user';
 
@@ -2231,6 +2237,23 @@ async function showFireModal() {
         }
     }
 
+    // Mostrar recompensa en efectivo pendiente si aplica (días 10, 20, 30)
+    const pendingCashEl = document.getElementById('firePendingCashReward');
+    if (pendingCashEl) {
+        if (fireStatus.pendingCashReward && fireStatus.pendingCashReward > 0) {
+            pendingCashEl.style.display = 'block';
+            pendingCashEl.innerHTML = `
+                <div style="margin-bottom:8px;">🎉 <strong style="color:#ffd700;">¡Tenés una recompensa de $${fireStatus.pendingCashReward.toLocaleString('es-AR')} para reclamar hoy!</strong></div>
+                <div style="font-size:11px;color:#aaa;margin-bottom:10px;">${fireStatus.pendingCashRewardDesc || 'Recompensa Fueguito'}</div>
+                <button id="claimFireRewardBtn" onclick="claimFireReward()" style="background:linear-gradient(135deg,#ffd700,#ff8c00);color:#111;font-weight:bold;border:none;border-radius:8px;padding:10px 22px;cursor:pointer;font-size:14px;width:100%;">
+                    💰 Reclamar Recompensa
+                </button>
+            `;
+        } else {
+            pendingCashEl.style.display = 'none';
+        }
+    }
+
     // Renderizar menú de milestones/recompensas
     const milestonesEl = document.getElementById('fireMilestonesMenu');
     if (milestonesEl && fireStatus.milestones) {
@@ -2376,6 +2399,51 @@ async function claimFire() {
         if (claimBtn) {
             claimBtn.disabled = false;
             claimBtn.textContent = '🔥 Reclamar Fueguito';
+        }
+    }
+}
+
+async function claimFireReward() {
+    const btn = document.getElementById('claimFireRewardBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Procesando...';
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/api/fire/claim-reward`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showToast(`🎉 ${data.message}`, 'success');
+            // Actualizar estado local para limpiar la recompensa pendiente
+            if (fireStatus) {
+                fireStatus.pendingCashReward = 0;
+                fireStatus.pendingCashRewardDay = 0;
+                fireStatus.pendingCashRewardDesc = '';
+            }
+            // Ocultar el recuadro de recompensa
+            const pendingCashEl = document.getElementById('firePendingCashReward');
+            if (pendingCashEl) pendingCashEl.style.display = 'none';
+            sendSystemMessage(`💰 ¡Recompensa Fueguito de $${data.reward ? data.reward.toLocaleString('es-AR') : '?'} acreditada!`);
+            setTimeout(() => hideModal('fireModal'), 1500);
+        } else {
+            showToast(data.error || 'Error al reclamar recompensa', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '💰 Reclamar Recompensa';
+            }
+        }
+    } catch (error) {
+        console.error('Error reclamando recompensa Fueguito:', error);
+        showToast('Error de conexión', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '💰 Reclamar Recompensa';
         }
     }
 }
