@@ -734,6 +734,10 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
     } else if (segment === 'inactive') {
       const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       query = { fcmToken: { $exists: true, $ne: null }, $or: [{ lastLogin: { $lt: cutoff } }, { lastLogin: { $exists: false } }] };
+    } else if (segment === 'inactive_7d') {
+      // Inactivos en los últimos 7 días (sin login en 7 días)
+      const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      query = { fcmToken: { $exists: true, $ne: null }, $or: [{ lastLogin: { $lt: cutoff7d } }, { lastLogin: { $exists: false } }] };
     } else {
       // all: todos con token FCM
       query = { fcmToken: { $exists: true, $ne: null } };

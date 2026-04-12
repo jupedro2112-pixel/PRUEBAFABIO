@@ -58,6 +58,12 @@ const fireStreakSchema = new mongoose.Schema({
   pendingCashRewardDesc: {
     type: String,
     default: ''
+  },
+  // Fecha (string en formato Argentina) en que se desbloqueó la recompensa pendiente
+  // Se usa para expirarla automáticamente si no se reclama el mismo día
+  pendingCashRewardDate: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true

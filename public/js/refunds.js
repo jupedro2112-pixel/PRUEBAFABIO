@@ -260,7 +260,12 @@ VIP.refunds = (function () {
         }
     }
 
-    function showUnifiedRefundModal() {
+    async function showUnifiedRefundModal() {
+        // Req 3: Precargar el estado de reembolsos ANTES de mostrar el modal unificado,
+        // para que al presionar una opción funcione de inmediato sin depender de cargas previas.
+        if (!VIP.state.refundStatus) {
+            await loadRefundStatus();
+        }
         VIP.ui.showModal('unifiedRefundModal');
     }
 

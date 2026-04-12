@@ -3890,14 +3890,13 @@ const getDepositsInPeriod = async (username, daysBack) => {
 };
 
 // Mínimo de depósitos mensuales para acceder al Fueguito diario
-const FIRE_MIN_MONTHLY_DEPOSIT = 20000;
-
 // Hitos/milestones del Fueguito
+// requireDeposits > 0 marca que la RECOMPENSA (no el reclamo diario) requiere actividad del mes
 const FIRE_MILESTONES = [
-  { day: 10, reward: 10000,  type: 'cash',           requireDeposits: 0,      desc: 'Recompensa Fueguito 10 días' },
-  { day: 15, reward: 0,      type: 'next_load_bonus', requireDeposits: 0,      desc: '100% en próxima carga' },
-  { day: 20, reward: 50000,  type: 'cash',           requireDeposits: 100000, desc: 'Recompensa Fueguito 20 días' },
-  { day: 30, reward: 200000, type: 'cash',           requireDeposits: 300000, desc: 'Recompensa Fueguito 30 días' }
+  { day: 10, reward: 10000,  type: 'cash',           requireDeposits: 20000,  depositDays: 30, desc: 'Recompensa Fueguito 10 días' },
+  { day: 15, reward: 0,      type: 'next_load_bonus', requireDeposits: 20000,  depositDays: 30, desc: '100% en próxima carga' },
+  { day: 20, reward: 50000,  type: 'cash',           requireDeposits: 100000, depositDays: 30, desc: 'Recompensa Fueguito 20 días' },
+  { day: 30, reward: 200000, type: 'cash',           requireDeposits: 300000, depositDays: 45, desc: 'Recompensa Fueguito 30 días' }
 ];
 
 app.get('/api/fire/status', authMiddleware, async (req, res) => {
@@ -3928,6 +3927,24 @@ app.get('/api/fire/status', authMiddleware, async (req, res) => {
 
     const currentStreak = fireStreak.streak || 0;
 
+    // Auto-expirar recompensa pendiente si no fue reclamada el mismo día (req 1)
+    let pendingCashReward = fireStreak.pendingCashReward || 0;
+    let pendingCashRewardDay = fireStreak.pendingCashRewardDay || 0;
+    let pendingCashRewardDesc = fireStreak.pendingCashRewardDesc || '';
+    if (pendingCashReward > 0) {
+      const rewardDate = fireStreak.pendingCashRewardDate || '';
+      if (rewardDate !== todayArgentina) {
+        // La recompensa expiró — limpiarla silenciosamente
+        await FireStreak.updateOne(
+          { userId },
+          { pendingCashReward: 0, pendingCashRewardDay: 0, pendingCashRewardDesc: '', pendingCashRewardDate: '' }
+        );
+        pendingCashReward = 0;
+        pendingCashRewardDay = 0;
+        pendingCashRewardDesc = '';
+      }
+    }
+
     // Construir lista de milestones con estado para la UI
     const milestones = FIRE_MILESTONES.map(m => {
       let status;
@@ -3953,9 +3970,9 @@ app.get('/api/fire/status', authMiddleware, async (req, res) => {
       totalClaimed: fireStreak.totalClaimed || 0,
       canClaim,
       pendingNextLoadBonus: fireStreak.pendingNextLoadBonus || false,
-      pendingCashReward: fireStreak.pendingCashReward || 0,
-      pendingCashRewardDay: fireStreak.pendingCashRewardDay || 0,
-      pendingCashRewardDesc: fireStreak.pendingCashRewardDesc || '',
+      pendingCashReward,
+      pendingCashRewardDay,
+      pendingCashRewardDesc,
       milestones,
       nextReward: currentStreak >= 9 ? 10000 : 0
     });
@@ -3983,11 +4000,8 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Ya reclamaste tu fueguito hoy' });
     }
 
-    // Verificar depósito mínimo del mes (20.000 ARS)
-    const monthlyDeposits = await getDepositsInPeriod(username, 30);
-    if (monthlyDeposits < FIRE_MIN_MONTHLY_DEPOSIT) {
-      return res.status(400).json({ error: 'Para acceder al Fueguito diario necesitás tener movimientos de cargas durante el mes.' });
-    }
+    // Req 5: El reclamo diario del Fueguito no requiere actividad del mes.
+    // Solo las recompensas de hitos verifican requisitos (en /api/fire/claim-reward).
     
     const yesterdayArgentina = getArgentinaYesterday();
     
@@ -4012,22 +4026,24 @@ app.post('/api/fire/claim', authMiddleware, async (req, res) => {
         fireStreak.pendingNextLoadBonus = true;
         message = '🎉 ¡15 días de racha! Tenés 100% en tu próxima carga. Un operador te lo aplicará cuando quieras reclamar.';
       } else if (milestone.type === 'cash') {
-        // Verificar depósitos si el hito lo requiere
-        let meetsDepositReq = true;
-        if (milestone.requireDeposits > 0) {
-          const deposits = await getDepositsInPeriod(username, 45);
-          meetsDepositReq = deposits >= milestone.requireDeposits;
-        }
-        if (meetsDepositReq) {
-          // Guardar como recompensa pendiente (el usuario la reclama explícitamente)
+        // Req 6: Siempre setear la recompensa como pendiente, sin verificar depósitos aquí.
+        // La verificación de actividad ocurre al reclamar la recompensa (/api/fire/claim-reward).
+        // Solo setear si no hay ya una recompensa pendiente vigente del mismo día para no sobreescribir.
+        const existingDate = fireStreak.pendingCashRewardDate || '';
+        if (!fireStreak.pendingCashReward || existingDate !== todayArgentina) {
           rewardType = 'cash_pending';
           reward = milestone.reward;
-          fireStreak.pendingCashReward = (fireStreak.pendingCashReward || 0) + milestone.reward;
+          fireStreak.pendingCashReward = milestone.reward;
           fireStreak.pendingCashRewardDay = fireStreak.streak;
           fireStreak.pendingCashRewardDesc = milestone.desc;
+          // Req 1: Guardar la fecha Argentina en que se desbloqueó para auto-expirar al día siguiente
+          fireStreak.pendingCashRewardDate = todayArgentina;
           message = `🔥 ¡${fireStreak.streak} días de racha! Tenés una recompensa de $${milestone.reward.toLocaleString()} para reclamar en el recuadro de Fueguito.`;
         } else {
-          message = `🔥 ¡${fireStreak.streak} días de racha! Recompensa disponible cuando cumplas el requisito de actividad del mes.`;
+          // Ya hay una recompensa pendiente del mismo día: no sobreescribir
+          rewardType = 'cash_pending';
+          reward = fireStreak.pendingCashReward;
+          message = `🔥 ¡${fireStreak.streak} días de racha! Tenés una recompensa de $${fireStreak.pendingCashReward.toLocaleString()} para reclamar en el recuadro de Fueguito.`;
         }
       }
     }
@@ -4069,6 +4085,33 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'No hay recompensa pendiente para reclamar.' });
     }
 
+    // Req 1: Verificar que la recompensa no expiró (solo reclamable el mismo día)
+    const todayArg = getArgentinaDateString();
+    const rewardDateStr = fireStreak.pendingCashRewardDate || '';
+    if (rewardDateStr && rewardDateStr !== todayArg) {
+      // Limpiar recompensa expirada
+      fireStreak.pendingCashReward = 0;
+      fireStreak.pendingCashRewardDay = 0;
+      fireStreak.pendingCashRewardDesc = '';
+      fireStreak.pendingCashRewardDate = '';
+      await fireStreak.save();
+      return res.status(400).json({ error: 'La recompensa expiró. Solo podés reclamarla el mismo día que llegaste al hito.' });
+    }
+
+    // Req 6: Verificar requisitos de actividad para este hito específico
+    const rewardDay = fireStreak.pendingCashRewardDay || 0;
+    const milestone = FIRE_MILESTONES.find(m => m.day === rewardDay);
+    if (milestone && milestone.requireDeposits > 0) {
+      const daysBack = milestone.depositDays || 30;
+      const deposits = await getDepositsInPeriod(username, daysBack);
+      if (deposits < milestone.requireDeposits) {
+        return res.status(400).json({
+          error: `No cumplís los requisitos para esta recompensa. Se requiere actividad de cargas del mes (mínimo $${milestone.requireDeposits.toLocaleString('es-AR')}).`,
+          requirementNotMet: true
+        });
+      }
+    }
+
     const rewardAmount = fireStreak.pendingCashReward;
     const rewardDesc = fireStreak.pendingCashRewardDesc || `Recompensa Fueguito día ${fireStreak.pendingCashRewardDay}`;
 
@@ -4098,6 +4141,7 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
     fireStreak.pendingCashReward = 0;
     fireStreak.pendingCashRewardDay = 0;
     fireStreak.pendingCashRewardDesc = '';
+    fireStreak.pendingCashRewardDate = '';
     await fireStreak.save();
 
     await Transaction.create({
@@ -4214,7 +4258,7 @@ app.get('/api/admin/database', authMiddleware, adminMiddleware, async (req, res)
 
 app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { from, to, type } = req.query;
+    const { from, to, type, username } = req.query;
     
     let query = {};
     
@@ -4243,17 +4287,26 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
     if (type && type !== 'all') {
       query.type = type;
     }
+
+    // Req 8: Filtrar por username si se especifica
+    if (username && username.trim()) {
+      // Limitar longitud y escapar caracteres especiales de regex para evitar ReDoS / injection
+      const rawUsername = username.trim().substring(0, 100);
+      const safeUsername = rawUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.username = { $regex: safeUsername, $options: 'i' };
+    }
     
     // Obtener todas las transacciones sin límite para el cierre
     const transactions = await Transaction.find(query)
       .sort({ timestamp: -1 })
       .lean();
     
-    // Calcular totales
+    // Calcular totales (req 7: incluir fire_reward en bonificaciones)
     let deposits = 0;
     let withdrawals = 0;
     let bonuses = 0;
     let refunds = 0;
+    let fireRewards = 0;
     
     transactions.forEach(t => {
       const amount = t.amount || 0;
@@ -4270,6 +4323,9 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
         case 'refund':
           refunds += amount;
           break;
+        case 'fire_reward':
+          fireRewards += amount;
+          break;
       }
     });
     
@@ -4282,6 +4338,7 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
       withdrawals,
       bonuses,
       refunds,
+      fireRewards,
       netBalance,
       totalTransactions: transactions.length
     };
@@ -4483,6 +4540,23 @@ app.get('/api/admin/datos', authMiddleware, adminMiddleware, async (req, res) =>
     const returningPct       = ds.uniqueDepositors > 0   ? Math.round((ds.returningUsers   / ds.uniqueDepositors)  * 1000) / 10 : null;
     const repeatRate         = ds.uniqueDepositors > 0   ? Math.round((ds.multipleDepositUsers / ds.uniqueDepositors) * 1000) / 10 : null;
 
+    // Req 10: Retención de usuarios — usuarios únicos que depositaron en los últimos N días
+    const nowUTC2 = new Date();
+    const retentionDays = [3, 7, 15, 30];
+    const retentionCounts = await Promise.all(retentionDays.map(days => {
+      const since = new Date(nowUTC2.getTime() - days * 24 * 60 * 60 * 1000);
+      return Transaction.distinct('username', { type: 'deposit', timestamp: { $gte: since } })
+        .then(users => users.length)
+        .catch(() => null);
+    }));
+
+    const retention = {
+      users3d:  retentionCounts[0],
+      users7d:  retentionCounts[1],
+      users15d: retentionCounts[2],
+      users30d: retentionCounts[3]
+    };
+
     res.json({
       status: 'success',
       data: {
@@ -4522,7 +4596,10 @@ app.get('/api/admin/datos', authMiddleware, adminMiddleware, async (req, res) =>
           returningPct,
           multipleDepositUsers: ds.multipleDepositUsers,
           repeatRate
-        }
+        },
+
+        // Bloque E — Retención (usuarios únicos activos en últimos N días, siempre en tiempo real)
+        retention
       }
     });
   } catch (error) {
