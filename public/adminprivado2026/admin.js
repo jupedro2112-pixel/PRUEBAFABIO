@@ -2423,9 +2423,13 @@ let datosPeriod = 'today';
 
 function setDatosPeriod(period) {
     datosPeriod = period;
-    // Limpiar fecha exacta
+    // Limpiar fecha exacta y rango
     const fechaInput = document.getElementById('datosFecha');
     if (fechaInput) fechaInput.value = '';
+    const desdeInput = document.getElementById('datosDesde');
+    if (desdeInput) desdeInput.value = '';
+    const hastaInput = document.getElementById('datosHasta');
+    if (hastaInput) hastaInput.value = '';
     // Resaltar botón activo
     document.querySelectorAll('.datos-period-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.period === period);
@@ -2436,6 +2440,24 @@ function setDatosPeriod(period) {
 function setDatosDate(date) {
     if (!date) return;
     datosPeriod = null;
+    const desdeInput = document.getElementById('datosDesde');
+    if (desdeInput) desdeInput.value = '';
+    const hastaInput = document.getElementById('datosHasta');
+    if (hastaInput) hastaInput.value = '';
+    document.querySelectorAll('.datos-period-btn').forEach(btn => btn.classList.remove('active'));
+    loadDatos();
+}
+
+function applyDatosRange() {
+    const desde = document.getElementById('datosDesde')?.value;
+    const hasta = document.getElementById('datosHasta')?.value;
+    if (!desde || !hasta) {
+        showToast('Seleccioná fecha desde y hasta', 'error');
+        return;
+    }
+    datosPeriod = null;
+    const fechaInput = document.getElementById('datosFecha');
+    if (fechaInput) fechaInput.value = '';
     document.querySelectorAll('.datos-period-btn').forEach(btn => btn.classList.remove('active'));
     loadDatos();
 }
@@ -2444,9 +2466,17 @@ async function loadDatos() {
     try {
         const fechaInput = document.getElementById('datosFecha');
         const fecha = fechaInput ? fechaInput.value : '';
-        const url = fecha
-            ? `${API_URL}/api/admin/datos?date=${encodeURIComponent(fecha)}`
-            : `${API_URL}/api/admin/datos?period=${datosPeriod || 'today'}`;
+        const desde = document.getElementById('datosDesde')?.value || '';
+        const hasta = document.getElementById('datosHasta')?.value || '';
+
+        let url;
+        if (desde && hasta) {
+            url = `${API_URL}/api/admin/datos?dateFrom=${encodeURIComponent(desde)}&dateTo=${encodeURIComponent(hasta)}`;
+        } else if (fecha) {
+            url = `${API_URL}/api/admin/datos?date=${encodeURIComponent(fecha)}`;
+        } else {
+            url = `${API_URL}/api/admin/datos?period=${datosPeriod || 'today'}`;
+        }
 
         const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
@@ -2558,6 +2588,8 @@ function incrementUnreadCount() {
 // ============================================
 // USERS SECTION
 // ============================================
+let allUsersCache = [];
+
 async function loadUsers() {
     try {
         const response = await fetch(`${API_URL}/api/admin/users`, {
@@ -2567,10 +2599,30 @@ async function loadUsers() {
         if (!response.ok) throw new Error('Failed to load users');
         
         const data = await response.json();
-        renderUsers(data.users || []);
+        allUsersCache = data.users || [];
+        filterAndRenderUsers();
     } catch (error) {
         console.error('Error loading users:', error);
     }
+}
+
+function filterAndRenderUsers() {
+    const searchInput = document.getElementById('searchUsers');
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    if (!query) {
+        renderUsers(allUsersCache);
+        return;
+    }
+    const filtered = allUsersCache.filter(u => {
+        return (
+            (u.username && u.username.toLowerCase().includes(query)) ||
+            (u.id && String(u.id).toLowerCase().includes(query)) ||
+            (u.accountId && String(u.accountId).toLowerCase().includes(query)) ||
+            (u.phone && u.phone.toLowerCase().includes(query)) ||
+            (u.email && u.email.toLowerCase().includes(query))
+        );
+    });
+    renderUsers(filtered);
 }
 
 // Exportar todos los usuarios a CSV (solo admin general)
@@ -3111,6 +3163,7 @@ function getTransactionTypeLabel(type) {
         deposit: 'Depósito',
         withdrawal: 'Retiro',
         bonus: 'Bonificación',
+        fire_reward: '🔥 Fueguito',
         refund: 'Reembolso',
         referral_commission: '🤝 Referido'
     };
@@ -3980,11 +4033,12 @@ async function loadNotifUsers(page = 1, filter = 'all') {
     }
 }
 
-async function sendBatchNotification() {
+async function sendBatchNotification(batchOffset) {
     const title = document.getElementById('notifTitle')?.value?.trim();
     const body = document.getElementById('notifBody')?.value?.trim();
     const segment = document.getElementById('notifSegment')?.value || 'all';
     const batchSize = parseInt(document.getElementById('notifBatchSize')?.value || '100');
+    const offset = (batchOffset !== undefined) ? parseInt(batchOffset) : (parseInt(document.getElementById('notifBatchOffset')?.value || '0') || 0);
 
     if (!title || !body) {
         showToast('❌ El título y el mensaje son obligatorios', 'error');
@@ -4002,7 +4056,9 @@ async function sendBatchNotification() {
     }
 
     const sendBtn = document.getElementById('notifSendBtn');
+    const nextBtn = document.getElementById('notifNextBatchBtn');
     if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '⏳ Enviando...'; }
+    if (nextBtn) nextBtn.disabled = true;
 
     const resultEl = document.getElementById('notifResult');
     const resultContent = document.getElementById('notifResultContent');
@@ -4015,7 +4071,7 @@ async function sendBatchNotification() {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentToken}`
             },
-            body: JSON.stringify({ title, body, batchSize, usernames })
+            body: JSON.stringify({ title, body, batchSize, segment, batchOffset: offset, usernames })
         });
         const data = await res.json();
 
@@ -4023,15 +4079,19 @@ async function sendBatchNotification() {
         if (resultContent) {
             if (data.success) {
                 const pct = data.totalUsers > 0 ? Math.round((data.successCount / data.totalUsers) * 100) : 0;
+                const sentNames = data.sentUsernames && data.sentUsernames.length > 0
+                    ? `<details style="margin-top:.5rem"><summary style="cursor:pointer;color:#aaa;font-size:.85rem">Ver usuarios enviados (${data.sentUsernames.length}${data.sentUsernames.length < data.totalUsers ? '+' : ''})</summary><div style="margin-top:.5rem;max-height:160px;overflow-y:auto;font-size:.8rem;color:#ccc">${data.sentUsernames.map(u => escapeHtml(u)).join(', ')}</div></details>` : '';
                 resultContent.innerHTML = `
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1rem;margin-bottom:1rem">
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${data.successCount}</div><div style="color:#aaa;font-size:.8rem">Enviados</div></div>
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#f87171">${data.failureCount}</div><div style="color:#aaa;font-size:.8rem">Fallidos</div></div>
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#fbbf24">${data.cleanedTokens}</div><div style="color:#aaa;font-size:.8rem">Tokens limpiados</div></div>
-                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${data.totalUsers}</div><div style="color:#aaa;font-size:.8rem">Destinatarios</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${data.totalUsers}</div><div style="color:#aaa;font-size:.8rem">En este lote</div></div>
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${pct}%</div><div style="color:#aaa;font-size:.8rem">Tasa de éxito</div></div>
-                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${data.batches}</div><div style="color:#aaa;font-size:.8rem">Lotes (${data.batchSize} c/u)</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#${data.remaining > 0 ? 'fbbf24' : '00ff88'}">${data.remaining}</div><div style="color:#aaa;font-size:.8rem">Faltan</div></div>
                     </div>
+                    <div style="font-size:.82rem;color:#aaa;margin-bottom:.5rem">Total del segmento: <strong>${data.totalSegmentUsers}</strong> | Enviados hasta ahora: <strong>${data.nextOffset}</strong></div>
+                    ${sentNames}
                     ${data.failedTokens && data.failedTokens.length > 0 ? `
                     <details style="margin-top:.5rem">
                         <summary style="cursor:pointer;color:#aaa;font-size:.85rem">Ver tokens fallidos (${data.failedTokens.length})</summary>
@@ -4041,6 +4101,24 @@ async function sendBatchNotification() {
                     </details>` : ''}
                 `;
                 showToast(`✅ Notificación enviada a ${data.successCount} usuarios`, 'success');
+
+                // Update next-batch state
+                const statusEl = document.getElementById('notifBatchStatus');
+                if (statusEl) {
+                    if (data.remaining > 0) {
+                        statusEl.style.display = 'block';
+                        statusEl.innerHTML = `📊 Enviados: ${data.nextOffset} / ${data.totalSegmentUsers} del segmento | Faltan: <strong>${data.remaining}</strong>`;
+                        if (nextBtn) { nextBtn.style.display = ''; nextBtn.dataset.nextOffset = data.nextOffset; }
+                    } else {
+                        statusEl.style.display = 'block';
+                        statusEl.innerHTML = `✅ Segmento completo: ${data.nextOffset} / ${data.totalSegmentUsers} enviados`;
+                        if (nextBtn) nextBtn.style.display = 'none';
+                    }
+                }
+                if (document.getElementById('notifBatchOffset')) {
+                    document.getElementById('notifBatchOffset').value = data.nextOffset;
+                }
+
                 // Reload stats and token list after sending (tokens may have been cleaned)
                 loadNotificationsPanel();
             } else {
@@ -4052,8 +4130,31 @@ async function sendBatchNotification() {
         showToast('❌ Error de conexión al enviar notificaciones', 'error');
         console.error('[Notif Panel] Error enviando:', e);
     } finally {
-        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '🚀 Enviar notificación'; }
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '🚀 Enviar lote'; }
+        if (nextBtn) nextBtn.disabled = false;
     }
+}
+
+function sendNextBatch() {
+    const nextBtn = document.getElementById('notifNextBatchBtn');
+    const nextOffset = parseInt(nextBtn?.dataset.nextOffset || '0');
+    sendBatchNotification(nextOffset);
+}
+
+function resetNotifBatch() {
+    const offsetInput = document.getElementById('notifBatchOffset');
+    if (offsetInput) offsetInput.value = '0';
+    const nextBtn = document.getElementById('notifNextBatchBtn');
+    if (nextBtn) { nextBtn.style.display = 'none'; delete nextBtn.dataset.nextOffset; }
+    const statusEl = document.getElementById('notifBatchStatus');
+    if (statusEl) statusEl.style.display = 'none';
+    showToast('Lote reiniciado desde el principio', 'info');
+}
+
+function updateNotifNextBatchVisibility() {
+    const segment = document.getElementById('notifSegment')?.value || 'all';
+    const offsetDiv = document.getElementById('notifOffsetDiv');
+    if (offsetDiv) offsetDiv.style.display = (segment !== 'specific') ? 'block' : 'none';
 }
 
 async function cleanInvalidTokens() {
@@ -4093,7 +4194,16 @@ document.addEventListener('DOMContentLoaded', () => {
         segmentSelect.addEventListener('change', () => {
             const specificDiv = document.getElementById('notifSpecificUsers');
             if (specificDiv) specificDiv.style.display = segmentSelect.value === 'specific' ? 'block' : 'none';
+            updateNotifNextBatchVisibility();
         });
+    }
+
+    // Búsqueda de usuarios en la sección Usuarios
+    const searchUsersInput = document.getElementById('searchUsers');
+    if (searchUsersInput) {
+        searchUsersInput.addEventListener('input', debounce(() => {
+            filterAndRenderUsers();
+        }, 300));
     }
 });
 
@@ -4101,7 +4211,10 @@ document.addEventListener('DOMContentLoaded', () => {
 window.loadNotificationsPanel = loadNotificationsPanel;
 window.loadNotifUsers = loadNotifUsers;
 window.sendBatchNotification = sendBatchNotification;
+window.sendNextBatch = sendNextBatch;
+window.resetNotifBatch = resetNotifBatch;
 window.cleanInvalidTokens = cleanInvalidTokens;
+window.applyDatosRange = applyDatosRange;
 
 // =============================================
 // PANEL DE REFERIDOS - ADMIN
@@ -4899,3 +5012,56 @@ window.loadAdminReferralRelationships = loadAdminReferralRelationships;
 window.adminReferralPreview = adminReferralPreview;
 window.adminReferralCalculate = adminReferralCalculate;
 window.adminReferralPayout = adminReferralPayout;
+
+// ============================================
+// CAMBIAR CONTRASEÑA PROPIA DEL ADMIN
+// ============================================
+function showChangeOwnPasswordModal() {
+    document.getElementById('ownCurrentPassword').value = '';
+    document.getElementById('ownNewPassword').value = '';
+    document.getElementById('ownConfirmPassword').value = '';
+    showModal('changeOwnPasswordModal');
+}
+
+async function handleChangeOwnPassword() {
+    const currentPassword = document.getElementById('ownCurrentPassword').value;
+    const newPassword = document.getElementById('ownNewPassword').value;
+    const confirmPassword = document.getElementById('ownConfirmPassword').value;
+    const btn = document.getElementById('confirmOwnPasswordBtn');
+
+    if (!currentPassword) {
+        showToast('Ingresá tu contraseña actual', 'error');
+        return;
+    }
+    if (!newPassword || newPassword.length < 6) {
+        showToast('La nueva contraseña debe tener al menos 6 caracteres', 'error');
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        showToast('Las contraseñas no coinciden', 'error');
+        return;
+    }
+
+    setButtonLoading(btn, true, 'Cambiando...');
+    try {
+        const response = await fetch(`${API_URL}/api/admin/change-own-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ currentPassword, newPassword })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Error al cambiar contraseña');
+        showToast('✅ Contraseña cambiada correctamente', 'success');
+        hideModal('changeOwnPasswordModal');
+    } catch (error) {
+        showToast(error.message || 'Error al cambiar contraseña', 'error');
+    } finally {
+        setButtonLoading(btn, false, '🔑 Cambiar contraseña');
+    }
+}
+
+window.showChangeOwnPasswordModal = showChangeOwnPasswordModal;
+window.handleChangeOwnPassword = handleChangeOwnPassword;

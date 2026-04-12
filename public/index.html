@@ -433,8 +433,9 @@
     </div>
 
     <!-- Modal Reembolso -->
-    <div id="refundModal" class="modal hidden">
-        <div class="modal-content" style="max-width: 500px;">
+    <div id="refundModal" class="modal hidden" onclick="if(event.target===this)hideModal('refundModal')">
+        <div class="modal-content" style="max-width: 500px; position: relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('refundModal')" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: #888; font-size: 22px; cursor: pointer; z-index: 10; line-height: 1;">✕</button>
             <div class="modal-header">
                 <h2 id="refundModalTitle">🎁 Reembolso</h2>
             </div>
@@ -453,18 +454,11 @@
                 
                 <!-- Movimientos del período -->
                 <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 10px;">
-                    <p id="refundMovementsTitle" style="color: #aaa; font-size: 11px; margin-bottom: 8px; text-align: center;">📊 MOVIMIENTOS</p>
+                    <p id="refundMovementsTitle" style="color: #aaa; font-size: 11px; margin-bottom: 8px; text-align: center;">📊 BASE DE CÁLCULO</p>
+                    <p style="color: #ff9900; font-size: 11px; margin-bottom: 8px; text-align: center;">⚠️ El reembolso se calcula sobre tus <strong>pérdidas netas</strong> (NETWIN), no sobre el balance de depósitos y retiros.</p>
                     <div class="refund-info-row">
-                        <span>Depósitos:</span>
-                        <span id="refundDeposits" style="color: #00ff88;">$0</span>
-                    </div>
-                    <div class="refund-info-row">
-                        <span>Retiros:</span>
-                        <span id="refundWithdrawals" style="color: #ff4444;">$0</span>
-                    </div>
-                    <div class="refund-info-row">
-                        <span>Saldo neto:</span>
-                        <span id="refundNetAmount">$0</span>
+                        <span>Pérdidas del período:</span>
+                        <span id="refundNetAmount" style="color: #ff6b6b;">$0</span>
                     </div>
                 </div>
                 

@@ -4228,7 +4228,18 @@ app.get('/api/admin/datos', authMiddleware, adminMiddleware, async (req, res) =>
 
     let startUTC, endUTC, periodLabel, isSingleDay = true;
 
-    if (req.query.date) {
+    if (req.query.dateFrom && req.query.dateTo) {
+      // Rango de fechas YYYY-MM-DD en ART
+      const [fy, fm, fd] = req.query.dateFrom.split('-').map(Number);
+      const [ty, tm, td] = req.query.dateTo.split('-').map(Number);
+      if (!fy || !fm || !fd || !ty || !tm || !td) {
+        return res.status(400).json({ error: 'Formato de fecha inválido. Use YYYY-MM-DD.' });
+      }
+      startUTC = new Date(Date.UTC(fy, fm - 1, fd, 3, 0, 0, 0));
+      endUTC   = new Date(Date.UTC(ty, tm - 1, td, 3, 0, 0, 0) + 24 * 60 * 60 * 1000 - 1);
+      periodLabel = `${req.query.dateFrom} → ${req.query.dateTo}`;
+      isSingleDay = false;
+    } else if (req.query.date) {
       // Fecha exacta YYYY-MM-DD en ART
       const [year, month, day] = req.query.date.split('-').map(Number);
       if (!year || !month || !day) {
@@ -4439,46 +4450,85 @@ app.post('/api/admin/change-password', authMiddleware, adminMiddleware, async (r
     user.passwordChangedAt = new Date();
     await user.save();
     
-    // Enviar mensaje al usuario
-    await Message.create({
-      id: uuidv4(),
-      senderId: req.user.userId,
-      senderUsername: req.user.username,
-      senderRole: 'admin',
-      receiverId: userId,
-      receiverRole: 'user',
-      content: `🔑 Tu contraseña ha sido cambiada por un administrador.\n\nTu nueva contraseña es: ${newPassword}\n\nPor seguridad, te recomendamos cambiarla después de iniciar sesión.`,
-      type: 'text',
-      timestamp: new Date(),
-      read: false
-    });
-    
-    // Notificar por socket
-    const userSocket = connectedUsers.get(userId);
-    if (userSocket) {
-      userSocket.emit('new_message', {
+    // Solo enviar mensaje y sincronizar con JUGAYGANA si el objetivo es un usuario regular (no admin)
+    if (user.role === 'user') {
+      // Enviar mensaje al usuario
+      await Message.create({
+        id: uuidv4(),
         senderId: req.user.userId,
         senderUsername: req.user.username,
-        content: 'Tu contraseña ha sido cambiada por un administrador.',
-        timestamp: new Date()
+        senderRole: 'admin',
+        receiverId: userId,
+        receiverRole: 'user',
+        content: `🔑 Tu contraseña ha sido cambiada por un administrador.\n\nTu nueva contraseña es: ${newPassword}\n\nPor seguridad, te recomendamos cambiarla después de iniciar sesión.`,
+        type: 'text',
+        timestamp: new Date(),
+        read: false
       });
-    }
-
-    // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
-    try {
-      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
-      if (jgResult.success) {
-        console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
-      } else {
-        console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+      
+      // Notificar por socket
+      const userSocket = connectedUsers.get(userId);
+      if (userSocket) {
+        userSocket.emit('new_message', {
+          senderId: req.user.userId,
+          senderUsername: req.user.username,
+          content: 'Tu contraseña ha sido cambiada por un administrador.',
+          timestamp: new Date()
+        });
       }
-    } catch (jgError) {
-      console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
+
+      // Sincronizar contraseña con JUGAYGANA (best-effort, solo para usuarios regulares)
+      try {
+        const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+        if (jgResult.success) {
+          console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+        } else {
+          console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+        }
+      } catch (jgError) {
+        console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
+      }
+    } else {
+      // Para admins: solo cambiar localmente, NO sincronizar con JUGAYGANA
+      console.log(`✅ [Admin] Contraseña de admin cambiada localmente para: ${user.username}`);
     }
     
     res.json({ success: true, message: 'Contraseña cambiada correctamente' });
   } catch (error) {
     console.error('Error cambiando contraseña:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Cambiar contraseña propia del admin logueado (sin tocar JUGAYGANA)
+app.post('/api/admin/change-own-password', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const adminUserId = req.user.userId;
+
+    if (!currentPassword || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Datos inválidos. La contraseña debe tener al menos 6 caracteres.' });
+    }
+
+    const admin = await User.findOne({ id: adminUserId });
+    if (!admin) {
+      return res.status(404).json({ error: 'Admin no encontrado' });
+    }
+
+    // Verificar contraseña actual
+    const isMatch = await bcrypt.compare(currentPassword, admin.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
+    }
+
+    admin.password = newPassword;
+    admin.passwordChangedAt = new Date();
+    await admin.save();
+
+    logger.info(`Admin ${admin.username} cambió su propia contraseña`);
+    res.json({ success: true, message: 'Contraseña cambiada correctamente' });
+  } catch (error) {
+    console.error('Error cambiando contraseña de admin:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
