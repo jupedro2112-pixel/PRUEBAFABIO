@@ -429,88 +429,10 @@ async function makeBonus(username, amount, description = '') {
   if (!amount || amount <= 0) {
     return { success: false, error: 'Monto inválido' };
   }
-  
-  const sessionOk = await jugaygana.ensureSession();
-  if (!sessionOk) {
-    return { success: false, error: 'No hay sesión válida' };
-  }
-  
-  // Obtener userId del usuario (o crearlo si no existe)
-  let userInfo = await jugaygana.getUserInfoByName(username);
-  
-  // Si no existe, intentar crearlo
-  if (!userInfo || !userInfo.id) {
-    console.log('👤 Usuario no encontrado, intentando crear:', username);
-    const createResult = await jugaygana.createPlatformUser({
-      username: username,
-      password: 'asd123',
-      userrole: 'player',
-      currency: 'ARS'
-    });
-    
-    if (createResult.success) {
-      // Esperar un momento y buscar de nuevo
-      await new Promise(r => setTimeout(r, 1000));
-      userInfo = await jugaygana.getUserInfoByName(username);
-    }
-    
-    if (!userInfo || !userInfo.id) {
-      return { success: false, error: 'Usuario no encontrado en JUGAYGANA y no se pudo crear' };
-    }
-  }
-  
-  try {
-    // Monto en centavos (igual que depositToUser y creditUserBalance)
-    const amountCents = Math.round(parseFloat(amount) * 100);
-    
-    const body = toFormUrlEncoded({
-      action: 'DepositMoney',
-      token: jugaygana.SESSION_TOKEN,
-      childid: userInfo.id,
-      amount: amountCents, // Monto en centavos
-      currency: 'ARS',
-      deposit_type: 'individual_bonus',
-      description: description || 'Bonificación - Sala de Juegos'
-    });
-    
-    const headers = {};
-    if (jugaygana.SESSION_COOKIE) headers.Cookie = jugaygana.SESSION_COOKIE;
-    
-    const resp = await axios.post(API_URL, body, {
-      httpsAgent,
-      proxy: false,
-      headers: {
-        ...headers,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      },
-      timeout: 30000
-    });
-    
-    let data = parsePossiblyWrappedJson(resp.data);
-    if (isHtmlBlocked(data)) {
-      return { success: false, error: 'IP bloqueada / respuesta HTML' };
-    }
-    
-    // Verificar respuesta exitosa (igual que makeDeposit)
-    if (data.success || data.status === 'success' || data.transfer_id || data.transferId) {
-      return {
-        success: true,
-        message: 'Bonificación realizada correctamente',
-        newBalance: data.user_balance_after || data.new_balance || data.balance,
-        transactionId: data.transfer_id || data.transferId || data.id,
-        transfer: data
-      };
-    } else {
-      return {
-        success: false,
-        error: data.error || data.message || 'Error al realizar bonificación'
-      };
-    }
-  } catch (error) {
-    console.error('Error en bonificación:', error.message);
-    return { success: false, error: error.message };
-  }
+
+  // Delegate to jugaygana.creditUserBalance which handles ensureSession, user lookup,
+  // and auth-error retry internally using the encapsulated session token.
+  return await jugaygana.creditUserBalance(username, amount);
 }
 
 module.exports = {
