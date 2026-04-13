@@ -114,8 +114,8 @@
             <!-- Sección derecha: Usuario y acciones -->
             <div class="header-right">
                 <!-- BOTÓN PLATAFORMA - Solo usuario -->
-                <button id="plataformaBtn" class="plataforma-btn" title="Ir a la Plataforma" onclick="VIP.ui.openPlatformModal()">
-                    🎰 PLATAFORMA
+                <button id="plataformaBtn" class="plataforma-btn" title="Ir al Casino" onclick="VIP.ui.openPlatformModal()">
+                    🎰 CASINO
                 </button>
                 <!-- BOTÓN CANAL INFORMATIVO - URL configurable desde admin -->
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
@@ -217,7 +217,7 @@
         <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;padding:28px 22px;max-width:360px;width:92%;box-shadow:0 0 50px rgba(212,175,55,0.45);text-align:center;position:relative;">
             <button onclick="VIP.ui.closePlatformModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>
             <div style="font-size:38px;margin-bottom:6px;">🎰</div>
-            <h3 style="color:#d4af37;margin:0 0 4px;font-size:20px;font-weight:800;">Acceder a PLATAFORMA</h3>
+            <h3 style="color:#d4af37;margin:0 0 4px;font-size:20px;font-weight:800;">Acceder al CASINO</h3>
             <p style="color:#aaa;margin:0 0 20px;font-size:13px;">Tus datos de acceso están listos</p>
 
             <!-- Usuario -->
@@ -243,15 +243,15 @@
                 </div>
             </div>
 
-            <p style="color:#aaa;font-size:12px;margin:0 0 16px;">Abrí la plataforma y pegá tu usuario — la contraseña ya la tenés acá</p>
+            <p style="color:#aaa;font-size:12px;margin:0 0 16px;">Abrí el casino y pegá tu usuario — la contraseña ya la tenés acá</p>
 
             <div style="background:rgba(255,204,0,0.08);border:1px solid rgba(255,204,0,0.25);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#ffcc66;text-align:left;line-height:1.6;">
-                ℹ️ <strong>La contraseña de la plataforma es la misma que usás para entrar a VIPCargas.</strong><br>
+                ℹ️ <strong>La contraseña del casino es la misma que usás para entrar a VIPCargas.</strong><br>
                 Si la olvidaste, podés cambiarla desde <em>Cambiar Contraseña</em> — se actualiza automáticamente en ambos lados.
             </div>
 
             <div style="display:flex;flex-direction:column;gap:10px;">
-                <button id="platformGoBtn" onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:14px;border-radius:25px;font-weight:800;font-size:17px;cursor:pointer;box-shadow:0 4px 18px rgba(106,13,173,0.45);">🎰 Abrir Plataforma</button>
+                <button id="platformGoBtn" onclick="VIP.ui.goToPlatform()" style="background:linear-gradient(135deg,#6a0dad 0%,#9b30ff 100%);color:#fff;border:none;padding:14px;border-radius:25px;font-weight:800;font-size:17px;cursor:pointer;box-shadow:0 4px 18px rgba(106,13,173,0.45);">🎰 Abrir Casino</button>
                 <button onclick="VIP.ui.showPlatformPasswordChange()" style="background:linear-gradient(135deg,#2d6a4f 0%,#40916c 100%);color:#fff;border:none;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">🔐 Cambiar Contraseña</button>
                 <button onclick="VIP.ui.closePlatformModal()" style="background:rgba(255,68,68,0.15);border:1px solid #ff4444;color:#ff6666;padding:10px;border-radius:25px;font-weight:700;font-size:14px;cursor:pointer;">✕ Cerrar</button>
             </div>

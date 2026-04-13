@@ -694,7 +694,7 @@ VIP.ui.toggleDrawer = function() {
       { emoji: '📅', text: 'Reembolso Diario', action: () => VIP.refunds.showRefundModal('daily') },
       { emoji: '📆', text: 'Reembolso Semanal', action: () => VIP.refunds.showRefundModal('weekly') },
       { emoji: '🗓️', text: 'Reembolso Mensual', action: () => VIP.refunds.showRefundModal('monthly') },
-      { emoji: '🎰', text: 'Plataforma', action: () => VIP.ui.openPlatformModal() },
+      { emoji: '🎰', text: 'Casino', action: () => VIP.ui.openPlatformModal() },
       { emoji: '📢', text: 'Canal Informativo', action: () => {
         const btn = document.getElementById('canalInformativoBtn');
         if (btn && btn.href && btn.href !== '#' && btn.href !== window.location.href) {
