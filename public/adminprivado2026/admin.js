@@ -324,7 +324,7 @@ function setupEventListeners() {
     // Confirm buttons
     document.getElementById('confirmDeposit').addEventListener('click', handleDeposit);
     document.getElementById('confirmWithdraw').addEventListener('click', handleWithdraw);
-    document.getElementById('confirmPassword').addEventListener('click', handlePasswordChange);
+    document.getElementById('confirmPasswordChange').addEventListener('click', handlePasswordChange);
     const confirmBonusBtn = document.getElementById('confirmBonus');
     if (confirmBonusBtn) {
         confirmBonusBtn.addEventListener('click', handleDirectBonus);
@@ -2097,7 +2097,7 @@ async function handleDirectBonus() {
 async function handlePasswordChange() {
     const newPassword = document.getElementById('newPassword').value;
     const confirmPassword = document.getElementById('confirmPassword').value;
-    const confirmBtn = document.getElementById('confirmPassword');
+    const confirmBtn = document.getElementById('confirmPasswordChange');
     
     if (!newPassword || newPassword.length < 6) {
         showToast('La contraseña debe tener al menos 6 caracteres', 'error');
