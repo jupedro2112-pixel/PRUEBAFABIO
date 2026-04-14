@@ -961,9 +961,14 @@
                         fcmToken = currentToken;
                         console.log('[FCM] ✅ Token obtenido:', currentToken.substring(0, 30) + '...');
                         
-                        // Guardar en localStorage
+                        // Guardar en localStorage junto con el contexto de ejecución
+                        // (standalone = PWA instalada, browser = Chrome/navegador normal).
+                        // Esto permite detectar si el usuario cambió de contexto en futuras
+                        // sesiones (ej: Chrome web → app instalada) y forzar re-registro.
+                        const _ctx = isStandalone ? 'standalone' : 'browser';
                         localStorage.setItem('fcmToken', currentToken);
-                        console.log('[FCM] Token guardado en localStorage');
+                        localStorage.setItem('fcmTokenContext', _ctx);
+                        console.log('[FCM] Token guardado en localStorage (contexto: ' + _ctx + ')');
                         
                         // Enviar token al servidor (si está logueado)
                         await sendTokenToServer(currentToken);
@@ -1053,38 +1058,137 @@
         // (llamada desde auth.js después de login / register / verifyToken)
         // Unificada: siempre usa sendTokenToServer como fuente de verdad.
         // Si no hay token FCM todavía, inicia initNotifications para generarlo.
+        //
+        // PWA CONTEXT-CHANGE FIX:
+        //   Cuando el usuario pasa de Chrome web (browser) a la app instalada
+        //   (standalone) o viceversa, el token FCM puede haber cambiado porque
+        //   la suscripción push subyacente es distinta para cada contexto.
+        //   Este handler detecta el cambio de contexto y fuerza la re-obtención
+        //   del token correcto antes de registrarlo en el backend, evitando que
+        //   el backend quede apuntando al token viejo/inválido.
         // ============================================
         window.sendFcmTokenAfterLogin = async function() {
             console.log('[FCM] sendFcmTokenAfterLogin() llamado');
             const token = localStorage.getItem('fcmToken');
 
+            // Detectar contexto de ejecución actual
+            const _nowStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+            const _currentCtx = _nowStandalone ? 'standalone' : 'browser';
+            const _storedCtx  = localStorage.getItem('fcmTokenContext'); // null en sesiones antiguas
+            // Cambio de contexto = token fue obtenido en un contexto distinto al actual
+            // (ej: token del Chrome web normal ahora se usa desde la PWA instalada)
+            const _ctxChanged = _storedCtx !== null && _storedCtx !== _currentCtx;
+
+            if (_ctxChanged) {
+                console.log('[FCM] 🔄 Cambio de contexto detectado: "' + _storedCtx + '" → "' + _currentCtx + '"');
+                if (token) {
+                    console.log('[FCM] ⚠️ Token anterior (' + token.substring(0, 20) + '...) pertenece al contexto "' + _storedCtx + '" y puede ser inválido en "' + _currentCtx + '"');
+                    console.log('[FCM] Backend todavía apunta al token viejo — forzando re-registro con token del contexto actual');
+                }
+            }
+
+            // ── CASO A: Cambio de contexto detectado ────────────────────────────
+            // Necesitamos obtener el token del nuevo contexto antes de registrar.
+            if (_ctxChanged) {
+                if (!_notifInitializing) {
+                    // No hay initNotifications en curso: podemos eliminar la suscripción
+                    // push anterior y solicitar una nueva de forma segura.
+                    if (messaging && token) {
+                        try {
+                            await messaging.deleteToken();
+                            console.log('[FCM] ✅ Suscripción push de contexto anterior ("' + _storedCtx + '") eliminada');
+                        } catch (delErr) {
+                            console.warn('[FCM] No se pudo eliminar suscripción anterior:', delErr.message);
+                        }
+                    }
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmTokenContext');
+                    fcmToken = null;
+                    const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
+                    if (!swReg) {
+                        console.warn('[FCM] ⚠️ Service Worker no disponible — no se puede obtener token nuevo. Se reintentará en la próxima apertura.');
+                    } else {
+                        await initNotifications(swReg);
+                        const newToken = localStorage.getItem('fcmToken');
+                        if (newToken) {
+                            console.log('[FCM] ✅ Token nuevo generado para contexto "' + _currentCtx + '": ' + newToken.substring(0, 20) + '...');
+                            console.log('[FCM] ✅ Token nuevo registrado correctamente en backend');
+                        } else {
+                            console.warn('[FCM] ⚠️ No se pudo obtener token nuevo para el contexto "' + _currentCtx + '"');
+                        }
+                    }
+                } else {
+                    // initNotifications ya está en curso (lanzado al cargar la página).
+                    // Cuando complete, llamará sendTokenToServer con el token del contexto
+                    // actual (el usuario ya estará logueado). Solo limpiamos el contexto
+                    // cacheado para que no bloquee futuros intentos.
+                    console.log('[FCM] initNotifications en progreso — el token del contexto "' + _currentCtx + '" quedará registrado al completar');
+                    localStorage.removeItem('fcmTokenContext');
+                }
+                return;
+            }
+
+            // ── CASO B: Mismo contexto, hay token en caché ───────────────────────
             if (token) {
-                // Token existe: enviarlo al backend (dedup interno evita duplicados)
+                // Enviar token cacheado al backend (dedup interno evita duplicados)
                 const sent = await sendTokenToServer(token);
-                // Además, refrescar token desde FCM por si rotó
+                // Refrescar token desde FCM por si rotó (token puede rotar por SW update,
+                // cambio de VAPID key, o expiración de la suscripción push).
                 if (messaging && 'Notification' in window && Notification.permission === 'granted') {
                     try {
                         const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
                         if (swReg) {
-                            const freshToken = await messaging.getToken({
-                                vapidKey: VAPID_KEY,
-                                serviceWorkerRegistration: swReg
-                            });
+                            let freshToken;
+                            try {
+                                freshToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: swReg
+                                });
+                            } catch (firstGetErr) {
+                                // La suscripción push puede estar obsoleta (ej: token inválido
+                                // por cambio de SW o PWA reinstalada). Igual que en initNotifications:
+                                // eliminamos la suscripción actual y reintentamos para obtener
+                                // un token completamente nuevo.
+                                console.warn('[FCM] ⚠️ getToken falló post-login (suscripción posiblemente obsoleta):', firstGetErr.message);
+                                console.log('[FCM] Reintentando tras deleteToken...');
+                                try { await messaging.deleteToken(); } catch (de) { console.warn('[FCM] deleteToken (retry):', de.message); }
+                                freshToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: swReg
+                                });
+                            }
                             if (freshToken && freshToken !== token) {
-                                console.log('[FCM] 🔄 Token rotado detectado, actualizando...');
+                                console.log('[FCM] 🔄 Token rotado detectado post-login');
+                                console.log('[FCM]   Token viejo (caché): ' + token.substring(0, 20) + '...');
+                                console.log('[FCM]   Token nuevo (Firebase): ' + freshToken.substring(0, 20) + '...');
                                 fcmToken = freshToken;
                                 localStorage.setItem('fcmToken', freshToken);
+                                localStorage.setItem('fcmTokenContext', _currentCtx);
                                 await sendTokenToServer(freshToken);
+                                console.log('[FCM] ✅ Token nuevo registrado correctamente en backend');
+                            } else if (freshToken) {
+                                console.log('[FCM] Token sin rotación — token en backend sigue siendo válido');
+                                // Guardar contexto si no estaba almacenado (sesión anterior sin esta lógica)
+                                if (!_storedCtx) {
+                                    localStorage.setItem('fcmTokenContext', _currentCtx);
+                                }
                             }
                         }
                     } catch (refreshErr) {
-                        console.warn('[FCM] Error refrescando token post-login:', refreshErr.message);
+                        console.warn('[FCM] ⚠️ Error en refresh de token post-login:', refreshErr.message);
                     }
                 }
             } else {
-                // No hay token: intentar generar uno vía initNotifications
+                // ── CASO C: Sin token en caché ───────────────────────────────────
+                // Intentar generar uno vía initNotifications
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
-                await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
+                const swRegC = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
+                if (!swRegC) {
+                    console.warn('[FCM] ⚠️ Service Worker no disponible — no se puede generar token FCM ahora.');
+                } else {
+                    await initNotifications(swRegC);
+                }
             }
         };
         
