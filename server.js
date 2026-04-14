@@ -334,14 +334,23 @@ notificationRoutes.setIo(io);
 
 const { sendNotificationToUser: _sendPushToUser } = require('./src/services/notificationService');
 
-// Helper: enviar push FCM a un usuario si tiene token y está offline.
-// Solo envía si el usuario tiene fcmToken; no depende de Socket.IO.
+// Helper: enviar push FCM a un usuario solo si no tiene socket activo.
+// Evita duplicado: si el usuario ya recibió el mensaje por Socket.IO (online),
+// no enviamos además un push. Solo enviamos push a usuarios offline.
+// connectedUsers se declara más abajo pero es accesible en runtime.
 async function sendPushIfOffline(user, title, body, data = {}) {
   if (!user || !user.fcmToken) return;
+  // connectedUsers es un Map() declarado en la sección de Socket.IO (más abajo).
+  // Si el usuario tiene un socket activo, ya recibió el mensaje en tiempo real;
+  // no enviamos push para evitar notificación duplicada.
+  if (connectedUsers && connectedUsers.has(user.id)) {
+    logger.debug(`[FCM] Usuario ${user.username} online (socket activo), omitiendo push duplicado`);
+    return;
+  }
   try {
     const result = await _sendPushToUser(user.fcmToken, title, body, data);
     if (result.success) {
-      logger.info(`[FCM] Push enviado a ${user.username}`);
+      logger.info(`[FCM] Push enviado a ${user.username} (offline)`);
     } else if (result.invalidToken) {
       // Token inválido/expirado: limpiarlo de la BD
       user.fcmToken = null;

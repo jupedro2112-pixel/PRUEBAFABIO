@@ -81,16 +81,24 @@ VIP.notifications = (function () {
     }
 
     // ---- FCM token registration ----
-
+    // This delegates to the unified window.sendFcmTokenAfterLogin defined in
+    // index.html (which handles dedup, retry, and rotation). If that hasn't
+    // loaded yet, fall back to a simple one-shot attempt.
     async function sendFcmTokenAfterLogin() {
+        // window.sendFcmTokenAfterLogin is set by index.html inline script
+        // and is the canonical implementation with dedup/retry/rotation.
+        if (typeof window.sendFcmTokenAfterLogin === 'function' &&
+            window.sendFcmTokenAfterLogin !== sendFcmTokenAfterLogin) {
+            return window.sendFcmTokenAfterLogin();
+        }
+
+        // Fallback: simple one-shot if inline script hasn't loaded yet
         const fcmToken  = localStorage.getItem('fcmToken');
         const authToken = localStorage.getItem('userToken');
 
-        console.log('[FCM] sendFcmTokenAfterLogin() - fcmToken:', fcmToken ? 'Sí (30 chars: ' + fcmToken.substring(0, 30) + '...)' : 'No');
-        console.log('[FCM] sendFcmTokenAfterLogin() - authToken:', authToken ? 'Sí' : 'No');
+        console.log('[FCM] sendFcmTokenAfterLogin() fallback - fcmToken:', fcmToken ? 'Sí' : 'No');
 
         if (fcmToken && authToken) {
-            console.log('[FCM] Enviando token al servidor después del login...');
             try {
                 const response = await fetch(`${VIP.config.API_URL}/api/notifications/register-token`, {
                     method: 'POST',
@@ -103,16 +111,13 @@ VIP.notifications = (function () {
 
                 const data = await response.json();
                 if (data.success) {
-                    console.log('[FCM] ✅ Token registrado en el servidor');
-                    VIP.ui.showToast('✅ Notificaciones activadas correctamente', 'success');
+                    console.log('[FCM] ✅ Token registrado en el servidor (fallback)');
                 } else {
                     console.log('[FCM] ⚠️ No se pudo registrar el token:', data.error);
                 }
             } catch (error) {
                 console.log('[FCM] ⚠️ Error al registrar token:', error.message);
             }
-        } else {
-            console.log('[FCM] No hay token FCM o authToken disponible');
         }
     }
 
