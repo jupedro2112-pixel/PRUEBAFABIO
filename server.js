@@ -337,10 +337,13 @@ const { sendNotificationToUser: _sendPushToUser } = require('./src/services/noti
 // Helper: enviar push FCM a un usuario solo si no tiene socket activo.
 // Evita duplicado: si el usuario ya recibió el mensaje por Socket.IO (online),
 // no enviamos además un push. Solo enviamos push a usuarios offline.
-// connectedUsers se declara más abajo pero es accesible en runtime.
+//
+// NOTA DE INICIALIZACIÓN: connectedUsers (const Map) se declara en la sección
+// de Socket.IO más abajo (~línea 3205). Esta función nunca se invoca antes de
+// esa declaración (solo se llama desde route handlers y socket handlers), por lo
+// que la referencia es segura en runtime.
 async function sendPushIfOffline(user, title, body, data = {}) {
   if (!user || !user.fcmToken) return;
-  // connectedUsers es un Map() declarado en la sección de Socket.IO (más abajo).
   // Si el usuario tiene un socket activo, ya recibió el mensaje en tiempo real;
   // no enviamos push para evitar notificación duplicada.
   if (connectedUsers && connectedUsers.has(user.id)) {
@@ -3497,7 +3500,9 @@ io.on('connection', (socket) => {
                 logger.warn(`[FCM] sendPushIfOffline (chat) falló para ${targetUser.username}: ${e.message}`);
               });
             }
-          }).catch(() => {});
+          }).catch((dbErr) => {
+            logger.warn(`[FCM] Error buscando usuario para push (chat): ${dbErr.message}`);
+          });
         }
       }
       

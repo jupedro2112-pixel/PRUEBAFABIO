@@ -1064,7 +1064,7 @@
                 // Además, refrescar token desde FCM por si rotó
                 if (messaging && 'Notification' in window && Notification.permission === 'granted') {
                     try {
-                        const swReg = await navigator.serviceWorker.ready.catch(() => null);
+                        const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
                         if (swReg) {
                             const freshToken = await messaging.getToken({
                                 vapidKey: VAPID_KEY,
@@ -1084,7 +1084,7 @@
             } else {
                 // No hay token: intentar generar uno vía initNotifications
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
-                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+                await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
             }
         };
         
@@ -1150,7 +1150,7 @@
                     fcmToken = null;
 
                     // Reintentar obtener el token
-                    await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+                    await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
 
                     const newToken = localStorage.getItem('fcmToken');
                     if (newToken) {
