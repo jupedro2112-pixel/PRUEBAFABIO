@@ -800,7 +800,33 @@
         }
         
         // Registrar SW e inicializar notificaciones
-        registerServiceWorker().then((swRegistration) => {
+        // PWA CONTEXT-CHANGE FIX (root cause): detectar cambio de contexto ANTES de que
+        // initNotifications obtenga el token. Cuando un usuario pasa de Chrome normal a la
+        // app instalada (WebAPK/standalone), Chrome puede generar una nueva suscripción push
+        // invalidando la anterior. Si iniciamos con el token viejo, el backend lo almacena y
+        // Firebase lo rechaza ("Device unregistered") en el primer envío. Al detectar el cambio
+        // ANTES de correr initNotifications, forzamos la creación de un token fresco.
+        registerServiceWorker().then(async (swRegistration) => {
+            const _isStandaloneNow = window.matchMedia('(display-mode: standalone)').matches ||
+                                     window.navigator.standalone === true;
+            const _ctxNow    = _isStandaloneNow ? 'standalone' : 'browser';
+            const _ctxStored = localStorage.getItem('fcmTokenContext');
+            if (_ctxStored !== null && _ctxStored !== _ctxNow) {
+                console.log('[FCM] 🔄 Cambio de contexto detectado al inicio: "' + _ctxStored + '" → "' + _ctxNow + '"');
+                console.log('[FCM] Limpiando suscripción del contexto anterior para obtener token fresco...');
+                if (messaging) {
+                    try {
+                        await messaging.deleteToken();
+                        console.log('[FCM] ✅ Suscripción push del contexto anterior eliminada');
+                    } catch (delErr) {
+                        console.warn('[FCM] deleteToken (cambio de contexto inicial):', delErr.message);
+                    }
+                }
+                localStorage.removeItem('fcmToken');
+                localStorage.removeItem('fcmTokenContext');
+                fcmToken = null;
+                console.log('[FCM] Estado local limpiado por cambio de contexto — initNotifications obtendrá token fresco');
+            }
             initNotifications(swRegistration);
         });
         
@@ -851,11 +877,22 @@
             }
             
             if (!messaging) {
-                console.log('[FCM] ❌ Firebase Messaging no está disponible - push no soportado en este entorno');
-                if (isIOS && typeof showToast === 'function') {
-                    showToast('⚠️ Notificaciones no disponibles. Necesitás iOS 16.4+, Safari, y la app instalada.', 'warning');
-                } else if (typeof showToast === 'function') {
-                    showToast('⚠️ Este navegador no soporta notificaciones push.', 'warning');
+                // Distinguir causa: ¿Firebase SDK no cargó (red), o el navegador no lo soporta?
+                if (typeof firebase === 'undefined') {
+                    console.log('[FCM] ❌ Firebase SDK no cargado (posible problema de red o script bloqueado)');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Error al cargar Firebase. Revisá tu conexión y recargá la página.', 'warning');
+                    }
+                } else if (isIOS) {
+                    console.log('[FCM] ❌ Firebase Messaging no disponible en iOS - requiere iOS 16.4+, Safari y app instalada');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Notificaciones no disponibles. Necesitás iOS 16.4+, Safari, y la app instalada.', 'warning');
+                    }
+                } else {
+                    console.log('[FCM] ❌ Firebase Messaging falló al inicializar (getToken no disponible en este entorno)');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ No se pudo inicializar el sistema de notificaciones. Recargá la página.', 'warning');
+                    }
                 }
                 return;
             }
@@ -1120,11 +1157,16 @@
                     }
                 } else {
                     // initNotifications ya está en curso (lanzado al cargar la página).
-                    // Cuando complete, llamará sendTokenToServer con el token del contexto
-                    // actual (el usuario ya estará logueado). Solo limpiamos el contexto
-                    // cacheado para que no bloquee futuros intentos.
-                    console.log('[FCM] initNotifications en progreso — el token del contexto "' + _currentCtx + '" quedará registrado al completar');
+                    // Limpiar token Y contexto para que initNotifications no registre en backend
+                    // el token del contexto anterior. NOTA: el initNotifications en curso puede
+                    // haber ya obtenido el token internamente — lo que se limpia aquí afecta solo
+                    // a lo que la próxima llamada a sendFcmTokenAfterLogin encontrará en localStorage.
+                    // Con el fix en registerServiceWorker, este caso raramente ocurre (la limpieza
+                    // ya se hace ANTES de que initNotifications arranque).
+                    console.log('[FCM] initNotifications en progreso — limpiando token del contexto anterior "' + _storedCtx + '" para evitar re-registro de token inválido');
+                    localStorage.removeItem('fcmToken');
                     localStorage.removeItem('fcmTokenContext');
+                    fcmToken = null;
                 }
                 return;
             }
@@ -1239,6 +1281,16 @@
 
                 if (permission === 'granted') {
                     console.log('[FCM] ✅ Permiso concedido. Obteniendo token...');
+
+                    // Guardia: si Firebase no está disponible, dar error claro en lugar de
+                    // "Este navegador no soporta notificaciones push" (que es engañoso en Android).
+                    if (!messaging) {
+                        console.error('[FCM] ❌ Firebase Messaging no disponible — no se puede obtener token');
+                        if (typeof showToast === 'function') {
+                            showToast('⚠️ Error interno de Firebase. Recargá la página e intentá de nuevo.', 'warning');
+                        }
+                        return { success: false, error: 'Firebase Messaging no disponible' };
+                    }
 
                     // Borrar token anterior (incluida la suscripción push subyacente) para
                     // forzar la creación de una suscripción nueva. Sin llamar deleteToken()
