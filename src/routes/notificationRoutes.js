@@ -86,7 +86,18 @@ router.post('/register-token', async (req, res) => {
     
     console.log('[FCM] Usuario encontrado:', user.username);
     
-    // Guardar el token en la base de datos
+    // Dedup backend: si el token es idéntico al que ya tiene, no guardar de nuevo
+    if (user.fcmToken === fcmToken) {
+      console.log('[FCM] Token idéntico al existente, omitiendo save');
+      return res.json({ 
+        success: true, 
+        message: 'Token ya registrado (sin cambios)',
+        userId: user.id,
+        username: user.username
+      });
+    }
+
+    // Guardar el token nuevo/actualizado en la base de datos
     user.fcmToken = fcmToken;
     user.fcmTokenUpdatedAt = new Date();
     await user.save();

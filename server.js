@@ -332,6 +332,42 @@ const notificationRoutes = require('./src/routes/notificationRoutes');
 app.use('/api/notifications', notificationRoutes);
 notificationRoutes.setIo(io);
 
+const { sendNotificationToUser: _sendPushToUser } = require('./src/services/notificationService');
+
+// Helper: enviar push FCM a un usuario solo si no tiene socket activo.
+// Evita duplicado: si el usuario ya recibió el mensaje por Socket.IO (online),
+// no enviamos además un push. Solo enviamos push a usuarios offline.
+//
+// NOTA DE INICIALIZACIÓN: connectedUsers (const Map) se declara en la sección
+// de Socket.IO más abajo (~línea 3205). Esta función nunca se invoca antes de
+// esa declaración (solo se llama desde route handlers y socket handlers), por lo
+// que la referencia es segura en runtime.
+async function sendPushIfOffline(user, title, body, data = {}) {
+  if (!user || !user.fcmToken) return;
+  // Si el usuario tiene un socket activo, ya recibió el mensaje en tiempo real;
+  // no enviamos push para evitar notificación duplicada.
+  if (connectedUsers && connectedUsers.has(user.id)) {
+    logger.debug(`[FCM] Usuario ${user.username} online (socket activo), omitiendo push duplicado`);
+    return;
+  }
+  try {
+    const result = await _sendPushToUser(user.fcmToken, title, body, data);
+    if (result.success) {
+      logger.info(`[FCM] Push enviado a ${user.username} (offline)`);
+    } else if (result.invalidToken) {
+      // Token inválido/expirado: limpiarlo de la BD
+      user.fcmToken = null;
+      user.fcmTokenUpdatedAt = null;
+      await user.save();
+      logger.warn(`[FCM] Token inválido eliminado para ${user.username}`);
+    } else {
+      logger.warn(`[FCM] Error enviando push a ${user.username}: ${result.error}`);
+    }
+  } catch (err) {
+    logger.warn(`[FCM] Excepción enviando push a ${user.username}: ${err.message}`);
+  }
+}
+
 // ============================================
 // FUNCIONES HELPER PARA MONGODB
 // ============================================
@@ -2880,6 +2916,19 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       if (userSocket) {
         userSocket.emit('balance_updated', { balance: newBalance });
       }
+
+      // Push FCM para usuarios offline: enviar si tiene token registrado.
+      // El mensaje ya se entregó por Socket.IO a usuarios online; FCM cubre offline/background.
+      {
+        const depositBonus = parseFloat(bonus) || 0;
+        const depositPushTitle = depositBonus > 0
+          ? `💰 Depósito + bonus acreditado`
+          : `💰 Depósito acreditado`;
+        const depositPushBody = `$${amount} acreditados en tu cuenta. Nuevo saldo: $${newBalance}.`;
+        sendPushIfOffline(user, depositPushTitle, depositPushBody, { tag: 'deposit' }).catch((e) => {
+          logger.warn(`[FCM] sendPushIfOffline (deposit) falló para ${user.username}: ${e.message}`);
+        });
+      }
       
       await Transaction.create({
         id: uuidv4(),
@@ -3025,6 +3074,11 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
       if (userSocket) {
         userSocket.emit('balance_updated', { balance: newBalance });
       }
+
+      // Push FCM para usuarios offline.
+      sendPushIfOffline(user, '💸 Retiro procesado', `$${amount} enviados. Nuevo saldo: $${newBalance}.`, { tag: 'withdrawal' }).catch((e) => {
+        logger.warn(`[FCM] sendPushIfOffline (withdrawal) falló para ${user.username}: ${e.message}`);
+      });
       
       await Transaction.create({
         id: uuidv4(),
@@ -3133,6 +3187,12 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
         } catch (msgErr) {
           console.error('No se pudo enviar mensaje de bonus al usuario:', msgErr);
         }
+
+        // Push FCM para usuarios offline (bonus).
+        const bonusBalance = newBalance !== null ? newBalance : '—';
+        sendPushIfOffline(bonusUser, '🎁 Bonificación acreditada', `$${bonusAmount} de bonus en tu cuenta. Saldo: $${bonusBalance}.`, { tag: 'bonus' }).catch((e) => {
+          logger.warn(`[FCM] sendPushIfOffline (bonus) falló para ${bonusUser.username}: ${e.message}`);
+        });
       }
 
       res.json({
@@ -3429,6 +3489,21 @@ io.on('connection', (socket) => {
         socket.emit('message_sent', message);
         
         logger.debug(`Message ${message.id} delivered: ${delivered ? 'YES (direct)' : 'NO (user offline, used rooms)'}`);
+
+        // Push FCM para usuario offline: si no está conectado por socket, enviar push.
+        if (!delivered) {
+          User.findOne({ id: receiverId }).then(function(targetUser) {
+            if (targetUser && targetUser.fcmToken) {
+              const pushTitle = 'Nuevo mensaje';
+              const pushBody = (message.content || '').substring(0, 100);
+              sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch((e) => {
+                logger.warn(`[FCM] sendPushIfOffline (chat) falló para ${targetUser.username}: ${e.message}`);
+              });
+            }
+          }).catch((dbErr) => {
+            logger.warn(`[FCM] Error buscando usuario para push (chat): ${dbErr.message}`);
+          });
+        }
       }
       
       broadcastStats();

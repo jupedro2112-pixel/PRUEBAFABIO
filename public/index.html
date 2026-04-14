@@ -746,6 +746,12 @@
         // Nota: deferredPrompt se declara en app.js
         let fcmToken = null;
         const VAPID_KEY = 'BHnnRx4J6u3aYBK_JExhceybaNNLhMEGosFSFau0niy0cSsW1qw02oZqyFFfOH-Hnr61mQq7TOVcM3TW58eVQRc';
+        // Guard: evita llamadas concurrentes a initNotifications (race condition fix)
+        let _notifInitializing = false;
+        // Tracking: último token FCM enviado exitosamente al backend (evita duplicados)
+        let _lastRegisteredToken = null;
+        // Tracking: si hay un intento pendiente de retry para registrar token
+        let _tokenRetryTimer = null;
         
         // ============================================
         // DETECTAR DISPOSITIVO
@@ -802,6 +808,12 @@
         // INICIALIZAR NOTIFICACIONES PUSH (AUTOMÁTICO)
         // ============================================
         async function initNotifications(swRegistration) {
+            // Race condition fix: si ya hay una inicialización en curso, ignorar esta llamada.
+            if (_notifInitializing) {
+                console.log('[FCM] initNotifications ya en progreso, ignorando llamada duplicada');
+                return;
+            }
+            _notifInitializing = true;
             console.log('[FCM] Inicializando notificaciones...');
             
             // Detectar dispositivo y modo de ejecución
@@ -824,32 +836,35 @@
             
             if (isIOS) {
                 console.log('[FCM] 📱 iOS detectado');
-                console.log('[FCM] Safari:', isSafari ? 'Sí' : 'No');
-                console.log('[FCM] Standalone (instalada):', isStandalone ? 'Sí' : 'No');
-                console.log('[FCM] Nota: Las notificaciones push en iOS requieren:');
-                console.log('[FCM] 1. iOS 16.4 o superior');
-                console.log('[FCM] 2. Agregar la app a la pantalla de inicio');
-                console.log('[FCM] 3. Abrir la app desde el icono de inicio');
-                
                 if (!isSafari) {
                     console.log('[FCM] ⚠️ iOS detectado pero NO es Safari. Las notificaciones NO funcionarán.');
-                    console.log('[FCM] Por favor usa Safari para instalar la app.');
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Las notificaciones requieren Safari en iPhone. Abrí esta página en Safari.', 'warning');
+                    }
                 }
                 if (!isStandalone) {
                     console.log('[FCM] ⚠️ La app no está instalada. Agrega a pantalla de inicio primero.');
+                    if (typeof showToast === 'function' && isSafari) {
+                        showToast('📱 Para recibir notificaciones, instalá la app: Compartir ⬆️ → Agregar a Inicio', 'info');
+                    }
                 }
             }
             
             if (!messaging) {
-                console.log('[FCM] ❌ Firebase Messaging no está disponible');
-                if (isIOS) {
-                    console.log('[FCM] ⚠️ En iOS, las notificaciones push web tienen limitaciones');
+                console.log('[FCM] ❌ Firebase Messaging no está disponible - push no soportado en este entorno');
+                if (isIOS && typeof showToast === 'function') {
+                    showToast('⚠️ Notificaciones no disponibles. Necesitás iOS 16.4+, Safari, y la app instalada.', 'warning');
+                } else if (typeof showToast === 'function') {
+                    showToast('⚠️ Este navegador no soporta notificaciones push.', 'warning');
                 }
                 return;
             }
             
             if (!('Notification' in window)) {
                 console.log('[FCM] Este navegador no soporta notificaciones');
+                if (typeof showToast === 'function') {
+                    showToast('⚠️ Este navegador no soporta notificaciones.', 'warning');
+                }
                 return;
             }
             
@@ -875,9 +890,11 @@
                 // Si fue denegado, mostrar mensaje pero NO retornar
                 // El usuario puede activarlo manualmente después
                 if (permission === 'denied') {
-                    console.log('[FCM] ⚠️ Permiso denegado. El usuario puede activarlo manualmente desde la configuración del navegador.');
-                    console.log('[FCM] Para reactivar: Configuración del sitio → Notificaciones → Permitir');
-                    // No retornamos aquí - el usuario puede intentar de nuevo
+                    console.log('[FCM] ⚠️ Permiso denegado.');
+                    if (typeof showToast === 'function') {
+                        showToast('🔕 Notificaciones bloqueadas. Activá desde configuración del sitio (ícono de candado).', 'warning');
+                    }
+                    // No retornamos - el usuario podría reactivar desde configuración
                 }
                 
                 if (permission === 'granted') {
@@ -963,73 +980,111 @@
             } catch (error) {
                 console.error('[FCM] ❌ Error al inicializar notificaciones:', error);
                 console.error('[FCM] Stack:', error.stack);
+            } finally {
+                _notifInitializing = false;
             }
         }
         
         // ============================================
-        // ENVIAR TOKEN AL SERVIDOR (AUTOMÁTICO)
+        // ENVIAR TOKEN AL SERVIDOR (ÚNICA FUENTE DE VERDAD)
+        // Características:
+        //   - Dedup: no re-envía si el mismo token ya fue registrado
+        //   - Retry: si no hay authToken (login pendiente), agenda un reintento
+        //   - Rotation: si el token cambió respecto al último registrado, re-envía
         // ============================================
         async function sendTokenToServer(token) {
             if (!token) {
                 console.log('[FCM] No hay token para enviar');
-                return;
+                return false;
             }
-            
-            console.log('[FCM] Preparando envío de token al servidor...');
-            console.log('[FCM] Token FCM:', token.substring(0, 30) + '...');
-            
-            // Intentar enviar al servidor si el usuario está logueado
-            // El login guarda el token como 'userToken' en app.js
+
+            // Dedup: si ya enviamos este mismo token con éxito, no re-enviar
+            if (_lastRegisteredToken === token) {
+                console.log('[FCM] Token ya registrado en backend, omitiendo duplicado');
+                return true;
+            }
+
             const authToken = localStorage.getItem('userToken');
-            console.log('[FCM] Auth token encontrado:', authToken ? 'Sí' : 'No');
-            
-            if (authToken) {
-                console.log('[FCM] Usuario logueado, enviando token...');
-                try {
-                    const response = await fetch('/api/notifications/register-token', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + authToken
-                        },
-                        body: JSON.stringify({ fcmToken: token })
-                    });
-                    
-                    const data = await response.json();
-                    if (data.success) {
-                        console.log('[FCM] ✅ Token registrado en el servidor para:', data.username);
-                    } else {
-                        console.log('[FCM] ⚠️ No se pudo registrar el token:', data.error);
-                    }
-                } catch (error) {
-                    console.log('[FCM] ⚠️ Error al registrar token:', error.message);
+            if (!authToken) {
+                console.log('[FCM] ⏳ Usuario no logueado, token en localStorage. Se registrará después del login.');
+                // Agendar retry: cuando el usuario haga login, sendFcmTokenAfterLogin se
+                // encargará. Pero por si acaso, hacemos un retry con backoff limitado.
+                if (!_tokenRetryTimer) {
+                    _tokenRetryTimer = setTimeout(function() {
+                        _tokenRetryTimer = null;
+                        const t = localStorage.getItem('fcmToken');
+                        if (t && localStorage.getItem('userToken')) {
+                            console.log('[FCM] Retry automático: intentando registrar token...');
+                            sendTokenToServer(t);
+                        }
+                    }, 5000);
                 }
-            } else {
-                console.log('[FCM] ⏳ Usuario no logueado, token guardado en localStorage para enviar después');
+                return false;
+            }
+
+            console.log('[FCM] Registrando token en backend...');
+            try {
+                const response = await fetch('/api/notifications/register-token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + authToken
+                    },
+                    body: JSON.stringify({ fcmToken: token })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    _lastRegisteredToken = token;
+                    console.log('[FCM] ✅ Token registrado en backend para:', data.username);
+                    return true;
+                } else {
+                    console.log('[FCM] ⚠️ Backend rechazó registro:', data.error);
+                    return false;
+                }
+            } catch (error) {
+                console.log('[FCM] ⚠️ Error de red al registrar token:', error.message);
+                return false;
             }
         }
-        
+
         // ============================================
         // FUNCIÓN GLOBAL: Enviar token después del login
+        // (llamada desde auth.js después de login / register / verifyToken)
+        // Unificada: siempre usa sendTokenToServer como fuente de verdad.
+        // Si no hay token FCM todavía, inicia initNotifications para generarlo.
         // ============================================
         window.sendFcmTokenAfterLogin = async function() {
-            console.log('[FCM] sendFcmTokenAfterLogin() llamado desde app.js');
+            console.log('[FCM] sendFcmTokenAfterLogin() llamado');
             const token = localStorage.getItem('fcmToken');
-            const permissionGranted = 'Notification' in window && Notification.permission === 'granted';
 
-            if (token && permissionGranted) {
-                // Permiso concedido y token en localStorage: enviar al servidor Y refrescar desde FCM
-                // en una sola llamada a initNotifications (que internamente revalida el token con FCM
-                // y vuelve a enviarlo al servidor si cambió).
-                await sendTokenToServer(token);
-                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
-            } else if (token) {
-                // Hay token pero permiso no confirmado: solo enviar al servidor
-                await sendTokenToServer(token);
+            if (token) {
+                // Token existe: enviarlo al backend (dedup interno evita duplicados)
+                const sent = await sendTokenToServer(token);
+                // Además, refrescar token desde FCM por si rotó
+                if (messaging && 'Notification' in window && Notification.permission === 'granted') {
+                    try {
+                        const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
+                        if (swReg) {
+                            const freshToken = await messaging.getToken({
+                                vapidKey: VAPID_KEY,
+                                serviceWorkerRegistration: swReg
+                            });
+                            if (freshToken && freshToken !== token) {
+                                console.log('[FCM] 🔄 Token rotado detectado, actualizando...');
+                                fcmToken = freshToken;
+                                localStorage.setItem('fcmToken', freshToken);
+                                await sendTokenToServer(freshToken);
+                            }
+                        }
+                    } catch (refreshErr) {
+                        console.warn('[FCM] Error refrescando token post-login:', refreshErr.message);
+                    }
+                }
             } else {
-                // No hay token: intentar inicializar notificaciones (generará token si hay permiso)
+                // No hay token: intentar generar uno vía initNotifications
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
-                await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+                await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
             }
         };
         
@@ -1095,7 +1150,7 @@
                     fcmToken = null;
 
                     // Reintentar obtener el token
-                    await initNotifications(await navigator.serviceWorker.ready.catch(() => null));
+                    await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
 
                     const newToken = localStorage.getItem('fcmToken');
                     if (newToken) {
@@ -1128,60 +1183,88 @@
         };
         
         // ============================================
-        // FUNCIÓN GLOBAL: Verificar estado de notificaciones
+        // FUNCIÓN GLOBAL: Verificar estado de notificaciones (diagnóstico)
+        // Incluye: permiso, token local, token registrado en backend, entorno
         // ============================================
         window.checkNotificationStatus = function() {
-            const permission = Notification.permission;
+            const notifSupported = 'Notification' in window;
+            const permission = notifSupported ? Notification.permission : 'no soportado';
             const token = localStorage.getItem('fcmToken');
+            const registeredInBackend = _lastRegisteredToken !== null && _lastRegisteredToken === token;
             const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             const isSafariBrowser = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
             const isAndroidDevice = /Android/.test(navigator.userAgent);
             const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
-            const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
+            const standaloneMode = window.matchMedia('(display-mode: standalone)').matches || 
                                  window.navigator.standalone === true;
+            const messagingAvailable = !!messaging;
             
             console.log('=== ESTADO DE NOTIFICACIONES ===');
             console.log('Permiso:', permission);
-            console.log('Token FCM:', token ? 'Sí (' + token.substring(0, 30) + '...)' : 'No');
+            console.log('Token FCM local:', token ? 'Sí (' + token.substring(0, 30) + '...)' : 'No');
+            console.log('Token registrado en backend:', registeredInBackend ? 'Sí' : 'No');
+            console.log('Firebase Messaging:', messagingAvailable ? 'Disponible' : 'No disponible');
             console.log('iOS:', isIOSDevice ? 'Sí' : 'No');
             console.log('Android:', isAndroidDevice ? 'Sí' : 'No');
             console.log('Chrome:', isChromeBrowser ? 'Sí' : 'No');
             console.log('Safari:', isSafariBrowser ? 'Sí' : 'No');
-            console.log('App instalada (standalone):', isStandalone ? 'Sí' : 'No');
+            console.log('App instalada (standalone):', standaloneMode ? 'Sí' : 'No');
             console.log('=================================');
             
             return {
                 permission: permission,
                 hasToken: !!token,
+                tokenRegisteredInBackend: registeredInBackend,
                 tokenPreview: token ? token.substring(0, 30) + '...' : null,
+                messagingAvailable: messagingAvailable,
                 isIOS: isIOSDevice,
                 isAndroid: isAndroidDevice,
                 isChrome: isChromeBrowser,
                 isSafari: isSafariBrowser,
-                isStandalone: isStandalone
+                isStandalone: standaloneMode
             };
         };
         
         // ============================================
         // MANEJAR NOTIFICACIONES EN PRIMER PLANO
+        // Null guard: solo registrar si Firebase Messaging está disponible.
+        // Sin este guard, si messaging es null el script se rompe y corta
+        // funciones posteriores (chat, login, etc.).
         // ============================================
-        messaging.onMessage(function(payload) {
-            console.log('[FCM] Notificación recibida en primer plano:', payload);
-            
-            const notif = payload.notification || {};
-            const notificationTitle = notif.title || 'Sala de Juegos';
-            const notificationOptions = {
-                body: notif.body || 'Nueva notificación',
-                icon: notif.icon || '/icons/icon-192x192.png',
-                badge: '/icons/icon-72x72.png',
-                tag: payload.data?.tag || 'default'
-            };
-            
-            // Mostrar notificación solo si la app no está enfocada
-            if (document.visibilityState !== 'visible') {
-                new Notification(notificationTitle, notificationOptions);
-            }
-        });
+        if (messaging) {
+            messaging.onMessage(function(payload) {
+                console.log('[FCM] Notificación recibida en primer plano:', payload);
+                
+                const notif = payload.notification || {};
+                const notificationTitle = notif.title || 'Sala de Juegos';
+                const notifBody = notif.body || 'Nueva notificación';
+                
+                if (document.visibilityState !== 'visible') {
+                    // App en background / minimizada: mostrar notificación nativa
+                    try {
+                        new Notification(notificationTitle, {
+                            body: notifBody,
+                            icon: notif.icon || '/icons/icon-192x192.png',
+                            badge: '/icons/icon-72x72.png',
+                            tag: payload.data?.tag || 'default'
+                        });
+                    } catch (e) {
+                        console.log('[FCM] No se pudo mostrar notificación nativa:', e.message);
+                    }
+                } else {
+                    // App visible en primer plano: mostrar toast para no perder el mensaje
+                    console.log('[FCM] App en primer plano - mostrando toast');
+                    if (typeof showToast === 'function') {
+                        showToast(`🔔 ${notificationTitle}: ${notifBody}`, 'info');
+                    }
+                    if (VIP && VIP.notifications && typeof VIP.notifications.showBrowserNotification === 'function') {
+                        VIP.notifications.showBrowserNotification(notificationTitle, notifBody, notif.icon || '/icons/icon-192x192.png');
+                    }
+                }
+            });
+        } else {
+            console.log('[FCM] Firebase Messaging no disponible - onMessage no registrado');
+        }
         
         // ============================================
         // BOTÓN DE INSTALACIÓN PWA
@@ -1438,6 +1521,19 @@
 
             notificationBtn.addEventListener('click', async () => {
                 console.log('[FCM] Botón de notificaciones clickeado');
+
+                // Si iOS sin soporte real, mostrar guía visible en vez de intentar
+                if (isIOS && !messaging) {
+                    if (!standaloneMode) {
+                        showIOSInstallInstructions();
+                    } else {
+                        if (typeof showToast === 'function') {
+                            showToast('⚠️ Tu versión de iOS no soporta notificaciones push. Necesitás iOS 16.4+.', 'warning');
+                        }
+                    }
+                    return;
+                }
+
                 // Mostrar estado de carga mientras se procesa
                 const prevHtml = notificationBtn.innerHTML;
                 notificationBtn.innerHTML = '⏳ ...';
@@ -1447,7 +1543,7 @@
                     if (result && result.success) {
                         notificationBtn.classList.add('active');
                         notificationBtn.innerHTML = '🔔 ACTIVADO';
-                        notificationBtn.title = 'Notificaciones activadas';
+                        notificationBtn.title = 'Notificaciones activadas ✅';
                     } else {
                         notificationBtn.innerHTML = '🔔 ERROR';
                         setTimeout(() => {
@@ -1466,11 +1562,18 @@
             });
             console.log('[FCM] ✅ Botón de notificaciones configurado');
             
-            // Actualizar estado inicial del botón
+            // Actualizar estado inicial del botón según diagnóstico
             const status = checkNotificationStatus();
             if (status.permission === 'granted' && status.hasToken) {
                 notificationBtn.classList.add('active');
                 notificationBtn.innerHTML = '🔔 ACTIVADO';
+                notificationBtn.title = status.tokenRegisteredInBackend
+                    ? 'Notificaciones activadas ✅ (registrado en servidor)'
+                    : 'Notificaciones activadas ✅ (pendiente de registro en servidor)';
+            } else if (status.permission === 'denied') {
+                notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
+            } else if (!status.messagingAvailable) {
+                notificationBtn.title = 'Push no soportado en este navegador/entorno.';
             }
         } else {
             console.log('[FCM] ❌ Botón notificationBtn no encontrado en el DOM');
