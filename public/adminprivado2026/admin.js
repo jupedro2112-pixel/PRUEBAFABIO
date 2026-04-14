@@ -720,13 +720,7 @@ function initSocket() {
     // Actualizar estado de app de notificaciones en tiempo real
     socket.on('user_app_status', (data) => {
         if (data.userId === selectedUserId && elements.chatAppStatus) {
-            if (data.appInstalled) {
-                elements.chatAppStatus.textContent = '📱 app instalada';
-                elements.chatAppStatus.style.color = '#00ff88';
-            } else {
-                elements.chatAppStatus.textContent = '📵 app borrada';
-                elements.chatAppStatus.style.color = '#aaa';
-            }
+            setNotifStatusBadge(elements.chatAppStatus, data.appInstalled, data.notifContext);
         }
     });
     
@@ -1845,6 +1839,26 @@ async function markMessagesAsRead(userId) {
 }
 
 // ============================================
+// NOTIF STATUS BADGE HELPER
+// Sets the chatAppStatus element to one of three states:
+//   APP INSTALADA          - standalone PWA + token activo
+//   NOTIFICACIONES EN NAVEGADOR - browser + token activo
+//   NOTIFICACIONES INACTIVAS    - sin token o sin contexto
+// ============================================
+function setNotifStatusBadge(el, hasToken, notifContext) {
+    if (hasToken && notifContext === 'standalone') {
+        el.textContent = '📱 APP INSTALADA';
+        el.style.color = '#00ff88';
+    } else if (hasToken && notifContext === 'browser') {
+        el.textContent = '🌐 NOTIFICACIONES EN NAVEGADOR';
+        el.style.color = '#60a5fa';
+    } else {
+        el.textContent = '🔕 NOTIFICACIONES INACTIVAS';
+        el.style.color = '#aaa';
+    }
+}
+
+// ============================================
 // USER ACTIONS
 // ============================================
 async function loadUserInfo(userId) {
@@ -1870,13 +1884,7 @@ async function loadUserInfo(userId) {
         
         // Mostrar estado de la app de notificaciones
         if (elements.chatAppStatus) {
-            if (user.fcmToken) {
-                elements.chatAppStatus.textContent = '📱 app instalada';
-                elements.chatAppStatus.style.color = '#00ff88';
-            } else {
-                elements.chatAppStatus.textContent = '📵 app borrada';
-                elements.chatAppStatus.style.color = '#aaa';
-            }
+            setNotifStatusBadge(elements.chatAppStatus, !!user.fcmToken, user.notifContext);
         }
     } catch (error) {
         console.error('Error loading user info:', error);

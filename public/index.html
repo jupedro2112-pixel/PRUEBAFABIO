@@ -1058,13 +1058,14 @@
 
             console.log('[FCM] Registrando token en backend...');
             try {
+                const _notifCtx = localStorage.getItem('fcmTokenContext') || 'browser';
                 const response = await fetch('/api/notifications/register-token', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
                     },
-                    body: JSON.stringify({ fcmToken: token })
+                    body: JSON.stringify({ fcmToken: token, notifContext: _notifCtx })
                 });
 
                 const data = await response.json();
@@ -1398,7 +1399,7 @@
                 const notifBody = notif.body || 'Nueva notificación';
                 
                 if (document.visibilityState !== 'visible') {
-                    // App en background / minimizada: mostrar notificación nativa
+                    // Tab oculta / minimizada: intentar notificación nativa
                     try {
                         new Notification(notificationTitle, {
                             body: notifBody,
@@ -1410,13 +1411,10 @@
                         console.log('[FCM] No se pudo mostrar notificación nativa:', e.message);
                     }
                 } else {
-                    // App visible en primer plano: mostrar toast para no perder el mensaje
-                    console.log('[FCM] App en primer plano - mostrando toast');
+                    // App visible en primer plano: mostrar siempre el toast in-app
+                    console.log('[FCM] App en primer plano - mostrando aviso in-app');
                     if (typeof showToast === 'function') {
                         showToast(`🔔 ${notificationTitle}: ${notifBody}`, 'info');
-                    }
-                    if (VIP && VIP.notifications && typeof VIP.notifications.showBrowserNotification === 'function') {
-                        VIP.notifications.showBrowserNotification(notificationTitle, notifBody, notif.icon || '/icons/icon-192x192.png');
                     }
                 }
             });
