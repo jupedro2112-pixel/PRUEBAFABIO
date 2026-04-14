@@ -877,31 +877,23 @@
             }
             
             if (!messaging) {
-                // Distinguir causa: ¿Firebase SDK no cargó (red), o el navegador no lo soporta?
+                // Distinguir causa solo para logs internos de debugging (no mostrar al usuario)
                 if (typeof firebase === 'undefined') {
-                    console.log('[FCM] ❌ Firebase SDK no cargado (posible problema de red o script bloqueado)');
-                    if (typeof showToast === 'function') {
-                        showToast('⚠️ No se pudieron activar las notificaciones. Revisá tu conexión y recargá la página.', 'warning');
-                    }
+                    console.error('[FCM] ❌ Firebase SDK no cargado (posible problema de red o script bloqueado)');
                 } else if (isIOS) {
-                    console.log('[FCM] ❌ Firebase Messaging no disponible en iOS - requiere iOS 16.4+, Safari y app instalada');
-                    if (typeof showToast === 'function') {
-                        showToast('⚠️ Notificaciones no disponibles. Necesitás iOS 16.4+, Safari, y la app instalada.', 'warning');
-                    }
+                    console.error('[FCM] ❌ Firebase Messaging no disponible en iOS - requiere iOS 16.4+, Safari y app instalada');
                 } else {
-                    console.log('[FCM] ❌ Firebase Messaging falló al inicializar (getToken no disponible en este entorno)');
-                    if (typeof showToast === 'function') {
-                        showToast('⚠️ No se pudo inicializar el sistema de notificaciones. Recargá la página.', 'warning');
-                    }
+                    console.error('[FCM] ❌ Firebase Messaging falló al inicializar (getToken no disponible en este entorno)');
                 }
+                // No mostrar toast al usuario: esta es una inicialización automática y el
+                // sistema puede seguir operativo con un token registrado en sesiones anteriores.
+                _notifInitializing = false;
                 return;
             }
             
             if (!('Notification' in window)) {
                 console.log('[FCM] Este navegador no soporta notificaciones');
-                if (typeof showToast === 'function') {
-                    showToast('⚠️ Este navegador no soporta notificaciones.', 'warning');
-                }
+                _notifInitializing = false;
                 return;
             }
             
@@ -1282,12 +1274,22 @@
                 if (permission === 'granted') {
                     console.log('[FCM] ✅ Permiso concedido. Obteniendo token...');
 
-                    // Guardia: si Firebase no está disponible, dar error claro en lugar de
-                    // "Este navegador no soporta notificaciones push" (que es engañoso en Android).
+                    // Guardia: si Firebase no está disponible verificar si ya hay token activo
+                    // antes de reportar un error al usuario.
                     if (!messaging) {
                         console.error('[FCM] ❌ Firebase Messaging no disponible — no se puede obtener token');
+                        // Si existe un token en localStorage el sistema puede seguir operativo
+                        // (token registrado en sesión anterior). No mostrar error en ese caso.
+                        const _existingToken = localStorage.getItem('fcmToken');
+                        if (_existingToken) {
+                            console.log('[FCM] Token existente detectado — notificaciones pueden estar activas');
+                            if (typeof showToast === 'function') {
+                                showToast('✅ Notificaciones ya activadas', 'success');
+                            }
+                            return { success: true, token: _existingToken };
+                        }
                         if (typeof showToast === 'function') {
-                            showToast('⚠️ Error interno de Firebase. Recargá la página e intentá de nuevo.', 'warning');
+                            showToast('⚠️ No se pudieron activar las notificaciones. Intentálo de nuevo.', 'warning');
                         }
                         return { success: false, error: 'Firebase Messaging no disponible' };
                     }
