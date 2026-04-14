@@ -881,7 +881,7 @@
                 if (typeof firebase === 'undefined') {
                     console.log('[FCM] ❌ Firebase SDK no cargado (posible problema de red o script bloqueado)');
                     if (typeof showToast === 'function') {
-                        showToast('⚠️ Error al cargar Firebase. Revisá tu conexión y recargá la página.', 'warning');
+                        showToast('⚠️ No se pudieron activar las notificaciones. Revisá tu conexión y recargá la página.', 'warning');
                     }
                 } else if (isIOS) {
                     console.log('[FCM] ❌ Firebase Messaging no disponible en iOS - requiere iOS 16.4+, Safari y app instalada');
