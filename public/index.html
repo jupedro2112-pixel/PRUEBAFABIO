@@ -1204,7 +1204,7 @@
                     // App visible en primer plano: mostrar toast para no perder el mensaje
                     console.log('[FCM] App en primer plano - mostrando toast');
                     if (typeof showToast === 'function') {
-                        showToast('🔔 ' + notificationTitle + ': ' + notifBody, 'info');
+                        showToast(`🔔 ${notificationTitle}: ${notifBody}`, 'info');
                     }
                     if (VIP && VIP.notifications && typeof VIP.notifications.showBrowserNotification === 'function') {
                         VIP.notifications.showBrowserNotification(notificationTitle, notifBody, notif.icon || '/icons/icon-192x192.png');

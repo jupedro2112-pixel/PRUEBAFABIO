@@ -2908,11 +2908,14 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       // Push FCM para usuarios offline: enviar si tiene token registrado.
       // El mensaje ya se entregó por Socket.IO a usuarios online; FCM cubre offline/background.
       {
-        const depositPushTitle = parseFloat(bonus) > 0
+        const depositBonus = parseFloat(bonus) || 0;
+        const depositPushTitle = depositBonus > 0
           ? `💰 Depósito + bonus acreditado`
           : `💰 Depósito acreditado`;
         const depositPushBody = `$${amount} acreditados en tu cuenta. Nuevo saldo: $${newBalance}.`;
-        sendPushIfOffline(user, depositPushTitle, depositPushBody, { tag: 'deposit' }).catch(() => {});
+        sendPushIfOffline(user, depositPushTitle, depositPushBody, { tag: 'deposit' }).catch((e) => {
+          logger.warn(`[FCM] sendPushIfOffline (deposit) falló para ${user.username}: ${e.message}`);
+        });
       }
       
       await Transaction.create({
@@ -3061,7 +3064,9 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
       }
 
       // Push FCM para usuarios offline.
-      sendPushIfOffline(user, '💸 Retiro procesado', `$${amount} enviados. Nuevo saldo: $${newBalance}.`, { tag: 'withdrawal' }).catch(() => {});
+      sendPushIfOffline(user, '💸 Retiro procesado', `$${amount} enviados. Nuevo saldo: $${newBalance}.`, { tag: 'withdrawal' }).catch((e) => {
+        logger.warn(`[FCM] sendPushIfOffline (withdrawal) falló para ${user.username}: ${e.message}`);
+      });
       
       await Transaction.create({
         id: uuidv4(),
@@ -3173,7 +3178,9 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
 
         // Push FCM para usuarios offline (bonus).
         const bonusBalance = newBalance !== null ? newBalance : '—';
-        sendPushIfOffline(bonusUser, '🎁 Bonificación acreditada', `$${bonusAmount} de bonus en tu cuenta. Saldo: $${bonusBalance}.`, { tag: 'bonus' }).catch(() => {});
+        sendPushIfOffline(bonusUser, '🎁 Bonificación acreditada', `$${bonusAmount} de bonus en tu cuenta. Saldo: $${bonusBalance}.`, { tag: 'bonus' }).catch((e) => {
+          logger.warn(`[FCM] sendPushIfOffline (bonus) falló para ${bonusUser.username}: ${e.message}`);
+        });
       }
 
       res.json({
@@ -3477,7 +3484,9 @@ io.on('connection', (socket) => {
             if (targetUser && targetUser.fcmToken) {
               const pushTitle = 'Nuevo mensaje';
               const pushBody = (message.content || '').substring(0, 100);
-              sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch(() => {});
+              sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch((e) => {
+                logger.warn(`[FCM] sendPushIfOffline (chat) falló para ${targetUser.username}: ${e.message}`);
+              });
             }
           }).catch(() => {});
         }
