@@ -708,7 +708,7 @@ VIP.ui.toggleDrawer = function() {
       { emoji: 'ℹ️', text: 'Información', action: () => VIP.ui.showModal('infoModal') },
       { emoji: '🔔', text: 'Notificaciones', action: () => VIP.notifications.requestNotificationPermission(), pwaOnly: true },
       { emoji: '📱', text: 'APP', action: () => VIP.ui.installApp(), hideStandalone: true },
-      { emoji: '⚙️', text: 'Configuración', action: () => VIP.ui.showModal('settingsModal') },
+      { emoji: '🔑', text: 'Cambiar contraseña', action: () => VIP.ui.showModal('settingsModal') },
     ];
 
     items.forEach(item => {
