@@ -746,6 +746,8 @@
         // Nota: deferredPrompt se declara en app.js
         let fcmToken = null;
         const VAPID_KEY = 'BHnnRx4J6u3aYBK_JExhceybaNNLhMEGosFSFau0niy0cSsW1qw02oZqyFFfOH-Hnr61mQq7TOVcM3TW58eVQRc';
+        // Guard: evita llamadas concurrentes a initNotifications (race condition fix)
+        let _notifInitializing = false;
         
         // ============================================
         // DETECTAR DISPOSITIVO
@@ -802,6 +804,12 @@
         // INICIALIZAR NOTIFICACIONES PUSH (AUTOMÁTICO)
         // ============================================
         async function initNotifications(swRegistration) {
+            // Race condition fix: si ya hay una inicialización en curso, ignorar esta llamada.
+            if (_notifInitializing) {
+                console.log('[FCM] initNotifications ya en progreso, ignorando llamada duplicada');
+                return;
+            }
+            _notifInitializing = true;
             console.log('[FCM] Inicializando notificaciones...');
             
             // Detectar dispositivo y modo de ejecución
@@ -841,9 +849,11 @@
             }
             
             if (!messaging) {
-                console.log('[FCM] ❌ Firebase Messaging no está disponible');
+                console.log('[FCM] ❌ Firebase Messaging no está disponible - push no soportado en este entorno');
                 if (isIOS) {
-                    console.log('[FCM] ⚠️ En iOS, las notificaciones push web tienen limitaciones');
+                    console.log('[FCM] ⚠️ iOS: las notificaciones push web requieren iOS 16.4+, Safari, y la app instalada en la pantalla de inicio');
+                } else {
+                    console.log('[FCM] ⚠️ Este navegador no soporta Firebase Messaging. Intenta con Chrome en Android o Safari en iOS 16.4+.');
                 }
                 return;
             }
@@ -963,6 +973,8 @@
             } catch (error) {
                 console.error('[FCM] ❌ Error al inicializar notificaciones:', error);
                 console.error('[FCM] Stack:', error.stack);
+            } finally {
+                _notifInitializing = false;
             }
         }
         
@@ -1164,24 +1176,44 @@
         
         // ============================================
         // MANEJAR NOTIFICACIONES EN PRIMER PLANO
+        // Null guard: solo registrar si Firebase Messaging está disponible.
+        // Sin este guard, si messaging es null el script se rompe y corta
+        // funciones posteriores (chat, login, etc.).
         // ============================================
-        messaging.onMessage(function(payload) {
-            console.log('[FCM] Notificación recibida en primer plano:', payload);
-            
-            const notif = payload.notification || {};
-            const notificationTitle = notif.title || 'Sala de Juegos';
-            const notificationOptions = {
-                body: notif.body || 'Nueva notificación',
-                icon: notif.icon || '/icons/icon-192x192.png',
-                badge: '/icons/icon-72x72.png',
-                tag: payload.data?.tag || 'default'
-            };
-            
-            // Mostrar notificación solo si la app no está enfocada
-            if (document.visibilityState !== 'visible') {
-                new Notification(notificationTitle, notificationOptions);
-            }
-        });
+        if (messaging) {
+            messaging.onMessage(function(payload) {
+                console.log('[FCM] Notificación recibida en primer plano:', payload);
+                
+                const notif = payload.notification || {};
+                const notificationTitle = notif.title || 'Sala de Juegos';
+                const notifBody = notif.body || 'Nueva notificación';
+                
+                if (document.visibilityState !== 'visible') {
+                    // App en background / minimizada: mostrar notificación nativa
+                    try {
+                        new Notification(notificationTitle, {
+                            body: notifBody,
+                            icon: notif.icon || '/icons/icon-192x192.png',
+                            badge: '/icons/icon-72x72.png',
+                            tag: payload.data?.tag || 'default'
+                        });
+                    } catch (e) {
+                        console.log('[FCM] No se pudo mostrar notificación nativa:', e.message);
+                    }
+                } else {
+                    // App visible en primer plano: mostrar toast para no perder el mensaje
+                    console.log('[FCM] App en primer plano - mostrando toast');
+                    if (typeof showToast === 'function') {
+                        showToast('🔔 ' + notificationTitle + ': ' + notifBody, 'info');
+                    }
+                    if (VIP && VIP.notifications && typeof VIP.notifications.showBrowserNotification === 'function') {
+                        VIP.notifications.showBrowserNotification(notificationTitle, notifBody, notif.icon || '/icons/icon-192x192.png');
+                    }
+                }
+            });
+        } else {
+            console.log('[FCM] Firebase Messaging no disponible - onMessage no registrado');
+        }
         
         // ============================================
         // BOTÓN DE INSTALACIÓN PWA

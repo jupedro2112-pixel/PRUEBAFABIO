@@ -3796,7 +3796,7 @@ async function registerServiceWorker() {
     }
     
     try {
-        const registration = await navigator.serviceWorker.register('/admin-sw.js');
+        const registration = await navigator.serviceWorker.register('/admin-sw.js', { scope: '/adminprivado2026/' });
         console.log('✅ Service Worker registrado:', registration.scope);
         
         // Escuchar mensajes del service worker

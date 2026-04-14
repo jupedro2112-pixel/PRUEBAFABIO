@@ -1255,13 +1255,15 @@
         
         // ============================================
         // REGISTRAR SERVICE WORKER
-        // Root cause fix: register /admin-sw.js (handles caching + push) and
-        // pass it to FCM getToken() so the push subscription is stable.
-        // admin.js also calls navigator.serviceWorker.register('/admin-sw.js') but
-        // browsers deduplicate registrations at the same scope, so it's safe.
+        // Scope fix: admin-sw.js se registra con scope '/adminprivado2026/'
+        // para que NO interfiera con firebase-messaging-sw.js (scope '/').
+        // Sin este fix, ambos SWs compiten en el mismo scope raíz y el
+        // token FCM del usuario queda asociado al SW equivocado.
+        // admin.js también llama register('/admin-sw.js') pero los navegadores
+        // deduplicarán si el scope coincide, así que es seguro.
         // ============================================
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/admin-sw.js', { updateViaCache: 'none' })
+            navigator.serviceWorker.register('/admin-sw.js', { scope: '/adminprivado2026/', updateViaCache: 'none' })
                 .then(function(registration) {
                     console.log('[PWA Admin] Service Worker registrado:', registration.scope);
                     initNotifications(registration);
