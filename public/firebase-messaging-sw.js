@@ -1,7 +1,7 @@
 // ============================================
 // FIREBASE CLOUD MESSAGING + CACHE SERVICE WORKER
 // SW único para notificaciones push Y caché PWA.
-// Versión: 2.2.0
+// Versión: 2.3.0
 // ============================================
 // ROOT CAUSE FIX: antes existían dos SWs (firebase-messaging-sw.js y
 // user-sw.js) compitiendo en el mismo scope (/). Eso provocaba que el
@@ -24,7 +24,7 @@ importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compa
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -157,6 +157,12 @@ self.addEventListener('install', function(event) {
 self.addEventListener('activate', function(event) {
   console.log('[FCM-SW] Activado', CACHE_VERSION);
 
+  // IMPORTANT: clients.claim() must be inside event.waitUntil so that
+  // navigator.serviceWorker.ready only resolves AFTER the SW is actually
+  // controlling the page. If claim() is called outside waitUntil, the
+  // ready promise may resolve before navigator.serviceWorker.controller
+  // is set, causing getToken() to fail in standalone/PWA mode because
+  // FCM internally checks the controller state.
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(
@@ -167,10 +173,10 @@ self.addEventListener('activate', function(event) {
           }
         })
       );
+    }).then(function() {
+      return self.clients.claim();
     })
   );
-
-  self.clients.claim();
 });
 
 // ============================================
