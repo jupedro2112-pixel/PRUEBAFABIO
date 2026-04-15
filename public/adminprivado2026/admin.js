@@ -1267,11 +1267,14 @@ function renderMessages(messages) {
 
 function formatMessageContent(msg) {
     if (msg.type === 'image') {
-        return `<img src="${escapeHtml(msg.content)}" class="message-image" onclick="openLightbox('${escapeHtml(msg.content)}')" alt="Imagen" loading="lazy">`;
+        const safeUrl = encodeURI(msg.content);
+        const jsonUrl = JSON.stringify(safeUrl);
+        return `<img src="${safeUrl}" class="message-image" onclick="openLightbox(${jsonUrl})" alt="Imagen" loading="lazy">`;
     }
     
     if (msg.type === 'video') {
-        return `<video src="${escapeHtml(msg.content)}" class="message-video" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
+        const safeUrl = encodeURI(msg.content);
+        return `<video src="${safeUrl}" class="message-video" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
     }
     
     // CORREGIDO: Convertir URLs en links clickeables
@@ -2749,10 +2752,10 @@ function renderUsers(users) {
             <td><span class="status-badge ${user.status}">${escapeHtml(user.status)}</span></td>
             <td>${formatDate(user.lastLogin)}</td>
             <td>
-                <button class="action-btn-small" onclick="viewUser('${escapeHtml(user.id)}')">
+                <button class="action-btn-small" onclick="viewUser(${JSON.stringify(user.id)})">
                     <span class="icon icon-eye"></span>
                 </button>
-                <button class="action-btn-small" onclick="chatUser('${escapeHtml(user.id)}')">
+                <button class="action-btn-small" onclick="chatUser(${JSON.stringify(user.id)})">
                     <span class="icon icon-comment"></span>
                 </button>
             </td>

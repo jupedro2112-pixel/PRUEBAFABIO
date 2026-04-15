@@ -1506,10 +1506,11 @@ function createMessageElement(message) {
 
     let contentHtml = '';
     if (message.type === 'image') {
-        const safeUrl = escapeHtml(message.content);
-        contentHtml = `<img src="${safeUrl}" onclick="openLightbox('${safeUrl}')" loading="lazy">`;
+        const safeUrl = encodeURI(message.content);
+        const jsonUrl = JSON.stringify(safeUrl);
+        contentHtml = `<img src="${safeUrl}" onclick="openLightbox(${jsonUrl})" loading="lazy">`;
     } else if (message.type === 'video') {
-        const safeUrl = escapeHtml(message.content);
+        const safeUrl = encodeURI(message.content);
         contentHtml = `<video src="${safeUrl}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
     } else {
         let content = escapeHtml(message.content);

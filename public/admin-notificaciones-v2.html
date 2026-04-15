@@ -407,10 +407,10 @@
                                 </div>
                             </div>
                             <div class="user-actions">
-                                <button class="btn-small btn-test" onclick="testUserNotification('${escapeHtml(user.username)}')">
+                                <button class="btn-small btn-test" onclick="testUserNotification(${JSON.stringify(user.username)})">
                                     🧪 Probar
                                 </button>
-                                <button class="btn-small btn-delete" onclick="removeToken('${escapeHtml(user.username)}')">
+                                <button class="btn-small btn-delete" onclick="removeToken(${JSON.stringify(user.username)})">
                                     🗑️ Borrar Token
                                 </button>
                             </div>

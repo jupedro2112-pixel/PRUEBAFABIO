@@ -2099,9 +2099,13 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Tipo de mensaje no válido' });
     }
 
-    // SECURITY: For image/video, validate that content is an https:// URL
-    if ((type === 'image' || type === 'video') && !/^https:\/\//i.test(content)) {
-      return res.status(400).json({ error: 'Las imágenes y videos deben ser URLs seguras (https)' });
+    // SECURITY: For image/video, validate that content is a well-formed https:// URL
+    if (type === 'image' || type === 'video') {
+      let parsedUrl;
+      try { parsedUrl = new URL(content); } catch (_) { parsedUrl = null; }
+      if (!parsedUrl || parsedUrl.protocol !== 'https:') {
+        return res.status(400).json({ error: 'Las imágenes y videos deben ser URLs seguras (https)' });
+      }
     }
     
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
@@ -3343,9 +3347,13 @@ io.on('connection', (socket) => {
         return socket.emit('error', { message: 'Tipo de mensaje no válido' });
       }
 
-      // SECURITY: For image/video, validate that content is an https:// URL
-      if ((type === 'image' || type === 'video') && content && !/^https:\/\//i.test(content)) {
-        return socket.emit('error', { message: 'Las imágenes y videos deben ser URLs seguras (https)' });
+      // SECURITY: For image/video, validate that content is a well-formed https:// URL
+      if ((type === 'image' || type === 'video') && content) {
+        let parsedMsgUrl;
+        try { parsedMsgUrl = new URL(content); } catch (_) { parsedMsgUrl = null; }
+        if (!parsedMsgUrl || parsedMsgUrl.protocol !== 'https:') {
+          return socket.emit('error', { message: 'Las imágenes y videos deben ser URLs seguras (https)' });
+        }
       }
       
       // Determinar el receptor correcto
