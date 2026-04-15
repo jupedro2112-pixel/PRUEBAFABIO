@@ -6,6 +6,13 @@ window.VIP = window.VIP || {};
 
 VIP.auth = (function () {
 
+    function escapeHtml(text) {
+        if (!text && text !== 0) return '';
+        const div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+    }
+
     async function checkUsernameAvailability(username) {
         const resultSpan = document.getElementById('usernameCheckResult');
         try {
@@ -444,8 +451,8 @@ VIP.auth = (function () {
                 resultDiv.innerHTML = `
                     <div style="text-align: center;">
                         <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Usuario encontrado!</p>
-                        <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${data.username}</p>
-                        <p style="color: #888; font-size: 12px;">Teléfono: ${data.phone || 'No registrado'}</p>
+                        <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${escapeHtml(data.username)}</p>
+                        <p style="color: #888; font-size: 12px;">Teléfono: ${escapeHtml(data.phone || 'No registrado')}</p>
                     </div>
                 `;
                 resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
@@ -453,7 +460,7 @@ VIP.auth = (function () {
             } else {
                 resultDiv.innerHTML = `
                     <div style="text-align: center;">
-                        <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${data.message}</p>
+                        <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.message)}</p>
                         <p style="color: #888; font-size: 12px; margin-top: 10px;">Verifica que el número sea correcto</p>
                     </div>
                 `;
@@ -512,7 +519,7 @@ VIP.auth = (function () {
                 resultDiv.innerHTML = `
                     <div style="text-align: center;">
                         <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Contraseña cambiada!</p>
-                        <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${data.username}</p>
+                        <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${escapeHtml(data.username)}</p>
                         <p style="color: #888; font-size: 12px;">Ya puedes iniciar sesión con tu nueva contraseña</p>
                     </div>
                 `;
@@ -524,7 +531,7 @@ VIP.auth = (function () {
             } else {
                 resultDiv.innerHTML = `
                     <div style="text-align: center;">
-                        <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${data.error}</p>
+                        <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.error)}</p>
                     </div>
                 `;
                 resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';

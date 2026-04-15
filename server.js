@@ -80,6 +80,15 @@ const authLimiter = rateLimit({
   message: { error: 'Demasiados intentos de autenticación. Intenta más tarde.' }
 });
 
+// Rate limiter for sensitive unauthenticated endpoints (phone lookup, password reset)
+const sensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiados intentos. Intenta más tarde.' }
+});
+
 // ============================================
 // SEGURIDAD - HEADERS DE SEGURIDAD
 // ============================================
@@ -270,7 +279,7 @@ async function setupRedisAdapter() {
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
 if (!process.env.JWT_SECRET) {
-  logger.warn('⚠️ ADVERTENCIA: JWT_SECRET no configurado en variables de entorno. Usando valor por defecto. Configurar en producción.');
+  logger.error('⛔ SEGURIDAD: JWT_SECRET no configurado en variables de entorno. Usando valor por defecto — configúralo en producción.');
 }
 
 // ============================================
@@ -1221,7 +1230,7 @@ app.post('/api/auth/platform-login', authMiddleware, async (req, res) => {
 // RUTAS PÚBLICAS - RECUPERACIÓN DE CUENTA
 // ============================================
 
-app.post('/api/auth/find-user-by-phone', async (req, res) => {
+app.post('/api/auth/find-user-by-phone', sensitiveLimiter, async (req, res) => {
   try {
     const { phone } = req.body;
     
@@ -1250,7 +1259,7 @@ app.post('/api/auth/find-user-by-phone', async (req, res) => {
   }
 });
 
-app.post('/api/auth/reset-password-by-phone', async (req, res) => {
+app.post('/api/auth/reset-password-by-phone', sensitiveLimiter, async (req, res) => {
   try {
     const { phone, newPassword } = req.body;
     
@@ -2082,6 +2091,17 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
     if (!content) {
       logger.debug('[API_MESSAGES_SEND] ERROR: content required');
       return res.status(400).json({ error: 'Contenido requerido' });
+    }
+
+    // SECURITY: Validate message type to prevent type confusion
+    const allowedTypes = ['text', 'image', 'video'];
+    if (!allowedTypes.includes(type)) {
+      return res.status(400).json({ error: 'Tipo de mensaje no válido' });
+    }
+
+    // SECURITY: For image/video, validate that content is an https:// URL
+    if ((type === 'image' || type === 'video') && !/^https:\/\//i.test(content)) {
+      return res.status(400).json({ error: 'Las imágenes y videos deben ser URLs seguras (https)' });
     }
     
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
@@ -3281,9 +3301,12 @@ io.on('connection', (socket) => {
   
   // Unirse a sala personal del usuario
   socket.on('join_user_room', (data) => {
-    if (socket.role === 'user' && data && data.userId) {
+    // SECURITY: Only allow a user to join their OWN room (prevent room spoofing)
+    if (socket.role === 'user' && data && data.userId && data.userId === socket.userId) {
       socket.join(`user_${data.userId}`);
       logger.debug(`User ${socket.username} joined personal room: user_${data.userId}`);
+    } else if (socket.role === 'user' && data && data.userId && data.userId !== socket.userId) {
+      logger.warn(`[SECURITY] User ${socket.username} (${socket.userId}) attempted to join room of user ${data.userId}`);
     }
   });
   
@@ -3312,6 +3335,17 @@ io.on('connection', (socket) => {
       if (!socket.userId) {
         logger.debug('[SEND_MESSAGE] ERROR: not authenticated');
         return socket.emit('error', { message: 'No autenticado' });
+      }
+
+      // SECURITY: Validate message type to prevent type confusion
+      const allowedMsgTypes = ['text', 'image', 'video'];
+      if (!allowedMsgTypes.includes(type)) {
+        return socket.emit('error', { message: 'Tipo de mensaje no válido' });
+      }
+
+      // SECURITY: For image/video, validate that content is an https:// URL
+      if ((type === 'image' || type === 'video') && content && !/^https:\/\//i.test(content)) {
+        return socket.emit('error', { message: 'Las imágenes y videos deben ser URLs seguras (https)' });
       }
       
       // Determinar el receptor correcto
@@ -3541,6 +3575,7 @@ io.on('connection', (socket) => {
   });
   
   socket.on('typing', (data) => {
+    if (!socket.userId) return; // SECURITY: Ignore events from unauthenticated sockets
     if (socket.role === 'user') {
       notifyAdmins('user_typing', {
         userId: socket.userId,
@@ -3560,6 +3595,7 @@ io.on('connection', (socket) => {
   });
   
   socket.on('stop_typing', (data) => {
+    if (!socket.userId) return; // SECURITY: Ignore events from unauthenticated sockets
     if (socket.role === 'user') {
       notifyAdmins('user_stop_typing', {
         userId: socket.userId,
@@ -5262,7 +5298,7 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
 
 const DB_PASSWORD = process.env.DB_PASSWORD || 'P4pelito2026';
 if (!process.env.DB_PASSWORD) {
-  logger.warn('⚠️ ADVERTENCIA: DB_PASSWORD no configurado en variables de entorno. Usando valor por defecto.');
+  logger.error('⛔ SEGURIDAD: DB_PASSWORD no configurado en variables de entorno. Usando valor por defecto — configúralo en producción.');
 }
 
 // Middleware para verificar contraseña de base de datos

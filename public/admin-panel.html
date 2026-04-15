@@ -213,15 +213,15 @@
                 if (data.success) {
                     showResult(`
                         ✅ <strong>¡Notificaciones enviadas!</strong><br><br>
-                        📱 Total usuarios: <strong>${data.totalUsers}</strong><br>
-                        ✅ Exitosas: <strong>${data.successCount}</strong><br>
-                        ❌ Fallidas: <strong>${data.failureCount}</strong>
+                        📱 Total usuarios: <strong>${parseInt(data.totalUsers) || 0}</strong><br>
+                        ✅ Exitosas: <strong>${parseInt(data.successCount) || 0}</strong><br>
+                        ❌ Fallidas: <strong>${parseInt(data.failureCount) || 0}</strong>
                     `, false);
                 } else {
-                    showResult('❌ Error: ' + data.error, true);
+                    showResult('❌ Error al enviar notificaciones', true);
                 }
             } catch (e) {
-                showResult('❌ Error de conexión: ' + e.message, true);
+                showResult('❌ Error de conexión. Intenta nuevamente.', true);
             } finally {
                 document.getElementById('loading').classList.remove('active');
             }

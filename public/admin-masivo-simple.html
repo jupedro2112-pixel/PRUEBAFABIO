@@ -138,6 +138,13 @@
     
     <script>
         const API_URL = '';
+
+        function escapeHtml(text) {
+            if (!text && text !== 0) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
         
         function setTitle(title) { document.getElementById('title').value = title; }
         function setBody(body) { document.getElementById('body').value = body; }
@@ -180,15 +187,15 @@
                 if (data.success) {
                     showResult(`
                         ✅ <strong>¡Notificaciones enviadas!</strong><br><br>
-                        📱 Total de usuarios: <strong>${data.totalUsers}</strong><br>
-                        ✅ Exitosas: <strong>${data.successCount}</strong><br>
-                        ❌ Fallidas: <strong>${data.failureCount}</strong>
+                        📱 Total de usuarios: <strong>${parseInt(data.totalUsers) || 0}</strong><br>
+                        ✅ Exitosas: <strong>${parseInt(data.successCount) || 0}</strong><br>
+                        ❌ Fallidas: <strong>${parseInt(data.failureCount) || 0}</strong>
                     `);
                 } else {
-                    showResult('❌ Error: ' + (data.error || 'Error desconocido'), true);
+                    showResult('❌ Error al enviar notificaciones', true);
                 }
             } catch (error) {
-                showResult('❌ Error de conexión: ' + error.message, true);
+                showResult('❌ Error de conexión. Intenta nuevamente.', true);
             } finally {
                 showLoading(false);
             }
@@ -207,24 +214,24 @@
                         <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
                             <div class="info-box">
                                 <h3>👥 Total Usuarios</h3>
-                                <p style="font-size: 2em; color: #d4af37;">${data.stats.totalUsers}</p>
+                                <p style="font-size: 2em; color: #d4af37;">${parseInt(data.stats.totalUsers) || 0}</p>
                             </div>
                             <div class="info-box">
                                 <h3>📱 Con App Instalada</h3>
-                                <p style="font-size: 2em; color: #00ff88;">${data.stats.usersWithToken}</p>
+                                <p style="font-size: 2em; color: #00ff88;">${parseInt(data.stats.usersWithToken) || 0}</p>
                             </div>
                             <div class="info-box">
                                 <h3>❌ Sin App</h3>
-                                <p style="font-size: 2em; color: #ff4444;">${data.stats.usersWithoutToken}</p>
+                                <p style="font-size: 2em; color: #ff4444;">${parseInt(data.stats.usersWithoutToken) || 0}</p>
                             </div>
                             <div class="info-box">
                                 <h3>📊 Porcentaje</h3>
-                                <p style="font-size: 2em; color: #d4af37;">${data.stats.percentage}%</p>
+                                <p style="font-size: 2em; color: #d4af37;">${parseFloat(data.stats.percentage) || 0}%</p>
                             </div>
                         </div>
                     `;
                 } else {
-                    statsDiv.innerHTML = '<p style="color: #ff4444;">Error: ' + data.error + '</p>';
+                    statsDiv.innerHTML = '<p style="color: #ff4444;">Error al cargar estadísticas</p>';
                 }
             } catch (error) {
                 statsDiv.innerHTML = '<p style="color: #ff4444;">Error de conexión</p>';

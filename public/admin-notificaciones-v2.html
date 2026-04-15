@@ -327,6 +327,13 @@
     <script>
         const API_URL = '';
         let currentUserToken = localStorage.getItem('adminToken') || localStorage.getItem('userToken');
+
+        function escapeHtml(text) {
+            if (!text && text !== 0) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
         
         // Logger
         function log(msg, type = 'info') {
@@ -393,17 +400,17 @@
                         item.className = 'user-item';
                         item.innerHTML = `
                             <div class="user-info">
-                                <div class="user-status online" id="status-${user.username}"></div>
+                                <div class="user-status online" id="status-${escapeHtml(user.username)}"></div>
                                 <div>
-                                    <div class="user-name">${user.username}</div>
-                                    <div class="user-date">Token: ${user.tokenPreview}</div>
+                                    <div class="user-name">${escapeHtml(user.username)}</div>
+                                    <div class="user-date">Token: ${escapeHtml(user.tokenPreview)}</div>
                                 </div>
                             </div>
                             <div class="user-actions">
-                                <button class="btn-small btn-test" onclick="testUserNotification('${user.username}')">
+                                <button class="btn-small btn-test" onclick="testUserNotification('${escapeHtml(user.username)}')">
                                     🧪 Probar
                                 </button>
-                                <button class="btn-small btn-delete" onclick="removeToken('${user.username}')">
+                                <button class="btn-small btn-delete" onclick="removeToken('${escapeHtml(user.username)}')">
                                     🗑️ Borrar Token
                                 </button>
                             </div>

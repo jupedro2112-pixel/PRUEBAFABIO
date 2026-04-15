@@ -1001,8 +1001,8 @@ function renderConversations() {
     
     elements.conversationsList.innerHTML = conversations.map(conv => `
         <div class="conversation-item ${conv.unread > 0 ? 'unread' : ''} ${conv.userId === selectedUserId ? 'active' : ''}" 
-             data-userid="${conv.userId}" 
-             data-username="${conv.username}">
+             data-userid="${escapeHtml(conv.userId)}" 
+             data-username="${escapeHtml(conv.username)}">
             <div class="conv-avatar">
                 <span class="icon icon-user"></span>
             </div>
@@ -1750,8 +1750,8 @@ function showCommandSuggestions(inputValue) {
         <div class="command-suggestion-item ${index === selectedCommandIndex ? 'selected' : ''}" 
              data-index="${index}"
              style="padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
-            <span style="font-weight: bold; color: #25d366;">${cmd.name}</span>
-            <span style="color: #666; font-size: 0.85em;">${cmd.description || ''}</span>
+            <span style="font-weight: bold; color: #25d366;">${escapeHtml(cmd.name)}</span>
+            <span style="color: #666; font-size: 0.85em;">${escapeHtml(cmd.description || '')}</span>
         </div>
     `).join('');
     
@@ -2741,18 +2741,18 @@ function renderUsers(users) {
     tbody.innerHTML = users.map(user => `
         <tr class="${user.role !== 'user' ? 'admin-row' : ''}">
             <td>${escapeHtml(user.username)}</td>
-            <td>${user.accountId || '-'}</td>
-            <td>${user.email || '-'}</td>
-            <td>${user.phone || '-'}</td>
+            <td>${escapeHtml(user.accountId || '-')}</td>
+            <td>${escapeHtml(user.email || '-')}</td>
+            <td>${escapeHtml(user.phone || '-')}</td>
             <td><span class="role-badge ${user.role}">${getRoleLabel(user.role)}</span></td>
             <td>${formatMoney(user.balance)}</td>
-            <td><span class="status-badge ${user.status}">${user.status}</span></td>
+            <td><span class="status-badge ${user.status}">${escapeHtml(user.status)}</span></td>
             <td>${formatDate(user.lastLogin)}</td>
             <td>
-                <button class="action-btn-small" onclick="viewUser('${user.id}')">
+                <button class="action-btn-small" onclick="viewUser('${escapeHtml(user.id)}')">
                     <span class="icon icon-eye"></span>
                 </button>
-                <button class="action-btn-small" onclick="chatUser('${user.id}')">
+                <button class="action-btn-small" onclick="chatUser('${escapeHtml(user.id)}')">
                     <span class="icon icon-comment"></span>
                 </button>
             </td>
@@ -3233,7 +3233,7 @@ function renderTransactions(transactions) {
             <td><span class="type-badge ${t.type}">${getTransactionTypeLabel(t.type)}</span></td>
             <td>${formatMoney(t.amount)}</td>
             <td>${escapeHtml(t.description || '-')}</td>
-            <td>${t.adminUsername || '-'}</td>
+            <td>${escapeHtml(t.adminUsername || '-')}</td>
         </tr>
     `).join('');
 }
