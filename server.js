@@ -97,8 +97,23 @@ function securityHeaders(req, res, next) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com; script-src-elem 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://fcm.googleapis.com https://firebaseinstallations.googleapis.com; frame-src 'self' https://*.firebaseapp.com https://*.google.com; manifest-src 'self';");
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  // CSP compatible con Firebase Auth, FCM, Socket.IO WebSocket y PWA service workers.
+  // 'unsafe-inline' en script-src/style-src es necesario por el stack actual de frontend.
+  // worker-src incluye blob: para Workbox/sw.js generados en runtime.
+  // connect-src incluye wss: para Socket.IO WebSocket y dominios Firebase necesarios.
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com",
+    "script-src-elem 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self'",
+    "connect-src 'self' wss: https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://fcm.googleapis.com https://firebaseinstallations.googleapis.com",
+    "frame-src 'self' https://*.firebaseapp.com https://*.google.com",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'"
+  ].join('; '));
   next();
 }
 
@@ -218,10 +233,39 @@ const app = express();
 // Without this, req.ip returns the internal LB address and Socket.IO/CORS may
 // behave incorrectly when accessed through a custom domain like vipcargas.com.
 app.set('trust proxy', 1);
+
+// ============================================
+// CORS ORIGIN RESOLVER (centralizado)
+// ============================================
+// En producción: usa la allowlist de ALLOWED_ORIGINS (obligatorio).
+// Si no se configura, restringe a mismo origen (no wildcard).
+// En desarrollo: acepta localhost como fallback seguro.
+const DEV_ORIGINS = ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:10000'];
+function resolveAllowedOrigins() {
+  if (process.env.ALLOWED_ORIGINS) {
+    return process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
+  }
+  if (process.env.NODE_ENV === 'production') {
+    // En producción sin ALLOWED_ORIGINS, no permitir orígenes cruzados.
+    // Las peticiones same-origin (sin cabecera Origin) siempre pasan.
+    return [];
+  }
+  return DEV_ORIGINS;
+}
+
+function corsOriginFn(origin, callback) {
+  const allowed = resolveAllowedOrigins();
+  // Requests sin cabecera Origin (same-origin, curl, mobile) siempre se permiten.
+  if (!origin) return callback(null, true);
+  if (allowed.includes(origin)) return callback(null, true);
+  logger.warn(`CORS bloqueado para origen: ${origin}`);
+  return callback(new Error('No autorizado por CORS'));
+}
+
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : "*",
+    origin: corsOriginFn,
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -300,13 +344,23 @@ app.use(compression({
 app.use(securityHeaders);
 app.use(generalLimiter);
 if (!process.env.ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
-  logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS acepta cualquier origen.');
+  logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS rechazará orígenes cruzados.');
 }
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
-  credentials: true
+  origin: corsOriginFn,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['X-Total-Count', 'X-RateLimit-Remaining']
 }));
 app.use(express.json({ limit: '50mb' }));
+
+// Cache-Control: no-store para rutas sensibles de autenticación y administración.
+// Evita que proxies, CDNs o el browser cacheen respuestas con datos personales o tokens.
+app.use(['/api/auth', '/api/admin', '/api/users/me'], (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 // ============================================
 // ADMIN PAGE SECURITY
