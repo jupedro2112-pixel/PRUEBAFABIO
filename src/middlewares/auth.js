@@ -291,7 +291,7 @@ const refreshToken = async (req, res, next) => {
     // Verificar que el usuario aún existe y está activo en la base de datos
     let user;
     try {
-      user = await User.findOne({ id: decoded.userId }).select('id username role isActive tokenVersion').lean();
+      user = await User.findOne({ id: decoded.userId }).select('id username role isActive').lean();
     } catch (dbErr) {
       logger.error('Error verificando usuario en refresh token:', dbErr.message);
       return next(new AppError('Error interno al verificar sesión', 500, ErrorCodes.AUTH_UNAUTHORIZED));
