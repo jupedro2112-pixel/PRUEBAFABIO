@@ -3321,8 +3321,13 @@ async function loadDatabaseUsers() {
             switchSection('database');
             return;
         }
-        const response = await fetch(`${API_URL}/api/admin/database/users?dbPassword=${encodeURIComponent(password)}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+        const response = await fetch(`${API_URL}/api/admin/database/users`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ dbPassword: password })
         });
         
         if (!response.ok) throw new Error('Failed to load database users');
@@ -3382,8 +3387,13 @@ async function exportDatabaseCSV() {
             switchSection('database');
             return;
         }
-        const response = await fetch(`${API_URL}/api/admin/database/export/csv?dbPassword=${encodeURIComponent(password)}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+        const response = await fetch(`${API_URL}/api/admin/database/export/csv`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ dbPassword: password })
         });
         
         if (!response.ok) throw new Error('Failed to export database');
