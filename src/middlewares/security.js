@@ -80,17 +80,15 @@ const chatLimiter = rateLimit({
  */
 const corsOptions = {
   origin: (origin, callback) => {
-    const allowedOrigins = process.env.ALLOWED_ORIGINS 
-      ? process.env.ALLOWED_ORIGINS.split(',') 
-      : ['http://localhost:3000', 'http://localhost:5173'];
-    
-    // Permitir requests sin origin (como mobile apps o curl)
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      logger.warn(`CORS bloqueado para origen: ${origin}`);
-      callback(new Error('No autorizado por CORS'));
-    }
+    const allowedOrigins = process.env.ALLOWED_ORIGINS
+      ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+      : (process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173']);
+
+    // Requests sin cabecera Origin (same-origin, curl, mobile) siempre se permiten.
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    logger.warn(`CORS bloqueado para origen: ${origin}`);
+    return callback(new Error('No autorizado por CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -111,14 +109,17 @@ const helmetConfig = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://www.gstatic.com', 'https://www.google.com', 'https://apis.google.com'],
+      scriptSrcElem: ["'self'", "'unsafe-inline'", 'https://www.gstatic.com', 'https://www.google.com', 'https://apis.google.com'],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", 'data:', 'blob:'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       fontSrc: ["'self'"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", 'https://*.googleapis.com', 'https://*.firebaseio.com', 'https://*.google.com', 'https://identitytoolkit.googleapis.com', 'https://securetoken.googleapis.com', 'https://fcm.googleapis.com', 'https://firebaseinstallations.googleapis.com'],
       mediaSrc: ["'self'"],
       objectSrc: ["'none'"],
-      frameSrc: ["'none'"],
+      frameSrc: ["'self'", 'https://*.firebaseapp.com', 'https://*.google.com'],
+      workerSrc: ["'self'", 'blob:'],
+      manifestSrc: ["'self'"],
       upgradeInsecureRequests: []
     }
   },
