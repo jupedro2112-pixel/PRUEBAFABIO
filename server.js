@@ -1859,14 +1859,14 @@ app.put('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
       updates.role = req.body.role;
     }
 
-    if (Object.keys(updates).length === 0 && !req.body.password) {
-      return res.status(400).json({ error: 'No se proporcionaron campos válidos para actualizar' });
-    }
-
     // Handle password separately (hash it)
     if (req.body.password) {
       updates.password = await bcrypt.hash(String(req.body.password), 10);
       updates.passwordChangedAt = new Date();
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No se proporcionaron campos válidos para actualizar' });
     }
     
     const user = await User.findOneAndUpdate(

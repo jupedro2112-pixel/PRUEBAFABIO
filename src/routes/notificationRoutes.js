@@ -24,33 +24,36 @@ const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
 // ============================================
 // MIDDLEWARE DE AUTENTICACIÓN (Admin)
 // ============================================
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   
   if (!token) {
     return res.status(401).json({ error: 'Token no proporcionado' });
   }
 
+  let decoded;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    
-    if (decoded.role !== 'admin' && decoded.role !== 'depositor' && decoded.role !== 'withdrawer') {
-      return res.status(403).json({ error: 'No tienes permisos de administrador' });
-    }
-
-    // Verify the user is still active in DB
-    User.findOne({ id: decoded.userId }).then(user => {
-      if (!user || !user.isActive) {
-        return res.status(401).json({ error: 'Usuario desactivado o no encontrado' });
-      }
-      req.user = decoded;
-      next();
-    }).catch(() => {
-      return res.status(500).json({ error: 'Error verificando usuario' });
-    });
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch (error) {
     return res.status(401).json({ error: 'Token inválido' });
   }
+
+  if (decoded.role !== 'admin' && decoded.role !== 'depositor' && decoded.role !== 'withdrawer') {
+    return res.status(403).json({ error: 'No tienes permisos de administrador' });
+  }
+
+  // Verify the user is still active in DB
+  try {
+    const user = await User.findOne({ id: decoded.userId });
+    if (!user || !user.isActive) {
+      return res.status(401).json({ error: 'Usuario desactivado o no encontrado' });
+    }
+  } catch (dbError) {
+    return res.status(500).json({ error: 'Error verificando usuario' });
+  }
+
+  req.user = decoded;
+  next();
 }
 
 // ============================================
