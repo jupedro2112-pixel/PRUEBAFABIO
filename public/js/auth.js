@@ -348,11 +348,18 @@ VIP.auth = (function () {
     async function handleChangePassword(e) {
         e.preventDefault();
 
+        const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
         const whatsappRaw = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
         const whatsappPrefix = (document.getElementById('changePasswordWhatsAppPrefix')?.value || '+54').trim();
         const errorDiv = document.getElementById('passwordError');
+
+        if (!currentPassword) {
+            errorDiv.textContent = 'Ingresá tu contraseña actual';
+            errorDiv.classList.add('show');
+            return;
+        }
 
         // Si el usuario ya tiene número vinculado, no pedir uno nuevo
         const existingPhone = VIP.state.currentUser && (VIP.state.currentUser.whatsapp || VIP.state.currentUser.phone);
@@ -388,7 +395,7 @@ VIP.auth = (function () {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${VIP.state.currentToken}`
                 },
-                body: JSON.stringify({ newPassword, whatsapp, closeAllSessions })
+                body: JSON.stringify({ currentPassword, newPassword, whatsapp, closeAllSessions })
             });
 
             if (response.ok) {
@@ -398,6 +405,7 @@ VIP.auth = (function () {
                 sessionStorage.setItem('sessionPassword', newPassword);
                 VIP.ui.hideModal('changePasswordModal');
                 VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
+                document.getElementById('currentPasswordInput').value = '';
                 document.getElementById('newPasswordInput').value = '';
                 document.getElementById('confirmPasswordInput').value = '';
                 const wpInput = document.getElementById('changePasswordWhatsApp');

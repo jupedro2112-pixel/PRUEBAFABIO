@@ -754,6 +754,10 @@ const authMiddleware = async (req, res, next) => {
     if (!user) {
       return res.status(401).json({ error: 'Usuario no encontrado' });
     }
+
+    if (!user.isActive) {
+      return res.status(401).json({ error: 'Usuario desactivado' });
+    }
     
     if (user.tokenVersion && decoded.tokenVersion !== user.tokenVersion) {
       return res.status(401).json({ error: 'Sesión expirada. Por favor, vuelve a iniciar sesión.' });
@@ -1378,7 +1382,11 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
 // Cambiar contraseña
 app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
   try {
-    const { newPassword, whatsapp, closeAllSessions } = req.body;
+    const { currentPassword, newPassword, whatsapp, closeAllSessions } = req.body;
+
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'La contraseña actual es requerida' });
+    }
     
     // Buscar por 'id' primero, luego por '_id' como fallback
     let user = await User.findOne({ id: req.user.userId });
@@ -1395,6 +1403,12 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
+    // Verificar contraseña actual antes de permitir el cambio
+    const isValidCurrent = await bcrypt.compare(currentPassword, user.password);
+    if (!isValidCurrent) {
+      return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+    }
+
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     }
@@ -1403,7 +1417,6 @@ app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'El número de WhatsApp debe tener al menos 8 dígitos' });
     }
     
-    // El usuario ya está autenticado (JWT válido), no se requiere contraseña anterior
     // Asignar contraseña en texto plano; el middleware pre-save del modelo la hasheará
     user.password = newPassword;
     user.passwordChangedAt = new Date();
@@ -1813,16 +1826,52 @@ app.post('/api/users', authMiddleware, adminMiddleware, async (req, res) => {
 app.put('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
-    
-    if (updates.password) {
-      updates.password = await bcrypt.hash(updates.password, 10);
+
+    // Whitelist of fields any admin role can update
+    const ALLOWED_FIELDS = ['email', 'phone', 'whatsapp', 'isActive', 'balance'];
+
+    const updates = {};
+
+    for (const field of ALLOWED_FIELDS) {
+      if (req.body[field] !== undefined) {
+        // Coerce to safe primitives to prevent NoSQL operator injection
+        if (field === 'isActive') {
+          updates[field] = Boolean(req.body[field]);
+        } else if (field === 'balance') {
+          const n = parseFloat(req.body[field]);
+          if (isNaN(n)) return res.status(400).json({ error: 'balance debe ser un número' });
+          updates[field] = n;
+        } else {
+          updates[field] = String(req.body[field]);
+        }
+      }
+    }
+
+    // Only strict admin can change the role
+    if (req.body.role !== undefined) {
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Solo el administrador principal puede cambiar roles' });
+      }
+      const validRoles = ['user', 'admin', 'depositor', 'withdrawer'];
+      if (!validRoles.includes(req.body.role)) {
+        return res.status(400).json({ error: 'Rol inválido' });
+      }
+      updates.role = req.body.role;
+    }
+
+    // Handle password separately (hash it)
+    if (req.body.password) {
+      updates.password = await bcrypt.hash(String(req.body.password), 10);
       updates.passwordChangedAt = new Date();
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No se proporcionaron campos válidos para actualizar' });
     }
     
     const user = await User.findOneAndUpdate(
       { id },
-      updates,
+      { $set: updates },
       { new: true }
     ).select('-password');
     
@@ -2309,7 +2358,7 @@ app.get('/api/conversations', authMiddleware, adminMiddleware, async (req, res) 
   }
 });
 
-app.post('/api/messages/read/:userId', authMiddleware, async (req, res) => {
+app.post('/api/messages/read/:userId', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
     
