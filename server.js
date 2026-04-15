@@ -112,7 +112,8 @@ function securityHeaders(req, res, next) {
     "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://fcm.googleapis.com https://firebaseinstallations.googleapis.com",
     "frame-src 'self' https://*.firebaseapp.com https://*.google.com",
     "worker-src 'self' blob:",
-    "manifest-src 'self'"
+    "manifest-src 'self'",
+    "media-src 'self' data: blob:"
   ].join('; '));
   next();
 }
@@ -804,9 +805,7 @@ app.get('/api/auth/check-username', async (req, res) => {
       if (jgUser) {
         return res.json({ 
           available: false, 
-          message: 'Este nombre de usuario ya está en uso en JUGAYGANA. Intenta con otro nombre.',
-          existsInJugaygana: true,
-          alreadyExists: true
+          message: 'Este nombre de usuario no está disponible. Intenta con otro nombre.'
         });
       }
     } catch (jgError) {
@@ -815,8 +814,7 @@ app.get('/api/auth/check-username', async (req, res) => {
     
     res.json({ 
       available: true, 
-      message: 'Usuario disponible',
-      existsInJugaygana: false
+      message: 'Usuario disponible'
     });
   } catch (error) {
     console.error('Error verificando username:', error);
@@ -898,10 +896,7 @@ app.post('/api/admin/send-cbu', authMiddleware, adminMiddleware, async (req, res
 app.get('/api/health', async (req, res) => {
   const mongoOk = mongoose.connection.readyState === 1;
   res.json({
-    status: mongoOk ? 'ok' : 'degraded',
-    mongodb: mongoOk,
-    uptime: Math.floor(process.uptime()),
-    timestamp: new Date().toISOString()
+    status: mongoOk ? 'ok' : 'degraded'
   });
 });
 
@@ -1346,11 +1341,15 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
 app.get('/api/users/me', authMiddleware, async (req, res) => {
   try {
     // Buscar por 'id' primero, luego por '_id' como fallback
-    let user = await User.findOne({ id: req.user.userId }).select('-password');
+    let user = await User.findOne({ id: req.user.userId })
+      .select('id username email phone accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin')
+      .lean();
     
     if (!user) {
       try {
-        user = await User.findById(req.user.userId).select('-password');
+        user = await User.findById(req.user.userId)
+          .select('id username email phone accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin')
+          .lean();
       } catch (e) {
         // _id inválido, ignorar
       }
@@ -4597,7 +4596,7 @@ app.get('/api/admin/database', authMiddleware, adminMiddleware, async (req, res)
     }
     
     const users = await User.find().select('-password').lean();
-    const messages = await Message.find().lean();
+    const totalMessages = await Message.countDocuments();
     
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     const totalAdmins = users.filter(u => adminRoles.includes(u.role)).length;
@@ -4606,7 +4605,7 @@ app.get('/api/admin/database', authMiddleware, adminMiddleware, async (req, res)
       users,
       totalUsers: users.length,
       totalAdmins,
-      totalMessages: messages.length
+      totalMessages
     });
   } catch (error) {
     console.error('Error obteniendo base de datos:', error);
@@ -5310,6 +5309,12 @@ app.get('/api/users/:userId', authMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
     
+    // Only admins or the user themselves can fetch a user profile
+    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    if (!adminRoles.includes(req.user.role) && req.user.userId !== userId) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    
     const user = await User.findOne({ id: userId }).select('-password').lean();
     
     if (!user) {
@@ -5525,7 +5530,9 @@ if (!process.env.DB_PASSWORD) {
 
 // Middleware para verificar contraseña de base de datos
 function dbPasswordMiddleware(req, res, next) {
-  const { dbPassword } = req.body || req.query;
+  // Accept dbPassword from body only — never from query string to avoid it
+  // appearing in server logs, referrer headers and browser history.
+  const { dbPassword } = req.body || {};
   
   if (dbPassword !== DB_PASSWORD) {
     return res.status(401).json({ error: 'Contraseña incorrecta' });
@@ -5541,7 +5548,7 @@ app.post('/api/admin/database/verify', authMiddleware, adminMiddleware, dbPasswo
 
 // Obtener todos los usuarios y admins para base de datos
 // CORREGIDO: Usar la misma lógica que /api/admin/users para consistencia
-app.get('/api/admin/database/users', authMiddleware, adminMiddleware, dbPasswordMiddleware, async (req, res) => {
+app.post('/api/admin/database/users', authMiddleware, adminMiddleware, dbPasswordMiddleware, async (req, res) => {
   try {
     const userRole = req.user.role;
     
@@ -5562,7 +5569,7 @@ app.get('/api/admin/database/users', authMiddleware, adminMiddleware, dbPassword
 });
 
 // Exportar base de datos a CSV
-app.get('/api/admin/database/export/csv', authMiddleware, adminMiddleware, dbPasswordMiddleware, async (req, res) => {
+app.post('/api/admin/database/export/csv', authMiddleware, adminMiddleware, dbPasswordMiddleware, async (req, res) => {
   try {
     const users = await User.find().select('-password').sort({ createdAt: -1 }).lean();
     
@@ -5610,10 +5617,10 @@ app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
 });
 
 // ============================================
-// ENDPOINT DE DIAGNÓSTICO PÚBLICO - TEST CREAR MENSAJE
+// ENDPOINT DE DIAGNÓSTICO - TEST CREAR MENSAJE
 // ============================================
 
-app.get('/api/diagnostic/public', async (req, res) => {
+app.get('/api/diagnostic/public', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     console.log('[DIAGNOSTIC_PUBLIC] ============================================');
     console.log('[DIAGNOSTIC_PUBLIC] Probando conexión y creación de mensaje');
@@ -5813,6 +5820,12 @@ app.use('/api/referrals', referralRoutes);
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Endpoint no encontrado' });
+  }
+  // Don't serve SPA HTML for static asset paths – they should 404 cleanly so that
+  // browsers don't receive HTML with Content-Type: text/html when they expect CSS/JS
+  // (which triggers X-Content-Type-Options: nosniff blocking).
+  if (/\.(css|js|map|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|json|webp|mp3|mp4|wav|ogg)$/i.test(req.path)) {
+    return res.status(404).send('Not found');
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
   const content = readFileSafe(indexPath);
