@@ -356,6 +356,15 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
+// Fields exposed to the authenticated user about their own profile.
+// Keep this list minimal – internal fields (jugaygana IDs, FCM tokens, etc.)
+// are excluded intentionally to reduce accidental data exposure.
+const USER_PUBLIC_FIELDS = 'id username email phone accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin';
+
+// Regex used by the SPA fallback to detect static asset paths that should
+// never be served as HTML (would trigger X-Content-Type-Options: nosniff).
+const STATIC_ASSET_EXT_RE = /\.(css|js|map|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|json|webp|mp3|mp4|wav|ogg)$/i;
+
 // Cache-Control: no-store para rutas sensibles de autenticación y administración.
 // Evita que proxies, CDNs o el browser cacheen respuestas con datos personales o tokens.
 app.use(['/api/auth', '/api/admin', '/api/users/me'], (req, res, next) => {
@@ -1342,13 +1351,13 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
   try {
     // Buscar por 'id' primero, luego por '_id' como fallback
     let user = await User.findOne({ id: req.user.userId })
-      .select('id username email phone accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin')
+      .select(USER_PUBLIC_FIELDS)
       .lean();
     
     if (!user) {
       try {
         user = await User.findById(req.user.userId)
-          .select('id username email phone accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin')
+          .select(USER_PUBLIC_FIELDS)
           .lean();
       } catch (e) {
         // _id inválido, ignorar
@@ -5824,7 +5833,7 @@ app.get('*', (req, res) => {
   // Don't serve SPA HTML for static asset paths – they should 404 cleanly so that
   // browsers don't receive HTML with Content-Type: text/html when they expect CSS/JS
   // (which triggers X-Content-Type-Options: nosniff blocking).
-  if (/\.(css|js|map|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|json|webp|mp3|mp4|wav|ogg)$/i.test(req.path)) {
+  if (STATIC_ASSET_EXT_RE.test(req.path)) {
     return res.status(404).send('Not found');
   }
   const indexPath = path.join(__dirname, 'public', 'index.html');
