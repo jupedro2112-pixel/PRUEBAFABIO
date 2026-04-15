@@ -445,6 +445,13 @@
     <script>
         const API_URL = '';
         
+        function escapeHtml(text) {
+            if (!text && text !== 0) return '';
+            const div = document.createElement('div');
+            div.textContent = String(text);
+            return div.innerHTML;
+        }
+
         // Verificar autenticación al cargar
         document.addEventListener('DOMContentLoaded', () => {
             const token = localStorage.getItem('adminToken');
@@ -493,7 +500,7 @@
                     // Mostrar usuarios recientes
                     const recentUsersHtml = data.recentUsers.map(u => `
                         <div class="user-item">
-                            <span class="username">@${u.username}</span>
+                            <span class="username">@${escapeHtml(u.username)}</span>
                             <span class="date">${new Date(u.updatedAt).toLocaleString()}</span>
                         </div>
                     `).join('');
@@ -559,16 +566,16 @@
                 if (data.success) {
                     showResult('resultAll', `
                         ✅ <strong>Notificaciones enviadas!</strong><br><br>
-                        📱 Total de usuarios: <strong>${data.totalUsers}</strong><br>
-                        ✅ Exitosas: <strong>${data.successCount}</strong><br>
-                        ❌ Fallidas: <strong>${data.failureCount}</strong>
+                        📱 Total de usuarios: <strong>${parseInt(data.totalUsers) || 0}</strong><br>
+                        ✅ Exitosas: <strong>${parseInt(data.successCount) || 0}</strong><br>
+                        ❌ Fallidas: <strong>${parseInt(data.failureCount) || 0}</strong>
                     `);
                     loadStats(); // Actualizar estadísticas
                 } else {
-                    showResult('resultAll', '❌ Error: ' + (data.error || 'Error desconocido'), true);
+                    showResult('resultAll', '❌ Error al enviar notificaciones', true);
                 }
             } catch (error) {
-                showResult('resultAll', '❌ Error de conexión: ' + error.message, true);
+                showResult('resultAll', '❌ Error de conexión. Intenta nuevamente.', true);
             } finally {
                 showLoading('loadingAll', false);
             }
@@ -610,15 +617,15 @@
                 if (data.success) {
                     showResult('resultSpecific', `
                         ✅ <strong>Notificaciones enviadas!</strong><br><br>
-                        👤 Usuarios: <strong>${data.targetUsers.join(', ')}</strong><br>
-                        ✅ Exitosas: <strong>${data.successCount}</strong><br>
-                        ❌ Fallidas: <strong>${data.failureCount}</strong>
+                        👤 Usuarios: <strong>${escapeHtml((data.targetUsers || []).join(', '))}</strong><br>
+                        ✅ Exitosas: <strong>${parseInt(data.successCount) || 0}</strong><br>
+                        ❌ Fallidas: <strong>${parseInt(data.failureCount) || 0}</strong>
                     `);
                 } else {
-                    showResult('resultSpecific', '❌ Error: ' + (data.error || 'Error desconocido'), true);
+                    showResult('resultSpecific', '❌ Error al enviar notificaciones', true);
                 }
             } catch (error) {
-                showResult('resultSpecific', '❌ Error de conexión: ' + error.message, true);
+                showResult('resultSpecific', '❌ Error de conexión. Intenta nuevamente.', true);
             } finally {
                 showLoading('loadingSpecific', false);
             }

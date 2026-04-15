@@ -64,9 +64,12 @@ VIP.chat = (function () {
 
         let contentHtml = '';
         if (message.type === 'image') {
-            contentHtml = `<img src="${message.content}" onclick="openLightbox('${message.content}')" loading="lazy">`;
+            const safeUrl = encodeURI(message.content);
+            const jsonUrl = JSON.stringify(safeUrl);
+            contentHtml = `<img src="${safeUrl}" onclick="openLightbox(${jsonUrl})" loading="lazy">`;
         } else if (message.type === 'video') {
-            contentHtml = `<video src="${message.content}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
+            const safeUrl = encodeURI(message.content);
+            contentHtml = `<video src="${safeUrl}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
         } else {
             let content = escapeHtml(message.content);
             const urlRegex = /(https?:\/\/[^\s<]+[^\s<.,;:!?])/g;

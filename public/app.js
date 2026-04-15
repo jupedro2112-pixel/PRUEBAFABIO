@@ -905,8 +905,8 @@ async function handleFindUserByPhone(e) {
             resultDiv.innerHTML = `
                 <div style="text-align: center;">
                     <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Usuario encontrado!</p>
-                    <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${data.username}</p>
-                    <p style="color: #888; font-size: 12px;">Teléfono: ${data.phone || 'No registrado'}</p>
+                    <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${escapeHtml(data.username)}</p>
+                    <p style="color: #888; font-size: 12px;">Teléfono: ${escapeHtml(data.phone || 'No registrado')}</p>
                 </div>
             `;
             resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
@@ -914,7 +914,7 @@ async function handleFindUserByPhone(e) {
         } else {
             resultDiv.innerHTML = `
                 <div style="text-align: center;">
-                    <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${data.message}</p>
+                    <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.message)}</p>
                     <p style="color: #888; font-size: 12px; margin-top: 10px;">Verifica que el número sea correcto</p>
                 </div>
             `;
@@ -979,7 +979,7 @@ async function handleResetPasswordByPhone(e) {
             resultDiv.innerHTML = `
                 <div style="text-align: center;">
                     <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Contraseña cambiada!</p>
-                    <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${data.username}</p>
+                    <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${escapeHtml(data.username)}</p>
                     <p style="color: #888; font-size: 12px;">Ya puedes iniciar sesión con tu nueva contraseña</p>
                 </div>
             `;
@@ -992,7 +992,7 @@ async function handleResetPasswordByPhone(e) {
         } else {
             resultDiv.innerHTML = `
                 <div style="text-align: center;">
-                    <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${data.error}</p>
+                    <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.error)}</p>
                 </div>
             `;
             resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
@@ -1506,9 +1506,12 @@ function createMessageElement(message) {
 
     let contentHtml = '';
     if (message.type === 'image') {
-        contentHtml = `<img src="${message.content}" onclick="openLightbox('${message.content}')" loading="lazy">`;
+        const safeUrl = encodeURI(message.content);
+        const jsonUrl = JSON.stringify(safeUrl);
+        contentHtml = `<img src="${safeUrl}" onclick="openLightbox(${jsonUrl})" loading="lazy">`;
     } else if (message.type === 'video') {
-        contentHtml = `<video src="${message.content}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
+        const safeUrl = encodeURI(message.content);
+        contentHtml = `<video src="${safeUrl}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
     } else {
         let content = escapeHtml(message.content);
         const urlRegex = /(https?:\/\/[^\s<]+[^\s<.,;:!?])/g;
