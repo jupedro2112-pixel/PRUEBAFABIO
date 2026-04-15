@@ -114,7 +114,7 @@ const helmetConfig = helmet({
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
       fontSrc: ["'self'"],
-      connectSrc: ["'self'", 'wss:', 'https://*.googleapis.com', 'https://*.firebaseio.com', 'https://*.google.com', 'https://identitytoolkit.googleapis.com', 'https://securetoken.googleapis.com', 'https://fcm.googleapis.com', 'https://firebaseinstallations.googleapis.com'],
+      connectSrc: ["'self'", 'https://*.googleapis.com', 'https://*.firebaseio.com', 'https://*.google.com', 'https://identitytoolkit.googleapis.com', 'https://securetoken.googleapis.com', 'https://fcm.googleapis.com', 'https://firebaseinstallations.googleapis.com'],
       mediaSrc: ["'self'"],
       objectSrc: ["'none'"],
       frameSrc: ["'self'", 'https://*.firebaseapp.com', 'https://*.google.com'],
