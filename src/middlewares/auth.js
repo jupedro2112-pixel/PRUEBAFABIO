@@ -6,10 +6,19 @@
 const jwt = require('jsonwebtoken');
 const { AppError, ErrorCodes, ErrorMessages } = require('../utils/AppError');
 const logger = require('../utils/logger');
+const { User } = require('../models');
 
 // Claves secretas (deberían estar en variables de entorno)
 const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'sala-de-juegos-refresh-secret-2024';
+
+if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⛔ FATAL: JWT_SECRET y/o JWT_REFRESH_SECRET no configurados en producción. El servidor no puede arrancar de forma segura.');
+    process.exit(1);
+  }
+  logger.warn('⚠️ SEGURIDAD: JWT_SECRET/JWT_REFRESH_SECRET usan valores por defecto. Configúralos antes de desplegar en producción.');
+}
 
 // Tiempos de expiración
 const ACCESS_TOKEN_EXPIRY = process.env.ACCESS_TOKEN_EXPIRY || '15m';
@@ -279,13 +288,23 @@ const refreshToken = async (req, res, next) => {
       ));
     }
 
-    // Aquí deberías verificar en la base de datos que el usuario aún existe y está activo
-    // Por ahora, generamos nuevos tokens directamente
+    // Verificar que el usuario aún existe y está activo en la base de datos
+    let user;
+    try {
+      user = await User.findOne({ id: decoded.userId }).select('id username role isActive tokenVersion').lean();
+    } catch (dbErr) {
+      logger.error('Error verificando usuario en refresh token:', dbErr.message);
+      return next(new AppError('Error interno al verificar sesión', 500, ErrorCodes.AUTH_UNAUTHORIZED));
+    }
+
+    if (!user || !user.isActive) {
+      return next(new AppError('Usuario no encontrado o desactivado', 401, ErrorCodes.AUTH_UNAUTHORIZED));
+    }
 
     const tokens = generateTokenPair({
-      id: decoded.userId,
-      username: decoded.username,
-      role: decoded.role || 'user'
+      id: user.id,
+      username: user.username,
+      role: user.role
     });
 
     res.json({
