@@ -89,28 +89,31 @@ router.post('/register-token', async (req, res) => {
     const normalizedCtx = fcmTokenContext || 'browser';
     const normalizedPerm = notifPermission || null;
 
+    // Garantizar que el token se trate siempre como string para evitar inyección NoSQL
+    const tokenStr = String(fcmToken);
+
     // Actualizar el array fcmTokens: upsert por token string.
     // Si el token ya existe, actualizamos contexto/fecha/permiso.
     // Si es nuevo, lo añadimos SIN borrar los tokens anteriores.
     // Esto permite que Chrome y la PWA coexistan con sus propios tokens.
     const tokenEntry = {
-      token: fcmToken,
+      token: tokenStr,
       context: normalizedCtx,
       updatedAt: new Date(),
       notifPermission: normalizedPerm || null
     };
-    const existingIdx = (user.fcmTokens || []).findIndex(t => t.token === fcmToken);
+    if (!user.fcmTokens) user.fcmTokens = [];
+    const existingIdx = user.fcmTokens.findIndex(t => t.token === tokenStr);
     if (existingIdx >= 0) {
       user.fcmTokens[existingIdx] = tokenEntry;
     } else {
-      if (!user.fcmTokens) user.fcmTokens = [];
       user.fcmTokens.push(tokenEntry);
     }
     user.markModified('fcmTokens');
 
     // También mantener los campos individuales con el último token registrado
     // para compatibilidad con el panel admin y lógica heredada.
-    user.fcmToken = fcmToken;
+    user.fcmToken = tokenStr;
     user.fcmTokenContext = normalizedCtx;
     user.fcmTokenUpdatedAt = new Date();
     if (normalizedPerm) {
@@ -224,13 +227,14 @@ router.post('/send', requireAdmin, async (req, res) => {
       // Si el token está permanentemente inválido, borrarlo de la BD
       if (result.invalidToken) {
         try {
+          const invalidTokenStr = String(fcmToken);
           await User.updateOne(
-            { fcmToken: fcmToken },
+            { fcmToken: invalidTokenStr },
             { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
           );
           await User.updateMany(
-            { 'fcmTokens.token': fcmToken },
-            { $pull: { fcmTokens: { token: fcmToken } } }
+            { 'fcmTokens.token': invalidTokenStr },
+            { $pull: { fcmTokens: { token: invalidTokenStr } } }
           );
           console.log('[FCM] 🗑️ Token inválido eliminado automáticamente de la BD');
         } catch (cleanErr) {
