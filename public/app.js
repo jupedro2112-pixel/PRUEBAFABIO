@@ -545,6 +545,10 @@ function handleLogout() {
     currentToken = null;
     currentUser = null;
     localStorage.removeItem('userToken');
+    // Limpiar estado FCM para evitar que el siguiente usuario herede el token de esta sesión
+    localStorage.removeItem('fcmToken');
+    localStorage.removeItem('fcmTokenContext');
+    localStorage.removeItem('fcmTokenUserId');
     showLoginScreen();
 }
 

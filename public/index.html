@@ -754,6 +754,22 @@
         let _lastRegisteredCtx = null;
         // Tracking: si hay un intento pendiente de retry para registrar token
         let _tokenRetryTimer = null;
+
+        // ── Utilidad: extraer userId del payload del JWT guardado en localStorage ──
+        // Solo decodifica el payload (base64) para obtener el userId con fines de
+        // tracking local de sesión. La verificación de firma se hace únicamente en
+        // el servidor; aquí se usa para detectar cambio de usuario en el mismo dispositivo.
+        function _extractUserIdFromJwt(jwtString) {
+            if (!jwtString) return null;
+            const parts = jwtString.split('.');
+            if (parts.length !== 3) return null; // JWT malformado: debe tener header.payload.signature
+            try {
+                const payload = JSON.parse(atob(parts[1]));
+                return String(payload.userId || payload.id || '');
+            } catch (_e) {
+                return null;
+            }
+        }
         
         // ============================================
         // DETECTAR DISPOSITIVO
@@ -1068,6 +1084,10 @@
                 if (data.success) {
                     _lastRegisteredToken = token;
                     _lastRegisteredCtx = _ctx;
+                    // Persistir el userId del token JWT para poder detectar cambio de usuario
+                    // en futuras sesiones (ver sendFcmTokenAfterLogin). Fallo al parsear se ignora.
+                    const _uid = _extractUserIdFromJwt(localStorage.getItem('userToken'));
+                    if (_uid) localStorage.setItem('fcmTokenUserId', _uid);
                     console.log('[FCM] ✅ Token registrado en backend para:', data.username);
                     return true;
                 } else {
@@ -1104,6 +1124,21 @@
             if (!_nowStandalone) {
                 console.log('[FCM] sendFcmTokenAfterLogin: modo browser, omitiendo registro de push.');
                 return;
+            }
+
+            // Detectar cambio de usuario: si el token cacheado pertenece a otra sesión,
+            // descartarlo para evitar que un usuario herede el token de otro.
+            const _storedUserId = localStorage.getItem('fcmTokenUserId');
+            const _cachedTokenCheck = localStorage.getItem('fcmToken');
+            if (_cachedTokenCheck && _storedUserId) {
+                const _currentUid = _extractUserIdFromJwt(localStorage.getItem('userToken'));
+                if (_currentUid && _currentUid !== _storedUserId) {
+                    console.log('[FCM] ⚠️ Cambio de usuario detectado (' + _storedUserId + ' → ' + _currentUid + '). Descartando token de sesión anterior; se obtendrá uno nuevo.');
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmTokenContext');
+                    localStorage.removeItem('fcmTokenUserId');
+                    fcmToken = null;
+                }
             }
 
             const token = localStorage.getItem('fcmToken');
@@ -1253,6 +1288,17 @@
                     }
                     localStorage.removeItem('fcmToken');
                     fcmToken = null;
+
+                    // Resetear el guard de inicialización: hemos limpiado el estado anterior
+                    // (deleteToken + localStorage), por lo que una nueva inicialización completa
+                    // es correcta y segura. Sin este reset, si había un initNotifications en
+                    // progreso (auto-init de carga de página), la llamada siguiente retornaría
+                    // inmediatamente sin obtener token, dejando el flujo bloqueado.
+                    _notifInitializing = false;
+                    if (_tokenRetryTimer) {
+                        clearTimeout(_tokenRetryTimer);
+                        _tokenRetryTimer = null;
+                    }
 
                     // Reintentar obtener el token
                     await initNotifications(await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; }));
