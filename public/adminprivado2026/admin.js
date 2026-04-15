@@ -478,6 +478,9 @@ function handleLogout() {
     if (socket) {
         socket.disconnect();
     }
+    // Clear the server-side admin_session cookie (best-effort, ignore errors).
+    fetch(`${API_URL}/api/auth/admin-logout`, { method: 'POST', credentials: 'include' })
+        .catch(() => {});
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
     currentToken = null;

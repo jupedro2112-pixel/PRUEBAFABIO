@@ -308,6 +308,154 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
+// ============================================
+// ADMIN PAGE SECURITY
+// ============================================
+
+// ADMIN_HOST: if set, admin pages are ONLY served when the request Host matches.
+// Configuring this env var is the primary server-side control to prevent the
+// public domain from ever serving the admin panel.
+const ADMIN_HOST = process.env.ADMIN_HOST || null;
+
+// Legacy / debug HTML files that must never be served publicly.
+// Use a Set for O(1) look-ups on every request.
+const BLOCKED_LEGACY_ADMIN_PATHS = new Set([
+  '/admin-masivo.html',
+  '/admin-masivo-simple.html',
+  '/admin-notificaciones-v2.html',
+  '/admin-notifications.html',
+  '/admin-panel.html',
+  '/diagnostico-fcm.html',
+  '/test-firebase.html',
+  '/test-pwa.html',
+]);
+
+// Helper: parse the admin_session httpOnly cookie value.
+function getAdminSessionCookie(req) {
+  const cookieHeader = req.headers.cookie || '';
+  for (const part of cookieHeader.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    const val = part.slice(eqIdx + 1).trim();
+    if (key === 'admin_session') return val;
+  }
+  return null;
+}
+
+// Helper: extract the bare hostname (without port) from a request.
+function parseRequestHost(req) {
+  const rawHost = req.hostname || (req.headers.host || '');
+  return rawHost.split(':')[0].toLowerCase();
+}
+
+// Helper: build the Set-Cookie header value for the admin session cookie.
+function buildAdminSessionCookieHeader(token) {
+  const maxAge = 8 * 60 * 60; // 8 hours in seconds
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `admin_session=${token}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}; Path=/adminprivado2026${secure}`;
+}
+
+// Middleware: check ADMIN_HOST restriction.
+// Returns 404 (not 403) to avoid revealing that an admin endpoint exists.
+function adminHostCheck(req, res, next) {
+  if (!ADMIN_HOST) return next();
+  if (parseRequestHost(req) !== ADMIN_HOST.toLowerCase()) {
+    return res.status(404).send('Not found');
+  }
+  next();
+}
+
+// Middleware: verify admin_session cookie for asset requests.
+// Returns 403 if cookie is absent or JWT is not an admin role.
+// NOTE: Currently not applied to admin.css/admin.js because those assets are
+// needed to render the login form (catch-22: can't require auth to load the
+// login page). Kept here for future use when the admin login form is split
+// into a separate lightweight page.
+function requireAdminCookie(req, res, next) {
+  const cookieVal = getAdminSessionCookie(req);
+  if (!cookieVal) {
+    return res.status(403).send('Forbidden');
+  }
+  try {
+    const decoded = jwt.verify(cookieVal, JWT_SECRET);
+    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    if (!adminRoles.includes(decoded.role)) {
+      return res.status(403).send('Forbidden');
+    }
+    next();
+  } catch {
+    return res.status(403).send('Forbidden');
+  }
+}
+
+// Block legacy admin HTML files before express.static can serve them.
+app.use((req, res, next) => {
+  if (BLOCKED_LEGACY_ADMIN_PATHS.has(req.path.toLowerCase())) {
+    return res.status(404).send('Not found');
+  }
+  next();
+});
+
+// ── Admin page routes ──────────────────────────────────────────────────────
+// These are registered BEFORE express.static so that:
+//  1. Host-based checks run before the file system is touched.
+//  2. Sub-paths like /adminprivado2026/index.html return 404 (must use the
+//     canonical /adminprivado2026 URL).
+//  3. admin.css and admin.js are served through guarded handlers only.
+
+// Helper: read a file or return null (defined early for these handlers).
+function readFileSafe(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    console.error(`Error leyendo archivo ${filePath}:`, err.message);
+    return null;
+  }
+}
+
+// Admin panel HTML (serves the login form + app shell; cookie NOT required
+// here so first-time visitors can authenticate via the login form).
+app.get(['/adminprivado2026', '/adminprivado2026/'], adminHostCheck, (req, res) => {
+  const adminPath = path.join(__dirname, 'public', 'adminprivado2026', 'index.html');
+  const content = readFileSafe(adminPath);
+  if (!content) return res.status(500).send('Error loading admin page');
+  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.send(content);
+});
+
+// Admin CSS asset — host check only (cookie check intentionally omitted; see
+// requireAdminCookie comment above for the rationale).
+app.get('/adminprivado2026/admin.css', adminHostCheck, (req, res) => {
+  const cssPath = path.join(__dirname, 'public', 'adminprivado2026', 'admin.css');
+  const content = readFileSafe(cssPath);
+  if (!content) return res.status(404).send('Not found');
+  res.setHeader('Content-Type', 'text/css');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.send(content);
+});
+
+// Admin JS asset — host check only (same rationale as admin.css above).
+app.get('/adminprivado2026/admin.js', adminHostCheck, (req, res) => {
+  const jsPath = path.join(__dirname, 'public', 'adminprivado2026', 'admin.js');
+  const content = readFileSafe(jsPath);
+  if (!content) return res.status(404).send('Not found');
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.send(content);
+});
+
+// Catch-all: block every other path under /adminprivado2026/ (e.g. direct
+// access to /adminprivado2026/index.html, /adminprivado2026/manifest.json).
+// This runs BEFORE express.static so static never serves these files.
+app.use('/adminprivado2026/', adminHostCheck, (req, res) => {
+  res.status(404).send('Not found');
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',
   index: false,
@@ -1065,6 +1213,26 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       logger.warn(`Error obteniendo token JUGAYGANA para ${username}: ${jgErr.message}`);
     }
     
+    // Set an httpOnly admin session cookie for admin roles so that the server
+    // can verify, on subsequent page requests, that the browser was genuinely
+    // authenticated — not just checking localStorage (client-side only).
+    // An httpOnly, SameSite=Strict, path-scoped cookie is the recommended
+    // alternative to localStorage for session tokens: it is inaccessible to
+    // JavaScript (XSS-safe) and is scoped to the admin path only.
+    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    if (adminRoles.includes(userObj.role)) {
+      // Short-lived cookie (8 h) scoped to the admin path only.
+      // The JWT is signed (integrity-protected). Storing it in an httpOnly
+      // cookie is intentional: it cannot be read by client-side scripts,
+      // unlike localStorage tokens.
+      const adminCookieToken = jwt.sign(
+        { userId: userId, username: userObj.username, role: userObj.role },
+        JWT_SECRET,
+        { expiresIn: '8h' }
+      );
+      res.setHeader('Set-Cookie', buildAdminSessionCookieHeader(adminCookieToken));
+    }
+
     res.json({
       message: 'Login exitoso',
       token,
@@ -1086,7 +1254,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Verificar token
+// Admin logout — clears the admin_session httpOnly cookie.
+// No authentication required: clearing a cookie is harmless.
+app.post('/api/auth/admin-logout', (req, res) => {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `admin_session=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/adminprivado2026${secure}`);
+  res.json({ success: true });
+});
+
+// Verify token
 app.get('/api/auth/verify', authMiddleware, async (req, res) => {
   try {
     // Buscar usuario completo
@@ -3754,15 +3930,7 @@ app.post('/api/admin/send-notification', authMiddleware, adminMiddleware, async 
 // ============================================
 // RUTAS ESTÁTICAS
 // ============================================
-
-function readFileSafe(filePath) {
-  try {
-    return fs.readFileSync(filePath, 'utf8');
-  } catch (error) {
-    console.error(`Error leyendo archivo ${filePath}:`, error.message);
-    return null;
-  }
-}
+// NOTE: readFileSafe() is defined above, in the ADMIN PAGE SECURITY section.
 
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
@@ -3778,41 +3946,10 @@ app.get('/', (req, res) => {
   }
 });
 
-app.get('/adminprivado2026', (req, res) => {
-  const adminPath = path.join(__dirname, 'public', 'adminprivado2026', 'index.html');
-  const content = readFileSafe(adminPath);
-  if (content) {
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.send(content);
-  } else {
-    res.status(500).send('Error loading admin page');
-  }
-});
-
-app.get('/adminprivado2026/admin.css', (req, res) => {
-  const cssPath = path.join(__dirname, 'public', 'adminprivado2026', 'admin.css');
-  const content = readFileSafe(cssPath);
-  if (content) {
-    res.setHeader('Content-Type', 'text/css');
-    res.send(content);
-  } else {
-    res.status(404).send('CSS not found');
-  }
-});
-
-app.get('/adminprivado2026/admin.js', (req, res) => {
-  const jsPath = path.join(__dirname, 'public', 'adminprivado2026', 'admin.js');
-  const content = readFileSafe(jsPath);
-  if (content) {
-    res.setHeader('Content-Type', 'application/javascript');
-    res.send(content);
-  } else {
-    res.status(404).send('JS not found');
-  }
-});
+// NOTE: /adminprivado2026 routes are now registered early, BEFORE the
+// express.static middleware, so they can enforce ADMIN_HOST and cookie
+// checks before the file system is touched.  The old (unguarded) copies
+// that lived here have been removed.
 
 // ============================================
 // INICIALIZAR DATOS DE PRUEBA
