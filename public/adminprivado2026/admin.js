@@ -1873,9 +1873,34 @@ async function loadUserInfo(userId) {
         
         // Mostrar estado de la app de notificaciones
         if (elements.chatAppStatus) {
-            if (user.fcmToken) {
-                const perm = user.notifPermission || 'granted'; // default granted si nunca reportó
-                if (user.fcmTokenContext === 'standalone') {
+            // Determinar el mejor estado a partir del array multi-token.
+            // Si tiene cualquier token standalone → APP INSTALADA (prioridad máxima).
+            // Si solo tiene tokens browser → NOTIS EN NAVEGADOR.
+            // Si no tiene tokens → NOTIS INACTIVAS.
+            const tokens = user.fcmTokens && user.fcmTokens.length > 0 ? user.fcmTokens : [];
+            const hasStandalone = tokens.some(t => t.context === 'standalone' && t.token);
+            const hasBrowser = tokens.some(t => t.context !== 'standalone' && t.token);
+            // También considerar el campo individual por compatibilidad con cuentas antiguas
+            const singleCtx = user.fcmTokenContext;
+            const singleToken = user.fcmToken;
+            const effectiveStandalone = hasStandalone || (singleToken && singleCtx === 'standalone');
+            const effectiveBrowser = hasBrowser || (singleToken && singleCtx !== 'standalone');
+            const hasAnyToken = tokens.length > 0 || !!singleToken;
+
+            if (hasAnyToken) {
+                // Determinar permiso: si tiene standalone, usar el permiso de ese token
+                let perm = null;
+                if (effectiveStandalone) {
+                    const standaloneTk = tokens.find(t => t.context === 'standalone' && t.token);
+                    perm = standaloneTk ? standaloneTk.notifPermission : (user.notifPermission || null);
+                } else {
+                    const browserTk = tokens.find(t => t.context !== 'standalone' && t.token);
+                    perm = browserTk ? browserTk.notifPermission : (user.notifPermission || null);
+                }
+                // Fallback para cuentas antiguas sin notifPermission en token
+                if (!perm) perm = user.notifPermission || null;
+
+                if (effectiveStandalone) {
                     if (perm === 'denied') {
                         elements.chatAppStatus.textContent = '📱 APP - NOTIS BLOQUEADAS';
                         elements.chatAppStatus.style.color = '#ff6b6b';
@@ -1883,7 +1908,7 @@ async function loadUserInfo(userId) {
                         elements.chatAppStatus.textContent = '📱 APP INSTALADA';
                         elements.chatAppStatus.style.color = '#00ff88';
                     }
-                } else {
+                } else if (effectiveBrowser) {
                     if (perm === 'denied') {
                         elements.chatAppStatus.textContent = '🌐 NAVEGADOR - NOTIS BLOQUEADAS';
                         elements.chatAppStatus.style.color = '#ff6b6b';
@@ -1891,6 +1916,9 @@ async function loadUserInfo(userId) {
                         elements.chatAppStatus.textContent = '🌐 NOTIS EN NAVEGADOR';
                         elements.chatAppStatus.style.color = '#4fc3f7';
                     }
+                } else {
+                    elements.chatAppStatus.textContent = '📵 NOTIS INACTIVAS';
+                    elements.chatAppStatus.style.color = '#aaa';
                 }
             } else {
                 elements.chatAppStatus.textContent = '📵 NOTIS INACTIVAS';

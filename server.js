@@ -343,28 +343,50 @@ const { sendNotificationToUser: _sendPushToUser } = require('./src/services/noti
 // esa declaración (solo se llama desde route handlers y socket handlers), por lo
 // que la referencia es segura en runtime.
 async function sendPushIfOffline(user, title, body, data = {}) {
-  if (!user || !user.fcmToken) return;
+  // Recopilar todos los tokens activos del usuario (array multi-token + fallback al campo individual)
+  const allTokens = new Set();
+  if (user.fcmTokens && user.fcmTokens.length > 0) {
+    for (const entry of user.fcmTokens) {
+      if (entry.token) allTokens.add(entry.token);
+    }
+  }
+  if (user.fcmToken) allTokens.add(user.fcmToken);
+
+  if (allTokens.size === 0) return;
+
   // Si el usuario tiene un socket activo, ya recibió el mensaje en tiempo real;
   // no enviamos push para evitar notificación duplicada.
   if (connectedUsers && connectedUsers.has(user.id)) {
     logger.debug(`[FCM] Usuario ${user.username} online (socket activo), omitiendo push duplicado`);
     return;
   }
-  try {
-    const result = await _sendPushToUser(user.fcmToken, title, body, data);
-    if (result.success) {
-      logger.info(`[FCM] Push enviado a ${user.username} (offline)`);
-    } else if (result.invalidToken) {
-      // Token inválido/expirado: limpiarlo de la BD
-      user.fcmToken = null;
-      user.fcmTokenUpdatedAt = null;
-      await user.save();
-      logger.warn(`[FCM] Token inválido eliminado para ${user.username}`);
-    } else {
-      logger.warn(`[FCM] Error enviando push a ${user.username}: ${result.error}`);
+
+  for (const token of allTokens) {
+    try {
+      const result = await _sendPushToUser(token, title, body, data);
+      if (result.success) {
+        logger.info(`[FCM] Push enviado a ${user.username} (offline) token ...${token.slice(-8)}`);
+      } else if (result.invalidToken) {
+        // Limpiar solo ese token específico, no todos los del usuario
+        try {
+          await User.updateOne(
+            { _id: user._id, fcmToken: token },
+            { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+          );
+          await User.updateOne(
+            { _id: user._id },
+            { $pull: { fcmTokens: { token: token } } }
+          );
+          logger.warn(`[FCM] Token inválido eliminado para ${user.username} (${token.slice(-8)})`);
+        } catch (cleanErr) {
+          logger.warn(`[FCM] Error limpiando token inválido de ${user.username}: ${cleanErr.message}`);
+        }
+      } else {
+        logger.warn(`[FCM] Error enviando push a ${user.username}: ${result.error}`);
+      }
+    } catch (err) {
+      logger.warn(`[FCM] Excepción enviando push a ${user.username}: ${err.message}`);
     }
-  } catch (err) {
-    logger.warn(`[FCM] Excepción enviando push a ${user.username}: ${err.message}`);
   }
 }
 
@@ -3493,7 +3515,8 @@ io.on('connection', (socket) => {
         // Push FCM para usuario offline: si no está conectado por socket, enviar push.
         if (!delivered) {
           User.findOne({ id: receiverId }).then(function(targetUser) {
-            if (targetUser && targetUser.fcmToken) {
+            const hasTokens = targetUser && (targetUser.fcmToken || (targetUser.fcmTokens && targetUser.fcmTokens.length > 0));
+            if (hasTokens) {
               const pushTitle = 'Nuevo mensaje';
               const pushBody = (message.content || '').substring(0, 100);
               sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch((e) => {

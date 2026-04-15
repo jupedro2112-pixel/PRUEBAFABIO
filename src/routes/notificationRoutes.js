@@ -89,10 +89,27 @@ router.post('/register-token', async (req, res) => {
     const normalizedCtx = fcmTokenContext || 'browser';
     const normalizedPerm = notifPermission || null;
 
-    // SIEMPRE guardar: el frontend solo llama cuando tiene un token válido y fresco.
-    // No hacer dedup agresivo: el último registro siempre gana.
-    // Esto garantiza que Chrome→PWA, rotaciones de token y re-registros
-    // siempre dejen el backend con el token más reciente y correcto.
+    // Actualizar el array fcmTokens: upsert por token string.
+    // Si el token ya existe, actualizamos contexto/fecha/permiso.
+    // Si es nuevo, lo añadimos SIN borrar los tokens anteriores.
+    // Esto permite que Chrome y la PWA coexistan con sus propios tokens.
+    const tokenEntry = {
+      token: fcmToken,
+      context: normalizedCtx,
+      updatedAt: new Date(),
+      notifPermission: normalizedPerm || null
+    };
+    const existingIdx = (user.fcmTokens || []).findIndex(t => t.token === fcmToken);
+    if (existingIdx >= 0) {
+      user.fcmTokens[existingIdx] = tokenEntry;
+    } else {
+      if (!user.fcmTokens) user.fcmTokens = [];
+      user.fcmTokens.push(tokenEntry);
+    }
+    user.markModified('fcmTokens');
+
+    // También mantener los campos individuales con el último token registrado
+    // para compatibilidad con el panel admin y lógica heredada.
     user.fcmToken = fcmToken;
     user.fcmTokenContext = normalizedCtx;
     user.fcmTokenUpdatedAt = new Date();
@@ -210,6 +227,10 @@ router.post('/send', requireAdmin, async (req, res) => {
           await User.updateOne(
             { fcmToken: fcmToken },
             { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+          );
+          await User.updateMany(
+            { 'fcmTokens.token': fcmToken },
+            { $pull: { fcmTokens: { token: fcmToken } } }
           );
           console.log('[FCM] 🗑️ Token inválido eliminado automáticamente de la BD');
         } catch (cleanErr) {
@@ -590,26 +611,47 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
     
     console.log('[FCM] Iniciando verificación de tokens...');
     
-    // Obtener todos los usuarios con token
-    const users = await User.find({ 
-      fcmToken: { $exists: true, $ne: null } 
-    }).select('username fcmToken').lean();
+    // Obtener todos los usuarios con al menos un token (array o campo individual)
+    const users = await User.find({
+      $or: [
+        { fcmToken: { $exists: true, $ne: null } },
+        { 'fcmTokens.0': { $exists: true } }
+      ]
+    }).select('username fcmToken fcmTokens').lean();
     
-    console.log(`[FCM] Verificando ${users.length} tokens...`);
+    // Construir lista plana { token, username } para verificar
+    const tokenList = [];
+    for (const user of users) {
+      const seen = new Set();
+      if (user.fcmTokens && user.fcmTokens.length > 0) {
+        for (const entry of user.fcmTokens) {
+          if (entry.token && !seen.has(entry.token)) {
+            seen.add(entry.token);
+            tokenList.push({ token: entry.token, username: user.username, userId: user.id });
+          }
+        }
+      }
+      // Incluir campo individual solo si no está ya en el array
+      if (user.fcmToken && !seen.has(user.fcmToken)) {
+        tokenList.push({ token: user.fcmToken, username: user.username, userId: user.id });
+      }
+    }
+    
+    console.log(`[FCM] Verificando ${tokenList.length} tokens (${users.length} usuarios)...`);
     
     const results = {
-      total: users.length,
+      total: tokenList.length,
       valid: 0,
       invalid: 0,
       errors: [],
       cleaned: 0
     };
     
-    for (const user of users) {
+    for (const entry of tokenList) {
       try {
         // Intentar enviar una notificación de prueba silenciosa
         const testResult = await sendNotificationToUser(
-          user.fcmToken,
+          entry.token,
           'Test',
           'Verificación de token',
           { type: 'token_verify', silent: 'true' }
@@ -617,25 +659,36 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
         
         if (testResult.success) {
           results.valid++;
-          console.log(`[FCM] ✅ Token válido: ${user.username}`);
+          console.log(`[FCM] ✅ Token válido: ${entry.username}`);
         } else {
           results.invalid++;
-          results.errors.push({ username: user.username, error: testResult.error });
-          console.log(`[FCM] ❌ Token inválido: ${user.username} - ${testResult.error}`);
+          results.errors.push({ username: entry.username, error: testResult.error });
+          console.log(`[FCM] ❌ Token inválido: ${entry.username} - ${testResult.error}`);
           
-          // Si el error indica token inválido, borrarlo (usa flag del servicio)
+          // Limpiar solo ese token específico, no todos los del usuario
           if (testResult.invalidToken) {
             await User.updateOne(
-              { username: user.username },
+              { username: entry.username, fcmToken: entry.token },
               { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
             );
+            await User.updateOne(
+              { username: entry.username },
+              { $pull: { fcmTokens: { token: entry.token } } }
+            );
             results.cleaned++;
-            console.log(`[FCM] 🧹 Token borrado automáticamente: ${user.username}`);
-            // Notificar a admins que la app del usuario fue borrada
-            if (_io) {
+            console.log(`[FCM] 🧹 Token borrado automáticamente: ${entry.username} (${entry.token.substring(0, 20)}...)`);
+            // Notificar a admins solo si el usuario no tiene más tokens
+            const remaining = await User.findOne({
+              username: entry.username,
+              $or: [
+                { fcmToken: { $exists: true, $ne: null } },
+                { 'fcmTokens.0': { $exists: true } }
+              ]
+            }).select('id fcmToken fcmTokens').lean();
+            if (!remaining && _io) {
               _io.to('admins').emit('user_app_status', {
-                userId: user.id,
-                username: user.username,
+                userId: entry.userId,
+                username: entry.username,
                 appInstalled: false
               });
             }
@@ -643,7 +696,7 @@ router.post('/verify-tokens', requireAdmin, async (req, res) => {
         }
       } catch (e) {
         results.invalid++;
-        results.errors.push({ username: user.username, error: e.message });
+        results.errors.push({ username: entry.username, error: e.message });
       }
     }
     
