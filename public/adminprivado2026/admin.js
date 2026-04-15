@@ -721,10 +721,15 @@ function initSocket() {
     socket.on('user_app_status', (data) => {
         if (data.userId === selectedUserId && elements.chatAppStatus) {
             if (data.appInstalled) {
-                elements.chatAppStatus.textContent = '📱 app instalada';
-                elements.chatAppStatus.style.color = '#00ff88';
+                if (data.fcmTokenContext === 'standalone') {
+                    elements.chatAppStatus.textContent = '📱 APP INSTALADA';
+                    elements.chatAppStatus.style.color = '#00ff88';
+                } else {
+                    elements.chatAppStatus.textContent = '🌐 NOTIS EN NAVEGADOR';
+                    elements.chatAppStatus.style.color = '#4fc3f7';
+                }
             } else {
-                elements.chatAppStatus.textContent = '📵 app borrada';
+                elements.chatAppStatus.textContent = '📵 NOTIS INACTIVAS';
                 elements.chatAppStatus.style.color = '#aaa';
             }
         }
@@ -1871,10 +1876,15 @@ async function loadUserInfo(userId) {
         // Mostrar estado de la app de notificaciones
         if (elements.chatAppStatus) {
             if (user.fcmToken) {
-                elements.chatAppStatus.textContent = '📱 app instalada';
-                elements.chatAppStatus.style.color = '#00ff88';
+                if (user.fcmTokenContext === 'standalone') {
+                    elements.chatAppStatus.textContent = '📱 APP INSTALADA';
+                    elements.chatAppStatus.style.color = '#00ff88';
+                } else {
+                    elements.chatAppStatus.textContent = '🌐 NOTIS EN NAVEGADOR';
+                    elements.chatAppStatus.style.color = '#4fc3f7';
+                }
             } else {
-                elements.chatAppStatus.textContent = '📵 app borrada';
+                elements.chatAppStatus.textContent = '📵 NOTIS INACTIVAS';
                 elements.chatAppStatus.style.color = '#aaa';
             }
         }

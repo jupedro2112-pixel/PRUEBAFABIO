@@ -118,6 +118,11 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // Contexto en que se obtuvo el token: 'standalone' (PWA instalada) o 'browser'
+  fcmTokenContext: {
+    type: String,
+    default: null
+  },
 
   // =============================================
   // Campos de sistema de referidos

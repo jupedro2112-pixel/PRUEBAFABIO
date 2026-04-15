@@ -1064,7 +1064,7 @@
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
                     },
-                    body: JSON.stringify({ fcmToken: token })
+                body: JSON.stringify({ fcmToken: token, fcmTokenContext: localStorage.getItem('fcmTokenContext') || 'browser' })
                 });
 
                 const data = await response.json();
@@ -1699,22 +1699,30 @@
                 try {
                     const result = await enableNotifications();
                     if (result && result.success) {
+                        notificationBtn.classList.remove('blocked');
                         notificationBtn.classList.add('active');
-                        notificationBtn.innerHTML = '🔔 ACTIVADO';
+                        notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
                         notificationBtn.title = 'Notificaciones activadas ✅';
+                        notificationBtn.disabled = true;
                     } else {
-                        notificationBtn.innerHTML = '🔔 ERROR';
-                        setTimeout(() => {
+                        // Si el permiso fue denegado durante el intento, mostrar BLOQUEADAS
+                        const newPerm = ('Notification' in window) ? Notification.permission : null;
+                        if (newPerm === 'denied') {
+                            notificationBtn.classList.remove('active');
+                            notificationBtn.classList.add('blocked');
+                            notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
+                            notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
+                            notificationBtn.disabled = false;
+                        } else {
+                            notificationBtn.classList.remove('blocked');
                             notificationBtn.innerHTML = '🔔 NOTIS';
-                        }, 3000);
+                            notificationBtn.disabled = false;
+                        }
                     }
                 } catch (err) {
                     console.error('[FCM] Error en click de NOTIS:', err);
-                    notificationBtn.innerHTML = '🔔 ERROR';
-                    setTimeout(() => {
-                        notificationBtn.innerHTML = '🔔 NOTIS';
-                    }, 3000);
-                } finally {
+                    notificationBtn.classList.remove('blocked');
+                    notificationBtn.innerHTML = '🔔 NOTIS';
                     notificationBtn.disabled = false;
                 }
             });
@@ -1723,12 +1731,17 @@
             // Actualizar estado inicial del botón según diagnóstico
             const status = checkNotificationStatus();
             if (status.permission === 'granted' && status.hasToken) {
+                notificationBtn.classList.remove('blocked');
                 notificationBtn.classList.add('active');
-                notificationBtn.innerHTML = '🔔 ACTIVADO';
+                notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
                 notificationBtn.title = status.tokenRegisteredInBackend
                     ? 'Notificaciones activadas ✅ (registrado en servidor)'
                     : 'Notificaciones activadas ✅ (pendiente de registro en servidor)';
+                notificationBtn.disabled = true;
             } else if (status.permission === 'denied') {
+                notificationBtn.classList.remove('active');
+                notificationBtn.classList.add('blocked');
+                notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
                 notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
             } else if (!status.messagingAvailable) {
                 notificationBtn.title = 'Push no soportado en este navegador/entorno.';

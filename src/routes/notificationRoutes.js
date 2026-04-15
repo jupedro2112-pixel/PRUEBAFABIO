@@ -50,7 +50,7 @@ function requireAdmin(req, res, next) {
 // ============================================
 router.post('/register-token', async (req, res) => {
   try {
-    const { fcmToken } = req.body;
+    const { fcmToken, fcmTokenContext } = req.body;
     const authHeader = req.headers.authorization;
     
     console.log('[FCM] Recibida petición de registro de token');
@@ -85,10 +85,15 @@ router.post('/register-token', async (req, res) => {
     }
     
     console.log('[FCM] Usuario encontrado:', user.username);
-    
-    // Dedup backend: si el token es idéntico al que ya tiene, no guardar de nuevo
-    if (user.fcmToken === fcmToken) {
-      console.log('[FCM] Token idéntico al existente, omitiendo save');
+
+    // Dedup: omitir solo si el token Y el contexto son idénticos al registrado.
+    // Si cambió el contexto (browser → standalone o viceversa) siempre guardar,
+    // aunque el string del token sea el mismo, para mantener el contexto actualizado.
+    const normalizedCtx = fcmTokenContext || 'browser';
+    const tokenUnchanged  = user.fcmToken === fcmToken;
+    const contextUnchanged = user.fcmTokenContext === normalizedCtx;
+    if (tokenUnchanged && contextUnchanged) {
+      console.log('[FCM] Token e contexto idénticos al existente, omitiendo save');
       return res.json({ 
         success: true, 
         message: 'Token ya registrado (sin cambios)',
@@ -97,19 +102,25 @@ router.post('/register-token', async (req, res) => {
       });
     }
 
-    // Guardar el token nuevo/actualizado en la base de datos
+    if (tokenUnchanged && !contextUnchanged) {
+      console.log('[FCM] Token idéntico pero contexto cambió: "' + user.fcmTokenContext + '" → "' + normalizedCtx + '", actualizando contexto');
+    }
+
+    // Guardar el token nuevo/actualizado junto con el contexto en la base de datos
     user.fcmToken = fcmToken;
+    user.fcmTokenContext = normalizedCtx;
     user.fcmTokenUpdatedAt = new Date();
     await user.save();
     
-    console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username);
+    console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username, '(contexto:', normalizedCtx + ')');
     
     // Notificar a admins en tiempo real sobre el nuevo estado de la app
     if (_io) {
       _io.to('admins').emit('user_app_status', {
         userId: user.id,
         username: user.username,
-        appInstalled: true
+        appInstalled: true,
+        fcmTokenContext: normalizedCtx
       });
     }
     
