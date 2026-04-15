@@ -123,6 +123,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Último permiso de notificaciones reportado por el cliente: 'granted' / 'denied' / 'default'
+  notifPermission: {
+    type: String,
+    default: null
+  },
 
   // =============================================
   // Campos de sistema de referidos

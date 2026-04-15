@@ -50,7 +50,7 @@ function requireAdmin(req, res, next) {
 // ============================================
 router.post('/register-token', async (req, res) => {
   try {
-    const { fcmToken, fcmTokenContext } = req.body;
+    const { fcmToken, fcmTokenContext, notifPermission } = req.body;
     const authHeader = req.headers.authorization;
     
     console.log('[FCM] Recibida petición de registro de token');
@@ -86,41 +86,31 @@ router.post('/register-token', async (req, res) => {
     
     console.log('[FCM] Usuario encontrado:', user.username);
 
-    // Dedup: omitir solo si el token Y el contexto son idénticos al registrado.
-    // Si cambió el contexto (browser → standalone o viceversa) siempre guardar,
-    // aunque el string del token sea el mismo, para mantener el contexto actualizado.
     const normalizedCtx = fcmTokenContext || 'browser';
-    const tokenUnchanged  = user.fcmToken === fcmToken;
-    const contextUnchanged = user.fcmTokenContext === normalizedCtx;
-    if (tokenUnchanged && contextUnchanged) {
-      console.log('[FCM] Token y contexto idénticos al existente, omitiendo save');
-      return res.json({ 
-        success: true, 
-        message: 'Token ya registrado (sin cambios)',
-        userId: user.id,
-        username: user.username
-      });
-    }
+    const normalizedPerm = notifPermission || null;
 
-    if (tokenUnchanged && !contextUnchanged) {
-      console.log('[FCM] Token idéntico pero contexto cambió: "' + user.fcmTokenContext + '" → "' + normalizedCtx + '", actualizando contexto');
-    }
-
-    // Guardar el token nuevo/actualizado junto con el contexto en la base de datos
+    // SIEMPRE guardar: el frontend solo llama cuando tiene un token válido y fresco.
+    // No hacer dedup agresivo: el último registro siempre gana.
+    // Esto garantiza que Chrome→PWA, rotaciones de token y re-registros
+    // siempre dejen el backend con el token más reciente y correcto.
     user.fcmToken = fcmToken;
     user.fcmTokenContext = normalizedCtx;
     user.fcmTokenUpdatedAt = new Date();
+    if (normalizedPerm) {
+      user.notifPermission = normalizedPerm;
+    }
     await user.save();
     
-    console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username, '(contexto:', normalizedCtx + ')');
+    console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username, '(contexto:', normalizedCtx, ', permiso:', normalizedPerm + ')');
     
-    // Notificar a admins en tiempo real sobre el nuevo estado de la app
+    // Notificar a admins en tiempo real sobre el nuevo estado
     if (_io) {
       _io.to('admins').emit('user_app_status', {
         userId: user.id,
         username: user.username,
         appInstalled: true,
-        fcmTokenContext: normalizedCtx
+        fcmTokenContext: normalizedCtx,
+        notifPermission: normalizedPerm || user.notifPermission || 'granted'
       });
     }
     
