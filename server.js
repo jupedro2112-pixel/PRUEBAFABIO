@@ -796,7 +796,7 @@ const withdrawerMiddleware = (req, res, next) => {
 // ============================================
 
 // Verificar disponibilidad de username
-app.get('/api/auth/check-username', async (req, res) => {
+app.get('/api/auth/check-username', authLimiter, async (req, res) => {
   try {
     const { username } = req.query;
     
@@ -1202,7 +1202,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
     
     if (!userObj.isActive) {
-      return res.status(401).json({ error: 'Usuario desactivado' });
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     }
     
     // Verificar que el usuario tenga una contraseña válida
@@ -1380,7 +1380,7 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
 });
 
 // Cambiar contraseña
-app.post('/api/auth/change-password', authMiddleware, async (req, res) => {
+app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, res) => {
   try {
     const { currentPassword, newPassword, whatsapp, closeAllSessions } = req.body;
 
@@ -1503,7 +1503,6 @@ app.post('/api/auth/find-user-by-phone', sensitiveLimiter, async (req, res) => {
     if (user) {
       res.json({ 
         found: true, 
-        username: user.username,
         message: 'Usuario encontrado'
       });
     } else {
@@ -1548,7 +1547,6 @@ app.post('/api/auth/reset-password-by-phone', sensitiveLimiter, async (req, res)
 
       res.json({ 
         success: true, 
-        username: result.username,
         message: 'Contraseña cambiada exitosamente' 
       });
     } else {

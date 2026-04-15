@@ -143,9 +143,8 @@ VIP.auth = (function () {
                 VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
                 localStorage.setItem('userToken', VIP.state.currentToken);
 
-                // Guardar contraseña en memoria y sessionStorage para mostrarla en el modal de plataforma
+                // Guardar contraseña en memoria de sesión para mostrarla en el modal de plataforma
                 VIP.state.sessionPassword = password;
-                sessionStorage.setItem('sessionPassword', password);
 
                 // Guardar token de JUGAYGANA en sessionStorage (expira al cerrar el navegador)
                 if (data.jugayganaToken) {
@@ -400,9 +399,8 @@ VIP.auth = (function () {
 
             if (response.ok) {
                 VIP.state.passwordChangePending = false;
-                // Actualizar contraseña en memoria y sessionStorage para el modal de plataforma
+                // Actualizar contraseña en memoria de sesión para el modal de plataforma
                 VIP.state.sessionPassword = newPassword;
-                sessionStorage.setItem('sessionPassword', newPassword);
                 VIP.ui.hideModal('changePasswordModal');
                 VIP.ui.showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
                 document.getElementById('currentPasswordInput').value = '';
@@ -458,9 +456,8 @@ VIP.auth = (function () {
             if (data.found) {
                 resultDiv.innerHTML = `
                     <div style="text-align: center;">
-                        <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Usuario encontrado!</p>
-                        <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${escapeHtml(data.username)}</p>
-                        <p style="color: #888; font-size: 12px;">Teléfono: ${escapeHtml(data.phone || 'No registrado')}</p>
+                        <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Cuenta encontrada!</p>
+                        <p style="color: #888; font-size: 12px; margin-top: 10px;">Ahora podés cambiar la contraseña en el paso siguiente</p>
                     </div>
                 `;
                 resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
@@ -527,7 +524,6 @@ VIP.auth = (function () {
                 resultDiv.innerHTML = `
                     <div style="text-align: center;">
                         <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Contraseña cambiada!</p>
-                        <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${escapeHtml(data.username)}</p>
                         <p style="color: #888; font-size: 12px;">Ya puedes iniciar sesión con tu nueva contraseña</p>
                     </div>
                 `;
