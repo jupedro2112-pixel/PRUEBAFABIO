@@ -279,6 +279,10 @@ async function setupRedisAdapter() {
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
 if (!process.env.JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⛔ FATAL: JWT_SECRET no configurado en producción. El servidor no puede arrancar de forma segura.');
+    process.exit(1);
+  }
   logger.error('⛔ SEGURIDAD: JWT_SECRET no configurado en variables de entorno. Usando valor por defecto — configúralo en producción.');
 }
 
@@ -295,6 +299,9 @@ app.use(compression({
 }));
 app.use(securityHeaders);
 app.use(generalLimiter);
+if (!process.env.ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
+  logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS acepta cualquier origen.');
+}
 app.use(cors({
   origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
   credentials: true
@@ -692,8 +699,6 @@ app.get('/api/health', async (req, res) => {
     status: mongoOk ? 'ok' : 'degraded',
     mongodb: mongoOk,
     uptime: Math.floor(process.uptime()),
-    connectedUsers: connectedUsers.size,
-    connectedAdmins: connectedAdmins.size,
     timestamp: new Date().toISOString()
   });
 });
@@ -908,21 +913,25 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       dbReadFailed = true;
     }
 
-    // Fallback controlado si MongoDB no está disponible: solo ignite100/pepsi100
+    // Fallback controlado si MongoDB no está disponible: solo con credenciales de env vars
     if (dbReadFailed) {
-      const isAdminFallback = username === 'ignite100' && password === 'pepsi100';
+      const fallbackAdminUsername = process.env.ADMIN_USERNAME || 'ignite100';
+      const fallbackAdminPassword = process.env.ADMIN_PASSWORD;
+      const isAdminFallback = fallbackAdminPassword &&
+        username === fallbackAdminUsername &&
+        password === fallbackAdminPassword;
       if (!isAdminFallback) {
         return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intenta más tarde.' });
       }
       const fallbackToken = jwt.sign(
-        { userId: 'fallback-admin', username: 'ignite100', role: 'admin', tokenVersion: 0 },
+        { userId: 'fallback-admin', username: fallbackAdminUsername, role: 'admin', tokenVersion: 0 },
         JWT_SECRET,
         { expiresIn: '4h' }
       );
-      logger.warn(`[Login] Fallback admin login used (ignite100) - MongoDB was unavailable`);
+      logger.warn(`[Login] Fallback admin login used (${fallbackAdminUsername}) - MongoDB was unavailable`);
       return res.json({
         token: fallbackToken,
-        user: { id: 'fallback-admin', username: 'ignite100', role: 'admin', balance: 0, needsPasswordChange: false }
+        user: { id: 'fallback-admin', username: fallbackAdminUsername, role: 'admin', balance: 0, needsPasswordChange: false }
       });
     }
     
@@ -1035,11 +1044,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     user.lastLogin = new Date();
     await user.save();
     
-    // Token con expiración de 90 días para persistencia de sesión
+    // Token con expiración de 30 días para persistencia de sesión
     const token = jwt.sign(
       { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion || 0 },
       JWT_SECRET,
-      { expiresIn: '90d' }
+      { expiresIn: '30d' }
     );
     
     // Intentar login en JUGAYGANA para obtener token de sesión (best-effort)
@@ -1244,7 +1253,6 @@ app.post('/api/auth/find-user-by-phone', sensitiveLimiter, async (req, res) => {
       res.json({ 
         found: true, 
         username: user.username,
-        phone: user.phone,
         message: 'Usuario encontrado'
       });
     } else {
@@ -3831,33 +3839,48 @@ async function initializeData() {
     console.log('⚠️ No se pudo conectar con JUGAYGANA');
   }
   
-  // Verificar/crear admin ignite100
-  let adminExists = await User.findOne({ username: 'ignite100' });
+  // Verificar/crear admin principal
+  // Usar variables de entorno para credenciales del admin.
+  // ADMIN_USERNAME y ADMIN_PASSWORD deben configurarse en producción.
+  const adminUsername = process.env.ADMIN_USERNAME || 'ignite100';
+  const adminInitialPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminInitialPassword) {
+    logger.error('⛔ SEGURIDAD: ADMIN_PASSWORD no configurado en variables de entorno. El admin inicial NO será creado/actualizado automáticamente en producción. Configúralo antes de desplegar.');
+  }
+
+  let adminExists = await User.findOne({ username: adminUsername });
   if (!adminExists) {
-    const adminPassword = await bcrypt.hash('pepsi100', 10);
-    await User.create({
-      id: uuidv4(),
-      username: 'ignite100',
-      password: adminPassword,
-      email: 'admin@saladejuegos.com',
-      phone: null,
-      role: 'admin',
-      accountNumber: 'ADMIN001',
-      balance: 0,
-      createdAt: new Date(),
-      lastLogin: null,
-      isActive: true,
-      jugayganaUserId: null,
-      jugayganaUsername: null,
-      jugayganaSyncStatus: 'not_applicable'
-    });
-    console.log('✅ Admin verificado: ignite100');
+    if (!adminInitialPassword) {
+      logger.warn('⚠️ No se creó el admin inicial porque ADMIN_PASSWORD no está configurado. Crealo manualmente vía API o configura la variable de entorno.');
+    } else {
+      const adminPassword = await bcrypt.hash(adminInitialPassword, 12);
+      await User.create({
+        id: uuidv4(),
+        username: adminUsername,
+        password: adminPassword,
+        email: 'admin@saladejuegos.com',
+        phone: null,
+        role: 'admin',
+        accountNumber: 'ADMIN001',
+        balance: 0,
+        createdAt: new Date(),
+        lastLogin: null,
+        isActive: true,
+        jugayganaUserId: null,
+        jugayganaUsername: null,
+        jugayganaSyncStatus: 'not_applicable'
+      });
+      console.log(`✅ Admin creado: ${adminUsername}`);
+    }
   } else {
-    adminExists.password = await bcrypt.hash('pepsi100', 10);
-    adminExists.role = 'admin';
-    adminExists.isActive = true;
-    await adminExists.save();
-    console.log('✅ Admin verificado: ignite100');
+    // Admin ya existe: solo asegurar que sigue activo y con el rol correcto.
+    // NO se sobrescribe la contraseña para preservar cambios realizados en producción.
+    let changed = false;
+    if (adminExists.role !== 'admin') { adminExists.role = 'admin'; changed = true; }
+    if (!adminExists.isActive) { adminExists.isActive = true; changed = true; }
+    if (changed) await adminExists.save();
+    console.log(`✅ Admin verificado: ${adminUsername}`);
   }
   
   // Verificar/crear configuración CBU por defecto
