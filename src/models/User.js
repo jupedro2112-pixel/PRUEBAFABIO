@@ -118,11 +118,6 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
-  notifContext: {
-    type: String,
-    enum: ['standalone', 'browser', null],
-    default: null
-  },
 
   // =============================================
   // Campos de sistema de referidos

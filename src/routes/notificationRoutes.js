@@ -50,7 +50,7 @@ function requireAdmin(req, res, next) {
 // ============================================
 router.post('/register-token', async (req, res) => {
   try {
-    const { fcmToken, notifContext } = req.body;
+    const { fcmToken } = req.body;
     const authHeader = req.headers.authorization;
     
     console.log('[FCM] Recibida petición de registro de token');
@@ -85,12 +85,9 @@ router.post('/register-token', async (req, res) => {
     }
     
     console.log('[FCM] Usuario encontrado:', user.username);
-
-    // Contexto normalizado: solo aceptamos 'standalone' o 'browser'
-    const normalizedCtx = notifContext === 'standalone' ? 'standalone' : 'browser';
     
-    // Dedup backend: si el token es idéntico y el contexto no cambió, no guardar de nuevo
-    if (user.fcmToken === fcmToken && user.notifContext === normalizedCtx) {
+    // Dedup backend: si el token es idéntico al que ya tiene, no guardar de nuevo
+    if (user.fcmToken === fcmToken) {
       console.log('[FCM] Token idéntico al existente, omitiendo save');
       return res.json({ 
         success: true, 
@@ -103,18 +100,16 @@ router.post('/register-token', async (req, res) => {
     // Guardar el token nuevo/actualizado en la base de datos
     user.fcmToken = fcmToken;
     user.fcmTokenUpdatedAt = new Date();
-    user.notifContext = normalizedCtx;
     await user.save();
     
-    console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username, '| contexto:', normalizedCtx);
+    console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username);
     
-    // Notificar a admins en tiempo real sobre el nuevo estado de notificaciones
+    // Notificar a admins en tiempo real sobre el nuevo estado de la app
     if (_io) {
       _io.to('admins').emit('user_app_status', {
         userId: user.id,
         username: user.username,
-        appInstalled: true,
-        notifContext: normalizedCtx
+        appInstalled: true
       });
     }
     
