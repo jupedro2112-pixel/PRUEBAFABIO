@@ -93,7 +93,7 @@ router.post('/register-token', async (req, res) => {
     const tokenUnchanged  = user.fcmToken === fcmToken;
     const contextUnchanged = user.fcmTokenContext === normalizedCtx;
     if (tokenUnchanged && contextUnchanged) {
-      console.log('[FCM] Token e contexto idénticos al existente, omitiendo save');
+      console.log('[FCM] Token y contexto idénticos al existente, omitiendo save');
       return res.json({ 
         success: true, 
         message: 'Token ya registrado (sin cambios)',

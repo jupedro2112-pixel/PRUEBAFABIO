@@ -1703,6 +1703,8 @@
                         notificationBtn.classList.add('active');
                         notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
                         notificationBtn.title = 'Notificaciones activadas ✅';
+                        notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
+                        notificationBtn.setAttribute('aria-disabled', 'true');
                         notificationBtn.disabled = true;
                     } else {
                         // Si el permiso fue denegado durante el intento, mostrar BLOQUEADAS
@@ -1737,6 +1739,8 @@
                 notificationBtn.title = status.tokenRegisteredInBackend
                     ? 'Notificaciones activadas ✅ (registrado en servidor)'
                     : 'Notificaciones activadas ✅ (pendiente de registro en servidor)';
+                notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
+                notificationBtn.setAttribute('aria-disabled', 'true');
                 notificationBtn.disabled = true;
             } else if (status.permission === 'denied') {
                 notificationBtn.classList.remove('active');
