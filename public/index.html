@@ -802,33 +802,26 @@
         }
         
         // Registrar SW e inicializar notificaciones
-        // PWA CONTEXT-CHANGE FIX (root cause): detectar cambio de contexto ANTES de que
-        // initNotifications obtenga el token. Cuando un usuario pasa de Chrome normal a la
-        // app instalada (WebAPK/standalone), Chrome puede generar una nueva suscripción push
-        // invalidando la anterior. Si iniciamos con el token viejo, el backend lo almacena y
-        // Firebase lo rechaza ("Device unregistered") en el primer envío. Al detectar el cambio
-        // ANTES de correr initNotifications, forzamos la creación de un token fresco.
+        // Solo se intenta registrar token cuando el usuario está en la APP PWA instalada
+        // (modo standalone). En navegador normal no se registra ningún token push.
         registerServiceWorker().then(async (swRegistration) => {
             const _isStandaloneNow = window.matchMedia('(display-mode: standalone)').matches ||
                                      window.navigator.standalone === true;
-            const _ctxNow    = _isStandaloneNow ? 'standalone' : 'browser';
-            const _ctxStored = localStorage.getItem('fcmTokenContext');
-            if (_ctxStored !== null && _ctxStored !== _ctxNow) {
-                console.log('[FCM] 🔄 Cambio de contexto detectado al inicio: "' + _ctxStored + '" → "' + _ctxNow + '"');
-                console.log('[FCM] Limpiando suscripción del contexto anterior para obtener token fresco...');
-                if (messaging) {
-                    try {
-                        await messaging.deleteToken();
-                        console.log('[FCM] ✅ Suscripción push del contexto anterior eliminada');
-                    } catch (delErr) {
-                        console.warn('[FCM] deleteToken (cambio de contexto inicial):', delErr.message);
-                    }
+
+            // Solo en standalone: limpiar token legacy de contexto 'browser' si existe.
+            // Esto migra silenciosamente a usuarios que tenían un token de navegador
+            // guardado antes de este cambio. No se llama deleteToken() para evitar
+            // destruir la suscripción push válida que pueda existir en el backend.
+            if (_isStandaloneNow) {
+                const _ctxStored = localStorage.getItem('fcmTokenContext');
+                if (_ctxStored === 'browser') {
+                    console.log('[FCM] Token de contexto browser encontrado en PWA standalone. Limpiando para obtener token PWA fresco...');
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmTokenContext');
+                    fcmToken = null;
                 }
-                localStorage.removeItem('fcmToken');
-                localStorage.removeItem('fcmTokenContext');
-                fcmToken = null;
-                console.log('[FCM] Estado local limpiado por cambio de contexto — initNotifications obtendrá token fresco');
             }
+
             initNotifications(swRegistration);
         });
         
@@ -842,8 +835,7 @@
                 return;
             }
             _notifInitializing = true;
-            console.log('[FCM] Inicializando notificaciones...');
-            
+
             // Detectar dispositivo y modo de ejecución
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -851,6 +843,17 @@
             const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches || 
                                  window.navigator.standalone === true;
+
+            // Solo registrar token push cuando la app está instalada como PWA (modo standalone).
+            // En navegador normal no se obtiene ni registra ningún token para evitar mezclar
+            // contextos y generar tokens inválidos en el backend.
+            if (!isStandalone) {
+                console.log('[FCM] Modo browser detectado. Registro de push omitido (solo PWA instalada).');
+                _notifInitializing = false;
+                return;
+            }
+
+            console.log('[FCM] Inicializando notificaciones (PWA standalone)...');
 
             // Debug logs útiles para diagnosticar en Android Chrome
             console.log('[FCM] 📊 Entorno de ejecución:');
@@ -863,17 +866,11 @@
             console.log('[FCM]   Notification.permission:', 'Notification' in window ? Notification.permission : 'no soportado');
             
             if (isIOS) {
-                console.log('[FCM] 📱 iOS detectado');
+                console.log('[FCM] 📱 iOS detectado (standalone)');
                 if (!isSafari) {
                     console.log('[FCM] ⚠️ iOS detectado pero NO es Safari. Las notificaciones NO funcionarán.');
                     if (typeof showToast === 'function') {
                         showToast('⚠️ Las notificaciones requieren Safari en iPhone. Abrí esta página en Safari.', 'warning');
-                    }
-                }
-                if (!isStandalone) {
-                    console.log('[FCM] ⚠️ La app no está instalada. Agrega a pantalla de inicio primero.');
-                    if (typeof showToast === 'function' && isSafari) {
-                        showToast('📱 Para recibir notificaciones, instalá la app: Compartir ⬆️ → Agregar a Inicio', 'info');
                     }
                 }
             }
@@ -1099,77 +1096,26 @@
         // ============================================
         window.sendFcmTokenAfterLogin = async function() {
             console.log('[FCM] sendFcmTokenAfterLogin() llamado');
-            const token = localStorage.getItem('fcmToken');
 
-            // Detectar contexto de ejecución actual
+            // Solo registrar token cuando estamos en la APP PWA instalada (modo standalone).
+            // En navegador normal se omite el registro para evitar mezclar contextos.
             const _nowStandalone = window.matchMedia('(display-mode: standalone)').matches ||
                                    window.navigator.standalone === true;
-            const _currentCtx = _nowStandalone ? 'standalone' : 'browser';
-            const _storedCtx  = localStorage.getItem('fcmTokenContext'); // null en sesiones antiguas
-            // Cambio de contexto = token fue obtenido en un contexto distinto al actual
-            // (ej: token del Chrome web normal ahora se usa desde la PWA instalada)
-            const _ctxChanged = _storedCtx !== null && _storedCtx !== _currentCtx;
-
-            if (_ctxChanged) {
-                console.log('[FCM] 🔄 Cambio de contexto detectado: "' + _storedCtx + '" → "' + _currentCtx + '"');
-                if (token) {
-                    console.log('[FCM] ⚠️ Token anterior (' + token.substring(0, 20) + '...) pertenece al contexto "' + _storedCtx + '" y puede ser inválido en "' + _currentCtx + '"');
-                    console.log('[FCM] Backend todavía apunta al token viejo — forzando re-registro con token del contexto actual');
-                }
-            }
-
-            // ── CASO A: Cambio de contexto detectado ────────────────────────────
-            // Necesitamos obtener el token del nuevo contexto antes de registrar.
-            if (_ctxChanged) {
-                if (!_notifInitializing) {
-                    // No hay initNotifications en curso: podemos eliminar la suscripción
-                    // push anterior y solicitar una nueva de forma segura.
-                    if (messaging && token) {
-                        try {
-                            await messaging.deleteToken();
-                            console.log('[FCM] ✅ Suscripción push de contexto anterior ("' + _storedCtx + '") eliminada');
-                        } catch (delErr) {
-                            console.warn('[FCM] No se pudo eliminar suscripción anterior:', delErr.message);
-                        }
-                    }
-                    localStorage.removeItem('fcmToken');
-                    localStorage.removeItem('fcmTokenContext');
-                    fcmToken = null;
-                    const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
-                    if (!swReg) {
-                        console.warn('[FCM] ⚠️ Service Worker no disponible — no se puede obtener token nuevo. Se reintentará en la próxima apertura.');
-                    } else {
-                        await initNotifications(swReg);
-                        const newToken = localStorage.getItem('fcmToken');
-                        if (newToken) {
-                            console.log('[FCM] ✅ Token nuevo generado para contexto "' + _currentCtx + '": ' + newToken.substring(0, 20) + '...');
-                            console.log('[FCM] ✅ Token nuevo registrado correctamente en backend');
-                        } else {
-                            console.warn('[FCM] ⚠️ No se pudo obtener token nuevo para el contexto "' + _currentCtx + '"');
-                        }
-                    }
-                } else {
-                    // initNotifications ya está en curso (lanzado al cargar la página).
-                    // Limpiar token Y contexto para que initNotifications no registre en backend
-                    // el token del contexto anterior. NOTA: el initNotifications en curso puede
-                    // haber ya obtenido el token internamente — lo que se limpia aquí afecta solo
-                    // a lo que la próxima llamada a sendFcmTokenAfterLogin encontrará en localStorage.
-                    // Con el fix en registerServiceWorker, este caso raramente ocurre (la limpieza
-                    // ya se hace ANTES de que initNotifications arranque).
-                    console.log('[FCM] initNotifications en progreso — limpiando token del contexto anterior "' + _storedCtx + '" para evitar re-registro de token inválido');
-                    localStorage.removeItem('fcmToken');
-                    localStorage.removeItem('fcmTokenContext');
-                    fcmToken = null;
-                }
+            if (!_nowStandalone) {
+                console.log('[FCM] sendFcmTokenAfterLogin: modo browser, omitiendo registro de push.');
                 return;
             }
 
-            // ── CASO B: Mismo contexto, hay token en caché ───────────────────────
+            const token = localStorage.getItem('fcmToken');
+            const _currentCtx = 'standalone';
+            const _storedCtx  = localStorage.getItem('fcmTokenContext'); // null en sesiones antiguas
+
+            // ── CASO A: Hay token en caché PWA ───────────────────────────────────
             if (token) {
-                // Enviar token cacheado al backend (dedup interno evita duplicados)
+                // Enviar token cacheado al backend
                 const sent = await sendTokenToServer(token);
                 // Refrescar token desde FCM por si rotó (token puede rotar por SW update,
-                // cambio de VAPID key, o expiración de la suscripción push).
+                // cambio de VAPID key, reinstalación o expiración de la suscripción push).
                 if (messaging && 'Notification' in window && Notification.permission === 'granted') {
                     try {
                         const swReg = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
@@ -1215,7 +1161,7 @@
                     }
                 }
             } else {
-                // ── CASO C: Sin token en caché ───────────────────────────────────
+                // ── CASO B: Sin token en caché ───────────────────────────────────
                 // Intentar generar uno vía initNotifications
                 console.log('[FCM] No hay token en localStorage, iniciando notificaciones...');
                 const swRegC = await navigator.serviceWorker.ready.catch(function(e) { console.warn('[FCM] SW ready falló:', e.message); return null; });
@@ -1664,113 +1610,79 @@
         `;
         document.head.appendChild(pwaStyles);
         
-        // Botón de notificaciones: visible en standalone (todas las plataformas) y
-        // también en Android Chrome en modo browser (las notificaciones push de FCM
-        // no requieren que la PWA esté instalada en Android/Chrome).
-        // En iOS, las notificaciones push web solo funcionan en standalone (Safari).
+        // Botón de notificaciones: solo visible cuando la app está instalada como PWA (standalone).
+        // En navegador normal no se muestra para no generar estados inconsistentes.
         const notificationBtn = document.getElementById('notificationBtn');
         console.log('[FCM] Buscando botón notificationBtn:', notificationBtn);
         if (notificationBtn) {
             const standaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
                                    window.navigator.standalone === true;
-            // isAndroid and isIOS are declared in the outer script scope (lines above).
-            // Show on Android Chrome (installed or not) and on any platform when standalone.
-            const showNotisBtn = standaloneMode || (isAndroid && !isIOS);
-            // Use setProperty with 'important' so this inline style overrides the CSS
-            // rule `#notificationBtn { display: none !important }`.
-            if (showNotisBtn) {
+            // Solo mostrar en modo standalone (PWA instalada). En browser siempre oculto.
+            if (standaloneMode) {
                 notificationBtn.style.setProperty('display', 'inline-flex', 'important');
             } else {
                 notificationBtn.style.display = 'none';
             }
-            console.log('[FCM] NOTIS visible:', showNotisBtn, '(standalone:', standaloneMode, '| Android:', isAndroid, ')');
+            console.log('[FCM] NOTIS visible:', standaloneMode, '(standalone)');
 
+            // Click: solicitar permiso si aún no fue concedido y actualizar estado del botón.
+            // Diseñado para ser simple y sin efectos secundarios que rompan el flujo.
             notificationBtn.addEventListener('click', async () => {
+                if (notificationBtn.disabled) return; // ya activado o procesando
                 console.log('[FCM] Botón de notificaciones clickeado');
 
-                // Si iOS sin soporte real, mostrar guía visible en vez de intentar
+                // iOS sin soporte de push: mostrar guía de instalación
                 if (isIOS && !messaging) {
-                    if (!standaloneMode) {
-                        showIOSInstallInstructions();
-                    } else {
-                        if (typeof showToast === 'function') {
-                            showToast('⚠️ Tu versión de iOS no soporta notificaciones push. Necesitás iOS 16.4+.', 'warning');
-                        }
+                    if (typeof showToast === 'function') {
+                        showToast('⚠️ Tu versión de iOS no soporta notificaciones push. Necesitás iOS 16.4+.', 'warning');
                     }
                     return;
                 }
 
-                // Mostrar estado de carga mientras se procesa
-                const prevHtml = notificationBtn.innerHTML;
                 notificationBtn.innerHTML = '⏳ ...';
                 notificationBtn.disabled = true;
                 try {
                     const result = await enableNotifications();
-                    if (result && result.success) {
-                        // Verify token was actually registered in backend
-                        const _postStatus = checkNotificationStatus();
-                        if (_postStatus.tokenRegisteredInBackend && _postStatus.tokenContextMatch) {
-                            notificationBtn.classList.remove('blocked');
-                            notificationBtn.classList.add('active');
-                            notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                            notificationBtn.title = 'Notificaciones activadas ✅';
-                            notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
-                            notificationBtn.setAttribute('aria-disabled', 'true');
-                            notificationBtn.disabled = true;
-                        } else {
-                            // Token obtained but backend registration pending/failed
-                            notificationBtn.classList.remove('blocked');
-                            notificationBtn.classList.remove('active');
-                            notificationBtn.innerHTML = '🔔 NOTIS';
-                            notificationBtn.title = 'Token obtenido pero registro en servidor pendiente. Tocá para reintentar.';
-                            notificationBtn.disabled = false;
-                        }
-                    } else {
-                        // Si el permiso fue denegado durante el intento, mostrar BLOQUEADAS
-                        const newPerm = ('Notification' in window) ? Notification.permission : null;
-                        if (newPerm === 'denied') {
-                            notificationBtn.classList.remove('active');
-                            notificationBtn.classList.add('blocked');
-                            notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
-                            notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
-                            notificationBtn.disabled = false;
-                        } else {
-                            notificationBtn.classList.remove('blocked');
-                            notificationBtn.innerHTML = '🔔 NOTIS';
-                            notificationBtn.disabled = false;
-                        }
-                    }
+                    console.log('[FCM] enableNotifications result:', result && result.success ? 'success' : (result && result.error ? result.error : 'no result'));
                 } catch (err) {
                     console.error('[FCM] Error en click de NOTIS:', err);
+                }
+                // Actualizar estado según resultado real
+                const newPerm = ('Notification' in window) ? Notification.permission : null;
+                const newToken = localStorage.getItem('fcmToken');
+                if (newPerm === 'granted' && newToken) {
                     notificationBtn.classList.remove('blocked');
+                    notificationBtn.classList.add('active');
+                    notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                    notificationBtn.title = 'Notificaciones activadas ✅';
+                    notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
+                    notificationBtn.setAttribute('aria-disabled', 'true');
+                    notificationBtn.disabled = true;
+                } else if (newPerm === 'denied') {
+                    notificationBtn.classList.remove('active');
+                    notificationBtn.classList.add('blocked');
+                    notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
+                    notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
+                    notificationBtn.disabled = false;
+                } else {
+                    notificationBtn.classList.remove('blocked');
+                    notificationBtn.classList.remove('active');
                     notificationBtn.innerHTML = '🔔 NOTIS';
                     notificationBtn.disabled = false;
                 }
             });
             console.log('[FCM] ✅ Botón de notificaciones configurado');
             
-            // Actualizar estado inicial del botón según diagnóstico
+            // Actualizar estado inicial del botón según permiso y token actuales
             const status = checkNotificationStatus();
-            // NOTIS ACTIVADAS solo si: permiso granted + token presente +
-            // token es del contexto ACTUAL (no un caché viejo de otro contexto) +
-            // token fue registrado exitosamente en backend en esta sesión
-            if (status.permission === 'granted' && status.hasToken && status.tokenContextMatch && status.tokenRegisteredInBackend) {
+            if (status.permission === 'granted' && status.hasToken) {
                 notificationBtn.classList.remove('blocked');
                 notificationBtn.classList.add('active');
                 notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                notificationBtn.title = 'Notificaciones activadas ✅ (registrado en servidor)';
+                notificationBtn.title = 'Notificaciones activadas ✅';
                 notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
                 notificationBtn.setAttribute('aria-disabled', 'true');
                 notificationBtn.disabled = true;
-            } else if (status.permission === 'granted' && status.hasToken && status.tokenContextMatch) {
-                // Token correcto para el contexto pero aún no confirmado en backend
-                // (puede pasar si initNotifications registró pero sendFcmTokenAfterLogin aún no corrió)
-                // Mostrar NOTIS (clickeable) para que el usuario pueda forzar re-registro
-                notificationBtn.classList.remove('blocked');
-                notificationBtn.classList.remove('active');
-                notificationBtn.innerHTML = '🔔 NOTIS';
-                notificationBtn.title = 'Token obtenido pero pendiente de registro en servidor. Tocá para reintentar.';
-                notificationBtn.disabled = false;
             } else if (status.permission === 'denied') {
                 notificationBtn.classList.remove('active');
                 notificationBtn.classList.add('blocked');
