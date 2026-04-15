@@ -750,6 +750,8 @@
         let _notifInitializing = false;
         // Tracking: último token FCM enviado exitosamente al backend (evita duplicados)
         let _lastRegisteredToken = null;
+        // Tracking: último contexto registrado exitosamente al backend
+        let _lastRegisteredCtx = null;
         // Tracking: si hay un intento pendiente de retry para registrar token
         let _tokenRetryTimer = null;
         
@@ -1032,12 +1034,6 @@
                 return false;
             }
 
-            // Dedup: si ya enviamos este mismo token con éxito, no re-enviar
-            if (_lastRegisteredToken === token) {
-                console.log('[FCM] Token ya registrado en backend, omitiendo duplicado');
-                return true;
-            }
-
             const authToken = localStorage.getItem('userToken');
             if (!authToken) {
                 console.log('[FCM] ⏳ Usuario no logueado, token en localStorage. Se registrará después del login.');
@@ -1056,7 +1052,11 @@
                 return false;
             }
 
-            console.log('[FCM] Registrando token en backend...');
+            // Obtener el permiso actual para enviarlo al backend
+            const _perm = ('Notification' in window) ? Notification.permission : 'default';
+            const _ctx = localStorage.getItem('fcmTokenContext') || 'browser';
+
+            console.log('[FCM] Registrando token en backend (contexto: ' + _ctx + ', permiso: ' + _perm + ')...');
             try {
                 const response = await fetch('/api/notifications/register-token', {
                     method: 'POST',
@@ -1064,12 +1064,13 @@
                         'Content-Type': 'application/json',
                         'Authorization': 'Bearer ' + authToken
                     },
-                    body: JSON.stringify({ fcmToken: token })
+                    body: JSON.stringify({ fcmToken: token, fcmTokenContext: _ctx, notifPermission: _perm })
                 });
 
                 const data = await response.json();
                 if (data.success) {
                     _lastRegisteredToken = token;
+                    _lastRegisteredCtx = _ctx;
                     console.log('[FCM] ✅ Token registrado en backend para:', data.username);
                     return true;
                 } else {
@@ -1348,6 +1349,7 @@
             const notifSupported = 'Notification' in window;
             const permission = notifSupported ? Notification.permission : 'no soportado';
             const token = localStorage.getItem('fcmToken');
+            const storedCtx = localStorage.getItem('fcmTokenContext');
             const registeredInBackend = _lastRegisteredToken !== null && _lastRegisteredToken === token;
             const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             const isSafariBrowser = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -1355,12 +1357,17 @@
             const isChromeBrowser = /Chrome/.test(navigator.userAgent) && !(/Edg\//.test(navigator.userAgent));
             const standaloneMode = window.matchMedia('(display-mode: standalone)').matches || 
                                  window.navigator.standalone === true;
+            const currentCtx = standaloneMode ? 'standalone' : 'browser';
             const messagingAvailable = !!messaging;
+            // Token is for the CURRENT context (not a stale one from a different context).
+            // If storedCtx is null (legacy session), treat as mismatch to avoid false positives.
+            const tokenContextMatch = storedCtx !== null && storedCtx === currentCtx;
             
             console.log('=== ESTADO DE NOTIFICACIONES ===');
             console.log('Permiso:', permission);
             console.log('Token FCM local:', token ? 'Sí (' + token.substring(0, 30) + '...)' : 'No');
             console.log('Token registrado en backend:', registeredInBackend ? 'Sí' : 'No');
+            console.log('Token contexto almacenado:', storedCtx, '| contexto actual:', currentCtx, '| coincide:', tokenContextMatch);
             console.log('Firebase Messaging:', messagingAvailable ? 'Disponible' : 'No disponible');
             console.log('iOS:', isIOSDevice ? 'Sí' : 'No');
             console.log('Android:', isAndroidDevice ? 'Sí' : 'No');
@@ -1373,6 +1380,7 @@
                 permission: permission,
                 hasToken: !!token,
                 tokenRegisteredInBackend: registeredInBackend,
+                tokenContextMatch: tokenContextMatch,
                 tokenPreview: token ? token.substring(0, 30) + '...' : null,
                 messagingAvailable: messagingAvailable,
                 isIOS: isIOSDevice,
@@ -1699,22 +1707,43 @@
                 try {
                     const result = await enableNotifications();
                     if (result && result.success) {
-                        notificationBtn.classList.add('active');
-                        notificationBtn.innerHTML = '🔔 ACTIVADO';
-                        notificationBtn.title = 'Notificaciones activadas ✅';
-                    } else {
-                        notificationBtn.innerHTML = '🔔 ERROR';
-                        setTimeout(() => {
+                        // Verify token was actually registered in backend
+                        const _postStatus = checkNotificationStatus();
+                        if (_postStatus.tokenRegisteredInBackend && _postStatus.tokenContextMatch) {
+                            notificationBtn.classList.remove('blocked');
+                            notificationBtn.classList.add('active');
+                            notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                            notificationBtn.title = 'Notificaciones activadas ✅';
+                            notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
+                            notificationBtn.setAttribute('aria-disabled', 'true');
+                            notificationBtn.disabled = true;
+                        } else {
+                            // Token obtained but backend registration pending/failed
+                            notificationBtn.classList.remove('blocked');
+                            notificationBtn.classList.remove('active');
                             notificationBtn.innerHTML = '🔔 NOTIS';
-                        }, 3000);
+                            notificationBtn.title = 'Token obtenido pero registro en servidor pendiente. Tocá para reintentar.';
+                            notificationBtn.disabled = false;
+                        }
+                    } else {
+                        // Si el permiso fue denegado durante el intento, mostrar BLOQUEADAS
+                        const newPerm = ('Notification' in window) ? Notification.permission : null;
+                        if (newPerm === 'denied') {
+                            notificationBtn.classList.remove('active');
+                            notificationBtn.classList.add('blocked');
+                            notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
+                            notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
+                            notificationBtn.disabled = false;
+                        } else {
+                            notificationBtn.classList.remove('blocked');
+                            notificationBtn.innerHTML = '🔔 NOTIS';
+                            notificationBtn.disabled = false;
+                        }
                     }
                 } catch (err) {
                     console.error('[FCM] Error en click de NOTIS:', err);
-                    notificationBtn.innerHTML = '🔔 ERROR';
-                    setTimeout(() => {
-                        notificationBtn.innerHTML = '🔔 NOTIS';
-                    }, 3000);
-                } finally {
+                    notificationBtn.classList.remove('blocked');
+                    notificationBtn.innerHTML = '🔔 NOTIS';
                     notificationBtn.disabled = false;
                 }
             });
@@ -1722,13 +1751,30 @@
             
             // Actualizar estado inicial del botón según diagnóstico
             const status = checkNotificationStatus();
-            if (status.permission === 'granted' && status.hasToken) {
+            // NOTIS ACTIVADAS solo si: permiso granted + token presente +
+            // token es del contexto ACTUAL (no un caché viejo de otro contexto) +
+            // token fue registrado exitosamente en backend en esta sesión
+            if (status.permission === 'granted' && status.hasToken && status.tokenContextMatch && status.tokenRegisteredInBackend) {
+                notificationBtn.classList.remove('blocked');
                 notificationBtn.classList.add('active');
-                notificationBtn.innerHTML = '🔔 ACTIVADO';
-                notificationBtn.title = status.tokenRegisteredInBackend
-                    ? 'Notificaciones activadas ✅ (registrado en servidor)'
-                    : 'Notificaciones activadas ✅ (pendiente de registro en servidor)';
+                notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                notificationBtn.title = 'Notificaciones activadas ✅ (registrado en servidor)';
+                notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
+                notificationBtn.setAttribute('aria-disabled', 'true');
+                notificationBtn.disabled = true;
+            } else if (status.permission === 'granted' && status.hasToken && status.tokenContextMatch) {
+                // Token correcto para el contexto pero aún no confirmado en backend
+                // (puede pasar si initNotifications registró pero sendFcmTokenAfterLogin aún no corrió)
+                // Mostrar NOTIS (clickeable) para que el usuario pueda forzar re-registro
+                notificationBtn.classList.remove('blocked');
+                notificationBtn.classList.remove('active');
+                notificationBtn.innerHTML = '🔔 NOTIS';
+                notificationBtn.title = 'Token obtenido pero pendiente de registro en servidor. Tocá para reintentar.';
+                notificationBtn.disabled = false;
             } else if (status.permission === 'denied') {
+                notificationBtn.classList.remove('active');
+                notificationBtn.classList.add('blocked');
+                notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
                 notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
             } else if (!status.messagingAvailable) {
                 notificationBtn.title = 'Push no soportado en este navegador/entorno.';
