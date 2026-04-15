@@ -318,7 +318,8 @@ app.use(express.json({ limit: '50mb' }));
 const ADMIN_HOST = process.env.ADMIN_HOST || null;
 
 // Legacy / debug HTML files that must never be served publicly.
-const BLOCKED_LEGACY_ADMIN_PATHS = [
+// Use a Set for O(1) look-ups on every request.
+const BLOCKED_LEGACY_ADMIN_PATHS = new Set([
   '/admin-masivo.html',
   '/admin-masivo-simple.html',
   '/admin-notificaciones-v2.html',
@@ -327,7 +328,7 @@ const BLOCKED_LEGACY_ADMIN_PATHS = [
   '/diagnostico-fcm.html',
   '/test-firebase.html',
   '/test-pwa.html',
-];
+]);
 
 // Helper: parse the admin_session httpOnly cookie value.
 function getAdminSessionCookie(req) {
@@ -342,6 +343,12 @@ function getAdminSessionCookie(req) {
   return null;
 }
 
+// Helper: extract the bare hostname (without port) from a request.
+function parseRequestHost(req) {
+  const rawHost = req.hostname || (req.headers.host || '');
+  return rawHost.split(':')[0].toLowerCase();
+}
+
 // Helper: build the Set-Cookie header value for the admin session cookie.
 function buildAdminSessionCookieHeader(token) {
   const maxAge = 8 * 60 * 60; // 8 hours in seconds
@@ -353,8 +360,7 @@ function buildAdminSessionCookieHeader(token) {
 // Returns 404 (not 403) to avoid revealing that an admin endpoint exists.
 function adminHostCheck(req, res, next) {
   if (!ADMIN_HOST) return next();
-  const reqHost = (req.hostname || (req.headers.host || '').split(':')[0]).toLowerCase();
-  if (reqHost !== ADMIN_HOST.toLowerCase()) {
+  if (parseRequestHost(req) !== ADMIN_HOST.toLowerCase()) {
     return res.status(404).send('Not found');
   }
   next();
@@ -385,7 +391,7 @@ function requireAdminCookie(req, res, next) {
 
 // Block legacy admin HTML files before express.static can serve them.
 app.use((req, res, next) => {
-  if (BLOCKED_LEGACY_ADMIN_PATHS.includes(req.path.toLowerCase())) {
+  if (BLOCKED_LEGACY_ADMIN_PATHS.has(req.path.toLowerCase())) {
     return res.status(404).send('Not found');
   }
   next();
@@ -1210,9 +1216,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     // Set an httpOnly admin session cookie for admin roles so that the server
     // can verify, on subsequent page requests, that the browser was genuinely
     // authenticated — not just checking localStorage (client-side only).
+    // An httpOnly, SameSite=Strict, path-scoped cookie is the recommended
+    // alternative to localStorage for session tokens: it is inaccessible to
+    // JavaScript (XSS-safe) and is scoped to the admin path only.
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     if (adminRoles.includes(userObj.role)) {
       // Short-lived cookie (8 h) scoped to the admin path only.
+      // The JWT is signed (integrity-protected). Storing it in an httpOnly
+      // cookie is intentional: it cannot be read by client-side scripts,
+      // unlike localStorage tokens.
       const adminCookieToken = jwt.sign(
         { userId: userId, username: userObj.username, role: userObj.role },
         JWT_SECRET,
