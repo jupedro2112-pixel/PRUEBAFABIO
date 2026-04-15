@@ -1359,8 +1359,9 @@
                                  window.navigator.standalone === true;
             const currentCtx = standaloneMode ? 'standalone' : 'browser';
             const messagingAvailable = !!messaging;
-            // Token is for the CURRENT context (not a stale one from a different context)
-            const tokenContextMatch = storedCtx === null || storedCtx === currentCtx;
+            // Token is for the CURRENT context (not a stale one from a different context).
+            // If storedCtx is null (legacy session), treat as mismatch to avoid false positives.
+            const tokenContextMatch = storedCtx !== null && storedCtx === currentCtx;
             
             console.log('=== ESTADO DE NOTIFICACIONES ===');
             console.log('Permiso:', permission);

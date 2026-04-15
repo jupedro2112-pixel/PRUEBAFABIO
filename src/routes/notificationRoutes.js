@@ -110,7 +110,7 @@ router.post('/register-token', async (req, res) => {
         username: user.username,
         appInstalled: true,
         fcmTokenContext: normalizedCtx,
-        notifPermission: normalizedPerm || user.notifPermission || 'granted'
+        notifPermission: normalizedPerm || user.notifPermission || 'unknown'
       });
     }
     
