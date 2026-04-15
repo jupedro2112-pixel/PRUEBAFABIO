@@ -805,11 +805,18 @@ function prepareChangePasswordModal() {
 
 async function handleChangePassword(e) {
     e.preventDefault();
-    
+
+    const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
     const newPassword = document.getElementById('newPasswordInput').value;
     const confirmPassword = document.getElementById('confirmPasswordInput').value;
     const whatsappInput = document.getElementById('changePasswordWhatsApp').value.trim();
     const errorDiv = document.getElementById('passwordError');
+
+    if (!currentPassword) {
+        errorDiv.textContent = 'Ingresá tu contraseña actual';
+        errorDiv.classList.add('show');
+        return;
+    }
 
     // Si el usuario ya tiene número vinculado, no pedir uno nuevo
     const existingPhone = currentUser && (currentUser.whatsapp || currentUser.phone);
@@ -842,7 +849,7 @@ async function handleChangePassword(e) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentToken}`
             },
-            body: JSON.stringify({ newPassword, whatsapp, closeAllSessions })
+            body: JSON.stringify({ currentPassword, newPassword, whatsapp, closeAllSessions })
         });
         
         if (response.ok) {
@@ -850,6 +857,7 @@ async function handleChangePassword(e) {
             hideModal('changePasswordModal');
             showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
             // Limpiar campos
+            document.getElementById('currentPasswordInput').value = '';
             document.getElementById('newPasswordInput').value = '';
             document.getElementById('confirmPasswordInput').value = '';
             document.getElementById('changePasswordWhatsApp').value = '';

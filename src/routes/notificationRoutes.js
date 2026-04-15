@@ -37,9 +37,17 @@ function requireAdmin(req, res, next) {
     if (decoded.role !== 'admin' && decoded.role !== 'depositor' && decoded.role !== 'withdrawer') {
       return res.status(403).json({ error: 'No tienes permisos de administrador' });
     }
-    
-    req.user = decoded;
-    next();
+
+    // Verify the user is still active in DB
+    User.findOne({ id: decoded.userId }).then(user => {
+      if (!user || !user.isActive) {
+        return res.status(401).json({ error: 'Usuario desactivado o no encontrado' });
+      }
+      req.user = decoded;
+      next();
+    }).catch(() => {
+      return res.status(500).json({ error: 'Error verificando usuario' });
+    });
   } catch (error) {
     return res.status(401).json({ error: 'Token inválido' });
   }
