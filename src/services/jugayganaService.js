@@ -93,75 +93,27 @@ const login = async () => {
       maxRedirects: 0
     });
 
-    // ── Diagnóstico OBLIGATORIO de set-cookie (visible en Render con console.warn) ─────────
+    // Parse set-cookie header and store session cookie
     const rawSetCookie = resp.headers['set-cookie'];
-    const scPresent = !!rawSetCookie;
-    const scType = typeof rawSetCookie;
-    const scCount = Array.isArray(rawSetCookie) ? rawSetCookie.length : (rawSetCookie ? 1 : 0);
-
-    console.warn(`[JG_LOGIN_COOKIE] set-cookie header present: ${scPresent ? 'yes' : 'no'}`);
-    console.warn(`[JG_LOGIN_COOKIE] set-cookie type: ${scType}`);
-    console.warn(`[JG_LOGIN_COOKIE] set-cookie count: ${scCount}`);
-
     if (rawSetCookie && Array.isArray(rawSetCookie) && rawSetCookie.length > 0) {
-      const parsed = rawSetCookie.map(c => c.split(';')[0]);
-      let discardedCount = 0;
-      const discardReasons = [];
-      const kept = parsed.filter(p => {
-        if (!p || !p.includes('=')) {
-          discardedCount++;
-          discardReasons.push(`entry-without-equals`);
-          return false;
-        }
-        return true;
-      });
-      // Extract names only from valid (kept) entries
-      const cookieNames = kept.map(p => p.split('=')[0].trim());
-      console.warn(`[JG_LOGIN_COOKIE] cookie names detected: ${cookieNames.length ? cookieNames.join(', ') : '(none valid)'}`);
-
+      const kept = rawSetCookie.map(c => c.split(';')[0]).filter(p => p && p.includes('='));
       sessionCookie = kept.join('; ');
-
-      const storedOk = !!sessionCookie;
-
-      console.warn(`[JG_LOGIN_COOKIE] parsed successfully: ${storedOk ? 'yes' : 'no'}`);
-      console.warn(`[JG_LOGIN_COOKIE] discarded cookies: ${discardedCount}`);
-      if (discardReasons.length > 0) {
-        console.warn(`[JG_LOGIN_COOKIE] discard reasons: ${discardReasons.join(', ')}`);
-      }
-      console.warn(`[JG_LOGIN_COOKIE] stored in session memory: ${storedOk ? 'yes' : 'no'}`);
-      console.warn(`[JG_LOGIN_COOKIE] stored cookie fingerprint: ${safeCookieFingerprint(sessionCookie)}`);
-      console.warn(`[JG_LOGIN_COOKIE] stored cookie length: ${sessionCookie ? sessionCookie.length : 0}`);
-      console.warn(`[JG_LOGIN_COOKIE] conclusion: provider returned cookie and it was stored successfully`);
     } else if (rawSetCookie) {
-      // Exists but not an array; unexpected format
-      const rawStr = String(rawSetCookie);
-      const firstPart = rawStr.split(';')[0];
-      const cookieName = firstPart.includes('=') ? firstPart.split('=')[0].trim() : '(malformed)';
-      console.warn(`[JG_LOGIN_COOKIE] cookie names detected: ${cookieName}`);
-
+      // Non-array format (unexpected but handle gracefully)
+      const firstPart = String(rawSetCookie).split(';')[0];
       sessionCookie = firstPart;
-
-      console.warn(`[JG_LOGIN_COOKIE] parsed successfully: yes`);
-      console.warn(`[JG_LOGIN_COOKIE] discarded cookies: 0`);
-      console.warn(`[JG_LOGIN_COOKIE] stored in session memory: yes`);
-      console.warn(`[JG_LOGIN_COOKIE] stored cookie fingerprint: ${safeCookieFingerprint(sessionCookie)}`);
-      console.warn(`[JG_LOGIN_COOKIE] stored cookie length: ${sessionCookie.length}`);
-      console.warn(`[JG_LOGIN_COOKIE] conclusion: provider returned cookie in unexpected non-array format but it was stored successfully as fallback`);
       logger.warn(
-        `[JG_LOGIN_COOKIE] set-cookie presente pero en formato inesperado (no-array) | ` +
-        `tipo=${scType} cookieAlmacenada=true longitudCookie=${sessionCookie.length}`
+        `[JugayganaService] set-cookie en formato inesperado (no-array) | ` +
+        `cookieAlmacenada=true fingerprint=${safeCookieFingerprint(firstPart)}`
       );
     } else {
-      // El proveedor no devolvió set-cookie en esta respuesta de login
       sessionCookie = null;
-      console.warn(`[JG_LOGIN_COOKIE] cookie names detected: (none)`);
-      console.warn(`[JG_LOGIN_COOKIE] parsed successfully: no`);
-      console.warn(`[JG_LOGIN_COOKIE] discarded cookies: 0`);
-      console.warn(`[JG_LOGIN_COOKIE] stored in session memory: no`);
-      console.warn(`[JG_LOGIN_COOKIE] stored cookie fingerprint: (none)`);
-      console.warn(`[JG_LOGIN_COOKIE] stored cookie length: 0`);
-      console.warn(`[JG_LOGIN_COOKIE] conclusion: provider did not return reusable set-cookie`);
     }
+    logger.info(
+      `[JugayganaService] login set-cookie parsed | ` +
+      `cookieObtained=${!!sessionCookie} cookieLength=${sessionCookie ? sessionCookie.length : 0} ` +
+      `fingerprint=${safeCookieFingerprint(sessionCookie)}`
+    );
 
     const data = parseJson(resp.data);
     
@@ -844,15 +796,7 @@ const loginAsUser = async (username, password) => {
  * Obtener token y cookie de la sesión actual (para compartir con otros servicios)
  */
 const getSessionToken = () => sessionToken;
-const getSessionCookie = () => {
-  const available = !!sessionCookie;
-  const length = sessionCookie ? sessionCookie.length : 0;
-  console.warn(`[JG_SESSION_COOKIE] requested: yes`);
-  console.warn(`[JG_SESSION_COOKIE] available: ${available ? 'yes' : 'no'}`);
-  console.warn(`[JG_SESSION_COOKIE] fingerprint: ${safeCookieFingerprint(sessionCookie)}`);
-  console.warn(`[JG_SESSION_COOKIE] length: ${length}`);
-  return sessionCookie;
-};
+const getSessionCookie = () => sessionCookie;
 
 module.exports = {
   login,

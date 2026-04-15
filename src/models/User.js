@@ -193,8 +193,6 @@ const userSchema = new mongoose.Schema({
 });
 
 // Índices compuestos
-userSchema.index({ jugayganaUserId: 1 });
-userSchema.index({ jugayganaSyncStatus: 1 });
 userSchema.index({ phone: 1 });
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ isActive: 1, role: 1 });

@@ -299,11 +299,6 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
   }
 
   try {
-    console.log('[FCM] Enviando notificación...');
-    console.log('[FCM] Token preview:', fcmToken ? fcmToken.substring(0, 30) + '...' : 'null');
-    console.log('[FCM] Título:', title);
-    console.log('[FCM] Cuerpo:', body);
-
     // Convertir todos los valores de data a string (requisito de FCM),
     // omitiendo entradas con valores null/undefined.
     const safeData = {};
