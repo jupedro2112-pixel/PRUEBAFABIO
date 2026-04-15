@@ -108,7 +108,7 @@ const userSchema = new mongoose.Schema({
     default: 'local' 
   },
   
-  // Token FCM para notificaciones push
+  // Token FCM para notificaciones push (último registrado – se mantiene para compatibilidad y vista admin)
   fcmToken: { 
     type: String, 
     default: null,
@@ -128,6 +128,15 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Lista de todos los tokens FCM activos del usuario (uno por contexto/dispositivo).
+  // Cada entrada: { token, context, updatedAt, notifPermission }
+  // Permite enviar notificaciones a Chrome Y a la PWA instalada al mismo tiempo.
+  fcmTokens: [{
+    token: { type: String, required: true },
+    context: { type: String, default: 'browser' },
+    updatedAt: { type: Date, default: Date.now },
+    notifPermission: { type: String, default: null }
+  }],
 
   // =============================================
   // Campos de sistema de referidos

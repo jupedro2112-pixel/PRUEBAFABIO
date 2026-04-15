@@ -611,19 +611,41 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
   }
 
   try {
-    // Buscar todos los usuarios que tienen fcmToken
+    // Buscar todos los usuarios que tienen al menos un token FCM (array o campo individual)
     const query = { 
-      fcmToken: { $exists: true, $ne: null },
+      $or: [
+        { fcmToken: { $exists: true, $ne: null } },
+        { 'fcmTokens.0': { $exists: true } }
+      ],
       ...filter
     };
     
-    const users = await UserModel.find(query).select('fcmToken username').lean();
+    const users = await UserModel.find(query).select('fcmToken fcmTokens username').lean();
     
     if (users.length === 0) {
       return { success: false, error: 'No hay usuarios con tokens FCM registrados' };
     }
 
-    console.log(`[FCM] Enviando notificación a ${users.length} usuarios...`);
+    // Construir lista plana { token, username } con todos los tokens únicos por usuario.
+    // Cada usuario puede tener múltiples tokens (browser + standalone PWA).
+    const tokenList = [];
+    for (const user of users) {
+      const seen = new Set();
+      if (user.fcmTokens && user.fcmTokens.length > 0) {
+        for (const entry of user.fcmTokens) {
+          if (entry.token && !seen.has(entry.token)) {
+            seen.add(entry.token);
+            tokenList.push({ token: entry.token, username: user.username });
+          }
+        }
+      }
+      // Incluir campo individual solo si no está ya cubierto por el array
+      if (user.fcmToken && !seen.has(user.fcmToken)) {
+        tokenList.push({ token: user.fcmToken, username: user.username });
+      }
+    }
+
+    console.log(`[FCM] Enviando notificación a ${tokenList.length} tokens (${users.length} usuarios)...`);
 
     // Firebase permite enviar hasta 500 mensajes por solicitud con sendEach
     const BATCH_SIZE = 500;
@@ -631,8 +653,8 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
     let totalFailure = 0;
     const failedTokens = [];
 
-    for (let i = 0; i < users.length; i += BATCH_SIZE) {
-      const batch = users.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < tokenList.length; i += BATCH_SIZE) {
+      const batch = tokenList.slice(i, i + BATCH_SIZE);
       
       // Crear mensajes individuales para cada token
       const messages = batch.map(u => ({
@@ -645,7 +667,7 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
           sound: 'default'
         },
-        token: u.fcmToken,
+        token: u.token,
         android: {
           priority: 'high',
           notification: {
@@ -702,7 +724,7 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
             const errorCode = resp.error?.code    || '';
             
             failedTokens.push({
-              token: batch[idx].fcmToken,
+              token: batch[idx].token,
               username: batch[idx].username,
               error: errorMsg,
               code: errorCode
@@ -712,23 +734,29 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
             if (isInvalidTokenError(errorMsg, errorCode)) {
               tokensToDelete.push({
                 username: batch[idx].username,
-                token: batch[idx].fcmToken
+                token: batch[idx].token
               });
             }
           }
         });
       }
 
-      // Borrar tokens inválidos de la base de datos
+      // Borrar solo los tokens inválidos específicos (no todos los del usuario)
       if (tokensToDelete.length > 0) {
         console.log(`[FCM] 🧹 Borrando ${tokensToDelete.length} tokens inválidos...`);
         for (const item of tokensToDelete) {
           try {
+            // Quitar del array fcmTokens
             await UserModel.updateOne(
               { username: item.username },
+              { $pull: { fcmTokens: { token: item.token } } }
+            );
+            // Si era también el campo individual, limpiarlo
+            await UserModel.updateOne(
+              { username: item.username, fcmToken: item.token },
               { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
             );
-            console.log(`[FCM] 🗑️ Token borrado para: ${item.username}`);
+            console.log(`[FCM] 🗑️ Token borrado para: ${item.username} (${item.token.substring(0, 20)}...)`);
           } catch (e) {
             console.error(`[FCM] ❌ Error borrando token de ${item.username}:`, e.message);
           }
@@ -738,7 +766,7 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
       console.log(`[FCM] Lote ${Math.floor(i / BATCH_SIZE) + 1}: ${response.successCount} exitosas, ${response.failureCount} fallidas`);
     }
 
-    console.log(`[FCM] ✅ Total: ${totalSuccess} exitosas, ${totalFailure} fallidas de ${users.length} usuarios`);
+    console.log(`[FCM] ✅ Total: ${totalSuccess} exitosas, ${totalFailure} fallidas de ${tokenList.length} tokens (${users.length} usuarios)`);
     
     return { 
       success: true, 
@@ -769,19 +797,39 @@ async function sendNotificationToUsernames(UserModel, usernames, title, body, da
   }
 
   try {
-    // Buscar usuarios por username
+    // Buscar usuarios por username que tengan al menos un token
     const users = await UserModel.find({
       username: { $in: usernames },
-      fcmToken: { $exists: true, $ne: null }
-    }).select('fcmToken username').lean();
+      $or: [
+        { fcmToken: { $exists: true, $ne: null } },
+        { 'fcmTokens.0': { $exists: true } }
+      ]
+    }).select('fcmToken fcmTokens username').lean();
 
     if (users.length === 0) {
       return { success: false, error: 'Ninguno de los usuarios tiene token FCM' };
     }
 
-    const tokens = users.map(u => u.fcmToken);
+    // Construir lista plana { token, username } con todos los tokens únicos por usuario
+    const tokenList = [];
+    for (const user of users) {
+      const seen = new Set();
+      if (user.fcmTokens && user.fcmTokens.length > 0) {
+        for (const entry of user.fcmTokens) {
+          if (entry.token && !seen.has(entry.token)) {
+            seen.add(entry.token);
+            tokenList.push({ token: entry.token, username: user.username });
+          }
+        }
+      }
+      if (user.fcmToken && !seen.has(user.fcmToken)) {
+        tokenList.push({ token: user.fcmToken, username: user.username });
+      }
+    }
+
+    const tokens = tokenList.map(t => t.token);
     
-    console.log(`[FCM] Enviando notificación a ${users.length} usuarios específicos...`);
+    console.log(`[FCM] Enviando notificación a ${users.length} usuarios (${tokens.length} tokens)...`);
 
     const result = await sendNotificationToMultiple(tokens, title, body, data);
     result.targetUsers = users.map(u => u.username);
@@ -790,11 +838,32 @@ async function sendNotificationToUsernames(UserModel, usernames, title, body, da
     if (result.invalidTokens && result.invalidTokens.length > 0) {
       console.log(`[FCM] 🧹 Borrando ${result.invalidTokens.length} tokens inválidos de usuarios específicos...`);
       for (const badToken of result.invalidTokens) {
+        // Encontrar a qué usuario pertenece este token
+        const owner = tokenList.find(t => t.token === badToken);
+        const username = owner ? owner.username : null;
         try {
-          await UserModel.updateOne(
-            { fcmToken: badToken },
-            { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
-          );
+          // Quitar del array fcmTokens
+          if (username) {
+            await UserModel.updateOne(
+              { username: username },
+              { $pull: { fcmTokens: { token: badToken } } }
+            );
+            // Si era también el campo individual, limpiarlo
+            await UserModel.updateOne(
+              { username: username, fcmToken: badToken },
+              { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+            );
+          } else {
+            // fallback: buscar por campo individual
+            await UserModel.updateOne(
+              { fcmToken: badToken },
+              { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+            );
+            await UserModel.updateMany(
+              { 'fcmTokens.token': badToken },
+              { $pull: { fcmTokens: { token: badToken } } }
+            );
+          }
           console.log(`[FCM] 🗑️ Token inválido borrado: ${badToken.substring(0, 20)}...`);
         } catch (e) {
           console.error(`[FCM] ❌ Error borrando token inválido:`, e.message);
