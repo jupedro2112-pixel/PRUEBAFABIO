@@ -214,7 +214,7 @@
 
     <!-- Modal Plataforma -->
     <div id="platformModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.80);" onclick="if(event.target===event.currentTarget)VIP.ui.closePlatformModal()">
-        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;padding:28px 22px;max-width:360px;width:92%;box-shadow:0 0 50px rgba(212,175,55,0.45);text-align:center;position:relative;">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;padding:28px 22px;max-width:360px;width:92%;max-height:90vh;overflow-y:auto;box-shadow:0 0 50px rgba(212,175,55,0.45);text-align:center;position:relative;">
             <button onclick="VIP.ui.closePlatformModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>
             <div style="font-size:38px;margin-bottom:6px;">🎰</div>
             <h3 style="color:#d4af37;margin:0 0 4px;font-size:20px;font-weight:800;">Acceder al CASINO</h3>
@@ -925,6 +925,7 @@
                         // En iOS, NO solicitamos permiso automáticamente.
                         // El usuario debe tocar el botón NOTIS para disparar el gesto.
                         console.log('[FCM] iOS detectado: omitiendo auto-solicitud de permiso. El usuario debe presionar NOTIS.');
+                        _notifInitializing = false;
                         return;
                     }
                     permission = await Notification.requestPermission();
@@ -1193,6 +1194,20 @@
                         }
                     } catch (refreshErr) {
                         console.warn('[FCM] ⚠️ Error en refresh de token post-login:', refreshErr.message);
+                        // El refresh falló (suscripción push probablemente revocada tras bloqueo previo).
+                        // Limpiamos el token local obsoleto para que el próximo intento (o clic en NOTIS)
+                        // pueda obtener una suscripción completamente nueva sin depender de borrar caché.
+                        localStorage.removeItem('fcmToken');
+                        localStorage.removeItem('fcmTokenContext');
+                        fcmToken = null;
+                        _notifInitializing = false;
+                        const _recoveryBtn = document.getElementById('notificationBtn');
+                        if (_recoveryBtn) {
+                            _recoveryBtn.disabled = false;
+                            _recoveryBtn.classList.remove('active');
+                            _recoveryBtn.innerHTML = '🔔 NOTIS';
+                            _recoveryBtn.title = 'Tocá para activar notificaciones';
+                        }
                     }
                 }
             } else {
@@ -1725,10 +1740,9 @@
                 notificationBtn.classList.remove('blocked');
                 notificationBtn.classList.add('active');
                 notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                notificationBtn.title = 'Notificaciones activadas ✅';
-                notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
-                notificationBtn.setAttribute('aria-disabled', 'true');
-                notificationBtn.disabled = true;
+                // No se deshabilita aquí: si el token quedó obsoleto tras un bloqueo previo
+                // el usuario puede tocar para regenerarlo sin necesidad de borrar caché.
+                notificationBtn.title = 'Notificaciones activadas — tocá para renovar si no recibís notificaciones';
             } else if (status.permission === 'denied') {
                 notificationBtn.classList.remove('active');
                 notificationBtn.classList.add('blocked');

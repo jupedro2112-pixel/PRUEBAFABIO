@@ -360,7 +360,7 @@
 .header-right .notification-btn.active {
     background: linear-gradient(135deg, #00cc6a 0%, #00ff88 100%);
     color: #000;
-    cursor: not-allowed;
+    cursor: pointer;
 }
 
 .header-right .notification-btn.blocked {
