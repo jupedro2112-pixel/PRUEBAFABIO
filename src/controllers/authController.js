@@ -71,11 +71,10 @@ const verify = asyncHandler(async (req, res) => {
  * Cambiar contraseña
  */
 const changePassword = asyncHandler(async (req, res) => {
-  const { currentPassword, newPassword, closeAllSessions } = req.body;
+  const { newPassword, closeAllSessions } = req.body;
   
   const result = await authService.changePassword(
     req.user.userId,
-    currentPassword,
     newPassword,
     { closeAllSessions }
   );

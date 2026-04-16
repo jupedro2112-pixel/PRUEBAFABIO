@@ -100,6 +100,22 @@ const getPeriodKey = (type) => {
 const calculateRefund = refundsModel.calculateRefundFromNetwin;
 
 /**
+ * Obtener total de créditos no-depósito (bonus, reembolsos previos, comisiones, fire rewards)
+ * para un usuario en un período dado. Se restan del NETWIN antes de calcular reembolsos.
+ */
+const getNonDepositCredits = async (username, fromDate, toDate) => {
+  const result = await Transaction.aggregate([
+    { $match: {
+      username: username,
+      type: { $in: ['bonus', 'refund', 'referral_commission', 'fire_reward'] },
+      createdAt: { $gte: fromDate, $lte: toDate }
+    }},
+    { $group: { _id: null, total: { $sum: '$amount' } }}
+  ]);
+  return result[0]?.total || 0;
+};
+
+/**
  * Verificar si puede reclamar reembolso diario
  */
 const canClaimDaily = async (userId) => {
@@ -147,10 +163,28 @@ const getStatus = async (userId, username) => {
     referralRevenueService.getUserNetwinForDateRange(username, jugayganaUserId, monthlyRange.fromDate, monthlyRange.toDate, monthlyRange.label)
   ]);
   
-  // Calcular montos potenciales usando NETWIN
-  const dailyCalc = calculateRefund(dailyNetwin.success ? (dailyNetwin.totalGgr || 0) : 0, 20);
-  const weeklyCalc = calculateRefund(weeklyNetwin.success ? (weeklyNetwin.totalGgr || 0) : 0, 10);
-  const monthlyCalc = calculateRefund(monthlyNetwin.success ? (monthlyNetwin.totalGgr || 0) : 0, 5);
+  // Calcular montos potenciales usando NETWIN ajustado (restando créditos gratuitos del período)
+  const [dailyFreeCredits, weeklyFreeCredits, monthlyFreeCredits] = await Promise.all([
+    getNonDepositCredits(username, dailyRange.fromDate, dailyRange.toDate),
+    getNonDepositCredits(username, weeklyRange.fromDate, weeklyRange.toDate),
+    getNonDepositCredits(username, monthlyRange.fromDate, monthlyRange.toDate)
+  ]);
+
+  const dailyRawNetwin = dailyNetwin.success ? (dailyNetwin.totalGgr || 0) : 0;
+  const weeklyRawNetwin = weeklyNetwin.success ? (weeklyNetwin.totalGgr || 0) : 0;
+  const monthlyRawNetwin = monthlyNetwin.success ? (monthlyNetwin.totalGgr || 0) : 0;
+
+  const dailyAdjusted = Math.max(0, dailyRawNetwin - dailyFreeCredits);
+  const weeklyAdjusted = Math.max(0, weeklyRawNetwin - weeklyFreeCredits);
+  const monthlyAdjusted = Math.max(0, monthlyRawNetwin - monthlyFreeCredits);
+
+  logger.info(`[refund] Adjusted NETWIN for ${username}: daily raw=${dailyRawNetwin}, freeCredits=${dailyFreeCredits}, adjusted=${dailyAdjusted}`);
+  logger.info(`[refund] Adjusted NETWIN for ${username}: weekly raw=${weeklyRawNetwin}, freeCredits=${weeklyFreeCredits}, adjusted=${weeklyAdjusted}`);
+  logger.info(`[refund] Adjusted NETWIN for ${username}: monthly raw=${monthlyRawNetwin}, freeCredits=${monthlyFreeCredits}, adjusted=${monthlyAdjusted}`);
+
+  const dailyCalc = calculateRefund(dailyAdjusted, 20);
+  const weeklyCalc = calculateRefund(weeklyAdjusted, 10);
+  const monthlyCalc = calculateRefund(monthlyAdjusted, 5);
   
   return {
     user: {
@@ -228,7 +262,11 @@ const claimDaily = async (userId, username) => {
       };
     }
     
-    const calc = calculateRefund(netwinResult.totalGgr || 0, 20);
+    const rawNetwin = netwinResult.totalGgr || 0;
+    const freeCredits = await getNonDepositCredits(username, fromDate, toDate);
+    const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
+    logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
+    const calc = calculateRefund(adjustedNetwin, 20);
     
     if (calc.refundAmount <= 0) {
       return {
@@ -342,7 +380,11 @@ const claimWeekly = async (userId, username) => {
       };
     }
     
-    const calc = calculateRefund(netwinResult.totalGgr || 0, 10);
+    const rawNetwin = netwinResult.totalGgr || 0;
+    const freeCredits = await getNonDepositCredits(username, fromDate, toDate);
+    const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
+    logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
+    const calc = calculateRefund(adjustedNetwin, 10);
     
     if (calc.refundAmount <= 0) {
       return {
@@ -452,7 +494,11 @@ const claimMonthly = async (userId, username) => {
       };
     }
     
-    const calc = calculateRefund(netwinResult.totalGgr || 0, 5);
+    const rawNetwin = netwinResult.totalGgr || 0;
+    const freeCredits = await getNonDepositCredits(username, fromDate, toDate);
+    const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
+    logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
+    const calc = calculateRefund(adjustedNetwin, 5);
     
     if (calc.refundAmount <= 0) {
       return {

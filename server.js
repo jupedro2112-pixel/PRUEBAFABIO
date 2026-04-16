@@ -433,7 +433,7 @@ app.use(express.json({ limit: '50mb' }));
 // Fields exposed to the authenticated user about their own profile.
 // Keep this list minimal – internal fields (jugaygana IDs, FCM tokens, etc.)
 // are excluded intentionally to reduce accidental data exposure.
-const USER_PUBLIC_FIELDS = 'id username email phone accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin';
+const USER_PUBLIC_FIELDS = 'id username email phone phoneVerified whatsapp accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin';
 
 // Regex used by the SPA fallback to detect static asset paths that should
 // never be served as HTML (would trigger X-Content-Type-Options: nosniff).
@@ -1394,6 +1394,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         id: userId,
         username: userObj.username,
         email: userObj.email,
+        phone: userObj.phone || null,
+        phoneVerified: userObj.phoneVerified || false,
+        whatsapp: userObj.whatsapp || null,
         accountNumber: userObj.accountNumber,
         role: userObj.role,
         balance: userObj.balance,
@@ -1473,12 +1476,8 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
 // Cambiar contraseña
 app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, res) => {
   try {
-    const { currentPassword, newPassword, whatsapp, closeAllSessions } = req.body;
+    const { newPassword, whatsapp, closeAllSessions } = req.body;
 
-    if (!currentPassword) {
-      return res.status(400).json({ error: 'La contraseña actual es requerida' });
-    }
-    
     // Buscar por 'id' primero, luego por '_id' como fallback
     let user = await User.findOne({ id: req.user.userId });
     
@@ -1492,12 +1491,6 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
     
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
-    }
-
-    // Verificar contraseña actual antes de permitir el cambio
-    const isValidCurrent = await bcrypt.compare(currentPassword, user.password);
-    if (!isValidCurrent) {
-      return res.status(401).json({ error: 'Contraseña actual incorrecta' });
     }
 
     if (!newPassword || newPassword.length < 6) {
@@ -2980,6 +2973,22 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
 // REEMBOLSOS (DIARIO, SEMANAL, MENSUAL)
 // ============================================
 
+/**
+ * Obtener total de créditos no-depósito (bonus, reembolsos previos, comisiones, fire rewards)
+ * para un usuario en un período. Se restan del NETWIN antes de calcular reembolsos.
+ */
+async function getRefundNonDepositCredits(username, fromDate, toDate) {
+  const result = await Transaction.aggregate([
+    { $match: {
+      username: username,
+      type: { $in: ['bonus', 'refund', 'referral_commission', 'fire_reward'] },
+      createdAt: { $gte: fromDate, $lte: toDate }
+    }},
+    { $group: { _id: null, total: { $sum: '$amount' } }}
+  ]);
+  return result[0]?.total || 0;
+}
+
 app.get('/api/refunds/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -3006,9 +3015,35 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
       referralRevenueService.getUserNetwinForDateRange(username, jugayganaUserId, new Date(lastMonthRange.fromEpoch * 1000), new Date(lastMonthRange.toEpoch * 1000), `${lastMonthRange.fromDateStr} a ${lastMonthRange.toDateStr}`)
     ]);
     
-    const dailyCalc = refunds.calculateRefundFromNetwin(dailyNetwin.success ? (dailyNetwin.totalGgr || 0) : 0, 20);
-    const weeklyCalc = refunds.calculateRefundFromNetwin(weeklyNetwin.success ? (weeklyNetwin.totalGgr || 0) : 0, 10);
-    const monthlyCalc = refunds.calculateRefundFromNetwin(monthlyNetwin.success ? (monthlyNetwin.totalGgr || 0) : 0, 5);
+    // Restar créditos gratuitos del período del NETWIN antes de calcular reembolsos
+    const dailyFrom = new Date(yesterdayRange.fromEpoch * 1000);
+    const dailyTo = new Date(yesterdayRange.toEpoch * 1000);
+    const weeklyFrom = new Date(lastWeekRange.fromEpoch * 1000);
+    const weeklyTo = new Date(lastWeekRange.toEpoch * 1000);
+    const monthlyFrom = new Date(lastMonthRange.fromEpoch * 1000);
+    const monthlyTo = new Date(lastMonthRange.toEpoch * 1000);
+
+    const [dailyFreeCredits, weeklyFreeCredits, monthlyFreeCredits] = await Promise.all([
+      getRefundNonDepositCredits(username, dailyFrom, dailyTo),
+      getRefundNonDepositCredits(username, weeklyFrom, weeklyTo),
+      getRefundNonDepositCredits(username, monthlyFrom, monthlyTo)
+    ]);
+
+    const dailyRawNetwin = dailyNetwin.success ? (dailyNetwin.totalGgr || 0) : 0;
+    const weeklyRawNetwin = weeklyNetwin.success ? (weeklyNetwin.totalGgr || 0) : 0;
+    const monthlyRawNetwin = monthlyNetwin.success ? (monthlyNetwin.totalGgr || 0) : 0;
+
+    const dailyAdjusted = Math.max(0, dailyRawNetwin - dailyFreeCredits);
+    const weeklyAdjusted = Math.max(0, weeklyRawNetwin - weeklyFreeCredits);
+    const monthlyAdjusted = Math.max(0, monthlyRawNetwin - monthlyFreeCredits);
+
+    logger.info(`[refund] Adjusted NETWIN for ${username}: daily raw=${dailyRawNetwin}, freeCredits=${dailyFreeCredits}, adjusted=${dailyAdjusted}`);
+    logger.info(`[refund] Adjusted NETWIN for ${username}: weekly raw=${weeklyRawNetwin}, freeCredits=${weeklyFreeCredits}, adjusted=${weeklyAdjusted}`);
+    logger.info(`[refund] Adjusted NETWIN for ${username}: monthly raw=${monthlyRawNetwin}, freeCredits=${monthlyFreeCredits}, adjusted=${monthlyAdjusted}`);
+
+    const dailyCalc = refunds.calculateRefundFromNetwin(dailyAdjusted, 20);
+    const weeklyCalc = refunds.calculateRefundFromNetwin(weeklyAdjusted, 10);
+    const monthlyCalc = refunds.calculateRefundFromNetwin(monthlyAdjusted, 5);
     
     res.json({
       user: {
@@ -3095,7 +3130,11 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         });
       }
       
-      const calc = refunds.calculateRefundFromNetwin(netwinResult.totalGgr || 0, 20);
+      const rawNetwin = netwinResult.totalGgr || 0;
+      const freeCredits = await getRefundNonDepositCredits(username, new Date(fromEpoch * 1000), new Date(toEpoch * 1000));
+      const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
+      logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
+      const calc = refunds.calculateRefundFromNetwin(adjustedNetwin, 20);
       
       if (calc.refundAmount <= 0) {
         return res.json({
@@ -3210,7 +3249,11 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       }
       
-      const calc = refunds.calculateRefundFromNetwin(netwinResult.totalGgr || 0, 10);
+      const rawNetwin = netwinResult.totalGgr || 0;
+      const freeCredits = await getRefundNonDepositCredits(username, new Date(fromEpoch * 1000), new Date(toEpoch * 1000));
+      const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
+      logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
+      const calc = refunds.calculateRefundFromNetwin(adjustedNetwin, 10);
       
       if (calc.refundAmount <= 0) {
         return res.json({
@@ -3325,7 +3368,11 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       }
       
-      const calc = refunds.calculateRefundFromNetwin(netwinResult.totalGgr || 0, 5);
+      const rawNetwin = netwinResult.totalGgr || 0;
+      const freeCredits = await getRefundNonDepositCredits(username, new Date(fromEpoch * 1000), new Date(toEpoch * 1000));
+      const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
+      logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
+      const calc = refunds.calculateRefundFromNetwin(adjustedNetwin, 5);
       
       if (calc.refundAmount <= 0) {
         return res.json({

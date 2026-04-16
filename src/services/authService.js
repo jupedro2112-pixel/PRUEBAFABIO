@@ -315,7 +315,7 @@ const login = async (credentials) => {
 /**
  * Cambiar contraseña
  */
-const changePassword = async (userId, currentPassword, newPassword, options = {}) => {
+const changePassword = async (userId, newPassword, options = {}) => {
   const { closeAllSessions = false } = options;
   
   const user = await User.findOne({ id: userId });
@@ -328,26 +328,16 @@ const changePassword = async (userId, currentPassword, newPassword, options = {}
     );
   }
   
-  // Verificar contraseña actual
-  const isValidPassword = await user.comparePassword(currentPassword);
-  if (!isValidPassword) {
-    throw new AppError(
-      'Contraseña actual incorrecta',
-      401,
-      ErrorCodes.AUTH_INVALID_CREDENTIALS
-    );
-  }
-  
-  // Cambiar contraseña
+  // Cambiar contraseña (sin verificar la actual — el usuario ya está autenticado)
   await user.changePassword(newPassword);
   
   logger.info(`Contraseña cambiada para usuario: ${user.username}`);
   
-  // Sincronizar contraseña con JUGAYGANA (best-effort)
+  // Sincronizar contraseña con JUGAYGANA via endpoint admin (best-effort)
   try {
-    const jgResult = await jugayganaService.changeUserPassword(user.username, currentPassword, newPassword);
+    const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
     if (jgResult.success) {
-      logger.info(`✅ Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+      logger.info(`✅ Contraseña sincronizada con JUGAYGANA (admin) para: ${user.username}`);
     } else {
       logger.warn(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
     }
