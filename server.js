@@ -1771,7 +1771,7 @@ const BULK_SMS_VALID_COUNTRY_CODES = [
 ];
 
 // Patrones de números claramente falsos (todos iguales, secuencias simples)
-const FAKE_NUMBER_PATTERNS = /^(\d)\1+$|^1234567890$|^0987654321$|^12345678$|^01234567$|^11111111$|^22222222$|^33333333$|^44444444$|^55555555$|^66666666$|^77777777$|^88888888$|^99999999$|^00000000$/;
+const FAKE_NUMBER_PATTERNS = /^(\d)\1+$|^1234567890$|^0987654321$|^12345678$|^01234567$/;
 
 /**
  * Valida un número de teléfono para envío masivo y devuelve la razón si es inválido.
@@ -1859,15 +1859,19 @@ app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, re
 
     const { message, filters } = req.body;
 
-    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'El mensaje es requerido' });
     }
 
-    if (message.trim().length > 160) {
-      return res.status(400).json({ error: 'El mensaje no puede superar los 160 caracteres' });
+    const trimmedMessage = message.trim();
+
+    if (trimmedMessage.length === 0) {
+      return res.status(400).json({ error: 'El mensaje es requerido' });
     }
 
-    const trimmedMessage = message.trim();
+    if (trimmedMessage.length > 160) {
+      return res.status(400).json({ error: 'El mensaje no puede superar los 160 caracteres' });
+    }
     const query = buildBulkSmsQuery(filters);
     const users = await User.find(query).select('phone username').lean();
 

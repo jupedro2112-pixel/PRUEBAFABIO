@@ -5287,7 +5287,9 @@ const SMS_VALID_COUNTRY_CODES = [
     '+503', '+502', '+504', '+52', '+505', '+507', '+595', '+51', '+1', '+598', '+58'
 ];
 
-const SMS_FAKE_PATTERN = /^(\d)\1+$|^1234567890$|^0987654321$|^12345678$|^01234567$|^11111111$|^22222222$|^33333333$|^44444444$|^55555555$|^66666666$|^77777777$|^88888888$|^99999999$|^00000000$/;
+const SMS_FAKE_PATTERN = /^(\d)\1+$|^1234567890$|^0987654321$|^12345678$|^01234567$/;
+
+const SMS_COSTO_POR_MENSAJE = 0.006;
 
 function smsValidarTelefono(phone) {
     if (!phone || typeof phone !== 'string') return { valid: false, reason: 'Número ausente o inválido' };
@@ -5379,7 +5381,7 @@ function renderSmsPreview(data) {
     }
 
     if (costo) {
-        const estimado = (data.valid * 0.006).toFixed(2);
+        const estimado = (data.valid * SMS_COSTO_POR_MENSAJE).toFixed(2);
         costo.textContent = `Costo estimado: ~$${estimado} USD`;
     }
 
@@ -5416,7 +5418,7 @@ function confirmarEnvioSmsMasivo() {
 
     if (validCount === 0) { showToast('No hay destinatarios válidos para enviar', 'error'); return; }
 
-    const estimado = (validCount * 0.006).toFixed(2);
+    const estimado = (validCount * SMS_COSTO_POR_MENSAJE).toFixed(2);
 
     if (!confirm(`¿Estás seguro?\n\nSe enviarán ${validCount} SMS.\nCosto estimado: $${estimado} USD\n\nEsta acción no se puede deshacer.`)) return;
 
