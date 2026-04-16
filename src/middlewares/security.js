@@ -181,6 +181,42 @@ const validatePassword = (password) => {
 };
 
 /**
+ * Códigos de país válidos para LATAM
+ */
+const VALID_COUNTRY_CODES = [
+  '+54', '+591', '+55', '+56', '+57', '+506', '+53', '+593',
+  '+503', '+502', '+504', '+52', '+505', '+507', '+595', '+51', '+1', '+598', '+58'
+];
+
+/**
+ * Normaliza un número de teléfono con código de país.
+ * Quita espacios, guiones, paréntesis. Retorna número normalizado o null si es inválido.
+ * @param {string} countryCode - Ej: '+54'
+ * @param {string} number - Ej: '9 11 1234-5678'
+ * @returns {string|null} - Ej: '+5491112345678' o null
+ */
+const normalizePhone = (countryCode, number) => {
+  if (!countryCode || !number) return null;
+  const cleanNumber = String(number).replace(/[\s\-().]/g, '');
+  const fullPhone = String(countryCode).trim() + cleanNumber;
+  // Debe empezar con + y tener entre 10 y 15 dígitos totales
+  if (!/^\+\d{8,14}$/.test(fullPhone)) return null;
+  return fullPhone;
+};
+
+/**
+ * Valida que un teléfono ya normalizado tenga formato internacional válido para LATAM.
+ * @param {string} phone - Ej: '+5491155551234'
+ * @returns {boolean}
+ */
+const validateInternationalPhone = (phone) => {
+  if (!phone || typeof phone !== 'string') return false;
+  if (!/^\+\d{8,14}$/.test(phone)) return false;
+  // Verificar que empiece con un código de país LATAM conocido
+  return VALID_COUNTRY_CODES.some(code => phone.startsWith(code));
+};
+
+/**
  * Middleware de validación de campos de registro
  */
 const validateRegister = (req, res, next) => {
@@ -257,5 +293,8 @@ module.exports = {
   validateRegister,
   validateLogin,
   validateUsername,
-  validatePassword
+  validatePassword,
+  normalizePhone,
+  validateInternationalPhone,
+  VALID_COUNTRY_CODES
 };

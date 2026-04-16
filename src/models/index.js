@@ -17,6 +17,7 @@ const Config = require('./Config');
 const ReferralCommission = require('./ReferralCommission');
 const ReferralPayout = require('./ReferralPayout');
 const ReferralEvent = require('./ReferralEvent');
+const OtpCode = require('./OtpCode');
 
 // Configuración de conexión
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos';
@@ -268,6 +269,7 @@ module.exports = {
   ReferralCommission,
   ReferralPayout,
   ReferralEvent,
+  OtpCode,
   
   // Funciones de conexión
   connectDB,

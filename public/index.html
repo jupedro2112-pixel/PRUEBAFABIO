@@ -58,7 +58,7 @@
             </div>
             
             <div style="margin: 10px 0; display: flex; gap: 8px;">
-                <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;">🔍 Buscar Usuario</button>
+                <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;" onclick="showModal('resetPassModal')">🔑 Recuperar Contraseña</button>
             </div>
             
             <button id="helpBtn" class="btn btn-secondary">📞 Ayuda</button>
@@ -266,6 +266,8 @@
                 <h2>📝 Crear Cuenta</h2>
                 <p>Regístrate para acceder a la Sala de Juegos</p>
             </div>
+            <!-- Paso 1: Datos del registro -->
+            <div id="registerStep1">
             <form id="registerForm" autocomplete="on">
                 <div class="input-group">
                     <label>Usuario *</label>
@@ -282,7 +284,30 @@
                 </div>
                 <div class="input-group">
                     <label>Teléfono *</label>
-                    <input type="tel" id="registerPhone" name="phone" placeholder="+54 9 11 1234-5678" required autocomplete="tel" minlength="8">
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="registerPhonePrefix" style="flex-shrink:0; width: 110px; padding: 8px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+1">🇩🇴 +1</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+58">🇻🇪 +58</option>
+                        </select>
+                        <input type="tel" id="registerPhone" name="phone" placeholder="9 11 1234-5678" required autocomplete="tel" style="flex: 1;">
+                    </div>
                     <span style="font-size: 11px; color: #f7931e; font-weight: 600;">⚠️ Ingresá tu número real. Es importante para no perder el acceso a tu cuenta y para recibir regalos y promociones exclusivas.</span>
                 </div>
                 <div class="input-group">
@@ -297,9 +322,24 @@
                 <div id="registerError" class="error-message"></div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" id="closeRegisterModal">Cancelar</button>
-                    <button type="submit" class="btn btn-primary">📝 Crear Cuenta</button>
+                    <button type="button" class="btn btn-primary" id="registerSendOtpBtn" onclick="handleRegisterSendOtp()">📱 Enviar código SMS</button>
                 </div>
             </form>
+            </div>
+            <!-- Paso 2: Verificar OTP -->
+            <div id="registerStep2" style="display:none;">
+                <p id="registerOtpMsg" style="color: #00ff88; text-align: center; margin-bottom: 16px;"></p>
+                <div class="input-group">
+                    <label>Código de verificación *</label>
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="registerOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                </div>
+                <div id="registerOtpError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('registerStep1').style.display=''; document.getElementById('registerStep2').style.display='none';">Volver</button>
+                    <button type="button" class="btn btn-primary" id="registerSubmitBtn" onclick="handleRegisterWithOtp()">📝 Crear Cuenta</button>
+                </div>
+                <p style="font-size: 11px; color: #888; text-align: center; margin-top: 10px;">¿No recibiste el código? <a href="#" style="color: #d4af37;" onclick="document.getElementById('registerStep1').style.display=''; document.getElementById('registerStep2').style.display='none'; return false;">Volvé a intentarlo</a></p>
+            </div>
         </div>
     </div>
 
@@ -645,55 +685,85 @@
         </div>
     </div>
 
-    <!-- Modal Buscar Usuario por Teléfono -->
-    <div id="findUserModal" class="modal hidden">
-        <div class="modal-content">
-            <button onclick="hideModal('findUserModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer;">✕</button>
-            <div class="modal-header">
-                <h2>🔍 Buscar Usuario</h2>
-                <p>Ingresa tu número de teléfono para encontrar tu usuario</p>
-            </div>
-            <form id="findUserForm">
-                <div class="input-group">
-                    <label>Número de Teléfono</label>
-                    <input type="tel" id="findUserPhone" placeholder="+54 9 11 1234-5678" required minlength="8">
-                </div>
-                <div id="findUserResult" style="margin: 15px 0; padding: 15px; border-radius: 10px; display: none;"></div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">🔍 Buscar</button>
-                    <button type="button" onclick="hideModal('findUserModal')" class="btn btn-secondary">Cerrar</button>
-                </div>
-            </form>
-        </div>
-    </div>
+    <!-- Modal Buscar Usuario por Teléfono - ELIMINADO (reemplazado por flujo OTP seguro) -->
 
-    <!-- Modal Cambiar Contraseña por Teléfono -->
+    <!-- Modal Cambiar Contraseña por Teléfono (flujo OTP 3 pasos) -->
     <div id="resetPassModal" class="modal hidden">
         <div class="modal-content">
             <button onclick="hideModal('resetPassModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer;">✕</button>
             <div class="modal-header">
-                <h2>🔑 Cambiar Contraseña</h2>
-                <p>Ingresa tu número de teléfono y nueva contraseña</p>
+                <h2>🔑 Recuperar Contraseña</h2>
+                <p>Verificá tu número de teléfono para restablecer tu contraseña</p>
             </div>
-            <form id="resetPassForm">
+
+            <!-- Paso 1: Ingresar teléfono -->
+            <div id="resetStep1">
                 <div class="input-group">
-                    <label>Número de Teléfono</label>
-                    <input type="tel" id="resetPassPhone" placeholder="+54 9 11 1234-5678" required minlength="8">
+                    <label>Número de Teléfono *</label>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="resetPhonePrefix" style="flex-shrink:0; width: 110px; padding: 8px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,0.3); background: rgba(0,0,0,0.4); color: #fff; font-size: 14px;">
+                            <option value="+54">🇦🇷 +54</option>
+                            <option value="+591">🇧🇴 +591</option>
+                            <option value="+55">🇧🇷 +55</option>
+                            <option value="+56">🇨🇱 +56</option>
+                            <option value="+57">🇨🇴 +57</option>
+                            <option value="+506">🇨🇷 +506</option>
+                            <option value="+53">🇨🇺 +53</option>
+                            <option value="+593">🇪🇨 +593</option>
+                            <option value="+503">🇸🇻 +503</option>
+                            <option value="+502">🇬🇹 +502</option>
+                            <option value="+504">🇭🇳 +504</option>
+                            <option value="+52">🇲🇽 +52</option>
+                            <option value="+505">🇳🇮 +505</option>
+                            <option value="+507">🇵🇦 +507</option>
+                            <option value="+595">🇵🇾 +595</option>
+                            <option value="+51">🇵🇪 +51</option>
+                            <option value="+1">🇩🇴 +1</option>
+                            <option value="+598">🇺🇾 +598</option>
+                            <option value="+58">🇻🇪 +58</option>
+                        </select>
+                        <input type="tel" id="resetPassPhone" placeholder="9 11 1234-5678" style="flex: 1;">
+                    </div>
                 </div>
-                <div class="input-group">
-                    <label>Nueva Contraseña</label>
-                    <input type="password" id="resetPassNew" placeholder="Mínimo 6 caracteres" required minlength="6">
-                </div>
-                <div class="input-group">
-                    <label>Confirmar Contraseña</label>
-                    <input type="password" id="resetPassConfirm" placeholder="Repite la contraseña" required minlength="6">
-                </div>
-                <div id="resetPassResult" style="margin: 15px 0; padding: 15px; border-radius: 10px; display: none;"></div>
+                <div id="resetStep1Result" style="margin: 10px 0; padding: 10px; border-radius: 8px; display: none; font-size: 13px;"></div>
                 <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">🔑 Cambiar Contraseña</button>
+                    <button type="button" class="btn btn-primary" onclick="handleRequestPasswordReset()">📱 Enviar código SMS</button>
                     <button type="button" onclick="hideModal('resetPassModal')" class="btn btn-secondary">Cerrar</button>
                 </div>
-            </form>
+            </div>
+
+            <!-- Paso 2: Ingresar código OTP -->
+            <div id="resetStep2" style="display:none;">
+                <p id="resetStep2Msg" style="color: #00ff88; text-align: center; font-size: 13px; margin-bottom: 14px;"></p>
+                <div class="input-group">
+                    <label>Código de verificación *</label>
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="resetOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                </div>
+                <div id="resetStep2Error" style="color: #ff4444; font-size: 13px; margin: 8px 0; display: none;"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('resetStep1').style.display=''; document.getElementById('resetStep2').style.display='none';">Volver</button>
+                    <button type="button" class="btn btn-primary" onclick="handleVerifyResetOtp()">🔍 Verificar código</button>
+                </div>
+            </div>
+
+            <!-- Paso 3: Nueva contraseña -->
+            <div id="resetStep3" style="display:none;">
+                <p id="resetStep3Username" style="color: #d4af37; text-align: center; font-size: 16px; font-weight: bold; margin-bottom: 14px;"></p>
+                <div class="input-group">
+                    <label>Nueva Contraseña *</label>
+                    <input type="password" id="resetPassNew" placeholder="Mínimo 6 caracteres" minlength="6">
+                </div>
+                <div class="input-group">
+                    <label>Confirmar Contraseña *</label>
+                    <input type="password" id="resetPassConfirm" placeholder="Repite la contraseña" minlength="6">
+                </div>
+                <div id="resetStep3Error" style="color: #ff4444; font-size: 13px; margin: 8px 0; display: none;"></div>
+                <div id="resetPassResult" style="margin: 15px 0; padding: 15px; border-radius: 10px; display: none;"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-primary" onclick="handleCompletePasswordReset()">🔑 Cambiar Contraseña</button>
+                    <button type="button" onclick="hideModal('resetPassModal')" class="btn btn-secondary">Cerrar</button>
+                </div>
+            </div>
         </div>
     </div>
 

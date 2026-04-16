@@ -12,8 +12,14 @@ const { authLimiter, validateRegister, validateLogin } = require('../middlewares
 router.post('/register', validateRegister, authController.register);
 router.post('/login', authLimiter, validateLogin, authController.login);
 router.get('/check-username', authController.checkUsername);
-router.post('/find-user-by-phone', authController.findUserByPhone);
-router.post('/reset-password-by-phone', authController.resetPasswordByPhone);
+
+// OTP para registro
+router.post('/send-register-otp', authController.sendRegisterOtp);
+
+// Reset de contraseña via OTP
+router.post('/request-password-reset', authController.requestPasswordReset);
+router.post('/verify-reset-otp', authController.verifyResetOtp);
+router.post('/complete-password-reset', authController.completePasswordReset);
 
 // Protegidas
 router.post('/logout', authenticate, authController.logout);

@@ -433,7 +433,5 @@ module.exports = {
   login,
   changePassword,
   logout,
-  getCurrentUser,
-  findUserByPhone,
-  resetPasswordByPhone
+  getCurrentUser
 };
