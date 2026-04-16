@@ -9,6 +9,7 @@ const socketIo = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +18,8 @@ const rateLimit = require('express-rate-limit');
 const { createClient } = require('redis');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const winston = require('winston');
+const mongoSanitize = require('express-mongo-sanitize');
+const xss = require('xss-clean');
 
 // ============================================
 // LOGGER (Winston)
@@ -172,6 +175,11 @@ function securityHeaders(req, res, next) {
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  // HSTS: only set in production (HTTPS). In development the server may run
+  // on plain HTTP where HSTS would cause the browser to block future HTTP requests.
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
   // CSP compatible con Firebase Auth, FCM, Socket.IO WebSocket y PWA service workers.
   // 'unsafe-inline' en script-src/style-src es necesario por el stack actual de frontend.
   // worker-src incluye blob: para Workbox/sw.js generados en runtime.
@@ -195,6 +203,20 @@ function securityHeaders(req, res, next) {
 // ============================================
 // SEGURIDAD - VALIDACIÓN DE INPUT
 // ============================================
+
+// Helper para comparación segura de strings (previene timing attacks).
+// Usa HMAC con clave aleatoria por llamada: ambos HMACs son siempre de 32 bytes,
+// por lo que timingSafeEqual nunca revela diferencias de longitud ni de contenido.
+function safeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  // A random per-call key ensures the attacker cannot predict the HMAC output
+  // and prevents multi-call timing oracle attacks.
+  const key = crypto.randomBytes(32);
+  const hmacA = crypto.createHmac('sha256', key).update(a).digest();
+  const hmacB = crypto.createHmac('sha256', key).update(b).digest();
+  return crypto.timingSafeEqual(hmacA, hmacB);
+}
+
 function sanitizeInput(input) {
   if (typeof input !== 'string') return input;
   return input
@@ -396,13 +418,10 @@ async function setupRedisAdapter() {
 }
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
-if (!process.env.JWT_SECRET) {
-  if (process.env.NODE_ENV === 'production') {
-    console.error('⛔ FATAL: JWT_SECRET no configurado en producción. El servidor no puede arrancar de forma segura.');
-    process.exit(1);
-  }
-  logger.error('⛔ SEGURIDAD: JWT_SECRET no configurado en variables de entorno. Usando valor por defecto — configúralo en producción.');
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('⛔ FATAL: JWT_SECRET no configurado. El servidor no puede arrancar.');
+  process.exit(1);
 }
 
 // ============================================
@@ -428,7 +447,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['X-Total-Count', 'X-RateLimit-Remaining']
 }));
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(mongoSanitize());
+app.use(xss());
 
 // Fields exposed to the authenticated user about their own profile.
 // Keep this list minimal – internal fields (jugaygana IDs, FCM tokens, etc.)
@@ -481,17 +502,34 @@ function getAdminSessionCookie(req) {
   return null;
 }
 
+// Helper: parse the admin_api_session httpOnly cookie value (Path=/api).
+function getAdminApiSessionCookie(req) {
+  const cookieHeader = req.headers.cookie || '';
+  for (const part of cookieHeader.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    const val = part.slice(eqIdx + 1).trim();
+    if (key === 'admin_api_session') return val;
+  }
+  return null;
+}
+
 // Helper: extract the bare hostname (without port) from a request.
 function parseRequestHost(req) {
   const rawHost = req.hostname || (req.headers.host || '');
   return rawHost.split(':')[0].toLowerCase();
 }
 
-// Helper: build the Set-Cookie header value for the admin session cookie.
-function buildAdminSessionCookieHeader(token) {
+// Helper: build the Set-Cookie header values for the admin session cookies.
+// Returns an array: [page-scoped cookie, api-scoped cookie].
+function buildAdminSessionCookieHeaders(token) {
   const maxAge = 8 * 60 * 60; // 8 hours in seconds
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  return `admin_session=${token}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}; Path=/adminprivado2026${secure}`;
+  return [
+    `admin_session=${token}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}; Path=/adminprivado2026${secure}`,
+    `admin_api_session=${token}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}; Path=/api${secure}`
+  ];
 }
 
 // Middleware: check ADMIN_HOST restriction.
@@ -804,7 +842,14 @@ function getArgentinaYesterday() {
 // MIDDLEWARE DE AUTENTICACIÓN
 // ============================================
 const authMiddleware = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+  // Accept token from Authorization header first; fall back to admin_api_session
+  // httpOnly cookie (sent automatically by the browser for same-origin requests
+  // to /api/*).  This allows the admin panel to work purely via cookie without
+  // storing the JWT in localStorage.
+  let token = req.headers.authorization?.split(' ')[1];
+  if (!token) {
+    token = getAdminApiSessionCookie(req) || null;
+  }
   
   if (!token) {
     return res.status(401).json({ error: 'Token no proporcionado' });
@@ -1220,7 +1265,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       const fallbackAdminPassword = process.env.ADMIN_PASSWORD;
       const isAdminFallback = fallbackAdminUsername && fallbackAdminPassword &&
         username === fallbackAdminUsername &&
-        password === fallbackAdminPassword;
+        safeCompare(password, fallbackAdminPassword);
       if (!isAdminFallback) {
         return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intenta más tarde.' });
       }
@@ -1262,7 +1307,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
           jugayganaUserId: jgUser.id,
           jugayganaUsername: jgUser.username,
           jugayganaSyncStatus: 'linked',
-          source: 'jugaygana'
+          source: 'jugaygana',
+          tokenVersion: 0
         });
         
         // Crear chat status
@@ -1347,7 +1393,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     
     // Token con expiración de 30 días para persistencia de sesión
     const token = jwt.sign(
-      { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion || 0 },
+      { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
       JWT_SECRET,
       { expiresIn: '30d' }
     );
@@ -1374,16 +1420,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     // JavaScript (XSS-safe) and is scoped to the admin path only.
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     if (adminRoles.includes(userObj.role)) {
-      // Short-lived cookie (8 h) scoped to the admin path only.
-      // The JWT is signed (integrity-protected). Storing it in an httpOnly
-      // cookie is intentional: it cannot be read by client-side scripts,
-      // unlike localStorage tokens.
+      // Set two httpOnly cookies: one for page access, one for API calls.
+      // Neither can be read by client-side scripts (XSS-safe).
       const adminCookieToken = jwt.sign(
         { userId: userId, username: userObj.username, role: userObj.role },
         JWT_SECRET,
         { expiresIn: '8h' }
       );
-      res.setHeader('Set-Cookie', buildAdminSessionCookieHeader(adminCookieToken));
+      res.setHeader('Set-Cookie', buildAdminSessionCookieHeaders(adminCookieToken));
     }
 
     res.json({
@@ -1410,11 +1454,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Admin logout — clears the admin_session httpOnly cookie.
+// Admin logout — clears both admin httpOnly cookies.
 // No authentication required: clearing a cookie is harmless.
 app.post('/api/auth/admin-logout', (req, res) => {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `admin_session=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/adminprivado2026${secure}`);
+  res.setHeader('Set-Cookie', [
+    `admin_session=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/adminprivado2026${secure}`,
+    `admin_api_session=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/api${secure}`
+  ]);
   res.json({ success: true });
 });
 
@@ -1441,6 +1488,53 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Error verificando token:', error);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/me — verify admin session via httpOnly cookie and return admin info.
+// The frontend uses this on page load instead of reading from localStorage.
+// Also returns a short-lived token for in-memory Socket.IO authentication.
+app.get('/api/admin/me', async (req, res) => {
+  const cookieToken = getAdminApiSessionCookie(req);
+  if (!cookieToken) {
+    return res.status(401).json({ error: 'No autenticado' });
+  }
+  try {
+    const decoded = jwt.verify(cookieToken, JWT_SECRET);
+    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    if (!adminRoles.includes(decoded.role)) {
+      return res.status(403).json({ error: 'Acceso denegado' });
+    }
+    // Fetch fresh user info from DB
+    let user = await User.findOne({ id: decoded.userId }).select('-password').lean();
+    if (!user) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+    if (!user.isActive) {
+      return res.status(401).json({ error: 'Usuario desactivado' });
+    }
+    // Issue a fresh short-lived in-memory token for Socket.IO auth.
+    // This is NOT stored in localStorage — only held in JavaScript memory.
+    const freshToken = jwt.sign(
+      { userId: user.id, username: user.username, role: user.role, tokenVersion: user.tokenVersion ?? 0 },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone || null,
+        phoneVerified: user.phoneVerified || false,
+        role: user.role,
+        balance: user.balance,
+        needsPasswordChange: !user.passwordChangedAt
+      },
+      token: freshToken
+    });
+  } catch (error) {
+    return res.status(401).json({ error: 'Sesión inválida o expirada' });
   }
 });
 
@@ -1933,7 +2027,7 @@ app.post('/api/admin/verify-sms-password', authMiddleware, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Configuración del servidor incompleta.' });
     }
 
-    if (password !== SMS_MASIVO_PASSWORD) {
+    if (!safeCompare(password, SMS_MASIVO_PASSWORD)) {
       return res.status(401).json({ success: false });
     }
 
@@ -6006,6 +6100,19 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
 // BASE DE DATOS - PROTEGIDA CON CONTRASEÑA
 // ============================================
 
+// Helper: escape a CSV field to prevent CSV injection attacks.
+// Returns the complete quoted field including surrounding double quotes.
+// Dangerous leading characters (=, +, -, @, tab, CR) are prefixed with a
+// single quote so that spreadsheet applications treat them as literal text.
+function escapeCsvField(value) {
+  if (value === null || value === undefined) return '""';
+  const str = String(value);
+  if (/^[=+\-@\t\r]/.test(str)) {
+    return '"\'' + str.replace(/"/g, '""') + '"';
+  }
+  return '"' + str.replace(/"/g, '""') + '"';
+}
+
 const DB_PASSWORD = process.env.DB_PASSWORD;
 if (!DB_PASSWORD) {
   if (process.env.NODE_ENV === 'production') {
@@ -6024,7 +6131,7 @@ function dbPasswordMiddleware(req, res, next) {
   // appearing in server logs, referrer headers and browser history.
   const { dbPassword } = req.body || {};
   
-  if (dbPassword !== DB_PASSWORD) {
+  if (!safeCompare(dbPassword, DB_PASSWORD)) {
     return res.status(401).json({ error: 'Contraseña incorrecta' });
   }
   
@@ -6067,7 +6174,7 @@ app.post('/api/admin/database/export/csv', authMiddleware, adminMiddleware, dbPa
     let csv = 'ID,Usuario,Email,Teléfono,Rol,Balance,AccountNumber,Estado,Último Login,Creado,JugayganaUserId,JugayganaUsername,JugayganaSyncStatus\n';
     
     users.forEach(user => {
-      csv += `"${user.id}","${user.username}","${user.email || ''}","${user.phone || ''}","${user.role}","${user.balance || 0}","${user.accountNumber || ''}","${user.isActive ? 'Activo' : 'Inactivo'}","${user.lastLogin || 'Nunca'}","${user.createdAt || ''}","${user.jugayganaUserId || ''}","${user.jugayganaUsername || ''}","${user.jugayganaSyncStatus || ''}"\n`;
+      csv += `${escapeCsvField(user.id)},${escapeCsvField(user.username)},${escapeCsvField(user.email || '')},${escapeCsvField(user.phone || '')},${escapeCsvField(user.role)},${escapeCsvField(user.balance || 0)},${escapeCsvField(user.accountNumber || '')},${escapeCsvField(user.isActive ? 'Activo' : 'Inactivo')},${escapeCsvField(user.lastLogin || 'Nunca')},${escapeCsvField(user.createdAt || '')},${escapeCsvField(user.jugayganaUserId || '')},${escapeCsvField(user.jugayganaUsername || '')},${escapeCsvField(user.jugayganaSyncStatus || '')}\n`;
     });
     
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -6094,7 +6201,7 @@ app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
     // Crear CSV
     let csv = 'Usuario,Teléfono,Email,Balance,Último Login\n';
     users.forEach(user => {
-      csv += `"${user.username}","${user.phone || ''}","${user.email || ''}","${user.balance || 0}","${user.lastLogin || 'Nunca'}"\n`;
+      csv += `${escapeCsvField(user.username)},${escapeCsvField(user.phone || '')},${escapeCsvField(user.email || '')},${escapeCsvField(user.balance || 0)},${escapeCsvField(user.lastLogin || 'Nunca')}\n`;
     });
     
     res.setHeader('Content-Type', 'text/csv');
