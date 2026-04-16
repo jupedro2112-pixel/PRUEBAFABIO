@@ -19,7 +19,13 @@ const {
 const { User } = require('../../config/database');
 
 // JWT Secret (debe ser el mismo que en server.js)
-const JWT_SECRET = process.env.JWT_SECRET || 'sala-de-juegos-secret-key-2024';
+// server.js (entry point) ya tiene fail-fast si JWT_SECRET no está en producción.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('⛔ FATAL: JWT_SECRET no configurado. Las rutas de notificaciones no funcionarán.');
+  // No process.exit aquí porque este módulo se importa desde server.js que ya tiene su propio fail-fast.
+  // Pero el middleware requireAdmin fallará si JWT_SECRET es undefined, lo cual es el comportamiento correcto.
+}
 
 // ============================================
 // MIDDLEWARE DE AUTENTICACIÓN (Admin)
@@ -158,62 +164,6 @@ router.post('/register-token', async (req, res) => {
 });
 
 // ============================================
-// GUARDAR TOKEN FCM MANUAL (PARA PRUEBAS - SIN AUTH)
-// ============================================
-router.post('/register-token-manual', async (req, res) => {
-  try {
-    const { fcmToken, username } = req.body;
-    
-    console.log('[FCM] Recibida petición MANUAL de registro de token');
-    console.log('[FCM] Username:', username);
-    console.log('[FCM] Token preview:', fcmToken ? fcmToken.substring(0, 30) + '...' : 'null');
-    
-    if (!username) {
-      return res.status(400).json({ error: 'Username requerido' });
-    }
-
-    // Buscar usuario por username
-    const user = await User.findOne({ username: username });
-    
-    if (!user) {
-      console.log('[FCM] ❌ Usuario no encontrado:', username);
-      return res.status(404).json({ error: 'Usuario no encontrado: ' + username });
-    }
-    
-    console.log('[FCM] Usuario encontrado:', user.username, 'ID:', user.id);
-    
-    // Guardar o borrar el token
-    if (fcmToken === null) {
-      // Borrar el token
-      user.fcmToken = null;
-      user.fcmTokenUpdatedAt = null;
-      await user.save();
-      console.log('[FCM] ✅ Token borrado para:', user.username);
-      res.json({ 
-        success: true, 
-        message: 'Token borrado correctamente',
-        username: user.username
-      });
-    } else {
-      // Guardar el token
-      user.fcmToken = fcmToken;
-      user.fcmTokenUpdatedAt = new Date();
-      await user.save();
-      console.log('[FCM] ✅ Token guardado manualmente para:', user.username);
-      res.json({ 
-        success: true, 
-        message: 'Token guardado correctamente',
-        username: user.username,
-        userId: user.id
-      });
-    }
-  } catch (error) {
-    console.error('[FCM] ❌ Error al guardar token manual:', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================
 // ENVIAR NOTIFICACIÓN A UN USUARIO
 // ============================================
 router.post('/send', requireAdmin, async (req, res) => {
@@ -340,7 +290,7 @@ router.post('/send-topic', requireAdmin, async (req, res) => {
 // ============================================
 // SUSCRIBIR USUARIO A TÓPICO
 // ============================================
-router.post('/subscribe-topic', async (req, res) => {
+router.post('/subscribe-topic', requireAdmin, async (req, res) => {
   try {
     const { fcmToken, topic } = req.body;
     
@@ -372,7 +322,7 @@ router.post('/subscribe-topic', async (req, res) => {
 // ============================================
 // DESUSCRIBIR USUARIO DE TÓPICO
 // ============================================
-router.post('/unsubscribe-topic', async (req, res) => {
+router.post('/unsubscribe-topic', requireAdmin, async (req, res) => {
   try {
     const { fcmToken, topic } = req.body;
     
@@ -404,7 +354,7 @@ router.post('/unsubscribe-topic', async (req, res) => {
 // ============================================
 // TEST - ENVIAR NOTIFICACIÓN DE PRUEBA
 // ============================================
-router.post('/test', async (req, res) => {
+router.post('/test', requireAdmin, async (req, res) => {
   try {
     const { fcmToken } = req.body;
     
@@ -440,9 +390,9 @@ router.post('/test', async (req, res) => {
 });
 
 // ============================================
-// ENVIAR NOTIFICACIÓN MASIVA A TODOS LOS USUARIOS (SIN AUTH - PARA PRUEBAS)
+// ENVIAR NOTIFICACIÓN MASIVA A TODOS LOS USUARIOS
 // ============================================
-router.post('/send-all', async (req, res) => {
+router.post('/send-all', requireAdmin, async (req, res) => {
   try {
     const { title, body, data, filter } = req.body;
     
@@ -532,9 +482,9 @@ router.post('/send-to-usernames', requireAdmin, async (req, res) => {
 });
 
 // ============================================
-// OBTENER ESTADÍSTICAS DE TOKENS FCM (SIN AUTH - PARA PRUEBAS)
+// OBTENER ESTADÍSTICAS DE TOKENS FCM
 // ============================================
-router.get('/stats', async (req, res) => {
+router.get('/stats', requireAdmin, async (req, res) => {
   try {
     console.log('[FCM] Solicitando estadísticas...');
     
@@ -578,7 +528,7 @@ router.get('/stats', async (req, res) => {
 // ============================================
 // DIAGNÓSTICO - VERIFICAR ESTADO DEL SISTEMA
 // ============================================
-router.get('/diagnostic', async (req, res) => {
+router.get('/diagnostic', requireAdmin, async (req, res) => {
   try {
     const admin = require('firebase-admin');
     
