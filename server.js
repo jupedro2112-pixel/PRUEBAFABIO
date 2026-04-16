@@ -275,7 +275,7 @@ const io = socketIo(server, {
   transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000,
-  maxHttpBufferSize: 50 * 1024 * 1024 // 50MB para permitir envío de imágenes/videos
+  maxHttpBufferSize: 5 * 1024 * 1024 // 5MB — suficiente para imágenes base64 razonables
 });
 
 // ============================================
@@ -1125,9 +1125,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     // Fallback controlado si MongoDB no está disponible: solo con credenciales de env vars
     if (dbReadFailed) {
-      const fallbackAdminUsername = process.env.ADMIN_USERNAME || 'ignite100';
+      const fallbackAdminUsername = process.env.ADMIN_USERNAME;
       const fallbackAdminPassword = process.env.ADMIN_PASSWORD;
-      const isAdminFallback = fallbackAdminPassword &&
+      const isAdminFallback = fallbackAdminUsername && fallbackAdminPassword &&
         username === fallbackAdminUsername &&
         password === fallbackAdminPassword;
       if (!isAdminFallback) {
@@ -1980,24 +1980,6 @@ app.delete('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) =
     res.json({ message: 'Usuario eliminado exitosamente' });
   } catch (error) {
     console.error('Error eliminando usuario:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// ============================================
-// DEBUG - Ver todos los mensajes
-// ============================================
-
-app.get('/api/debug/messages', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const messages = await Message.find().sort({ timestamp: -1 }).limit(20).lean();
-    const count = await Message.countDocuments();
-    
-    res.json({
-      count,
-      messages
-    });
-  } catch (error) {
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -4088,13 +4070,17 @@ async function initializeData() {
   // Verificar/crear admin principal
   // Usar variables de entorno para credenciales del admin.
   // ADMIN_USERNAME y ADMIN_PASSWORD deben configurarse en producción.
-  const adminUsername = process.env.ADMIN_USERNAME || 'ignite100';
+  const adminUsername = process.env.ADMIN_USERNAME;
+  if (!adminUsername) {
+    logger.warn('⚠️ ADMIN_USERNAME no configurado. El admin inicial no será creado/verificado automáticamente.');
+  }
   const adminInitialPassword = process.env.ADMIN_PASSWORD;
 
   if (!adminInitialPassword) {
     logger.error('⛔ SEGURIDAD: ADMIN_PASSWORD no configurado en variables de entorno. El admin inicial NO será creado/actualizado automáticamente en producción. Configúralo antes de desplegar.');
   }
 
+  if (adminUsername) {
   let adminExists = await User.findOne({ username: adminUsername });
   if (!adminExists) {
     if (!adminInitialPassword) {
@@ -4128,6 +4114,7 @@ async function initializeData() {
     if (changed) await adminExists.save();
     console.log(`✅ Admin verificado: ${adminUsername}`);
   }
+  } // end if (adminUsername)
   
   // Verificar/crear configuración CBU por defecto
   const cbuConfig = await getConfig('cbu');
@@ -5579,13 +5566,20 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
 // BASE DE DATOS - PROTEGIDA CON CONTRASEÑA
 // ============================================
 
-const DB_PASSWORD = process.env.DB_PASSWORD || 'P4pelito2026';
-if (!process.env.DB_PASSWORD) {
-  logger.error('⛔ SEGURIDAD: DB_PASSWORD no configurado en variables de entorno. Usando valor por defecto — configúralo en producción.');
+const DB_PASSWORD = process.env.DB_PASSWORD;
+if (!DB_PASSWORD) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⛔ FATAL: DB_PASSWORD no configurado en producción.');
+    process.exit(1);
+  }
+  logger.error('⛔ SEGURIDAD: DB_PASSWORD no configurado. Las rutas de base de datos no funcionarán sin esta variable.');
 }
 
 // Middleware para verificar contraseña de base de datos
 function dbPasswordMiddleware(req, res, next) {
+  if (!DB_PASSWORD) {
+    return res.status(503).json({ error: 'Servicio de base de datos temporalmente no disponible.' });
+  }
   // Accept dbPassword from body only — never from query string to avoid it
   // appearing in server logs, referrer headers and browser history.
   const { dbPassword } = req.body || {};
@@ -5669,193 +5663,6 @@ app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Error exportando usuarios:', error);
     res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// ============================================
-// ENDPOINT DE DIAGNÓSTICO - TEST CREAR MENSAJE
-// ============================================
-
-app.get('/api/diagnostic/public', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    console.log('[DIAGNOSTIC_PUBLIC] ============================================');
-    console.log('[DIAGNOSTIC_PUBLIC] Probando conexión y creación de mensaje');
-    
-    // Verificar conexión a MongoDB
-    const mongoState = mongoose.connection.readyState;
-    console.log('[DIAGNOSTIC_PUBLIC] Estado de conexión MongoDB:', mongoState);
-    // 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
-    
-    if (mongoState !== 1) {
-      return res.status(500).json({
-        success: false,
-        error: 'MongoDB no está conectado',
-        mongodbState: mongoState
-      });
-    }
-    
-    const testMessageData = {
-      id: uuidv4(),
-      senderId: 'diagnostic-test',
-      senderUsername: 'diagnostic',
-      senderRole: 'admin',
-      receiverId: 'test-user',
-      receiverRole: 'user',
-      content: 'Test message - ' + new Date().toISOString(),
-      type: 'text',
-      timestamp: new Date(),
-      read: false
-    };
-    
-    console.log('[DIAGNOSTIC_PUBLIC] Intentando crear mensaje...');
-    
-    let createdMessage;
-    try {
-      createdMessage = await Message.create(testMessageData);
-      console.log('[DIAGNOSTIC_PUBLIC] ✅ Mensaje CREADO - ID:', createdMessage.id);
-    } catch (err) {
-      console.error('[DIAGNOSTIC_PUBLIC] ❌ ERROR al crear:', err.message);
-      console.error('[DIAGNOSTIC_PUBLIC] Error name:', err.name);
-      console.error('[DIAGNOSTIC_PUBLIC] Error code:', err.code);
-      return res.status(500).json({
-        success: false,
-        error: err.message,
-        errorName: err.name,
-        errorCode: err.code,
-        mongodbState: mongoState
-      });
-    }
-    
-    // Verificar que se guardó
-    const verifyMessage = await Message.findOne({ id: createdMessage.id }).lean();
-    console.log('[DIAGNOSTIC_PUBLIC] Verificación - mensaje encontrado:', !!verifyMessage);
-    
-    // Contar mensajes totales
-    const totalMessages = await Message.countDocuments();
-    
-    res.json({
-      success: true,
-      message: 'Diagnóstico completado',
-      mongodbState: mongoState,
-      mongodbConnected: true,
-      totalMessages: totalMessages,
-      testMessageCreated: {
-        id: createdMessage.id,
-        content: createdMessage.content,
-        timestamp: createdMessage.timestamp
-      },
-      verified: !!verifyMessage
-    });
-  } catch (error) {
-    console.error('[DIAGNOSTIC_PUBLIC] ❌ ERROR:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      errorName: error.name,
-      mongodbState: mongoose.connection.readyState
-    });
-  }
-});
-
-// ============================================
-// ENDPOINT DE DIAGNÓSTICO - TEST CREAR MENSAJE (con auth)
-// ============================================
-
-app.post('/api/diagnostic/test-message', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    console.log('[DIAGNOSTIC_TEST] ============================================');
-    console.log('[DIAGNOSTIC_TEST] Probando creación de mensaje');
-    
-    // Verificar conexión a MongoDB
-    console.log('[DIAGNOSTIC_TEST] Estado de conexión MongoDB:', mongoose.connection.readyState);
-    // 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
-    
-    const testMessageData = {
-      id: uuidv4(),
-      senderId: 'test-admin-id',
-      senderUsername: 'test-admin',
-      senderRole: 'admin',
-      receiverId: 'test-user-id',
-      receiverRole: 'user',
-      content: 'Mensaje de prueba - ' + new Date().toISOString(),
-      type: 'text',
-      timestamp: new Date(),
-      read: false
-    };
-    
-    console.log('[DIAGNOSTIC_TEST] Datos de prueba:', JSON.stringify(testMessageData, null, 2));
-    console.log('[DIAGNOSTIC_TEST] Modelo Message definido:', !!Message);
-    console.log('[DIAGNOSTIC_TEST] Modelo Message collection:', Message.collection.name);
-    
-    let createdMessage;
-    try {
-      createdMessage = await Message.create(testMessageData);
-      console.log('[DIAGNOSTIC_TEST] ✅ Mensaje de prueba CREADO');
-      console.log('[DIAGNOSTIC_TEST] ID:', createdMessage.id);
-      console.log('[DIAGNOSTIC_TEST] _id:', createdMessage._id);
-    } catch (err) {
-      console.error('[DIAGNOSTIC_TEST] ❌ ERROR al crear:', err.message);
-      console.error('[DIAGNOSTIC_TEST] Error name:', err.name);
-      console.error('[DIAGNOSTIC_TEST] Error code:', err.code);
-      throw err;
-    }
-    
-    // Verificar que se guardó
-    const verifyMessage = await Message.findOne({ id: createdMessage.id }).lean();
-    console.log('[DIAGNOSTIC_TEST] Verificación - mensaje encontrado:', !!verifyMessage);
-    
-    res.json({
-      success: true,
-      message: 'Mensaje de prueba creado',
-      createdMessage: {
-        id: createdMessage.id,
-        content: createdMessage.content,
-        timestamp: createdMessage.timestamp
-      },
-      verified: !!verifyMessage,
-      mongodbState: mongoose.connection.readyState
-    });
-  } catch (error) {
-    console.error('[DIAGNOSTIC_TEST] ❌ ERROR:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      errorName: error.name,
-      errorCode: error.code,
-      mongodbState: mongoose.connection.readyState
-    });
-  }
-});
-
-// ============================================
-// ENDPOINT DE DIAGNÓSTICO
-// ============================================
-
-app.get('/api/diagnostic/messages', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const totalMessages = await Message.countDocuments();
-    const recentMessages = await Message.find().sort({ timestamp: -1 }).limit(5).lean();
-    const messageStats = await Message.aggregate([
-      { $group: { _id: '$senderRole', count: { $sum: 1 } } }
-    ]);
-    
-    res.json({
-      totalMessages,
-      recentMessages: recentMessages.map(m => ({
-        id: m.id,
-        senderId: m.senderId,
-        senderRole: m.senderRole,
-        receiverId: m.receiverId,
-        content: m.content.substring(0, 50),
-        timestamp: m.timestamp
-      })),
-      statsByRole: messageStats,
-      mongodbConnected: mongoose.connection.readyState === 1,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('[DIAGNOSTIC] Error:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 
