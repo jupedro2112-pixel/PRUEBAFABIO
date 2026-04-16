@@ -170,54 +170,69 @@ const register = async (userData) => {
  * Iniciar sesión
  */
 const login = async (credentials) => {
-  const { username, password } = credentials;
-  
-  logger.info(`Intentando login para: ${username}`);
-  
-  // Buscar usuario (case-insensitive)
-  let user = await User.findByUsername(username);
-  
-  // Si no existe localmente, verificar en JUGAYGANA
-  if (!user) {
-    logger.info(`Usuario ${username} no encontrado localmente, verificando en JUGAYGANA...`);
-    
-    const jgUser = await jugayganaService.getUserInfo(username);
-    
-    if (jgUser) {
-      logger.info(`Usuario encontrado en JUGAYGANA, creando localmente...`);
-      
-      const userId = uuidv4();
-      user = await User.create({
-        id: userId,
-        username: jgUser.username.toLowerCase(),
-        password: 'asd123',
-        email: jgUser.email || null,
-        phone: jgUser.phone || null,
-        role: 'user',
-        accountNumber: generateAccountNumber(),
-        balance: jgUser.balance || 0,
-        isActive: true,
-        jugayganaUserId: jgUser.id,
-        jugayganaUsername: jgUser.username,
-        jugayganaSyncStatus: 'linked',
-        source: 'jugaygana'
-      });
-      
-      // Crear chat status
-      await ChatStatus.create({
-        userId: userId,
-        username: jgUser.username,
-        status: 'open',
-        category: 'cargas'
-      });
-      
-      logger.info(`Usuario ${username} creado automáticamente desde JUGAYGANA`);
-    } else {
+  const { username, phone, password } = credentials;
+  const identifier = username || phone;
+
+  logger.info(`Intentando login para: ${identifier}`);
+
+  let user = null;
+
+  if (phone) {
+    // Login por número de teléfono
+    user = await User.findByPhone(phone);
+    if (!user) {
       throw new AppError(
         ErrorMessages[ErrorCodes.AUTH_INVALID_CREDENTIALS],
         401,
         ErrorCodes.AUTH_INVALID_CREDENTIALS
       );
+    }
+  } else {
+    // Login por nombre de usuario (case-insensitive)
+    user = await User.findByUsername(username);
+
+    // Si no existe localmente, verificar en JUGAYGANA
+    if (!user) {
+      logger.info(`Usuario ${username} no encontrado localmente, verificando en JUGAYGANA...`);
+
+      const jgUser = await jugayganaService.getUserInfo(username);
+
+      if (jgUser) {
+        logger.info(`Usuario encontrado en JUGAYGANA, creando localmente...`);
+
+        const userId = uuidv4();
+        user = await User.create({
+          id: userId,
+          username: jgUser.username.toLowerCase(),
+          password: 'asd123',
+          email: jgUser.email || null,
+          phone: jgUser.phone || null,
+          role: 'user',
+          accountNumber: generateAccountNumber(),
+          balance: jgUser.balance || 0,
+          isActive: true,
+          jugayganaUserId: jgUser.id,
+          jugayganaUsername: jgUser.username,
+          jugayganaSyncStatus: 'linked',
+          source: 'jugaygana'
+        });
+
+        // Crear chat status
+        await ChatStatus.create({
+          userId: userId,
+          username: jgUser.username,
+          status: 'open',
+          category: 'cargas'
+        });
+
+        logger.info(`Usuario ${username} creado automáticamente desde JUGAYGANA`);
+      } else {
+        throw new AppError(
+          ErrorMessages[ErrorCodes.AUTH_INVALID_CREDENTIALS],
+          401,
+          ErrorCodes.AUTH_INVALID_CREDENTIALS
+        );
+      }
     }
   }
   
@@ -257,7 +272,7 @@ const login = async (credentials) => {
   user.lastLogin = new Date();
   await user.save();
   
-  logger.info(`Login exitoso para: ${username}`);
+  logger.info(`Login exitoso para: ${user.username}`);
   
   // Generar tokens
   const tokens = generateTokenPair(user);
@@ -272,12 +287,12 @@ const login = async (credentials) => {
     const jgLogin = await jugayganaService.loginAsUser(user.username, password);
     if (jgLogin.success) {
       jugayganaToken = jgLogin.token;
-      logger.info(`Token de JUGAYGANA obtenido para: ${username}`);
+      logger.info(`Token de JUGAYGANA obtenido para: ${user.username}`);
     } else {
-      logger.warn(`No se pudo obtener token JUGAYGANA para ${username}: ${jgLogin.error}`);
+      logger.warn(`No se pudo obtener token JUGAYGANA para ${user.username}: ${jgLogin.error}`);
     }
   } catch (jgError) {
-    logger.warn(`Error obteniendo token JUGAYGANA para ${username}: ${jgError.message}`);
+    logger.warn(`Error obteniendo token JUGAYGANA para ${user.username}: ${jgError.message}`);
   }
   
   return {

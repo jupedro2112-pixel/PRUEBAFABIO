@@ -179,10 +179,20 @@ VIP.auth = (function () {
     async function handleLogin(e) {
         e.preventDefault();
 
-        const username = document.getElementById('username').value;
+        const loginMode = window._loginMode || 'username';
+        const username = loginMode === 'username' ? document.getElementById('username').value : null;
+        const phonePrefix = loginMode === 'phone' ? (document.getElementById('loginPhonePrefix')?.value || '+54') : null;
+        const phoneNumber = loginMode === 'phone' ? document.getElementById('loginPhone')?.value?.trim() : null;
+        const phone = loginMode === 'phone' ? (phonePrefix + phoneNumber.replace(/\D/g, '')) : null;
         const password = document.getElementById('password').value;
         const errorDiv = document.getElementById('errorMessage');
         const loginBtn = document.querySelector('#loginForm button[type="submit"]');
+
+        if (loginMode === 'phone' && (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 7)) {
+            errorDiv.textContent = 'Ingresá un número de celular válido';
+            errorDiv.classList.add('show');
+            return;
+        }
 
         if (loginBtn) { loginBtn.textContent = 'Ingresando...'; loginBtn.disabled = true; }
         errorDiv.classList.remove('show');
@@ -197,10 +207,14 @@ VIP.auth = (function () {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
 
+            const loginPayload = loginMode === 'phone'
+                ? { phone, password }
+                : { username, password };
+
             const response = await fetch(`${VIP.config.API_URL}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify(loginPayload),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -639,6 +653,29 @@ VIP.auth = (function () {
         }
     }
 
+    function switchLoginMode(mode) {
+        window._loginMode = mode;
+        const usernameGroup = document.getElementById('loginUsernameGroup');
+        const phoneGroup = document.getElementById('loginPhoneGroup');
+        const usernameBtn = document.getElementById('loginByUsernameBtn');
+        const phoneBtn = document.getElementById('loginByPhoneBtn');
+        const usernameInput = document.getElementById('username');
+
+        if (mode === 'phone') {
+            if (usernameGroup) usernameGroup.classList.add('hidden');
+            if (phoneGroup) phoneGroup.classList.remove('hidden');
+            if (usernameInput) usernameInput.removeAttribute('required');
+            if (usernameBtn) { usernameBtn.style.background = 'transparent'; usernameBtn.style.color = '#888'; usernameBtn.style.fontWeight = 'normal'; }
+            if (phoneBtn) { phoneBtn.style.background = 'rgba(212,175,55,0.2)'; phoneBtn.style.color = '#d4af37'; phoneBtn.style.fontWeight = '600'; }
+        } else {
+            if (usernameGroup) usernameGroup.classList.remove('hidden');
+            if (phoneGroup) phoneGroup.classList.add('hidden');
+            if (usernameInput) usernameInput.setAttribute('required', '');
+            if (usernameBtn) { usernameBtn.style.background = 'rgba(212,175,55,0.2)'; usernameBtn.style.color = '#d4af37'; usernameBtn.style.fontWeight = '600'; }
+            if (phoneBtn) { phoneBtn.style.background = 'transparent'; phoneBtn.style.color = '#888'; phoneBtn.style.fontWeight = 'normal'; }
+        }
+    }
+
     return {
         checkUsernameAvailability,
         handleRegister,
@@ -655,7 +692,8 @@ VIP.auth = (function () {
         handleRequestPasswordReset,
         handleVerifyResetOtp,
         handleCompletePasswordReset,
-        prepareChangePasswordModal
+        prepareChangePasswordModal,
+        switchLoginMode
     };
 
 })();
@@ -667,3 +705,4 @@ window.handleRegisterWithOtp = VIP.auth.handleRegisterWithOtp;
 window.handleRequestPasswordReset = VIP.auth.handleRequestPasswordReset;
 window.handleVerifyResetOtp = VIP.auth.handleVerifyResetOtp;
 window.handleCompletePasswordReset = VIP.auth.handleCompletePasswordReset;
+window.switchLoginMode = VIP.auth.switchLoginMode;

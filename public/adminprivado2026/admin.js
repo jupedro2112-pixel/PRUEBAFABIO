@@ -2804,6 +2804,11 @@ function switchSection(section) {
             showToast('No tienes permiso para acceder a esta sección', 'error');
             return;
         }
+        if (!smsAccessGranted) {
+            showSmsPasswordModal();
+        } else {
+            document.getElementById('smsSectionContent').classList.remove('hidden');
+        }
     }
     if (section === 'database') {
         if (!dbAccessGranted) {
@@ -3274,6 +3279,48 @@ function filterTransactions(type) {
         btn.classList.toggle('active', btn.dataset.filter === type);
     });
     renderTransactions(transactionsData);
+}
+
+// ============================================
+// SMS MASIVO SECTION - Password Gate
+// ============================================
+let smsAccessGranted = false;
+
+function showSmsPasswordModal() {
+    showModal('smsPasswordModal');
+}
+
+async function verifySmsAccessFromModal() {
+    const password = document.getElementById('smsPasswordInput').value;
+
+    if (!password) {
+        showToast('Ingresa la contraseña', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/api/admin/verify-sms-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ password })
+        });
+
+        if (response.ok) {
+            smsAccessGranted = true;
+            hideModal('smsPasswordModal');
+            document.getElementById('smsPasswordInput').value = '';
+            document.getElementById('smsSectionContent').classList.remove('hidden');
+            showToast('Acceso concedido', 'success');
+        } else {
+            showToast('Contraseña incorrecta', 'error');
+        }
+    } catch (error) {
+        console.error('Error verifying SMS access:', error);
+        showToast('Error al verificar acceso', 'error');
+    }
 }
 
 // ============================================
