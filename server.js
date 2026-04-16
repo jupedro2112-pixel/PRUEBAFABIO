@@ -5578,7 +5578,7 @@ if (!DB_PASSWORD) {
 // Middleware para verificar contraseña de base de datos
 function dbPasswordMiddleware(req, res, next) {
   if (!DB_PASSWORD) {
-    return res.status(503).json({ error: 'Servicio de base de datos no disponible: DB_PASSWORD no configurado.' });
+    return res.status(503).json({ error: 'Servicio de base de datos temporalmente no disponible.' });
   }
   // Accept dbPassword from body only — never from query string to avoid it
   // appearing in server logs, referrer headers and browser history.
