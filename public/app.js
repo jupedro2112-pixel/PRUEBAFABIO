@@ -270,6 +270,12 @@ async function handleLogin(e) {
         errorDiv.classList.add('show');
         return;
     }
+
+    if (loginMode === 'username' && !username) {
+        errorDiv.textContent = 'Ingresá tu usuario';
+        errorDiv.classList.add('show');
+        return;
+    }
     
     // Mostrar estado de carga
     if (loginBtn) {

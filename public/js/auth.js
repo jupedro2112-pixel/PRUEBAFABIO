@@ -183,13 +183,19 @@ VIP.auth = (function () {
         const username = loginMode === 'username' ? document.getElementById('username').value : null;
         const phonePrefix = loginMode === 'phone' ? (document.getElementById('loginPhonePrefix')?.value || '+54') : null;
         const phoneNumber = loginMode === 'phone' ? document.getElementById('loginPhone')?.value?.trim() : null;
-        const phone = loginMode === 'phone' ? (phonePrefix + phoneNumber.replace(/\D/g, '')) : null;
+        const phone = loginMode === 'phone' ? (phonePrefix + (phoneNumber || '').replace(/\D/g, '')) : null;
         const password = document.getElementById('password').value;
         const errorDiv = document.getElementById('errorMessage');
         const loginBtn = document.querySelector('#loginForm button[type="submit"]');
 
         if (loginMode === 'phone' && (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 7)) {
             errorDiv.textContent = 'Ingresá un número de celular válido';
+            errorDiv.classList.add('show');
+            return;
+        }
+
+        if (loginMode === 'username' && !username) {
+            errorDiv.textContent = 'Ingresá tu usuario';
             errorDiv.classList.add('show');
             return;
         }
