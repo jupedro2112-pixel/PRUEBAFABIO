@@ -96,6 +96,10 @@
                     <span class="icon icon-chart"></span>
                     <span>Referidos</span>
                 </a>
+                <a href="#" class="nav-item nav-item-sms-masivo" data-section="sms" style="display:none">
+                    <span>📱</span>
+                    <span>SMS Masivo</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -925,6 +929,95 @@
                             </div>
                         </div>
                         <div id="referralRelationshipsList" style="font-size:13px;"><span style="color:#888;">Hacé clic en "Cargar" para ver las relaciones.</span></div>
+                    </div>
+
+                </div>
+            </section>
+
+            <!-- SMS Masivo Section -->
+            <section id="smsSection" class="section">
+                <div class="panel-header">
+                    <h2>📱 SMS MASIVO</h2>
+                </div>
+                <div style="padding:16px;display:grid;gap:20px;max-width:1100px;">
+
+                    <!-- Filtros -->
+                    <div style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;">
+                        <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa);">🎛️ Filtros de destinatarios</h3>
+                        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;">
+                            <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+                                <input type="checkbox" id="smsFiltroConsentimiento" style="accent-color:#6366f1;width:16px;height:16px;">
+                                <span style="font-size:.9rem;">Solo usuarios con consentimiento SMS</span>
+                            </label>
+                            <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+                                <input type="checkbox" id="smsFiltroActivos" style="accent-color:#6366f1;width:16px;height:16px;">
+                                <span style="font-size:.9rem;">Solo usuarios activos</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Redactar mensaje -->
+                    <div style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;">
+                        <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa);">✉️ Redactar mensaje SMS</h3>
+                        <div class="form-group">
+                            <label class="form-label">Mensaje <span style="color:#aaa;font-weight:normal;">(máx. 160 caracteres)</span></label>
+                            <textarea id="smsMensaje" class="form-input" rows="4" maxlength="160" placeholder="Escribí el mensaje SMS aquí..." oninput="actualizarContadorSms()" style="resize:vertical"></textarea>
+                            <div style="text-align:right;margin-top:.3rem;font-size:.8rem;" id="smsContador"><span id="smsContadorNum">160</span> caracteres restantes</div>
+                        </div>
+                        <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem;">
+                            <button id="smsPreviewBtn" class="btn btn-secondary" onclick="previewSmsMasivo()">🔍 Ver destinatarios</button>
+                        </div>
+                    </div>
+
+                    <!-- Panel de preview (oculto hasta hacer preview) -->
+                    <div id="smsPreviewPanel" style="display:none;background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;">
+                        <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa);">📋 Vista previa de destinatarios</h3>
+                        <div id="smsPreviewResumen" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
+                        <div style="max-height:360px;overflow-y:auto;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                            <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+                                <thead>
+                                    <tr style="background:rgba(99,102,241,.15);position:sticky;top:0;">
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Usuario</th>
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Teléfono</th>
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Estado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="smsPreviewTabla"></tbody>
+                            </table>
+                        </div>
+                        <div style="margin-top:1.2rem;display:flex;gap:.75rem;align-items:center;flex-wrap:wrap;">
+                            <button id="smsSendBtn" class="btn btn-primary" onclick="confirmarEnvioSmsMasivo()" style="background:linear-gradient(135deg,#e53e3e,#c53030);">🚀 Enviar SMS</button>
+                            <span id="smsEstimadoCosto" style="font-size:.85rem;color:#aaa;"></span>
+                        </div>
+                    </div>
+
+                    <!-- Progreso de envío (oculto hasta enviar) -->
+                    <div id="smsProgreso" style="display:none;background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;">
+                        <h3 style="margin-bottom:.75rem;font-size:1rem;color:var(--text-secondary,#aaa);">⏳ Enviando SMS masivo...</h3>
+                        <div style="display:flex;align-items:center;gap:.75rem;">
+                            <div style="width:32px;height:32px;border:3px solid rgba(99,102,241,.3);border-top-color:#6366f1;border-radius:50%;animation:spin .8s linear infinite;"></div>
+                            <span id="smsProgresoTexto" style="color:#a5b4fc;font-size:.95rem;">Procesando...</span>
+                        </div>
+                    </div>
+
+                    <!-- Resultados de envío (oculto hasta recibir respuesta) -->
+                    <div id="smsResultados" style="display:none;background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;">
+                        <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa);">📊 Resultados del envío</h3>
+                        <div id="smsResultadosResumen" style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;"></div>
+                        <div style="max-height:400px;overflow-y:auto;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">
+                            <table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+                                <thead>
+                                    <tr style="background:rgba(99,102,241,.15);position:sticky;top:0;">
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Usuario</th>
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Teléfono</th>
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Estado</th>
+                                        <th style="padding:.6rem .8rem;text-align:left;color:#a5b4fc;">Detalle</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="smsResultadosTabla"></tbody>
+                            </table>
+                        </div>
+                        <button class="btn btn-secondary" onclick="reiniciarSmsMasivo()" style="margin-top:1rem;">🔄 Nuevo envío</button>
                     </div>
 
                 </div>

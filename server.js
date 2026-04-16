@@ -1764,6 +1764,92 @@ app.post('/api/auth/complete-password-reset', sensitiveLimiter, async (req, res)
 // ADMIN - Envío masivo de SMS (solo ADMIN GENERAL)
 // ============================================
 
+// Códigos de país válidos para LATAM (mismo listado que security.js)
+const BULK_SMS_VALID_COUNTRY_CODES = [
+  '+54', '+591', '+55', '+56', '+57', '+506', '+53', '+593',
+  '+503', '+502', '+504', '+52', '+505', '+507', '+595', '+51', '+1', '+598', '+58'
+];
+
+// Patrones de números claramente falsos (todos iguales, secuencias simples)
+const FAKE_NUMBER_PATTERNS = /^(\d)\1+$|^1234567890$|^0987654321$|^12345678$|^01234567$/;
+
+/**
+ * Valida un número de teléfono para envío masivo y devuelve la razón si es inválido.
+ * @param {string} phone
+ * @returns {{ valid: boolean, reason?: string }}
+ */
+function validateBulkSmsPhone(phone) {
+  if (!phone || typeof phone !== 'string') {
+    return { valid: false, reason: 'Número ausente o inválido' };
+  }
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 8) {
+    return { valid: false, reason: 'Menos de 8 dígitos' };
+  }
+  if (digits.length > 15) {
+    return { valid: false, reason: 'Más de 15 dígitos' };
+  }
+  if (FAKE_NUMBER_PATTERNS.test(digits)) {
+    return { valid: false, reason: 'Patrón falso o de prueba' };
+  }
+  const hasValidPrefix = BULK_SMS_VALID_COUNTRY_CODES.some(code => phone.startsWith(code));
+  if (!hasValidPrefix) {
+    return { valid: false, reason: 'Prefijo de país no reconocido' };
+  }
+  return { valid: true };
+}
+
+/**
+ * Construye el query de Mongoose para los filtros de bulk SMS.
+ * Solo se permiten claves específicas con valores primitivos para evitar inyección NoSQL.
+ */
+function buildBulkSmsQuery(filters) {
+  const query = { phone: { $ne: null }, phoneVerified: true };
+  if (filters && typeof filters === 'object') {
+    const allowedFilters = ['smsConsent', 'isActive'];
+    for (const key of allowedFilters) {
+      if (Object.prototype.hasOwnProperty.call(filters, key)) {
+        const val = filters[key];
+        if (typeof val === 'boolean' || typeof val === 'string' || typeof val === 'number') {
+          query[key] = val;
+        }
+      }
+    }
+  }
+  return query;
+}
+
+// Preview: devuelve la lista de destinatarios con validación de números SIN enviar SMS
+app.post('/api/admin/bulk-sms/preview', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Solo el administrador general puede usar esta función.' });
+    }
+
+    const { filters } = req.body;
+    const query = buildBulkSmsQuery(filters);
+    const users = await User.find(query).select('phone username').lean();
+
+    const recipients = users.map(u => {
+      const validation = validateBulkSmsPhone(u.phone);
+      return {
+        username: u.username,
+        phone: u.phone,
+        valid: validation.valid,
+        reason: validation.reason || null
+      };
+    });
+
+    const valid = recipients.filter(r => r.valid).length;
+    const invalid = recipients.length - valid;
+
+    res.json({ total: recipients.length, valid, invalid, recipients });
+  } catch (error) {
+    logger.error(`Error en bulk-sms/preview: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, res) => {
   try {
     // Solo el administrador general puede enviar SMS masivos
@@ -1773,48 +1859,50 @@ app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, re
 
     const { message, filters } = req.body;
 
-    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'El mensaje es requerido' });
     }
 
     const trimmedMessage = message.trim();
 
-    // Construir query: solo usuarios con teléfono verificado
-    const query = { phone: { $ne: null }, phoneVerified: true };
-
-    // Aplicar filtros adicionales opcionales (e.g., { smsConsent: true })
-    // Solo se permiten claves específicas con valores primitivos para evitar inyección NoSQL
-    if (filters && typeof filters === 'object') {
-      const allowedFilters = ['smsConsent', 'isActive'];
-      for (const key of allowedFilters) {
-        if (Object.prototype.hasOwnProperty.call(filters, key)) {
-          const val = filters[key];
-          if (typeof val === 'boolean' || typeof val === 'string' || typeof val === 'number') {
-            query[key] = val;
-          }
-        }
-      }
+    if (trimmedMessage.length === 0) {
+      return res.status(400).json({ error: 'El mensaje es requerido' });
     }
 
+    if (trimmedMessage.length > 160) {
+      return res.status(400).json({ error: 'El mensaje no puede superar los 160 caracteres' });
+    }
+    const query = buildBulkSmsQuery(filters);
     const users = await User.find(query).select('phone username').lean();
 
     let sent = 0;
     let failed = 0;
-    const total = users.length;
+    let discarded = 0;
+    const results = [];
 
-    logger.info(`[bulk-sms] Admin ${req.user.username} iniciando envío masivo a ${total} usuarios`);
+    logger.info(`[bulk-sms] Admin ${req.user.username} iniciando envío masivo a ${users.length} usuarios`);
 
     for (const user of users) {
+      const validation = validateBulkSmsPhone(user.phone);
+      if (!validation.valid) {
+        discarded++;
+        results.push({ username: user.username, phone: user.phone, status: 'discarded', reason: validation.reason });
+        continue;
+      }
+
       try {
         const result = await sendSMS(user.phone, trimmedMessage);
         if (result.success) {
           sent++;
+          results.push({ username: user.username, phone: user.phone, status: 'sent' });
         } else {
           failed++;
+          results.push({ username: user.username, phone: user.phone, status: 'failed', error: result.error || 'Error desconocido' });
           logger.warn(`[bulk-sms] Fallo al enviar a usuario ${user.username}: ${result.error}`);
         }
       } catch (err) {
         failed++;
+        results.push({ username: user.username, phone: user.phone, status: 'failed', error: err.message });
         logger.warn(`[bulk-sms] Error al enviar a usuario ${user.username}: ${err.message}`);
       }
 
@@ -1822,9 +1910,9 @@ app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, re
       await new Promise(resolve => setTimeout(resolve, 50));
     }
 
-    logger.info(`[bulk-sms] Envío masivo completado por ${req.user.username}: enviados=${sent}, fallidos=${failed}, total=${total}`);
+    logger.info(`[bulk-sms] Envío masivo completado por ${req.user.username}: enviados=${sent}, fallidos=${failed}, descartados=${discarded}, total=${users.length}`);
 
-    res.json({ sent, failed, total });
+    res.json({ sent, failed, discarded, total: users.length, results });
   } catch (error) {
     logger.error(`Error en bulk-sms: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });

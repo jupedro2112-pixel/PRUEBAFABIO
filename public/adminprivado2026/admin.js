@@ -569,6 +569,12 @@ function setupRoleBasedUI() {
     if (btnBonus) {
         btnBonus.style.display = ['admin', 'depositor'].includes(role) ? '' : 'none';
     }
+
+    // SMS Masivo: solo visible para admin general
+    const smsNavItem = document.querySelector('.nav-item-sms-masivo');
+    if (smsNavItem) {
+        smsNavItem.style.display = role === 'admin' ? '' : 'none';
+    }
     
     // Actualizar botones según la pestaña actual
     updateActionButtonsByTab();
@@ -2793,6 +2799,12 @@ function switchSection(section) {
     if (section === 'datos') loadDatos();
     if (section === 'notifications') loadNotificationsPanel();
     if (section === 'referrals') loadAdminReferralSummary();
+    if (section === 'sms') {
+        if (currentAdmin?.role !== 'admin') {
+            showToast('No tienes permiso para acceder a esta sección', 'error');
+            return;
+        }
+    }
     if (section === 'database') {
         if (!dbAccessGranted) {
             showDatabasePasswordModal();
@@ -5264,3 +5276,263 @@ async function handleChangeOwnPassword() {
 
 window.showChangeOwnPasswordModal = showChangeOwnPasswordModal;
 window.handleChangeOwnPassword = handleChangeOwnPassword;
+
+// ============================================
+// SMS MASIVO PANEL
+// ============================================
+
+// Códigos de país LATAM válidos (espejo del listado de server.js)
+const SMS_VALID_COUNTRY_CODES = [
+    '+54', '+591', '+55', '+56', '+57', '+506', '+53', '+593',
+    '+503', '+502', '+504', '+52', '+505', '+507', '+595', '+51', '+1', '+598', '+58'
+];
+
+const SMS_FAKE_PATTERN = /^(\d)\1+$|^1234567890$|^0987654321$|^12345678$|^01234567$/;
+
+const SMS_COSTO_POR_MENSAJE = 0.006;
+
+function smsValidarTelefono(phone) {
+    if (!phone || typeof phone !== 'string') return { valid: false, reason: 'Número ausente o inválido' };
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 8) return { valid: false, reason: 'Menos de 8 dígitos' };
+    if (digits.length > 15) return { valid: false, reason: 'Más de 15 dígitos' };
+    if (SMS_FAKE_PATTERN.test(digits)) return { valid: false, reason: 'Patrón falso o de prueba' };
+    const hasValidPrefix = SMS_VALID_COUNTRY_CODES.some(code => phone.startsWith(code));
+    if (!hasValidPrefix) return { valid: false, reason: 'Prefijo de país no reconocido' };
+    return { valid: true };
+}
+
+function actualizarContadorSms() {
+    const textarea = document.getElementById('smsMensaje');
+    const counter = document.getElementById('smsContadorNum');
+    if (!textarea || !counter) return;
+    const remaining = 160 - textarea.value.length;
+    counter.textContent = remaining;
+    counter.style.color = remaining < 20 ? '#ef4444' : remaining < 40 ? '#f59e0b' : '#86efac';
+}
+
+async function previewSmsMasivo() {
+    const mensaje = (document.getElementById('smsMensaje')?.value || '').trim();
+    if (!mensaje) {
+        showToast('Escribí el mensaje SMS antes de ver los destinatarios', 'error');
+        return;
+    }
+    if (mensaje.length > 160) {
+        showToast('El mensaje supera los 160 caracteres', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('smsPreviewBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Cargando...'; }
+
+    // Ocultar resultados anteriores
+    const panelPreview = document.getElementById('smsPreviewPanel');
+    const panelResultados = document.getElementById('smsResultados');
+    if (panelPreview) panelPreview.style.display = 'none';
+    if (panelResultados) panelResultados.style.display = 'none';
+
+    try {
+        const filters = obtenerFiltrosSms();
+        const res = await fetch(`${API_URL}/api/admin/bulk-sms/preview`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ filters })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al cargar destinatarios');
+
+        renderSmsPreview(data);
+        if (panelPreview) panelPreview.style.display = '';
+    } catch (error) {
+        showToast(error.message || 'Error al cargar destinatarios', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Ver destinatarios'; }
+    }
+}
+
+function obtenerFiltrosSms() {
+    const filtros = {};
+    if (document.getElementById('smsFiltroConsentimiento')?.checked) filtros.smsConsent = true;
+    if (document.getElementById('smsFiltroActivos')?.checked) filtros.isActive = true;
+    return filtros;
+}
+
+function renderSmsPreview(data) {
+    const resumen = document.getElementById('smsPreviewResumen');
+    const tabla = document.getElementById('smsPreviewTabla');
+    const costo = document.getElementById('smsEstimadoCosto');
+    const sendBtn = document.getElementById('smsSendBtn');
+
+    if (resumen) {
+        resumen.innerHTML = `
+            <div style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;">
+                📦 Total en DB: <strong>${data.total}</strong>
+            </div>
+            <div style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;color:#86efac;">
+                ✅ Válidos: <strong>${data.valid}</strong>
+            </div>
+            <div style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;color:#fca5a5;">
+                ❌ Descartados: <strong>${data.invalid}</strong>
+            </div>
+        `;
+    }
+
+    if (costo) {
+        const estimado = (data.valid * SMS_COSTO_POR_MENSAJE).toFixed(2);
+        costo.textContent = `Costo estimado: ~$${estimado} USD`;
+    }
+
+    if (sendBtn) {
+        sendBtn.disabled = data.valid === 0;
+    }
+
+    if (tabla) {
+        if (!data.recipients || data.recipients.length === 0) {
+            tabla.innerHTML = '<tr><td colspan="3" style="padding:.8rem;text-align:center;color:#888;">Sin destinatarios</td></tr>';
+            return;
+        }
+        tabla.innerHTML = data.recipients.map(r => `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <td style="padding:.5rem .8rem;">${escapeHtml(r.username)}</td>
+                <td style="padding:.5rem .8rem;font-family:monospace;font-size:.8rem;">${escapeHtml(r.phone || '-')}</td>
+                <td style="padding:.5rem .8rem;">
+                    ${r.valid
+                        ? '<span style="color:#86efac;">✅ Válido</span>'
+                        : `<span style="color:#fca5a5;">❌ ${escapeHtml(r.reason || 'Inválido')}</span>`}
+                </td>
+            </tr>
+        `).join('');
+    }
+}
+
+function confirmarEnvioSmsMasivo() {
+    const mensaje = (document.getElementById('smsMensaje')?.value || '').trim();
+    if (!mensaje) { showToast('El mensaje está vacío', 'error'); return; }
+
+    const resumenEl = document.getElementById('smsPreviewResumen');
+    const validMatch = resumenEl ? resumenEl.textContent.match(/Válidos:\s*(\d+)/) : null;
+    const validCount = validMatch ? parseInt(validMatch[1], 10) : 0;
+
+    if (validCount === 0) { showToast('No hay destinatarios válidos para enviar', 'error'); return; }
+
+    const estimado = (validCount * SMS_COSTO_POR_MENSAJE).toFixed(2);
+
+    if (!confirm(`¿Estás seguro?\n\nSe enviarán ${validCount} SMS.\nCosto estimado: $${estimado} USD\n\nEsta acción no se puede deshacer.`)) return;
+
+    enviarSmsMasivo(mensaje);
+}
+
+async function enviarSmsMasivo(mensaje) {
+    const sendBtn = document.getElementById('smsSendBtn');
+    const previewBtn = document.getElementById('smsPreviewBtn');
+    const progreso = document.getElementById('smsProgreso');
+    const progresoTexto = document.getElementById('smsProgresoTexto');
+    const previewPanel = document.getElementById('smsPreviewPanel');
+    const resultados = document.getElementById('smsResultados');
+
+    if (sendBtn) { sendBtn.disabled = true; }
+    if (previewBtn) { previewBtn.disabled = true; }
+    if (progreso) { progreso.style.display = ''; }
+    if (progresoTexto) { progresoTexto.textContent = 'Enviando SMS masivo... (esto puede demorar varios minutos)'; }
+    if (previewPanel) previewPanel.style.display = 'none';
+    if (resultados) resultados.style.display = 'none';
+
+    try {
+        const filters = obtenerFiltrosSms();
+        const res = await fetch(`${API_URL}/api/admin/bulk-sms`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ message: mensaje, filters })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al enviar SMS masivo');
+
+        if (progreso) progreso.style.display = 'none';
+        renderSmsResultados(data);
+        if (resultados) resultados.style.display = '';
+
+        showToast(`✅ Envío completado: ${data.sent} enviados, ${data.failed} fallidos, ${data.discarded || 0} descartados`, 'success');
+    } catch (error) {
+        if (progreso) progreso.style.display = 'none';
+        showToast(error.message || 'Error al enviar SMS masivo', 'error');
+        if (sendBtn) sendBtn.disabled = false;
+        if (previewPanel) previewPanel.style.display = '';
+    } finally {
+        if (previewBtn) previewBtn.disabled = false;
+    }
+}
+
+function renderSmsResultados(data) {
+    const resumen = document.getElementById('smsResultadosResumen');
+    const tabla = document.getElementById('smsResultadosTabla');
+
+    if (resumen) {
+        resumen.innerHTML = `
+            <div style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;color:#86efac;">
+                ✅ Enviados: <strong>${data.sent}</strong>
+            </div>
+            <div style="background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;color:#fca5a5;">
+                ❌ Fallidos: <strong>${data.failed}</strong>
+            </div>
+            <div style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;color:#fcd34d;">
+                ⚠️ Descartados: <strong>${data.discarded || 0}</strong>
+            </div>
+            <div style="background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:.6rem 1rem;font-size:.9rem;">
+                📦 Total: <strong>${data.total}</strong>
+            </div>
+        `;
+    }
+
+    if (tabla) {
+        if (!data.results || data.results.length === 0) {
+            tabla.innerHTML = '<tr><td colspan="4" style="padding:.8rem;text-align:center;color:#888;">Sin resultados</td></tr>';
+            return;
+        }
+        tabla.innerHTML = data.results.map(r => {
+            let statusHtml;
+            if (r.status === 'sent') {
+                statusHtml = '<span style="color:#86efac;">✅ Enviado</span>';
+            } else if (r.status === 'discarded') {
+                statusHtml = '<span style="color:#fcd34d;">⚠️ Descartado</span>';
+            } else {
+                statusHtml = '<span style="color:#fca5a5;">❌ Fallido</span>';
+            }
+            const detalle = r.error || r.reason || '-';
+            return `
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <td style="padding:.5rem .8rem;">${escapeHtml(r.username)}</td>
+                    <td style="padding:.5rem .8rem;font-family:monospace;font-size:.8rem;">${escapeHtml(r.phone || '-')}</td>
+                    <td style="padding:.5rem .8rem;">${statusHtml}</td>
+                    <td style="padding:.5rem .8rem;font-size:.8rem;color:#aaa;">${escapeHtml(detalle)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+}
+
+function reiniciarSmsMasivo() {
+    const ids = ['smsPreviewPanel', 'smsProgreso', 'smsResultados'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+    const textarea = document.getElementById('smsMensaje');
+    if (textarea) textarea.value = '';
+    actualizarContadorSms();
+    const sendBtn = document.getElementById('smsSendBtn');
+    if (sendBtn) sendBtn.disabled = false;
+    const previewBtn = document.getElementById('smsPreviewBtn');
+    if (previewBtn) previewBtn.disabled = false;
+}
+
+window.actualizarContadorSms = actualizarContadorSms;
+window.previewSmsMasivo = previewSmsMasivo;
+window.confirmarEnvioSmsMasivo = confirmarEnvioSmsMasivo;
+window.reiniciarSmsMasivo = reiniciarSmsMasivo;
+
