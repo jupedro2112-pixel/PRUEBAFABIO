@@ -142,7 +142,7 @@ const authenticate = async (req, res, next) => {
     if (decoded.tokenVersion !== undefined) {
       try {
         const user = await User.findOne({ id: decoded.userId }).select('tokenVersion isActive').lean();
-        if (user && user.tokenVersion && decoded.tokenVersion !== user.tokenVersion) {
+        if (user && user.tokenVersion !== undefined && decoded.tokenVersion !== user.tokenVersion) {
           return next(new AppError(
             'Sesión invalidada. Iniciá sesión nuevamente.',
             401,

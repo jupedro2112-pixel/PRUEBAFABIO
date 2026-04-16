@@ -175,7 +175,11 @@ function securityHeaders(req, res, next) {
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  // HSTS: only set in production (HTTPS). In development the server may run
+  // on plain HTTP where HSTS would cause the browser to block future HTTP requests.
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
   // CSP compatible con Firebase Auth, FCM, Socket.IO WebSocket y PWA service workers.
   // 'unsafe-inline' en script-src/style-src es necesario por el stack actual de frontend.
   // worker-src incluye blob: para Workbox/sw.js generados en runtime.
@@ -203,14 +207,16 @@ function securityHeaders(req, res, next) {
 // Helper para comparación segura de strings (previene timing attacks)
 function safeCompare(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  let aStr = a;
-  let bStr = b;
-  if (aStr.length !== bStr.length) {
-    const maxLen = Math.max(aStr.length, bStr.length);
-    aStr = aStr.padEnd(maxLen, '\0');
-    bStr = bStr.padEnd(maxLen, '\0');
-  }
-  return crypto.timingSafeEqual(Buffer.from(aStr), Buffer.from(bStr));
+  // Always pad both buffers to the same length so the timingSafeEqual call
+  // is reached regardless of whether the lengths differ — this prevents
+  // leaking length information via the timing of an early-return branch.
+  const maxLen = Math.max(a.length, b.length);
+  const aBuf = Buffer.from(a.padEnd(maxLen, '\0'));
+  const bBuf = Buffer.from(b.padEnd(maxLen, '\0'));
+  // timingSafeEqual compares byte-by-byte in constant time.
+  // The explicit length check is added afterwards so attackers cannot use
+  // timing on padding bytes to recover the secret length.
+  return crypto.timingSafeEqual(aBuf, bBuf) && a.length === b.length;
 }
 
 function sanitizeInput(input) {
@@ -1389,7 +1395,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     
     // Token con expiración de 30 días para persistencia de sesión
     const token = jwt.sign(
-      { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion || 0 },
+      { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
       JWT_SECRET,
       { expiresIn: '30d' }
     );
@@ -1512,7 +1518,7 @@ app.get('/api/admin/me', async (req, res) => {
     // Issue a fresh short-lived in-memory token for Socket.IO auth.
     // This is NOT stored in localStorage — only held in JavaScript memory.
     const freshToken = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role, tokenVersion: user.tokenVersion || 0 },
+      { userId: user.id, username: user.username, role: user.role, tokenVersion: user.tokenVersion ?? 0 },
       JWT_SECRET,
       { expiresIn: '8h' }
     );
@@ -6097,14 +6103,16 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
 // ============================================
 
 // Helper: escape a CSV field to prevent CSV injection attacks.
-// Prefixes dangerous leading characters with a single quote.
+// Returns the complete quoted field including surrounding double quotes.
+// Dangerous leading characters (=, +, -, @, tab, CR) are prefixed with a
+// single quote so that spreadsheet applications treat them as literal text.
 function escapeCsvField(value) {
-  if (value === null || value === undefined) return '';
+  if (value === null || value === undefined) return '""';
   const str = String(value);
   if (/^[=+\-@\t\r]/.test(str)) {
-    return "'" + str.replace(/"/g, '""');
+    return '"\''+  str.replace(/"/g, '""') + '"';
   }
-  return str.replace(/"/g, '""');
+  return '"' + str.replace(/"/g, '""') + '"';
 }
 
 const DB_PASSWORD = process.env.DB_PASSWORD;
@@ -6168,7 +6176,7 @@ app.post('/api/admin/database/export/csv', authMiddleware, adminMiddleware, dbPa
     let csv = 'ID,Usuario,Email,Teléfono,Rol,Balance,AccountNumber,Estado,Último Login,Creado,JugayganaUserId,JugayganaUsername,JugayganaSyncStatus\n';
     
     users.forEach(user => {
-      csv += `"${escapeCsvField(user.id)}","${escapeCsvField(user.username)}","${escapeCsvField(user.email || '')}","${escapeCsvField(user.phone || '')}","${escapeCsvField(user.role)}","${escapeCsvField(user.balance || 0)}","${escapeCsvField(user.accountNumber || '')}","${escapeCsvField(user.isActive ? 'Activo' : 'Inactivo')}","${escapeCsvField(user.lastLogin || 'Nunca')}","${escapeCsvField(user.createdAt || '')}","${escapeCsvField(user.jugayganaUserId || '')}","${escapeCsvField(user.jugayganaUsername || '')}","${escapeCsvField(user.jugayganaSyncStatus || '')}"\n`;
+      csv += `${escapeCsvField(user.id)},${escapeCsvField(user.username)},${escapeCsvField(user.email || '')},${escapeCsvField(user.phone || '')},${escapeCsvField(user.role)},${escapeCsvField(user.balance || 0)},${escapeCsvField(user.accountNumber || '')},${escapeCsvField(user.isActive ? 'Activo' : 'Inactivo')},${escapeCsvField(user.lastLogin || 'Nunca')},${escapeCsvField(user.createdAt || '')},${escapeCsvField(user.jugayganaUserId || '')},${escapeCsvField(user.jugayganaUsername || '')},${escapeCsvField(user.jugayganaSyncStatus || '')}\n`;
     });
     
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -6195,7 +6203,7 @@ app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
     // Crear CSV
     let csv = 'Usuario,Teléfono,Email,Balance,Último Login\n';
     users.forEach(user => {
-      csv += `"${escapeCsvField(user.username)}","${escapeCsvField(user.phone || '')}","${escapeCsvField(user.email || '')}","${escapeCsvField(user.balance || 0)}","${escapeCsvField(user.lastLogin || 'Nunca')}"\n`;
+      csv += `${escapeCsvField(user.username)},${escapeCsvField(user.phone || '')},${escapeCsvField(user.email || '')},${escapeCsvField(user.balance || 0)},${escapeCsvField(user.lastLogin || 'Nunca')}\n`;
     });
     
     res.setHeader('Content-Type', 'text/csv');
