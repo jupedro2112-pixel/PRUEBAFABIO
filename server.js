@@ -57,6 +57,8 @@ const {
 const ReferralEvent = require('./src/models/ReferralEvent');
 const { generateReferralCode } = require('./src/utils/referralCode');
 const { setRedisClient, getRedisClient } = require('./src/utils/redisClient');
+const { generateAndSendOTP, verifyOTP } = require('./src/services/otpService');
+const { validateInternationalPhone } = require('./src/middlewares/security');
 
 // ============================================
 // SEGURIDAD - RATE LIMITING
@@ -948,7 +950,7 @@ app.post('/api/upload/presigned-url', authMiddleware, async (req, res) => {
 // Registro de usuario
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
-    const { username, password, email, phone, referralCode } = req.body;
+    const { username, password, email, phone, referralCode, otpCode } = req.body;
     
     if (!username || !password) {
       return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
@@ -960,6 +962,22 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     
     if (!phone || phone.trim().length < 8) {
       return res.status(400).json({ error: 'El número de teléfono es obligatorio (mínimo 8 dígitos)' });
+    }
+
+    const normalizedPhone = phone.trim();
+
+    // Validar y verificar OTP antes de crear la cuenta
+    if (!otpCode) {
+      return res.status(400).json({ error: 'Se requiere el código de verificación SMS' });
+    }
+
+    if (!validateInternationalPhone(normalizedPhone)) {
+      return res.status(400).json({ error: 'Número de teléfono inválido. Usa formato internacional con código de país (ej: +5491155551234)' });
+    }
+
+    const otpResult = await verifyOTP(normalizedPhone, otpCode, 'register');
+    if (!otpResult.valid) {
+      return res.status(400).json({ error: otpResult.error || 'Código de verificación incorrecto o expirado' });
     }
     
     // Buscar case-insensitive
@@ -1021,7 +1039,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       username,
       password: password,
       email: email || null,
-      phone: phone.trim(),
+      phone: normalizedPhone,
+      phoneVerified: true,
       role: 'user',
       accountNumber: generateAccountNumber(),
       balance: jgResult.user?.balance || jgResult.user?.user_balance || 0,
@@ -1487,73 +1506,184 @@ app.post('/api/auth/platform-login', authMiddleware, async (req, res) => {
 });
 
 // ============================================
-// RUTAS PÚBLICAS - RECUPERACIÓN DE CUENTA
+// RUTAS PÚBLICAS - OTP / VERIFICACIÓN SMS
 // ============================================
 
-app.post('/api/auth/find-user-by-phone', sensitiveLimiter, async (req, res) => {
+// Enviar OTP para verificación de teléfono en el registro
+app.post('/api/auth/send-register-otp', sensitiveLimiter, async (req, res) => {
   try {
-    const { phone } = req.body;
-    
-    if (!phone || phone.trim().length < 8) {
-      return res.status(400).json({ error: 'Número de teléfono inválido' });
+    const { phone, username } = req.body;
+
+    if (!phone || typeof phone !== 'string') {
+      return res.status(400).json({ error: 'Número de teléfono requerido' });
     }
-    
-    const user = await findUserByPhone(phone.trim());
-    
-    if (user) {
-      res.json({ 
-        found: true, 
-        message: 'Usuario encontrado'
-      });
-    } else {
-      res.json({ 
-        found: false, 
-        message: 'No se encontró ningún usuario con ese número de teléfono' 
-      });
+
+    const normalizedPhone = phone.trim();
+    if (!validateInternationalPhone(normalizedPhone)) {
+      return res.status(400).json({ error: 'Número de teléfono inválido. Usa formato internacional con código de país (ej: +5491155551234)' });
     }
+
+    // Validar username si fue proporcionado
+    if (username) {
+      const existing = await User.findOne({
+        username: { $regex: new RegExp('^' + escapeRegex(String(username).trim()) + '$', 'i') }
+      }).lean();
+      if (existing) {
+        return res.status(400).json({ error: 'El nombre de usuario ya está en uso' });
+      }
+    }
+
+    // Verificar que el teléfono no esté ya registrado y verificado
+    const existingPhone = await User.findOne({ phone: normalizedPhone, phoneVerified: true }).lean();
+    if (existingPhone) {
+      return res.status(400).json({ error: 'Este número de teléfono ya está registrado' });
+    }
+
+    const result = await generateAndSendOTP(normalizedPhone, 'register');
+
+    if (!result.success) {
+      return res.status(429).json({ error: result.error });
+    }
+
+    const maskedPhone = normalizedPhone.replace(/(\+\d+)\d{4}$/, '$1****');
+
+    res.json({
+      success: true,
+      pendingVerification: true,
+      phone: maskedPhone,
+      message: 'Te enviamos un código SMS al número indicado'
+    });
   } catch (error) {
-    console.error('Error buscando usuario por teléfono:', error);
+    logger.error(`Error en send-register-otp: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-app.post('/api/auth/reset-password-by-phone', sensitiveLimiter, async (req, res) => {
-  try {
-    const { phone, newPassword } = req.body;
-    
-    if (!phone || phone.trim().length < 8) {
-      return res.status(400).json({ error: 'Número de teléfono inválido' });
-    }
-    
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
-    }
-    
-    const result = await changePasswordByPhone(phone.trim(), newPassword);
-    
-    if (result.success) {
-      // Best-effort sync with JUGAYGANA (no currentPassword available for phone reset)
-      try {
-        const jugayganaSync = require('./jugaygana');
-        const jgResult = await jugayganaSync.changeUserPassword(result.username, null, newPassword);
-        if (jgResult.success) {
-          console.log(`✅ Contraseña sincronizada con JUGAYGANA para: ${result.username}`);
-        } else {
-          console.warn(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${result.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
-        }
-      } catch (jgError) {
-        console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
-      }
+// Solicitar reset de contraseña por SMS (anti-enumeration: siempre responde igual)
+app.post('/api/auth/request-password-reset', sensitiveLimiter, async (req, res) => {
+  const ANTI_ENUM_MESSAGE = 'Si este número está vinculado a una cuenta, recibirás un código SMS en los próximos segundos. Si no recibís ningún código, significa que este número no está asociado a ninguna cuenta.';
 
-      res.json({ 
-        success: true, 
-        message: 'Contraseña cambiada exitosamente' 
-      });
-    } else {
-      res.status(404).json({ error: result.error });
+  try {
+    const { phone } = req.body;
+
+    if (phone && typeof phone === 'string') {
+      const normalizedPhone = phone.trim();
+      if (validateInternationalPhone(normalizedPhone)) {
+        const user = await User.findOne({ phone: normalizedPhone, phoneVerified: true }).lean();
+        if (user) {
+          try {
+            await generateAndSendOTP(normalizedPhone, 'reset');
+          } catch (err) {
+            logger.warn(`[request-password-reset] Error generando OTP: ${err.message}`);
+          }
+        }
+      }
     }
   } catch (error) {
-    console.error('Error cambiando contraseña por teléfono:', error);
+    logger.error(`Error en request-password-reset: ${error.message}`);
+  }
+
+  // SIEMPRE la misma respuesta (anti-enumeration)
+  res.json({ success: true, message: ANTI_ENUM_MESSAGE });
+});
+
+// Verificar código OTP para reset de contraseña
+app.post('/api/auth/verify-reset-otp', sensitiveLimiter, async (req, res) => {
+  try {
+    const { phone, code } = req.body;
+
+    if (!phone || !code) {
+      return res.status(400).json({ error: 'Teléfono y código requeridos' });
+    }
+
+    const normalizedPhone = phone.trim();
+    if (!validateInternationalPhone(normalizedPhone)) {
+      return res.status(400).json({ error: 'Número de teléfono inválido' });
+    }
+
+    const otpResult = await verifyOTP(normalizedPhone, String(code).trim(), 'reset');
+
+    if (!otpResult.valid) {
+      return res.status(400).json({ error: otpResult.error || 'Código incorrecto o expirado' });
+    }
+
+    // Buscar usuario con ese teléfono verificado
+    const user = await User.findOne({ phone: normalizedPhone, phoneVerified: true }).lean();
+
+    if (!user) {
+      return res.status(400).json({ error: 'Código incorrecto o expirado' });
+    }
+
+    // Generar JWT temporal de 5 minutos solo para reset
+    const resetToken = jwt.sign(
+      { userId: user.id, username: user.username, purpose: 'reset' },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+
+    res.json({
+      success: true,
+      verified: true,
+      username: user.username,
+      resetToken
+    });
+  } catch (error) {
+    logger.error(`Error en verify-reset-otp: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Completar reset de contraseña usando el JWT temporal
+app.post('/api/auth/complete-password-reset', sensitiveLimiter, async (req, res) => {
+  try {
+    const { resetToken, newPassword } = req.body;
+
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({ error: 'Token y nueva contraseña requeridos' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, JWT_SECRET);
+    } catch (err) {
+      return res.status(400).json({ error: 'Token de reset inválido o expirado' });
+    }
+
+    if (decoded.purpose !== 'reset') {
+      return res.status(400).json({ error: 'Token de reset inválido' });
+    }
+
+    const user = await User.findOne({ id: decoded.userId });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Cambiar contraseña
+    user.password = newPassword;
+    user.passwordChangedAt = new Date();
+    await user.save();
+
+    // Sincronizar con JUGAYGANA (best-effort)
+    try {
+      const jugayganaSync = require('./jugaygana');
+      const jgResult = await jugayganaSync.changeUserPassword(user.username, null, newPassword);
+      if (jgResult.success) {
+        logger.info(`[complete-password-reset] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+      } else {
+        logger.warn(`[complete-password-reset] No se pudo sincronizar con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+      }
+    } catch (jgError) {
+      logger.error(`[complete-password-reset] Error sincronizando con JUGAYGANA: ${jgError.message}`);
+    }
+
+    res.json({ success: true, message: 'Contraseña cambiada exitosamente' });
+  } catch (error) {
+    logger.error(`Error en complete-password-reset: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

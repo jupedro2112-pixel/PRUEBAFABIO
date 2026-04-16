@@ -39,6 +39,11 @@ const userSchema = new mongoose.Schema({
     default: null,
     trim: true
   },
+  phoneVerified: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
   whatsapp: { 
     type: String, 
     default: null,

@@ -32,18 +32,24 @@ VIP.auth = (function () {
         }
     }
 
-    async function handleRegister(e) {
-        e.preventDefault();
+    // Estado temporal del registro OTP (compartido con app.js global via window)
+    let _vipRegisterOtpPhone = null;
 
+    async function handleRegister(e) {
+        if (e) e.preventDefault();
+        // El registro ahora usa flujo OTP: handleRegisterSendOtp y handleRegisterWithOtp
+        // Esta función se mantiene por compatibilidad
+    }
+
+    async function handleRegisterSendOtp() {
         const username = document.getElementById('registerUsername').value.trim();
         const password = document.getElementById('registerPassword').value;
         const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
-        const email = document.getElementById('registerEmail').value.trim();
-        const phone = document.getElementById('registerPhone').value.trim();
-        const referralCodeInput = document.getElementById('registerReferralCode');
-        const referralCode = referralCodeInput ? referralCodeInput.value.trim().toUpperCase() : null;
+        const phonePrefix = document.getElementById('registerPhonePrefix').value;
+        const phoneNumber = document.getElementById('registerPhone').value.trim();
         const errorDiv = document.getElementById('registerError');
-        const submitBtn = e.target.querySelector('button[type="submit"]');
+
+        errorDiv.classList.remove('show');
 
         if (password !== passwordConfirm) {
             errorDiv.textContent = 'Las contraseñas no coinciden';
@@ -60,9 +66,71 @@ VIP.auth = (function () {
             errorDiv.classList.add('show');
             return;
         }
+        if (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 8) {
+            errorDiv.textContent = 'Ingresá un número de teléfono válido (mínimo 8 dígitos)';
+            errorDiv.classList.add('show');
+            return;
+        }
+
+        const fullPhone = phonePrefix + phoneNumber.replace(/[\s\-().]/g, '');
+        const btn = document.getElementById('registerSendOtpBtn');
+        if (btn) { btn.textContent = 'Enviando...'; btn.disabled = true; }
+
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/send-register-otp`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: fullPhone, username })
+            });
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                _vipRegisterOtpPhone = fullPhone;
+                // Sync con variable global si existe (app.js)
+                if (typeof window !== 'undefined') window._registerOtpPhone = fullPhone;
+                document.getElementById('registerStep1').style.display = 'none';
+                document.getElementById('registerStep2').style.display = '';
+                document.getElementById('registerOtpMsg').textContent = `✅ ${data.message} (${data.phone})`;
+                document.getElementById('registerOtpCode').value = '';
+                document.getElementById('registerOtpError').classList.remove('show');
+            } else {
+                errorDiv.textContent = data.error || 'Error al enviar el código SMS';
+                errorDiv.classList.add('show');
+            }
+        } catch (error) {
+            errorDiv.textContent = 'Error de conexión. Intenta más tarde.';
+            errorDiv.classList.add('show');
+        } finally {
+            if (btn) { btn.textContent = '📱 Enviar código SMS'; btn.disabled = false; }
+        }
+    }
+
+    async function handleRegisterWithOtp() {
+        const username = document.getElementById('registerUsername').value.trim();
+        const password = document.getElementById('registerPassword').value;
+        const email = document.getElementById('registerEmail').value.trim();
+        const referralCodeInput = document.getElementById('registerReferralCode');
+        const referralCode = referralCodeInput ? referralCodeInput.value.trim().toUpperCase() : null;
+        const otpCode = document.getElementById('registerOtpCode').value.trim();
+        const errorDiv = document.getElementById('registerOtpError');
+        const submitBtn = document.getElementById('registerSubmitBtn');
+
+        errorDiv.classList.remove('show');
+
+        if (!otpCode || otpCode.length < 6) {
+            errorDiv.textContent = 'Ingresá el código de 6 dígitos';
+            errorDiv.classList.add('show');
+            return;
+        }
+
+        const phone = _vipRegisterOtpPhone || (typeof window !== 'undefined' ? window._registerOtpPhone : null);
+        if (!phone) {
+            errorDiv.textContent = 'Error: teléfono no encontrado. Volvé al paso anterior.';
+            errorDiv.classList.add('show');
+            return;
+        }
 
         if (submitBtn) { submitBtn.textContent = 'Creando cuenta...'; submitBtn.disabled = true; }
-        errorDiv.classList.remove('show');
 
         try {
             const response = await fetch(`${VIP.config.API_URL}/api/auth/register`, {
@@ -72,14 +140,16 @@ VIP.auth = (function () {
                     username,
                     password,
                     email: email || null,
-                    phone: phone || null,
-                    referralCode: referralCode || undefined
+                    phone,
+                    referralCode: referralCode || undefined,
+                    otpCode
                 })
             });
-
             const data = await response.json();
 
             if (response.ok) {
+                _vipRegisterOtpPhone = null;
+                if (typeof window !== 'undefined') window._registerOtpPhone = null;
                 VIP.state.currentToken = data.token;
                 VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
                 localStorage.setItem('userToken', VIP.state.currentToken);
@@ -87,12 +157,12 @@ VIP.auth = (function () {
                 VIP.ui.hideModal('registerModal');
                 document.getElementById('registerForm').reset();
                 document.getElementById('usernameCheckResult').textContent = '';
+                document.getElementById('registerStep1').style.display = '';
+                document.getElementById('registerStep2').style.display = 'none';
 
                 await initializeSession(true);
-
                 console.log('[FCM] Registro exitoso, enviando token FCM...');
                 await VIP.notifications.sendFcmTokenAfterLogin();
-
                 VIP.ui.showToast('✅ ¡Cuenta creada exitosamente!', 'success');
             } else {
                 errorDiv.textContent = data.error || 'Error al crear cuenta';
@@ -430,129 +500,150 @@ VIP.auth = (function () {
         }
     }
 
+    // Estado temporal del reset OTP
+    let _vipResetOtpPhone = null;
+    let _vipResetToken = null;
+
     async function handleFindUserByPhone(e) {
-        e.preventDefault();
+        // ELIMINADO: Este endpoint permitía enumerar usuarios.
+        // El reset de contraseña ahora usa flujo OTP seguro (anti-enumeration).
+        if (e) e.preventDefault();
+    }
 
-        const phone = document.getElementById('findUserPhone').value.trim();
-        const resultDiv = document.getElementById('findUserResult');
+    async function handleRequestPasswordReset() {
+        const phonePrefix = document.getElementById('resetPhonePrefix').value;
+        const phoneNumber = document.getElementById('resetPassPhone').value.trim();
+        const resultDiv = document.getElementById('resetStep1Result');
 
-        if (!phone || phone.length < 8) {
-            resultDiv.textContent = 'Ingresa un número de teléfono válido (mínimo 8 dígitos)';
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-            resultDiv.style.display = 'block';
+        if (resultDiv) resultDiv.style.display = 'none';
+
+        if (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 8) {
+            if (resultDiv) {
+                resultDiv.textContent = 'Ingresá un número de teléfono válido (mínimo 8 dígitos)';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+            }
+            return;
+        }
+
+        const fullPhone = phonePrefix + phoneNumber.replace(/[\s\-().]/g, '');
+        _vipResetOtpPhone = fullPhone;
+
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/request-password-reset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: fullPhone })
+            });
+            const data = await response.json();
+
+            document.getElementById('resetStep1').style.display = 'none';
+            document.getElementById('resetStep2').style.display = '';
+            document.getElementById('resetStep2Msg').textContent = data.message || 'Si este número está vinculado a una cuenta, recibirás un código SMS.';
+            document.getElementById('resetOtpCode').value = '';
+            const errDiv = document.getElementById('resetStep2Error');
+            if (errDiv) errDiv.style.display = 'none';
+        } catch (error) {
+            if (resultDiv) {
+                resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
+                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
+                resultDiv.style.color = '#ff4444';
+                resultDiv.style.display = 'block';
+            }
+        }
+    }
+
+    async function handleVerifyResetOtp() {
+        const code = document.getElementById('resetOtpCode').value.trim();
+        const errDiv = document.getElementById('resetStep2Error');
+
+        if (errDiv) errDiv.style.display = 'none';
+
+        if (!code || code.length < 6) {
+            if (errDiv) { errDiv.textContent = 'Ingresá el código de 6 dígitos'; errDiv.style.display = 'block'; }
             return;
         }
 
         try {
-            const response = await fetch(`${VIP.config.API_URL}/api/auth/find-user-by-phone`, {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/verify-reset-otp`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone })
+                body: JSON.stringify({ phone: _vipResetOtpPhone, code })
             });
-
             const data = await response.json();
 
-            if (data.found) {
-                resultDiv.innerHTML = `
-                    <div style="text-align: center;">
-                        <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Cuenta encontrada!</p>
-                        <p style="color: #888; font-size: 12px; margin-top: 10px;">Ahora podés cambiar la contraseña en el paso siguiente</p>
-                    </div>
-                `;
-                resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
-                resultDiv.style.color = '#00ff88';
+            if (response.ok && data.success) {
+                _vipResetToken = data.resetToken;
+                document.getElementById('resetStep2').style.display = 'none';
+                document.getElementById('resetStep3').style.display = '';
+                document.getElementById('resetStep3Username').textContent = `👤 Usuario: ${escapeHtml(data.username)}`;
+                document.getElementById('resetPassNew').value = '';
+                document.getElementById('resetPassConfirm').value = '';
+                const errDiv3 = document.getElementById('resetStep3Error');
+                if (errDiv3) errDiv3.style.display = 'none';
             } else {
-                resultDiv.innerHTML = `
-                    <div style="text-align: center;">
-                        <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.message)}</p>
-                        <p style="color: #888; font-size: 12px; margin-top: 10px;">Verifica que el número sea correcto</p>
-                    </div>
-                `;
-                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-                resultDiv.style.color = '#ff4444';
+                if (errDiv) { errDiv.textContent = data.error || 'Código incorrecto o expirado'; errDiv.style.display = 'block'; }
             }
-            resultDiv.style.display = 'block';
         } catch (error) {
-            resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-            resultDiv.style.display = 'block';
+            if (errDiv) { errDiv.textContent = 'Error de conexión. Intenta más tarde.'; errDiv.style.display = 'block'; }
         }
     }
 
     async function handleResetPasswordByPhone(e) {
-        e.preventDefault();
+        // MANTENIDO por compatibilidad con HTML (resetPassForm) - redirige al nuevo flujo OTP
+        if (e) e.preventDefault();
+        // El nuevo flujo usa handleRequestPasswordReset, handleVerifyResetOtp, handleCompletePasswordReset
+    }
 
-        const phone = document.getElementById('resetPassPhone').value.trim();
+    async function handleCompletePasswordReset() {
         const newPassword = document.getElementById('resetPassNew').value;
         const confirmPassword = document.getElementById('resetPassConfirm').value;
         const resultDiv = document.getElementById('resetPassResult');
+        const errDiv = document.getElementById('resetStep3Error');
 
-        if (!phone || phone.length < 8) {
-            resultDiv.textContent = 'Ingresa un número de teléfono válido';
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-            resultDiv.style.display = 'block';
-            return;
-        }
+        if (errDiv) errDiv.style.display = 'none';
+        if (resultDiv) resultDiv.style.display = 'none';
+
         if (newPassword.length < 6) {
-            resultDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-            resultDiv.style.display = 'block';
+            if (errDiv) { errDiv.textContent = 'La contraseña debe tener al menos 6 caracteres'; errDiv.style.display = 'block'; }
             return;
         }
         if (newPassword !== confirmPassword) {
-            resultDiv.textContent = 'Las contraseñas no coinciden';
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-            resultDiv.style.display = 'block';
+            if (errDiv) { errDiv.textContent = 'Las contraseñas no coinciden'; errDiv.style.display = 'block'; }
             return;
         }
 
         try {
-            const response = await fetch(`${VIP.config.API_URL}/api/auth/reset-password-by-phone`, {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/complete-password-reset`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone, newPassword })
+                body: JSON.stringify({ resetToken: _vipResetToken, newPassword })
             });
-
             const data = await response.json();
 
             if (data.success) {
-                resultDiv.innerHTML = `
-                    <div style="text-align: center;">
-                        <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Contraseña cambiada!</p>
-                        <p style="color: #888; font-size: 12px;">Ya puedes iniciar sesión con tu nueva contraseña</p>
-                    </div>
-                `;
-                resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
-                resultDiv.style.color = '#00ff88';
-                document.getElementById('resetPassPhone').value = '';
-                document.getElementById('resetPassNew').value = '';
-                document.getElementById('resetPassConfirm').value = '';
+                _vipResetToken = null;
+                _vipResetOtpPhone = null;
+                if (resultDiv) {
+                    resultDiv.innerHTML = `<p style="color: #00ff88; font-size: 16px; font-weight: bold; text-align:center;">✅ Contraseña cambiada exitosamente</p><p style="color: #888; font-size: 12px; text-align:center;">Ya puedes iniciar sesión con tu nueva contraseña</p>`;
+                    resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
+                    resultDiv.style.display = 'block';
+                }
+                document.getElementById('resetStep3').style.display = 'none';
             } else {
-                resultDiv.innerHTML = `
-                    <div style="text-align: center;">
-                        <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.error)}</p>
-                    </div>
-                `;
-                resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-                resultDiv.style.color = '#ff4444';
+                if (errDiv) { errDiv.textContent = data.error || 'Error al cambiar contraseña'; errDiv.style.display = 'block'; }
             }
-            resultDiv.style.display = 'block';
         } catch (error) {
-            resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-            resultDiv.style.display = 'block';
+            if (errDiv) { errDiv.textContent = 'Error de conexión. Intenta más tarde.'; errDiv.style.display = 'block'; }
         }
     }
 
     return {
         checkUsernameAvailability,
         handleRegister,
+        handleRegisterSendOtp,
+        handleRegisterWithOtp,
         handleLogin,
         verifyToken,
         handleLogout,
@@ -561,6 +652,9 @@ VIP.auth = (function () {
         handleChangePassword,
         handleFindUserByPhone,
         handleResetPasswordByPhone,
+        handleRequestPasswordReset,
+        handleVerifyResetOtp,
+        handleCompletePasswordReset,
         prepareChangePasswordModal
     };
 
@@ -568,3 +662,8 @@ VIP.auth = (function () {
 
 // Window aliases for any HTML onclick / external callers
 window.checkUsernameAvailability = VIP.auth.checkUsernameAvailability;
+window.handleRegisterSendOtp = VIP.auth.handleRegisterSendOtp;
+window.handleRegisterWithOtp = VIP.auth.handleRegisterWithOtp;
+window.handleRequestPasswordReset = VIP.auth.handleRequestPasswordReset;
+window.handleVerifyResetOtp = VIP.auth.handleVerifyResetOtp;
+window.handleCompletePasswordReset = VIP.auth.handleCompletePasswordReset;

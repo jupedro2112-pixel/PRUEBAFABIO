@@ -127,7 +127,7 @@ function setupEventListeners() {
     // Registro
     document.getElementById('registerBtn').addEventListener('click', () => showModal('registerModal'));
     document.getElementById('closeRegisterModal').addEventListener('click', () => hideModal('registerModal'));
-    document.getElementById('registerForm').addEventListener('submit', handleRegister);
+    // El registro ahora usa flujo OTP: handleRegisterSendOtp y handleRegisterWithOtp (botones inline)
     
     // Chat
     document.getElementById('sendBtn').addEventListener('click', sendMessage);
@@ -206,14 +206,11 @@ function setupEventListeners() {
         showModal('changePasswordModal');
     });
     
-    // Buscar usuario por teléfono
-    document.getElementById('findUserBtn').addEventListener('click', () => showModal('findUserModal'));
-    document.getElementById('findUserForm').addEventListener('submit', handleFindUserByPhone);
+    // Buscar usuario por teléfono - ELIMINADO (reemplazado por flujo OTP seguro)
+    // document.getElementById('findUserBtn').addEventListener('click', () => showModal('findUserModal'));
     
-    // Cambiar contraseña por teléfono
-    // Botón resetPassBtn eliminado - ya no se usa
-    // document.getElementById('resetPassBtn').addEventListener('click', () => showModal('resetPassModal'));
-    document.getElementById('resetPassForm').addEventListener('submit', handleResetPasswordByPhone);
+    // Cambiar contraseña por teléfono (nuevo flujo OTP)
+    // Los handlers están definidos en las funciones globales: handleRequestPasswordReset, handleVerifyResetOtp, handleCompletePasswordReset
     
     // Cambio de contraseña
     document.getElementById('changePasswordForm').addEventListener('submit', handleChangePassword);
@@ -250,97 +247,10 @@ async function checkUsernameAvailability(username) {
     }
 }
 
-// Manejar registro
+// Manejar registro (ahora usa flujo OTP - la función legacy se mantiene como stub)
 async function handleRegister(e) {
-    e.preventDefault();
-    
-    const username = document.getElementById('registerUsername').value.trim();
-    const password = document.getElementById('registerPassword').value;
-    const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
-    const email = document.getElementById('registerEmail').value.trim();
-    const phone = document.getElementById('registerPhone').value.trim();
-    const referralCodeInput = document.getElementById('registerReferralCode');
-    const referralCode = referralCodeInput ? referralCodeInput.value.trim().toUpperCase() : null;
-    const errorDiv = document.getElementById('registerError');
-    const submitBtn = e.target.querySelector('button[type="submit"]');
-    
-    // Validaciones
-    if (password !== passwordConfirm) {
-        errorDiv.textContent = 'Las contraseñas no coinciden';
-        errorDiv.classList.add('show');
-        return;
-    }
-    
-    if (password.length < 6) {
-        errorDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
-        errorDiv.classList.add('show');
-        return;
-    }
-    
-    if (username.length < 3) {
-        errorDiv.textContent = 'El usuario debe tener al menos 3 caracteres';
-        errorDiv.classList.add('show');
-        return;
-    }
-    
-    // Mostrar estado de carga
-    if (submitBtn) {
-        submitBtn.textContent = 'Creando cuenta...';
-        submitBtn.disabled = true;
-    }
-    errorDiv.classList.remove('show');
-    
-    try {
-        const response = await fetch(`${API_URL}/api/auth/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                username, 
-                password, 
-                email: email || null, 
-                phone: phone || null,
-                referralCode: referralCode || undefined
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            // Registro exitoso, iniciar sesión automáticamente
-            currentToken = data.token;
-            currentUser = {
-                ...data.user,
-                id: data.user.id,
-                userId: data.user.id
-            };
-            localStorage.setItem('userToken', currentToken);
-            
-            hideModal('registerModal');
-            document.getElementById('registerForm').reset();
-            document.getElementById('usernameCheckResult').textContent = '';
-            
-            // Inicializar sesión con carga automática de usuario (true = después de registro)
-            await initializeSession(true);
-            
-            // Enviar token FCM al servidor después del registro
-            console.log('[FCM] Registro exitoso, enviando token FCM...');
-            await sendFcmTokenAfterLogin();
-            
-            showToast('✅ ¡Cuenta creada exitosamente!', 'success');
-        } else {
-            errorDiv.textContent = data.error || 'Error al crear cuenta';
-            errorDiv.classList.add('show');
-        }
-    } catch (error) {
-        errorDiv.textContent = 'Error de conexión';
-        errorDiv.classList.add('show');
-    } finally {
-        // Restaurar botón
-        if (submitBtn) {
-            submitBtn.textContent = '📝 Crear Cuenta';
-            submitBtn.disabled = false;
-        }
-    }
+    if (e) e.preventDefault();
+    // El registro ahora usa flujo OTP: handleRegisterSendOtp y handleRegisterWithOtp (botones inline en el HTML)
 }
 
 async function handleLogin(e) {
@@ -883,53 +793,182 @@ async function handleChangePassword(e) {
 }
 
 // ========================================
-// BUSCAR USUARIO POR TELÉFONO
+// BUSCAR USUARIO POR TELÉFONO - REEMPLAZADO POR FLUJO OTP
 // ========================================
 
-async function handleFindUserByPhone(e) {
-    e.preventDefault();
-    
-    const phone = document.getElementById('findUserPhone').value.trim();
-    const resultDiv = document.getElementById('findUserResult');
-    
-    if (!phone || phone.length < 8) {
-        resultDiv.textContent = 'Ingresa un número de teléfono válido (mínimo 8 dígitos)';
+// Estado temporal del registro OTP
+let _registerOtpPhone = null;
+
+async function handleRegisterSendOtp() {
+    const username = document.getElementById('registerUsername').value.trim();
+    const password = document.getElementById('registerPassword').value;
+    const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
+    const phonePrefix = document.getElementById('registerPhonePrefix').value;
+    const phoneNumber = document.getElementById('registerPhone').value.trim();
+    const errorDiv = document.getElementById('registerError');
+
+    errorDiv.classList.remove('show');
+
+    if (password !== passwordConfirm) {
+        errorDiv.textContent = 'Las contraseñas no coinciden';
+        errorDiv.classList.add('show');
+        return;
+    }
+    if (password.length < 6) {
+        errorDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
+        errorDiv.classList.add('show');
+        return;
+    }
+    if (username.length < 3) {
+        errorDiv.textContent = 'El usuario debe tener al menos 3 caracteres';
+        errorDiv.classList.add('show');
+        return;
+    }
+    if (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 8) {
+        errorDiv.textContent = 'Ingresá un número de teléfono válido (mínimo 8 dígitos)';
+        errorDiv.classList.add('show');
+        return;
+    }
+
+    const fullPhone = phonePrefix + phoneNumber.replace(/[\s\-().]/g, '');
+    const btn = document.getElementById('registerSendOtpBtn');
+    if (btn) { btn.textContent = 'Enviando...'; btn.disabled = true; }
+
+    try {
+        const response = await fetch(`${API_URL}/api/auth/send-register-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: fullPhone, username })
+        });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            _registerOtpPhone = fullPhone;
+            document.getElementById('registerStep1').style.display = 'none';
+            document.getElementById('registerStep2').style.display = '';
+            document.getElementById('registerOtpMsg').textContent = `✅ ${data.message} (${data.phone})`;
+            document.getElementById('registerOtpCode').value = '';
+            document.getElementById('registerOtpError').classList.remove('show');
+        } else {
+            errorDiv.textContent = data.error || 'Error al enviar el código SMS';
+            errorDiv.classList.add('show');
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error de conexión. Intenta más tarde.';
+        errorDiv.classList.add('show');
+    } finally {
+        if (btn) { btn.textContent = '📱 Enviar código SMS'; btn.disabled = false; }
+    }
+}
+
+async function handleRegisterWithOtp() {
+    const username = document.getElementById('registerUsername').value.trim();
+    const password = document.getElementById('registerPassword').value;
+    const email = document.getElementById('registerEmail').value.trim();
+    const referralCodeInput = document.getElementById('registerReferralCode');
+    const referralCode = referralCodeInput ? referralCodeInput.value.trim().toUpperCase() : null;
+    const otpCode = document.getElementById('registerOtpCode').value.trim();
+    const errorDiv = document.getElementById('registerOtpError');
+    const submitBtn = document.getElementById('registerSubmitBtn');
+
+    errorDiv.classList.remove('show');
+
+    if (!otpCode || otpCode.length < 6) {
+        errorDiv.textContent = 'Ingresá el código de 6 dígitos';
+        errorDiv.classList.add('show');
+        return;
+    }
+
+    if (!_registerOtpPhone) {
+        errorDiv.textContent = 'Error: teléfono no encontrado. Volvé al paso anterior.';
+        errorDiv.classList.add('show');
+        return;
+    }
+
+    if (submitBtn) { submitBtn.textContent = 'Creando cuenta...'; submitBtn.disabled = true; }
+
+    try {
+        const response = await fetch(`${API_URL}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username,
+                password,
+                email: email || null,
+                phone: _registerOtpPhone,
+                referralCode: referralCode || undefined,
+                otpCode
+            })
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            _registerOtpPhone = null;
+            currentToken = data.token;
+            currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
+            localStorage.setItem('userToken', currentToken);
+
+            hideModal('registerModal');
+            document.getElementById('registerForm').reset();
+            document.getElementById('usernameCheckResult').textContent = '';
+            document.getElementById('registerStep1').style.display = '';
+            document.getElementById('registerStep2').style.display = 'none';
+
+            await initializeSession(true);
+            console.log('[FCM] Registro exitoso, enviando token FCM...');
+            await sendFcmTokenAfterLogin();
+            showToast('✅ ¡Cuenta creada exitosamente!', 'success');
+        } else {
+            errorDiv.textContent = data.error || 'Error al crear cuenta';
+            errorDiv.classList.add('show');
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error de conexión';
+        errorDiv.classList.add('show');
+    } finally {
+        if (submitBtn) { submitBtn.textContent = '📝 Crear Cuenta'; submitBtn.disabled = false; }
+    }
+}
+
+// ========================================
+// RESET DE CONTRASEÑA (flujo OTP 3 pasos)
+// ========================================
+
+let _resetOtpPhone = null;
+let _resetToken = null;
+
+async function handleRequestPasswordReset() {
+    const phonePrefix = document.getElementById('resetPhonePrefix').value;
+    const phoneNumber = document.getElementById('resetPassPhone').value.trim();
+    const resultDiv = document.getElementById('resetStep1Result');
+
+    resultDiv.style.display = 'none';
+
+    if (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 8) {
+        resultDiv.textContent = 'Ingresá un número de teléfono válido (mínimo 8 dígitos)';
         resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
         resultDiv.style.color = '#ff4444';
         resultDiv.style.display = 'block';
         return;
     }
-    
+
+    const fullPhone = phonePrefix + phoneNumber.replace(/[\s\-().]/g, '');
+    _resetOtpPhone = fullPhone;
+
     try {
-        const response = await fetch(`${API_URL}/api/auth/find-user-by-phone`, {
+        const response = await fetch(`${API_URL}/api/auth/request-password-reset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone })
+            body: JSON.stringify({ phone: fullPhone })
         });
-        
         const data = await response.json();
-        
-        if (data.found) {
-            resultDiv.innerHTML = `
-                <div style="text-align: center;">
-                    <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Usuario encontrado!</p>
-                    <p style="font-size: 24px; font-weight: bold; color: #d4af37; margin: 10px 0;">${escapeHtml(data.username)}</p>
-                    <p style="color: #888; font-size: 12px;">Teléfono: ${escapeHtml(data.phone || 'No registrado')}</p>
-                </div>
-            `;
-            resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
-            resultDiv.style.color = '#00ff88';
-        } else {
-            resultDiv.innerHTML = `
-                <div style="text-align: center;">
-                    <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.message)}</p>
-                    <p style="color: #888; font-size: 12px; margin-top: 10px;">Verifica que el número sea correcto</p>
-                </div>
-            `;
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
-        }
-        resultDiv.style.display = 'block';
+
+        document.getElementById('resetStep1').style.display = 'none';
+        document.getElementById('resetStep2').style.display = '';
+        document.getElementById('resetStep2Msg').textContent = data.message || 'Si este número está vinculado a una cuenta, recibirás un código SMS.';
+        document.getElementById('resetOtpCode').value = '';
+        const errDiv = document.getElementById('resetStep2Error');
+        if (errDiv) errDiv.style.display = 'none';
     } catch (error) {
         resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
         resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
@@ -938,80 +977,81 @@ async function handleFindUserByPhone(e) {
     }
 }
 
-// ========================================
-// CAMBIAR CONTRASEÑA POR TELÉFONO
-// ========================================
+async function handleVerifyResetOtp() {
+    const code = document.getElementById('resetOtpCode').value.trim();
+    const errDiv = document.getElementById('resetStep2Error');
 
-async function handleResetPasswordByPhone(e) {
-    e.preventDefault();
-    
-    const phone = document.getElementById('resetPassPhone').value.trim();
+    if (errDiv) errDiv.style.display = 'none';
+
+    if (!code || code.length < 6) {
+        if (errDiv) { errDiv.textContent = 'Ingresá el código de 6 dígitos'; errDiv.style.display = 'block'; }
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/api/auth/verify-reset-otp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: _resetOtpPhone, code })
+        });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            _resetToken = data.resetToken;
+            document.getElementById('resetStep2').style.display = 'none';
+            document.getElementById('resetStep3').style.display = '';
+            document.getElementById('resetStep3Username').textContent = `👤 Usuario: ${escapeHtml(data.username)}`;
+            document.getElementById('resetPassNew').value = '';
+            document.getElementById('resetPassConfirm').value = '';
+            const errDiv3 = document.getElementById('resetStep3Error');
+            if (errDiv3) errDiv3.style.display = 'none';
+        } else {
+            if (errDiv) { errDiv.textContent = data.error || 'Código incorrecto o expirado'; errDiv.style.display = 'block'; }
+        }
+    } catch (error) {
+        if (errDiv) { errDiv.textContent = 'Error de conexión. Intenta más tarde.'; errDiv.style.display = 'block'; }
+    }
+}
+
+async function handleCompletePasswordReset() {
     const newPassword = document.getElementById('resetPassNew').value;
     const confirmPassword = document.getElementById('resetPassConfirm').value;
     const resultDiv = document.getElementById('resetPassResult');
-    
-    if (!phone || phone.length < 8) {
-        resultDiv.textContent = 'Ingresa un número de teléfono válido';
-        resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-        resultDiv.style.color = '#ff4444';
-        resultDiv.style.display = 'block';
-        return;
-    }
-    
+    const errDiv = document.getElementById('resetStep3Error');
+
+    if (errDiv) errDiv.style.display = 'none';
+    resultDiv.style.display = 'none';
+
     if (newPassword.length < 6) {
-        resultDiv.textContent = 'La contraseña debe tener al menos 6 caracteres';
-        resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-        resultDiv.style.color = '#ff4444';
-        resultDiv.style.display = 'block';
+        if (errDiv) { errDiv.textContent = 'La contraseña debe tener al menos 6 caracteres'; errDiv.style.display = 'block'; }
         return;
     }
-    
     if (newPassword !== confirmPassword) {
-        resultDiv.textContent = 'Las contraseñas no coinciden';
-        resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-        resultDiv.style.color = '#ff4444';
-        resultDiv.style.display = 'block';
+        if (errDiv) { errDiv.textContent = 'Las contraseñas no coinciden'; errDiv.style.display = 'block'; }
         return;
     }
-    
+
     try {
-        const response = await fetch(`${API_URL}/api/auth/reset-password-by-phone`, {
+        const response = await fetch(`${API_URL}/api/auth/complete-password-reset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ phone, newPassword })
+            body: JSON.stringify({ resetToken: _resetToken, newPassword })
         });
-        
         const data = await response.json();
-        
+
         if (data.success) {
-            resultDiv.innerHTML = `
-                <div style="text-align: center;">
-                    <p style="color: #00ff88; font-size: 18px; font-weight: bold; margin-bottom: 10px;">✅ Contraseña cambiada!</p>
-                    <p style="font-size: 16px; color: #d4af37; margin: 10px 0;">Usuario: ${escapeHtml(data.username)}</p>
-                    <p style="color: #888; font-size: 12px;">Ya puedes iniciar sesión con tu nueva contraseña</p>
-                </div>
-            `;
+            _resetToken = null;
+            _resetOtpPhone = null;
+            resultDiv.innerHTML = `<p style="color: #00ff88; font-size: 16px; font-weight: bold; text-align:center;">✅ Contraseña cambiada exitosamente</p><p style="color: #888; font-size: 12px; text-align:center;">Ya puedes iniciar sesión con tu nueva contraseña</p>`;
             resultDiv.style.background = 'rgba(0, 255, 136, 0.2)';
-            resultDiv.style.color = '#00ff88';
-            // Limpiar campos
-            document.getElementById('resetPassPhone').value = '';
-            document.getElementById('resetPassNew').value = '';
-            document.getElementById('resetPassConfirm').value = '';
+            resultDiv.style.display = 'block';
+            document.getElementById('resetStep3').style.display = 'none';
+            resultDiv.style.display = 'block';
         } else {
-            resultDiv.innerHTML = `
-                <div style="text-align: center;">
-                    <p style="color: #ff4444; font-size: 16px; font-weight: bold;">❌ ${escapeHtml(data.error)}</p>
-                </div>
-            `;
-            resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-            resultDiv.style.color = '#ff4444';
+            if (errDiv) { errDiv.textContent = data.error || 'Error al cambiar contraseña'; errDiv.style.display = 'block'; }
         }
-        resultDiv.style.display = 'block';
     } catch (error) {
-        resultDiv.textContent = 'Error de conexión. Intenta más tarde.';
-        resultDiv.style.background = 'rgba(255, 68, 68, 0.2)';
-        resultDiv.style.color = '#ff4444';
-        resultDiv.style.display = 'block';
+        if (errDiv) { errDiv.textContent = 'Error de conexión. Intenta más tarde.'; errDiv.style.display = 'block'; }
     }
 }
 
@@ -2693,6 +2733,24 @@ function hideModal(modalId) {
         return;
     }
     document.getElementById(modalId).classList.add('hidden');
+
+    // Reset OTP step states when closing modals
+    if (modalId === 'resetPassModal') {
+        const s1 = document.getElementById('resetStep1');
+        const s2 = document.getElementById('resetStep2');
+        const s3 = document.getElementById('resetStep3');
+        if (s1) s1.style.display = '';
+        if (s2) s2.style.display = 'none';
+        if (s3) s3.style.display = 'none';
+        const r = document.getElementById('resetStep1Result');
+        if (r) r.style.display = 'none';
+    }
+    if (modalId === 'registerModal') {
+        const s1 = document.getElementById('registerStep1');
+        const s2 = document.getElementById('registerStep2');
+        if (s1) s1.style.display = '';
+        if (s2) s2.style.display = 'none';
+    }
 }
 
 async function copyText(text) {

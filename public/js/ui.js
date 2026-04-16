@@ -17,6 +17,22 @@ VIP.ui = (function () {
             return;
         }
         document.getElementById(modalId).classList.add('hidden');
+
+        // Reset OTP step states when closing modals
+        if (modalId === 'resetPassModal') {
+            const s1 = document.getElementById('resetStep1');
+            const s2 = document.getElementById('resetStep2');
+            const s3 = document.getElementById('resetStep3');
+            if (s1) s1.style.display = '';
+            if (s2) s2.style.display = 'none';
+            if (s3) s3.style.display = 'none';
+        }
+        if (modalId === 'registerModal') {
+            const s1 = document.getElementById('registerStep1');
+            const s2 = document.getElementById('registerStep2');
+            if (s1) s1.style.display = '';
+            if (s2) s2.style.display = 'none';
+        }
     }
 
     // ---- Toast & copy ----
