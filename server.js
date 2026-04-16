@@ -204,19 +204,17 @@ function securityHeaders(req, res, next) {
 // SEGURIDAD - VALIDACIÓN DE INPUT
 // ============================================
 
-// Helper para comparación segura de strings (previene timing attacks)
+// Helper para comparación segura de strings (previene timing attacks).
+// Usa HMAC con clave aleatoria por llamada: ambos HMACs son siempre de 32 bytes,
+// por lo que timingSafeEqual nunca revela diferencias de longitud ni de contenido.
 function safeCompare(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  // Always pad both buffers to the same length so the timingSafeEqual call
-  // is reached regardless of whether the lengths differ — this prevents
-  // leaking length information via the timing of an early-return branch.
-  const maxLen = Math.max(a.length, b.length);
-  const aBuf = Buffer.from(a.padEnd(maxLen, '\0'));
-  const bBuf = Buffer.from(b.padEnd(maxLen, '\0'));
-  // timingSafeEqual compares byte-by-byte in constant time.
-  // The explicit length check is added afterwards so attackers cannot use
-  // timing on padding bytes to recover the secret length.
-  return crypto.timingSafeEqual(aBuf, bBuf) && a.length === b.length;
+  // A random per-call key ensures the attacker cannot predict the HMAC output
+  // and prevents multi-call timing oracle attacks.
+  const key = crypto.randomBytes(32);
+  const hmacA = crypto.createHmac('sha256', key).update(a).digest();
+  const hmacB = crypto.createHmac('sha256', key).update(b).digest();
+  return crypto.timingSafeEqual(hmacA, hmacB);
 }
 
 function sanitizeInput(input) {
@@ -6110,7 +6108,7 @@ function escapeCsvField(value) {
   if (value === null || value === undefined) return '""';
   const str = String(value);
   if (/^[=+\-@\t\r]/.test(str)) {
-    return '"\''+  str.replace(/"/g, '""') + '"';
+    return '"\'' + str.replace(/"/g, '""') + '"';
   }
   return '"' + str.replace(/"/g, '""') + '"';
 }
