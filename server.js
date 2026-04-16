@@ -1920,6 +1920,38 @@ app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, re
 });
 
 // ============================================
+// ADMIN - Verificar contraseña del panel SMS MASIVO
+// ============================================
+
+app.post('/api/admin/verify-sms-password', authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Acceso denegado.' });
+    }
+
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'Contraseña requerida.' });
+    }
+
+    const SMS_MASIVO_PASSWORD = process.env.SMS_MASIVO_PASSWORD;
+    if (!SMS_MASIVO_PASSWORD) {
+      logger.error('⛔ SMS_MASIVO_PASSWORD no configurado en el entorno.');
+      return res.status(500).json({ success: false, error: 'Configuración del servidor incompleta.' });
+    }
+
+    if (password !== SMS_MASIVO_PASSWORD) {
+      return res.status(401).json({ success: false });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`Error en verify-sms-password: ${error.message}`);
+    res.status(500).json({ success: false, error: 'Error del servidor.' });
+  }
+});
+
+// ============================================
 // ADMIN - Resetear contraseña de usuario
 // ============================================
 

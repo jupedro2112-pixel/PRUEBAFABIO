@@ -77,8 +77,8 @@ async function generateAndSendOTP(phone, purpose) {
 
   // Enviar SMS
   const message = purpose === 'register'
-    ? `Tu código de verificación para registrarte es: ${code}. Válido por 5 minutos.`
-    : `Tu código para restablecer contraseña es: ${code}. Válido por 5 minutos.`;
+    ? `VIPCARGAS - Tu código de verificación es: ${code}. Válido por 5 min. www.vipcargas.com`
+    : `VIPCARGAS - Tu código para restablecer contraseña es: ${code}. Válido por 5 min. www.vipcargas.com`;
 
   const smsResult = await sendSMS(phone, message);
 

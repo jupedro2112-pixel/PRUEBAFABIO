@@ -256,10 +256,26 @@ async function handleRegister(e) {
 async function handleLogin(e) {
     e.preventDefault();
     
-    const username = document.getElementById('username').value;
+    const loginMode = window._loginMode || 'username';
+    const username = loginMode === 'username' ? document.getElementById('username').value : null;
+    const phonePrefix = loginMode === 'phone' ? (document.getElementById('loginPhonePrefix')?.value || '+54') : null;
+    const phoneNumber = loginMode === 'phone' ? document.getElementById('loginPhone')?.value?.trim() : null;
+    const phone = loginMode === 'phone' ? (phonePrefix + (phoneNumber || '').replace(/\D/g, '')) : null;
     const password = document.getElementById('password').value;
     const errorDiv = document.getElementById('errorMessage');
     const loginBtn = document.querySelector('#loginForm button[type="submit"]');
+
+    if (loginMode === 'phone' && (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 7)) {
+        errorDiv.textContent = 'Ingresá un número de celular válido';
+        errorDiv.classList.add('show');
+        return;
+    }
+
+    if (loginMode === 'username' && !username) {
+        errorDiv.textContent = 'Ingresá tu usuario';
+        errorDiv.classList.add('show');
+        return;
+    }
     
     // Mostrar estado de carga
     if (loginBtn) {
@@ -281,11 +297,15 @@ async function handleLogin(e) {
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos para la petición
+
+        const loginPayload = loginMode === 'phone'
+            ? { phone, password }
+            : { username, password };
         
         const response = await fetch(`${API_URL}/api/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
+            body: JSON.stringify(loginPayload),
             signal: controller.signal
         });
         clearTimeout(timeoutId);

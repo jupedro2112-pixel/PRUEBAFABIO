@@ -939,7 +939,7 @@
                 <div class="panel-header">
                     <h2>📱 SMS MASIVO</h2>
                 </div>
-                <div style="padding:16px;display:grid;gap:20px;max-width:1100px;">
+                <div id="smsSectionContent" class="hidden" style="padding:16px;display:grid;gap:20px;max-width:1100px;">
 
                     <!-- Filtros -->
                     <div style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;">
@@ -1200,6 +1200,28 @@
                 <button class="btn-secondary close-modal">Cancelar</button>
                 <button id="confirmPasswordChange" class="btn-primary" onclick="handlePasswordChange()">
                     <span class="icon icon-check"></span> Cambiar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SMS Password Modal -->
+    <div id="smsPasswordModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><span class="icon icon-lock"></span> Acceso a SMS Masivo</h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="smsPasswordInput">Contraseña:</label>
+                    <input type="password" id="smsPasswordInput" placeholder="Ingresa la contraseña de SMS Masivo">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary close-modal">Cancelar</button>
+                <button class="btn-primary" onclick="verifySmsAccessFromModal()">
+                    <span class="icon icon-check"></span> Acceder
                 </button>
             </div>
         </div>
