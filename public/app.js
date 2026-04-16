@@ -711,12 +711,15 @@ function playNotificationSound() {
 // CAMBIO DE CONTRASEÑA
 // ========================================
 
-// Preparar el modal de cambio de contraseña según si el usuario ya tiene teléfono
+// Preparar el modal de cambio de contraseña según si el usuario ya tiene teléfono verificado
 function prepareChangePasswordModal() {
     const whatsappGroup = document.getElementById('changePasswordWhatsAppGroup');
     const whatsappInfo = document.getElementById('changePasswordWhatsAppInfo');
     const whatsappInput = document.getElementById('changePasswordWhatsApp');
-    const existingPhone = currentUser && (currentUser.whatsapp || currentUser.phone);
+    // Solo consideramos teléfono válido si está verificado
+    const existingPhone = currentUser && currentUser.phoneVerified && currentUser.phone
+        ? currentUser.phone
+        : (currentUser && currentUser.whatsapp) || null;
 
     if (whatsappGroup) {
         if (existingPhone) {
@@ -736,20 +739,13 @@ function prepareChangePasswordModal() {
 async function handleChangePassword(e) {
     e.preventDefault();
 
-    const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
     const newPassword = document.getElementById('newPasswordInput').value;
     const confirmPassword = document.getElementById('confirmPasswordInput').value;
     const whatsappInput = document.getElementById('changePasswordWhatsApp').value.trim();
     const errorDiv = document.getElementById('passwordError');
 
-    if (!currentPassword) {
-        errorDiv.textContent = 'Ingresá tu contraseña actual';
-        errorDiv.classList.add('show');
-        return;
-    }
-
-    // Si el usuario ya tiene número vinculado, no pedir uno nuevo
-    const existingPhone = currentUser && (currentUser.whatsapp || currentUser.phone);
+    // Si el usuario ya tiene número vinculado y verificado, no pedir uno nuevo
+    const existingPhone = currentUser && (currentUser.phoneVerified ? currentUser.phone : null) || (currentUser && currentUser.whatsapp);
     const whatsapp = whatsappInput || existingPhone || '';
     
     if (newPassword !== confirmPassword) {
@@ -779,15 +775,14 @@ async function handleChangePassword(e) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentToken}`
             },
-            body: JSON.stringify({ currentPassword, newPassword, whatsapp, closeAllSessions })
+            body: JSON.stringify({ newPassword, whatsapp, closeAllSessions })
         });
         
         if (response.ok) {
             passwordChangePending = false; // Desbloquear: cambio obligatorio completado
             hideModal('changePasswordModal');
-            showToast('✅ Contraseña y WhatsApp guardados exitosamente', 'success');
+            showToast('✅ Contraseña guardada exitosamente', 'success');
             // Limpiar campos
-            document.getElementById('currentPasswordInput').value = '';
             document.getElementById('newPasswordInput').value = '';
             document.getElementById('confirmPasswordInput').value = '';
             document.getElementById('changePasswordWhatsApp').value = '';
