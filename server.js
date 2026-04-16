@@ -58,6 +58,7 @@ const ReferralEvent = require('./src/models/ReferralEvent');
 const { generateReferralCode } = require('./src/utils/referralCode');
 const { setRedisClient, getRedisClient } = require('./src/utils/redisClient');
 const { generateAndSendOTP, verifyOTP } = require('./src/services/otpService');
+const { sendSMS } = require('./src/services/smsService');
 const { validateInternationalPhone } = require('./src/middlewares/security');
 
 // ============================================
@@ -90,6 +91,77 @@ const sensitiveLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Demasiados intentos. Intenta más tarde.' }
 });
+
+// ============================================
+// IP-BASED SMS RATE LIMITING (in-memory Map)
+// ============================================
+
+// Tracks SMS requests per IP: { ip -> [timestamp, ...] }
+const smsIpStore = new Map();
+// Tracks bulk SMS requests per IP: { ip -> [timestamp, ...] }
+const bulkSmsIpStore = new Map();
+
+// Periodically clean up expired entries to prevent memory leaks (every 30 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of smsIpStore) {
+    const valid = timestamps.filter(ts => ts > now - 15 * 60 * 1000);
+    if (valid.length === 0) smsIpStore.delete(ip);
+    else smsIpStore.set(ip, valid);
+  }
+  for (const [ip, timestamps] of bulkSmsIpStore) {
+    const valid = timestamps.filter(ts => ts > now - 60 * 60 * 1000);
+    if (valid.length === 0) bulkSmsIpStore.delete(ip);
+    else bulkSmsIpStore.set(ip, valid);
+  }
+}, 30 * 60 * 1000).unref();
+
+/**
+ * Creates an IP-based rate limiting middleware using an in-memory Map.
+ * @param {Map} store - The Map used to track IP -> timestamps
+ * @param {number} windowMs - Time window in milliseconds
+ * @param {number} max - Maximum number of requests per window
+ * @param {string} message - Error message to return when limit is exceeded
+ */
+function createIpSmsLimiter(store, windowMs, max, message) {
+  return (req, res, next) => {
+    const ip = req.ip || req.socket?.remoteAddress;
+    if (!ip) {
+      return res.status(429).json({ error: message });
+    }
+    const now = Date.now();
+    const windowStart = now - windowMs;
+
+    // Get existing timestamps for this IP, filter out expired ones
+    const timestamps = (store.get(ip) || []).filter(ts => ts > windowStart);
+
+    if (timestamps.length >= max) {
+      return res.status(429).json({ error: message });
+    }
+
+    // Record this request
+    timestamps.push(now);
+    store.set(ip, timestamps);
+
+    next();
+  };
+}
+
+// 5 SMS requests per IP per 15 minutes (for OTP endpoints)
+const smsIpLimiter = createIpSmsLimiter(
+  smsIpStore,
+  15 * 60 * 1000,
+  5,
+  'Demasiadas solicitudes de SMS. Por favor, intenta nuevamente más tarde.'
+);
+
+// 1 bulk SMS request per IP per hour
+const bulkSmsIpLimiter = createIpSmsLimiter(
+  bulkSmsIpStore,
+  60 * 60 * 1000,
+  1,
+  'Demasiadas solicitudes de SMS masivo. Por favor, intenta nuevamente en una hora.'
+);
 
 // ============================================
 // SEGURIDAD - HEADERS DE SEGURIDAD
@@ -1510,7 +1582,7 @@ app.post('/api/auth/platform-login', authMiddleware, async (req, res) => {
 // ============================================
 
 // Enviar OTP para verificación de teléfono en el registro
-app.post('/api/auth/send-register-otp', sensitiveLimiter, async (req, res) => {
+app.post('/api/auth/send-register-otp', sensitiveLimiter, smsIpLimiter, async (req, res) => {
   try {
     const { phone, username } = req.body;
 
@@ -1560,7 +1632,7 @@ app.post('/api/auth/send-register-otp', sensitiveLimiter, async (req, res) => {
 });
 
 // Solicitar reset de contraseña por SMS (anti-enumeration: siempre responde igual)
-app.post('/api/auth/request-password-reset', sensitiveLimiter, async (req, res) => {
+app.post('/api/auth/request-password-reset', sensitiveLimiter, smsIpLimiter, async (req, res) => {
   const ANTI_ENUM_MESSAGE = 'Si este número está vinculado a una cuenta, recibirás un código SMS en los próximos segundos. Si no recibís ningún código, significa que este número no está asociado a ninguna cuenta.';
 
   try {
@@ -1684,6 +1756,77 @@ app.post('/api/auth/complete-password-reset', sensitiveLimiter, async (req, res)
     res.json({ success: true, message: 'Contraseña cambiada exitosamente' });
   } catch (error) {
     logger.error(`Error en complete-password-reset: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// ADMIN - Envío masivo de SMS (solo ADMIN GENERAL)
+// ============================================
+
+app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, res) => {
+  try {
+    // Solo el administrador general puede enviar SMS masivos
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Acceso denegado. Solo el administrador general puede enviar SMS masivos.' });
+    }
+
+    const { message, filters } = req.body;
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({ error: 'El mensaje es requerido' });
+    }
+
+    const trimmedMessage = message.trim();
+
+    // Construir query: solo usuarios con teléfono verificado
+    const query = { phone: { $ne: null }, phoneVerified: true };
+
+    // Aplicar filtros adicionales opcionales (e.g., { smsConsent: true })
+    // Solo se permiten claves específicas con valores primitivos para evitar inyección NoSQL
+    if (filters && typeof filters === 'object') {
+      const allowedFilters = ['smsConsent', 'isActive'];
+      for (const key of allowedFilters) {
+        if (Object.prototype.hasOwnProperty.call(filters, key)) {
+          const val = filters[key];
+          if (typeof val === 'boolean' || typeof val === 'string' || typeof val === 'number') {
+            query[key] = val;
+          }
+        }
+      }
+    }
+
+    const users = await User.find(query).select('phone username').lean();
+
+    let sent = 0;
+    let failed = 0;
+    const total = users.length;
+
+    logger.info(`[bulk-sms] Admin ${req.user.username} iniciando envío masivo a ${total} usuarios`);
+
+    for (const user of users) {
+      try {
+        const result = await sendSMS(user.phone, trimmedMessage);
+        if (result.success) {
+          sent++;
+        } else {
+          failed++;
+          logger.warn(`[bulk-sms] Fallo al enviar a usuario ${user.username}: ${result.error}`);
+        }
+      } catch (err) {
+        failed++;
+        logger.warn(`[bulk-sms] Error al enviar a usuario ${user.username}: ${err.message}`);
+      }
+
+      // Esperar 50ms entre envíos para evitar saturar SNS
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+
+    logger.info(`[bulk-sms] Envío masivo completado por ${req.user.username}: enviados=${sent}, fallidos=${failed}, total=${total}`);
+
+    res.json({ sent, failed, total });
+  } catch (error) {
+    logger.error(`Error en bulk-sms: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
