@@ -251,8 +251,8 @@ const sendRegisterOtp = asyncHandler(async (req, res) => {
     throw new AppError(result.error, 429, 'OTP_RATE_LIMIT');
   }
 
-  // Mostrar solo los últimos 4 dígitos del teléfono
-  const maskedPhone = normalizedPhone.replace(/(\+\d+)\d{4}$/, '$1****');
+  // Mostrar código de país + últimos 4 dígitos, ocultar el resto
+  const maskedPhone = normalizedPhone.replace(/(\+\d{1,4})\d+(\d{4})$/, '$1****$2');
 
   res.json({
     success: true,

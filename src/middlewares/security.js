@@ -200,7 +200,7 @@ const normalizePhone = (countryCode, number) => {
   const cleanNumber = String(number).replace(/[\s\-().]/g, '');
   const fullPhone = String(countryCode).trim() + cleanNumber;
   // Debe empezar con + y tener entre 10 y 15 dígitos totales
-  if (!/^\+\d{9,14}$/.test(fullPhone)) return null;
+  if (!/^\+\d{8,14}$/.test(fullPhone)) return null;
   return fullPhone;
 };
 
@@ -211,7 +211,7 @@ const normalizePhone = (countryCode, number) => {
  */
 const validateInternationalPhone = (phone) => {
   if (!phone || typeof phone !== 'string') return false;
-  if (!/^\+\d{9,14}$/.test(phone)) return false;
+  if (!/^\+\d{8,14}$/.test(phone)) return false;
   // Verificar que empiece con un código de país LATAM conocido
   return VALID_COUNTRY_CODES.some(code => phone.startsWith(code));
 };

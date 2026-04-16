@@ -1545,7 +1545,7 @@ app.post('/api/auth/send-register-otp', sensitiveLimiter, async (req, res) => {
       return res.status(429).json({ error: result.error });
     }
 
-    const maskedPhone = normalizedPhone.replace(/(\+\d+)\d{4}$/, '$1****');
+    const maskedPhone = normalizedPhone.replace(/(\+\d{1,4})\d+(\d{4})$/, '$1****$2');
 
     res.json({
       success: true,

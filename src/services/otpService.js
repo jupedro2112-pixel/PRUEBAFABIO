@@ -86,11 +86,15 @@ async function generateAndSendOTP(phone, purpose) {
     // En modo desarrollo (sin SMS configurado), igual retornamos success para que el flujo continue
     // pero indicamos que el SMS no fue enviado
     if (smsResult.error === 'SMS service not configured') {
-      console.log(`[otpService] MODO DESARROLLO - Código OTP para ${phone} (${purpose}): ${code}`);
-      return { success: true, smsSent: false, devCode: code };
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[otpService] MODO DESARROLLO - Código OTP para ${phone} (${purpose}): ${code}`);
+        return { success: true, smsSent: false, devCode: code };
+      }
+      // En producción sin SMS configurado: retornar error para evitar cuentas sin verificación real
+      return { success: false, error: 'El servicio de SMS no está configurado. Contacta al administrador.' };
     }
     // Error real de SMS
-    console.error(`[otpService] Error enviando SMS OTP a ${phone}: ${smsResult.error}`);
+    console.error('[otpService] Error enviando SMS OTP:', smsResult.error);
     return { success: false, error: 'No se pudo enviar el SMS. Intenta nuevamente.' };
   }
 

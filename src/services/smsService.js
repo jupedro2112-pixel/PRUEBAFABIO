@@ -53,7 +53,8 @@ async function sendSMS(phone, message) {
     await snsClient.send(command);
     return { success: true };
   } catch (error) {
-    console.error(`[smsService] Error enviando SMS a ${phone}:`, error.message);
+    // Avoid logging user-controlled phone number in format strings
+    console.error('[smsService] Error enviando SMS:', error.message);
     return { success: false, error: error.message };
   }
 }

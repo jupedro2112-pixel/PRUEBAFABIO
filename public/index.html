@@ -331,7 +331,7 @@
                 <p id="registerOtpMsg" style="color: #00ff88; text-align: center; margin-bottom: 16px;"></p>
                 <div class="input-group">
                     <label>Código de verificación *</label>
-                    <input type="number" id="registerOtpCode" placeholder="Código de 6 dígitos" minlength="6" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="registerOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
                 </div>
                 <div id="registerOtpError" class="error-message"></div>
                 <div class="modal-actions">
@@ -737,7 +737,7 @@
                 <p id="resetStep2Msg" style="color: #00ff88; text-align: center; font-size: 13px; margin-bottom: 14px;"></p>
                 <div class="input-group">
                     <label>Código de verificación *</label>
-                    <input type="number" id="resetOtpCode" placeholder="Código de 6 dígitos" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="resetOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
                 </div>
                 <div id="resetStep2Error" style="color: #ff4444; font-size: 13px; margin: 8px 0; display: none;"></div>
                 <div class="modal-actions">
