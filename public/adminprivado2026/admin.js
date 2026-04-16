@@ -25,7 +25,7 @@ const SOCKET_OPTIONS = {
 // STATE
 // ============================================
 let socket = null;
-let currentToken = localStorage.getItem('adminToken');
+let currentToken = null;
 let currentAdmin = null;
 let selectedUserId = null;
 let selectedUsername = null;
@@ -114,12 +114,7 @@ const elements = {
 // INITIALIZATION
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
-    if (currentToken) {
-        validateToken();
-    } else {
-        showLogin();
-    }
-    
+    checkAdminSession();
     setupEventListeners();
 });
 
@@ -380,8 +375,6 @@ async function handleLogin(e) {
         if (data.token) {
             currentToken = data.token;
             currentAdmin = data.user;
-            localStorage.setItem('adminToken', currentToken);
-            localStorage.setItem('adminUser', JSON.stringify(currentAdmin));
             
             // Configurar UI según el rol
             setupRoleBasedUI();
@@ -405,7 +398,6 @@ async function handleLogin(e) {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${currentToken}`
                     },
                     body: JSON.stringify({ fcmToken: pendingFcmToken })
                 }).then(r => r.json()).then(d => {
@@ -444,15 +436,17 @@ async function handleLogin(e) {
     }
 }
 
-async function validateToken() {
+async function checkAdminSession() {
     try {
-        const response = await fetch(`${API_URL}/api/auth/verify`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
+        const response = await fetch(`${API_URL}/api/admin/me`, {
+            credentials: 'include'
         });
         
         if (response.ok) {
             const data = await response.json();
-            currentAdmin = data.user || JSON.parse(localStorage.getItem('adminUser'));
+            currentToken = data.token || null;
+            currentAdmin = data.user;
+            setupRoleBasedUI();
             showApp();
             initSocket();
             // Solicitar permiso para notificaciones al iniciar
@@ -464,12 +458,10 @@ async function validateToken() {
             // Iniciar reconciliación periódica de conversaciones
             startConversationReconciliation();
         } else {
-            localStorage.removeItem('adminToken');
-            localStorage.removeItem('adminUser');
             showLogin();
         }
     } catch (error) {
-        console.error('Token validation error:', error);
+        console.error('Session check error:', error);
         showLogin();
     }
 }
@@ -481,8 +473,6 @@ function handleLogout() {
     // Clear the server-side admin_session cookie (best-effort, ignore errors).
     fetch(`${API_URL}/api/auth/admin-logout`, { method: 'POST', credentials: 'include' })
         .catch(() => {});
-    localStorage.removeItem('adminToken');
-    localStorage.removeItem('adminUser');
     currentToken = null;
     currentAdmin = null;
     selectedUserId = null;
@@ -959,7 +949,6 @@ async function loadConversations(forceRefresh = false) {
     
     try {
         const response = await fetch(`${API_URL}/api/admin/conversations?status=${currentTab}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to load conversations');
@@ -984,7 +973,6 @@ async function prefetchMessages(convs) {
     for (const conv of convs) {
         if (!messageCache.has(conv.userId)) {
             fetch(`${API_URL}/api/messages/${conv.userId}?limit=50`, {
-                headers: { 'Authorization': `Bearer ${currentToken}` }
             })
             .then(r => r.json())
             .then(data => {
@@ -1181,7 +1169,6 @@ async function loadMessages(userId) {
         
         // Cargar últimos 50 mensajes previos (límite del panel de admin)
         const response = await fetch(`${API_URL}/api/messages/${userId}?limit=50`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` },
             signal: controller.signal
         });
         
@@ -1491,7 +1478,6 @@ async function sendMessage() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${currentToken}`
                 },
                 body: JSON.stringify({
                     content: messageToSend,
@@ -1594,7 +1580,6 @@ async function handleImageSelect(e) {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${currentToken}`
                 },
                 body: JSON.stringify({
                     content: base64File,
@@ -1680,7 +1665,6 @@ async function handleAdminPaste(e) {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${currentToken}`
                         },
                         body: JSON.stringify({ content: base64Image, receiverId: selectedUserId, type: 'image' })
                     });
@@ -1841,7 +1825,6 @@ async function markMessagesAsRead(userId) {
     try {
         await fetch(`${API_URL}/api/messages/read/${userId}`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         // Actualizar conteo local de no leídos inmediatamente (optimistic update)
@@ -1865,7 +1848,6 @@ async function markMessagesAsRead(userId) {
 async function loadUserInfo(userId) {
     try {
         const response = await fetch(`${API_URL}/api/users/${userId}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to load user info');
@@ -1953,7 +1935,6 @@ async function sendCBU() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ userId: selectedUserId })
         });
@@ -2000,7 +1981,6 @@ async function handleDeposit() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({
                 userId: selectedUserId,
@@ -2064,7 +2044,6 @@ async function handleWithdraw() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({
                 userId: selectedUserId,
@@ -2122,7 +2101,6 @@ async function handleDirectBonus() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({
                 userId: selectedUserId,
@@ -2199,7 +2177,6 @@ async function handlePasswordChange() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({
                 userId: selectedUserId,
@@ -2262,7 +2239,6 @@ async function sendToPayments() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ userId: userIdToRemove })
         });
@@ -2333,7 +2309,6 @@ async function sendToOpen() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ userId: userIdToRemove })
         });
@@ -2451,7 +2426,6 @@ async function closeChat() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ 
                 userId: userIdToClose,
@@ -2558,7 +2532,6 @@ async function loadDatos() {
         }
 
         const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!response.ok) throw new Error('Failed to load datos');
         const json = await response.json();
@@ -2634,7 +2607,6 @@ async function loadDatos() {
 async function loadStats() {
     try {
         const response = await fetch(`${API_URL}/api/admin/stats`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to load stats');
@@ -2679,7 +2651,6 @@ let allUsersCache = [];
 async function loadUsers() {
     try {
         const response = await fetch(`${API_URL}/api/admin/users`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to load users');
@@ -2720,7 +2691,6 @@ async function exportUsersCSV() {
     
     try {
         const response = await fetch(`${API_URL}/api/admin/users/export/csv`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to export users');
@@ -2998,7 +2968,6 @@ async function selectAllBalance() {
     
     try {
         const response = await fetch(`${API_URL}/api/admin/balance/${selectedUsername}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (response.ok) {
@@ -3065,7 +3034,6 @@ async function loadTransactions() {
         }
         
         const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to load transactions');
@@ -3303,7 +3271,6 @@ async function verifySmsAccessFromModal() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ password })
         });
@@ -3346,7 +3313,6 @@ async function verifyDatabaseAccess() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ dbPassword: password })
         });
@@ -3384,7 +3350,6 @@ async function loadDatabaseUsers() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ dbPassword: password })
         });
@@ -3450,7 +3415,6 @@ async function exportDatabaseCSV() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ dbPassword: password })
         });
@@ -3483,7 +3447,6 @@ async function verifyDatabaseAccessFromModal() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ dbPassword: password })
         });
@@ -3534,7 +3497,6 @@ async function handleCreateUser() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ username, password, email, phone, role })
         });
@@ -3568,7 +3530,6 @@ let commandsData = [];
 async function loadCommands() {
     try {
         const response = await fetch(`${API_URL}/api/admin/commands`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (!response.ok) throw new Error('Failed to load commands');
@@ -3616,7 +3577,6 @@ function renderCommands(commands) {
 async function loadCBUConfig() {
     try {
         const response = await fetch(`${API_URL}/api/admin/cbu`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (response.ok) {
@@ -3650,7 +3610,6 @@ async function saveCBUConfig() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ bank, titular, number, alias })
         });
@@ -3671,7 +3630,6 @@ async function saveCBUConfig() {
 async function loadCanalUrlConfig() {
     try {
         const response = await fetch(`${API_URL}/api/admin/config`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (response.ok) {
             const data = await response.json();
@@ -3694,7 +3652,6 @@ async function saveCanalUrl() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ url })
         });
@@ -3748,7 +3705,6 @@ async function handleCreateCommand() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ name, description, response })
         });
@@ -3778,7 +3734,6 @@ async function deleteCommand(name) {
     try {
         const response = await fetch(`${API_URL}/api/admin/commands/${encodeURIComponent(name)}`, {
             method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
         if (response.ok) {
@@ -3965,7 +3920,6 @@ async function sendPushNotification(userId, message) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({
                 userId: userId,
@@ -4001,7 +3955,6 @@ async function prefetchFrequentConversations() {
     for (const conv of frequentUsers) {
         if (!messageCache.has(conv.userId)) {
             fetch(`${API_URL}/api/messages/${conv.userId}?limit=50`, {
-                headers: { 'Authorization': `Bearer ${currentToken}` }
             })
             .then(r => r.json())
             .then(data => {
@@ -4103,7 +4056,6 @@ async function loadNotificationsPanel() {
 async function loadNotifStats() {
     try {
         const res = await fetch(`${API_URL}/api/notifications/users-status?page=1&limit=1&filter=all`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         const data = await res.json();
         if (!data.success) return;
@@ -4126,7 +4078,6 @@ async function loadNotifUsers(page = 1, filter = 'all') {
 
     try {
         const res = await fetch(`${API_URL}/api/notifications/users-status?page=${page}&limit=${limit}&filter=${filter}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         const data = await res.json();
         if (!data.success) { if (listEl) listEl.innerHTML = '<p style="color:#f00">Error al cargar</p>'; return; }
@@ -4224,7 +4175,6 @@ async function sendBatchNotification(batchOffset) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ title, body, batchSize, segment, batchOffset: offset, usernames })
         });
@@ -4364,7 +4314,7 @@ async function sendAllWithApp() {
 
             const res = await fetch(`${API_URL}/api/notifications/send-batch`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ title, body, batchSize: 200, segment: 'all', batchOffset: offset })
             });
             const data = await res.json();
@@ -4421,7 +4371,6 @@ async function cleanInvalidTokens() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ sendTest: false })
         });
@@ -4516,7 +4465,6 @@ async function loadAdminReferralSummary() {
     loadAdminReferralPayouts();
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/summary`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) { container.innerHTML = '<span style="color:#ff4444;">Error cargando datos.</span>'; return; }
         const data = await res.json();
@@ -4656,7 +4604,6 @@ async function loadAdminReferralPayouts() {
         if (usernameFilter) params.append('username', usernameFilter);
 
         const res = await fetch(`${API_URL}/api/referrals/admin/payouts?${params}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) {
             container.innerHTML = '<span style="color:#ff4444;font-size:12px;">Error cargando historial de pagos.</span>';
@@ -4752,7 +4699,6 @@ async function loadAdminUserReferrals(userId) {
     if (detailPanel) detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/users/${userId}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) {
             if (detailContent) detailContent.innerHTML = '<span style="color:#ff4444;">Error cargando detalle del referidor.</span>';
@@ -4921,7 +4867,6 @@ async function loadAdminReferralRelationships() {
     if (referredFilter) params.append('referredUsername', referredFilter);
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/relationships?${params}`, {
-            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) {
             container.innerHTML = '<span style="color:#ff4444;">Error cargando relaciones. Verificar que el endpoint exista.</span>';
@@ -5113,7 +5058,7 @@ async function adminReferralPreview() {
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/preview`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
@@ -5138,7 +5083,7 @@ async function adminReferralCalculate() {
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/calculate`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
@@ -5166,7 +5111,7 @@ async function adminReferralPayout() {
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/payout`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${currentToken}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ periodKey: period })
         });
         const data = await res.json();
@@ -5306,7 +5251,6 @@ async function handleChangeOwnPassword() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ currentPassword, newPassword })
         });
@@ -5384,7 +5328,6 @@ async function previewSmsMasivo() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ filters })
         });
@@ -5493,7 +5436,6 @@ async function enviarSmsMasivo(mensaje) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
             },
             body: JSON.stringify({ message: mensaje, filters })
         });

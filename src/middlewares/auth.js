@@ -138,6 +138,23 @@ const authenticate = async (req, res, next) => {
       ));
     }
 
+    // Check tokenVersion for session revocation
+    if (decoded.tokenVersion !== undefined) {
+      try {
+        const user = await User.findOne({ id: decoded.userId }).select('tokenVersion isActive').lean();
+        if (user && user.tokenVersion && decoded.tokenVersion !== user.tokenVersion) {
+          return next(new AppError(
+            'Sesión invalidada. Iniciá sesión nuevamente.',
+            401,
+            ErrorCodes.AUTH_UNAUTHORIZED
+          ));
+        }
+      } catch (dbErr) {
+        logger.error('Error verificando tokenVersion:', dbErr.message);
+        // Allow request if DB check fails (best-effort)
+      }
+    }
+
     // Adjuntar usuario al request
     req.user = decoded;
     req.token = token;
