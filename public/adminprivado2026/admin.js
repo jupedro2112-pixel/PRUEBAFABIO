@@ -4056,6 +4056,7 @@ async function loadNotificationsPanel() {
 async function loadNotifStats() {
     try {
         const res = await fetch(`${API_URL}/api/notifications/users-status?page=1&limit=1&filter=all`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         const data = await res.json();
         if (!data.success) return;
@@ -4078,6 +4079,7 @@ async function loadNotifUsers(page = 1, filter = 'all') {
 
     try {
         const res = await fetch(`${API_URL}/api/notifications/users-status?page=${page}&limit=${limit}&filter=${filter}`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         const data = await res.json();
         if (!data.success) { if (listEl) listEl.innerHTML = '<p style="color:#f00">Error al cargar</p>'; return; }
