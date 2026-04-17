@@ -1269,8 +1269,7 @@ function renderMessages(messages) {
 function formatMessageContent(msg) {
     if (msg.type === 'image') {
         const safeUrl = encodeURI(msg.content);
-        const jsonUrl = JSON.stringify(safeUrl);
-        return `<img src="${safeUrl}" class="message-image" onclick="openLightbox(${jsonUrl})" alt="Imagen" loading="lazy">`;
+        return `<img src="${safeUrl}" class="message-image" data-lightbox-src="${safeUrl}" alt="Imagen" loading="lazy" style="cursor:pointer;">`;
     }
     
     if (msg.type === 'video') {
@@ -4059,6 +4058,14 @@ function createMessageElement(message) {
         <div class="message-content">${content}</div>
         <div class="message-time">${time}</div>
     `;
+
+    const lightboxImg = msgDiv.querySelector('[data-lightbox-src]');
+    if (lightboxImg) {
+        const src = lightboxImg.dataset.lightboxSrc;
+        lightboxImg.addEventListener('click', function() {
+            openLightbox(src);
+        });
+    }
     
     return msgDiv;
 }

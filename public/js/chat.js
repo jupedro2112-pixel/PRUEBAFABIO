@@ -63,10 +63,10 @@ VIP.chat = (function () {
         });
 
         let contentHtml = '';
+        let imageUrl = null;
         if (message.type === 'image') {
-            const safeUrl = encodeURI(message.content);
-            const jsonUrl = JSON.stringify(safeUrl);
-            contentHtml = `<img src="${safeUrl}" onclick="openLightbox(${jsonUrl})" loading="lazy">`;
+            imageUrl = encodeURI(message.content);
+            contentHtml = `<img src="${imageUrl}" loading="lazy" style="cursor:pointer;">`;
         } else if (message.type === 'video') {
             const safeUrl = encodeURI(message.content);
             contentHtml = `<video src="${safeUrl}" controls preload="metadata" style="max-width:100%;max-height:300px;border-radius:8px;"></video>`;
@@ -79,6 +79,15 @@ VIP.chat = (function () {
         }
 
         msgDiv.innerHTML = `${contentHtml}<span class="message-time">${time}</span>`;
+
+        if (imageUrl) {
+            const img = msgDiv.querySelector('img');
+            if (img) {
+                img.addEventListener('click', function() {
+                    openLightbox(imageUrl);
+                });
+            }
+        }
 
         const copyBtn = document.createElement('button');
         copyBtn.className = 'copy-btn';
