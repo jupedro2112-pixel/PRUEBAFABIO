@@ -228,9 +228,10 @@ async function migrateReferralPayoutIndex() {
 async function connectDB() {
   try {
     await mongoose.connect(MONGODB_URI, {
-      maxPoolSize: 50,
+      maxPoolSize: 20,
+      minPoolSize: 5,
       serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
+      socketTimeoutMS: 30000,
     });
     console.log('✅ MongoDB conectado');
 
@@ -239,6 +240,32 @@ async function connectDB() {
     // Backfill settlement amounts for legacy payouts that lack perReferredDetails.
     // Must run AFTER migrateReferralPayoutIndex so the collection and indexes are stable.
     await backfillLegacyPayoutSettlements();
+
+    // Auto-delete messages older than 3 days via MongoDB TTL index
+    Message.collection.createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 259200 } // 3 days = 3 * 24 * 60 * 60
+    ).then(() => {
+      console.log('✅ TTL index para auto-limpieza de mensajes (3 días) creado/verificado');
+    }).catch(err => {
+      if (err.codeName === 'IndexOptionsConflict') {
+        // An existing createdAt_1 index without TTL is present — auto-cleanup will not work
+        // until the conflicting index is manually dropped and this process is restarted
+        console.warn('⚠️ TTL index no creado: existe un índice createdAt_1 sin TTL (IndexOptionsConflict). Para activar auto-limpieza, eliminar el índice manualmente y reiniciar.');
+      } else {
+        console.error('Error creando TTL index:', err.message);
+      }
+    });
+
+    // One-time cleanup of messages older than 3 days
+    const messageCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    Message.deleteMany({ createdAt: { $lt: messageCutoff } })
+      .then(result => {
+        if (result.deletedCount > 0) {
+          console.log(`🧹 Limpieza inicial: ${result.deletedCount} mensajes antiguos eliminados`);
+        }
+      })
+      .catch(err => console.error('Error en limpieza inicial de mensajes:', err.message));
 
     return true;
   } catch (error) {

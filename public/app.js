@@ -1444,7 +1444,7 @@ let lastMessagesHash = ''; // Para evitar re-renderizar si no hay cambios
 function startMessagePolling() {
     loadMessages();
     // Polling de respaldo: cada 8 segundos (el socket maneja los mensajes en tiempo real)
-    messageCheckInterval = setInterval(loadMessages, 8000);
+    messageCheckInterval = setInterval(loadMessages, 30000);
     initSocket();
 }
 
@@ -2727,7 +2727,7 @@ function startBalancePolling() {
     if (balanceCheckInterval) {
         clearInterval(balanceCheckInterval);
     }
-    balanceCheckInterval = setInterval(syncBalance, 10000);
+    balanceCheckInterval = setInterval(syncBalance, 30000);
 }
 
 // Detener polling de saldo
