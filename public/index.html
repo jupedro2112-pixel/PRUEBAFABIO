@@ -1387,21 +1387,36 @@
                     // Guardia: si Firebase no está disponible verificar si ya hay token activo
                     // antes de reportar un error al usuario.
                     if (!messaging) {
-                        console.error('[FCM] ❌ Firebase Messaging no disponible — no se puede obtener token');
-                        // Si existe un token en localStorage el sistema puede seguir operativo
-                        // (token registrado en sesión anterior). No mostrar error en ese caso.
-                        const _existingToken = localStorage.getItem('fcmToken');
-                        if (_existingToken) {
-                            console.log('[FCM] Token existente detectado — notificaciones pueden estar activas');
-                            if (typeof showToast === 'function') {
-                                showToast('✅ Notificaciones ya activadas', 'success');
+                        console.log('[FCM] messaging es null, intentando reinicializar...');
+                        if (typeof firebase !== 'undefined' && firebase.messaging) {
+                            try {
+                                if (!firebase.apps || firebase.apps.length === 0) {
+                                    app = firebase.initializeApp(firebaseConfig);
+                                }
+                                messaging = firebase.messaging();
+                                console.log('[FCM] ✅ Firebase Messaging reinicializado correctamente');
+                            } catch (reinitErr) {
+                                console.error('[FCM] ❌ Reinicialización falló:', reinitErr);
                             }
-                            return { success: true, token: _existingToken };
                         }
-                        if (typeof showToast === 'function') {
-                            showToast('⚠️ No se pudieron activar las notificaciones. Intentálo de nuevo.', 'warning');
+                        // Si sigue siendo null después del reintento, ahí sí mostrar el error
+                        if (!messaging) {
+                            console.error('[FCM] ❌ Firebase Messaging no disponible — no se puede obtener token');
+                            // Si existe un token en localStorage el sistema puede seguir operativo
+                            // (token registrado en sesión anterior). No mostrar error en ese caso.
+                            const _existingToken = localStorage.getItem('fcmToken');
+                            if (_existingToken) {
+                                console.log('[FCM] Token existente detectado — notificaciones pueden estar activas');
+                                if (typeof showToast === 'function') {
+                                    showToast('✅ Notificaciones ya activadas', 'success');
+                                }
+                                return { success: true, token: _existingToken };
+                            }
+                            if (typeof showToast === 'function') {
+                                showToast('⚠️ No se pudieron activar las notificaciones. Intentálo de nuevo.', 'warning');
+                            }
+                            return { success: false, error: 'Firebase Messaging no disponible' };
                         }
-                        return { success: false, error: 'Firebase Messaging no disponible' };
                     }
 
                     // Borrar token anterior (incluida la suscripción push subyacente) para
