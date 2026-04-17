@@ -5436,11 +5436,12 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
 // ============================================
 
 let _cachedAdminStats = { data: null, lastUpdate: 0 };
+const _STATS_CACHE_TTL = 60000; // 60 seconds
 
 app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const now = Date.now();
-    if (_cachedAdminStats.data && now - _cachedAdminStats.lastUpdate < 30000) {
+    if (_cachedAdminStats.data && now - _cachedAdminStats.lastUpdate < _STATS_CACHE_TTL) {
       return res.json(_cachedAdminStats.data);
     }
     const totalUsers = await User.countDocuments();
@@ -5466,6 +5467,9 @@ app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) =>
     res.json(result);
   } catch (error) {
     console.error('Error obteniendo estadísticas:', error);
+    if (_cachedAdminStats.data) {
+      return res.json({ ..._cachedAdminStats.data, cached: true });
+    }
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

@@ -68,7 +68,7 @@ const UserActivity = mongoose.models['UserActivity'] || mongoose.model('UserActi
 async function connectDB() {
   try {
     await mongoose.connect(MONGODB_URI, {
-      maxPoolSize: 50,
+      maxPoolSize: 20,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
     });

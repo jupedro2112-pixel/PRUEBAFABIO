@@ -27,6 +27,11 @@ if (!JWT_SECRET) {
   // Pero el middleware requireAdmin fallará si JWT_SECRET es undefined, lo cual es el comportamiento correcto.
 }
 
+// In-memory cache for FCM stats endpoints
+const _fcmStatsCache = { data: null, updatedAt: 0 };
+const _fcmUsersStatusCache = { data: null, updatedAt: 0 };
+const FCM_CACHE_TTL = 60000; // 60 seconds
+
 // ============================================
 // MIDDLEWARE DE AUTENTICACIÓN (Admin)
 // ============================================
@@ -486,6 +491,11 @@ router.post('/send-to-usernames', requireAdmin, async (req, res) => {
 // ============================================
 router.get('/stats', requireAdmin, async (req, res) => {
   try {
+    const now = Date.now();
+    if (_fcmStatsCache.data && (now - _fcmStatsCache.updatedAt) < FCM_CACHE_TTL) {
+      return res.json(_fcmStatsCache.data);
+    }
+
     console.log('[FCM] Solicitando estadísticas...');
     
     const totalUsers = await User.countDocuments();
@@ -505,7 +515,7 @@ router.get('/stats', requireAdmin, async (req, res) => {
     .limit(10)
     .lean();
 
-    res.json({
+    const result = {
       success: true,
       stats: {
         totalUsers,
@@ -518,9 +528,15 @@ router.get('/stats', requireAdmin, async (req, res) => {
         tokenPreview: u.fcmToken ? u.fcmToken.substring(0, 20) + '...' : null,
         updatedAt: u.fcmTokenUpdatedAt
       }))
-    });
+    };
+    _fcmStatsCache.data = result;
+    _fcmStatsCache.updatedAt = now;
+    res.json(result);
   } catch (error) {
     console.error('[FCM] Error:', error);
+    if (_fcmStatsCache.data) {
+      return res.json({ ..._fcmStatsCache.data, cached: true });
+    }
     res.status(500).json({ error: error.message });
   }
 });
@@ -686,6 +702,15 @@ router.setIo = (ioInstance) => { _io = ioInstance; };
 // ============================================
 router.get('/users-status', requireAdmin, async (req, res) => {
   try {
+    const now = Date.now();
+    // Cache only default (no-filter, page 1) requests to avoid stale paginated data
+    const isDefaultRequest = (!req.query.filter || req.query.filter === 'all') &&
+      (!req.query.page || req.query.page === '1') &&
+      (!req.query.limit || req.query.limit === '50');
+    if (isDefaultRequest && _fcmUsersStatusCache.data && (now - _fcmUsersStatusCache.updatedAt) < FCM_CACHE_TTL) {
+      return res.json(_fcmUsersStatusCache.data);
+    }
+
     const { page = 1, limit = 50, filter = 'all' } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -707,7 +732,7 @@ router.get('/users-status', requireAdmin, async (req, res) => {
     const totalUsers = await User.countDocuments();
     const usersWithToken = await User.countDocuments({ fcmToken: { $exists: true, $ne: null } });
 
-    res.json({
+    const result = {
       success: true,
       stats: {
         totalUsers,
@@ -728,9 +753,17 @@ router.get('/users-status', requireAdmin, async (req, res) => {
         total,
         pages: Math.ceil(total / parseInt(limit))
       }
-    });
+    };
+    if (isDefaultRequest) {
+      _fcmUsersStatusCache.data = result;
+      _fcmUsersStatusCache.updatedAt = now;
+    }
+    res.json(result);
   } catch (error) {
     console.error('[FCM] Error en users-status:', error);
+    if (_fcmUsersStatusCache.data) {
+      return res.json({ ..._fcmUsersStatusCache.data, cached: true });
+    }
     res.status(500).json({ error: error.message });
   }
 });

@@ -14,7 +14,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-d
 const connectDB = async () => {
   try {
     const conn = await mongoose.connect(MONGODB_URI, {
-      maxPoolSize: 50,
+      maxPoolSize: 20,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
     });
