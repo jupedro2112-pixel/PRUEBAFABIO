@@ -2985,12 +2985,24 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Tipo de mensaje no válido' });
     }
 
-    // SECURITY: For image/video, validate that content is a well-formed https:// URL
+    // SECURITY: For image/video, validate that content is a well-formed https:// URL or an allowed data: URL
     if (type === 'image' || type === 'video') {
-      let parsedUrl;
-      try { parsedUrl = new URL(content); } catch (_) { parsedUrl = null; }
-      if (!parsedUrl || parsedUrl.protocol !== 'https:') {
-        return res.status(400).json({ error: 'Las imágenes y videos deben ser URLs seguras (https)' });
+      const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+      const ALLOWED_DATA_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm'];
+      if (content.startsWith('data:')) {
+        const mimeMatch = content.match(/^data:([\w\/+.-]+);base64,/);
+        if (!mimeMatch || !ALLOWED_DATA_MIMES.includes(mimeMatch[1])) {
+          return res.status(400).json({ error: 'Tipo de imagen o video no permitido' });
+        }
+        if (content.length > MAX_BASE64_SIZE) {
+          return res.status(400).json({ error: 'La imagen o video es demasiado grande (máximo 5MB)' });
+        }
+      } else {
+        let parsedUrl;
+        try { parsedUrl = new URL(content); } catch (_) { parsedUrl = null; }
+        if (!parsedUrl || parsedUrl.protocol !== 'https:') {
+          return res.status(400).json({ error: 'Las imágenes y videos deben ser URLs seguras (https)' });
+        }
       }
     }
     
@@ -4287,12 +4299,24 @@ io.on('connection', (socket) => {
         return socket.emit('error', { message: 'Tipo de mensaje no válido' });
       }
 
-      // SECURITY: For image/video, validate that content is a well-formed https:// URL
+      // SECURITY: For image/video, validate that content is a well-formed https:// URL or an allowed data: URL
       if ((type === 'image' || type === 'video') && content) {
-        let parsedMsgUrl;
-        try { parsedMsgUrl = new URL(content); } catch (_) { parsedMsgUrl = null; }
-        if (!parsedMsgUrl || parsedMsgUrl.protocol !== 'https:') {
-          return socket.emit('error', { message: 'Las imágenes y videos deben ser URLs seguras (https)' });
+        const MAX_BASE64_SIZE = 5 * 1024 * 1024; // 5MB
+        const ALLOWED_DATA_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm'];
+        if (content.startsWith('data:')) {
+          const mimeMatch = content.match(/^data:([\w\/+.-]+);base64,/);
+          if (!mimeMatch || !ALLOWED_DATA_MIMES.includes(mimeMatch[1])) {
+            return socket.emit('error', { message: 'Tipo de imagen o video no permitido' });
+          }
+          if (content.length > MAX_BASE64_SIZE) {
+            return socket.emit('error', { message: 'La imagen o video es demasiado grande (máximo 5MB)' });
+          }
+        } else {
+          let parsedMsgUrl;
+          try { parsedMsgUrl = new URL(content); } catch (_) { parsedMsgUrl = null; }
+          if (!parsedMsgUrl || parsedMsgUrl.protocol !== 'https:') {
+            return socket.emit('error', { message: 'Las imágenes y videos deben ser URLs seguras (https)' });
+          }
         }
       }
       
