@@ -1096,6 +1096,12 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     if (!otpResult.valid) {
       return res.status(400).json({ error: otpResult.error || 'Código de verificación incorrecto o expirado' });
     }
+
+    // Check if phone is already registered and verified (second line of defense)
+    const existingPhoneUser = await User.findOne({ phone: normalizedPhone, phoneVerified: true }).lean();
+    if (existingPhoneUser) {
+      return res.status(400).json({ error: 'Este número de teléfono ya está registrado' });
+    }
     
     // Buscar case-insensitive
     const existingUser = await User.findOne({ 
@@ -1239,24 +1245,37 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 // Login
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, phone, password } = req.body;
     
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
+    if ((!username && !phone) || !password) {
+      return res.status(400).json({ error: 'Usuario o teléfono, y contraseña requeridos' });
     }
     
-    logger.debug(`Login attempt for: ${username}`);
+    logger.debug(`Login attempt for: ${username || phone}`);
     
     // Buscar usuario case-insensitive (para soportar usernames con mayúsculas/minúsculas)
     let user;
     let dbReadFailed = false;
-    try {
-      user = await User.findOne({ 
-        username: { $regex: new RegExp('^' + escapeRegex(username) + '$', 'i') } 
-      });
-    } catch (dbErr) {
-      logger.error(`[Login] MongoDB read failed for ${username}: ${dbErr.message}`);
-      dbReadFailed = true;
+
+    if (phone && !username) {
+      // Phone-based login
+      const normalizedPhone = phone.trim();
+      try {
+        user = await User.findOne({ phone: normalizedPhone, phoneVerified: true });
+      } catch (dbErr) {
+        logger.error(`[Login] MongoDB read failed for phone ${normalizedPhone}: ${dbErr.message}`);
+        dbReadFailed = true;
+      }
+    } else {
+      // Username-based login
+      try {
+        user = await User.findOne({ 
+          username: { $regex: new RegExp('^' + escapeRegex(username) + '$', 'i') } 
+        });
+      } catch (dbErr) {
+        logger.error(`[Login] MongoDB read failed for ${username}: ${dbErr.message}`);
+        dbReadFailed = true;
+      }
     }
 
     // Fallback controlado si MongoDB no está disponible: solo con credenciales de env vars
@@ -1281,8 +1300,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       });
     }
     
-    // Si no existe localmente, verificar en JUGAYGANA
-    if (!user) {
+    // Si no existe localmente, verificar en JUGAYGANA (solo para login por username)
+    if (!user && username) {
       logger.debug(`User ${username} not found locally, checking JUGAYGANA...`);
       
       const jgUser = await jugaygana.getUserInfoByName(username);
@@ -1321,8 +1340,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         
         logger.info(`User ${username} auto-created from JUGAYGANA`);
       } else {
-        return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+        return res.status(401).json({ error: 'Credenciales inválidas' });
       }
+    } else if (!user) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
     
     // Convertir a objeto plano para acceder a los campos correctamente
@@ -1333,25 +1354,27 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     
     logger.debug(`User found: ${userObj.username}, ID: ${userId}`);
     
+    const loginIdentifier = username || phone;
+    
     if (!userId) {
-      logger.error(`User ${username} has no valid ID`);
+      logger.error(`User ${loginIdentifier} has no valid ID`);
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
     if (!userObj.isActive) {
-      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
     
     // Verificar que el usuario tenga una contraseña válida
     if (!userObj.password) {
-      logger.error(`User ${username} has no password configured`);
+      logger.error(`User ${loginIdentifier} has no password configured`);
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
     // Verificar si la contraseña almacenada es un hash bcrypt válido
     const isValidBcryptHash = userObj.password.startsWith('$2') || userObj.password.startsWith('$2a$') || userObj.password.startsWith('$2b$');
     if (!isValidBcryptHash) {
-      logger.error(`User ${username} has password in invalid format`);
+      logger.error(`User ${loginIdentifier} has password in invalid format`);
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
@@ -1366,12 +1389,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     try {
       isValidPassword = await bcrypt.compare(password, userObj.password);
     } catch (bcryptError) {
-      logger.error(`Error comparing password for ${username}: ${bcryptError.message}`);
+      logger.error(`Error comparing password for ${loginIdentifier}: ${bcryptError.message}`);
     }
     
     // Si la contraseña no coincide y el usuario nunca cambió su contraseña, intentar con 'asd123'
     if (!isValidPassword && !userObj.passwordChangedAt) {
-      logger.debug(`Trying default password for ${username}...`);
+      logger.debug(`Trying default password for ${loginIdentifier}...`);
       const defaultHash = await bcrypt.hash('asd123', 10);
       try {
         isValidPassword = await bcrypt.compare(password, defaultHash);
@@ -1381,11 +1404,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
     
     if (!isValidPassword) {
-      logger.debug(`Wrong password for ${username}`);
-      return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+      logger.debug(`Wrong password for ${loginIdentifier}`);
+      return res.status(401).json({ error: 'Credenciales inválidas' });
     }
     
-    logger.info(`Login successful for ${username}`);
+    logger.info(`Login successful for ${loginIdentifier}`);
     
     // Actualizar lastLogin usando el modelo de Mongoose
     user.lastLogin = new Date();
@@ -1404,12 +1427,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       const jgLogin = await jugayganaService.loginAsUser(userObj.username, password);
       if (jgLogin.success) {
         jugayganaToken = jgLogin.token;
-        logger.info(`Token JUGAYGANA obtenido para: ${username}`);
+        logger.info(`Token JUGAYGANA obtenido para: ${loginIdentifier}`);
       } else {
-        logger.warn(`No se pudo obtener token JUGAYGANA para ${username}: ${jgLogin.error}`);
+        logger.warn(`No se pudo obtener token JUGAYGANA para ${loginIdentifier}: ${jgLogin.error}`);
       }
     } catch (jgErr) {
-      logger.warn(`Error obteniendo token JUGAYGANA para ${username}: ${jgErr.message}`);
+      logger.warn(`Error obteniendo token JUGAYGANA para ${loginIdentifier}: ${jgErr.message}`);
     }
     
     // Set an httpOnly admin session cookie for admin roles so that the server
@@ -1714,6 +1737,114 @@ app.post('/api/auth/send-register-otp', sensitiveLimiter, smsIpLimiter, async (r
     });
   } catch (error) {
     logger.error(`Error en send-register-otp: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Solicitar OTP para login por teléfono (anti-enumeration: siempre responde igual)
+app.post('/api/auth/login-otp-request', authLimiter, smsIpLimiter, async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || typeof phone !== 'string') {
+      return res.status(400).json({ error: 'Número de teléfono requerido' });
+    }
+    const normalizedPhone = phone.trim();
+    if (!validateInternationalPhone(normalizedPhone)) {
+      return res.status(400).json({ error: 'Número de teléfono inválido' });
+    }
+
+    // Check if user exists with this phone (verified)
+    const user = await User.findOne({ phone: normalizedPhone, phoneVerified: true }).lean();
+
+    // ANTI-ENUMERATION: Always respond the same way
+    if (user) {
+      try {
+        await generateAndSendOTP(normalizedPhone, 'login');
+      } catch (err) {
+        logger.warn(`[LoginOTP] Error generando OTP: ${err.message}`);
+      }
+    }
+
+    // Always return success to prevent phone enumeration
+    const maskedPhone = normalizedPhone.replace(/(\+\d{1,4})\d+(\d{4})$/, '$1****$2');
+    res.json({
+      success: true,
+      message: 'Si el número está registrado, recibirás un código SMS',
+      phone: maskedPhone
+    });
+  } catch (error) {
+    logger.error(`[LoginOTP] Error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Verificar OTP para login por teléfono
+app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
+  try {
+    const { phone, code } = req.body;
+    if (!phone || !code) {
+      return res.status(400).json({ error: 'Teléfono y código requeridos' });
+    }
+    const normalizedPhone = phone.trim();
+
+    const otpResult = await verifyOTP(normalizedPhone, code, 'login');
+    if (!otpResult.valid) {
+      return res.status(400).json({ error: otpResult.error || 'Código incorrecto o expirado' });
+    }
+
+    const user = await User.findOne({ phone: normalizedPhone, phoneVerified: true });
+    if (!user) {
+      return res.status(400).json({ error: 'Código incorrecto o expirado' });
+    }
+
+    // Update last login
+    user.lastLogin = new Date();
+    await user.save();
+
+    const userObj = user.toObject ? user.toObject() : user;
+    const userId = userObj.id || userObj._id?.toString();
+
+    // Generate token (same as regular login)
+    const token = jwt.sign(
+      { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion || 0 },
+      JWT_SECRET,
+      { expiresIn: '90d' }
+    );
+
+    // Set admin cookies if applicable
+    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    if (adminRoles.includes(userObj.role)) {
+      const adminCookieToken = jwt.sign(
+        { userId: userId, username: userObj.username, role: userObj.role },
+        JWT_SECRET,
+        { expiresIn: '8h' }
+      );
+      res.setHeader('Set-Cookie', buildAdminSessionCookieHeaders(adminCookieToken));
+    }
+
+    logger.info(`Login successful for ${userObj.username} via OTP`);
+
+    res.json({
+      message: 'Login exitoso',
+      token,
+      user: {
+        id: userId,
+        userId: userId,
+        username: userObj.username,
+        email: userObj.email,
+        phone: userObj.phone,
+        phoneVerified: userObj.phoneVerified || false,
+        whatsapp: userObj.whatsapp || null,
+        accountNumber: userObj.accountNumber,
+        role: userObj.role,
+        balance: userObj.balance,
+        jugayganaLinked: !!userObj.jugayganaUserId,
+        needsPasswordChange: false,
+        referralCode: userObj.referralCode
+      }
+    });
+  } catch (error) {
+    logger.error(`[LoginOTP] Verify error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
