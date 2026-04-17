@@ -76,6 +76,18 @@
                         <input type="tel" id="loginPhone" name="loginPhone" placeholder="11 1234-5678" autocomplete="tel" style="flex:1;">
                     </div>
                 </div>
+                <div id="phoneLoginModeToggle" class="hidden" style="display:flex;gap:8px;margin:8px 0;">
+                    <button type="button" id="phoneLoginByPassword" onclick="switchPhoneLoginMode('password')" style="flex:1;padding:6px;font-size:11px;background:rgba(212,175,55,0.2);color:#d4af37;border:1px solid rgba(212,175,55,0.3);border-radius:6px;cursor:pointer;font-weight:600;">🔑 Contraseña</button>
+                    <button type="button" id="phoneLoginByOtp" onclick="switchPhoneLoginMode('otp')" style="flex:1;padding:6px;font-size:11px;background:transparent;color:#888;border:1px solid rgba(255,255,255,0.1);border-radius:6px;cursor:pointer;">📱 Código SMS</button>
+                </div>
+                <div id="phoneOtpStep" class="hidden" style="margin-top:8px;">
+                    <p id="phoneOtpMsg" style="color:#00ff88;font-size:12px;margin-bottom:8px;"></p>
+                    <div class="input-group">
+                        <label>Código de verificación</label>
+                        <input type="text" id="phoneOtpCode" placeholder="Ingresá el código de 6 dígitos" maxlength="6" inputmode="numeric" style="text-align:center;font-size:18px;letter-spacing:8px;">
+                    </div>
+                    <button type="button" onclick="handlePhoneOtpVerify()" class="btn btn-primary" id="phoneOtpVerifyBtn">✅ Verificar código</button>
+                </div>
                 <div class="input-group">
                     <label>Contraseña</label>
                     <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" required autocomplete="current-password">
