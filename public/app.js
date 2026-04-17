@@ -253,6 +253,71 @@ async function handleRegister(e) {
     // El registro ahora usa flujo OTP: handleRegisterSendOtp y handleRegisterWithOtp (botones inline en el HTML)
 }
 
+window._phoneLoginMode = 'password'; // 'password' or 'otp'
+window._phoneOtpFullPhone = null;
+
+function switchPhoneLoginMode(mode) {
+    window._phoneLoginMode = mode;
+    const passwordGroup = document.querySelector('#loginForm .input-group:has(#password)');
+    const submitBtn = document.querySelector('#loginForm button[type="submit"]');
+    const otpStep = document.getElementById('phoneOtpStep');
+    const passwordBtn = document.getElementById('phoneLoginByPassword');
+    const otpBtn = document.getElementById('phoneLoginByOtp');
+
+    if (mode === 'otp') {
+        if (passwordGroup) passwordGroup.style.display = 'none';
+        if (submitBtn) submitBtn.textContent = '📱 Enviar código SMS';
+        if (otpStep) otpStep.classList.add('hidden');
+        if (passwordBtn) { passwordBtn.style.background = 'transparent'; passwordBtn.style.color = '#888'; passwordBtn.style.fontWeight = 'normal'; }
+        if (otpBtn) { otpBtn.style.background = 'rgba(212,175,55,0.2)'; otpBtn.style.color = '#d4af37'; otpBtn.style.fontWeight = '600'; }
+    } else {
+        if (passwordGroup) passwordGroup.style.display = '';
+        if (submitBtn) submitBtn.textContent = 'Ingresar a la Sala';
+        if (otpStep) otpStep.classList.add('hidden');
+        if (passwordBtn) { passwordBtn.style.background = 'rgba(212,175,55,0.2)'; passwordBtn.style.color = '#d4af37'; passwordBtn.style.fontWeight = '600'; }
+        if (otpBtn) { otpBtn.style.background = 'transparent'; otpBtn.style.color = '#888'; otpBtn.style.fontWeight = 'normal'; }
+    }
+}
+
+async function handlePhoneOtpVerify() {
+    const code = document.getElementById('phoneOtpCode').value.trim();
+    const errorDiv = document.getElementById('errorMessage');
+    const verifyBtn = document.getElementById('phoneOtpVerifyBtn');
+
+    if (!code || code.length < 6) {
+        errorDiv.textContent = 'Ingresá el código de 6 dígitos';
+        errorDiv.classList.add('show');
+        return;
+    }
+
+    if (verifyBtn) { verifyBtn.textContent = 'Verificando...'; verifyBtn.disabled = true; }
+
+    try {
+        const response = await fetch(`${API_URL}/api/auth/login-otp-verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: window._phoneOtpFullPhone, code })
+        });
+        const data = await response.json();
+
+        if (response.ok && data.token) {
+            currentToken = data.token;
+            currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
+            localStorage.setItem('userToken', currentToken);
+            await initializeSession(false);
+            sendFcmTokenAfterLogin();
+        } else {
+            errorDiv.textContent = data.error || 'Código incorrecto o expirado';
+            errorDiv.classList.add('show');
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error de conexión';
+        errorDiv.classList.add('show');
+    } finally {
+        if (verifyBtn) { verifyBtn.textContent = '✅ Verificar código'; verifyBtn.disabled = false; }
+    }
+}
+
 async function handleLogin(e) {
     e.preventDefault();
     
@@ -295,6 +360,29 @@ async function handleLogin(e) {
     }, 15000); // 15 segundos timeout
     
     try {
+        // OTP login flow for phone mode
+        if (loginMode === 'phone' && window._phoneLoginMode === 'otp') {
+            const response = await fetch(`${API_URL}/api/auth/login-otp-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                window._phoneOtpFullPhone = phone;
+                document.getElementById('phoneOtpMsg').textContent = `✅ ${data.message}`;
+                document.getElementById('phoneOtpStep').classList.remove('hidden');
+                document.getElementById('phoneOtpCode').value = '';
+                if (loginBtn) loginBtn.style.display = 'none';
+            } else {
+                errorDiv.textContent = data.error || 'Error al enviar código';
+                errorDiv.classList.add('show');
+            }
+            clearTimeout(loginTimeout);
+            if (loginBtn) { loginBtn.textContent = '📱 Enviar código SMS'; loginBtn.disabled = false; }
+            return;
+        }
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 segundos para la petición
 
@@ -357,7 +445,7 @@ async function handleLogin(e) {
     } finally {
         // SIEMPLE restaurar botón al final
         if (loginBtn) {
-            loginBtn.textContent = 'Ingresar a la Sala';
+            loginBtn.textContent = window._phoneLoginMode === 'otp' && loginMode === 'phone' ? '📱 Enviar código SMS' : 'Ingresar a la Sala';
             loginBtn.disabled = false;
         }
     }

@@ -210,6 +210,29 @@ VIP.auth = (function () {
         }, 15000);
 
         try {
+            // OTP login flow for phone mode
+            if (loginMode === 'phone' && window._phoneLoginMode === 'otp') {
+                const response = await fetch(`${VIP.config.API_URL}/api/auth/login-otp-request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    window._phoneOtpFullPhone = phone;
+                    document.getElementById('phoneOtpMsg').textContent = `✅ ${data.message}`;
+                    document.getElementById('phoneOtpStep').classList.remove('hidden');
+                    document.getElementById('phoneOtpCode').value = '';
+                    if (loginBtn) loginBtn.style.display = 'none';
+                } else {
+                    errorDiv.textContent = data.error || 'Error al enviar código';
+                    errorDiv.classList.add('show');
+                }
+                clearTimeout(loginTimeout);
+                if (loginBtn) { loginBtn.textContent = '📱 Enviar código SMS'; loginBtn.disabled = false; }
+                return;
+            }
+
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -272,7 +295,10 @@ VIP.auth = (function () {
             }
             errorDiv.classList.add('show');
         } finally {
-            if (loginBtn) { loginBtn.textContent = 'Ingresar a la Sala'; loginBtn.disabled = false; }
+            if (loginBtn) {
+                loginBtn.textContent = window._phoneLoginMode === 'otp' && loginMode === 'phone' ? '📱 Enviar código SMS' : 'Ingresar a la Sala';
+                loginBtn.disabled = false;
+            }
         }
     }
 
@@ -663,6 +689,10 @@ VIP.auth = (function () {
         const usernameBtn = document.getElementById('loginByUsernameBtn');
         const phoneBtn = document.getElementById('loginByPhoneBtn');
         const usernameInput = document.getElementById('username');
+        const phoneLoginModeToggle = document.getElementById('phoneLoginModeToggle');
+        const phoneOtpStep = document.getElementById('phoneOtpStep');
+        const passwordGroup = document.querySelector('#loginForm .input-group:has(#password)');
+        const submitBtn = document.querySelector('#loginForm button[type="submit"]');
 
         if (mode === 'phone') {
             if (usernameGroup) usernameGroup.classList.add('hidden');
@@ -670,12 +700,20 @@ VIP.auth = (function () {
             if (usernameInput) usernameInput.removeAttribute('required');
             if (usernameBtn) { usernameBtn.style.background = 'transparent'; usernameBtn.style.color = '#888'; usernameBtn.style.fontWeight = 'normal'; }
             if (phoneBtn) { phoneBtn.style.background = 'rgba(212,175,55,0.2)'; phoneBtn.style.color = '#d4af37'; phoneBtn.style.fontWeight = '600'; }
+            if (phoneLoginModeToggle) phoneLoginModeToggle.classList.remove('hidden');
         } else {
             if (usernameGroup) usernameGroup.classList.remove('hidden');
             if (phoneGroup) phoneGroup.classList.add('hidden');
             if (usernameInput) usernameInput.setAttribute('required', '');
             if (usernameBtn) { usernameBtn.style.background = 'rgba(212,175,55,0.2)'; usernameBtn.style.color = '#d4af37'; usernameBtn.style.fontWeight = '600'; }
             if (phoneBtn) { phoneBtn.style.background = 'transparent'; phoneBtn.style.color = '#888'; phoneBtn.style.fontWeight = 'normal'; }
+            if (phoneLoginModeToggle) phoneLoginModeToggle.classList.add('hidden');
+            if (phoneOtpStep) phoneOtpStep.classList.add('hidden');
+            // Reset phone login mode to password
+            window._phoneLoginMode = 'password';
+            if (passwordGroup) passwordGroup.style.display = '';
+            if (submitBtn) submitBtn.textContent = 'Ingresar a la Sala';
+            if (submitBtn) submitBtn.style.display = '';
         }
     }
 
@@ -709,3 +747,69 @@ window.handleRequestPasswordReset = VIP.auth.handleRequestPasswordReset;
 window.handleVerifyResetOtp = VIP.auth.handleVerifyResetOtp;
 window.handleCompletePasswordReset = VIP.auth.handleCompletePasswordReset;
 window.switchLoginMode = VIP.auth.switchLoginMode;
+
+// Phone login OTP mode functions (global scope for onclick handlers)
+window._phoneLoginMode = 'password';
+window._phoneOtpFullPhone = null;
+
+window.switchPhoneLoginMode = function(mode) {
+    window._phoneLoginMode = mode;
+    var passwordGroup = document.querySelector('#loginForm .input-group:has(#password)');
+    var submitBtn = document.querySelector('#loginForm button[type="submit"]');
+    var otpStep = document.getElementById('phoneOtpStep');
+    var passwordBtn = document.getElementById('phoneLoginByPassword');
+    var otpBtn = document.getElementById('phoneLoginByOtp');
+
+    if (mode === 'otp') {
+        if (passwordGroup) passwordGroup.style.display = 'none';
+        if (submitBtn) submitBtn.textContent = '📱 Enviar código SMS';
+        if (otpStep) otpStep.classList.add('hidden');
+        if (passwordBtn) { passwordBtn.style.background = 'transparent'; passwordBtn.style.color = '#888'; passwordBtn.style.fontWeight = 'normal'; }
+        if (otpBtn) { otpBtn.style.background = 'rgba(212,175,55,0.2)'; otpBtn.style.color = '#d4af37'; otpBtn.style.fontWeight = '600'; }
+    } else {
+        if (passwordGroup) passwordGroup.style.display = '';
+        if (submitBtn) submitBtn.textContent = 'Ingresar a la Sala';
+        if (otpStep) otpStep.classList.add('hidden');
+        if (passwordBtn) { passwordBtn.style.background = 'rgba(212,175,55,0.2)'; passwordBtn.style.color = '#d4af37'; passwordBtn.style.fontWeight = '600'; }
+        if (otpBtn) { otpBtn.style.background = 'transparent'; otpBtn.style.color = '#888'; otpBtn.style.fontWeight = 'normal'; }
+    }
+};
+
+window.handlePhoneOtpVerify = async function() {
+    var code = document.getElementById('phoneOtpCode').value.trim();
+    var errorDiv = document.getElementById('errorMessage');
+    var verifyBtn = document.getElementById('phoneOtpVerifyBtn');
+
+    if (!code || code.length < 6) {
+        errorDiv.textContent = 'Ingresá el código de 6 dígitos';
+        errorDiv.classList.add('show');
+        return;
+    }
+
+    if (verifyBtn) { verifyBtn.textContent = 'Verificando...'; verifyBtn.disabled = true; }
+
+    try {
+        var response = await fetch((VIP.config.API_URL || '') + '/api/auth/login-otp-verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: window._phoneOtpFullPhone, code: code })
+        });
+        var data = await response.json();
+
+        if (response.ok && data.token) {
+            VIP.state.currentToken = data.token;
+            VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
+            localStorage.setItem('userToken', VIP.state.currentToken);
+            await VIP.auth.initializeSession(false);
+            VIP.notifications.sendFcmTokenAfterLogin();
+        } else {
+            errorDiv.textContent = data.error || 'Código incorrecto o expirado';
+            errorDiv.classList.add('show');
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Error de conexión';
+        errorDiv.classList.add('show');
+    } finally {
+        if (verifyBtn) { verifyBtn.textContent = '✅ Verificar código'; verifyBtn.disabled = false; }
+    }
+};
