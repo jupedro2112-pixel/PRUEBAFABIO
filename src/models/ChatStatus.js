@@ -64,7 +64,6 @@ const chatStatusSchema = new mongoose.Schema({
 chatStatusSchema.index({ status: 1, lastMessageAt: -1 });
 chatStatusSchema.index({ category: 1, lastMessageAt: -1 });
 chatStatusSchema.index({ assignedTo: 1, status: 1 });
-chatStatusSchema.index({ userId: 1 }, { unique: true });
 
 // Método estático para obtener chats abiertos
 chatStatusSchema.statics.getOpenChats = function(options = {}) {
