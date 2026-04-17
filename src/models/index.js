@@ -248,8 +248,11 @@ async function connectDB() {
     ).then(() => {
       console.log('✅ TTL index para auto-limpieza de mensajes (3 días) creado/verificado');
     }).catch(err => {
-      // Index may already exist — that's fine
-      if (err.codeName !== 'IndexOptionsConflict') {
+      if (err.codeName === 'IndexOptionsConflict') {
+        // An existing createdAt_1 index without TTL is present — auto-cleanup will not work
+        // until the conflicting index is manually dropped and this process is restarted
+        console.warn('⚠️ TTL index no creado: existe un índice createdAt_1 sin TTL (IndexOptionsConflict). Para activar auto-limpieza, eliminar el índice manualmente y reiniciar.');
+      } else {
         console.error('Error creando TTL index:', err.message);
       }
     });
