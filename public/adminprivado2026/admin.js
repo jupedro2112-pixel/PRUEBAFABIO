@@ -4467,6 +4467,7 @@ async function loadAdminReferralSummary() {
     loadAdminReferralPayouts();
     try {
         const res = await fetch(`${API_URL}/api/referrals/admin/summary`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) { container.innerHTML = '<span style="color:#ff4444;">Error cargando datos.</span>'; return; }
         const data = await res.json();
@@ -4606,6 +4607,7 @@ async function loadAdminReferralPayouts() {
         if (usernameFilter) params.append('username', usernameFilter);
 
         const res = await fetch(`${API_URL}/api/referrals/admin/payouts?${params}`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         if (!res.ok) {
             container.innerHTML = '<span style="color:#ff4444;font-size:12px;">Error cargando historial de pagos.</span>';
