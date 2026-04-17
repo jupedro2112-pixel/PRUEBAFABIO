@@ -4450,15 +4450,23 @@ function notifyAdmins(event, data) {
   io.to('admins').emit(event, data);
 }
 
+let _cachedStatsData = { totalUsers: 0, lastUpdate: 0 };
+
 async function broadcastStats() {
-  const totalUsers = await User.countDocuments({ role: 'user' });
-  
+  const now = Date.now();
+  if (now - _cachedStatsData.lastUpdate > 60000) {
+    try {
+      _cachedStatsData.totalUsers = await User.countDocuments({ role: 'user' });
+      _cachedStatsData.lastUpdate = now;
+    } catch (err) {
+      logger.error('Error actualizando stats cache:', err.message);
+    }
+  }
   const stats = {
     connectedUsers: connectedUsers.size,
     connectedAdmins: connectedAdmins.size,
-    totalUsers
+    totalUsers: _cachedStatsData.totalUsers
   };
-  
   connectedAdmins.forEach((socket) => {
     socket.emit('stats', stats);
   });
@@ -5296,8 +5304,14 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
 // ESTADÍSTICAS
 // ============================================
 
+let _cachedAdminStats = { data: null, lastUpdate: 0 };
+
 app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    const now = Date.now();
+    if (_cachedAdminStats.data && now - _cachedAdminStats.lastUpdate < 30000) {
+      return res.json(_cachedAdminStats.data);
+    }
     const totalUsers = await User.countDocuments();
     const onlineUsers = await User.countDocuments({ lastLogin: { $gte: new Date(Date.now() - 5 * 60 * 1000) } });
     const totalMessages = await Message.countDocuments();
@@ -5315,14 +5329,10 @@ app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) =>
       if (t.type === 'withdrawal') todayWithdrawals += t.amount;
     });
     
-    res.json({
-      totalUsers,
-      onlineUsers,
-      totalMessages,
-      totalTransactions,
-      todayDeposits,
-      todayWithdrawals
-    });
+    const result = { totalUsers, onlineUsers, totalMessages, totalTransactions, todayDeposits, todayWithdrawals };
+    _cachedAdminStats.data = result;
+    _cachedAdminStats.lastUpdate = now;
+    res.json(result);
   } catch (error) {
     console.error('Error obteniendo estadísticas:', error);
     res.status(500).json({ error: 'Error del servidor' });

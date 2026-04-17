@@ -196,7 +196,7 @@ VIP.ui = (function () {
         if (VIP.state.balanceCheckInterval) {
             clearInterval(VIP.state.balanceCheckInterval);
         }
-        VIP.state.balanceCheckInterval = setInterval(syncBalance, 10000);
+        VIP.state.balanceCheckInterval = setInterval(syncBalance, 30000);
     }
 
     function stopBalancePolling() {

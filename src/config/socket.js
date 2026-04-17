@@ -338,17 +338,23 @@ const notifyAdmins = (io, event, data) => {
 /**
  * Broadcast de estadísticas
  */
+let _cachedSocketStatsData = { totalUsers: 0, lastUpdate: 0 };
+
 const broadcastStats = async (io) => {
   try {
     const { User } = require('../models');
-    const totalUsers = await User.countDocuments({ role: 'user' });
+    const now = Date.now();
+    if (now - _cachedSocketStatsData.lastUpdate > 60000) {
+      _cachedSocketStatsData.totalUsers = await User.countDocuments({ role: 'user' });
+      _cachedSocketStatsData.lastUpdate = now;
+    }
     
     const onlineCount = connectedUsers.size;
     const stats = {
       connectedUsers: onlineCount,
       onlineUsers: onlineCount, // alias para compatibilidad con HTTP endpoint
       connectedAdmins: connectedAdmins.size,
-      totalUsers
+      totalUsers: _cachedSocketStatsData.totalUsers
     };
     
     io.to('admins').emit('stats', stats);

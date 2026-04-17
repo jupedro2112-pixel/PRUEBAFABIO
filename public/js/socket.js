@@ -186,7 +186,7 @@ VIP.socket = (function () {
 
     function startMessagePolling() {
         VIP.chat.loadMessages();
-        VIP.state.messageCheckInterval = setInterval(VIP.chat.loadMessages, 8000);
+        VIP.state.messageCheckInterval = setInterval(VIP.chat.loadMessages, 30000);
         initSocket();
     }
 
