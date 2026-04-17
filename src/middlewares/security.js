@@ -257,11 +257,11 @@ const validateRegister = (req, res, next) => {
  * Middleware de validación de login
  */
 const validateLogin = (req, res, next) => {
-  const { username, password } = req.body;
+  const { username, phone, password } = req.body;
   const errors = [];
 
-  if (!username) {
-    errors.push('El usuario es requerido');
+  if (!username && !phone) {
+    errors.push('El usuario o teléfono es requerido');
   }
 
   if (!password) {

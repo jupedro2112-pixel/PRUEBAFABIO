@@ -72,7 +72,7 @@ const { validateInternationalPhone } = require('./src/middlewares/security');
 // ============================================
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 100,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Demasiadas solicitudes. Intenta más tarde.' }
@@ -436,7 +436,6 @@ app.use(compression({
   }
 }));
 app.use(securityHeaders);
-app.use(generalLimiter);
 if (!process.env.ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
   logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS rechazará orígenes cruzados.');
 }
@@ -447,6 +446,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['X-Total-Count', 'X-RateLimit-Remaining']
 }));
+app.use('/api/', generalLimiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(mongoSanitize());
 app.use(xss());

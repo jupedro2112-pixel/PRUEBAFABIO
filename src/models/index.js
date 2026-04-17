@@ -50,6 +50,13 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-d
  */
 async function backfillLegacyPayoutSettlements() {
   try {
+    // Check if migration already completed
+    const migrationFlag = await Config.findOne({ key: 'migration_backfilllegacypayoutsettlements_done' }).lean();
+    if (migrationFlag && migrationFlag.value === true) {
+      console.log('[Migration] backfillLegacyPayoutSettlements: already completed — skipping');
+      return;
+    }
+
     const legacyPayouts = await ReferralPayout.find({
       status: 'paid',
       $or: [
@@ -148,6 +155,14 @@ async function backfillLegacyPayoutSettlements() {
       `backfilledCommissions=${backfilledCount} skippedAlreadySet=${skippedAlreadySet} ` +
       `mongoPersistenceEnabled=true serverRestartSafe=true`
     );
+
+    // Mark migration as complete so it skips on next startup
+    await Config.findOneAndUpdate(
+      { key: 'migration_backfilllegacypayoutsettlements_done' },
+      { key: 'migration_backfilllegacypayoutsettlements_done', value: true },
+      { upsert: true }
+    );
+    console.log('[Migration] backfillLegacyPayoutSettlements: marked as complete — will skip on next startup');
   } catch (err) {
     // Log but do not block startup — the enhanced fallback in referralCalculationService
     // provides a secondary safety net for any commission records that could not be backfilled.
@@ -175,6 +190,13 @@ async function backfillLegacyPayoutSettlements() {
 async function migrateReferralPayoutIndex() {
   const INDEX_NAME = 'periodKey_1_referrerUserId_1';
   try {
+    // Check if migration already completed
+    const migrationFlag = await Config.findOne({ key: 'migration_referralpayoutindex_done' }).lean();
+    if (migrationFlag && migrationFlag.value === true) {
+      console.log('[Migration] referralpayouts: index migration already completed — skipping');
+      return;
+    }
+
     const collection = mongoose.connection.collection('referralpayouts');
 
     // List existing indexes to detect the old unique one
@@ -215,6 +237,14 @@ async function migrateReferralPayoutIndex() {
     } catch (createErr) {
       console.error('[Migration] referralpayouts: error creating indexes:', createErr.message);
     }
+
+    // Mark migration as complete so it skips on next startup
+    await Config.findOneAndUpdate(
+      { key: 'migration_referralpayoutindex_done' },
+      { key: 'migration_referralpayoutindex_done', value: true },
+      { upsert: true }
+    );
+    console.log('[Migration] referralpayouts: marked as complete — will skip on next startup');
   } catch (err) {
     // Log but do not block startup — worst case the old index may still exist; the payout
     // service has its own E11000 recovery handler for this situation.
