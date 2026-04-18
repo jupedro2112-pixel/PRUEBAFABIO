@@ -429,13 +429,17 @@ VIP.auth = (function () {
         const whatsappGroup = document.getElementById('changePasswordWhatsAppGroup');
         const whatsappInfo = document.getElementById('changePasswordWhatsAppInfo');
         const whatsappInput = document.getElementById('changePasswordWhatsApp');
-        // Solo consideramos teléfono válido si está verificado
-        const existingPhone = VIP.state.currentUser && VIP.state.currentUser.phoneVerified && VIP.state.currentUser.phone
+        // Por requerimiento de Problema 2: el campo de teléfono se oculta SOLO si el usuario
+        // ya tiene un teléfono verificado vía OTP. El campo `whatsapp` (no verificado) NO cuenta
+        // como teléfono válido para saltarse la verificación, porque históricamente se guardó sin OTP.
+        const verifiedPhone = VIP.state.currentUser
+            && VIP.state.currentUser.phoneVerified === true
+            && VIP.state.currentUser.phone
             ? VIP.state.currentUser.phone
-            : (VIP.state.currentUser && VIP.state.currentUser.whatsapp) || null;
+            : null;
 
         if (whatsappGroup) {
-            if (existingPhone) {
+            if (verifiedPhone) {
                 whatsappGroup.style.display = 'none';
                 if (whatsappInput) whatsappInput.removeAttribute('required');
             } else {
@@ -444,9 +448,21 @@ VIP.auth = (function () {
             }
         }
         if (whatsappInfo) {
-            whatsappInfo.style.display = existingPhone ? 'block' : 'none';
-            whatsappInfo.textContent = existingPhone ? `✅ Teléfono ya registrado: ${existingPhone}` : '';
+            whatsappInfo.style.display = verifiedPhone ? 'block' : 'none';
+            whatsappInfo.textContent = verifiedPhone ? `✅ Teléfono verificado: ${verifiedPhone}` : '';
         }
+
+        // Reset del paso OTP: siempre arranca en paso 1 al abrir el modal.
+        const otpStep = document.getElementById('changePasswordOtpStep');
+        const form = document.getElementById('changePasswordForm');
+        if (otpStep) otpStep.style.display = 'none';
+        if (form) form.style.display = '';
+        const otpCodeInput = document.getElementById('changePasswordOtpCode');
+        if (otpCodeInput) otpCodeInput.value = '';
+        const otpErr = document.getElementById('changePasswordOtpError');
+        if (otpErr) { otpErr.textContent = ''; otpErr.classList.remove('show'); }
+        _vipChangePwdPending = null;
+        _stopChangePwdResendCooldown();
 
         // Actualizar título, subtítulo y botón de cierre según si el cambio es obligatorio
         const closeBtn = document.getElementById('changePasswordCloseBtn');
@@ -463,8 +479,45 @@ VIP.auth = (function () {
         }
     }
 
+    // Estado pendiente del cambio de contraseña con OTP:
+    // se guarda entre el paso 1 (datos) y el paso 2 (verificación OTP) para no perder
+    // la nueva contraseña ni el teléfono mientras el usuario espera el SMS.
+    let _vipChangePwdPending = null;
+    let _vipChangePwdResendTimer = null;
+
+    function _stopChangePwdResendCooldown() {
+        if (_vipChangePwdResendTimer) {
+            clearInterval(_vipChangePwdResendTimer);
+            _vipChangePwdResendTimer = null;
+        }
+        const cooldownLabel = document.getElementById('changePasswordOtpResendCooldown');
+        const resendBtn = document.getElementById('changePasswordOtpResendBtn');
+        if (cooldownLabel) { cooldownLabel.style.display = 'none'; cooldownLabel.textContent = ''; }
+        if (resendBtn) { resendBtn.style.display = ''; resendBtn.disabled = false; }
+    }
+
+    function _startChangePwdResendCooldown(seconds) {
+        const cooldownLabel = document.getElementById('changePasswordOtpResendCooldown');
+        const resendBtn = document.getElementById('changePasswordOtpResendBtn');
+        let remaining = seconds;
+        if (resendBtn) { resendBtn.style.display = 'none'; resendBtn.disabled = true; }
+        if (cooldownLabel) {
+            cooldownLabel.style.display = '';
+            cooldownLabel.textContent = `Podés reenviar en ${remaining}s`;
+        }
+        if (_vipChangePwdResendTimer) clearInterval(_vipChangePwdResendTimer);
+        _vipChangePwdResendTimer = setInterval(() => {
+            remaining -= 1;
+            if (remaining <= 0) {
+                _stopChangePwdResendCooldown();
+            } else if (cooldownLabel) {
+                cooldownLabel.textContent = `Podés reenviar en ${remaining}s`;
+            }
+        }, 1000);
+    }
+
     async function handleChangePassword(e) {
-        e.preventDefault();
+        if (e) e.preventDefault();
 
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
@@ -472,13 +525,17 @@ VIP.auth = (function () {
         const whatsappPrefix = (document.getElementById('changePasswordWhatsAppPrefix')?.value || '+54').trim();
         const errorDiv = document.getElementById('passwordError');
 
-        // Solo consideramos teléfono válido si está verificado
-        const existingPhone = VIP.state.currentUser && VIP.state.currentUser.phoneVerified && VIP.state.currentUser.phone
+        // Solo consideramos teléfono válido si está VERIFICADO vía OTP.
+        const verifiedPhone = VIP.state.currentUser
+            && VIP.state.currentUser.phoneVerified === true
+            && VIP.state.currentUser.phone
             ? VIP.state.currentUser.phone
-            : (VIP.state.currentUser && VIP.state.currentUser.whatsapp) || null;
+            : null;
         // Construir número completo solo si se ingresó uno nuevo
         const whatsappFull = whatsappRaw ? (whatsappPrefix + whatsappRaw.replace(/^0+/, '')) : '';
-        const whatsapp = whatsappFull || existingPhone || '';
+
+        errorDiv.textContent = '';
+        errorDiv.classList.remove('show');
 
         if (newPassword !== confirmPassword) {
             errorDiv.textContent = 'Las contraseñas no coinciden';
@@ -490,31 +547,120 @@ VIP.auth = (function () {
             errorDiv.classList.add('show');
             return;
         }
-        if (!existingPhone) {
-            const digits = (whatsappFull || '').replace(/\D/g, '');
-            if (!whatsappRaw || digits.length <= 10) {
-                errorDiv.textContent = 'El número de WhatsApp es obligatorio (más de 10 dígitos con prefijo internacional)';
-                errorDiv.classList.add('show');
-                return;
-            }
-        }
 
         const closeAllSessions = document.getElementById('closeAllSessions').checked;
 
+        // CASO A: el usuario ya tiene un teléfono verificado y NO está cambiándolo.
+        // No se requiere OTP. Solo se cambia la contraseña.
+        if (verifiedPhone && !whatsappFull) {
+            return _commitPasswordChange({
+                newPassword,
+                closeAllSessions,
+                phone: null,
+                otpCode: null,
+                errorDiv
+            });
+        }
+
+        // CASO B: se está agregando o cambiando teléfono → OTP obligatorio.
+        if (!whatsappFull) {
+            errorDiv.textContent = 'El número de WhatsApp es obligatorio (más de 10 dígitos con prefijo internacional)';
+            errorDiv.classList.add('show');
+            return;
+        }
+        const digits = whatsappFull.replace(/\D/g, '');
+        if (digits.length <= 10) {
+            errorDiv.textContent = 'El número de WhatsApp es obligatorio (más de 10 dígitos con prefijo internacional)';
+            errorDiv.classList.add('show');
+            return;
+        }
+        // Si el usuario solo está cambiando contraseña pero también escribió su mismo teléfono ya verificado,
+        // tratar como CASO A (sin OTP).
+        if (verifiedPhone && whatsappFull === verifiedPhone) {
+            return _commitPasswordChange({
+                newPassword,
+                closeAllSessions,
+                phone: null,
+                otpCode: null,
+                errorDiv
+            });
+        }
+
+        // Pedir OTP al backend y mostrar paso 2.
+        const submitBtn = document.getElementById('changePasswordSubmitBtn');
+        if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '📱 Enviando código...'; }
         try {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/change-password/send-otp`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${VIP.state.currentToken}`
+                },
+                body: JSON.stringify({ phone: whatsappFull })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                errorDiv.textContent = data.error || 'No se pudo enviar el código SMS';
+                errorDiv.classList.add('show');
+                return;
+            }
+            // Guardar contexto pendiente y mostrar paso 2.
+            _vipChangePwdPending = {
+                newPassword,
+                phone: whatsappFull,
+                closeAllSessions
+            };
+            const form = document.getElementById('changePasswordForm');
+            const otpStep = document.getElementById('changePasswordOtpStep');
+            const otpMsg = document.getElementById('changePasswordOtpMsg');
+            if (form) form.style.display = 'none';
+            if (otpStep) otpStep.style.display = '';
+            if (otpMsg) otpMsg.textContent = `Te enviamos un código SMS al ${data.phone || whatsappFull}. Ingresálo para confirmar el cambio.`;
+            const otpErr = document.getElementById('changePasswordOtpError');
+            if (otpErr) { otpErr.textContent = ''; otpErr.classList.remove('show'); }
+            const otpCodeInput = document.getElementById('changePasswordOtpCode');
+            if (otpCodeInput) { otpCodeInput.value = ''; setTimeout(() => otpCodeInput.focus(), 50); }
+            _startChangePwdResendCooldown(60);
+        } catch (err) {
+            errorDiv.textContent = 'Error de conexión';
+            errorDiv.classList.add('show');
+        } finally {
+            if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '💾 Guardar Cambios'; }
+        }
+    }
+
+    async function _commitPasswordChange({ newPassword, closeAllSessions, phone, otpCode, errorDiv }) {
+        try {
+            const body = { newPassword, closeAllSessions };
+            if (phone) {
+                body.phone = phone;
+                // Mantener `whatsapp` por compatibilidad con código existente.
+                body.whatsapp = phone;
+                body.otpCode = otpCode;
+            }
             const response = await fetch(`${VIP.config.API_URL}/api/auth/change-password`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${VIP.state.currentToken}`
                 },
-                body: JSON.stringify({ newPassword, whatsapp, closeAllSessions })
+                body: JSON.stringify(body)
             });
+            const data = await response.json().catch(() => ({}));
 
             if (response.ok) {
                 VIP.state.passwordChangePending = false;
                 // Actualizar contraseña en memoria de sesión para el modal de plataforma
                 VIP.state.sessionPassword = newPassword;
+                // Reflejar el teléfono verificado en el estado local para no volver a pedirlo.
+                if (data && data.phoneVerified && data.phone && VIP.state.currentUser) {
+                    VIP.state.currentUser.phone = data.phone;
+                    VIP.state.currentUser.phoneVerified = true;
+                    VIP.state.currentUser.whatsapp = data.phone;
+                }
+                _vipChangePwdPending = null;
+                _stopChangePwdResendCooldown();
+
                 VIP.ui.hideModal('changePasswordModal');
                 VIP.ui.showToast('✅ Contraseña guardada exitosamente', 'success');
                 document.getElementById('newPasswordInput').value = '';
@@ -532,15 +678,108 @@ VIP.auth = (function () {
                         location.reload();
                     }, 2000);
                 }
-            } else {
-                const data = await response.json();
-                errorDiv.textContent = data.error || 'Error al cambiar contraseña';
-                errorDiv.classList.add('show');
+                return true;
             }
+
+            const target = errorDiv || document.getElementById('changePasswordOtpError') || document.getElementById('passwordError');
+            if (target) {
+                target.textContent = (data && data.error) || 'Error al cambiar contraseña';
+                target.classList.add('show');
+            }
+            return false;
         } catch (error) {
-            errorDiv.textContent = 'Error de conexión';
-            errorDiv.classList.add('show');
+            const target = errorDiv || document.getElementById('changePasswordOtpError') || document.getElementById('passwordError');
+            if (target) {
+                target.textContent = 'Error de conexión';
+                target.classList.add('show');
+            }
+            return false;
         }
+    }
+
+    async function handleChangePasswordOtpVerify() {
+        const otpErr = document.getElementById('changePasswordOtpError');
+        const verifyBtn = document.getElementById('changePasswordOtpVerifyBtn');
+        if (otpErr) { otpErr.textContent = ''; otpErr.classList.remove('show'); }
+
+        if (!_vipChangePwdPending) {
+            if (otpErr) {
+                otpErr.textContent = 'Sesión de verificación expirada. Volvé a iniciar el cambio.';
+                otpErr.classList.add('show');
+            }
+            return;
+        }
+        const code = (document.getElementById('changePasswordOtpCode')?.value || '').trim();
+        if (!code || code.length < 6) {
+            if (otpErr) {
+                otpErr.textContent = 'Ingresá el código de 6 dígitos';
+                otpErr.classList.add('show');
+            }
+            return;
+        }
+        if (verifyBtn) { verifyBtn.disabled = true; verifyBtn.textContent = 'Verificando...'; }
+        const ok = await _commitPasswordChange({
+            newPassword: _vipChangePwdPending.newPassword,
+            closeAllSessions: _vipChangePwdPending.closeAllSessions,
+            phone: _vipChangePwdPending.phone,
+            otpCode: code,
+            errorDiv: otpErr
+        });
+        if (verifyBtn) { verifyBtn.disabled = false; verifyBtn.textContent = '✅ Verificar y Guardar'; }
+        // Si falló (p. ej. OTP incorrecto), el backend ya gestiona los 3 intentos vía OtpCode.
+        // El usuario puede reintentar o pedir un nuevo código con el botón de reenvío.
+        if (!ok) {
+            const codeInput = document.getElementById('changePasswordOtpCode');
+            if (codeInput) { codeInput.value = ''; codeInput.focus(); }
+        }
+    }
+
+    async function handleChangePasswordOtpResend() {
+        const otpErr = document.getElementById('changePasswordOtpError');
+        if (!_vipChangePwdPending) {
+            if (otpErr) {
+                otpErr.textContent = 'Sesión de verificación expirada. Volvé a iniciar el cambio.';
+                otpErr.classList.add('show');
+            }
+            return;
+        }
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/change-password/send-otp`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${VIP.state.currentToken}`
+                },
+                body: JSON.stringify({ phone: _vipChangePwdPending.phone })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                if (otpErr) {
+                    otpErr.textContent = (data && data.error) || 'No se pudo reenviar el código';
+                    otpErr.classList.add('show');
+                }
+                return;
+            }
+            const otpMsg = document.getElementById('changePasswordOtpMsg');
+            if (otpMsg) otpMsg.textContent = `Te reenviamos el código SMS al ${data.phone || _vipChangePwdPending.phone}.`;
+            _startChangePwdResendCooldown(60);
+        } catch (err) {
+            if (otpErr) {
+                otpErr.textContent = 'Error de conexión';
+                otpErr.classList.add('show');
+            }
+        }
+    }
+
+    function handleChangePasswordOtpBack() {
+        _vipChangePwdPending = null;
+        _stopChangePwdResendCooldown();
+        const otpStep = document.getElementById('changePasswordOtpStep');
+        const form = document.getElementById('changePasswordForm');
+        if (otpStep) otpStep.style.display = 'none';
+        if (form) form.style.display = '';
+        const otpErr = document.getElementById('changePasswordOtpError');
+        if (otpErr) { otpErr.textContent = ''; otpErr.classList.remove('show'); }
     }
 
     // Estado temporal del reset OTP
@@ -691,7 +930,11 @@ VIP.auth = (function () {
         const usernameInput = document.getElementById('username');
         const phoneLoginModeToggle = document.getElementById('phoneLoginModeToggle');
         const phoneOtpStep = document.getElementById('phoneOtpStep');
-        const passwordGroup = document.querySelector('#loginForm .input-group:has(#password)');
+        // iOS Safari < 15.4 no soporta `:has()` y tira SyntaxError en querySelector — eso abortaba
+        // el handler y dejaba el toggle "Celular" sin responder al tap. Resolvemos el grupo
+        // navegando desde el input por id hasta su `.input-group` ancestro (compatible siempre).
+        const passwordInputEl = document.getElementById('password');
+        const passwordGroup = passwordInputEl ? passwordInputEl.closest('.input-group') : null;
         const submitBtn = document.querySelector('#loginForm button[type="submit"]');
 
         if (mode === 'phone') {
@@ -728,6 +971,9 @@ VIP.auth = (function () {
         ensureUserLoaded,
         initializeSession,
         handleChangePassword,
+        handleChangePasswordOtpVerify,
+        handleChangePasswordOtpResend,
+        handleChangePasswordOtpBack,
         handleFindUserByPhone,
         handleResetPasswordByPhone,
         handleRequestPasswordReset,
@@ -754,7 +1000,9 @@ window._phoneOtpFullPhone = null;
 
 window.switchPhoneLoginMode = function(mode) {
     window._phoneLoginMode = mode;
-    var passwordGroup = document.querySelector('#loginForm .input-group:has(#password)');
+    // iOS Safari < 15.4 no soporta `:has()` — usar closest desde el input por id (ver fix en switchLoginMode).
+    var passwordInputEl = document.getElementById('password');
+    var passwordGroup = passwordInputEl ? passwordInputEl.closest('.input-group') : null;
     var submitBtn = document.querySelector('#loginForm button[type="submit"]');
     var otpStep = document.getElementById('phoneOtpStep');
     var passwordBtn = document.getElementById('phoneLoginByPassword');

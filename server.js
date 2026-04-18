@@ -1593,7 +1593,7 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
 // Cambiar contraseña
 app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, res) => {
   try {
-    const { newPassword, whatsapp, closeAllSessions } = req.body;
+    const { newPassword, whatsapp, phone, otpCode, closeAllSessions } = req.body;
 
     // Buscar por 'id' primero, luego por '_id' como fallback
     let user = await User.findOne({ id: req.user.userId });
@@ -1613,18 +1613,72 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     }
-    
-    if (whatsapp && whatsapp.trim().length < 8) {
-      return res.status(400).json({ error: 'El número de WhatsApp debe tener al menos 8 dígitos' });
+
+    // Determinar si el usuario YA tiene un teléfono verificado vía OTP.
+    // Solo en ese caso se permite cambiar la contraseña sin volver a verificar nada.
+    const hasVerifiedPhone = !!(user.phone && user.phoneVerified === true);
+
+    // Resolver el "nuevo teléfono" propuesto: priorizar `phone` (formato internacional),
+    // y como fallback aceptar `whatsapp` por compatibilidad con el cliente actual.
+    const requestedPhoneRaw = (typeof phone === 'string' && phone.trim())
+      || (typeof whatsapp === 'string' && whatsapp.trim())
+      || null;
+    const requestedPhone = requestedPhoneRaw ? requestedPhoneRaw.trim() : null;
+
+    // ¿Se está intentando agregar/cambiar el teléfono?
+    // - Si el usuario NO tiene teléfono verificado y se envió un teléfono → exigir OTP.
+    // - Si el usuario YA tiene teléfono verificado y se envió un teléfono distinto → exigir OTP.
+    // - Si el usuario YA tiene teléfono verificado y NO se envió teléfono (o coincide) → no se exige OTP,
+    //   solo se valida la contraseña actual del usuario (esto cubre el caso "cambio de contraseña sin tocar teléfono").
+    let isPhoneChange = false;
+    if (requestedPhone) {
+      if (!hasVerifiedPhone) {
+        isPhoneChange = true;
+      } else if (requestedPhone !== user.phone) {
+        isPhoneChange = true;
+      }
+    } else if (!hasVerifiedPhone) {
+      // No tiene teléfono verificado y no envió uno → no podemos guardar phoneVerified=true,
+      // pero permitimos cambiar la contraseña. (No debería ocurrir desde el flujo forzado,
+      // ya que el front exige el teléfono cuando no hay uno verificado.)
+      isPhoneChange = false;
     }
-    
+
+    if (isPhoneChange) {
+      // Validar formato del teléfono propuesto.
+      if (!validateInternationalPhone(requestedPhone)) {
+        return res.status(400).json({
+          error: 'Número de teléfono inválido. Usá formato internacional con código de país (ej: +5491155551234)'
+        });
+      }
+      // Exigir código OTP previamente enviado vía /api/auth/change-password/send-otp.
+      if (!otpCode || String(otpCode).trim().length < 6) {
+        return res.status(400).json({ error: 'Se requiere el código de verificación SMS' });
+      }
+      // Verificar que el teléfono no esté ya registrado y verificado por otro usuario.
+      const otherUser = await User.findOne({
+        phone: requestedPhone,
+        phoneVerified: true,
+        id: { $ne: user.id }
+      }).lean();
+      if (otherUser) {
+        return res.status(400).json({ error: 'Este número de teléfono ya está registrado por otra cuenta' });
+      }
+      const otpResult = await verifyOTP(requestedPhone, String(otpCode).trim(), 'change-password');
+      if (!otpResult.valid) {
+        return res.status(400).json({ error: otpResult.error || 'Código de verificación incorrecto o expirado' });
+      }
+      // OTP válido: persistir teléfono verificado.
+      user.phone = requestedPhone;
+      user.phoneVerified = true;
+      user.smsConsent = true;
+      // Mantener `whatsapp` sincronizado para compatibilidad con vistas que lo siguen leyendo.
+      user.whatsapp = requestedPhone;
+    }
+
     // Asignar contraseña en texto plano; el middleware pre-save del modelo la hasheará
     user.password = newPassword;
     user.passwordChangedAt = new Date();
-    
-    if (whatsapp && whatsapp.trim()) {
-      user.whatsapp = whatsapp.trim();
-    }
     
     if (closeAllSessions) {
       user.tokenVersion = (user.tokenVersion || 0) + 1;
@@ -1646,9 +1700,69 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
     
     res.json({ 
       message: 'Contraseña cambiada exitosamente',
-      sessionsClosed: closeAllSessions || false
+      sessionsClosed: closeAllSessions || false,
+      phoneVerified: !!user.phoneVerified,
+      phone: user.phone || null
     });
   } catch (error) {
+    logger.error(`Error en change-password: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Enviar OTP para verificar el teléfono nuevo durante un cambio de contraseña
+// (aplica tanto al cambio obligatorio del primer login como al cambio desde el perfil).
+// Reutiliza generateAndSendOTP/verifyOTP del PR #260 con un nuevo `purpose`.
+app.post('/api/auth/change-password/send-otp', authMiddleware, sensitiveLimiter, smsIpLimiter, async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone || typeof phone !== 'string') {
+      return res.status(400).json({ error: 'Número de teléfono requerido' });
+    }
+
+    const normalizedPhone = phone.trim();
+    if (!validateInternationalPhone(normalizedPhone)) {
+      return res.status(400).json({
+        error: 'Número de teléfono inválido. Usá formato internacional con código de país (ej: +5491155551234)'
+      });
+    }
+
+    // Buscar el usuario autenticado.
+    let user = await User.findOne({ id: req.user.userId }).lean();
+    if (!user) {
+      try {
+        user = await User.findById(req.user.userId).lean();
+      } catch (e) { /* ignorar id inválido */ }
+    }
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Si otro usuario distinto ya tiene este teléfono verificado, rechazar.
+    const otherUser = await User.findOne({
+      phone: normalizedPhone,
+      phoneVerified: true,
+      id: { $ne: user.id }
+    }).lean();
+    if (otherUser) {
+      return res.status(400).json({ error: 'Este número de teléfono ya está registrado por otra cuenta' });
+    }
+
+    const result = await generateAndSendOTP(normalizedPhone, 'change-password');
+    if (!result.success) {
+      return res.status(429).json({ error: result.error });
+    }
+
+    const maskedPhone = normalizedPhone.replace(/(\+\d{1,4})\d+(\d{4})$/, '$1****$2');
+    res.json({
+      success: true,
+      pendingVerification: true,
+      phone: maskedPhone,
+      message: 'Te enviamos un código SMS al número indicado'
+    });
+  } catch (error) {
+    logger.error(`Error en change-password/send-otp: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

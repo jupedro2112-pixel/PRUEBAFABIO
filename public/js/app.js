@@ -156,4 +156,11 @@ function setupEventListeners() {
 
     // Change password
     document.getElementById('changePasswordForm').addEventListener('submit', VIP.auth.handleChangePassword);
+    // Cambio de contraseña — paso 2 (verificación OTP del nuevo teléfono).
+    const cpOtpVerifyBtn = document.getElementById('changePasswordOtpVerifyBtn');
+    const cpOtpResendBtn = document.getElementById('changePasswordOtpResendBtn');
+    const cpOtpBackBtn = document.getElementById('changePasswordOtpBackBtn');
+    if (cpOtpVerifyBtn) cpOtpVerifyBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpVerify);
+    if (cpOtpResendBtn) cpOtpResendBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpResend);
+    if (cpOtpBackBtn) cpOtpBackBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpBack);
 }

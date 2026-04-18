@@ -49,6 +49,15 @@ const userSchema = new mongoose.Schema({
     default: null,
     trim: true
   },
+  // Consentimiento explícito del usuario para recibir SMS (incluye marketing/avisos masivos).
+  // Se setea automáticamente a true cuando el usuario verifica su teléfono vía OTP en el alta
+  // o en el cambio de contraseña, ya que en ese momento confirma tener acceso a la línea.
+  // Es uno de los filtros usados por el panel de SMS Masivo (ver buildBulkSmsQuery en server.js).
+  smsConsent: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
   role: { 
     type: String, 
     enum: ['user', 'admin', 'depositor', 'withdrawer'], 
