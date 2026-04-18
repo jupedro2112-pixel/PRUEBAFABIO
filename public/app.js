@@ -258,7 +258,11 @@ window._phoneOtpFullPhone = null;
 
 function switchPhoneLoginMode(mode) {
     window._phoneLoginMode = mode;
-    const passwordGroup = document.querySelector('#loginForm .input-group:has(#password)');
+    // iOS Safari < 15.4 no soporta el selector CSS :has(), y `document.querySelector('...:has(...)')`
+    // tira SyntaxError, abortando el handler entero (causa raíz del bug del toggle "Celular" en iPhone).
+    // Resolvemos el grupo del password buscando el input por id y subiendo al .input-group ancestro.
+    const passwordInputEl = document.getElementById('password');
+    const passwordGroup = passwordInputEl ? passwordInputEl.closest('.input-group') : null;
     const submitBtn = document.querySelector('#loginForm button[type="submit"]');
     const otpStep = document.getElementById('phoneOtpStep');
     const passwordBtn = document.getElementById('phoneLoginByPassword');

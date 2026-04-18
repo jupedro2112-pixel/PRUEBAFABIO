@@ -76,9 +76,18 @@ async function generateAndSendOTP(phone, purpose) {
   await OtpCode.create({ phone, codeHash, purpose });
 
   // Enviar SMS
-  const message = purpose === 'register'
-    ? `VIPCARGAS - Tu código de verificación es: ${code}. Válido por 5 min. www.vipcargas.com`
-    : `VIPCARGAS - Tu código para restablecer contraseña es: ${code}. Válido por 5 min. www.vipcargas.com`;
+  let message;
+  if (purpose === 'register') {
+    message = `VIPCARGAS - Tu código de verificación es: ${code}. Válido por 5 min. www.vipcargas.com`;
+  } else if (purpose === 'reset') {
+    message = `VIPCARGAS - Tu código para restablecer contraseña es: ${code}. Válido por 5 min. www.vipcargas.com`;
+  } else if (purpose === 'change-password') {
+    message = `VIPCARGAS - Tu código para verificar tu teléfono al cambiar la contraseña es: ${code}. Válido por 5 min. www.vipcargas.com`;
+  } else if (purpose === 'login') {
+    message = `VIPCARGAS - Tu código de inicio de sesión es: ${code}. Válido por 5 min. www.vipcargas.com`;
+  } else {
+    message = `VIPCARGAS - Tu código de verificación es: ${code}. Válido por 5 min. www.vipcargas.com`;
+  }
 
   const smsResult = await sendSMS(phone, message);
 

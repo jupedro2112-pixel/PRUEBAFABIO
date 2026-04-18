@@ -42,8 +42,11 @@
             
             <form id="loginForm" autocomplete="on">
                 <div style="display:flex;gap:0;margin-bottom:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(212,175,55,0.3);">
-                    <button type="button" id="loginByUsernameBtn" onclick="switchLoginMode('username')" style="flex:1;padding:8px 4px;font-size:12px;background:rgba(212,175,55,0.2);color:#d4af37;border:none;cursor:pointer;font-weight:600;">👤 Usuario</button>
-                    <button type="button" id="loginByPhoneBtn" onclick="switchLoginMode('phone')" style="flex:1;padding:8px 4px;font-size:12px;background:transparent;color:#888;border:none;cursor:pointer;">📱 Celular</button>
+                    <!-- iOS Safari fix: touch-action:manipulation evita el delay de 300ms del doble-tap;
+                         -webkit-tap-highlight-color asegura feedback visual al tocar. Los handlers se asignan
+                         por addEventListener en auth.js para no depender de inline onclick (más confiable en iOS). -->
+                    <button type="button" id="loginByUsernameBtn" onclick="switchLoginMode('username')" style="flex:1;padding:8px 4px;font-size:12px;background:rgba(212,175,55,0.2);color:#d4af37;border:none;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:rgba(212,175,55,0.3);touch-action:manipulation;-webkit-appearance:none;appearance:none;">👤 Usuario</button>
+                    <button type="button" id="loginByPhoneBtn" onclick="switchLoginMode('phone')" style="flex:1;padding:8px 4px;font-size:12px;background:transparent;color:#888;border:none;cursor:pointer;-webkit-tap-highlight-color:rgba(212,175,55,0.3);touch-action:manipulation;-webkit-appearance:none;appearance:none;">📱 Celular</button>
                 </div>
                 <div class="input-group" id="loginUsernameGroup">
                     <label>Usuario</label>
@@ -394,6 +397,7 @@
                 <h2 id="changePasswordTitle">🔐 Cambiar Contraseña</h2>
                 <p id="changePasswordSubtitle">Ingresá tu nueva contraseña para actualizarla.</p>
             </div>
+            <!-- Paso 1: Datos del cambio -->
             <form id="changePasswordForm" autocomplete="on">
                 <div class="input-group">
                     <label>Nueva Contraseña</label>
@@ -429,7 +433,7 @@
                         </select>
                         <input type="tel" id="changePasswordWhatsApp" name="whatsapp" placeholder="9 11 1234-5678" autocomplete="tel" style="flex: 1;">
                     </div>
-                    <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta (más de 10 dígitos)</span>
+                    <span style="font-size: 11px; color: #888;">Necesario para recuperar tu cuenta. Te vamos a enviar un código por SMS para verificarlo.</span>
                 </div>
                 <div id="changePasswordWhatsAppInfo" style="display:none; font-size: 12px; color: #00ff88; padding: 8px 0; margin-bottom: 8px;"></div>
                 <div class="input-group" style="display: flex; align-items: center; gap: 10px;">
@@ -437,8 +441,27 @@
                     <label for="closeAllSessions" style="margin: 0; font-size: 14px;">Cerrar todas las sesiones activas</label>
                 </div>
                 <div id="passwordError" class="error-message"></div>
-                <button type="submit" class="btn btn-primary">💾 Guardar Cambios</button>
+                <button type="submit" class="btn btn-primary" id="changePasswordSubmitBtn">💾 Guardar Cambios</button>
             </form>
+            <!-- Paso 2: Verificación OTP del nuevo teléfono.
+                 Reutiliza el patrón del paso 2 de registro (#registerStep2) y el flujo OTP del PR #260. -->
+            <div id="changePasswordOtpStep" style="display:none;">
+                <p id="changePasswordOtpMsg" style="color: #00ff88; text-align: center; margin-bottom: 16px;"></p>
+                <div class="input-group">
+                    <label>Código de verificación *</label>
+                    <input type="text" inputmode="numeric" pattern="[0-9]{6}" id="changePasswordOtpCode" placeholder="Código de 6 dígitos" maxlength="6" style="font-size: 22px; text-align: center; letter-spacing: 8px;">
+                </div>
+                <div id="changePasswordOtpError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="changePasswordOtpBackBtn">Volver</button>
+                    <button type="button" class="btn btn-primary" id="changePasswordOtpVerifyBtn">✅ Verificar y Guardar</button>
+                </div>
+                <p style="font-size: 11px; color: #888; text-align: center; margin-top: 10px;">
+                    ¿No recibiste el código?
+                    <button type="button" id="changePasswordOtpResendBtn" style="background:none;border:none;color:#d4af37;cursor:pointer;text-decoration:underline;padding:0;font-size:11px;">Reenviar SMS</button>
+                    <span id="changePasswordOtpResendCooldown" style="color:#888;display:none;"></span>
+                </p>
+            </div>
         </div>
     </div>
 
