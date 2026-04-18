@@ -50,117 +50,149 @@ document.addEventListener('keydown', function (e) {
 });
 
 function setupEventListeners() {
-    // Login / logout
-    document.getElementById('loginForm').addEventListener('submit', VIP.auth.handleLogin);
-    document.getElementById('logoutBtn').addEventListener('click', VIP.auth.handleLogout);
-    document.getElementById('helpBtn').addEventListener('click', () => {
-        window.open('https://wa.link/metawin2026', '_blank');
-    });
-    document.getElementById('installBtn').addEventListener('click', VIP.ui.installApp);
+    try {
+        // ⚠️ CRÍTICO: registrar el submit handler de cambio de contraseña PRIMERO.
+        // Si cualquier listener posterior fallara, este flujo (OTP de cambio obligatorio)
+        // igual queda cubierto y no se cae al submit nativo del browser.
+        const changePasswordForm = document.getElementById('changePasswordForm');
+        if (changePasswordForm) changePasswordForm.addEventListener('submit', VIP.auth.handleChangePassword);
+        // Cambio de contraseña — paso 2 (verificación OTP del nuevo teléfono).
+        const cpOtpVerifyBtn = document.getElementById('changePasswordOtpVerifyBtn');
+        const cpOtpResendBtn = document.getElementById('changePasswordOtpResendBtn');
+        const cpOtpBackBtn = document.getElementById('changePasswordOtpBackBtn');
+        if (cpOtpVerifyBtn) cpOtpVerifyBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpVerify);
+        if (cpOtpResendBtn) cpOtpResendBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpResend);
+        if (cpOtpBackBtn) cpOtpBackBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpBack);
 
-    const headerInstallBtn = document.getElementById('headerInstallBtn');
-    if (headerInstallBtn) headerInstallBtn.addEventListener('click', VIP.ui.installApp);
-
-    const appInstallBtn = document.getElementById('appInstallBtn');
-    if (appInstallBtn) appInstallBtn.addEventListener('click', VIP.ui.installApp);
-
-    // Register modal
-    document.getElementById('registerBtn').addEventListener('click', () => VIP.ui.showModal('registerModal'));
-    document.getElementById('closeRegisterModal').addEventListener('click', () => VIP.ui.hideModal('registerModal'));
-    document.getElementById('registerForm').addEventListener('submit', VIP.auth.handleRegister);
-
-    // Chat send
-    document.getElementById('sendBtn').addEventListener('click', VIP.chat.sendMessage);
-
-    const messageInput = document.getElementById('messageInput');
-    messageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            VIP.chat.sendMessage();
-        }
-    });
-
-    // Typing indicator
-    let typingTimeout;
-    messageInput.addEventListener('input', function () {
-        if (VIP.state.socket) {
-            VIP.state.socket.emit('typing', { isTyping: true });
-            clearTimeout(typingTimeout);
-            typingTimeout = setTimeout(() => {
-                VIP.state.socket.emit('stop_typing', {});
-            }, 2000);
-        }
-    });
-
-    // File attach & paste
-    document.getElementById('attachBtn').addEventListener('click', () => {
-        document.getElementById('fileInput').click();
-    });
-    document.getElementById('fileInput').addEventListener('change', VIP.chat.handleFileSelect);
-    document.getElementById('messageInput').addEventListener('paste', VIP.chat.handlePaste);
-
-    // Auto-resize textarea
-    const textarea = document.getElementById('messageInput');
-    textarea.addEventListener('input', function () {
-        this.style.height = 'auto';
-        this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-    });
-
-    // Refund buttons
-    document.getElementById('dailyRefundBtn').addEventListener('click', () => VIP.refunds.showRefundModal('daily'));
-    document.getElementById('weeklyRefundBtn').addEventListener('click', () => VIP.refunds.showRefundModal('weekly'));
-    document.getElementById('monthlyRefundBtn').addEventListener('click', () => VIP.refunds.showRefundModal('monthly'));
-    document.getElementById('closeRefundModal').addEventListener('click', () => VIP.ui.hideModal('refundModal'));
-
-    // Fire (Fueguito)
-    const fireBtn = document.getElementById('fireBtn');
-    if (fireBtn) {
-        fireBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('🔥 Fueguito clickeado');
-            VIP.fire.showFireModal();
+        // Login / logout
+        const loginForm = document.getElementById('loginForm');
+        if (loginForm) loginForm.addEventListener('submit', VIP.auth.handleLogin);
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) logoutBtn.addEventListener('click', VIP.auth.handleLogout);
+        const helpBtn = document.getElementById('helpBtn');
+        if (helpBtn) helpBtn.addEventListener('click', () => {
+            window.open('https://wa.link/metawin2026', '_blank');
         });
-    }
-    document.getElementById('closeFireModal').addEventListener('click', () => VIP.ui.hideModal('fireModal'));
-    document.getElementById('claimFireBtn').addEventListener('click', VIP.fire.claimFire);
+        const installBtn = document.getElementById('installBtn');
+        if (installBtn) installBtn.addEventListener('click', VIP.ui.installApp);
 
-    // Referrals
-    document.getElementById('referralBtn').addEventListener('click', () => VIP.ui.openReferralModal());
+        const headerInstallBtn = document.getElementById('headerInstallBtn');
+        if (headerInstallBtn) headerInstallBtn.addEventListener('click', VIP.ui.installApp);
 
-    // Info modal
-    document.getElementById('infoBtn').addEventListener('click', () => VIP.ui.showModal('infoModal'));
-    document.getElementById('closeInfoModal').addEventListener('click', () => VIP.ui.hideModal('infoModal'));
+        const appInstallBtn = document.getElementById('appInstallBtn');
+        if (appInstallBtn) appInstallBtn.addEventListener('click', VIP.ui.installApp);
 
-    // CBU
-    document.getElementById('cbuChatBtn').addEventListener('click', VIP.ui.loadAndShowCBU);
+        // Register modal
+        const registerBtn = document.getElementById('registerBtn');
+        if (registerBtn) registerBtn.addEventListener('click', () => VIP.ui.showModal('registerModal'));
+        const closeRegisterModal = document.getElementById('closeRegisterModal');
+        if (closeRegisterModal) closeRegisterModal.addEventListener('click', () => VIP.ui.hideModal('registerModal'));
+        const registerForm = document.getElementById('registerForm');
+        if (registerForm) registerForm.addEventListener('submit', VIP.auth.handleRegister);
 
-    // Settings
-    document.getElementById('settingsBtn').addEventListener('click', () => VIP.ui.showModal('settingsModal'));
-    document.getElementById('closeSettingsModal').addEventListener('click', () => VIP.ui.hideModal('settingsModal'));
-    document.getElementById('changePasswordSettingsBtn').addEventListener('click', () => {
-        VIP.ui.hideModal('settingsModal');
-        VIP.state.passwordChangePending = false;
-        if (typeof VIP.auth.prepareChangePasswordModal === 'function') {
-            VIP.auth.prepareChangePasswordModal();
+        // Chat send
+        const sendBtn = document.getElementById('sendBtn');
+        if (sendBtn) sendBtn.addEventListener('click', VIP.chat.sendMessage);
+
+        const messageInput = document.getElementById('messageInput');
+        if (messageInput) {
+            messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    VIP.chat.sendMessage();
+                }
+            });
+
+            // Typing indicator
+            let typingTimeout;
+            messageInput.addEventListener('input', function () {
+                if (VIP.state.socket) {
+                    VIP.state.socket.emit('typing', { isTyping: true });
+                    clearTimeout(typingTimeout);
+                    typingTimeout = setTimeout(() => {
+                        VIP.state.socket.emit('stop_typing', {});
+                    }, 2000);
+                }
+            });
+
+            messageInput.addEventListener('paste', VIP.chat.handlePaste);
+
+            // Auto-resize textarea
+            messageInput.addEventListener('input', function () {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+            });
         }
-        VIP.ui.showModal('changePasswordModal');
-    });
 
-    // Find user by phone
-    document.getElementById('findUserBtn').addEventListener('click', () => VIP.ui.showModal('findUserModal'));
-    document.getElementById('findUserForm').addEventListener('submit', VIP.auth.handleFindUserByPhone);
+        // File attach & paste
+        const attachBtn = document.getElementById('attachBtn');
+        if (attachBtn) attachBtn.addEventListener('click', () => {
+            const fi = document.getElementById('fileInput');
+            if (fi) fi.click();
+        });
+        const fileInput = document.getElementById('fileInput');
+        if (fileInput) fileInput.addEventListener('change', VIP.chat.handleFileSelect);
 
-    // Reset password by phone
-    document.getElementById('resetPassForm').addEventListener('submit', VIP.auth.handleResetPasswordByPhone);
+        // Refund buttons
+        const dailyRefundBtn = document.getElementById('dailyRefundBtn');
+        if (dailyRefundBtn) dailyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('daily'));
+        const weeklyRefundBtn = document.getElementById('weeklyRefundBtn');
+        if (weeklyRefundBtn) weeklyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('weekly'));
+        const monthlyRefundBtn = document.getElementById('monthlyRefundBtn');
+        if (monthlyRefundBtn) monthlyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('monthly'));
+        const closeRefundModal = document.getElementById('closeRefundModal');
+        if (closeRefundModal) closeRefundModal.addEventListener('click', () => VIP.ui.hideModal('refundModal'));
 
-    // Change password
-    document.getElementById('changePasswordForm').addEventListener('submit', VIP.auth.handleChangePassword);
-    // Cambio de contraseña — paso 2 (verificación OTP del nuevo teléfono).
-    const cpOtpVerifyBtn = document.getElementById('changePasswordOtpVerifyBtn');
-    const cpOtpResendBtn = document.getElementById('changePasswordOtpResendBtn');
-    const cpOtpBackBtn = document.getElementById('changePasswordOtpBackBtn');
-    if (cpOtpVerifyBtn) cpOtpVerifyBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpVerify);
-    if (cpOtpResendBtn) cpOtpResendBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpResend);
-    if (cpOtpBackBtn) cpOtpBackBtn.addEventListener('click', VIP.auth.handleChangePasswordOtpBack);
+        // Fire (Fueguito)
+        const fireBtn = document.getElementById('fireBtn');
+        if (fireBtn) {
+            fireBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('🔥 Fueguito clickeado');
+                VIP.fire.showFireModal();
+            });
+        }
+        const closeFireModal = document.getElementById('closeFireModal');
+        if (closeFireModal) closeFireModal.addEventListener('click', () => VIP.ui.hideModal('fireModal'));
+        const claimFireBtn = document.getElementById('claimFireBtn');
+        if (claimFireBtn) claimFireBtn.addEventListener('click', VIP.fire.claimFire);
+
+        // Referrals
+        const referralBtn = document.getElementById('referralBtn');
+        if (referralBtn) referralBtn.addEventListener('click', () => VIP.ui.openReferralModal());
+
+        // Info modal
+        const infoBtn = document.getElementById('infoBtn');
+        if (infoBtn) infoBtn.addEventListener('click', () => VIP.ui.showModal('infoModal'));
+        const closeInfoModal = document.getElementById('closeInfoModal');
+        if (closeInfoModal) closeInfoModal.addEventListener('click', () => VIP.ui.hideModal('infoModal'));
+
+        // CBU
+        const cbuChatBtn = document.getElementById('cbuChatBtn');
+        if (cbuChatBtn) cbuChatBtn.addEventListener('click', VIP.ui.loadAndShowCBU);
+
+        // Settings
+        const settingsBtn = document.getElementById('settingsBtn');
+        if (settingsBtn) settingsBtn.addEventListener('click', () => VIP.ui.showModal('settingsModal'));
+        const closeSettingsModal = document.getElementById('closeSettingsModal');
+        if (closeSettingsModal) closeSettingsModal.addEventListener('click', () => VIP.ui.hideModal('settingsModal'));
+        const changePasswordSettingsBtn = document.getElementById('changePasswordSettingsBtn');
+        if (changePasswordSettingsBtn) changePasswordSettingsBtn.addEventListener('click', () => {
+            VIP.ui.hideModal('settingsModal');
+            VIP.state.passwordChangePending = false;
+            if (typeof VIP.auth.prepareChangePasswordModal === 'function') {
+                VIP.auth.prepareChangePasswordModal();
+            }
+            VIP.ui.showModal('changePasswordModal');
+        });
+
+        // Nota: findUserForm y resetPassForm ya no existen en el HTML. findUserBtn
+        // sí existe pero usa un `onclick` inline que abre directamente resetPassModal
+        // (flujo de recuperación por SMS: handleRequestPasswordReset / handleVerifyResetOtp /
+        // handleCompletePasswordReset, todos cableados vía onclick inline en index.html).
+        // Por eso no registramos ningún addEventListener para estos IDs aquí.
+    } catch (err) {
+        console.error('[setupEventListeners] Error al registrar listeners (app parcialmente funcional):', err);
+    }
 }
