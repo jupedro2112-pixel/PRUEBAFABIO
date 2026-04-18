@@ -2185,9 +2185,15 @@ function validateBulkSmsPhone(phone) {
 /**
  * Construye el query de Mongoose para los filtros de bulk SMS.
  * Solo se permiten claves específicas con valores primitivos para evitar inyección NoSQL.
+ *
+ * Por defecto incluye TODOS los usuarios con teléfono cargado (verificados o no).
+ * Si `onlyVerified === true`, restringe a usuarios con `phoneVerified: true` y `smsConsent: true`
+ * (modo estricto, equivalente al comportamiento histórico).
  */
-function buildBulkSmsQuery(filters) {
-  const query = { phone: { $ne: null }, phoneVerified: true };
+function buildBulkSmsQuery(filters, onlyVerified = false) {
+  const query = {
+    phone: { $exists: true, $nin: [null, ''] }
+  };
   if (filters && typeof filters === 'object') {
     const allowedFilters = ['smsConsent', 'isActive'];
     for (const key of allowedFilters) {
@@ -2199,6 +2205,12 @@ function buildBulkSmsQuery(filters) {
       }
     }
   }
+  // Aplicar overrides de modo estricto al final para que no puedan ser debilitados
+  // por filtros del cliente (p.ej. filters.smsConsent = false).
+  if (onlyVerified === true) {
+    query.phoneVerified = true;
+    query.smsConsent = true;
+  }
   return query;
 }
 
@@ -2209,8 +2221,8 @@ app.post('/api/admin/bulk-sms/preview', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Acceso denegado. Solo el administrador general puede usar esta función.' });
     }
 
-    const { filters } = req.body;
-    const query = buildBulkSmsQuery(filters);
+    const { filters, onlyVerified } = req.body;
+    const query = buildBulkSmsQuery(filters, onlyVerified === true);
     const users = await User.find(query).select('phone username').lean();
 
     const recipients = users.map(u => {
@@ -2240,7 +2252,7 @@ app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, re
       return res.status(403).json({ error: 'Acceso denegado. Solo el administrador general puede enviar SMS masivos.' });
     }
 
-    const { message, filters } = req.body;
+    const { message, filters, onlyVerified } = req.body;
 
     if (!message || typeof message !== 'string') {
       return res.status(400).json({ error: 'El mensaje es requerido' });
@@ -2255,20 +2267,21 @@ app.post('/api/admin/bulk-sms', authMiddleware, bulkSmsIpLimiter, async (req, re
     if (trimmedMessage.length > 160) {
       return res.status(400).json({ error: 'El mensaje no puede superar los 160 caracteres' });
     }
-    const query = buildBulkSmsQuery(filters);
-    const users = await User.find(query).select('phone username').lean();
+    const query = buildBulkSmsQuery(filters, onlyVerified === true);
+    const users = await User.find(query).select('_id phone username').lean();
 
     let sent = 0;
     let failed = 0;
     let discarded = 0;
     const results = [];
 
-    logger.info(`[bulk-sms] Admin ${req.user.username} iniciando envío masivo a ${users.length} usuarios`);
+    logger.info(`[bulk-sms] Admin ${req.user.username} iniciando envío masivo a ${users.length} usuarios (onlyVerified=${onlyVerified === true})`);
 
     for (const user of users) {
       const validation = validateBulkSmsPhone(user.phone);
       if (!validation.valid) {
         discarded++;
+        logger.info(`[bulk-sms] Skipped invalid phone: ${user._id} (${validation.reason})`);
         results.push({ username: user.username, phone: user.phone, status: 'discarded', reason: validation.reason });
         continue;
       }

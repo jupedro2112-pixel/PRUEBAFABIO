@@ -965,6 +965,15 @@
                             <div style="text-align:right;margin-top:.3rem;font-size:.8rem;" id="smsContador"><span id="smsContadorNum">160</span> caracteres restantes</div>
                         </div>
                         <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem;">
+                            <label style="display:flex;align-items:center;gap:8px;color:#d4af37;font-weight:600;cursor:pointer;">
+                                <input type="checkbox" id="bulkSmsOnlyVerified" style="accent-color:#d4af37;width:16px;height:16px;">
+                                Solo usuarios que verificaron su número (más seguro, menos destinatarios)
+                            </label>
+                        </div>
+                        <small style="color:#888;display:block;margin-top:.4rem;">
+                            Si está desmarcado, se enviará a TODOS los usuarios con teléfono cargado (verificados o no).
+                        </small>
+                        <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem;">
                             <button id="smsPreviewBtn" class="btn btn-secondary" onclick="previewSmsMasivo()">🔍 Ver destinatarios</button>
                         </div>
                     </div>
