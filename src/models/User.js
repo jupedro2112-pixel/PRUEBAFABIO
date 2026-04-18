@@ -91,6 +91,23 @@ const userSchema = new mongoose.Schema({
     type: Date, 
     default: null 
   },
+  // Forces the user to change their password before they can use the rest of the app.
+  // Set to `true` when:
+  //   - A new user is auto-imported from JUGAYGANA (default password "asd123").
+  //   - Login detects the JUGAYGANA-default scenario (`needsPasswordChange`).
+  //   - An admin resets the user's password.
+  // Cleared (`false`) when the user successfully completes a password change
+  // (POST /api/auth/change-password) or a password reset by SMS
+  // (POST /api/auth/complete-password-reset).
+  // Enforced server-side by `authMiddleware`: any authenticated request to a
+  // non-allow-listed path returns 403 with `code: 'MUST_CHANGE_PASSWORD'` while
+  // this flag is true. This prevents bypassing the mandatory change modal by
+  // simply reloading the page.
+  mustChangePassword: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
   tokenVersion: { 
     type: Number, 
     default: 0 

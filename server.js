@@ -367,7 +367,7 @@ const io = socketIo(server, {
     credentials: true
   },
   // Force WebSocket transport for lower latency and better behavior behind ALB/NLB.
-  // Clients in public/app.js already request ['websocket'] so this is consistent.
+  // Clients in public/js/socket.js already request ['websocket'] so this is consistent.
   transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000,
@@ -454,7 +454,21 @@ app.use(xss());
 // Fields exposed to the authenticated user about their own profile.
 // Keep this list minimal – internal fields (jugaygana IDs, FCM tokens, etc.)
 // are excluded intentionally to reduce accidental data exposure.
-const USER_PUBLIC_FIELDS = 'id username email phone phoneVerified whatsapp accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin';
+const USER_PUBLIC_FIELDS = 'id username email phone phoneVerified whatsapp accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin mustChangePassword';
+
+// Paths that are reachable while a user has `mustChangePassword: true`.
+// Everything else returns 403 with `code: 'MUST_CHANGE_PASSWORD'` (enforced
+// inside `authMiddleware`) so the client can re-open the mandatory change
+// modal even after a page reload or a manual API call.
+const MUST_CHANGE_PASSWORD_ALLOWED_PATHS = [
+  '/api/auth/change-password',
+  '/api/auth/change-password/send-otp',
+  '/api/users/me',
+  '/api/auth/logout',
+  '/api/auth/admin-logout',
+  '/api/auth/verify',
+  '/api/health'
+];
 
 // Regex used by the SPA fallback to detect static asset paths that should
 // never be served as HTML (would trigger X-Content-Type-Options: nosniff).
@@ -883,6 +897,23 @@ const authMiddleware = async (req, res, next) => {
     }
     
     req.user = decoded;
+
+    // Enforce mandatory password change server-side.
+    // If the user has `mustChangePassword: true` (set by JUGAYGANA import,
+    // login default-password detection, or admin reset), only the allow-listed
+    // endpoints are reachable. Any other authenticated request returns 403 so
+    // the SPA can re-open the mandatory change modal — even after a reload.
+    if (user.mustChangePassword === true) {
+      const path = req.path || '';
+      const allowed = MUST_CHANGE_PASSWORD_ALLOWED_PATHS.some(p => path === p || path.startsWith(p + '/'));
+      if (!allowed) {
+        return res.status(403).json({
+          error: 'Debés cambiar tu contraseña antes de continuar',
+          code: 'MUST_CHANGE_PASSWORD'
+        });
+      }
+    }
+
     next();
   } catch (error) {
     return res.status(401).json({ error: 'Token inválido' });
@@ -1327,7 +1358,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
           jugayganaUsername: jgUser.username,
           jugayganaSyncStatus: 'linked',
           source: 'jugaygana',
-          tokenVersion: 0
+          tokenVersion: 0,
+          // Auto-imported JUGAYGANA users start with the default password
+          // "asd123"; force them to change it before they can use the app.
+          mustChangePassword: true
         });
         
         // Crear chat status
@@ -1412,6 +1446,13 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     
     // Actualizar lastLogin usando el modelo de Mongoose
     user.lastLogin = new Date();
+    // If the user must change the password (default JUGAYGANA password or
+    // never-changed JUGAYGANA-imported account), persist the flag so the
+    // server-side enforcement in `authMiddleware` keeps blocking the rest of
+    // the API even after a page reload.
+    if (needsPasswordChange && user.mustChangePassword !== true) {
+      user.mustChangePassword = true;
+    }
     await user.save();
     
     // Token con expiración de 30 días para persistencia de sesión
@@ -1468,7 +1509,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         role: userObj.role,
         balance: userObj.balance,
         jugayganaLinked: !!userObj.jugayganaUserId,
-        needsPasswordChange: needsPasswordChange
+        needsPasswordChange: needsPasswordChange,
+        mustChangePassword: needsPasswordChange || userObj.mustChangePassword === true
       }
     });
   } catch (error) {
@@ -1505,7 +1547,8 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role,
-        balance: user.balance
+        balance: user.balance,
+        mustChangePassword: user.mustChangePassword === true
       }
     });
   } catch (error) {
@@ -1679,6 +1722,10 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
     // Asignar contraseña en texto plano; el middleware pre-save del modelo la hasheará
     user.password = newPassword;
     user.passwordChangedAt = new Date();
+    // The user just changed their password (and verified the OTP for any new
+    // phone, if applicable). Lift the mandatory-change flag so the rest of the
+    // API stops returning 403 MUST_CHANGE_PASSWORD on subsequent requests.
+    user.mustChangePassword = false;
     
     if (closeAllSessions) {
       user.tokenVersion = (user.tokenVersion || 0) + 1;
@@ -1954,6 +2001,7 @@ app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
         balance: userObj.balance,
         jugayganaLinked: !!userObj.jugayganaUserId,
         needsPasswordChange: false,
+        mustChangePassword: userObj.mustChangePassword === true,
         referralCode: userObj.referralCode
       }
     });
@@ -2070,6 +2118,9 @@ app.post('/api/auth/complete-password-reset', sensitiveLimiter, async (req, res)
     // Cambiar contraseña
     user.password = newPassword;
     user.passwordChangedAt = new Date();
+    // Recovering the password via SMS counts as completing a password change,
+    // so lift any pending `mustChangePassword` enforcement.
+    user.mustChangePassword = false;
     await user.save();
 
     // Sincronizar con JUGAYGANA (best-effort)
@@ -2304,6 +2355,10 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
     
     user.password = newPassword;
     user.passwordChangedAt = new Date();
+    // After an admin resets a user's password, force the user to change it on
+    // their next interaction. Without this, the admin-chosen value would
+    // remain valid indefinitely and bypass the mandatory-change flow.
+    user.mustChangePassword = true;
     await user.save();
     
     logger.info(`Admin ${req.user.username} reset password for ${user.username}`);

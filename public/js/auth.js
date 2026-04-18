@@ -274,7 +274,7 @@ VIP.auth = (function () {
                     console.error('Error inicializando sesión:', initError);
                 }
 
-                if (data.user.needsPasswordChange) {
+                if (data.user.needsPasswordChange || data.user.mustChangePassword === true) {
                     VIP.state.passwordChangePending = true;
                     prepareChangePasswordModal();
                     VIP.ui.showModal('changePasswordModal');
@@ -342,6 +342,15 @@ VIP.auth = (function () {
                 VIP.socket.startMessagePolling();
                 VIP.refunds.loadRefundStatus();
                 VIP.fire.loadFireStatus();
+
+                // Server-side enforcement: if the user must change their
+                // password (flag persisted in DB), re-open the mandatory
+                // change modal even after a page reload.
+                if (VIP.state.currentUser && VIP.state.currentUser.mustChangePassword === true) {
+                    VIP.state.passwordChangePending = true;
+                    try { prepareChangePasswordModal(); } catch (e) { /* DOM not ready */ }
+                    try { VIP.ui.showModal('changePasswordModal'); } catch (e) { /* ignore */ }
+                }
 
                 VIP.notifications.requestNotificationPermission();
                 VIP.notifications.sendFcmTokenAfterLogin().catch(function (e) {
@@ -414,6 +423,17 @@ VIP.auth = (function () {
 
         if (!userLoaded) {
             console.warn('⚠️ No se pudo cargar el usuario completamente, pero continuando...');
+        }
+
+        // Server-side enforcement of mandatory password change.
+        // If `/api/users/me` reported `mustChangePassword: true`, re-open the
+        // mandatory change modal automatically. This handles the page-reload
+        // bypass: the flag lives on the server and is detected here on every
+        // session bootstrap.
+        if (VIP.state.currentUser && VIP.state.currentUser.mustChangePassword === true) {
+            VIP.state.passwordChangePending = true;
+            try { prepareChangePasswordModal(); } catch (e) { /* DOM not ready yet */ }
+            try { VIP.ui.showModal('changePasswordModal'); } catch (e) { /* ignore */ }
         }
 
         VIP.ui.showChatScreen();
@@ -1061,3 +1081,58 @@ window.handlePhoneOtpVerify = async function() {
         if (verifyBtn) { verifyBtn.textContent = '✅ Verificar código'; verifyBtn.disabled = false; }
     }
 };
+
+// ============================================================
+// Global fetch interceptor: detect server-side enforcement of
+// mandatory password change (HTTP 403 with `code: MUST_CHANGE_PASSWORD`).
+//
+// This covers the "reload bypass" attack: even if the user reloads the page
+// or tries to call any authenticated API directly, the server returns 403
+// for non-allow-listed endpoints while `user.mustChangePassword === true`.
+// We catch that response globally, flip the in-memory flag, and re-open
+// the mandatory change modal.
+// ============================================================
+(function installMustChangePasswordInterceptor() {
+    if (typeof window === 'undefined' || !window.fetch || window.__vipMustChangePasswordInterceptorInstalled) {
+        return;
+    }
+    window.__vipMustChangePasswordInterceptorInstalled = true;
+
+    const originalFetch = window.fetch.bind(window);
+
+    window.fetch = async function (...args) {
+        const response = await originalFetch(...args);
+        try {
+            if (response && response.status === 403) {
+                // Clone so the original consumer can still read the body.
+                const clone = response.clone();
+                const contentType = clone.headers.get('content-type') || '';
+                if (contentType.indexOf('application/json') !== -1) {
+                    const body = await clone.json().catch(() => null);
+                    if (body && body.code === 'MUST_CHANGE_PASSWORD') {
+                        // Only re-prepare the modal the first time we see the
+                        // server-side enforcement. Otherwise repeated background
+                        // requests (balance polling, fire status, etc.) would
+                        // keep resetting the OTP step while the user types it.
+                        if (!VIP.state.passwordChangePending) {
+                            VIP.state.passwordChangePending = true;
+                            try {
+                                if (VIP.auth && typeof VIP.auth.prepareChangePasswordModal === 'function') {
+                                    VIP.auth.prepareChangePasswordModal();
+                                }
+                            } catch (e) { /* ignore */ }
+                            try {
+                                if (VIP.ui && typeof VIP.ui.showModal === 'function') {
+                                    VIP.ui.showModal('changePasswordModal');
+                                }
+                            } catch (e) { /* ignore */ }
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // Never let the interceptor break the original request flow.
+        }
+        return response;
+    };
+})();
