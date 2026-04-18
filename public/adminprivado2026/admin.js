@@ -5379,13 +5379,14 @@ async function previewSmsMasivo() {
 
     try {
         const filters = obtenerFiltrosSms();
+        const onlyVerified = document.getElementById('bulkSmsOnlyVerified')?.checked === true;
         const res = await fetch(`${API_URL}/api/admin/bulk-sms/preview`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentToken}`
             },
-            body: JSON.stringify({ filters })
+            body: JSON.stringify({ filters, onlyVerified })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error al cargar destinatarios');
@@ -5460,13 +5461,29 @@ function confirmarEnvioSmsMasivo() {
 
     const resumenEl = document.getElementById('smsPreviewResumen');
     const validMatch = resumenEl ? resumenEl.textContent.match(/Válidos:\s*(\d+)/) : null;
+    const totalMatch = resumenEl ? resumenEl.textContent.match(/Total en DB:\s*(\d+)/) : null;
     const validCount = validMatch ? parseInt(validMatch[1], 10) : 0;
+    const totalCount = totalMatch ? parseInt(totalMatch[1], 10) : validCount;
 
     if (validCount === 0) { showToast('No hay destinatarios válidos para enviar', 'error'); return; }
 
     const estimado = (validCount * SMS_COSTO_POR_MENSAJE).toFixed(2);
+    const onlyVerified = document.getElementById('bulkSmsOnlyVerified')?.checked === true;
 
-    if (!confirm(`¿Estás seguro?\n\nSe enviarán ${validCount} SMS.\nCosto estimado: $${estimado} USD\n\nEsta acción no se puede deshacer.`)) return;
+    let confirmMsg;
+    if (!onlyVerified) {
+        confirmMsg = `⚠️ Vas a enviar SMS a TODOS los usuarios con teléfono cargado, incluyendo los que NO verificaron su número.\n\n` +
+            `Esto puede:\n` +
+            `- Generar SMS fallidos a números inválidos.\n` +
+            `- Llegar a usuarios que no dieron consentimiento explícito.\n\n` +
+            `Total en DB: ${totalCount} | Válidos: ${validCount}\n` +
+            `Costo estimado (sobre válidos): $${estimado} USD\n\n` +
+            `¿Continuar?`;
+    } else {
+        confirmMsg = `¿Estás seguro?\n\nSe enviarán ${validCount} SMS.\nCosto estimado: $${estimado} USD\n\nEsta acción no se puede deshacer.`;
+    }
+
+    if (!confirm(confirmMsg)) return;
 
     enviarSmsMasivo(mensaje);
 }
@@ -5488,13 +5505,14 @@ async function enviarSmsMasivo(mensaje) {
 
     try {
         const filters = obtenerFiltrosSms();
+        const onlyVerified = document.getElementById('bulkSmsOnlyVerified')?.checked === true;
         const res = await fetch(`${API_URL}/api/admin/bulk-sms`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${currentToken}`
             },
-            body: JSON.stringify({ message: mensaje, filters })
+            body: JSON.stringify({ message: mensaje, filters, onlyVerified })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error al enviar SMS masivo');
@@ -5503,7 +5521,7 @@ async function enviarSmsMasivo(mensaje) {
         renderSmsResultados(data);
         if (resultados) resultados.style.display = '';
 
-        showToast(`✅ Envío completado: ${data.sent} enviados, ${data.failed} fallidos, ${data.discarded || 0} descartados`, 'success');
+        showToast(`✅ Enviados: ${data.sent} | ⚠️ Saltados (teléfono inválido): ${data.discarded || 0} | ❌ Errores: ${data.failed}`, 'success');
     } catch (error) {
         if (progreso) progreso.style.display = 'none';
         showToast(error.message || 'Error al enviar SMS masivo', 'error');
