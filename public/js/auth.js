@@ -18,6 +18,7 @@ VIP.auth = (function () {
      * El banner es prominente (fondo amarillo/naranja, borde rojo) para que
      * el usuario note que el SMS no llegó y que el código es sensible.
      * NO auto-rellena el campo de código para evitar visual spoofing.
+     * Usa DOM methods (sin innerHTML) para prevenir XSS.
      *
      * @param {string} targetId   - id del elemento donde insertar el banner
      * @param {object} fallback   - { code, reason, warning } de la respuesta API
@@ -26,44 +27,64 @@ VIP.auth = (function () {
     function _showOtpFallbackBanner(targetId, fallback, maskedPhone) {
         const container = document.getElementById(targetId);
         if (!container) return;
-        const bannerId = 'otpFb_' + targetId;
-        const codeId   = 'otpFbCode_' + targetId;
-        const safeCode    = escapeHtml(fallback.code    || '');
-        const safeWarning = escapeHtml(fallback.warning || '');
-        const safeMasked  = escapeHtml(maskedPhone || '');
-        container.innerHTML = `<div class="otp-fallback-banner" id="${bannerId}">
-            <p class="otp-fallback-warning">${safeWarning}</p>
-            <div class="otp-fallback-code-wrap">
-                <span class="otp-fallback-code" id="${codeId}">${safeCode}</span>
-                <button type="button" class="btn otp-fallback-copy-btn" id="otpFbCopy_${targetId}">📋 Copiar código</button>
-            </div>
-            <small style="color:#555; display:block; margin-top:8px;">Teléfono: ${safeMasked}</small>
-        </div>`;
-        const copyBtn = document.getElementById('otpFbCopy_' + targetId);
-        if (copyBtn) {
-            copyBtn.addEventListener('click', function() {
-                const codeEl = document.getElementById(codeId);
-                const code = codeEl ? codeEl.textContent : '';
-                if (!code) return;
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(code).then(function() {
-                        copyBtn.textContent = '✅ Copiado';
-                        setTimeout(function() { copyBtn.textContent = '📋 Copiar código'; }, 2000);
-                    }).catch(function() {});
-                } else {
-                    try {
-                        var ta = document.createElement('textarea');
-                        ta.value = code;
-                        document.body.appendChild(ta);
-                        ta.select();
-                        document.execCommand('copy');
-                        document.body.removeChild(ta);
-                        copyBtn.textContent = '✅ Copiado';
-                        setTimeout(function() { copyBtn.textContent = '📋 Copiar código'; }, 2000);
-                    } catch (e) {}
-                }
-            });
-        }
+
+        // Limpiar contenido anterior con DOM seguro
+        while (container.firstChild) { container.removeChild(container.firstChild); }
+
+        const banner = document.createElement('div');
+        banner.className = 'otp-fallback-banner';
+
+        const warningP = document.createElement('p');
+        warningP.className = 'otp-fallback-warning';
+        warningP.textContent = fallback.warning || '';
+        banner.appendChild(warningP);
+
+        const codeWrap = document.createElement('div');
+        codeWrap.className = 'otp-fallback-code-wrap';
+
+        const codeEl = document.createElement('span');
+        codeEl.className = 'otp-fallback-code';
+        codeEl.textContent = fallback.code || '';
+        codeWrap.appendChild(codeEl);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'btn otp-fallback-copy-btn';
+        copyBtn.textContent = '📋 Copiar código';
+        codeWrap.appendChild(copyBtn);
+
+        banner.appendChild(codeWrap);
+
+        const maskedEl = document.createElement('small');
+        maskedEl.style.cssText = 'color:#555; display:block; margin-top:8px;';
+        maskedEl.textContent = 'Teléfono: ' + (maskedPhone || '');
+        banner.appendChild(maskedEl);
+
+        container.appendChild(banner);
+
+        copyBtn.addEventListener('click', function () {
+            const code = codeEl.textContent;
+            if (!code) return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(code).then(function () {
+                    copyBtn.textContent = '✅ Copiado';
+                    setTimeout(function () { copyBtn.textContent = '📋 Copiar código'; }, 2000);
+                }).catch(function () {});
+            } else {
+                // execCommand('copy') está deprecado pero se usa como último recurso
+                // para browsers sin Clipboard API (ej: algunos WebViews de iOS/Android viejos).
+                try {
+                    var ta = document.createElement('textarea');
+                    ta.value = code;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    copyBtn.textContent = '✅ Copiado';
+                    setTimeout(function () { copyBtn.textContent = '📋 Copiar código'; }, 2000);
+                } catch (e) {}
+            }
+        });
     }
 
     async function checkUsernameAvailability(username) {

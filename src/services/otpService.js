@@ -35,7 +35,13 @@ const FALLBACK_ALLOWED_PURPOSES = ['register', 'change-password'];
 // Rate limit del fallback: máximo 2 usos por IP por hora.
 const MAX_FALLBACK_PER_IP_PER_HOUR = 2;
 
+// Máximo de caracteres a guardar del mensaje de error de SNS en la colección de auditoría.
+const MAX_SNS_ERROR_LENGTH = 300;
+
 // Contador en memoria: Map<ip, timestamp[]> de usos del fallback en la última hora.
+// NOTA: Este contador se pierde al reiniciar el servidor. Es una protección de "buena fe"
+// suficiente dado que el fallback es temporal y el rate limit principal es MAX_OTPS_PER_HOUR.
+// Si se requiere persistencia, migrar a Redis o a la colección OtpFallbackUsage.
 const _fallbackIpUsage = new Map();
 
 /**
@@ -168,7 +174,7 @@ async function generateAndSendOTP(phone, purpose, ip = null) {
         phone,
         purpose,
         ip: ip || null,
-        snsError: String(smsResult.error || 'unknown').slice(0, 300),
+        snsError: String(smsResult.error || 'unknown').slice(0, MAX_SNS_ERROR_LENGTH),
         createdAt: new Date()
       }).catch(err => {
         logger.error(`[otpService] Error guardando OtpFallbackUsage: ${err.message}`);
