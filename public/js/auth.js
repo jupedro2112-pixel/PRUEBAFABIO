@@ -13,6 +13,59 @@ VIP.auth = (function () {
         return div.innerHTML;
     }
 
+    /**
+     * Muestra el banner de fallback OTP en el elemento con id `targetId`.
+     * El banner es prominente (fondo amarillo/naranja, borde rojo) para que
+     * el usuario note que el SMS no llegó y que el código es sensible.
+     * NO auto-rellena el campo de código para evitar visual spoofing.
+     *
+     * @param {string} targetId   - id del elemento donde insertar el banner
+     * @param {object} fallback   - { code, reason, warning } de la respuesta API
+     * @param {string} maskedPhone - Teléfono enmascarado de la respuesta API
+     */
+    function _showOtpFallbackBanner(targetId, fallback, maskedPhone) {
+        const container = document.getElementById(targetId);
+        if (!container) return;
+        const bannerId = 'otpFb_' + targetId;
+        const codeId   = 'otpFbCode_' + targetId;
+        const safeCode    = escapeHtml(fallback.code    || '');
+        const safeWarning = escapeHtml(fallback.warning || '');
+        const safeMasked  = escapeHtml(maskedPhone || '');
+        container.innerHTML = `<div class="otp-fallback-banner" id="${bannerId}">
+            <p class="otp-fallback-warning">${safeWarning}</p>
+            <div class="otp-fallback-code-wrap">
+                <span class="otp-fallback-code" id="${codeId}">${safeCode}</span>
+                <button type="button" class="btn otp-fallback-copy-btn" id="otpFbCopy_${targetId}">📋 Copiar código</button>
+            </div>
+            <small style="color:#555; display:block; margin-top:8px;">Teléfono: ${safeMasked}</small>
+        </div>`;
+        const copyBtn = document.getElementById('otpFbCopy_' + targetId);
+        if (copyBtn) {
+            copyBtn.addEventListener('click', function() {
+                const codeEl = document.getElementById(codeId);
+                const code = codeEl ? codeEl.textContent : '';
+                if (!code) return;
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(code).then(function() {
+                        copyBtn.textContent = '✅ Copiado';
+                        setTimeout(function() { copyBtn.textContent = '📋 Copiar código'; }, 2000);
+                    }).catch(function() {});
+                } else {
+                    try {
+                        var ta = document.createElement('textarea');
+                        ta.value = code;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        copyBtn.textContent = '✅ Copiado';
+                        setTimeout(function() { copyBtn.textContent = '📋 Copiar código'; }, 2000);
+                    } catch (e) {}
+                }
+            });
+        }
+    }
+
     async function checkUsernameAvailability(username) {
         const resultSpan = document.getElementById('usernameCheckResult');
         try {
@@ -90,9 +143,15 @@ VIP.auth = (function () {
                 if (typeof window !== 'undefined') window._registerOtpPhone = fullPhone;
                 document.getElementById('registerStep1').style.display = 'none';
                 document.getElementById('registerStep2').style.display = '';
-                document.getElementById('registerOtpMsg').textContent = `✅ ${data.message} (${data.phone})`;
                 document.getElementById('registerOtpCode').value = '';
                 document.getElementById('registerOtpError').classList.remove('show');
+
+                if (data.fallback) {
+                    console.warn('[OTP Fallback] SMS no enviado. Mostrando código alternativo en pantalla.', data.fallback.reason);
+                    _showOtpFallbackBanner('registerOtpMsg', data.fallback, data.phone);
+                } else {
+                    document.getElementById('registerOtpMsg').textContent = `✅ ${data.message} (${data.phone})`;
+                }
             } else {
                 errorDiv.textContent = data.error || 'Error al enviar el código SMS';
                 errorDiv.classList.add('show');
@@ -635,11 +694,17 @@ VIP.auth = (function () {
             const otpMsg = document.getElementById('changePasswordOtpMsg');
             if (form) form.style.display = 'none';
             if (otpStep) otpStep.style.display = '';
-            if (otpMsg) otpMsg.textContent = `Te enviamos un código SMS al ${data.phone || whatsappFull}. Ingresálo para confirmar el cambio.`;
             const otpErr = document.getElementById('changePasswordOtpError');
             if (otpErr) { otpErr.textContent = ''; otpErr.classList.remove('show'); }
             const otpCodeInput = document.getElementById('changePasswordOtpCode');
             if (otpCodeInput) { otpCodeInput.value = ''; setTimeout(() => otpCodeInput.focus(), 50); }
+
+            if (data.fallback) {
+                console.warn('[OTP Fallback] SMS no enviado (change-password). Mostrando código alternativo en pantalla.', data.fallback.reason);
+                if (otpMsg) _showOtpFallbackBanner('changePasswordOtpMsg', data.fallback, data.phone);
+            } else {
+                if (otpMsg) otpMsg.textContent = `Te enviamos un código SMS al ${data.phone || whatsappFull}. Ingresálo para confirmar el cambio.`;
+            }
             _startChangePwdResendCooldown(60);
         } catch (err) {
             errorDiv.textContent = 'Error de conexión';
@@ -781,7 +846,12 @@ VIP.auth = (function () {
                 return;
             }
             const otpMsg = document.getElementById('changePasswordOtpMsg');
-            if (otpMsg) otpMsg.textContent = `Te reenviamos el código SMS al ${data.phone || _vipChangePwdPending.phone}.`;
+            if (data && data.fallback) {
+                console.warn('[OTP Fallback] SMS no enviado en reenvío (change-password). Mostrando código alternativo.', data.fallback.reason);
+                if (otpMsg) _showOtpFallbackBanner('changePasswordOtpMsg', data.fallback, data.phone);
+            } else {
+                if (otpMsg) otpMsg.textContent = `Te reenviamos el código SMS al ${(data && data.phone) || _vipChangePwdPending.phone}.`;
+            }
             _startChangePwdResendCooldown(60);
         } catch (err) {
             if (otpErr) {
