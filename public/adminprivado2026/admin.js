@@ -520,7 +520,7 @@ function showPasswordChangeModal() {
 
 function setupRoleBasedUI() {
     const role = currentAdmin?.role;
-    
+    console.log('[Admin Panel] Rol detectado:', currentAdmin?.role);
     // Configurar pestañas visibles según el rol
     const tabOpen = document.querySelector('[data-tab="open"]');
     const tabClosed = document.querySelector('[data-tab="closed"]');
@@ -954,7 +954,13 @@ async function loadConversations(forceRefresh = false) {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
         
-        if (!response.ok) throw new Error('Failed to load conversations');
+        if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            console.error('[loadConversations] HTTP', response.status, errBody);
+            showToast(`Error cargando ${currentTab}: ${errBody.error || response.status}`, 'error');
+            // NO guardar respuesta vacía en cache cuando hay error
+            return;
+        }
         
         const data = await response.json();
         conversations = data.conversations || [];
