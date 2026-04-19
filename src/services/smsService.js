@@ -2,29 +2,53 @@
 /**
  * Servicio SMS via AWS SNS
  *
- * Variables de entorno requeridas:
- * AWS_REGION (o AWS_SNS_REGION): región de AWS SNS (ej: 'us-east-1')
- * AWS_ACCESS_KEY_ID: access key de IAM con permisos SNS
- * AWS_SECRET_ACCESS_KEY: secret key de IAM
+ * Variables de entorno:
+ * AWS_REGION (o AWS_SNS_REGION): región de AWS SNS (ej: 'sa-east-1')
+ * AWS_ACCESS_KEY_ID (opcional): access key de IAM. Si no se provee, el SDK
+ *   usa el IAM Role del EC2 automáticamente (recomendado en AWS EB).
+ * AWS_SECRET_ACCESS_KEY (opcional): secret key del mismo usuario IAM.
  *
- * Si no están configuradas, el servicio SMS no envía mensajes (modo desarrollo).
+ * El cliente SNS se inicializa de forma lazy (al primer uso) para que las
+ * variables de entorno ya estén disponibles aunque vengan de SSM Parameter
+ * Store cargado en el bootstrap de server.js.
+ *
+ * Si AWS_REGION no está configurada, el servicio no envía mensajes.
  */
 
 const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
 
-const region = process.env.AWS_REGION || process.env.AWS_SNS_REGION;
-const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-
 let snsClient = null;
 
-if (region && accessKeyId && secretAccessKey) {
-  snsClient = new SNSClient({
-    region,
-    credentials: { accessKeyId, secretAccessKey }
-  });
-} else {
-  console.warn('[smsService] AWS SNS no configurado. Los SMS no serán enviados. Configurá AWS_REGION, AWS_ACCESS_KEY_ID y AWS_SECRET_ACCESS_KEY para habilitar el envío.');
+/**
+ * Devuelve el cliente SNS, inicializándolo si es la primera llamada.
+ * Usa lazy initialization para asegurar que process.env ya tenga los
+ * valores cargados desde SSM antes de construir el cliente.
+ * @returns {SNSClient|null}
+ */
+function getSnsClient() {
+  if (snsClient) return snsClient;
+
+  const region = process.env.AWS_REGION || process.env.AWS_SNS_REGION;
+  if (!region) {
+    console.warn('[smsService] AWS SNS no configurado. Falta AWS_REGION. Los SMS no serán enviados.');
+    return null;
+  }
+
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+  if (accessKeyId && secretAccessKey) {
+    snsClient = new SNSClient({
+      region,
+      credentials: { accessKeyId, secretAccessKey }
+    });
+    console.log('[smsService] AWS SNS inicializado con Access Keys explícitas');
+  } else {
+    snsClient = new SNSClient({ region });
+    console.log('[smsService] AWS SNS inicializado con IAM Role (sin Access Keys)');
+  }
+
+  return snsClient;
 }
 
 /**
@@ -34,7 +58,8 @@ if (region && accessKeyId && secretAccessKey) {
  * @returns {Promise<{success: boolean, error?: string}>}
  */
 async function sendSMS(phone, message) {
-  if (!snsClient) {
+  const client = getSnsClient();
+  if (!client) {
     return { success: false, error: 'SMS service not configured' };
   }
 
@@ -50,7 +75,7 @@ async function sendSMS(phone, message) {
       }
     });
 
-    await snsClient.send(command);
+    await client.send(command);
     return { success: true };
   } catch (error) {
     // Avoid logging user-controlled phone number in format strings
