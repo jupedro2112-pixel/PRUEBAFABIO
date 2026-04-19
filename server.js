@@ -2683,9 +2683,6 @@ app.put('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
-// Importar módulo de sincronización
-const jugayganaSync = require('./jugaygana-sync');
-
 app.post('/api/users/:id/sync-jugaygana', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
