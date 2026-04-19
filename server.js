@@ -3,6 +3,12 @@
 // Este archivo se mantiene como entry point principal hasta completar la migración.
 // NO agregar funcionalidad nueva aquí — usar /src/controllers/ y /src/routes/
 
+// Cargar .env primero (Render / dev local). En AWS EB con SSM_PATH, las vars
+// sensibles se cargarán desde Parameter Store en el bootstrap async de abajo.
+require('dotenv').config();
+
+const { loadSecretsFromSSM } = require('./src/config/loadSecrets');
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -418,11 +424,8 @@ async function setupRedisAdapter() {
 }
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error('⛔ FATAL: JWT_SECRET no configurado. El servidor no puede arrancar.');
-  process.exit(1);
-}
+// JWT_SECRET se valida dentro del bootstrap async (después de cargar SSM).
+let JWT_SECRET;
 
 // ============================================
 // MIDDLEWARE DE SEGURIDAD
@@ -6619,10 +6622,25 @@ if (process.env.VERCEL) {
   
   module.exports = app;
 } else {
-  initializeData().then(async () => {
+  (async () => {
+    try {
+      await loadSecretsFromSSM();
+    } catch (err) {
+      console.error('[BOOT] No se pudo cargar la configuración desde SSM. Abortando.');
+      process.exit(1);
+    }
+
+    // Validar JWT_SECRET ahora que SSM ya cargó las vars
+    JWT_SECRET = process.env.JWT_SECRET;
+    if (!JWT_SECRET) {
+      console.error('⛔ FATAL: JWT_SECRET no configurado. El servidor no puede arrancar.');
+      process.exit(1);
+    }
+
+    await initializeData();
     await setupRedisAdapter();
     server.listen(PORT, () => {
       logger.info(`Server started on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
     });
-  });
+  })();
 }
