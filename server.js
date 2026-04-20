@@ -459,6 +459,16 @@ app.use(xss());
 // are excluded intentionally to reduce accidental data exposure.
 const USER_PUBLIC_FIELDS = 'id username email phone phoneVerified whatsapp accountNumber role balance isActive referralCode referredByUserId referralStatus createdAt lastLogin mustChangePassword';
 
+// Admin roles are internal VIPCARGAS accounts that have NO counterpart in
+// JUGAYGANA. They must never be routed through any JUGAYGANA sync, default-
+// password detection, or mustChangePassword flow.
+const ADMIN_ROLES = ['admin', 'depositor', 'withdrawer'];
+const isAdminRole = (role) => ADMIN_ROLES.includes(role);
+
+// Maximum character length for a block reason stored on a user account.
+// Must match the maxlength attribute in the admin panel block modal HTML.
+const MAX_BLOCK_REASON_LENGTH = 500;
+
 // Paths that are reachable while a user has `mustChangePassword: true`.
 // Everything else returns 403 with `code: 'MUST_CHANGE_PASSWORD'` (enforced
 // inside `authMiddleware`) so the client can re-open the mandatory change
@@ -893,6 +903,14 @@ const authMiddleware = async (req, res, next) => {
 
     if (!user.isActive) {
       return res.status(401).json({ error: 'Usuario desactivado' });
+    }
+
+    if (user.isBlocked === true) {
+      return res.status(403).json({
+        error: 'Tu cuenta está bloqueada. Contactá a soporte.',
+        code: 'USER_BLOCKED',
+        reason: user.blockReason || null
+      });
     }
     
     if (user.tokenVersion && decoded.tokenVersion !== user.tokenVersion) {
@@ -1401,6 +1419,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     if (!userObj.isActive) {
       return res.status(401).json({ error: 'Credenciales inválidas' });
     }
+
+    // Reject login for blocked users before doing any further work.
+    if (userObj.isBlocked === true) {
+      return res.status(403).json({
+        error: `Tu cuenta está bloqueada: ${userObj.blockReason || 'Contactá a soporte.'}`,
+        code: 'USER_BLOCKED'
+      });
+    }
     
     // Verificar que el usuario tenga una contraseña válida
     if (!userObj.password) {
@@ -1415,11 +1441,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.status(500).json({ error: 'Error de configuración de usuario. Contacta al administrador.' });
     }
     
-    // Verificar si el usuario necesita cambiar la contraseña
-    // TRUE si: nunca cambió la contraseña (passwordChangedAt es null) Y viene de JUGAYGANA
-    // O si la contraseña es la default "asd123"
+    // Verificar si el usuario necesita cambiar la contraseña.
+    // Admin roles (admin/depositor/withdrawer) are internal VIPCARGAS accounts and
+    // must NEVER enter the mustChangePassword flow — even if their password is
+    // "asd123". Only role=user is subject to this check.
     const isDefaultPassword = password === 'asd123';
-    const needsPasswordChange = (!userObj.passwordChangedAt && userObj.source === 'jugaygana') || isDefaultPassword;
+    const needsPasswordChange = isAdminRole(userObj.role)
+      ? false
+      : ((!userObj.passwordChangedAt && userObj.source === 'jugaygana') || isDefaultPassword);
     
     let isValidPassword = false;
     
@@ -1432,9 +1461,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     // Fallback SOLO para usuarios auto-importados desde JUGAYGANA que aún no cambiaron
     // su contraseña real (la inicial real es "asd123"). Para evitar backdoor:
     //  - Sólo aplica si source === 'jugaygana' Y nunca cambió contraseña.
+    //  - Sólo aplica para role=user (admins nunca tienen contraparte en JUGAYGANA).
     //  - Valida que el hash almacenado realmente corresponda a "asd123";
     //    si la DB guarda otro hash, NO se acepta "asd123" como atajo.
-    if (!isValidPassword && password === 'asd123' && !userObj.passwordChangedAt && userObj.source === 'jugaygana') {
+    if (!isValidPassword && password === 'asd123' && !userObj.passwordChangedAt && userObj.source === 'jugaygana' && !isAdminRole(userObj.role)) {
       try {
         isValidPassword = await bcrypt.compare('asd123', userObj.password);
       } catch (bcryptError) {
@@ -1451,11 +1481,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     
     // Actualizar lastLogin usando el modelo de Mongoose
     user.lastLogin = new Date();
-    // If the user must change the password (default JUGAYGANA password or
-    // never-changed JUGAYGANA-imported account), persist the flag so the
-    // server-side enforcement in `authMiddleware` keeps blocking the rest of
-    // the API even after a page reload.
-    if (needsPasswordChange && user.mustChangePassword !== true) {
+    // Persist mustChangePassword only for non-admin roles. Admins are internal
+    // VIPCARGAS accounts and are never blocked by the JUGAYGANA default-password
+    // flow — even if their password happens to be "asd123".
+    if (needsPasswordChange && !isAdminRole(user.role) && user.mustChangePassword !== true) {
       user.mustChangePassword = true;
     }
     await user.save();
@@ -1467,18 +1496,21 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       { expiresIn: '30d' }
     );
     
-    // Intentar login en JUGAYGANA para obtener token de sesión (best-effort)
+    // Intentar login en JUGAYGANA para obtener token de sesión (best-effort).
+    // Admin roles have no counterpart in JUGAYGANA, so skip entirely.
     let jugayganaToken = null;
-    try {
-      const jgLogin = await jugayganaService.loginAsUser(userObj.username, password);
-      if (jgLogin.success) {
-        jugayganaToken = jgLogin.token;
-        logger.info(`Token JUGAYGANA obtenido para: ${loginIdentifier}`);
-      } else {
-        logger.warn(`No se pudo obtener token JUGAYGANA para ${loginIdentifier}: ${jgLogin.error}`);
+    if (!isAdminRole(userObj.role)) {
+      try {
+        const jgLogin = await jugayganaService.loginAsUser(userObj.username, password);
+        if (jgLogin.success) {
+          jugayganaToken = jgLogin.token;
+          logger.info(`Token JUGAYGANA obtenido para: ${loginIdentifier}`);
+        } else {
+          logger.warn(`No se pudo obtener token JUGAYGANA para ${loginIdentifier}: ${jgLogin.error}`);
+        }
+      } catch (jgErr) {
+        logger.warn(`Error obteniendo token JUGAYGANA para ${loginIdentifier}: ${jgErr.message}`);
       }
-    } catch (jgErr) {
-      logger.warn(`Error obteniendo token JUGAYGANA para ${loginIdentifier}: ${jgErr.message}`);
     }
     
     // Set an httpOnly admin session cookie for admin roles so that the server
@@ -1738,16 +1770,20 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
     
     await user.save();
 
-    // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
-    try {
-      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
-      if (jgResult.success) {
-        console.log(`✅ Contraseña sincronizada con JUGAYGANA (admin) para: ${user.username}`);
-      } else {
-        console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
+    // Sincronizar contraseña con JUGAYGANA (best-effort).
+    // Admin roles are internal VIPCARGAS accounts without a JUGAYGANA counterpart
+    // — skip sync entirely to avoid errors.
+    if (!isAdminRole(user.role)) {
+      try {
+        const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+        if (jgResult.success) {
+          console.log(`✅ Contraseña sincronizada con JUGAYGANA (admin) para: ${user.username}`);
+        } else {
+          console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
+        }
+      } catch (jgError) {
+        console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
       }
-    } catch (jgError) {
-      console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
     }
     
     res.json({ 
@@ -2373,24 +2409,28 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
     
     user.password = newPassword;
     user.passwordChangedAt = new Date();
-    // After an admin resets a user's password, force the user to change it on
-    // their next interaction. Without this, the admin-chosen value would
-    // remain valid indefinitely and bypass the mandatory-change flow.
-    user.mustChangePassword = true;
+    // After an admin resets a regular user's password, force them to change it on
+    // next login. Admin accounts do not go through the mustChangePassword flow.
+    if (!isAdminRole(user.role)) {
+      user.mustChangePassword = true;
+    }
     await user.save();
     
     logger.info(`Admin ${req.user.username} reset password for ${user.username}`);
 
-    // Sincronizar contraseña con JUGAYGANA usando flujo admin (best-effort)
-    try {
-      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
-      if (jgResult.success) {
-        console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
-      } else {
-        console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+    // Sincronizar contraseña con JUGAYGANA (best-effort).
+    // Admin roles have no counterpart in JUGAYGANA — skip sync.
+    if (!isAdminRole(user.role)) {
+      try {
+        const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+        if (jgResult.success) {
+          console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
+        } else {
+          console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
+        }
+      } catch (jgError) {
+        console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
       }
-    } catch (jgError) {
-      console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
     }
     
     res.json({ 
@@ -6008,6 +6048,7 @@ app.post('/api/admin/change-own-password', authMiddleware, adminMiddleware, asyn
 
     admin.password = newPassword;
     admin.passwordChangedAt = new Date();
+    admin.mustChangePassword = false;
     await admin.save();
 
     logger.info(`Admin ${admin.username} cambió su propia contraseña`);
@@ -6015,6 +6056,68 @@ app.post('/api/admin/change-own-password', authMiddleware, adminMiddleware, asyn
   } catch (error) {
     console.error('Error cambiando contraseña de admin:', error);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// BLOQUEO / DESBLOQUEO DE USUARIOS
+// ============================================
+
+app.post('/api/admin/users/:id/block', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin general puede bloquear usuarios.' });
+    }
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+      return res.status(400).json({ error: 'El motivo es obligatorio (mínimo 5 caracteres).' });
+    }
+
+    const user = await User.findOne({ id });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+
+    if (isAdminRole(user.role)) {
+      return res.status(403).json({ error: 'No se pueden bloquear cuentas administrativas.' });
+    }
+
+    user.isBlocked = true;
+    user.blockReason = reason.trim().slice(0, MAX_BLOCK_REASON_LENGTH);
+    user.blockedAt = new Date();
+    user.blockedBy = req.user.username;
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    await user.save();
+
+    logger.info(`Admin ${req.user.username} bloqueó a ${user.username}: ${user.blockReason}`);
+    res.json({ success: true, message: `Usuario ${user.username} bloqueado.` });
+  } catch (e) {
+    logger.error(`Error en block: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+app.post('/api/admin/users/:id/unblock', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin general puede desbloquear usuarios.' });
+    }
+    const user = await User.findOne({ id });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+
+    user.isBlocked = false;
+    user.blockReason = null;
+    user.blockedAt = null;
+    user.blockedBy = null;
+    await user.save();
+
+    logger.info(`Admin ${req.user.username} desbloqueó a ${user.username}`);
+    res.json({ success: true, message: `Usuario ${user.username} desbloqueado.` });
+  } catch (e) {
+    logger.error(`Error en unblock: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
   }
 });
 
