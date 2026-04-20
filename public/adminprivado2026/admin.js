@@ -2765,7 +2765,7 @@ function renderUsers(users) {
         // Status cell: show BLOQUEADO badge if blocked
         let statusCell;
         if (user.isBlocked) {
-            const reason = user.blockReason ? escapeHtml(user.blockReason) : 'Sin motivo registrado';
+            const reason = user.blockReason ? escapeHtml(user.blockReason).replace(/"/g, '&quot;') : 'Sin motivo registrado';
             statusCell = `<span class="status-badge blocked" title="${reason}" style="background:#dc3545;color:#fff;cursor:default;">BLOQUEADO</span>`;
         } else {
             statusCell = `<span class="status-badge ${user.status}">${escapeHtml(user.status)}</span>`;

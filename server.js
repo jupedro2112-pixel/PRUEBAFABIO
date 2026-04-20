@@ -465,6 +465,10 @@ const USER_PUBLIC_FIELDS = 'id username email phone phoneVerified whatsapp accou
 const ADMIN_ROLES = ['admin', 'depositor', 'withdrawer'];
 const isAdminRole = (role) => ADMIN_ROLES.includes(role);
 
+// Maximum character length for a block reason stored on a user account.
+// Must match the maxlength attribute in the admin panel block modal HTML.
+const MAX_BLOCK_REASON_LENGTH = 500;
+
 // Paths that are reachable while a user has `mustChangePassword: true`.
 // Everything else returns 403 with `code: 'MUST_CHANGE_PASSWORD'` (enforced
 // inside `authMiddleware`) so the client can re-open the mandatory change
@@ -6080,7 +6084,7 @@ app.post('/api/admin/users/:id/block', authMiddleware, adminMiddleware, async (r
     }
 
     user.isBlocked = true;
-    user.blockReason = reason.trim().slice(0, 500);
+    user.blockReason = reason.trim().slice(0, MAX_BLOCK_REASON_LENGTH);
     user.blockedAt = new Date();
     user.blockedBy = req.user.username;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
