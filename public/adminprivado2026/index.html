@@ -1214,6 +1214,32 @@
         </div>
     </div>
 
+    <!-- Block User Modal -->
+    <div id="blockModal" class="modal hidden" onclick="if(event.target===this)hideModal('blockModal')">
+        <div class="modal-content" style="max-width:440px" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3><span class="icon icon-ban"></span> Bloquear usuario: <span id="blockModalUsername"></span></h3>
+                <button class="close-modal" onclick="hideModal('blockModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="blockReasonInput">Motivo del bloqueo <span style="color:#dc3545">*</span></label>
+                    <textarea id="blockReasonInput" rows="3" maxlength="500"
+                        placeholder="Ingresá el motivo (mínimo 5 caracteres, máximo 500)"
+                        oninput="document.getElementById('confirmBlockBtn').disabled = this.value.trim().length < 5"
+                        style="width:100%;resize:vertical;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:0.9em"></textarea>
+                    <small style="color:#888">Este motivo queda registrado en el historial y se muestra al usuario.</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="hideModal('blockModal')">Cancelar</button>
+                <button id="confirmBlockBtn" class="btn-danger" onclick="handleBlockUser()" disabled style="background:#dc3545;color:#fff">
+                    <span class="icon icon-ban"></span> Bloquear usuario
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- SMS Password Modal -->
     <div id="smsPasswordModal" class="modal hidden">
         <div class="modal-content">

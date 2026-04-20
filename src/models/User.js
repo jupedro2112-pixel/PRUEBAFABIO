@@ -216,6 +216,27 @@ const userSchema = new mongoose.Schema({
     default: null,
     min: 0,
     max: 1
+  },
+
+  // =============================================
+  // Bloqueo de cuenta (solo admin general puede bloquear/desbloquear)
+  // =============================================
+  isBlocked: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  blockReason: {
+    type: String,
+    default: null
+  },
+  blockedAt: {
+    type: Date,
+    default: null
+  },
+  blockedBy: {
+    type: String,
+    default: null
   }
 }, {
   timestamps: true,

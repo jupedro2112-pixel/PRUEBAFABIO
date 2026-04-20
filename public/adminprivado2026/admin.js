@@ -29,6 +29,8 @@ let currentToken = null;
 let currentAdmin = null;
 let selectedUserId = null;
 let selectedUsername = null;
+let selectedUserRole = null; // Role of the user currently selected for an action (password change, block…)
+let selectedUserForBlock = null; // { id, username } for the block modal
 let conversations = [];
 let currentTab = 'open';
 let typingTimeout = null;
@@ -271,7 +273,11 @@ function setupEventListeners() {
         if (withdrawAmountEl) withdrawAmountEl.value = '';
         showModal('withdrawModal');
     });
-    elements.btnPassword.addEventListener('click', () => showModal('passwordModal'));
+    elements.btnPassword.addEventListener('click', () => {
+        // Opening from the chat panel: clear any user-table-specific role override.
+        selectedUserRole = null;
+        showModal('passwordModal');
+    });
     elements.btnPayments.addEventListener('click', sendToPayments);
     elements.btnClose.addEventListener('click', closeChat);
     
@@ -2172,8 +2178,10 @@ async function handlePasswordChange() {
     
     // Verificar permisos según rol
     const adminRole = currentAdmin?.role;
+    // Prefer the role stored when the modal was opened (users-table flow), then
+    // fall back to the conversations list (chat-panel flow).
     const targetUser = conversations.find(c => c.userId === selectedUserId);
-    const targetUserRole = targetUser?.role || 'user';
+    const targetUserRole = selectedUserRole || targetUser?.role || 'user';
     
     // Admin general puede cambiar contraseña de TODOS incluyendo admins
     // Admin depositer puede cambiar contraseña de usuarios pero NO de admins
@@ -2210,8 +2218,9 @@ async function handlePasswordChange() {
             throw new Error(data.error || 'Error al cambiar contraseña');
         }
         
-        showToast('Contraseña cambiada correctamente', 'success');
+        showToast(`Contraseña actualizada correctamente`, 'success');
         hideModal('passwordModal');
+        selectedUserRole = null;
         
         // Clear inputs
         document.getElementById('newPassword').value = '';
@@ -2741,33 +2750,159 @@ async function exportUsersCSV() {
 
 function renderUsers(users) {
     const tbody = document.getElementById('usersTableBody');
+    const adminRole = currentAdmin?.role;
     
     if (!users.length) {
         tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No hay usuarios</td></tr>';
         return;
     }
     
-    tbody.innerHTML = users.map(user => `
-        <tr class="${user.role !== 'user' ? 'admin-row' : ''}">
+    tbody.innerHTML = users.map(user => {
+        const isAdminUser = ['admin', 'depositor', 'withdrawer'].includes(user.role);
+        const canChangePassword = adminRole === 'admin' || (adminRole === 'depositor' && !isAdminUser);
+        const canBlock = adminRole === 'admin' && !isAdminUser;
+
+        // Status cell: show BLOQUEADO badge if blocked
+        let statusCell;
+        if (user.isBlocked) {
+            const reason = user.blockReason ? escapeHtml(user.blockReason) : 'Sin motivo registrado';
+            statusCell = `<span class="status-badge blocked" title="${reason}" style="background:#dc3545;color:#fff;cursor:default;">BLOQUEADO</span>`;
+        } else {
+            statusCell = `<span class="status-badge ${user.status}">${escapeHtml(user.status)}</span>`;
+        }
+
+        const pwdBtn = canChangePassword
+            ? `<button class="action-btn-small" title="Cambiar contraseña" onclick="openUserPasswordModal(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)}, ${JSON.stringify(user.role)})"><span class="icon icon-key"></span></button>`
+            : '';
+
+        let blockBtn = '';
+        if (canBlock) {
+            if (user.isBlocked) {
+                blockBtn = `<button class="action-btn-small" title="Desbloquear usuario" onclick="handleUnblockUser(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)})"><span class="icon icon-lock-open"></span></button>`;
+            } else {
+                blockBtn = `<button class="action-btn-small" style="color:#dc3545" title="Bloquear usuario" onclick="openBlockModal(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)})"><span class="icon icon-ban"></span></button>`;
+            }
+        }
+
+        return `
+        <tr class="${isAdminUser ? 'admin-row' : ''}">
             <td>${escapeHtml(user.username)}</td>
             <td>${escapeHtml(user.accountId || '-')}</td>
             <td>${escapeHtml(user.email || '-')}</td>
             <td>${escapeHtml(user.phone || '-')}</td>
             <td><span class="role-badge ${user.role}">${getRoleLabel(user.role)}</span></td>
             <td>${formatMoney(user.balance)}</td>
-            <td><span class="status-badge ${user.status}">${escapeHtml(user.status)}</span></td>
+            <td>${statusCell}</td>
             <td>${formatDate(user.lastLogin)}</td>
             <td>
-                <button class="action-btn-small" onclick="viewUser(${JSON.stringify(user.id)})">
+                <button class="action-btn-small" title="Ver detalle" onclick="viewUser(${JSON.stringify(user.id)})">
                     <span class="icon icon-eye"></span>
                 </button>
-                <button class="action-btn-small" onclick="chatUser(${JSON.stringify(user.id)})">
+                <button class="action-btn-small" title="Ir al chat" onclick="chatUser(${JSON.stringify(user.id)})">
                     <span class="icon icon-comment"></span>
                 </button>
+                ${pwdBtn}
+                ${blockBtn}
             </td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 }
+
+// ============================================
+// USER ACTIONS — Password change & Block/Unblock
+// ============================================
+
+// Opens the existing passwordModal pre-filled for a specific user from the table.
+function openUserPasswordModal(userId, username, userRole) {
+    selectedUserId = userId;
+    selectedUserRole = userRole;
+    // Update modal title to show which user's password is being changed
+    const modalHeader = document.querySelector('#passwordModal .modal-header h3');
+    if (modalHeader) {
+        modalHeader.innerHTML = `<span class="icon icon-key"></span> Cambiar contraseña: ${escapeHtml(username)}`;
+    }
+    // Ensure close/cancel buttons are visible (they may have been hidden by the forced-change flow)
+    const closeBtn = document.querySelector('#passwordModal .close-modal');
+    if (closeBtn) closeBtn.style.display = '';
+    const cancelBtn = document.querySelector('#passwordModal .btn-secondary');
+    if (cancelBtn) cancelBtn.style.display = '';
+    // Clear previous values
+    const np = document.getElementById('newPassword');
+    const cp = document.getElementById('confirmPassword');
+    if (np) np.value = '';
+    if (cp) cp.value = '';
+    showModal('passwordModal');
+}
+
+// Opens the block modal for a specific user.
+function openBlockModal(userId, username) {
+    selectedUserForBlock = { id: userId, username };
+    const titleEl = document.getElementById('blockModalUsername');
+    if (titleEl) titleEl.textContent = username;
+    const reasonEl = document.getElementById('blockReasonInput');
+    if (reasonEl) reasonEl.value = '';
+    const confirmBtn = document.getElementById('confirmBlockBtn');
+    if (confirmBtn) confirmBtn.disabled = true;
+    showModal('blockModal');
+}
+
+// Handles submitting the block form.
+async function handleBlockUser() {
+    if (!selectedUserForBlock) return;
+    const reasonEl = document.getElementById('blockReasonInput');
+    const reason = reasonEl ? reasonEl.value.trim() : '';
+    if (reason.length < 5) {
+        showToast('El motivo debe tener al menos 5 caracteres', 'error');
+        return;
+    }
+    const confirmBtn = document.getElementById('confirmBlockBtn');
+    setButtonLoading(confirmBtn, true, 'Bloqueando...');
+    try {
+        const response = await fetch(`${API_URL}/api/admin/users/${encodeURIComponent(selectedUserForBlock.id)}/block`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ reason })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Error al bloquear usuario');
+        showToast(`Usuario ${selectedUserForBlock.username} bloqueado`, 'success');
+        hideModal('blockModal');
+        loadUsers();
+    } catch (error) {
+        showToast(error.message || 'Error al bloquear usuario', 'error');
+    } finally {
+        setButtonLoading(confirmBtn, false, 'Bloquear usuario');
+    }
+}
+
+// Handles unblocking a user directly (with a simple confirm dialog).
+async function handleUnblockUser(userId, username) {
+    if (!confirm(`¿Desbloquear a ${username}?`)) return;
+    try {
+        const response = await fetch(`${API_URL}/api/admin/users/${encodeURIComponent(userId)}/unblock`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Error al desbloquear usuario');
+        showToast(`Usuario ${username} desbloqueado`, 'success');
+        loadUsers();
+    } catch (error) {
+        showToast(error.message || 'Error al desbloquear usuario', 'error');
+    }
+}
+
+window.openUserPasswordModal = openUserPasswordModal;
+window.openBlockModal = openBlockModal;
+window.handleBlockUser = handleBlockUser;
+window.handleUnblockUser = handleUnblockUser;
 
 // ============================================
 // UI HELPERS
