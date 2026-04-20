@@ -925,13 +925,27 @@ const authMiddleware = async (req, res, next) => {
     // endpoints are reachable. Any other authenticated request returns 403 so
     // the SPA can re-open the mandatory change modal — even after a reload.
     if (user.mustChangePassword === true) {
-      const path = req.path || '';
-      const allowed = MUST_CHANGE_PASSWORD_ALLOWED_PATHS.some(p => path === p || path.startsWith(p + '/'));
-      if (!allowed) {
-        return res.status(403).json({
-          error: 'Debés cambiar tu contraseña antes de continuar',
-          code: 'MUST_CHANGE_PASSWORD'
-        });
+      if (isAdminRole(user.role)) {
+        // Self-heal: admins must NEVER carry the mustChangePassword flag.
+        // Clean it on the fly so the request proceeds normally. This handles
+        // admins that were marked before the role-isolation fix (PR #286)
+        // and would otherwise be permanently blocked by this middleware.
+        try {
+          user.mustChangePassword = false;
+          await user.save();
+          logger.info(`[authMiddleware] Auto-cleared mustChangePassword for admin ${user.username}`);
+        } catch (e) {
+          logger.warn(`[authMiddleware] Failed to auto-clear mustChangePassword for ${user.username}: ${e.message}`);
+        }
+      } else {
+        const path = req.path || '';
+        const allowed = MUST_CHANGE_PASSWORD_ALLOWED_PATHS.some(p => path === p || path.startsWith(p + '/'));
+        if (!allowed) {
+          return res.status(403).json({
+            error: 'Debés cambiar tu contraseña antes de continuar',
+            code: 'MUST_CHANGE_PASSWORD'
+          });
+        }
       }
     }
 
@@ -1487,6 +1501,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     if (needsPasswordChange && !isAdminRole(user.role) && user.mustChangePassword !== true) {
       user.mustChangePassword = true;
     }
+    // Self-heal: admins must NEVER carry mustChangePassword. If a stale flag
+    // from before the role-isolation fix is still in DB, clear it on next login.
+    if (isAdminRole(user.role) && user.mustChangePassword === true) {
+      user.mustChangePassword = false;
+      logger.info(`[login] Cleared stale mustChangePassword for admin ${user.username}`);
+    }
     await user.save();
     
     // Token con expiración de 30 días para persistencia de sesión
@@ -1547,7 +1567,9 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         balance: userObj.balance,
         jugayganaLinked: !!userObj.jugayganaUserId,
         needsPasswordChange: needsPasswordChange,
-        mustChangePassword: needsPasswordChange || userObj.mustChangePassword === true
+        mustChangePassword: isAdminRole(userObj.role)
+          ? false
+          : (needsPasswordChange || userObj.mustChangePassword === true)
       }
     });
   } catch (error) {
@@ -4973,6 +4995,21 @@ async function initializeData() {
   if (!dbConnected) {
     console.error('❌ No se pudo conectar a MongoDB');
     return;
+  }
+
+  // One-shot migration: clear stale mustChangePassword flag from admin accounts.
+  // This fixes admins that were marked before the role-isolation fix (PR #286)
+  // and would otherwise be permanently blocked by authMiddleware.
+  try {
+    const result = await User.updateMany(
+      { role: { $in: ADMIN_ROLES }, mustChangePassword: true },
+      { $set: { mustChangePassword: false } }
+    );
+    if (result.modifiedCount > 0) {
+      logger.info(`[startup-migration] Cleared mustChangePassword flag from ${result.modifiedCount} admin accounts`);
+    }
+  } catch (e) {
+    logger.error(`[startup-migration] Failed to clear admin mustChangePassword: ${e.message}`);
   }
   
   if (process.env.PROXY_URL) {
