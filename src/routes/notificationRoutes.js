@@ -52,7 +52,7 @@ async function requireAdmin(req, res, next) {
   // Accept token from Authorization header first; fall back to admin_api_session
   // httpOnly cookie — mirrors the behaviour of authMiddleware in server.js so
   // that both header-based and cookie-based admin requests work correctly.
-  let token = req.headers.authorization?.split(' ')[1];
+  let token = req.headers.authorization?.split(' ')?.[1];
   if (!token) {
     token = _getAdminApiSessionCookie(req) || null;
   }
