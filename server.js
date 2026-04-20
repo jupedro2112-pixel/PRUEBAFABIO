@@ -1429,14 +1429,16 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       logger.error(`Error comparing password for ${loginIdentifier}: ${bcryptError.message}`);
     }
     
-    // Si la contraseña no coincide y el usuario nunca cambió su contraseña, intentar con 'asd123'
-    if (!isValidPassword && !userObj.passwordChangedAt) {
-      logger.debug(`Trying default password for ${loginIdentifier}...`);
-      const defaultHash = await bcrypt.hash('asd123', 10);
+    // Fallback SOLO para usuarios auto-importados desde JUGAYGANA que aún no cambiaron
+    // su contraseña real (la inicial real es "asd123"). Para evitar backdoor:
+    //  - Sólo aplica si source === 'jugaygana' Y nunca cambió contraseña.
+    //  - Valida que el hash almacenado realmente corresponda a "asd123";
+    //    si la DB guarda otro hash, NO se acepta "asd123" como atajo.
+    if (!isValidPassword && password === 'asd123' && !userObj.passwordChangedAt && userObj.source === 'jugaygana') {
       try {
-        isValidPassword = await bcrypt.compare(password, defaultHash);
+        isValidPassword = await bcrypt.compare('asd123', userObj.password);
       } catch (bcryptError) {
-        logger.error(`Error comparing default password: ${bcryptError.message}`);
+        logger.error(`Error verifying JUGAYGANA default password: ${bcryptError.message}`);
       }
     }
     
