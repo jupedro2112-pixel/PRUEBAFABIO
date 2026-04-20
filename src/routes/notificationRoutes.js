@@ -32,13 +32,35 @@ const _fcmStatsCache = { data: null, updatedAt: 0 };
 const _fcmUsersStatusCache = { data: null, updatedAt: 0 };
 const FCM_CACHE_TTL = 60000; // 60 seconds
 
+// Helper: parse the admin_api_session httpOnly cookie value (mirrors server.js).
+function _getAdminApiSessionCookie(req) {
+  const cookieHeader = req.headers.cookie || '';
+  for (const part of cookieHeader.split(';')) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = part.slice(0, eqIdx).trim();
+    const val = part.slice(eqIdx + 1).trim();
+    if (key === 'admin_api_session') return val;
+  }
+  return null;
+}
+
 // ============================================
 // MIDDLEWARE DE AUTENTICACIÓN (Admin)
 // ============================================
 async function requireAdmin(req, res, next) {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  
+  // Accept token from Authorization header first; fall back to admin_api_session
+  // httpOnly cookie — mirrors the behaviour of authMiddleware in server.js so
+  // that both header-based and cookie-based admin requests work correctly.
+  let token = req.headers.authorization?.split(' ')?.[1];
   if (!token) {
+    token = _getAdminApiSessionCookie(req) || null;
+  }
+
+  console.log('[NOTIF-ADMIN] requireAdmin — token source:', req.headers.authorization ? 'Authorization header' : 'cookie');
+
+  if (!token) {
+    console.log('[NOTIF-ADMIN] requireAdmin — no token provided, returning 401');
     return res.status(401).json({ error: 'Token no proporcionado' });
   }
 
@@ -46,20 +68,34 @@ async function requireAdmin(req, res, next) {
   try {
     decoded = jwt.verify(token, JWT_SECRET);
   } catch (error) {
+    console.log('[NOTIF-ADMIN] requireAdmin — jwt.verify failed:', error.message);
     return res.status(401).json({ error: 'Token inválido' });
   }
 
-  if (decoded.role !== 'admin' && decoded.role !== 'depositor' && decoded.role !== 'withdrawer') {
+  const adminRoles = ['admin', 'depositor', 'withdrawer'];
+  if (!adminRoles.includes(decoded.role)) {
+    console.log('[NOTIF-ADMIN] requireAdmin — role not allowed:', decoded.role);
     return res.status(403).json({ error: 'No tienes permisos de administrador' });
   }
 
-  // Verify the user is still active in DB
+  // Verify the user is still active in DB — mirrors authMiddleware fallback to _id.
   try {
-    const user = await User.findOne({ id: decoded.userId });
+    let user = await User.findOne({ id: decoded.userId });
+    if (!user) {
+      // Fallback: some legacy admin accounts may only have _id (no UUID id field).
+      try {
+        user = await User.findById(decoded.userId);
+      } catch (e) {
+        // Invalid ObjectId format — ignore and let the !user check below handle it.
+      }
+    }
     if (!user || !user.isActive) {
+      console.log('[NOTIF-ADMIN] requireAdmin — user not found or inactive for userId:', decoded.userId);
       return res.status(401).json({ error: 'Usuario desactivado o no encontrado' });
     }
+    console.log('[NOTIF-ADMIN] requireAdmin — authenticated:', decoded.username, '(role:', decoded.role + ')');
   } catch (dbError) {
+    console.error('[NOTIF-ADMIN] requireAdmin — DB error:', dbError.message);
     return res.status(500).json({ error: 'Error verificando usuario' });
   }
 

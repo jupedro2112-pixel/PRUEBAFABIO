@@ -4873,52 +4873,6 @@ async function broadcastStats() {
   });
 }
 
-// ============================================
-// NOTIFICACIONES PUSH
-// ============================================
-
-// Almacenar suscripciones de push (en producción usar MongoDB)
-const pushSubscriptions = new Map();
-
-// Endpoint para suscribirse a notificaciones push
-app.post('/api/notifications/subscribe', authMiddleware, async (req, res) => {
-  try {
-    const { subscription } = req.body;
-    const userId = req.user.userId;
-    
-    if (!subscription) {
-      return res.status(400).json({ error: 'Subscription requerida' });
-    }
-    
-    // Guardar suscripción
-    pushSubscriptions.set(userId, {
-      subscription,
-      userId,
-      username: req.user.username,
-      role: req.user.role,
-      createdAt: new Date()
-    });
-    
-    console.log(`✅ Usuario ${req.user.username} suscrito a notificaciones push`);
-    res.json({ success: true, message: 'Suscripción guardada' });
-  } catch (error) {
-    console.error('Error en subscribe:', error);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// Endpoint para desuscribirse
-app.post('/api/notifications/unsubscribe', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    pushSubscriptions.delete(userId);
-    console.log(`❌ Usuario ${req.user.username} desuscrito de notificaciones push`);
-    res.json({ success: true, message: 'Suscripción eliminada' });
-  } catch (error) {
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
 // Endpoint para enviar notificación (usado por admin)
 app.post('/api/admin/send-notification', authMiddleware, adminMiddleware, async (req, res) => {
   try {

@@ -1360,12 +1360,49 @@
         };
         
         // ============================================
+        // HELPER: Mensaje de error específico según la causa real
+        // ============================================
+        function getNotificationErrorMessage() {
+            if (!('serviceWorker' in navigator)) {
+                return '⚠️ Tu navegador no soporta notificaciones push. Probá con Chrome, Firefox o Safari (sin modo privado/incógnito).';
+            }
+            if (!('Notification' in window)) {
+                return '⚠️ Tu navegador no soporta notificaciones.';
+            }
+            if (Notification.permission === 'denied') {
+                return '⚠️ Bloqueaste las notificaciones para este sitio. Habilitalas en la configuración del navegador.';
+            }
+            if (typeof firebase === 'undefined' || !firebase.messaging) {
+                return '⚠️ No se pudo cargar Firebase. Recargá la página o revisá tu conexión a internet.';
+            }
+            return '⚠️ No se pudieron activar las notificaciones. Inténtalo de nuevo en unos segundos.';
+        }
+
+        // ============================================
         // FUNCIÓN GLOBAL: Activar notificaciones manualmente
         // ============================================
         // Esta función permite al usuario reactivar las notificaciones
         // si las rechazó inicialmente o si no funcionaron
         window.enableNotifications = async function() {
             console.log('[FCM] enableNotifications() llamado manualmente');
+
+            // Bug 4 fix: si messaging no está listo aún (race condition con SW),
+            // esperar hasta 3 segundos con reintentos antes de reportar error.
+            let retries = 0;
+            while ((typeof messaging === 'undefined' || !messaging) && retries < 6) {
+                console.log('[FCM] Esperando que messaging se inicialice...', retries);
+                await new Promise(r => setTimeout(r, 500));
+                retries++;
+                if (typeof firebase !== 'undefined' && firebase.messaging) {
+                    try {
+                        messaging = firebase.messaging();
+                        console.log('[FCM] ✅ messaging inicializado en retry', retries);
+                        break;
+                    } catch(e) {
+                        console.warn('[FCM] Retry falló:', e.message);
+                    }
+                }
+            }
 
             try {
                 // Verificar soporte de Notifications API
@@ -1436,7 +1473,7 @@
                                 return { success: true, token: _existingToken };
                             }
                             if (typeof showToast === 'function') {
-                                showToast('⚠️ No se pudieron activar las notificaciones. Intentálo de nuevo.', 'warning');
+                                showToast(getNotificationErrorMessage(), 'warning');
                             }
                             return { success: false, error: 'Firebase Messaging no disponible' };
                         }
@@ -1910,6 +1947,36 @@
         console.log('[PWA] Debug - header-right:', document.querySelector('.header-right'));
         console.log('[PWA] Debug - Todos los botones:', document.querySelectorAll('.header-right button'));
         
+        // Bug 2 fix: conectar botones del banner de notificaciones
+        const notifBannerActivate = document.getElementById('notifBannerActivate');
+        if (notifBannerActivate) {
+            notifBannerActivate.addEventListener('click', () => {
+                if (typeof enableNotifications === 'function') {
+                    enableNotifications();
+                } else {
+                    console.warn('[FCM] enableNotifications no disponible');
+                }
+            });
+        }
+
+        const notifBannerClose = document.getElementById('notifBannerClose');
+        if (notifBannerClose) {
+            notifBannerClose.addEventListener('click', () => {
+                const banner = document.getElementById('notifBanner');
+                if (banner) banner.style.display = 'none';
+                try { localStorage.setItem('notifBannerDismissed', '1'); } catch(e) {}
+            });
+        }
+
+        // Bug 3 fix: ocultar el botón NOTIS si el navegador no soporta Service Worker
+        if (!('serviceWorker' in navigator)) {
+            const notifBtnNoSW = document.getElementById('notificationBtn');
+            if (notifBtnNoSW) {
+                notifBtnNoSW.style.display = 'none';
+                console.log('[FCM] Botón NOTIS ocultado — Service Worker no disponible');
+            }
+        }
+
         console.log('[PWA] Firebase y PWA inicializados correctamente');
     </script>
     
