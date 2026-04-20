@@ -18,13 +18,16 @@ const {
 // Importar modelo de usuario
 const { User } = require('../../config/database');
 
-// JWT Secret (debe ser el mismo que en server.js)
-// server.js (entry point) ya tiene fail-fast si JWT_SECRET no está en producción.
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error('⛔ FATAL: JWT_SECRET no configurado. Las rutas de notificaciones no funcionarán.');
-  // No process.exit aquí porque este módulo se importa desde server.js que ya tiene su propio fail-fast.
-  // Pero el middleware requireAdmin fallará si JWT_SECRET es undefined, lo cual es el comportamiento correcto.
+// Lazy getter for JWT_SECRET — must be read at runtime (not module load) because
+// in AWS Elastic Beanstalk, SSM Parameter Store secrets load AFTER all modules
+// are required by server.js. Reading process.env.JWT_SECRET at module load
+// captures `undefined` and breaks jwt.verify with "secretOrPublicKey must be provided".
+function _getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    console.error('[NOTIF-ADMIN] JWT_SECRET not available in process.env at runtime');
+  }
+  return secret;
 }
 
 // In-memory cache for FCM stats endpoints
@@ -64,9 +67,15 @@ async function requireAdmin(req, res, next) {
     return res.status(401).json({ error: 'Token no proporcionado' });
   }
 
+  const jwtSecret = _getJwtSecret();
+  if (!jwtSecret) {
+    console.error('[NOTIF-ADMIN] requireAdmin — JWT_SECRET undefined at runtime');
+    return res.status(500).json({ error: 'Error de configuración del servidor' });
+  }
+
   let decoded;
   try {
-    decoded = jwt.verify(token, JWT_SECRET);
+    decoded = jwt.verify(token, jwtSecret);
   } catch (error) {
     console.log('[NOTIF-ADMIN] requireAdmin — jwt.verify failed:', error.message);
     return res.status(401).json({ error: 'Token inválido' });
@@ -125,7 +134,12 @@ router.post('/register-token', async (req, res) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const jwtSecret = _getJwtSecret();
+    if (!jwtSecret) {
+      console.error('[FCM] JWT_SECRET undefined at runtime');
+      return res.status(500).json({ error: 'Error de configuración del servidor' });
+    }
+    const decoded = jwt.verify(token, jwtSecret);
     
     console.log('[FCM] JWT decodificado:', { userId: decoded.userId, username: decoded.username });
     
