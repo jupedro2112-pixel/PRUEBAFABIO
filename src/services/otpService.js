@@ -25,6 +25,29 @@ function generateCode() {
 }
 
 /**
+ * Construye el texto del SMS OTP para el purpose dado.
+ * Usa solo caracteres ASCII puro (sin tildes, sin ñ) para forzar codificación
+ * GSM-7 en AWS SNS y garantizar entrega en 1 sola parte (~160 chars).
+ *
+ * @param {string} purpose - 'register' | 'reset' | 'change-password' | 'login'
+ * @param {string} code    - Código OTP de 6 dígitos
+ * @returns {string} Texto del SMS listo para enviar
+ */
+function buildOtpMessage(purpose, code) {
+  if (purpose === 'register') {
+    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas.com`;
+  } else if (purpose === 'reset') {
+    return `VIPCARGAS: codigo para restablecer contrasena ${code}. Valido 5 min. vipcargas.com`;
+  } else if (purpose === 'change-password') {
+    return `VIPCARGAS: codigo para cambiar contrasena ${code}. Valido 5 min. vipcargas.com`;
+  } else if (purpose === 'login') {
+    return `VIPCARGAS: codigo de inicio de sesion ${code}. Valido 5 min. vipcargas.com`;
+  } else {
+    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas.com`;
+  }
+}
+
+/**
  * Genera un OTP, lo hashea, lo guarda en DB y lo envía por SMS.
  * Rate limit: no envía si ya hay un OTP válido para ese phone+purpose creado hace menos de 60s.
  * Máximo 3 OTPs por número por hora.
@@ -76,18 +99,7 @@ async function generateAndSendOTP(phone, purpose) {
   await OtpCode.create({ phone, codeHash, purpose });
 
   // Enviar SMS
-  let message;
-  if (purpose === 'register') {
-    message = `VIPCARGAS - Tu código de verificación es: ${code}. Válido por 5 min. www.vipcargas.com`;
-  } else if (purpose === 'reset') {
-    message = `VIPCARGAS - Tu código para restablecer contraseña es: ${code}. Válido por 5 min. www.vipcargas.com`;
-  } else if (purpose === 'change-password') {
-    message = `VIPCARGAS - Tu código para verificar tu teléfono al cambiar la contraseña es: ${code}. Válido por 5 min. www.vipcargas.com`;
-  } else if (purpose === 'login') {
-    message = `VIPCARGAS - Tu código de inicio de sesión es: ${code}. Válido por 5 min. www.vipcargas.com`;
-  } else {
-    message = `VIPCARGAS - Tu código de verificación es: ${code}. Válido por 5 min. www.vipcargas.com`;
-  }
+  const message = buildOtpMessage(purpose, code);
 
   const smsResult = await sendSMS(phone, message);
 
@@ -145,4 +157,4 @@ async function verifyOTP(phone, code, purpose) {
   return { valid: true };
 }
 
-module.exports = { generateAndSendOTP, verifyOTP };
+module.exports = { generateAndSendOTP, verifyOTP, buildOtpMessage };
