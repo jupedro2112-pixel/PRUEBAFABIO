@@ -3480,25 +3480,18 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     const userInfo = await jugaygana.getUserInfoByName(username);
     const currentBalance = userInfo ? userInfo.balance : 0;
     
-    // Obtener jugayganaUserId para consultar NETWIN (misma fuente que referidos).
-    // Si falta, se intenta completar automáticamente (backfill al vuelo).
-    const jugayganaUserId = await resolveJugayganaUserId(userId, username);
-    
     // Rangos de fechas (zona horaria Argentina)
     const yesterdayRange = jugaygana.getYesterdayRangeArgentinaEpoch();
     const lastWeekRange = jugaygana.getLastWeekRangeArgentinaEpoch();
     const lastMonthRange = jugaygana.getLastMonthRangeArgentinaEpoch();
     
-    const [dailyStatus, weeklyStatus, monthlyStatus, dailyNetwin, weeklyNetwin, monthlyNetwin] = await Promise.all([
+    const [dailyStatus, weeklyStatus, monthlyStatus] = await Promise.all([
       refunds.canClaimDailyRefund(userId),
       refunds.canClaimWeeklyRefund(userId),
-      refunds.canClaimMonthlyRefund(userId),
-      referralRevenueService.getUserNetwinForDateRange(username, jugayganaUserId, new Date(yesterdayRange.fromEpoch * 1000), new Date(yesterdayRange.toEpoch * 1000), yesterdayRange.dateStr),
-      referralRevenueService.getUserNetwinForDateRange(username, jugayganaUserId, new Date(lastWeekRange.fromEpoch * 1000), new Date(lastWeekRange.toEpoch * 1000), `${lastWeekRange.fromDateStr} a ${lastWeekRange.toDateStr}`),
-      referralRevenueService.getUserNetwinForDateRange(username, jugayganaUserId, new Date(lastMonthRange.fromEpoch * 1000), new Date(lastMonthRange.toEpoch * 1000), `${lastMonthRange.fromDateStr} a ${lastMonthRange.toDateStr}`)
+      refunds.canClaimMonthlyRefund(userId)
     ]);
     
-    // Restar créditos gratuitos del período del NETWIN antes de calcular reembolsos
+    // Rangos de fechas para calcular depósitos y retiros reales
     const dailyFrom = new Date(yesterdayRange.fromEpoch * 1000);
     const dailyTo = new Date(yesterdayRange.toEpoch * 1000);
     const weeklyFrom = new Date(lastWeekRange.fromEpoch * 1000);
@@ -3506,27 +3499,34 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     const monthlyFrom = new Date(lastMonthRange.fromEpoch * 1000);
     const monthlyTo = new Date(lastMonthRange.toEpoch * 1000);
 
-    const [dailyFreeCredits, weeklyFreeCredits, monthlyFreeCredits] = await Promise.all([
-      getRefundNonDepositCredits(username, dailyFrom, dailyTo),
-      getRefundNonDepositCredits(username, weeklyFrom, weeklyTo),
-      getRefundNonDepositCredits(username, monthlyFrom, monthlyTo)
+    // Calcular depósitos y retiros reales del período (no GGR de juegos)
+    const [dailyDepositsAgg, dailyWithdrawalsAgg, weeklyDepositsAgg, weeklyWithdrawalsAgg, monthlyDepositsAgg, monthlyWithdrawalsAgg] = await Promise.all([
+      Transaction.aggregate([{ $match: { username, type: 'deposit', createdAt: { $gte: dailyFrom, $lte: dailyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      Transaction.aggregate([{ $match: { username, type: 'withdrawal', createdAt: { $gte: dailyFrom, $lte: dailyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      Transaction.aggregate([{ $match: { username, type: 'deposit', createdAt: { $gte: weeklyFrom, $lte: weeklyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      Transaction.aggregate([{ $match: { username, type: 'withdrawal', createdAt: { $gte: weeklyFrom, $lte: weeklyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      Transaction.aggregate([{ $match: { username, type: 'deposit', createdAt: { $gte: monthlyFrom, $lte: monthlyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
+      Transaction.aggregate([{ $match: { username, type: 'withdrawal', createdAt: { $gte: monthlyFrom, $lte: monthlyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }])
     ]);
 
-    const dailyRawNetwin = dailyNetwin.success ? (dailyNetwin.totalGgr || 0) : 0;
-    const weeklyRawNetwin = weeklyNetwin.success ? (weeklyNetwin.totalGgr || 0) : 0;
-    const monthlyRawNetwin = monthlyNetwin.success ? (monthlyNetwin.totalGgr || 0) : 0;
+    const dailyDeposits = dailyDepositsAgg[0]?.total || 0;
+    const dailyWithdrawals = dailyWithdrawalsAgg[0]?.total || 0;
+    const weeklyDeposits = weeklyDepositsAgg[0]?.total || 0;
+    const weeklyWithdrawals = weeklyWithdrawalsAgg[0]?.total || 0;
+    const monthlyDeposits = monthlyDepositsAgg[0]?.total || 0;
+    const monthlyWithdrawals = monthlyWithdrawalsAgg[0]?.total || 0;
 
-    const dailyAdjusted = Math.max(0, dailyRawNetwin - dailyFreeCredits);
-    const weeklyAdjusted = Math.max(0, weeklyRawNetwin - weeklyFreeCredits);
-    const monthlyAdjusted = Math.max(0, monthlyRawNetwin - monthlyFreeCredits);
+    const dailyNetLoss = Math.max(0, dailyDeposits - dailyWithdrawals);
+    const weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
+    const monthlyNetLoss = Math.max(0, monthlyDeposits - monthlyWithdrawals);
 
-    logger.info(`[refund] Adjusted NETWIN for ${username}: daily raw=${dailyRawNetwin}, freeCredits=${dailyFreeCredits}, adjusted=${dailyAdjusted}`);
-    logger.info(`[refund] Adjusted NETWIN for ${username}: weekly raw=${weeklyRawNetwin}, freeCredits=${weeklyFreeCredits}, adjusted=${weeklyAdjusted}`);
-    logger.info(`[refund] Adjusted NETWIN for ${username}: monthly raw=${monthlyRawNetwin}, freeCredits=${monthlyFreeCredits}, adjusted=${monthlyAdjusted}`);
+    logger.info(`[REFUND] status — usuario: ${username} daily depositos:${dailyDeposits} retiros:${dailyWithdrawals} netLoss:${dailyNetLoss}`);
+    logger.info(`[REFUND] status — usuario: ${username} weekly depositos:${weeklyDeposits} retiros:${weeklyWithdrawals} netLoss:${weeklyNetLoss}`);
+    logger.info(`[REFUND] status — usuario: ${username} monthly depositos:${monthlyDeposits} retiros:${monthlyWithdrawals} netLoss:${monthlyNetLoss}`);
 
-    const dailyCalc = refunds.calculateRefundFromNetwin(dailyAdjusted, 20);
-    const weeklyCalc = refunds.calculateRefundFromNetwin(weeklyAdjusted, 10);
-    const monthlyCalc = refunds.calculateRefundFromNetwin(monthlyAdjusted, 5);
+    const dailyPotential = Math.round(dailyNetLoss * 0.20);
+    const weeklyPotential = Math.round(weeklyNetLoss * 0.10);
+    const monthlyPotential = Math.round(monthlyNetLoss * 0.05);
     
     res.json({
       user: {
@@ -3536,22 +3536,22 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
       },
       daily: {
         ...dailyStatus,
-        potentialAmount: dailyCalc.refundAmount,
-        netAmount: dailyCalc.netAmount,
+        potentialAmount: dailyPotential,
+        netAmount: dailyNetLoss,
         percentage: 20,
         period: yesterdayRange.dateStr
       },
       weekly: {
         ...weeklyStatus,
-        potentialAmount: weeklyCalc.refundAmount,
-        netAmount: weeklyCalc.netAmount,
+        potentialAmount: weeklyPotential,
+        netAmount: weeklyNetLoss,
         percentage: 10,
         period: `${lastWeekRange.fromDateStr} a ${lastWeekRange.toDateStr}`
       },
       monthly: {
         ...monthlyStatus,
-        potentialAmount: monthlyCalc.refundAmount,
-        netAmount: monthlyCalc.netAmount,
+        potentialAmount: monthlyPotential,
+        netAmount: monthlyNetLoss,
         percentage: 5,
         period: `${lastMonthRange.fromDateStr} a ${lastMonthRange.toDateStr}`
       }
@@ -3601,34 +3601,44 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
       }
       
       const { fromEpoch, toEpoch, dateStr } = jugaygana.getYesterdayRangeArgentinaEpoch();
-      const netwinResult = await referralRevenueService.getUserNetwinForDateRange(
-        username, jugayganaUserId, new Date(fromEpoch * 1000), new Date(toEpoch * 1000), dateStr
-      );
-      
-      if (!netwinResult.success) {
+      const fromDate = new Date(fromEpoch * 1000);
+      const toDate = new Date(toEpoch * 1000);
+
+      // Obtener depósitos REALES del período
+      const periodDeposits = await Transaction.aggregate([
+        { $match: { username, type: 'deposit', createdAt: { $gte: fromDate, $lte: toDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalDeposits = periodDeposits[0]?.total || 0;
+
+      // Obtener retiros REALES del período
+      const periodWithdrawals = await Transaction.aggregate([
+        { $match: { username, type: 'withdrawal', createdAt: { $gte: fromDate, $lte: toDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalWithdrawals = periodWithdrawals[0]?.total || 0;
+
+      logger.info('[REFUND] daily — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
+
+      // Calcular pérdida real (lo que depositó y NO retiró)
+      const netLoss = Math.max(0, totalDeposits - totalWithdrawals);
+
+      if (netLoss === 0) {
+        logger.info('[REFUND] daily — sin pérdida neta para:', username);
         return res.json({
           success: false,
-          message: 'No se pudo obtener el NETWIN. Intenta más tarde.',
-          canClaim: true
-        });
-      }
-      
-      const rawNetwin = netwinResult.totalGgr || 0;
-      const freeCredits = await getRefundNonDepositCredits(username, new Date(fromEpoch * 1000), new Date(toEpoch * 1000));
-      const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
-      logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
-      const calc = refunds.calculateRefundFromNetwin(adjustedNetwin, 20);
-      
-      if (calc.refundAmount <= 0) {
-        return res.json({
-          success: false,
-          message: `No tienes NETWIN positivo para reclamar reembolso. NETWIN: $${calc.netAmount}`,
+          message: 'No tenés pérdida neta en el período. El reembolso aplica solo sobre depósitos no recuperados vía retiros.',
           canClaim: true,
-          netAmount: calc.netAmount
+          netAmount: 0
         });
       }
+
+      // Calcular monto del reembolso (20% para daily)
+      const refundAmount = Math.round(netLoss * 0.20);
+
+      logger.info('[REFUND] daily — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
       
-      const depositResult = await jugaygana.creditUserBalance(username, calc.refundAmount);
+      const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
       
       if (!depositResult.success) {
         return res.json({
@@ -3644,8 +3654,8 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         userId,
         username,
         type: 'daily',
-        amount: calc.refundAmount,
-        netAmount: calc.netAmount,
+        amount: refundAmount,
+        netAmount: netLoss,
         percentage: 20,
         period: dateStr,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
@@ -3656,7 +3666,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
       await Transaction.create({
         id: uuidv4(),
         type: 'refund',
-        amount: calc.refundAmount,
+        amount: refundAmount,
         username,
         description: `Reembolso diario (${dateStr})`,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
@@ -3665,10 +3675,10 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
       
       res.json({
         success: true,
-        message: `¡Reembolso diario de $${calc.refundAmount} acreditado!`,
-        amount: calc.refundAmount,
+        message: `¡Reembolso diario de $${refundAmount} acreditado!`,
+        amount: refundAmount,
         percentage: 20,
-        netAmount: calc.netAmount,
+        netAmount: netLoss,
         nextClaim: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
       });
     } finally {
@@ -3720,34 +3730,44 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       }
       
       const { fromEpoch, toEpoch, fromDateStr, toDateStr } = jugaygana.getLastWeekRangeArgentinaEpoch();
-      const netwinResult = await referralRevenueService.getUserNetwinForDateRange(
-        username, jugayganaUserId, new Date(fromEpoch * 1000), new Date(toEpoch * 1000), `${fromDateStr} a ${toDateStr}`
-      );
-      
-      if (!netwinResult.success) {
+      const fromDate = new Date(fromEpoch * 1000);
+      const toDate = new Date(toEpoch * 1000);
+
+      // Obtener depósitos REALES del período
+      const periodDeposits = await Transaction.aggregate([
+        { $match: { username, type: 'deposit', createdAt: { $gte: fromDate, $lte: toDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalDeposits = periodDeposits[0]?.total || 0;
+
+      // Obtener retiros REALES del período
+      const periodWithdrawals = await Transaction.aggregate([
+        { $match: { username, type: 'withdrawal', createdAt: { $gte: fromDate, $lte: toDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalWithdrawals = periodWithdrawals[0]?.total || 0;
+
+      logger.info('[REFUND] weekly — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
+
+      // Calcular pérdida real (lo que depositó y NO retiró)
+      const netLoss = Math.max(0, totalDeposits - totalWithdrawals);
+
+      if (netLoss === 0) {
+        logger.info('[REFUND] weekly — sin pérdida neta para:', username);
         return res.json({
           success: false,
-          message: 'No se pudo obtener el NETWIN. Intenta más tarde.',
-          canClaim: true
-        });
-      }
-      
-      const rawNetwin = netwinResult.totalGgr || 0;
-      const freeCredits = await getRefundNonDepositCredits(username, new Date(fromEpoch * 1000), new Date(toEpoch * 1000));
-      const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
-      logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
-      const calc = refunds.calculateRefundFromNetwin(adjustedNetwin, 10);
-      
-      if (calc.refundAmount <= 0) {
-        return res.json({
-          success: false,
-          message: `No tienes NETWIN positivo. NETWIN: $${calc.netAmount}`,
+          message: 'No tenés pérdida neta en el período. El reembolso aplica solo sobre depósitos no recuperados vía retiros.',
           canClaim: true,
-          netAmount: calc.netAmount
+          netAmount: 0
         });
       }
+
+      // Calcular monto del reembolso (10% para weekly)
+      const refundAmount = Math.round(netLoss * 0.10);
+
+      logger.info('[REFUND] weekly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
       
-      const depositResult = await jugaygana.creditUserBalance(username, calc.refundAmount);
+      const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
       
       if (!depositResult.success) {
         return res.json({
@@ -3763,8 +3783,8 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         userId,
         username,
         type: 'weekly',
-        amount: calc.refundAmount,
-        netAmount: calc.netAmount,
+        amount: refundAmount,
+        netAmount: netLoss,
         percentage: 10,
         period: `${fromDateStr} a ${toDateStr}`,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
@@ -3775,7 +3795,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       await Transaction.create({
         id: uuidv4(),
         type: 'refund',
-        amount: calc.refundAmount,
+        amount: refundAmount,
         username,
         description: `Reembolso semanal (${fromDateStr} a ${toDateStr})`,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
@@ -3784,10 +3804,10 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       
       res.json({
         success: true,
-        message: `¡Reembolso semanal de $${calc.refundAmount} acreditado!`,
-        amount: calc.refundAmount,
+        message: `¡Reembolso semanal de $${refundAmount} acreditado!`,
+        amount: refundAmount,
         percentage: 10,
-        netAmount: calc.netAmount,
+        netAmount: netLoss,
         nextClaim: status.nextClaim
       });
     } finally {
@@ -3839,34 +3859,44 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       }
       
       const { fromEpoch, toEpoch, fromDateStr, toDateStr } = jugaygana.getLastMonthRangeArgentinaEpoch();
-      const netwinResult = await referralRevenueService.getUserNetwinForDateRange(
-        username, jugayganaUserId, new Date(fromEpoch * 1000), new Date(toEpoch * 1000), `${fromDateStr} a ${toDateStr}`
-      );
-      
-      if (!netwinResult.success) {
+      const fromDate = new Date(fromEpoch * 1000);
+      const toDate = new Date(toEpoch * 1000);
+
+      // Obtener depósitos REALES del período
+      const periodDeposits = await Transaction.aggregate([
+        { $match: { username, type: 'deposit', createdAt: { $gte: fromDate, $lte: toDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalDeposits = periodDeposits[0]?.total || 0;
+
+      // Obtener retiros REALES del período
+      const periodWithdrawals = await Transaction.aggregate([
+        { $match: { username, type: 'withdrawal', createdAt: { $gte: fromDate, $lte: toDate } } },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+      const totalWithdrawals = periodWithdrawals[0]?.total || 0;
+
+      logger.info('[REFUND] monthly — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
+
+      // Calcular pérdida real (lo que depositó y NO retiró)
+      const netLoss = Math.max(0, totalDeposits - totalWithdrawals);
+
+      if (netLoss === 0) {
+        logger.info('[REFUND] monthly — sin pérdida neta para:', username);
         return res.json({
           success: false,
-          message: 'No se pudo obtener el NETWIN. Intenta más tarde.',
-          canClaim: true
-        });
-      }
-      
-      const rawNetwin = netwinResult.totalGgr || 0;
-      const freeCredits = await getRefundNonDepositCredits(username, new Date(fromEpoch * 1000), new Date(toEpoch * 1000));
-      const adjustedNetwin = Math.max(0, rawNetwin - freeCredits);
-      logger.info(`[refund] Adjusted NETWIN for ${username}: raw=${rawNetwin}, freeCredits=${freeCredits}, adjusted=${adjustedNetwin}`);
-      const calc = refunds.calculateRefundFromNetwin(adjustedNetwin, 5);
-      
-      if (calc.refundAmount <= 0) {
-        return res.json({
-          success: false,
-          message: `No tienes NETWIN positivo. NETWIN: $${calc.netAmount}`,
+          message: 'No tenés pérdida neta en el período. El reembolso aplica solo sobre depósitos no recuperados vía retiros.',
           canClaim: true,
-          netAmount: calc.netAmount
+          netAmount: 0
         });
       }
+
+      // Calcular monto del reembolso (5% para monthly)
+      const refundAmount = Math.round(netLoss * 0.05);
+
+      logger.info('[REFUND] monthly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
       
-      const depositResult = await jugaygana.creditUserBalance(username, calc.refundAmount);
+      const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
       
       if (!depositResult.success) {
         return res.json({
@@ -3882,8 +3912,8 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         userId,
         username,
         type: 'monthly',
-        amount: calc.refundAmount,
-        netAmount: calc.netAmount,
+        amount: refundAmount,
+        netAmount: netLoss,
         percentage: 5,
         period: `${fromDateStr} a ${toDateStr}`,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
@@ -3894,7 +3924,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       await Transaction.create({
         id: uuidv4(),
         type: 'refund',
-        amount: calc.refundAmount,
+        amount: refundAmount,
         username,
         description: `Reembolso mensual (${fromDateStr} a ${toDateStr})`,
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
@@ -3903,10 +3933,10 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       
       res.json({
         success: true,
-        message: `¡Reembolso mensual de $${calc.refundAmount} acreditado!`,
-        amount: calc.refundAmount,
+        message: `¡Reembolso mensual de $${refundAmount} acreditado!`,
+        amount: refundAmount,
         percentage: 5,
-        netAmount: calc.netAmount,
+        netAmount: netLoss,
         nextClaim: status.nextClaim
       });
     } finally {
