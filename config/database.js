@@ -5,7 +5,6 @@
 
 const mongoose = require('mongoose');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos';
 
 // ============================================
 // MODELOS COMPARTIDOS
@@ -67,7 +66,7 @@ const UserActivity = mongoose.models['UserActivity'] || mongoose.model('UserActi
 // ============================================
 async function connectDB() {
   try {
-    await mongoose.connect(MONGODB_URI, {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos', {
       maxPoolSize: 20,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
