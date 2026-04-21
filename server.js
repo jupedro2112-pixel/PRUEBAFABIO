@@ -722,9 +722,26 @@ async function sendPushIfOffline(user, title, body, data = {}) {
   if (allTokens.size === 0) return;
 
   // Si el usuario tiene un socket activo, ya recibió el mensaje en tiempo real;
-  // no enviamos push para evitar notificación duplicada.
+  // no enviamos push para evitar notificación duplicada. En su lugar emitimos
+  // un evento socket 'admin_notification' para que el frontend muestre un
+  // cartel in-app cuando la PWA está abierta en foreground.
   if (connectedUsers && connectedUsers.has(user.id)) {
     logger.debug(`[FCM] Usuario ${user.username} online (socket activo), omitiendo push duplicado`);
+    try {
+      const userSocket = connectedUsers.get(user.id);
+      if (userSocket && typeof userSocket.emit === 'function') {
+        userSocket.emit('admin_notification', {
+          title: title,
+          body: body,
+          icon: (data && data.icon) || '/icons/icon-192x192.png',
+          timestamp: Date.now(),
+          data: data || {}
+        });
+        logger.info(`[NOTIF] Emitido por socket a usuario online: ${user.username}`);
+      }
+    } catch (emitErr) {
+      logger.warn(`[NOTIF] Error emitiendo admin_notification por socket a ${user.username}: ${emitErr.message}`);
+    }
     return;
   }
 

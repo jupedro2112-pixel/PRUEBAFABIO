@@ -31,6 +31,80 @@
     <link rel="stylesheet" href="/css/chat.css">
     <link rel="stylesheet" href="/css/modals.css">
     <link rel="stylesheet" href="/css/responsive.css">
+    <style>
+        /* In-app notification banner (foreground PWA) */
+        .in-app-notification-banner {
+            position: fixed;
+            top: 16px;
+            left: 50%;
+            transform: translate(-50%, -120%);
+            width: calc(100% - 32px);
+            max-width: 440px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 1px solid rgba(255, 215, 0, 0.4);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            z-index: 99999;
+            opacity: 0;
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .in-app-notification-banner.show {
+            transform: translate(-50%, 0);
+            opacity: 1;
+        }
+        .notif-banner-content {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            gap: 12px;
+        }
+        .notif-banner-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+        .notif-banner-text {
+            flex: 1;
+            min-width: 0;
+        }
+        .notif-banner-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #ffd700;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .notif-banner-body {
+            font-size: 13px;
+            color: #e0e0e0;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .notif-banner-close {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: #fff;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+        .notif-banner-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
 </head>
 <body>
     <!-- Login Screen -->
@@ -1587,6 +1661,119 @@
         };
         
         // ============================================
+        // CARTEL IN-APP (foreground PWA)
+        // Muestra un banner animado cuando llega una notificación con la app
+        // abierta. Se dispara desde el evento socket 'admin_notification' y
+        // como backup desde messaging.onMessage (FCM en foreground).
+        // ============================================
+        function _escapeNotifText(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function showInAppNotification(title, body, icon, data) {
+            try {
+                const banner = document.createElement('div');
+                banner.className = 'in-app-notification-banner';
+                const iconUrl = _escapeNotifText(icon || '/icons/icon-192x192.png');
+                banner.innerHTML =
+                    '<div class="notif-banner-content">' +
+                        '<img src="' + iconUrl + '" alt="" class="notif-banner-icon" onerror="this.style.display=\'none\'">' +
+                        '<div class="notif-banner-text">' +
+                            '<div class="notif-banner-title">' + _escapeNotifText(title || 'Notificación') + '</div>' +
+                            '<div class="notif-banner-body">' + _escapeNotifText(body || '') + '</div>' +
+                        '</div>' +
+                        '<button class="notif-banner-close" aria-label="Cerrar">&times;</button>' +
+                    '</div>';
+
+                document.body.appendChild(banner);
+                requestAnimationFrame(function () { banner.classList.add('show'); });
+
+                // Sonido suave (opcional, ignorar si el browser bloquea)
+                try {
+                    const audio = new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ==');
+                    audio.volume = 0.3;
+                    const p = audio.play();
+                    if (p && typeof p.catch === 'function') p.catch(function () {});
+                } catch (e) { /* ignore */ }
+
+                let autoCloseTimer = null;
+                function closeBanner() {
+                    if (autoCloseTimer) { clearTimeout(autoCloseTimer); autoCloseTimer = null; }
+                    banner.classList.remove('show');
+                    setTimeout(function () { try { banner.remove(); } catch (e) {} }, 400);
+                }
+
+                const content = banner.querySelector('.notif-banner-content');
+                if (content) {
+                    content.addEventListener('click', function (e) {
+                        if (e.target && typeof e.target.closest === 'function' && e.target.closest('.notif-banner-close')) return;
+                        try {
+                            if (data && data.url) {
+                                window.location.href = data.url;
+                            }
+                        } catch (navErr) { /* ignore */ }
+                        closeBanner();
+                    });
+                }
+                const closeBtn = banner.querySelector('.notif-banner-close');
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        closeBanner();
+                    });
+                }
+                autoCloseTimer = setTimeout(closeBanner, 6000);
+            } catch (err) {
+                console.warn('[NOTIF] No se pudo mostrar cartel in-app:', err);
+            }
+        }
+
+        // Listener socket: notificaciones in-app cuando la app está abierta y conectada.
+        // El socket se inicializa en /js/socket.js (VIP.state.socket). Reintentamos
+        // hasta que esté disponible para no perder el binding, y dejamos de
+        // reintentar una vez registrado.
+        (function bindAdminNotificationSocket() {
+            let attempts = 0;
+            const maxAttempts = 40; // ~20s de espera inicial
+            let boundSocket = null;
+            function tryBind() {
+                attempts++;
+                try {
+                    const sock = (window.VIP && window.VIP.state && window.VIP.state.socket) || null;
+                    if (sock && sock !== boundSocket) {
+                        // Quitar listener anterior por si el socket se recreó
+                        try { sock.off && sock.off('admin_notification'); } catch (e) {}
+                        sock.on('admin_notification', function (data) {
+                            try {
+                                console.log('[NOTIF] Recibida por socket:', data);
+                                showInAppNotification(
+                                    data && data.title,
+                                    data && data.body,
+                                    data && data.icon,
+                                    (data && data.data) || {}
+                                );
+                            } catch (e) {
+                                console.warn('[NOTIF] Error manejando admin_notification:', e);
+                            }
+                        });
+                        boundSocket = sock;
+                        console.log('[NOTIF] Listener admin_notification registrado en socket');
+                        return; // ya enganchado, no seguir reintentando
+                    }
+                } catch (e) { /* ignore */ }
+                if (attempts < maxAttempts) {
+                    setTimeout(tryBind, 500);
+                }
+            }
+            tryBind();
+        })();
+
+        // ============================================
         // MANEJAR NOTIFICACIONES EN PRIMER PLANO
         // Null guard: solo registrar si Firebase Messaging está disponible.
         // Sin este guard, si messaging es null el script se rompe y corta
@@ -1620,6 +1807,20 @@
                     }
                     if (VIP && VIP.notifications && typeof VIP.notifications.showBrowserNotification === 'function') {
                         VIP.notifications.showBrowserNotification(notificationTitle, notifBody, notif.icon || '/icons/icon-192x192.png');
+                    }
+                    // Backup: mostrar también el cartel in-app por si el evento socket
+                    // 'admin_notification' no llegó (caso edge: socket aún no conectado).
+                    try {
+                        if (typeof showInAppNotification === 'function') {
+                            showInAppNotification(
+                                notificationTitle,
+                                notifBody,
+                                notif.icon || (payload.data && payload.data.icon),
+                                payload.data || {}
+                            );
+                        }
+                    } catch (bannerErr) {
+                        console.warn('[FCM] No se pudo mostrar cartel in-app desde onMessage:', bannerErr);
                     }
                 }
             });
