@@ -19,8 +19,6 @@ const ReferralPayout = require('./ReferralPayout');
 const ReferralEvent = require('./ReferralEvent');
 const OtpCode = require('./OtpCode');
 
-// Configuración de conexión
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos';
 
 /**
  * Migration: backfill settledOwnerRevenue / settledCommissionAmount on ReferralCommission records
@@ -257,7 +255,7 @@ async function migrateReferralPayoutIndex() {
  */
 async function connectDB() {
   try {
-    await mongoose.connect(MONGODB_URI, {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/sala-de-juegos', {
       maxPoolSize: 20,
       minPoolSize: 5,
       serverSelectionTimeoutMS: 5000,

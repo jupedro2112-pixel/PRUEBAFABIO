@@ -8,10 +8,24 @@ const { AppError, ErrorCodes, ErrorMessages } = require('../utils/AppError');
 const logger = require('../utils/logger');
 const { User } = require('../models');
 
-// Claves secretas (deben estar configuradas como variables de entorno)
-// server.js (entry point) ya tiene fail-fast si JWT_SECRET no está en producción.
-const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+// Lazy getters for SSM-loaded secrets — must be read at runtime because
+// in AWS Elastic Beanstalk, secrets are loaded by loadSecretsFromSSM() AFTER
+// all modules are required by server.js. Reading at module load captures
+// `undefined` and breaks jwt.sign / jwt.verify.
+function _getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    logger.error('[AUTH] JWT_SECRET not available in process.env at runtime');
+  }
+  return secret;
+}
+function _getJwtRefreshSecret() {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    logger.error('[AUTH] JWT_REFRESH_SECRET not available in process.env at runtime');
+  }
+  return secret;
+}
 
 // Tiempos de expiración
 const ACCESS_TOKEN_EXPIRY = process.env.ACCESS_TOKEN_EXPIRY || '15m';
@@ -24,14 +38,14 @@ const tokenBlacklist = new Set();
  * Generar access token
  */
 const generateAccessToken = (payload) => {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
+  return jwt.sign(payload, _getJwtSecret(), { expiresIn: ACCESS_TOKEN_EXPIRY });
 };
 
 /**
  * Generar refresh token
  */
 const generateRefreshToken = (payload) => {
-  return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY });
+  return jwt.sign(payload, _getJwtRefreshSecret(), { expiresIn: REFRESH_TOKEN_EXPIRY });
 };
 
 /**
@@ -66,7 +80,7 @@ const verifyAccessToken = (token) => {
     if (tokenBlacklist.has(token)) {
       throw new Error('Token revocado');
     }
-    return jwt.verify(token, JWT_SECRET);
+    return jwt.verify(token, _getJwtSecret());
   } catch (error) {
     throw error;
   }
@@ -77,7 +91,7 @@ const verifyAccessToken = (token) => {
  */
 const verifyRefreshToken = (token) => {
   try {
-    return jwt.verify(token, JWT_REFRESH_SECRET);
+    return jwt.verify(token, _getJwtRefreshSecret());
   } catch (error) {
     throw error;
   }
@@ -338,7 +352,5 @@ module.exports = {
   verifyAccessToken,
   verifyRefreshToken,
   revokeToken,
-  refreshToken,
-  JWT_SECRET,
-  JWT_REFRESH_SECRET
+  refreshToken
 };
