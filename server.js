@@ -1709,6 +1709,61 @@ app.get('/api/users/me', authMiddleware, async (req, res) => {
   }
 });
 
+// Sincroniza la contraseña con JUGAYGANA reintentando hasta 3 veces.
+// Si tras los 3 intentos no se puede sincronizar, crea un mensaje interno
+// (adminOnly) en el chat del usuario para que los admins sepan que la
+// contraseña quedó desincronizada y puedan corregirla manualmente.
+async function syncPasswordToJugaygana(user, newPassword, context) {
+  if (isAdminRole(user.role)) {
+    return { success: true, skipped: true };
+  }
+
+  const MAX_ATTEMPTS = 3;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
+      if (jgResult.success) {
+        logger.info(`[pwd-sync] Sincronizada con JUGAYGANA (${context}) para ${user.username} en intento ${attempt}/${MAX_ATTEMPTS}`);
+        return { success: true, attempts: attempt };
+      }
+      lastError = jgResult.error || 'Error desconocido';
+      logger.warn(`[pwd-sync] Intento ${attempt}/${MAX_ATTEMPTS} falló para ${user.username}: ${lastError}`);
+    } catch (err) {
+      lastError = err.message;
+      logger.error(`[pwd-sync] Intento ${attempt}/${MAX_ATTEMPTS} con excepción para ${user.username}: ${lastError}`);
+    }
+
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt - 1)));
+    }
+  }
+
+  logger.error(`[pwd-sync] Falló sync con JUGAYGANA para ${user.username} tras ${MAX_ATTEMPTS} intentos. Último error: ${lastError}`);
+
+  try {
+    await Message.create({
+      id: uuidv4(),
+      senderId: 'system',
+      senderUsername: 'SYSTEM',
+      senderRole: 'system',
+      receiverId: user.id,
+      receiverRole: 'user',
+      content: `⚠️ SYNC FALLIDO: el usuario cambió su contraseña en VIPCARGAS pero no se pudo sincronizar con jugaygana44.bet tras ${MAX_ATTEMPTS} intentos. Último error: "${lastError}". Revisar y actualizar la contraseña manualmente en la plataforma. Contexto: ${context}.`,
+      type: 'system',
+      adminOnly: true,
+      read: true,
+      timestamp: new Date()
+    });
+    logger.info(`[pwd-sync] Mensaje interno creado para admins en chat de ${user.username}`);
+  } catch (msgErr) {
+    logger.error(`[pwd-sync] No se pudo crear mensaje interno para ${user.username}: ${msgErr.message}`);
+  }
+
+  return { success: false, attempts: MAX_ATTEMPTS, error: lastError };
+}
+
 // Cambiar contraseña
 app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, res) => {
   try {
@@ -1809,23 +1864,9 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
     
     await user.save();
 
-    // Sincronizar contraseña con JUGAYGANA (best-effort).
-    // Admin roles are internal VIPCARGAS accounts without a JUGAYGANA counterpart
-    // — skip sync entirely to avoid errors.
-    if (!isAdminRole(user.role)) {
-      try {
-        const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
-        if (jgResult.success) {
-          console.log(`✅ Contraseña sincronizada con JUGAYGANA (admin) para: ${user.username}`);
-        } else {
-          console.error(`⚠️ No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error || JSON.stringify(jgResult)}`);
-        }
-      } catch (jgError) {
-        console.error('⚠️ Error sincronizando contraseña con JUGAYGANA:', jgError.message);
-      }
-    }
-    
-    res.json({ 
+    await syncPasswordToJugaygana(user, newPassword, 'change-password');
+
+    res.json({
       message: 'Contraseña cambiada exitosamente',
       sessionsClosed: closeAllSessions || false,
       phoneVerified: !!user.phoneVerified,
@@ -2203,18 +2244,7 @@ app.post('/api/auth/complete-password-reset', sensitiveLimiter, async (req, res)
     user.mustChangePassword = false;
     await user.save();
 
-    // Sincronizar con JUGAYGANA (best-effort)
-    try {
-      const jugayganaSync = require('./jugaygana');
-      const jgResult = await jugayganaSync.changeUserPassword(user.username, null, newPassword);
-      if (jgResult.success) {
-        logger.info(`[complete-password-reset] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
-      } else {
-        logger.warn(`[complete-password-reset] No se pudo sincronizar con JUGAYGANA para ${user.username}: ${jgResult.error}`);
-      }
-    } catch (jgError) {
-      logger.error(`[complete-password-reset] Error sincronizando con JUGAYGANA: ${jgError.message}`);
-    }
+    await syncPasswordToJugaygana(user, newPassword, 'complete-password-reset');
 
     res.json({ success: true, message: 'Contraseña cambiada exitosamente' });
   } catch (error) {
@@ -2457,24 +2487,11 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
     
     logger.info(`Admin ${req.user.username} reset password for ${user.username}`);
 
-    // Sincronizar contraseña con JUGAYGANA (best-effort).
-    // Admin roles have no counterpart in JUGAYGANA — skip sync.
-    if (!isAdminRole(user.role)) {
-      try {
-        const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
-        if (jgResult.success) {
-          console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
-        } else {
-          console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
-        }
-      } catch (jgError) {
-        console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
-      }
-    }
-    
-    res.json({ 
-      success: true, 
-      message: `Contraseña de ${user.username} reseteada exitosamente` 
+    await syncPasswordToJugaygana(user, newPassword, `admin-reset-password by ${req.user.username}`);
+
+    res.json({
+      success: true,
+      message: `Contraseña de ${user.username} reseteada exitosamente`
     });
   } catch (error) {
     console.error('Error reseteando contraseña:', error);
@@ -6040,17 +6057,7 @@ app.post('/api/admin/change-password', authMiddleware, adminMiddleware, async (r
         });
       }
 
-      // Sincronizar contraseña con JUGAYGANA (best-effort, solo para usuarios regulares)
-      try {
-        const jgResult = await jugayganaService.changeUserPasswordAsAdmin(user.username, newPassword);
-        if (jgResult.success) {
-          console.log(`✅ [Admin] Contraseña sincronizada con JUGAYGANA para: ${user.username}`);
-        } else {
-          console.warn(`⚠️ [Admin] No se pudo sincronizar contraseña con JUGAYGANA para ${user.username}: ${jgResult.error}`);
-        }
-      } catch (jgError) {
-        console.error('⚠️ [Admin] Error sincronizando contraseña con JUGAYGANA:', jgError.message);
-      }
+      await syncPasswordToJugaygana(user, newPassword, `admin-change-password by ${req.user.username}`);
     } else {
       // Para admins: solo cambiar localmente, NO sincronizar con JUGAYGANA
       console.log(`✅ [Admin] Contraseña de admin cambiada localmente para: ${user.username}`);
