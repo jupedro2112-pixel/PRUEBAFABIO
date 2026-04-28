@@ -18,13 +18,23 @@
 // (opaqueredirect), sin que el SW actúe como proxy cross-origin.
 // ============================================
 
-importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js');
+// SDK Firebase self-hosted (mismo origen). Antes se importaba desde gstatic,
+// pero en redes flaky ese host puede fallar y romper el SW entero. Sirviendo
+// los scripts del propio dominio garantizamos que el SW siempre instale.
+// Fallback a gstatic si el archivo local no estuviera disponible.
+try {
+  importScripts('/lib/firebase/9.1.2/firebase-app-compat.js');
+  importScripts('/lib/firebase/9.1.2/firebase-messaging-compat.js');
+} catch (localImportErr) {
+  console.warn('[FCM-SW] No se pudo importar Firebase SDK local, cayendo a gstatic:', localImportErr && localImportErr.message);
+  importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js');
+}
 
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v11';
+const CACHE_VERSION = 'v12';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

@@ -21,9 +21,9 @@
     <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180x180.png">
     
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js"></script>
+    <!-- Firebase SDK (self-hosted para evitar bloqueos de red/CDN/CSP) -->
+    <script src="/lib/firebase/9.1.2/firebase-app-compat.js"></script>
+    <script src="/lib/firebase/9.1.2/firebase-messaging-compat.js"></script>
     <script>
         // ============================================
         // FIREBASE SDK LOADER ROBUSTO (RETRIES + CDN FALLBACK)
@@ -43,7 +43,12 @@
         //        - window.__firebaseRetryNow() para forzar un reintento desde la UI.
         (function () {
             var FIREBASE_VERSION = '9.1.2';
+            // Origen local (mismo dominio) primero — sobrevive a CSP, CDN caídos,
+            // ISP bloqueando gstatic, etc. Si por alguna razón el archivo local
+            // no existe (deploy roto), caemos a CDNs externos como red de
+            // seguridad. CSP debe permitir gstatic + jsdelivr + unpkg.
             var CDN_BASES = [
+                '/lib/firebase/' + FIREBASE_VERSION,
                 'https://www.gstatic.com/firebasejs/' + FIREBASE_VERSION,
                 'https://cdn.jsdelivr.net/npm/firebase@' + FIREBASE_VERSION + '/compat',
                 'https://unpkg.com/firebase@' + FIREBASE_VERSION + '/compat'
