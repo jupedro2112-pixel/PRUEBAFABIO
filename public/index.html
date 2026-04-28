@@ -26,21 +26,34 @@
     <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js"></script>
     <script>
         // ============================================
-        // FIREBASE SDK LOADER CON REINTENTOS
+        // FIREBASE SDK LOADER ROBUSTO (RETRIES + CDN FALLBACK)
         // ============================================
-        // Si los <script> de gstatic.com fallan en cargar (red móvil lenta,
-        // pico de latencia, paquete perdido, proxy intermedio que timeoutea,
-        // etc.) el global `firebase` queda undefined y NOTIS muestra el error
-        // "No se pudo cargar Firebase". Antes la app se rendía en ese caso.
-        // Ahora reintentamos cargar los SDK programáticamente con backoff
-        // (1s, 3s, 6s) y exponemos `window.__firebaseReady` como Promise para
-        // que el resto del código espere a que firebase esté disponible.
+        // Si los <script> de gstatic.com fallan (red móvil flaky, ISP que
+        // bloquea, paquete perdido, etc.) este loader:
+        //   1) Reintenta con backoff progresivo (1s, 2s, 5s, 10s, 20s, 30s).
+        //   2) Si gstatic falla, intenta CDNs alternativos (jsDelivr, unpkg).
+        //   3) Si agota todos los intentos NO rechaza la promesa: queda en
+        //      estado 'failed-retrying' y reactiva el ciclo cuando vuelve la
+        //      conexión (`online`) o la pestaña vuelve al frente
+        //      (`visibilitychange`). Así el sistema se auto-recupera siempre.
+        //   4) Expone:
+        //        - window.__firebaseReady (Promise que SÓLO resuelve, nunca
+        //          rechaza)
+        //        - window.__firebaseLoadState ('loading'|'ready'|'failed-retrying')
+        //        - window.__firebaseRetryNow() para forzar un reintento desde la UI.
         (function () {
-            var FIREBASE_SCRIPTS = [
-                'https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js',
-                'https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js'
+            var FIREBASE_VERSION = '9.1.2';
+            var CDN_BASES = [
+                'https://www.gstatic.com/firebasejs/' + FIREBASE_VERSION,
+                'https://cdn.jsdelivr.net/npm/firebase@' + FIREBASE_VERSION + '/compat',
+                'https://unpkg.com/firebase@' + FIREBASE_VERSION + '/compat'
             ];
-            var BACKOFFS_MS = [1000, 3000, 6000];
+            var SCRIPTS = ['firebase-app-compat.js', 'firebase-messaging-compat.js'];
+            var BACKOFFS_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+
+            window.__firebaseLoadState = 'loading';
+            var _readyResolve;
+            window.__firebaseReady = new Promise(function (resolve) { _readyResolve = resolve; });
 
             function isFirebaseLoaded() {
                 return typeof window.firebase !== 'undefined' && !!window.firebase.messaging;
@@ -49,7 +62,7 @@
             function loadScript(src) {
                 return new Promise(function (resolve, reject) {
                     var s = document.createElement('script');
-                    s.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'retry=' + Date.now();
+                    s.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'r=' + Date.now();
                     s.async = false;
                     s.crossOrigin = 'anonymous';
                     s.onload = function () { resolve(); };
@@ -58,46 +71,97 @@
                 });
             }
 
-            async function loadAllWithRetry() {
-                if (isFirebaseLoaded()) return;
-                var lastErr = null;
-                for (var attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
-                    try {
-                        for (var i = 0; i < FIREBASE_SCRIPTS.length; i++) {
-                            await loadScript(FIREBASE_SCRIPTS[i]);
-                        }
-                        if (isFirebaseLoaded()) {
-                            console.log('[FCM] ✅ Firebase SDK cargado en reintento', attempt + 1);
-                            return;
-                        }
-                        throw new Error('Scripts cargados pero global firebase sigue indefinido');
-                    } catch (err) {
-                        lastErr = err;
-                        console.warn('[FCM] Reintento ' + (attempt + 1) + ' de carga de Firebase falló:', err.message);
-                        await new Promise(function (r) { setTimeout(r, BACKOFFS_MS[attempt]); });
-                    }
+            async function tryLoadFromCDN(cdnBase) {
+                for (var i = 0; i < SCRIPTS.length; i++) {
+                    await loadScript(cdnBase + '/' + SCRIPTS[i]);
                 }
-                throw lastErr || new Error('No se pudo cargar Firebase tras varios intentos');
+                if (!isFirebaseLoaded()) {
+                    throw new Error('scripts cargados pero global firebase indefinido');
+                }
             }
 
-            // Esperá un tick para dejar que los <script> estáticos terminen
-            // de cargar primero (camino feliz). Si fallaron, recién ahí
-            // arrancamos los reintentos programáticos.
-            window.__firebaseReady = new Promise(function (resolve, reject) {
-                setTimeout(function () {
-                    if (isFirebaseLoaded()) {
-                        resolve();
+            async function attemptLoadAcrossCDNs() {
+                var lastErr = null;
+                for (var c = 0; c < CDN_BASES.length; c++) {
+                    if (isFirebaseLoaded()) return;
+                    try {
+                        await tryLoadFromCDN(CDN_BASES[c]);
                         return;
+                    } catch (err) {
+                        lastErr = err;
+                        console.warn('[FCM] CDN falló (' + CDN_BASES[c] + '):', err.message);
                     }
-                    console.warn('[FCM] Firebase no cargó vía <script> estáticos, iniciando reintentos...');
-                    loadAllWithRetry().then(resolve).catch(reject);
-                }, 0);
-            });
+                }
+                throw lastErr || new Error('todas las CDN fallaron');
+            }
 
-            // Exponer también la última causa de fallo para diagnósticos.
-            window.__firebaseReady.catch(function (err) {
-                window.__firebaseLoadError = err && err.message ? err.message : String(err);
-                console.error('[FCM] ❌ Carga de Firebase fallida definitivamente:', window.__firebaseLoadError);
+            var _retrying = false;
+            async function retryLoop() {
+                if (_retrying || isFirebaseLoaded()) return;
+                _retrying = true;
+                try {
+                    for (var attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
+                        if (isFirebaseLoaded()) break;
+                        try {
+                            await attemptLoadAcrossCDNs();
+                            if (isFirebaseLoaded()) {
+                                console.log('[FCM] ✅ Firebase SDK cargado en reintento', attempt + 1);
+                                break;
+                            }
+                        } catch (err) {
+                            window.__firebaseLoadError = err && err.message ? err.message : String(err);
+                            console.warn('[FCM] Reintento ' + (attempt + 1) + ' falló:', window.__firebaseLoadError);
+                        }
+                        await new Promise(function (r) { setTimeout(r, BACKOFFS_MS[attempt]); });
+                    }
+                } finally {
+                    _retrying = false;
+                }
+
+                if (isFirebaseLoaded()) {
+                    window.__firebaseLoadState = 'ready';
+                    _readyResolve();
+                } else {
+                    window.__firebaseLoadState = 'failed-retrying';
+                    console.warn('[FCM] ⚠️ Firebase no cargó tras varios intentos. Esperando reconexión / foreground / retry manual...');
+                }
+            }
+
+            // API pública: forzar un reintento (botón NOTIS o navegador volvió online).
+            window.__firebaseRetryNow = function () {
+                if (isFirebaseLoaded()) {
+                    if (window.__firebaseLoadState !== 'ready') {
+                        window.__firebaseLoadState = 'ready';
+                        _readyResolve();
+                    }
+                    return Promise.resolve();
+                }
+                return retryLoop();
+            };
+
+            // Camino feliz: los <script> estáticos ya cargaron. Si no, retryLoop.
+            setTimeout(function () {
+                if (isFirebaseLoaded()) {
+                    window.__firebaseLoadState = 'ready';
+                    _readyResolve();
+                    return;
+                }
+                console.warn('[FCM] Firebase no cargó vía <script> estáticos, iniciando reintentos...');
+                retryLoop();
+            }, 0);
+
+            // Auto-recovery: re-trigger ante eventos que sugieren que la red puede estar OK ahora.
+            window.addEventListener('online', function () {
+                if (!isFirebaseLoaded()) {
+                    console.log('[FCM] online event — reintentando carga de Firebase');
+                    retryLoop();
+                }
+            });
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'visible' && !isFirebaseLoaded()) {
+                    console.log('[FCM] visibilitychange visible — reintentando carga de Firebase');
+                    retryLoop();
+                }
             });
         })();
     </script>
@@ -1022,9 +1086,35 @@
                     console.warn('[FCM] Firebase no listo aún, esperando loader con reintentos...');
                     await window.__firebaseReady;
                 }
-                app = firebase.initializeApp(firebaseConfig);
+                // Idempotente: si app ya fue inicializada, reusar la default.
+                if (!firebase.apps || firebase.apps.length === 0) {
+                    app = firebase.initializeApp(firebaseConfig);
+                } else {
+                    app = firebase.app();
+                }
                 messaging = firebase.messaging();
                 console.log('[FCM] ✅ Firebase inicializado correctamente');
+
+                // Si la auto-init de notificaciones (registerServiceWorker → initNotifications)
+                // se ejecutó ANTES de que Firebase cargara, salió en early-return sin obtener
+                // token. Ahora que messaging existe, reintentamos en caso de PWA standalone
+                // con permiso ya concedido o por solicitar.
+                try {
+                    const _isStandaloneNow2 = window.matchMedia('(display-mode: standalone)').matches ||
+                                              window.navigator.standalone === true;
+                    if (_isStandaloneNow2 && !localStorage.getItem('fcmToken')) {
+                        console.log('[FCM] Firebase listo tarde — reintentando auto-init de notificaciones...');
+                        const _swReg = await navigator.serviceWorker.ready.catch(function (e) {
+                            console.warn('[FCM] SW ready falló en post-load init:', e && e.message);
+                            return null;
+                        });
+                        if (_swReg && typeof initNotifications === 'function') {
+                            initNotifications(_swReg);
+                        }
+                    }
+                } catch (postInitErr) {
+                    console.warn('[FCM] post-load initNotifications falló:', postInitErr && postInitErr.message);
+                }
             } catch (error) {
                 console.error('[FCM] ❌ Error al inicializar Firebase:', error);
             }
@@ -1246,29 +1336,61 @@
                         const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
                         console.log('[FCM] Service Worker listo:', usedRegistration.scope);
                         
+                        // Estrategia de 3 niveles: si getToken falla, escalamos progresivamente
+                        // hasta recuperar un token usable sin intervención del usuario.
+                        //   1) getToken directo.
+                        //   2) deleteToken + getToken (limpia push subscription obsoleta).
+                        //   3) unregister SW + register SW + getToken (recupera SW corrupto).
+                        let _activeReg = usedRegistration;
                         try {
-                            currentToken = await messaging.getToken({ 
+                            currentToken = await messaging.getToken({
                                 vapidKey: VAPID_KEY,
-                                serviceWorkerRegistration: usedRegistration
+                                serviceWorkerRegistration: _activeReg
                             });
                             console.log('[FCM] getToken completado');
                         } catch (firstErr) {
-                            // En Android PWA instalada el token anterior puede quedar en un estado
-                            // obsoleto (push subscription válida en el browser pero revocada en FCM).
-                            // Limpiamos la suscripción push subyacente y reintentamos para obtener
-                            // un token completamente nuevo sin necesidad de que el usuario intervenga.
                             console.warn('[FCM] ⚠️ Error en getToken (intento 1):', firstErr.message);
-                            console.log('[FCM] Limpiando suscripción push obsoleta y reintentando...');
+                            console.log('[FCM] Tier 2: limpiando suscripción push y reintentando...');
                             try {
                                 await messaging.deleteToken();
                             } catch (delErr) {
-                                console.warn('[FCM] deleteToken (pre-reintento):', delErr.message);
+                                console.warn('[FCM] deleteToken (tier 2):', delErr.message);
                             }
-                            currentToken = await messaging.getToken({ 
-                                vapidKey: VAPID_KEY,
-                                serviceWorkerRegistration: usedRegistration
-                            });
-                            console.log('[FCM] ✅ getToken completado tras limpiar suscripción obsoleta');
+                            try {
+                                currentToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: _activeReg
+                                });
+                                console.log('[FCM] ✅ getToken completado tras tier 2');
+                            } catch (secondErr) {
+                                // Tier 3: el SW puede haber quedado en estado corrupto.
+                                // Lo desregistramos y volvemos a registrar de cero.
+                                console.warn('[FCM] ⚠️ Error en getToken (intento 2):', secondErr.message);
+                                console.log('[FCM] Tier 3: re-registrando Service Worker y reintentando...');
+                                try {
+                                    if (_activeReg && typeof _activeReg.unregister === 'function') {
+                                        await _activeReg.unregister();
+                                        console.log('[FCM] SW desregistrado correctamente');
+                                    }
+                                } catch (unregErr) {
+                                    console.warn('[FCM] No se pudo desregistrar SW:', unregErr.message);
+                                }
+                                try {
+                                    _activeReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+                                        updateViaCache: 'none'
+                                    });
+                                    await navigator.serviceWorker.ready;
+                                    console.log('[FCM] SW re-registrado:', _activeReg.scope);
+                                } catch (regErr) {
+                                    console.error('[FCM] Re-registro de SW falló:', regErr.message);
+                                    throw secondErr;
+                                }
+                                currentToken = await messaging.getToken({
+                                    vapidKey: VAPID_KEY,
+                                    serviceWorkerRegistration: _activeReg
+                                });
+                                console.log('[FCM] ✅ getToken completado tras tier 3 (SW re-registrado)');
+                            }
                         }
                     } catch (tokenError) {
                         // Llega aquí si falló tanto el intento inicial como el reintento post-deleteToken.
@@ -1555,9 +1677,15 @@
                 return '⚠️ Bloqueaste las notificaciones para este sitio. Habilitalas en la configuración del navegador.';
             }
             if (typeof firebase === 'undefined' || !firebase.messaging) {
-                var loadErr = window.__firebaseLoadError;
-                var detail = loadErr ? (' (' + loadErr + ')') : '';
-                return '⚠️ No se pudo cargar Firebase' + detail + '. Revisá tu conexión a internet y volvé a intentar.';
+                // Mientras el loader sigue reintentando NO mostramos error rojo:
+                // esto es normal en redes móviles flaky y se va a resolver solo.
+                if (window.__firebaseLoadState === 'loading') {
+                    return '⏳ Cargando notificaciones, probá de nuevo en unos segundos…';
+                }
+                if (window.__firebaseLoadState === 'failed-retrying') {
+                    return '⏳ Reconectando con Firebase. Volvé a intentar en un momento.';
+                }
+                return '⚠️ No se pudieron cargar las notificaciones. Revisá tu conexión y volvé a intentar.';
             }
             return '⚠️ No se pudieron activar las notificaciones. Inténtalo de nuevo en unos segundos.';
         }
@@ -1573,22 +1701,32 @@
             // Antes de hacer nada, esperar a que el SDK de Firebase esté
             // cargado. Si los <script> estáticos fallaron al inicio, el
             // loader (window.__firebaseReady) ya está reintentando con
-            // backoff. Acá nos suscribimos a esa promesa con un timeout
-            // razonable para no dejar al user esperando para siempre.
+            // backoff + fallback CDN. Si el loader quedó en 'failed-retrying'
+            // (agotó el ciclo) lo pateamos manualmente con __firebaseRetryNow.
+            // Timeout extendido a 30s — usuarios en red móvil necesitan margen.
             try {
+                if (window.__firebaseLoadState === 'failed-retrying' && typeof window.__firebaseRetryNow === 'function') {
+                    console.log('[FCM] Loader en failed-retrying — disparando retry manual...');
+                    window.__firebaseRetryNow();
+                }
                 await Promise.race([
                     window.__firebaseReady,
                     new Promise(function (_r, reject) {
-                        setTimeout(function () { reject(new Error('timeout esperando carga de Firebase')); }, 12000);
+                        setTimeout(function () { reject(new Error('timeout esperando carga de Firebase')); }, 30000);
                     })
                 ]);
             } catch (e) {
-                console.error('[FCM] ❌ Carga de Firebase no completó:', e && e.message);
+                console.error('[FCM] ❌ Carga de Firebase no completó tras 30s:', e && e.message);
+                // El loader sigue reintentando en background — el usuario sólo
+                // tiene que esperar y reintentar. Mensaje friendly, no rojo.
                 if (typeof showToast === 'function') {
-                    var detail = window.__firebaseLoadError ? (' (' + window.__firebaseLoadError + ')') : '';
-                    showToast('⚠️ No se pudo cargar Firebase' + detail + '. Revisá tu conexión a internet y volvé a intentar.', 'error');
+                    showToast('⏳ Notificaciones aún cargando. Volvé a tocar NOTIS en unos segundos.', 'warning');
                 }
-                return { success: false, error: 'firebase-load-failed' };
+                // Re-disparar retry para no quedar atascado.
+                if (typeof window.__firebaseRetryNow === 'function') {
+                    window.__firebaseRetryNow();
+                }
+                return { success: false, error: 'firebase-load-pending' };
             }
 
             // Si firebase ya cargó pero `messaging` (variable local) aún no,
@@ -2240,6 +2378,27 @@
                 if (notificationBtn.disabled) return; // ya activado o procesando
                 console.log('[FCM] Botón de notificaciones clickeado');
 
+                // Si Firebase aún no terminó de cargar, disparar retry y avisar friendly
+                // (no rojo). El usuario puede volver a tocar en unos segundos.
+                if (window.__firebaseLoadState !== 'ready') {
+                    if (typeof window.__firebaseRetryNow === 'function') {
+                        window.__firebaseRetryNow();
+                    }
+                    if (typeof showToast === 'function') {
+                        showToast('⏳ Cargando Firebase... probá de nuevo en unos segundos.', 'warning');
+                    }
+                    notificationBtn.innerHTML = '⏳ Cargando…';
+                    setTimeout(function () {
+                        if (window.__firebaseLoadState === 'ready') {
+                            notificationBtn.innerHTML = '🔔 NOTIS';
+                        } else {
+                            notificationBtn.innerHTML = '🔔 NOTIS';
+                        }
+                        notificationBtn.disabled = false;
+                    }, 3000);
+                    return;
+                }
+
                 // iOS sin soporte de push: mostrar guía de instalación
                 if (isIOS && !messaging) {
                     if (typeof showToast === 'function') {
@@ -2298,6 +2457,28 @@
                 notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
             } else if (!status.messagingAvailable) {
                 notificationBtn.title = 'Push no soportado en este navegador/entorno.';
+            }
+
+            // Auto-update: cuando Firebase termine de cargar (puede tardar
+            // segundos en redes flaky) refrescamos el estado del botón sin
+            // requerir interacción del usuario. Así el "🔔 NOTIS" pasa a
+            // "🔔 NOTIS ACTIVADAS" en cuanto el token quede registrado.
+            if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
+                window.__firebaseReady.then(function () {
+                    setTimeout(function () {
+                        try {
+                            const s2 = (typeof checkNotificationStatus === 'function') ? checkNotificationStatus() : null;
+                            if (s2 && s2.permission === 'granted' && s2.hasToken) {
+                                notificationBtn.classList.remove('blocked');
+                                notificationBtn.classList.add('active');
+                                notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                                notificationBtn.title = 'Notificaciones activadas ✅';
+                            }
+                        } catch (e) {
+                            console.warn('[FCM] No se pudo actualizar estado del botón post-load:', e && e.message);
+                        }
+                    }, 1500);
+                });
             }
         } else {
             console.log('[FCM] ❌ Botón notificationBtn no encontrado en el DOM');
