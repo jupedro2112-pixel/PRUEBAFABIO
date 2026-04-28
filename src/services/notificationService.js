@@ -9,6 +9,86 @@ const { createPrivateKey } = require('crypto');
 let isInitialized = false;
 
 // ============================================
+// HELPER: ENVIAR CON TIMEOUT
+// FCM puede tardar (o colgarse) bajo carga; sin timeout el handler queda
+// bloqueado e impide responder al cliente. 10s cubre el p99 normal y deja
+// margen para detectar problemas reales de red/credencial.
+// ============================================
+const FCM_SEND_TIMEOUT_MS = 10000;
+
+function _sendWithTimeout(promise, timeoutMs) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(`FCM send timeout (${timeoutMs}ms)`);
+      err.code = 'fcm/timeout';
+      reject(err);
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
+
+// ============================================
+// HELPER: VALIDAR Y RECORTAR PAYLOAD
+// FCM rechaza mensajes >4KB. Truncamos body a 3500 bytes para dejar margen
+// (los headers + notification + data + apns/android wrappers consumen el resto).
+// Si después del recorte el total supera 4096 bytes, recortamos data extra.
+// ============================================
+const FCM_MAX_PAYLOAD_BYTES = 4000;
+const FCM_BODY_MAX_BYTES = 3500;
+
+function _byteLen(str) {
+  return Buffer.byteLength(String(str || ''), 'utf8');
+}
+
+function _truncateToBytes(str, maxBytes) {
+  if (!str) return '';
+  const buf = Buffer.from(String(str), 'utf8');
+  if (buf.length <= maxBytes) return str;
+  // Recortar y agregar elipsis. Usamos slice + toString con cuidado de no
+  // partir un caracter UTF-8 multi-byte: retrocedemos hasta encontrar un
+  // byte de inicio de secuencia válida.
+  let end = maxBytes - 3; // reservar 3 bytes para "..."
+  while (end > 0 && (buf[end] & 0xC0) === 0x80) end--;
+  return buf.slice(0, end).toString('utf8') + '...';
+}
+
+function _sanitizeAndCapPayload(title, body, data) {
+  const safeTitle = String(title || '');
+  let safeBody = String(body || '');
+  if (_byteLen(safeBody) > FCM_BODY_MAX_BYTES) {
+    safeBody = _truncateToBytes(safeBody, FCM_BODY_MAX_BYTES);
+  }
+  // Convertir todos los valores de data a string (requisito de FCM)
+  const safeData = {};
+  if (data && typeof data === 'object') {
+    for (const [k, v] of Object.entries(data)) {
+      if (v !== null && v !== undefined) {
+        safeData[k] = String(v);
+      }
+    }
+  }
+  // Si el conjunto sigue siendo demasiado grande, recortar data progresivamente
+  // (mantener title/body intactos; data extra es lo más probable de exceder).
+  let totalBytes = _byteLen(safeTitle) + _byteLen(safeBody);
+  for (const k of Object.keys(safeData)) totalBytes += _byteLen(k) + _byteLen(safeData[k]);
+  if (totalBytes > FCM_MAX_PAYLOAD_BYTES) {
+    const keys = Object.keys(safeData).sort((a, b) => _byteLen(safeData[b]) - _byteLen(safeData[a]));
+    for (const k of keys) {
+      if (totalBytes <= FCM_MAX_PAYLOAD_BYTES) break;
+      const before = _byteLen(safeData[k]);
+      // Mantener algunas keys críticas si caben en poco; el resto se elimina.
+      if (['tag', 'icon', 'badge', 'click_action', 'sound', 'requireInteraction'].includes(k) && before < 200) continue;
+      delete safeData[k];
+      totalBytes -= _byteLen(k) + before;
+    }
+  }
+  return { safeTitle, safeBody, safeData };
+}
+
+// ============================================
 // HELPER: DETECTAR TOKEN INVÁLIDO/NO REGISTRADO
 // Cubre todos los códigos de error que FCM devuelve para
 // tokens que ya no son válidos y deben borrarse de la BD.
@@ -299,21 +379,14 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
   }
 
   try {
-    // Convertir todos los valores de data a string (requisito de FCM),
-    // omitiendo entradas con valores null/undefined.
-    const safeData = {};
-    if (data && typeof data === 'object') {
-      for (const [k, v] of Object.entries(data)) {
-        if (v !== null && v !== undefined) {
-          safeData[k] = String(v);
-        }
-      }
-    }
+    // Validar y recortar payload para no exceder el límite 4KB de FCM,
+    // que rechaza mensajes más grandes con error opaco.
+    const { safeTitle, safeBody, safeData } = _sanitizeAndCapPayload(title, body, data);
 
     const message = {
       notification: {
-        title: String(title || ''),
-        body: String(body || '')
+        title: safeTitle,
+        body: safeBody
       },
       data: {
         ...safeData,
@@ -333,8 +406,8 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
         payload: {
           aps: {
             alert: {
-              title: String(title || ''),
-              body: String(body || '')
+              title: safeTitle,
+              body: safeBody
             },
             sound: 'default',
             badge: 1
@@ -346,8 +419,8 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
       },
       webpush: {
         notification: {
-          title: String(title || ''),
-          body: String(body || ''),
+          title: safeTitle,
+          body: safeBody,
           icon: '/icons/icon-192x192.png',
           badge: '/icons/icon-72x72.png',
           requireInteraction: true,
@@ -366,7 +439,7 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
       return { success: false, error: 'Firebase Messaging no disponible' };
     }
 
-    const response = await messagingService.send(message);
+    const response = await _sendWithTimeout(messagingService.send(message), FCM_SEND_TIMEOUT_MS);
     console.log('[FCM] ✅ Notificación enviada exitosamente:', response);
     return { success: true, messageId: response };
   } catch (error) {
@@ -417,14 +490,17 @@ async function sendNotificationToMultiple(fcmTokens, title, body, data = {}) {
   }
 
   try {
+    // Sanitizar payload una sola vez (mismo title/body para todos los tokens)
+    const { safeTitle, safeBody, safeData } = _sanitizeAndCapPayload(title, body, data);
+
     // Crear mensajes individuales para cada token
     const messages = fcmTokens.map(token => ({
       notification: {
-        title: title,
-        body: body
+        title: safeTitle,
+        body: safeBody
       },
       data: {
-        ...data,
+        ...safeData,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
         sound: 'default'
       },
@@ -446,20 +522,22 @@ async function sendNotificationToMultiple(fcmTokens, title, body, data = {}) {
       }
     }));
 
-    // Usar sendEach (método nuevo) o sendAll (método antiguo)
+    // Usar sendEach (método nuevo) o sendAll (método antiguo).
+    // Timeout más amplio para batches: ~50ms por token sobre el base.
     let response;
+    const batchTimeout = FCM_SEND_TIMEOUT_MS + (messages.length * 50);
     if (admin.messaging().sendEach) {
       // Firebase Admin SDK v11+
-      response = await admin.messaging().sendEach(messages);
+      response = await _sendWithTimeout(admin.messaging().sendEach(messages), batchTimeout);
     } else if (admin.messaging().sendAll) {
       // Firebase Admin SDK v10
-      response = await admin.messaging().sendAll(messages);
+      response = await _sendWithTimeout(admin.messaging().sendAll(messages), batchTimeout);
     } else {
-      // Fallback: enviar uno por uno
+      // Fallback: enviar uno por uno (con timeout individual)
       const results = [];
       for (const message of messages) {
         try {
-          await admin.messaging().send(message);
+          await _sendWithTimeout(admin.messaging().send(message), FCM_SEND_TIMEOUT_MS);
           results.push({ success: true });
         } catch (e) {
           results.push({ success: false, error: e });
@@ -515,13 +593,14 @@ async function sendNotificationToTopic(topic, title, body, data = {}) {
   }
 
   try {
+    const { safeTitle, safeBody, safeData } = _sanitizeAndCapPayload(title, body, data);
     const message = {
       notification: {
-        title: title,
-        body: body
+        title: safeTitle,
+        body: safeBody
       },
       data: {
-        ...data,
+        ...safeData,
         click_action: 'FLUTTER_NOTIFICATION_CLICK',
         sound: 'default'
       },
@@ -543,7 +622,7 @@ async function sendNotificationToTopic(topic, title, body, data = {}) {
       }
     };
 
-    const response = await admin.messaging().send(message);
+    const response = await _sendWithTimeout(admin.messaging().send(message), FCM_SEND_TIMEOUT_MS);
     console.log('[FCM] ✅ Notificación enviada al tópico:', response);
     return { success: true, messageId: response };
   } catch (error) {
@@ -648,17 +727,20 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
     let totalFailure = 0;
     const failedTokens = [];
 
+    // Sanitizar payload una sola vez (idéntico para todos los tokens del envío masivo)
+    const { safeTitle, safeBody, safeData } = _sanitizeAndCapPayload(title, body, data);
+
     for (let i = 0; i < tokenList.length; i += BATCH_SIZE) {
       const batch = tokenList.slice(i, i + BATCH_SIZE);
-      
+
       // Crear mensajes individuales para cada token
       const messages = batch.map(u => ({
         notification: {
-          title: title,
-          body: body
+          title: safeTitle,
+          body: safeBody
         },
         data: {
-          ...data,
+          ...safeData,
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
           sound: 'default'
         },
@@ -681,20 +763,23 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
       }));
 
       let response;
-      
+
+      // Timeout más amplio para batches: ~50ms por token sobre el base.
+      const batchTimeout = FCM_SEND_TIMEOUT_MS + (messages.length * 50);
+
       // Usar el método disponible según la versión de Firebase Admin
       if (admin.messaging().sendEach) {
         // Firebase Admin SDK v11+
-        response = await admin.messaging().sendEach(messages);
+        response = await _sendWithTimeout(admin.messaging().sendEach(messages), batchTimeout);
       } else if (admin.messaging().sendAll) {
         // Firebase Admin SDK v10
-        response = await admin.messaging().sendAll(messages);
+        response = await _sendWithTimeout(admin.messaging().sendAll(messages), batchTimeout);
       } else {
-        // Fallback: enviar uno por uno
+        // Fallback: enviar uno por uno (con timeout individual)
         const results = [];
         for (const message of messages) {
           try {
-            await admin.messaging().send(message);
+            await _sendWithTimeout(admin.messaging().send(message), FCM_SEND_TIMEOUT_MS);
             results.push({ success: true });
           } catch (e) {
             results.push({ success: false, error: e });
@@ -875,6 +960,101 @@ async function sendNotificationToUsernames(UserModel, usernames, title, body, da
 }
 
 // ============================================
+// LIMPIEZA PROACTIVA DE TOKENS FCM MUERTOS
+// Recorre todos los tokens registrados (campo individual + array fcmTokens)
+// y los valida contra FCM usando dry-run (no entrega push real al dispositivo).
+// Borra los que devuelven error de token inválido. Pensada para ejecutarse
+// desde un cron diario; segura para llamarse en frío.
+// ============================================
+async function pruneInvalidFcmTokens(UserModel) {
+  if (!isInitialized) {
+    const initialized = initializeFirebase();
+    if (!initialized) {
+      return { success: false, error: 'Firebase Admin no inicializado' };
+    }
+  }
+
+  const messagingService = admin.messaging();
+  if (!messagingService || typeof messagingService.send !== 'function') {
+    return { success: false, error: 'Firebase Messaging no disponible' };
+  }
+
+  // Recolectar todos los pares { username, token } únicos
+  const users = await UserModel.find({
+    $or: [
+      { fcmToken: { $exists: true, $ne: null } },
+      { 'fcmTokens.0': { $exists: true } }
+    ]
+  }).select('username fcmToken fcmTokens').lean();
+
+  const tokenList = [];
+  for (const user of users) {
+    const seen = new Set();
+    if (user.fcmTokens && user.fcmTokens.length > 0) {
+      for (const entry of user.fcmTokens) {
+        if (entry.token && !seen.has(entry.token)) {
+          seen.add(entry.token);
+          tokenList.push({ token: entry.token, username: user.username });
+        }
+      }
+    }
+    if (user.fcmToken && !seen.has(user.fcmToken)) {
+      tokenList.push({ token: user.fcmToken, username: user.username });
+    }
+  }
+
+  const stats = { total: tokenList.length, valid: 0, invalid: 0, cleaned: 0, errors: 0 };
+  console.log(`[FCM-prune] Validando ${tokenList.length} tokens vía dry-run...`);
+
+  // Procesar de a chunks pequeños con pausa para no saturar FCM ni la BD
+  const CHUNK = 50;
+  for (let i = 0; i < tokenList.length; i += CHUNK) {
+    const chunk = tokenList.slice(i, i + CHUNK);
+    await Promise.all(chunk.map(async (entry) => {
+      const dryMessage = {
+        token: entry.token,
+        notification: { title: 'health-check', body: 'health-check' }
+      };
+      try {
+        // Segundo arg dryRun=true: FCM valida el token y la estructura del mensaje
+        // pero NO entrega ningún push al dispositivo.
+        await _sendWithTimeout(messagingService.send(dryMessage, true), FCM_SEND_TIMEOUT_MS);
+        stats.valid++;
+      } catch (err) {
+        const msg = err.message || '';
+        const code = err.code || '';
+        if (isInvalidTokenError(msg, code)) {
+          stats.invalid++;
+          try {
+            await UserModel.updateOne(
+              { username: entry.username },
+              { $pull: { fcmTokens: { token: entry.token } } }
+            );
+            await UserModel.updateOne(
+              { username: entry.username, fcmToken: entry.token },
+              { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+            );
+            stats.cleaned++;
+          } catch (dbErr) {
+            console.error(`[FCM-prune] Error borrando token de ${entry.username}: ${dbErr.message}`);
+          }
+        } else {
+          // Errores transitorios (red, timeout) NO se cuentan como inválidos
+          stats.errors++;
+        }
+      }
+    }));
+    // Pausa breve entre chunks para no martillar FCM en envíos grandes
+    if (i + CHUNK < tokenList.length) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+
+  console.log(`[FCM-prune] ✅ ${stats.valid} válidos, ${stats.invalid} inválidos (${stats.cleaned} limpiados), ${stats.errors} errores transitorios`);
+  return { success: true, ...stats };
+}
+
+// ============================================
 // INICIALIZAR AL CARGAR
 // ============================================
 initializeFirebase();
@@ -887,5 +1067,6 @@ module.exports = {
   sendNotificationToTopic,
   subscribeToTopic,
   unsubscribeFromTopic,
+  pruneInvalidFcmTokens,
   initializeFirebase
 };

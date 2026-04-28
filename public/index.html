@@ -1432,7 +1432,34 @@
                 }
             }
         };
-        
+
+        // ============================================
+        // REFRESH PERIÓDICO DEL TOKEN FCM (cada 24h, solo en standalone)
+        // ============================================
+        // El token FCM puede rotar entre logins (SW update, expiración de la
+        // suscripción push, reinstalación de la PWA). Sin un refresh periódico
+        // el backend puede quedar apuntando a un token muerto durante semanas.
+        // Reusamos sendFcmTokenAfterLogin que ya hace getToken + detect-rotation
+        // + re-register, y lo ejecutamos cada 24h mientras la app esté abierta.
+        // Se omite en navegador puro (no hay token FCM activo en ese contexto).
+        const FCM_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+        setInterval(function () {
+            try {
+                const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+                if (!standalone) return;
+                if (!localStorage.getItem('userToken')) return; // sin sesión: no refresh
+                if (typeof window.sendFcmTokenAfterLogin === 'function') {
+                    console.log('[FCM] Refresh periódico de token (24h)');
+                    window.sendFcmTokenAfterLogin().catch(function (e) {
+                        console.warn('[FCM] Refresh periódico falló:', e && e.message);
+                    });
+                }
+            } catch (e) {
+                console.warn('[FCM] Error en refresh periódico:', e && e.message);
+            }
+        }, FCM_REFRESH_INTERVAL_MS);
+
         // ============================================
         // HELPER: Mensaje de error específico según la causa real
         // ============================================
@@ -1782,13 +1809,13 @@
         if (messaging) {
             messaging.onMessage(function(payload) {
                 console.log('[FCM] Notificación recibida en primer plano:', payload);
-                
+
                 const notif = payload.notification || {};
                 const notificationTitle = notif.title || 'Sala de Juegos';
                 const notifBody = notif.body || 'Nueva notificación';
-                
+
                 if (document.visibilityState !== 'visible') {
-                    // App en background / minimizada: mostrar notificación nativa
+                    // App en background / minimizada: notificación nativa.
                     try {
                         new Notification(notificationTitle, {
                             body: notifBody,
@@ -1800,16 +1827,13 @@
                         console.log('[FCM] No se pudo mostrar notificación nativa:', e.message);
                     }
                 } else {
-                    // App visible en primer plano: mostrar toast para no perder el mensaje
-                    console.log('[FCM] App en primer plano - mostrando toast');
-                    if (typeof showToast === 'function') {
-                        showToast(`🔔 ${notificationTitle}: ${notifBody}`, 'info');
-                    }
-                    if (VIP && VIP.notifications && typeof VIP.notifications.showBrowserNotification === 'function') {
-                        VIP.notifications.showBrowserNotification(notificationTitle, notifBody, notif.icon || '/icons/icon-192x192.png');
-                    }
-                    // Backup: mostrar también el cartel in-app por si el evento socket
-                    // 'admin_notification' no llegó (caso edge: socket aún no conectado).
+                    // App visible en primer plano: SOLO el banner in-app.
+                    // Antes mostrábamos toast + Notification nativa + banner por el
+                    // mismo push (3 alertas para 1 mensaje). Ahora unificado al
+                    // banner in-app, que es la UX consistente con el evento socket
+                    // 'admin_notification'. El sonido lo dispara el handler de socket
+                    // si llega por esa vía; si llegó por FCM (sin socket), el banner
+                    // alcanza para alertar visualmente.
                     try {
                         if (typeof showInAppNotification === 'function') {
                             showInAppNotification(
@@ -1818,6 +1842,9 @@
                                 notif.icon || (payload.data && payload.data.icon),
                                 payload.data || {}
                             );
+                        } else if (typeof showToast === 'function') {
+                            // Fallback si el banner no estuviera disponible
+                            showToast('🔔 ' + notificationTitle + ': ' + notifBody, 'info');
                         }
                     } catch (bannerErr) {
                         console.warn('[FCM] No se pudo mostrar cartel in-app desde onMessage:', bannerErr);

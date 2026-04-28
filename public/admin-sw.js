@@ -8,7 +8,7 @@
  */
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).
@@ -158,51 +158,10 @@ self.addEventListener('fetch', (event) => {
     }
 });
 
-// Manejar notificaciones push
-// Supports both legacy (payload.title/body) and FCM format (payload.notification.title/body)
-self.addEventListener('push', (event) => {
-    console.log('[SW-Admin] Push recibido:', event);
-    
-    let title = 'Admin Sala de Juegos';
-    let body = 'Tienes una nueva notificación';
-    let icon = '/icons/icon-192x192.png';
-    let badge = '/icons/icon-72x72.png';
-    let tag = 'admin-notification';
-    let extraData = {};
-
-    try {
-        const payload = event.data.json();
-
-        const notif = payload.notification || {};
-        const webpushNotif = (payload.webpush && payload.webpush.notification) || {};
-
-        title = notif.title || webpushNotif.title || payload.title || title;
-        body = notif.body || webpushNotif.body || payload.body || body;
-        icon = notif.icon || webpushNotif.icon || payload.icon || icon;
-        badge = notif.badge || webpushNotif.badge || payload.badge || badge;
-        tag = (payload.data && payload.data.tag) || payload.tag || tag;
-        extraData = payload.data || {};
-    } catch (e) {
-        try { body = event.data.text(); } catch (_) {}
-    }
-    
-    const options = {
-        body,
-        icon,
-        badge,
-        tag,
-        requireInteraction: extraData.requireInteraction || false,
-        data: extraData,
-        actions: [
-            { action: 'open', title: 'Abrir' },
-            { action: 'close', title: 'Cerrar' }
-        ]
-    };
-    
-    event.waitUntil(
-        self.registration.showNotification(title, options)
-    );
-});
+// NOTA: NO registramos un handler 'push' manual. La app admin usa Firebase
+// Cloud Messaging SDK, que registra su propio handler interno para mostrar
+// la notificación en background. Tener ambos handlers causaba conflicto
+// (a veces se mostraban dos notificaciones, otras ninguna). El SDK basta.
 
 // Manejar click en notificación
 self.addEventListener('notificationclick', (event) => {
@@ -238,21 +197,13 @@ self.addEventListener('notificationclick', (event) => {
 
 // Escuchar mensajes desde la app
 self.addEventListener('message', (event) => {
-    console.log('[SW-Admin] Mensaje recibido:', event.data);
-    
     if (event.data && event.data.type === 'SKIP_WAITING') {
         self.skipWaiting();
     }
-    
-    if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
-        self.registration.showNotification(event.data.title, {
-            body: event.data.body,
-            icon: event.data.icon || '/icons/icon-192x192.png',
-            badge: event.data.badge || '/icons/icon-72x72.png',
-            tag: event.data.tag || 'default',
-            data: event.data.data || {}
-        });
-    }
+    // NOTA: el handler SHOW_NOTIFICATION fue removido junto con el handler
+    // 'push' manual. La app admin no postMessage-ea al SW para mostrar
+    // notificaciones; usa el SDK FCM (background) o muestra UI in-app
+    // (foreground). Este listener solo gestiona SKIP_WAITING.
 });
 
 console.log('[SW-Admin] Service Worker cargado', CACHE_VERSION);

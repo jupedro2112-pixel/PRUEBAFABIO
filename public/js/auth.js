@@ -366,12 +366,36 @@ VIP.auth = (function () {
     }
 
     function handleLogout() {
+        // Avisar al backend para limpiar el token FCM de este dispositivo, así
+        // las notificaciones del próximo user no se entregan a la sesión cerrada.
+        // Best-effort: no bloqueamos el logout si la llamada falla (offline, etc.).
+        try {
+            const fcmToken = localStorage.getItem('fcmToken');
+            const authToken = VIP.state.currentToken || localStorage.getItem('userToken');
+            if (fcmToken) {
+                const headers = { 'Content-Type': 'application/json' };
+                if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+                fetch(VIP.config.API_URL + '/api/auth/logout', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ fcmToken: fcmToken }),
+                    keepalive: true
+                }).catch(function () { /* ignore */ });
+            }
+        } catch (e) { /* ignore */ }
+
         VIP.socket.stopMessagePolling();
         VIP.ui.stopBalancePolling();
         VIP.state.currentToken = null;
         VIP.state.currentUser = null;
         VIP.state.sessionPassword = '';
         localStorage.removeItem('userToken');
+        // El fcmToken local también se borra para que la sesión siguiente
+        // (otro usuario en el mismo dispositivo) registre uno fresco asociado
+        // a su cuenta y no herede el del usuario anterior.
+        localStorage.removeItem('fcmToken');
+        localStorage.removeItem('fcmTokenContext');
+        localStorage.removeItem('fcmTokenUserId');
         sessionStorage.removeItem('sessionPassword');
         VIP.ui.showLoginScreen();
     }

@@ -699,7 +699,68 @@ const notificationRoutes = require('./src/routes/notificationRoutes');
 app.use('/api/notifications', notificationRoutes);
 notificationRoutes.setIo(io);
 
-const { sendNotificationToUser: _sendPushToUser } = require('./src/services/notificationService');
+const { sendNotificationToUser: _sendPushToUser, pruneInvalidFcmTokens } = require('./src/services/notificationService');
+
+// ============================================
+// CRON DIARIO: LIMPIEZA DE TOKENS FCM MUERTOS
+// Valida cada token vía dry-run de FCM (no envía push real al dispositivo) y
+// borra de la BD los que devuelven error de token inválido. Esto mantiene
+// limpio el array fcmTokens y reduce la tasa de fallidos en envíos masivos.
+//
+// Guarda anti-overlap: si la corrida anterior aún no terminó (ej: 100K users),
+// se omite la siguiente para no superponer escrituras a la misma colección.
+// ============================================
+const FCM_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+let _fcmPruneRunning = false;
+async function _runFcmPrune(reason) {
+  if (_fcmPruneRunning) {
+    logger.warn(`[FCM-prune] (${reason}) saltado: corrida anterior aún en curso`);
+    return;
+  }
+  _fcmPruneRunning = true;
+  const startedAt = Date.now();
+  try {
+    const result = await pruneInvalidFcmTokens(User);
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    if (result && result.success) {
+      logger.info(`[FCM-prune] (${reason}) total=${result.total} valid=${result.valid} cleaned=${result.cleaned} errors=${result.errors} (${elapsed}s)`);
+    } else {
+      logger.warn(`[FCM-prune] (${reason}) sin resultado: ${result && result.error}`);
+    }
+  } catch (e) {
+    logger.error(`[FCM-prune] (${reason}) excepción: ${e.message}`);
+  } finally {
+    _fcmPruneRunning = false;
+  }
+}
+// Primera corrida 5 min después del arranque para no impactar el inicio del proceso
+setTimeout(() => { _runFcmPrune('startup-delayed'); }, 5 * 60 * 1000);
+setInterval(() => { _runFcmPrune('cron-24h'); }, FCM_PRUNE_INTERVAL_MS);
+
+// Helper: dado un receiverId y un mensaje de chat, dispara push FCM si el user
+// tiene tokens registrados. Usado por: (a) usuarios offline (canal directo
+// fallido) y (b) usuarios "online" cuyo socket directo no acusó recibo en 3s
+// (socket fantasma — pestaña suspendida por el SO, conexión TCP sin proceso).
+// La doble entrega (sala + push) se mitiga con tag:'chat-message' que reemplaza
+// notificaciones del mismo chat en el dispositivo.
+function _maybeSendPushFallback(receiverId, message) {
+  if (!receiverId) return;
+  User.findOne({ id: receiverId })
+    .then(function (targetUser) {
+      const hasTokens = targetUser && (targetUser.fcmToken || (targetUser.fcmTokens && targetUser.fcmTokens.length > 0));
+      if (!hasTokens) return;
+      const pushTitle = 'Nuevo mensaje';
+      const pushBody = message && message.type === 'image' ? '📸 Imagen'
+                     : message && message.type === 'video' ? '🎥 Video'
+                     : (message && message.content || '').substring(0, 100);
+      sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch(function (e) {
+        logger.warn(`[FCM] sendPushIfOffline (chat) falló para ${targetUser.username}: ${e.message}`);
+      });
+    })
+    .catch(function (dbErr) {
+      logger.warn(`[FCM] Error buscando usuario para push (chat): ${dbErr.message}`);
+    });
+}
 
 // Helper: enviar push FCM a un usuario solo si no tiene socket activo.
 // Evita duplicado: si el usuario ya recibió el mensaje por Socket.IO (online),
@@ -1592,6 +1653,64 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } catch (error) {
     logger.error(`Login error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// User logout — limpia el token FCM actual del backend para que las
+// notificaciones no sigan llegando a este dispositivo después de cerrar
+// sesión. Acepta el fcmToken por body o por query; si no viene, intenta
+// inferirlo del header Authorization (último token registrado del user).
+// Nunca devuelve 401: cerrar sesión siempre es válido aunque el token JWT
+// esté expirado.
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const fcmToken = (req.body && req.body.fcmToken) || (req.query && req.query.fcmToken) || null;
+
+    // Intentar identificar al usuario por el JWT. Si está expirado o ausente,
+    // hacemos best-effort: borramos el fcmToken provisto donde sea que esté.
+    let userId = null;
+    const authHeader = req.headers.authorization || '';
+    const authToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (authToken) {
+      try {
+        const decoded = jwt.verify(authToken, JWT_SECRET);
+        userId = decoded.userId;
+      } catch (_) {
+        // JWT expirado/inválido: igual seguimos para limpiar por token si vino
+      }
+    }
+
+    if (fcmToken) {
+      const tokenStr = String(fcmToken);
+      // Borrar del array fcmTokens y del campo individual donde coincida
+      if (userId) {
+        await User.updateOne(
+          { id: userId },
+          { $pull: { fcmTokens: { token: tokenStr } } }
+        );
+        await User.updateOne(
+          { id: userId, fcmToken: tokenStr },
+          { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+        );
+      } else {
+        // Sin userId verificado: borrar el token donde sea que esté.
+        await User.updateMany(
+          { 'fcmTokens.token': tokenStr },
+          { $pull: { fcmTokens: { token: tokenStr } } }
+        );
+        await User.updateMany(
+          { fcmToken: tokenStr },
+          { $set: { fcmToken: null, fcmTokenUpdatedAt: null } }
+        );
+      }
+      logger.info(`[AUTH] logout: token FCM eliminado (user=${userId || 'unknown'}, token=...${tokenStr.slice(-8)})`);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    // Logout siempre debe responder OK al cliente; loggeamos para diagnóstico.
+    logger.warn(`[AUTH] logout: error limpiando token FCM: ${error.message}`);
+    res.json({ success: true });
   }
 });
 
@@ -3461,6 +3580,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
     } else {
       // Admin enviando mensaje - notificar al usuario
       const userSocket = connectedUsers.get(req.body.receiverId);
+      const deliveredViaSocket = !!userSocket;
       if (userSocket) {
         userSocket.emit('new_message', message);
       }
@@ -3474,6 +3594,27 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
         userId: req.body.receiverId,
         username: req.user.username
       });
+
+      // Push FCM para usuario offline: misma lógica que la rama socket de chat
+      // (server.js socket.on('send_message')). Sin esto, los clientes que caen
+      // a fallback REST nunca disparan push y los users offline pierden el msg.
+      if (!deliveredViaSocket && req.body.receiverId) {
+        User.findOne({ id: req.body.receiverId })
+          .then(function(targetUser) {
+            const hasTokens = targetUser && (targetUser.fcmToken || (targetUser.fcmTokens && targetUser.fcmTokens.length > 0));
+            if (!hasTokens) return;
+            const pushTitle = 'Nuevo mensaje';
+            const pushBody = type === 'image' ? '📸 Imagen'
+                          : type === 'video' ? '🎥 Video'
+                          : (content || '').substring(0, 100);
+            sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch(function(e) {
+              logger.warn(`[FCM] sendPushIfOffline (REST chat) falló para ${targetUser.username}: ${e.message}`);
+            });
+          })
+          .catch(function(dbErr) {
+            logger.warn(`[FCM] Error buscando usuario para push (REST chat): ${dbErr.message}`);
+          });
+      }
     }
     
     res.json(message);
@@ -4798,50 +4939,59 @@ io.on('connection', (socket) => {
       } else {
         // Admin/depositor/withdrawer enviando mensaje - notificar al usuario específico
         logger.debug(`[SEND_MESSAGE] Looking up socket for user ${receiverId}`);
-        
+
         // CORREGIDO: Múltiples canales de entrega para asegurar que llegue
         let delivered = false;
-        
-        // Canal 1: Socket directo
+
+        // Canal 1: Socket directo, CON ack-timeout 3s. Si el cliente está vivo
+        // confirma con ack({ ok: true }) (ver public/js/socket.js handler
+        // 'new_message'). Si no responde en 3s consideramos el socket "fantasma"
+        // (TCP conectado, pero el browser suspendió la pestaña o el SO mató el
+        // proceso) y disparamos push FCM como respaldo.
         const userSocket = connectedUsers.get(receiverId);
+        let ackReceived = false;
         if (userSocket) {
-          userSocket.emit('new_message', message);
           delivered = true;
-          logger.debug(`Message delivered to user ${receiverId} via direct socket`);
+          try {
+            userSocket.timeout(3000).emit('new_message', message, function (err /*, ack */) {
+              if (err) {
+                // Timeout o error de ack: el directo no contestó.
+                logger.debug(`[SEND_MESSAGE] ack-timeout para user ${receiverId} (msg ${message.id}); fallback FCM`);
+                _maybeSendPushFallback(receiverId, message);
+              } else {
+                ackReceived = true;
+                logger.debug(`[SEND_MESSAGE] ack OK del user ${receiverId} (msg ${message.id})`);
+              }
+            });
+          } catch (emitErr) {
+            // Cliente Socket.IO sin soporte de ack: fallback inmediato a emit normal
+            logger.warn(`[SEND_MESSAGE] timeout().emit no disponible (${emitErr.message}); usando emit plano`);
+            try { userSocket.emit('new_message', message); } catch (_) {}
+          }
         }
-        
+
         // Canal 2: Sala del usuario (por si está conectado en otra pestaña/dispositivo)
         io.to(`user_${receiverId}`).emit('new_message', message);
-        
+
         // Canal 3: Sala del chat (por si hay admins viendo)
         io.to(`chat_${receiverId}`).emit('new_message', message);
-        
+
         // CORREGIDO: También notificar a otros admins que están viendo este chat
         notifyAdmins('new_message', {
           message,
           userId: receiverId,
           username: socket.username
         });
-        
+
         // Confirmar al admin
         socket.emit('message_sent', message);
-        
+
         logger.debug(`Message ${message.id} delivered: ${delivered ? 'YES (direct)' : 'NO (user offline, used rooms)'}`);
 
-        // Push FCM para usuario offline: si no está conectado por socket, enviar push.
+        // Push FCM para usuario offline: si no está conectado por socket, enviar push
+        // de inmediato (no hay ack que esperar).
         if (!delivered) {
-          User.findOne({ id: receiverId }).then(function(targetUser) {
-            const hasTokens = targetUser && (targetUser.fcmToken || (targetUser.fcmTokens && targetUser.fcmTokens.length > 0));
-            if (hasTokens) {
-              const pushTitle = 'Nuevo mensaje';
-              const pushBody = (message.content || '').substring(0, 100);
-              sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch((e) => {
-                logger.warn(`[FCM] sendPushIfOffline (chat) falló para ${targetUser.username}: ${e.message}`);
-              });
-            }
-          }).catch((dbErr) => {
-            logger.warn(`[FCM] Error buscando usuario para push (chat): ${dbErr.message}`);
-          });
+          _maybeSendPushFallback(receiverId, message);
         }
       }
       
@@ -4941,38 +5091,48 @@ async function broadcastStats() {
 app.post('/api/admin/send-notification', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { userId, title, body, icon, badge, tag, requireInteraction, data } = req.body;
-    
+
     if (!userId) {
       return res.status(400).json({ error: 'userId requerido' });
     }
-    
-    // Enviar notificación vía Socket.IO al usuario
-    const userSocket = connectedUsers.get(userId);
-    if (userSocket) {
-      userSocket.emit('push_notification', {
-        title: title || 'Nueva notificación',
-        body: body || '',
-        icon: icon || '/icons/icon-192x192.png',
-        badge: badge || '/icons/icon-72x72.png',
-        tag: tag || 'default',
-        requireInteraction: requireInteraction || false,
-        data: data || {}
-      });
+
+    // Localizar al usuario con sus tokens FCM (UUID 'id' o ObjectId '_id').
+    let user = await User.findOne({ id: userId }).select('_id id username fcmToken fcmTokens');
+    if (!user) {
+      try {
+        user = await User.findById(userId).select('_id id username fcmToken fcmTokens');
+      } catch (_) {
+        // userId con formato no válido para ObjectId — caer al 404
+      }
     }
-    
-    // También enviar a la sala del usuario (por si está en otra pestaña)
-    io.to(`user_${userId}`).emit('push_notification', {
-      title: title || 'Nueva notificación',
-      body: body || '',
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const payloadTitle = title || 'Nueva notificación';
+    const payloadBody  = body  || '';
+    const payloadData = {
+      ...(data || {}),
       icon: icon || '/icons/icon-192x192.png',
       badge: badge || '/icons/icon-72x72.png',
       tag: tag || 'default',
-      requireInteraction: requireInteraction || false,
-      data: data || {}
+      requireInteraction: requireInteraction ? 'true' : 'false'
+    };
+
+    const isOnline = !!(connectedUsers && connectedUsers.has(user.id));
+
+    // sendPushIfOffline emite 'admin_notification' por socket si el user está
+    // online (que es el evento que el cliente escucha en index.html para mostrar
+    // el banner in-app); si está offline envía push FCM real a todos sus tokens
+    // y limpia automáticamente los inválidos.
+    await sendPushIfOffline(user, payloadTitle, payloadBody, payloadData);
+
+    console.log(`📱 Notificación enviada a ${user.username} (${isOnline ? 'socket' : 'FCM'}): ${payloadTitle}`);
+    res.json({
+      success: true,
+      message: 'Notificación enviada',
+      delivery: isOnline ? 'socket' : 'fcm'
     });
-    
-    console.log(`📱 Notificación enviada a usuario ${userId}: ${title}`);
-    res.json({ success: true, message: 'Notificación enviada' });
   } catch (error) {
     console.error('Error enviando notificación:', error);
     res.status(500).json({ error: 'Error del servidor' });

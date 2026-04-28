@@ -85,7 +85,13 @@ VIP.socket = (function () {
             }
         });
 
-        VIP.state.socket.on('new_message', function (data) {
+        VIP.state.socket.on('new_message', function (data, ack) {
+            // Acuse de recibo inmediato: el server emite con ack-timeout 3s.
+            // Si no llamamos ack, el server asume socket fantasma y manda push
+            // FCM de respaldo. Llamarlo lo más temprano posible reduce falsos
+            // positivos cuando el dispositivo está lento procesando el mensaje.
+            try { if (typeof ack === 'function') ack({ ok: true }); } catch (_) {}
+
             console.log('📨 NEW_MESSAGE event received:', data);
             console.log('📨 Message content:', data.message?.content?.substring(0, 50) || data.content?.substring(0, 50));
             console.log('📨 Sender role:', data.message?.senderRole || data.senderRole);
@@ -133,7 +139,13 @@ VIP.socket = (function () {
 
                 const adminRoles = ['admin', 'depositor', 'withdrawer'];
                 const isFromAdmin = adminRoles.includes(message.senderRole);
-                if (isFromAdmin) {
+                // Solo mostrar notificación nativa cuando la pestaña NO está
+                // visible. Si el user está mirando la app, el mensaje ya
+                // aparece en pantalla y el evento 'admin_notification' (vía
+                // sendPushIfOffline en el backend) muestra un banner in-app.
+                // Sin esta guarda veíamos hasta 2 alertas por un solo mensaje.
+                const tabVisible = document.visibilityState === 'visible';
+                if (isFromAdmin && !tabVisible) {
                     const senderName = message.senderUsername || 'Soporte';
                     const messagePreview = message.type === 'image'
                         ? '📸 Imagen'
