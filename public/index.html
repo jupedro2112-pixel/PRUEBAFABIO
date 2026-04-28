@@ -24,7 +24,84 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js"></script>
-    
+    <script>
+        // ============================================
+        // FIREBASE SDK LOADER CON REINTENTOS
+        // ============================================
+        // Si los <script> de gstatic.com fallan en cargar (red móvil lenta,
+        // pico de latencia, paquete perdido, proxy intermedio que timeoutea,
+        // etc.) el global `firebase` queda undefined y NOTIS muestra el error
+        // "No se pudo cargar Firebase". Antes la app se rendía en ese caso.
+        // Ahora reintentamos cargar los SDK programáticamente con backoff
+        // (1s, 3s, 6s) y exponemos `window.__firebaseReady` como Promise para
+        // que el resto del código espere a que firebase esté disponible.
+        (function () {
+            var FIREBASE_SCRIPTS = [
+                'https://www.gstatic.com/firebasejs/9.1.2/firebase-app-compat.js',
+                'https://www.gstatic.com/firebasejs/9.1.2/firebase-messaging-compat.js'
+            ];
+            var BACKOFFS_MS = [1000, 3000, 6000];
+
+            function isFirebaseLoaded() {
+                return typeof window.firebase !== 'undefined' && !!window.firebase.messaging;
+            }
+
+            function loadScript(src) {
+                return new Promise(function (resolve, reject) {
+                    var s = document.createElement('script');
+                    s.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'retry=' + Date.now();
+                    s.async = false;
+                    s.crossOrigin = 'anonymous';
+                    s.onload = function () { resolve(); };
+                    s.onerror = function () { reject(new Error('script load failed: ' + src)); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            async function loadAllWithRetry() {
+                if (isFirebaseLoaded()) return;
+                var lastErr = null;
+                for (var attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
+                    try {
+                        for (var i = 0; i < FIREBASE_SCRIPTS.length; i++) {
+                            await loadScript(FIREBASE_SCRIPTS[i]);
+                        }
+                        if (isFirebaseLoaded()) {
+                            console.log('[FCM] ✅ Firebase SDK cargado en reintento', attempt + 1);
+                            return;
+                        }
+                        throw new Error('Scripts cargados pero global firebase sigue indefinido');
+                    } catch (err) {
+                        lastErr = err;
+                        console.warn('[FCM] Reintento ' + (attempt + 1) + ' de carga de Firebase falló:', err.message);
+                        await new Promise(function (r) { setTimeout(r, BACKOFFS_MS[attempt]); });
+                    }
+                }
+                throw lastErr || new Error('No se pudo cargar Firebase tras varios intentos');
+            }
+
+            // Esperá un tick para dejar que los <script> estáticos terminen
+            // de cargar primero (camino feliz). Si fallaron, recién ahí
+            // arrancamos los reintentos programáticos.
+            window.__firebaseReady = new Promise(function (resolve, reject) {
+                setTimeout(function () {
+                    if (isFirebaseLoaded()) {
+                        resolve();
+                        return;
+                    }
+                    console.warn('[FCM] Firebase no cargó vía <script> estáticos, iniciando reintentos...');
+                    loadAllWithRetry().then(resolve).catch(reject);
+                }, 0);
+            });
+
+            // Exponer también la última causa de fallo para diagnósticos.
+            window.__firebaseReady.catch(function (err) {
+                window.__firebaseLoadError = err && err.message ? err.message : String(err);
+                console.error('[FCM] ❌ Carga de Firebase fallida definitivamente:', window.__firebaseLoadError);
+            });
+        })();
+    </script>
+
     <link rel="stylesheet" href="/css/base.css">
     <link rel="stylesheet" href="/css/login.css">
     <link rel="stylesheet" href="/css/header.css">
@@ -932,23 +1009,27 @@
             measurementId: "G-3ZJRT0NCTE"
         };
         
-        // Verificar que Firebase esté cargado
-        if (typeof firebase === 'undefined') {
-            console.error('[FCM] ❌ Firebase SDK no está cargado. Verifica la conexión a internet.');
-        } else {
-            console.log('[FCM] ✅ Firebase SDK cargado correctamente');
-        }
-        
-        // Inicializar Firebase
+        // Inicializar Firebase. Si los <script> estáticos no llegaron a
+        // cargar, esperamos al loader con reintentos (window.__firebaseReady)
+        // antes de declararnos vencidos. Así el primer intento de NOTIS no
+        // falla por una pérdida de paquete inicial.
         let app = null;
         let messaging = null;
-        try {
-            app = firebase.initializeApp(firebaseConfig);
-            messaging = firebase.messaging();
-            console.log('[FCM] ✅ Firebase inicializado correctamente');
-        } catch (error) {
-            console.error('[FCM] ❌ Error al inicializar Firebase:', error);
+
+        async function _initFirebaseWhenReady() {
+            try {
+                if (typeof firebase === 'undefined' || !firebase.messaging) {
+                    console.warn('[FCM] Firebase no listo aún, esperando loader con reintentos...');
+                    await window.__firebaseReady;
+                }
+                app = firebase.initializeApp(firebaseConfig);
+                messaging = firebase.messaging();
+                console.log('[FCM] ✅ Firebase inicializado correctamente');
+            } catch (error) {
+                console.error('[FCM] ❌ Error al inicializar Firebase:', error);
+            }
         }
+        _initFirebaseWhenReady();
         
         // ============================================
         // VARIABLES GLOBALES PWA
@@ -1474,7 +1555,9 @@
                 return '⚠️ Bloqueaste las notificaciones para este sitio. Habilitalas en la configuración del navegador.';
             }
             if (typeof firebase === 'undefined' || !firebase.messaging) {
-                return '⚠️ No se pudo cargar Firebase. Recargá la página o revisá tu conexión a internet.';
+                var loadErr = window.__firebaseLoadError;
+                var detail = loadErr ? (' (' + loadErr + ')') : '';
+                return '⚠️ No se pudo cargar Firebase' + detail + '. Revisá tu conexión a internet y volvé a intentar.';
             }
             return '⚠️ No se pudieron activar las notificaciones. Inténtalo de nuevo en unos segundos.';
         }
@@ -1487,21 +1570,39 @@
         window.enableNotifications = async function() {
             console.log('[FCM] enableNotifications() llamado manualmente');
 
-            // Bug 4 fix: si messaging no está listo aún (race condition con SW),
-            // esperar hasta 3 segundos con reintentos antes de reportar error.
-            let retries = 0;
-            while ((typeof messaging === 'undefined' || !messaging) && retries < 6) {
-                console.log('[FCM] Esperando que messaging se inicialice...', retries);
-                await new Promise(r => setTimeout(r, 500));
-                retries++;
-                if (typeof firebase !== 'undefined' && firebase.messaging) {
-                    try {
-                        messaging = firebase.messaging();
-                        console.log('[FCM] ✅ messaging inicializado en retry', retries);
-                        break;
-                    } catch(e) {
-                        console.warn('[FCM] Retry falló:', e.message);
+            // Antes de hacer nada, esperar a que el SDK de Firebase esté
+            // cargado. Si los <script> estáticos fallaron al inicio, el
+            // loader (window.__firebaseReady) ya está reintentando con
+            // backoff. Acá nos suscribimos a esa promesa con un timeout
+            // razonable para no dejar al user esperando para siempre.
+            try {
+                await Promise.race([
+                    window.__firebaseReady,
+                    new Promise(function (_r, reject) {
+                        setTimeout(function () { reject(new Error('timeout esperando carga de Firebase')); }, 12000);
+                    })
+                ]);
+            } catch (e) {
+                console.error('[FCM] ❌ Carga de Firebase no completó:', e && e.message);
+                if (typeof showToast === 'function') {
+                    var detail = window.__firebaseLoadError ? (' (' + window.__firebaseLoadError + ')') : '';
+                    showToast('⚠️ No se pudo cargar Firebase' + detail + '. Revisá tu conexión a internet y volvé a intentar.', 'error');
+                }
+                return { success: false, error: 'firebase-load-failed' };
+            }
+
+            // Si firebase ya cargó pero `messaging` (variable local) aún no,
+            // inicializarla acá. Esto cubre la race condition donde el loader
+            // resolvió justo después de que _initFirebaseWhenReady terminara.
+            if (!messaging && typeof firebase !== 'undefined' && firebase.messaging) {
+                try {
+                    if (!firebase.apps || firebase.apps.length === 0) {
+                        app = firebase.initializeApp(firebaseConfig);
                     }
+                    messaging = firebase.messaging();
+                    console.log('[FCM] ✅ messaging inicializado tras esperar a __firebaseReady');
+                } catch (e) {
+                    console.warn('[FCM] No se pudo inicializar messaging tras carga:', e.message);
                 }
             }
 
@@ -1806,7 +1907,15 @@
         // Sin este guard, si messaging es null el script se rompe y corta
         // funciones posteriores (chat, login, etc.).
         // ============================================
-        if (messaging) {
+        // El registro se difiere hasta que Firebase termine de cargar (puede
+        // venir tarde si los <script> de gstatic fallaron y el loader tuvo
+        // que reintentar). Sin esta espera el handler de foreground nunca
+        // queda registrado en dispositivos con red móvil flaky.
+        function _registerForegroundOnMessage() {
+            if (!messaging) {
+                console.log('[FCM] Firebase Messaging no disponible - onMessage no registrado');
+                return;
+            }
             messaging.onMessage(function(payload) {
                 console.log('[FCM] Notificación recibida en primer plano:', payload);
 
@@ -1851,10 +1960,33 @@
                     }
                 }
             });
-        } else {
-            console.log('[FCM] Firebase Messaging no disponible - onMessage no registrado');
+            console.log('[FCM] ✅ onMessage handler registrado');
         }
-        
+
+        // Esperar a que Firebase cargue (puede demorar si tuvo que reintentar)
+        // antes de registrar el handler de primer plano.
+        if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
+            window.__firebaseReady
+                .then(function () {
+                    if (!messaging && typeof firebase !== 'undefined' && firebase.messaging) {
+                        try {
+                            if (!firebase.apps || firebase.apps.length === 0) {
+                                app = firebase.initializeApp(firebaseConfig);
+                            }
+                            messaging = firebase.messaging();
+                        } catch (e) {
+                            console.warn('[FCM] Init de messaging para onMessage falló:', e.message);
+                        }
+                    }
+                    _registerForegroundOnMessage();
+                })
+                .catch(function (e) {
+                    console.warn('[FCM] No se registra onMessage: Firebase no cargó:', e && e.message);
+                });
+        } else {
+            _registerForegroundOnMessage();
+        }
+
         // ============================================
         // BOTÓN DE INSTALACIÓN PWA
         // ============================================
