@@ -1102,13 +1102,16 @@
 
                 // Si la auto-init de notificaciones (registerServiceWorker → initNotifications)
                 // se ejecutó ANTES de que Firebase cargara, salió en early-return sin obtener
-                // token. Ahora que messaging existe, reintentamos en caso de PWA standalone
-                // con permiso ya concedido o por solicitar.
+                // token. Ahora que messaging existe, reintentamos SIEMPRE en standalone:
+                //  - Si no hay token: lo obtenemos
+                //  - Si hay token pero el endpoint cambió (reinstall): se detecta dentro y
+                //    se fuerza refresh
+                //  - Si hay token y endpoint coincide: no se toca, sólo se confirma
                 try {
                     const _isStandaloneNow2 = window.matchMedia('(display-mode: standalone)').matches ||
                                               window.navigator.standalone === true;
-                    if (_isStandaloneNow2 && !localStorage.getItem('fcmToken')) {
-                        console.log('[FCM] Firebase listo tarde — reintentando auto-init de notificaciones...');
+                    if (_isStandaloneNow2) {
+                        console.log('[FCM] Firebase listo — disparando auto-init/validación de notificaciones...');
                         const _swReg = await navigator.serviceWorker.ready.catch(function (e) {
                             console.warn('[FCM] SW ready falló en post-load init:', e && e.message);
                             return null;
@@ -1330,7 +1333,7 @@
                 
                 if (permission === 'granted') {
                     console.log('[FCM] ✅ Permiso concedido');
-                    
+
                     // Obtener token FCM usando la misma SW registration que se pasó
                     // (evita que FCM y la SW de caché compitan por el mismo scope)
                     console.log('[FCM] Solicitando token FCM...');
@@ -1340,7 +1343,43 @@
                         // Si no se proporcionó, hacer fallback a navigator.serviceWorker.ready.
                         const usedRegistration = swRegistration || (await navigator.serviceWorker.ready);
                         console.log('[FCM] Service Worker listo:', usedRegistration.scope);
-                        
+
+                        // ── AUTO-REFRESH: detectar token stale por endpoint ──────────
+                        // Si el endpoint de la push subscription cambió respecto al guardado
+                        // (reinstalación de la PWA, SW update, suscripción expirada) o si
+                        // tenemos token cacheado pero ya no hay subscription, el token está
+                        // muerto. Forzamos deleteToken para que getToken cree una suscripción
+                        // y un token completamente nuevos. Si el endpoint no cambió, el
+                        // token que ya tenemos es válido y no se toca (cumple "si tiene
+                        // token funcional q deje el q esta").
+                        try {
+                            const _existingSub = await usedRegistration.pushManager.getSubscription();
+                            const _currentEndpoint = _existingSub ? _existingSub.endpoint : null;
+                            const _storedEndpoint = localStorage.getItem('fcmPushEndpoint');
+                            const _cachedToken = localStorage.getItem('fcmToken');
+                            let _shouldForceRefresh = false;
+                            let _reason = '';
+                            if (_storedEndpoint && _currentEndpoint && _storedEndpoint !== _currentEndpoint) {
+                                _shouldForceRefresh = true;
+                                _reason = 'endpoint cambió (reinstall o SW update)';
+                            } else if (_cachedToken && !_currentEndpoint) {
+                                _shouldForceRefresh = true;
+                                _reason = 'token cacheado pero sin push subscription (reinstall)';
+                            } else if (_cachedToken && _storedEndpoint && _currentEndpoint && _storedEndpoint === _currentEndpoint) {
+                                // Token y endpoint coinciden → token funcional, no tocar.
+                                console.log('[FCM] Endpoint coincide con el almacenado → token actual válido, no se fuerza refresh');
+                            }
+                            if (_shouldForceRefresh) {
+                                console.log('[FCM] 🔄 Auto-refresh: ' + _reason + ' — forzando deleteToken');
+                                try { await messaging.deleteToken(); } catch (delE) { console.warn('[FCM] deleteToken auto-refresh:', delE.message); }
+                                localStorage.removeItem('fcmToken');
+                                localStorage.removeItem('fcmPushEndpoint');
+                                fcmToken = null;
+                            }
+                        } catch (autoRefErr) {
+                            console.warn('[FCM] Auto-refresh por endpoint falló:', autoRefErr.message);
+                        }
+
                         // Estrategia de 3 niveles: si getToken falla, escalamos progresivamente
                         // hasta recuperar un token usable sin intervención del usuario.
                         //   1) getToken directo.
@@ -1423,7 +1462,7 @@
                     if (currentToken) {
                         fcmToken = currentToken;
                         console.log('[FCM] ✅ Token obtenido:', currentToken.substring(0, 30) + '...');
-                        
+
                         // Guardar en localStorage junto con el contexto de ejecución
                         // (standalone = PWA instalada, browser = Chrome/navegador normal).
                         // Esto permite detectar si el usuario cambió de contexto en futuras
@@ -1432,7 +1471,20 @@
                         localStorage.setItem('fcmToken', currentToken);
                         localStorage.setItem('fcmTokenContext', _ctx);
                         console.log('[FCM] Token guardado en localStorage (contexto: ' + _ctx + ')');
-                        
+
+                        // Guardar el endpoint de la push subscription como huella digital.
+                        // En la próxima carga comparamos: si cambió → token stale → refresh
+                        // automático sin intervención del usuario.
+                        try {
+                            const _newSub = await _activeReg.pushManager.getSubscription();
+                            if (_newSub && _newSub.endpoint) {
+                                localStorage.setItem('fcmPushEndpoint', _newSub.endpoint);
+                                console.log('[FCM] Endpoint guardado:', _newSub.endpoint.substring(0, 60) + '...');
+                            }
+                        } catch (epErr) {
+                            console.warn('[FCM] No se pudo guardar endpoint:', epErr.message);
+                        }
+
                         // Enviar token al servidor (si está logueado)
                         await sendTokenToServer(currentToken);
                         
@@ -1566,7 +1618,43 @@
 
             // ── CASO A: Hay token en caché PWA ───────────────────────────────────
             if (token) {
-                // Enviar token cacheado al backend
+                // Antes de confiar en el token cacheado, validar la huella del endpoint:
+                // si la push subscription actual tiene un endpoint distinto al guardado
+                // (PWA reinstalada, SW recreado), el token cacheado está MUERTO aunque
+                // FCM siga devolviéndolo. Forzamos refresh para no spammear al backend
+                // con un token que jamás va a entregar notifs.
+                let _endpointStale = false;
+                if (messaging && 'Notification' in window && Notification.permission === 'granted') {
+                    try {
+                        const _swProbe = await navigator.serviceWorker.ready.catch(function () { return null; });
+                        if (_swProbe) {
+                            const _sub = await _swProbe.pushManager.getSubscription();
+                            const _curEp = _sub ? _sub.endpoint : null;
+                            const _stEp = localStorage.getItem('fcmPushEndpoint');
+                            if (_stEp && _curEp && _stEp !== _curEp) {
+                                console.log('[FCM] post-login: endpoint cambió → token stale, forzando refresh');
+                                _endpointStale = true;
+                            } else if (!_curEp) {
+                                console.log('[FCM] post-login: sin push subscription → token stale, forzando refresh');
+                                _endpointStale = true;
+                            }
+                        }
+                    } catch (_e) { /* ignore */ }
+                }
+
+                if (_endpointStale) {
+                    // Limpiar todo y delegar a initNotifications para regenerar de cero.
+                    try { await messaging.deleteToken(); } catch (_) {}
+                    localStorage.removeItem('fcmToken');
+                    localStorage.removeItem('fcmPushEndpoint');
+                    fcmToken = null;
+                    _notifInitializing = false;
+                    const _swR = await navigator.serviceWorker.ready.catch(function () { return null; });
+                    if (_swR) await initNotifications(_swR);
+                    return;
+                }
+
+                // Enviar token cacheado al backend (sólo si la huella valida arriba pasó).
                 const sent = await sendTokenToServer(token);
                 // Refrescar token desde FCM por si rotó (token puede rotar por SW update,
                 // cambio de VAPID key, reinstalación o expiración de la suscripción push).
@@ -1600,6 +1688,11 @@
                                 fcmToken = freshToken;
                                 localStorage.setItem('fcmToken', freshToken);
                                 localStorage.setItem('fcmTokenContext', _currentCtx);
+                                // Actualizar fingerprint del endpoint también
+                                try {
+                                    const _ns = await swReg.pushManager.getSubscription();
+                                    if (_ns && _ns.endpoint) localStorage.setItem('fcmPushEndpoint', _ns.endpoint);
+                                } catch (_) {}
                                 await sendTokenToServer(freshToken);
                                 console.log('[FCM] ✅ Token nuevo registrado correctamente en backend');
                             } else if (freshToken) {
@@ -1607,6 +1700,13 @@
                                 // Guardar contexto si no estaba almacenado (sesión anterior sin esta lógica)
                                 if (!_storedCtx) {
                                     localStorage.setItem('fcmTokenContext', _currentCtx);
+                                }
+                                // Persistir endpoint si por alguna razón no estaba guardado.
+                                if (!localStorage.getItem('fcmPushEndpoint')) {
+                                    try {
+                                        const _ns2 = await swReg.pushManager.getSubscription();
+                                        if (_ns2 && _ns2.endpoint) localStorage.setItem('fcmPushEndpoint', _ns2.endpoint);
+                                    } catch (_) {}
                                 }
                             }
                         }
