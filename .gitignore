@@ -3,6 +3,7 @@ firebase-service-account.json
 *.env
 .env
 .env.*
+.npmrc
 
 # Log files
 logs/
