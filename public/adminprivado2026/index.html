@@ -1240,6 +1240,20 @@
         </div>
     </div>
 
+    <!-- User Detail Modal -->
+    <div id="userDetailModal" class="modal hidden" onclick="if(event.target===this)hideModal('userDetailModal')">
+        <div class="modal-content" style="max-width:520px" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3><span class="icon icon-eye"></span> Detalle de usuario</h3>
+                <button class="close-modal" onclick="hideModal('userDetailModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="userDetailBody">Cargando...</div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="hideModal('userDetailModal')">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- SMS Password Modal -->
     <div id="smsPasswordModal" class="modal hidden">
         <div class="modal-content">

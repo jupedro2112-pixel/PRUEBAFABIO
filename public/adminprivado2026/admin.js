@@ -2771,16 +2771,22 @@ function renderUsers(users) {
             statusCell = `<span class="status-badge ${user.status}">${escapeHtml(user.status)}</span>`;
         }
 
+        // ROOT CAUSE FIX: los onclick deben usar comillas SIMPLES como
+        // delimitador de atributo porque JSON.stringify produce strings con
+        // comillas dobles ("abc"). Si el atributo se delimita con dobles, el
+        // browser parsea onclick="fn(" y descarta el resto → ningún botón
+        // ejecutaba su handler. Con comillas simples afuera, las dobles del
+        // JSON conviven sin colisión: onclick='fn("abc", "pepe")'.
         const pwdBtn = canChangePassword
-            ? `<button class="action-btn-small" title="Cambiar contraseña" onclick="openUserPasswordModal(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)}, ${JSON.stringify(user.role)})"><span class="icon icon-key"></span></button>`
+            ? `<button class="action-btn-small" title="Cambiar contraseña" onclick='openUserPasswordModal(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)}, ${JSON.stringify(user.role)})'><span class="icon icon-key"></span></button>`
             : '';
 
         let blockBtn = '';
         if (canBlock) {
             if (user.isBlocked) {
-                blockBtn = `<button class="action-btn-small" title="Desbloquear usuario" onclick="handleUnblockUser(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)})"><span class="icon icon-lock-open"></span></button>`;
+                blockBtn = `<button class="action-btn-small" title="Desbloquear usuario" onclick='handleUnblockUser(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)})'><span class="icon icon-lock-open"></span></button>`;
             } else {
-                blockBtn = `<button class="action-btn-small" style="color:#dc3545" title="Bloquear usuario" onclick="openBlockModal(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)})"><span class="icon icon-ban"></span></button>`;
+                blockBtn = `<button class="action-btn-small" style="color:#dc3545" title="Bloquear usuario" onclick='openBlockModal(${JSON.stringify(user.id)}, ${JSON.stringify(user.username)})'><span class="icon icon-ban"></span></button>`;
             }
         }
 
@@ -2795,10 +2801,10 @@ function renderUsers(users) {
             <td>${statusCell}</td>
             <td>${formatDate(user.lastLogin)}</td>
             <td>
-                <button class="action-btn-small" title="Ver detalle" onclick="viewUser(${JSON.stringify(user.id)})">
+                <button class="action-btn-small" title="Ver detalle" onclick='viewUser(${JSON.stringify(user.id)})'>
                     <span class="icon icon-eye"></span>
                 </button>
-                <button class="action-btn-small" title="Ir al chat" onclick="chatUser(${JSON.stringify(user.id)})">
+                <button class="action-btn-small" title="Ir al chat" onclick='chatUser(${JSON.stringify(user.id)})'>
                     <span class="icon icon-comment"></span>
                 </button>
                 ${pwdBtn}
@@ -3927,8 +3933,45 @@ async function deleteCommand(name) {
 }
 
 // Global functions for inline handlers
-window.viewUser = function(userId) {
-    console.log('View user:', userId);
+window.viewUser = async function(userId) {
+    const body = document.getElementById('userDetailBody');
+    if (body) body.innerHTML = '<p style="color:#888">Cargando...</p>';
+    showModal('userDetailModal');
+    try {
+        const res = await fetch(`${API_URL}/api/users/${encodeURIComponent(userId)}`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al obtener usuario');
+        const u = data.user || {};
+        const blocked = u.isBlocked
+            ? `<span style="color:#dc3545;font-weight:700">SÍ</span>${u.blockReason ? ` — <em style="color:#aaa">${escapeHtml(u.blockReason)}</em>` : ''}`
+            : '<span style="color:#16a34a">No</span>';
+        const lastLogin = u.lastLogin ? formatDate(u.lastLogin) : 'Nunca';
+        const created = u.createdAt ? formatDate(u.createdAt) : '-';
+        if (body) {
+            body.innerHTML = `
+                <div style="display:grid;gap:.6rem;font-size:.92rem;line-height:1.4">
+                    <div><strong>Username:</strong> ${escapeHtml(u.username || '-')}</div>
+                    <div><strong>Email:</strong> ${escapeHtml(u.email || '-')}</div>
+                    <div><strong>Teléfono:</strong> ${escapeHtml(u.phone || '-')}</div>
+                    <div><strong>Rol:</strong> <span class="role-badge ${escapeHtml(u.role || 'user')}">${escapeHtml(getRoleLabel(u.role) || u.role || '-')}</span></div>
+                    <div><strong>Balance:</strong> ${formatMoney(u.balance || 0)}</div>
+                    <div><strong>N° de cuenta:</strong> ${escapeHtml(u.accountNumber || u.accountId || '-')}</div>
+                    <div><strong>Estado:</strong> ${escapeHtml(u.status || '-')}</div>
+                    <div><strong>Bloqueado:</strong> ${blocked}</div>
+                    <div><strong>Origen:</strong> ${escapeHtml(u.source || 'local')}</div>
+                    <div><strong>Debe cambiar contraseña:</strong> ${u.mustChangePassword ? 'Sí' : 'No'}</div>
+                    <div><strong>Último login:</strong> ${escapeHtml(lastLogin)}</div>
+                    <div><strong>Fecha creación:</strong> ${escapeHtml(created)}</div>
+                    <div><strong>JUGAYGANA ID:</strong> ${escapeHtml(u.jugayganaUserId || '-')}</div>
+                    <div><strong>Tokens FCM:</strong> ${(u.fcmTokens && u.fcmTokens.length) || 0}</div>
+                </div>
+            `;
+        }
+    } catch (e) {
+        if (body) body.innerHTML = `<p style="color:#f87171">❌ ${escapeHtml(e.message || 'Error')}</p>`;
+    }
 };
 
 window.chatUser = function(userId) {
