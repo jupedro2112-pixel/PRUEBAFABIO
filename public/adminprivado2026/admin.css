@@ -98,6 +98,10 @@ body {
 .icon-times::before { content: "×"; font-size: 1.2em; }
 .icon-unlock::before { content: "🔓"; }
 .icon-download::before { content: "⬇️"; }
+.icon-eye::before { content: "👁️"; }
+.icon-comment::before { content: "💬"; }
+.icon-ban::before { content: "🚫"; }
+.icon-lock-open::before { content: "🔓"; }
 
 /* ============================================
    LOGIN SCREEN
