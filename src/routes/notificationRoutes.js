@@ -910,8 +910,6 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
     // Apply offset: send only the next chunk of chunkSize from offset
     const totalSegmentUsers = allUsers.length;
     const usersToSend = allUsers.slice(offset, offset + chunkSize);
-    const nextOffset = offset + usersToSend.length;
-    const remaining = Math.max(0, totalSegmentUsers - nextOffset);
 
     console.log(`[FCM Batch] Segmento=${segment} total=${totalSegmentUsers} offset=${offset} enviando=${usersToSend.length}`);
 
@@ -974,6 +972,17 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
     }
 
     console.log(`[FCM Batch] ✅ Total: ${totalSuccess} exitosas, ${totalFailure} fallidas, ${totalCleaned} tokens limpiados`);
+
+    // BUGFIX: el offset siguiente debe descontar los tokens recién limpiados.
+    // Razón: la query usa { fcmToken: { $ne: null } } y se vuelve a ejecutar en
+    // el próximo lote. Como acabamos de poner fcmToken=null a 'totalCleaned'
+    // usuarios, el array de la próxima query tendrá 'totalCleaned' usuarios
+    // menos. Si avanzáramos offset+=chunkSize, saltearíamos silenciosamente a
+    // 'totalCleaned' usuarios efectivos. Ej: lote 1 con offset=0, chunk=100 y
+    // 14 limpiados → nextOffset debe ser 86, no 100, para que el lote 2 cubra
+    // a los users que originalmente estaban en posiciones 100..199 del array.
+    const nextOffset = offset + usersToSend.length - totalCleaned;
+    const remaining = Math.max(0, totalSegmentUsers - totalCleaned - nextOffset);
 
     res.json({
       success: true,
