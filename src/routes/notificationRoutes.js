@@ -35,6 +35,46 @@ const _fcmStatsCache = { data: null, updatedAt: 0 };
 const _fcmUsersStatusCache = { data: null, updatedAt: 0 };
 const FCM_CACHE_TTL = 60000; // 60 seconds
 
+// ============================================
+// SISTEMA DE CONFIRMACIÓN DE ENTREGA REAL
+// ============================================
+// FCM Admin SDK reporta "success" cuando acepta el mensaje, NO cuando llega
+// al dispositivo. Si la push subscription murió (app desinstalada, datos
+// borrados, navegador deshabilitó push) FCM puede aceptar igualmente y el
+// admin ve un falso "enviado". Este sistema corrige eso:
+//   1) Cada envío incluye un batchId + userId en data payload.
+//   2) El SW del cliente recibe el push y POSTea /confirm-delivery.
+//   3) El admin polling /batch-status/:batchId ve los confirmados reales.
+// Los batches se guardan en memoria con TTL de 10 min.
+const _pendingBatches = new Map();
+const BATCH_TTL_MS = 10 * 60 * 1000;
+setInterval(function () {
+  const now = Date.now();
+  for (const [id, batch] of _pendingBatches) {
+    if (now - batch.sentAt > BATCH_TTL_MS) {
+      _pendingBatches.delete(id);
+    }
+  }
+}, 60 * 1000).unref?.();
+
+function _newBatchId() {
+  // UUID v4 simple sin dependencia adicional (uuid ya está en deps pero evito overhead).
+  return 'b_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 12);
+}
+
+function _registerBatch(batchId) {
+  _pendingBatches.set(batchId, {
+    sentAt: Date.now(),
+    sentUsers: new Set(),
+    confirmedUsers: new Set()
+  });
+}
+
+function _markBatchSent(batchId, userId) {
+  const b = _pendingBatches.get(batchId);
+  if (b && userId) b.sentUsers.add(String(userId));
+}
+
 // Helper: parse the admin_api_session httpOnly cookie value (mirrors server.js).
 function _getAdminApiSessionCookie(req) {
   const cookieHeader = req.headers.cookie || '';
@@ -881,11 +921,21 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
     const allFailedTokens = [];
     const sentUsernames = [];
 
+    // Generar batchId para tracking de confirmaciones de entrega real.
+    const batchId = _newBatchId();
+    _registerBatch(batchId);
+
     for (const user of usersToSend) {
       sentUsernames.push(user.username);
       let result;
       try {
-        result = await sendNotificationToUser(user.fcmToken, title, body, data || {});
+        // Inyectar batchId + userId en el data payload para que el SW del
+        // cliente pueda confirmar entrega vía /confirm-delivery.
+        const userData = Object.assign({}, data || {}, {
+          batchId: batchId,
+          userId: String(user._id || user.id || user.username)
+        });
+        result = await sendNotificationToUser(user.fcmToken, title, body, userData);
       } catch (userErr) {
         console.error(`[FCM Batch] ❌ Error inesperado para ${user.username}:`, userErr.message);
         result = {
@@ -897,6 +947,7 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
       }
       if (result.success) {
         totalSuccess++;
+        _markBatchSent(batchId, user._id || user.id || user.username);
       } else {
         totalFailure++;
         const errorMsg = result.error || '';
@@ -938,12 +989,60 @@ router.post('/send-batch', requireAdmin, async (req, res) => {
       remaining,
       sentUsernames: sentUsernames.slice(0, 50),
       batchResults: [{ batch: 1, total: usersToSend.length, success: totalSuccess, failure: totalFailure }],
-      failedTokens: allFailedTokens.slice(0, 20)
+      failedTokens: allFailedTokens.slice(0, 20),
+      // batchId permite al admin polling /batch-status/:batchId para ver
+      // confirmaciones de entrega reales (no sólo aceptación por FCM).
+      batchId: batchId
     });
   } catch (error) {
     console.error('[FCM Batch] Error:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// ============================================
+// CONFIRMACIÓN DE ENTREGA (llamado desde el SW del cliente)
+// ============================================
+// El SW invoca este endpoint cuando recibe efectivamente la notificación
+// push. Sin auth: el SW no tiene cookie ni JWT. La protección viene de:
+//   1) batchId opaco (no enumerable razonablemente).
+//   2) TTL corto (10 min) tras el cual el batch se descarta.
+//   3) Sólo registra confirmaciones, no expone datos.
+router.post('/confirm-delivery', express.json({ limit: '1kb' }), (req, res) => {
+  try {
+    const { batchId, userId } = req.body || {};
+    if (!batchId || !userId) {
+      return res.status(400).json({ error: 'batchId y userId requeridos' });
+    }
+    const batch = _pendingBatches.get(String(batchId));
+    if (batch) {
+      batch.confirmedUsers.add(String(userId));
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[NOTIF] confirm-delivery error:', e.message);
+    res.status(500).json({ error: 'internal' });
+  }
+});
+
+// ============================================
+// ESTADO DE UN BATCH (polled por el admin panel)
+// ============================================
+router.get('/batch-status/:batchId', requireAdmin, (req, res) => {
+  const batchId = String(req.params.batchId || '');
+  const batch = _pendingBatches.get(batchId);
+  if (!batch) {
+    return res.status(404).json({ error: 'Batch no encontrado o expirado' });
+  }
+  res.json({
+    batchId,
+    sentAt: batch.sentAt,
+    ageMs: Date.now() - batch.sentAt,
+    sent: batch.sentUsers.size,
+    confirmed: batch.confirmedUsers.size,
+    pending: Math.max(0, batch.sentUsers.size - batch.confirmedUsers.size),
+    confirmedUserIds: Array.from(batch.confirmedUsers)
+  });
 });
 
 module.exports = router;

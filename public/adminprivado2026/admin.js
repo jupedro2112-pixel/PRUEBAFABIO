@@ -4378,14 +4378,15 @@ async function sendBatchNotification(batchOffset) {
                     ? `<details style="margin-top:.5rem"><summary style="cursor:pointer;color:#aaa;font-size:.85rem">Ver usuarios enviados (${data.sentUsernames.length}${data.sentUsernames.length < data.totalUsers ? '+' : ''})</summary><div style="margin-top:.5rem;max-height:160px;overflow-y:auto;font-size:.8rem;color:#ccc">${data.sentUsernames.map(u => escapeHtml(u)).join(', ')}</div></details>` : '';
                 resultContent.innerHTML = `
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1rem;margin-bottom:1rem">
-                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${data.successCount}</div><div style="color:#aaa;font-size:.8rem">Enviados</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${data.successCount}</div><div style="color:#aaa;font-size:.8rem">Aceptados por FCM</div></div>
+                        <div style="text-align:center" id="batchConfirmedCell"><div style="font-size:1.5rem;font-weight:700;color:#22d3ee" id="batchConfirmedNum">0</div><div style="color:#aaa;font-size:.8rem">Confirmados (entregados)</div></div>
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#f87171">${data.failureCount}</div><div style="color:#aaa;font-size:.8rem">Fallidos</div></div>
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#fbbf24">${data.cleanedTokens}</div><div style="color:#aaa;font-size:.8rem">Tokens limpiados</div></div>
                         <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${data.totalUsers}</div><div style="color:#aaa;font-size:.8rem">En este lote</div></div>
-                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${pct}%</div><div style="color:#aaa;font-size:.8rem">Tasa de éxito</div></div>
-                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#${data.remaining > 0 ? 'fbbf24' : '00ff88'}">${data.remaining}</div><div style="color:#aaa;font-size:.8rem">Faltan</div></div>
+                        <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${pct}%</div><div style="color:#aaa;font-size:.8rem">Tasa FCM</div></div>
                     </div>
-                    <div style="font-size:.82rem;color:#aaa;margin-bottom:.5rem">Total del segmento: <strong>${data.totalSegmentUsers}</strong> | Enviados hasta ahora: <strong>${data.nextOffset}</strong></div>
+                    <div style="font-size:.82rem;color:#aaa;margin-bottom:.5rem">Total del segmento: <strong>${data.totalSegmentUsers}</strong> | Enviados hasta ahora: <strong>${data.nextOffset}</strong> | Faltan: <strong style="color:${data.remaining > 0 ? '#fbbf24' : '#00ff88'}">${data.remaining}</strong></div>
+                    <div id="batchDeliveryStatus" style="font-size:.78rem;color:#aaa;margin-bottom:.5rem;font-style:italic">⏳ Esperando confirmaciones de entrega del cliente…</div>
                     ${sentNames}
                     ${data.failedTokens && data.failedTokens.length > 0 ? `
                     <details style="margin-top:.5rem">
@@ -4395,7 +4396,60 @@ async function sendBatchNotification(batchOffset) {
                         </div>
                     </details>` : ''}
                 `;
-                showToast(`✅ Notificación enviada a ${data.successCount} usuarios`, 'success');
+                showToast(`✅ FCM aceptó ${data.successCount} envíos. Esperando confirmaciones reales...`, 'success');
+
+                // ============================================
+                // POLLING DE CONFIRMACIONES DE ENTREGA REAL
+                // ============================================
+                // FCM aceptar != entregado. El SW del cliente confirma cuando
+                // realmente recibe el push. Polleamos batch-status durante 30s
+                // y mostramos el conteo real. Pasados 30s sin confirmación, los
+                // usuarios "Aceptados pero no Confirmados" son sospechosos
+                // (token muerto, app desinstalada, datos borrados).
+                if (data.batchId && data.successCount > 0) {
+                    const _batchIdLocal = data.batchId;
+                    let _polls = 0;
+                    const _maxPolls = 15; // 15 × 2s = 30s
+                    const _pollInterval = setInterval(async function () {
+                        _polls++;
+                        try {
+                            const stRes = await fetch(`${API_URL}/api/notifications/batch-status/${encodeURIComponent(_batchIdLocal)}`, {
+                                headers: { 'Authorization': `Bearer ${currentToken}` }
+                            });
+                            if (!stRes.ok) {
+                                clearInterval(_pollInterval);
+                                return;
+                            }
+                            const st = await stRes.json();
+                            const numEl = document.getElementById('batchConfirmedNum');
+                            const statusEl = document.getElementById('batchDeliveryStatus');
+                            if (numEl) numEl.textContent = String(st.confirmed);
+                            if (statusEl) {
+                                const pendingNow = Math.max(0, st.sent - st.confirmed);
+                                if (_polls >= _maxPolls) {
+                                    statusEl.innerHTML = pendingNow === 0
+                                        ? `✅ Todos los envíos confirmados (${st.confirmed}/${st.sent}).`
+                                        : `⚠️ ${pendingNow} de ${st.sent} sin confirmación tras 30s — probablemente con token muerto (app desinstalada o datos borrados). FCM los aceptó pero nunca llegaron al dispositivo.`;
+                                    statusEl.style.color = pendingNow === 0 ? '#22d3ee' : '#fbbf24';
+                                    statusEl.style.fontStyle = 'normal';
+                                    clearInterval(_pollInterval);
+                                } else {
+                                    statusEl.innerHTML = `⏳ ${st.confirmed}/${st.sent} confirmados (poll ${_polls}/${_maxPolls})…`;
+                                }
+                            }
+                            if (st.confirmed >= st.sent && _polls >= 2) {
+                                if (statusEl) {
+                                    statusEl.innerHTML = `✅ Todos los envíos confirmados (${st.confirmed}/${st.sent}).`;
+                                    statusEl.style.color = '#22d3ee';
+                                    statusEl.style.fontStyle = 'normal';
+                                }
+                                clearInterval(_pollInterval);
+                            }
+                        } catch (e) {
+                            console.warn('[Notif Panel] poll batch-status error:', e && e.message);
+                        }
+                    }, 2000);
+                }
 
                 // Update next-batch state
                 const statusEl = document.getElementById('notifBatchStatus');

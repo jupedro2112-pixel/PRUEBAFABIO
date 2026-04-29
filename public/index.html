@@ -1485,6 +1485,9 @@
                             console.warn('[FCM] No se pudo guardar endpoint:', epErr.message);
                         }
 
+                        // Notificar a la UI para que el botón NOTIS pase a verde inmediatamente
+                        try { window.dispatchEvent(new Event('fcm-token-changed')); } catch (_) {}
+
                         // Enviar token al servidor (si está logueado)
                         await sendTokenToServer(currentToken);
                         
@@ -2512,79 +2515,132 @@
                     return;
                 }
 
+                notificationBtn.dataset.busy = '1';
                 notificationBtn.innerHTML = '⏳ ...';
                 notificationBtn.disabled = true;
                 try {
                     const result = await enableNotifications();
                     console.log('[FCM] enableNotifications result:', result && result.success ? 'success' : (result && result.error ? result.error : 'no result'));
+                    // Si quedó bloqueado, ofrecer ayuda más detallada
+                    const _newPerm = ('Notification' in window) ? Notification.permission : null;
+                    if (_newPerm === 'denied' && typeof showToast === 'function') {
+                        showToast('🔕 Para activar: tocá el ícono de candado al lado de la URL → Permisos → Notificaciones → Permitir.', 'warning');
+                    }
                 } catch (err) {
                     console.error('[FCM] Error en click de NOTIS:', err);
                 }
-                // Actualizar estado según resultado real
-                const newPerm = ('Notification' in window) ? Notification.permission : null;
-                const newToken = localStorage.getItem('fcmToken');
-                if (newPerm === 'granted' && newToken) {
-                    notificationBtn.classList.remove('blocked');
-                    notificationBtn.classList.add('active');
-                    notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                    notificationBtn.title = 'Notificaciones activadas ✅';
-                    notificationBtn.setAttribute('aria-label', 'Notificaciones activadas');
-                    notificationBtn.setAttribute('aria-disabled', 'true');
-                    notificationBtn.disabled = true;
-                } else if (newPerm === 'denied') {
-                    notificationBtn.classList.remove('active');
-                    notificationBtn.classList.add('blocked');
-                    notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
-                    notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
-                    notificationBtn.disabled = false;
-                } else {
-                    notificationBtn.classList.remove('blocked');
-                    notificationBtn.classList.remove('active');
-                    notificationBtn.innerHTML = '🔔 NOTIS';
-                    notificationBtn.disabled = false;
+                notificationBtn.dataset.busy = '0';
+                // Delegar el render final a la función reactiva centralizada
+                if (typeof window._updateNotisButton === 'function') {
+                    window._updateNotisButton();
                 }
+                try { window.dispatchEvent(new Event('fcm-token-changed')); } catch (_) {}
             });
             console.log('[FCM] ✅ Botón de notificaciones configurado');
-            
-            // Actualizar estado inicial del botón según permiso y token actuales
-            const status = checkNotificationStatus();
-            if (status.permission === 'granted' && status.hasToken) {
-                notificationBtn.classList.remove('blocked');
-                notificationBtn.classList.add('active');
-                notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                // No se deshabilita aquí: si el token quedó obsoleto tras un bloqueo previo
-                // el usuario puede tocar para regenerarlo sin necesidad de borrar caché.
-                notificationBtn.title = 'Notificaciones activadas — tocá para renovar si no recibís notificaciones';
-            } else if (status.permission === 'denied') {
-                notificationBtn.classList.remove('active');
-                notificationBtn.classList.add('blocked');
-                notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
-                notificationBtn.title = 'Notificaciones bloqueadas. Activá desde configuración del sitio.';
-            } else if (!status.messagingAvailable) {
-                notificationBtn.title = 'Push no soportado en este navegador/entorno.';
-            }
 
-            // Auto-update: cuando Firebase termine de cargar (puede tardar
-            // segundos en redes flaky) refrescamos el estado del botón sin
-            // requerir interacción del usuario. Así el "🔔 NOTIS" pasa a
-            // "🔔 NOTIS ACTIVADAS" en cuanto el token quede registrado.
+            // ============================================
+            // ESTADO REACTIVO DEL BOTÓN NOTIS
+            // ============================================
+            // Una sola función centraliza el estado del botón. Se llama:
+            //   - Al inicio (estado inicial)
+            //   - Cuando Firebase termina de cargar
+            //   - Cuando cambia Notification.permission (Permissions API change event)
+            //   - Cuando se obtiene/borra un token (window event 'fcm-token-changed')
+            //   - Cada 4s como red de seguridad (cubre Android Chrome donde
+            //     Permissions.query no siempre dispara change events)
+            //
+            // Resultado: el usuario nunca tiene que tocar NOTIS para que el
+            // estado del botón refleje la realidad. Si las notifs funcionan,
+            // el botón se pinta verde solo. Si están bloqueadas, rojo solo.
+            window._updateNotisButton = function () {
+                try {
+                    if (!notificationBtn) return;
+                    if (notificationBtn.dataset.busy === '1') return; // no pisar mid-click
+                    const perm = ('Notification' in window) ? Notification.permission : 'default';
+                    const tok = localStorage.getItem('fcmToken');
+                    const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                       window.navigator.standalone === true;
+                    const fbReady = window.__firebaseLoadState === 'ready';
+
+                    // Solo en standalone se muestra el botón
+                    if (!standalone) {
+                        notificationBtn.style.display = 'none';
+                        return;
+                    }
+                    notificationBtn.style.setProperty('display', 'inline-flex', 'important');
+
+                    if (perm === 'denied') {
+                        notificationBtn.classList.remove('active');
+                        notificationBtn.classList.add('blocked');
+                        notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
+                        notificationBtn.title = 'Bloqueado. Tocá el ícono de candado en la barra de direcciones → Permisos → Notificaciones → Permitir.';
+                        notificationBtn.disabled = false;
+                        return;
+                    }
+                    if (perm === 'granted' && tok) {
+                        notificationBtn.classList.remove('blocked');
+                        notificationBtn.classList.add('active');
+                        notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                        notificationBtn.title = 'Notificaciones activadas ✅ (tocá para renovar si no recibís)';
+                        notificationBtn.disabled = false;
+                        return;
+                    }
+                    // permiso default o granted sin token todavía
+                    notificationBtn.classList.remove('blocked');
+                    notificationBtn.classList.remove('active');
+                    if (!fbReady) {
+                        notificationBtn.innerHTML = '⏳ Cargando…';
+                        notificationBtn.title = 'Esperando que Firebase termine de cargar...';
+                    } else {
+                        notificationBtn.innerHTML = '🔔 NOTIS';
+                        notificationBtn.title = 'Tocá para activar notificaciones';
+                    }
+                    notificationBtn.disabled = false;
+                } catch (e) {
+                    console.warn('[FCM] _updateNotisButton falló:', e && e.message);
+                }
+            };
+
+            // 1) Estado inicial
+            window._updateNotisButton();
+
+            // 2) Suscripción a cambios de permiso vía Permissions API
+            try {
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({ name: 'notifications' }).then(function (status) {
+                        status.addEventListener('change', function () {
+                            console.log('[FCM] Permission change detectado:', status.state);
+                            window._updateNotisButton();
+                            // Si el usuario acaba de conceder permiso desde el ícono de candado,
+                            // disparar getToken automáticamente — sin que tenga que tocar NOTIS.
+                            if (status.state === 'granted' && !localStorage.getItem('fcmToken')) {
+                                navigator.serviceWorker.ready.then(function (swReg) {
+                                    if (swReg && typeof initNotifications === 'function') {
+                                        initNotifications(swReg);
+                                    }
+                                });
+                            }
+                        });
+                    }).catch(function (e) {
+                        console.warn('[FCM] Permissions.query no soportado:', e && e.message);
+                    });
+                }
+            } catch (e) { /* Permissions API no soportado */ }
+
+            // 3) Auto-update tras carga de Firebase
             if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
                 window.__firebaseReady.then(function () {
-                    setTimeout(function () {
-                        try {
-                            const s2 = (typeof checkNotificationStatus === 'function') ? checkNotificationStatus() : null;
-                            if (s2 && s2.permission === 'granted' && s2.hasToken) {
-                                notificationBtn.classList.remove('blocked');
-                                notificationBtn.classList.add('active');
-                                notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                                notificationBtn.title = 'Notificaciones activadas ✅';
-                            }
-                        } catch (e) {
-                            console.warn('[FCM] No se pudo actualizar estado del botón post-load:', e && e.message);
-                        }
-                    }, 1500);
+                    setTimeout(window._updateNotisButton, 1200);
+                    setTimeout(window._updateNotisButton, 3000);
                 });
             }
+
+            // 4) Polling de seguridad cada 4s (cubre cambios sin event)
+            setInterval(window._updateNotisButton, 4000);
+
+            // 5) Listener de evento custom para que initNotifications/enableNotifications
+            //    notifiquen actualización inmediata.
+            window.addEventListener('fcm-token-changed', window._updateNotisButton);
         } else {
             console.log('[FCM] ❌ Botón notificationBtn no encontrado en el DOM');
         }

@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v12';
+const CACHE_VERSION = 'v13';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -100,13 +100,28 @@ messaging.onBackgroundMessage(function(payload) {
   const badge = notif.badge || webNotif.badge || '/icons/icon-72x72.png';
   const tag   = (payload.data && payload.data.tag) || 'chat-message';
 
+  // Confirmación de entrega: si el envío vino con batchId+userId, avisar al
+  // backend que el push llegó realmente (cubre el falso "enviado" cuando
+  // FCM acepta el mensaje pero la subscription estaba muerta).
+  const _data = payload.data || {};
+  if (_data.batchId && _data.userId) {
+    fetch('/api/notifications/confirm-delivery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ batchId: _data.batchId, userId: _data.userId }),
+      keepalive: true
+    }).catch(function (err) {
+      console.warn('[FCM-SW] confirm-delivery falló:', err && err.message);
+    });
+  }
+
   const options = {
     body,
     icon,
     badge,
     tag,
     requireInteraction: false,
-    data: payload.data || {},
+    data: _data,
     actions: [
       { action: 'open',  title: 'Abrir chat' },
       { action: 'close', title: 'Cerrar'     }
