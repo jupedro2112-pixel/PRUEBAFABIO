@@ -429,17 +429,45 @@
             </div>
         </div>
 
-        <!-- Banner de Notificaciones -->
+        <!-- Banner de Notificaciones (auto-actualiza según estado de permiso) -->
         <div id="notifBanner" style="display:none; background: linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%); color: #fff; padding: 12px 16px; border-radius: 12px; margin: 8px 12px; box-shadow: 0 4px 15px rgba(157,78,221,0.5); border: 1px solid rgba(255,255,255,0.2);">
             <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                <span style="font-size: 22px;">🔔</span>
+                <span id="notifBannerIcon" style="font-size: 22px;">🔔</span>
                 <div style="flex: 1; min-width: 0;">
-                    <strong style="font-size: 13px; display: block;">¡Activa las notificaciones para recibir regalos y promociones exclusivas!</strong>
+                    <strong id="notifBannerText" style="font-size: 13px; display: block;">¡Activá las notificaciones para recibir regalos, bonus y atención 24/7!</strong>
                 </div>
                 <div style="display: flex; gap: 8px; flex-shrink: 0;">
-                    <button id="notifBannerActivate" style="background: #fff; color: #6a0dad; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 700; font-size: 12px; cursor: pointer;">🔔 Activar Notificaciones</button>
+                    <button id="notifBannerActivate" style="background: #fff; color: #6a0dad; border: none; border-radius: 8px; padding: 8px 14px; font-weight: 700; font-size: 12px; cursor: pointer;">🔔 Activar</button>
                     <button id="notifBannerClose" style="background: rgba(255,255,255,0.2); color: #fff; border: none; border-radius: 8px; padding: 8px 12px; font-weight: 600; font-size: 12px; cursor: pointer;">✕</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Modal de instrucciones cuando notifs están bloqueadas en PWA -->
+        <div id="notifBlockedModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:10000; align-items:center; justify-content:center; padding:20px;">
+            <div style="background: linear-gradient(135deg, #1a0033 0%, #0a0015 100%); border:2px solid #d4af37; border-radius:20px; padding:24px; max-width:420px; color:#fff; box-shadow:0 20px 60px rgba(0,0,0,.5);">
+                <h3 style="color:#d4af37; margin:0 0 12px; font-size:1.3rem;">🔕 Notificaciones bloqueadas</h3>
+                <p style="margin:0 0 14px; color:#eee; line-height:1.5; font-size:.95rem;">
+                    No vas a recibir avisos de <strong>recargas, retiros, bonus ni respuestas del soporte</strong>. Para activarlas hay 2 opciones:
+                </p>
+                <div style="background:rgba(212,175,55,.08); border:1px solid rgba(212,175,55,.3); border-radius:10px; padding:12px; margin-bottom:12px;">
+                    <strong style="color:#d4af37; display:block; margin-bottom:6px; font-size:.9rem;">Opción 1 (más rápida)</strong>
+                    <ol style="margin:0; padding-left:20px; line-height:1.6; font-size:.88rem; color:#ddd;">
+                        <li>Mantené presionado el ícono de la app en tu pantalla</li>
+                        <li>Tocá <strong>"Información de la app"</strong></li>
+                        <li>Entrá en <strong>Notificaciones</strong></li>
+                        <li>Activá <strong>"Mostrar notificaciones"</strong></li>
+                    </ol>
+                </div>
+                <div style="background:rgba(157,78,221,.08); border:1px solid rgba(157,78,221,.3); border-radius:10px; padding:12px; margin-bottom:14px;">
+                    <strong style="color:#9d4edd; display:block; margin-bottom:6px; font-size:.9rem;">Opción 2 (siempre funciona)</strong>
+                    <ol style="margin:0; padding-left:20px; line-height:1.6; font-size:.88rem; color:#ddd;">
+                        <li>Desinstalá esta app de tu celular</li>
+                        <li>Volvé a instalarla desde el sitio</li>
+                        <li>Cuando aparezca el cartel de notificaciones, tocá <strong>"Permitir"</strong></li>
+                    </ol>
+                </div>
+                <button id="notifBlockedModalClose" style="width:100%; background:#d4af37; color:#000; border:none; border-radius:10px; padding:12px; font-weight:700; font-size:.95rem; cursor:pointer;">Entendido</button>
             </div>
         </div>
 
@@ -2521,10 +2549,11 @@
                 try {
                     const result = await enableNotifications();
                     console.log('[FCM] enableNotifications result:', result && result.success ? 'success' : (result && result.error ? result.error : 'no result'));
-                    // Si quedó bloqueado, ofrecer ayuda más detallada
+                    // Si quedó bloqueado, abrir modal con instrucciones específicas para PWA
                     const _newPerm = ('Notification' in window) ? Notification.permission : null;
-                    if (_newPerm === 'denied' && typeof showToast === 'function') {
-                        showToast('🔕 Para activar: tocá el ícono de candado al lado de la URL → Permisos → Notificaciones → Permitir.', 'warning');
+                    if (_newPerm === 'denied') {
+                        const _modal = document.getElementById('notifBlockedModal');
+                        if (_modal) _modal.style.display = 'flex';
                     }
                 } catch (err) {
                     console.error('[FCM] Error en click de NOTIS:', err);
@@ -2573,7 +2602,7 @@
                         notificationBtn.classList.remove('active');
                         notificationBtn.classList.add('blocked');
                         notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
-                        notificationBtn.title = 'Bloqueado. Tocá el ícono de candado en la barra de direcciones → Permisos → Notificaciones → Permitir.';
+                        notificationBtn.title = 'Bloqueadas. Tocá el botón para ver cómo activarlas (mantené presionado el ícono de la app → Información → Notificaciones, o desinstalá y reinstalá la app).';
                         notificationBtn.disabled = false;
                         return;
                     }
@@ -2649,10 +2678,88 @@
         console.log('[PWA] Debug - header-right:', document.querySelector('.header-right'));
         console.log('[PWA] Debug - Todos los botones:', document.querySelectorAll('.header-right button'));
         
-        // Bug 2 fix: conectar botones del banner de notificaciones
+        // ============================================
+        // BANNER + MODAL DE NOTIFICACIONES (reactivo)
+        // ============================================
+        // Cartel arriba del chat que motiva al usuario a aceptar las
+        // notificaciones. Cambia de color/contenido según el estado:
+        //   - permission 'default' (no decidió todavía): banner morado con
+        //     "Activar". Permite cerrar por sesión (sessionStorage).
+        //   - permission 'denied' (bloqueó): banner rojo con "Cómo activar"
+        //     que abre el modal de instrucciones (sin opción de cerrar
+        //     forever — sigue mostrándose hasta que activen).
+        //   - permission 'granted' (aceptó): banner oculto.
         const notifBannerActivate = document.getElementById('notifBannerActivate');
+        const notifBannerClose = document.getElementById('notifBannerClose');
+        const notifBlockedModalClose = document.getElementById('notifBlockedModalClose');
+
+        function _updateNotifBanner() {
+            try {
+                const banner = document.getElementById('notifBanner');
+                if (!banner) return;
+                const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
+                const perm = ('Notification' in window) ? Notification.permission : 'default';
+                const tok = localStorage.getItem('fcmToken');
+                const dismissedThisSession = sessionStorage.getItem('notifBannerDismissedSession') === '1';
+
+                // En navegador puro: no molestar (el flujo PWA es la prioridad).
+                if (!standalone) {
+                    banner.style.display = 'none';
+                    return;
+                }
+                // Si ya tiene permiso y token: ocultar (todo OK).
+                if (perm === 'granted' && tok) {
+                    banner.style.display = 'none';
+                    return;
+                }
+
+                const iconEl = document.getElementById('notifBannerIcon');
+                const textEl = document.getElementById('notifBannerText');
+                if (perm === 'denied') {
+                    // BLOQUEADO: rojo, sin opción de cerrar (volvemos a mostrar siempre).
+                    banner.style.background = 'linear-gradient(135deg, #dc2626 0%, #f87171 100%)';
+                    banner.style.boxShadow = '0 4px 15px rgba(220,38,38,.5)';
+                    if (iconEl) iconEl.textContent = '🔕';
+                    if (textEl) textEl.innerHTML = '<strong>Notificaciones bloqueadas.</strong> Te perdés regalos, bonus y avisos. Tocá "Cómo activar".';
+                    if (notifBannerActivate) {
+                        notifBannerActivate.textContent = '🛠️ Cómo activar';
+                        notifBannerActivate.style.color = '#dc2626';
+                    }
+                    if (notifBannerClose) notifBannerClose.style.display = 'none';
+                    banner.style.display = '';
+                    return;
+                }
+                // permission === 'default' (todavía no preguntó / o granted sin token aún)
+                if (dismissedThisSession) {
+                    banner.style.display = 'none';
+                    return;
+                }
+                banner.style.background = 'linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%)';
+                banner.style.boxShadow = '0 4px 15px rgba(157,78,221,.5)';
+                if (iconEl) iconEl.textContent = '🔔';
+                if (textEl) textEl.innerHTML = '<strong>¡Activá las notificaciones!</strong> Recibí avisos de cargas, retiros, bonus y soporte 24/7.';
+                if (notifBannerActivate) {
+                    notifBannerActivate.textContent = '🔔 Activar';
+                    notifBannerActivate.style.color = '#6a0dad';
+                }
+                if (notifBannerClose) notifBannerClose.style.display = '';
+                banner.style.display = '';
+            } catch (e) {
+                console.warn('[FCM] _updateNotifBanner falló:', e && e.message);
+            }
+        }
+        window._updateNotifBanner = _updateNotifBanner;
+
         if (notifBannerActivate) {
             notifBannerActivate.addEventListener('click', () => {
+                const perm = ('Notification' in window) ? Notification.permission : 'default';
+                if (perm === 'denied') {
+                    // Mostrar modal con instrucciones específicas para PWA
+                    const _modal = document.getElementById('notifBlockedModal');
+                    if (_modal) _modal.style.display = 'flex';
+                    return;
+                }
                 if (typeof enableNotifications === 'function') {
                     enableNotifications();
                 } else {
@@ -2661,14 +2768,45 @@
             });
         }
 
-        const notifBannerClose = document.getElementById('notifBannerClose');
         if (notifBannerClose) {
             notifBannerClose.addEventListener('click', () => {
                 const banner = document.getElementById('notifBanner');
                 if (banner) banner.style.display = 'none';
-                try { localStorage.setItem('notifBannerDismissed', '1'); } catch(e) {}
+                // Sólo dismiss por sesión: si abre la app de nuevo va a volver a verlo.
+                // No usamos localStorage aquí porque el usuario quiere insistencia.
+                try { sessionStorage.setItem('notifBannerDismissedSession', '1'); } catch(e) {}
             });
         }
+
+        if (notifBlockedModalClose) {
+            notifBlockedModalClose.addEventListener('click', () => {
+                const m = document.getElementById('notifBlockedModal');
+                if (m) m.style.display = 'none';
+            });
+        }
+        // Click fuera del contenido del modal también cierra
+        const _blockedModal = document.getElementById('notifBlockedModal');
+        if (_blockedModal) {
+            _blockedModal.addEventListener('click', (e) => {
+                if (e.target === _blockedModal) _blockedModal.style.display = 'none';
+            });
+        }
+
+        // Render inicial + reactivo a cambios de permiso/token/Firebase ready
+        _updateNotifBanner();
+        window.addEventListener('fcm-token-changed', _updateNotifBanner);
+        if (window.__firebaseReady && typeof window.__firebaseReady.then === 'function') {
+            window.__firebaseReady.then(function () { setTimeout(_updateNotifBanner, 1500); });
+        }
+        try {
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'notifications' }).then(function (s) {
+                    s.addEventListener('change', _updateNotifBanner);
+                }).catch(function () {});
+            }
+        } catch (_) {}
+        // Polling de seguridad
+        setInterval(_updateNotifBanner, 4000);
 
         // Bug 3 fix: ocultar el botón NOTIS si el navegador no soporta Service Worker
         if (!('serviceWorker' in navigator)) {
