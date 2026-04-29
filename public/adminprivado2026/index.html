@@ -222,10 +222,20 @@
                                 <button id="btnPayments" class="action-btn payments" title="Enviar a Pagos">
                                     <span class="icon icon-exchange"></span> Enviar a Pagos
                                 </button>
+                                <button id="btnBlock" class="action-btn block" title="Bloquear usuario" style="display:none;background:#dc3545;color:#fff">
+                                    <span class="icon icon-ban"></span> Bloquear
+                                </button>
+                                <button id="btnUnblock" class="action-btn unblock" title="Desbloquear usuario" style="display:none;background:#28a745;color:#fff">
+                                    <span class="icon icon-lock-open"></span> Desbloquear
+                                </button>
                                 <button id="btnClose" class="action-btn close" title="Cerrar Chat">
                                     <span class="icon icon-times-circle"></span> Cerrar Chat
                                 </button>
                             </div>
+                        </div>
+                        <div id="chatBlockedBanner" class="chat-blocked-banner" style="display:none;padding:10px 14px;background:linear-gradient(90deg,#dc3545 0%,#a01a28 100%);color:#fff;font-size:13px;border-bottom:1px solid #7a141d">
+                            <strong><span class="icon icon-ban"></span> USUARIO BLOQUEADO</strong>
+                            <span id="chatBlockedReason" style="display:block;margin-top:3px;font-weight:400;opacity:.95"></span>
                         </div>
                         <div id="chatMessages" class="chat-messages">
                             <div class="empty-state">

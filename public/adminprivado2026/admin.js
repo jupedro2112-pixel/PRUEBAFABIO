@@ -90,10 +90,12 @@ const elements = {
     chatStatus: document.getElementById('chatStatus'),
     chatAppStatus: document.getElementById('chatAppStatus'),
     chatBalance: document.getElementById('chatBalance'),
+    chatBlockedBanner: document.getElementById('chatBlockedBanner'),
+    chatBlockedReason: document.getElementById('chatBlockedReason'),
     messageInput: document.getElementById('messageInput'),
     sendMessage: document.getElementById('sendMessage'),
     typingIndicator: document.getElementById('typingIndicator'),
-    
+
     // Action buttons
     btnCBU: document.getElementById('btnCBU'),
     btnDeposit: document.getElementById('btnDeposit'),
@@ -101,6 +103,8 @@ const elements = {
     btnWithdraw: document.getElementById('btnWithdraw'),
     btnPassword: document.getElementById('btnPassword'),
     btnPayments: document.getElementById('btnPayments'),
+    btnBlock: document.getElementById('btnBlock'),
+    btnUnblock: document.getElementById('btnUnblock'),
     btnClose: document.getElementById('btnClose'),
     
     // Modals
@@ -279,6 +283,8 @@ function setupEventListeners() {
         showModal('passwordModal');
     });
     elements.btnPayments.addEventListener('click', sendToPayments);
+    if (elements.btnBlock) elements.btnBlock.addEventListener('click', openBlockModalFromChat);
+    if (elements.btnUnblock) elements.btnUnblock.addEventListener('click', handleUnblockFromChat);
     elements.btnClose.addEventListener('click', closeChat);
     
     // Modal close buttons
@@ -1090,6 +1096,12 @@ async function selectConversation(userId, username) {
     elements.chatHeader.classList.remove('hidden');
     elements.chatInputArea.classList.remove('hidden');
     elements.chatUsername.textContent = username;
+
+    // Reset banner de bloqueo y botones hasta que loadUserInfo confirme el estado
+    if (elements.chatBlockedBanner) elements.chatBlockedBanner.style.display = 'none';
+    if (elements.chatBlockedReason) elements.chatBlockedReason.textContent = '';
+    if (elements.btnBlock) elements.btnBlock.style.display = 'none';
+    if (elements.btnUnblock) elements.btnUnblock.style.display = 'none';
     
     // CORREGIDO: Mostrar mensajes cacheados inmediatamente (sin esperar)
     const cachedMessages = messageCache.get(userId);
@@ -1885,6 +1897,9 @@ async function loadUserInfo(userId) {
         elements.chatBalance.textContent = formatMoney(user.balance);
         elements.chatStatus.textContent = user.online ? 'En línea' : 'Desconectado';
         elements.chatStatus.className = user.online ? 'status online' : 'status';
+
+        // Reflejar estado de bloqueo en el header del chat
+        applyBlockStateToChatHeader(user);
         
         // Mostrar estado de la app de notificaciones
         if (elements.chatAppStatus) {
@@ -2877,7 +2892,14 @@ async function handleBlockUser() {
         if (!response.ok) throw new Error(data.error || 'Error al bloquear usuario');
         showToast(`Usuario ${selectedUserForBlock.username} bloqueado`, 'success');
         hideModal('blockModal');
-        loadUsers();
+        // Si el usuario bloqueado es el del chat activo, refrescar header
+        if (selectedUserForBlock.id === selectedUserId) {
+            loadUserInfo(selectedUserForBlock.id);
+        }
+        // Refrescar tabla de usuarios solo si la sección está visible
+        if (typeof loadUsers === 'function' && document.getElementById('usersSection')?.classList.contains('active')) {
+            loadUsers();
+        }
     } catch (error) {
         showToast(error.message || 'Error al bloquear usuario', 'error');
     } finally {
@@ -2909,6 +2931,69 @@ window.openUserPasswordModal = openUserPasswordModal;
 window.openBlockModal = openBlockModal;
 window.handleBlockUser = handleBlockUser;
 window.handleUnblockUser = handleUnblockUser;
+
+// Pinta el banner BLOQUEADO + alterna botones Bloquear/Desbloquear según el estado del user
+function applyBlockStateToChatHeader(user) {
+    if (!user) return;
+    const isBlocked = user.isBlocked === true;
+    const reason = user.blockReason || 'Sin motivo registrado';
+    const isAdminUser = ['admin', 'depositor', 'withdrawer'].includes(user.role);
+    const canBlock = currentAdmin?.role === 'admin' && !isAdminUser;
+
+    if (elements.chatBlockedBanner) {
+        elements.chatBlockedBanner.style.display = isBlocked ? 'block' : 'none';
+    }
+    if (elements.chatBlockedReason) {
+        elements.chatBlockedReason.textContent = isBlocked ? `Motivo: ${reason}` : '';
+    }
+
+    if (elements.btnBlock) {
+        elements.btnBlock.style.display = (canBlock && !isBlocked) ? '' : 'none';
+    }
+    if (elements.btnUnblock) {
+        elements.btnUnblock.style.display = (canBlock && isBlocked) ? '' : 'none';
+    }
+}
+
+// Abre el modal de bloqueo desde el header del chat (usa el chat seleccionado)
+function openBlockModalFromChat() {
+    if (!selectedUserId || !selectedUsername) {
+        showToast('Seleccioná un chat primero', 'error');
+        return;
+    }
+    openBlockModal(selectedUserId, selectedUsername);
+}
+
+// Desbloquea desde el header del chat y refresca el header
+async function handleUnblockFromChat() {
+    if (!selectedUserId || !selectedUsername) {
+        showToast('Seleccioná un chat primero', 'error');
+        return;
+    }
+    if (!confirm(`¿Desbloquear a ${selectedUsername}?`)) return;
+    const userId = selectedUserId;
+    const username = selectedUsername;
+    try {
+        const response = await fetch(`${API_URL}/api/admin/users/${encodeURIComponent(userId)}/unblock`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            }
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Error al desbloquear usuario');
+        showToast(`Usuario ${username} desbloqueado`, 'success');
+        // Refrescar header con el estado nuevo
+        if (userId === selectedUserId) loadUserInfo(userId);
+    } catch (error) {
+        showToast(error.message || 'Error al desbloquear usuario', 'error');
+    }
+}
+
+window.applyBlockStateToChatHeader = applyBlockStateToChatHeader;
+window.openBlockModalFromChat = openBlockModalFromChat;
+window.handleUnblockFromChat = handleUnblockFromChat;
 
 // ============================================
 // UI HELPERS
