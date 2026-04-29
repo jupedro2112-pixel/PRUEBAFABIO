@@ -2598,25 +2598,52 @@
                     }
                     notificationBtn.style.setProperty('display', 'inline-flex', 'important');
 
+                    // Modo compacto: la primera vez que el usuario ve un estado terminal
+                    // (activadas / bloqueadas) se muestra el texto completo y se marca en
+                    // localStorage. Próximas cargas ya muestran solo el emoji para no
+                    // tapar el resto del menú.
+                    var _seenGranted = false, _seenDenied = false;
+                    try {
+                        _seenGranted = localStorage.getItem('notisLabelSeen:granted') === '1';
+                        _seenDenied  = localStorage.getItem('notisLabelSeen:denied')  === '1';
+                    } catch (_) {}
+
                     if (perm === 'denied') {
                         notificationBtn.classList.remove('active');
                         notificationBtn.classList.add('blocked');
-                        notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
-                        notificationBtn.title = 'Bloqueadas. Tocá el botón para ver cómo activarlas (mantené presionado el ícono de la app → Información → Notificaciones, o desinstalá y reinstalá la app).';
+                        if (_seenDenied) {
+                            notificationBtn.innerHTML = '🔕';
+                            notificationBtn.classList.add('compact');
+                            notificationBtn.title = 'Notificaciones bloqueadas. Tocá para ver cómo activarlas.';
+                        } else {
+                            notificationBtn.innerHTML = '🔕 NOTIS BLOQUEADAS';
+                            notificationBtn.classList.remove('compact');
+                            notificationBtn.title = 'Bloqueadas. Tocá el botón para ver cómo activarlas (mantené presionado el ícono de la app → Información → Notificaciones, o desinstalá y reinstalá la app).';
+                            try { localStorage.setItem('notisLabelSeen:denied', '1'); } catch (_) {}
+                        }
                         notificationBtn.disabled = false;
                         return;
                     }
                     if (perm === 'granted' && tok) {
                         notificationBtn.classList.remove('blocked');
                         notificationBtn.classList.add('active');
-                        notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
-                        notificationBtn.title = 'Notificaciones activadas ✅ (tocá para renovar si no recibís)';
+                        if (_seenGranted) {
+                            notificationBtn.innerHTML = '🔔';
+                            notificationBtn.classList.add('compact');
+                            notificationBtn.title = 'Notificaciones activadas ✅ (tocá para renovar si no recibís)';
+                        } else {
+                            notificationBtn.innerHTML = '🔔 NOTIS ACTIVADAS';
+                            notificationBtn.classList.remove('compact');
+                            notificationBtn.title = 'Notificaciones activadas ✅ (tocá para renovar si no recibís)';
+                            try { localStorage.setItem('notisLabelSeen:granted', '1'); } catch (_) {}
+                        }
                         notificationBtn.disabled = false;
                         return;
                     }
                     // permiso default o granted sin token todavía
                     notificationBtn.classList.remove('blocked');
                     notificationBtn.classList.remove('active');
+                    notificationBtn.classList.remove('compact');
                     if (!fbReady) {
                         notificationBtn.innerHTML = '⏳ Cargando…';
                         notificationBtn.title = 'Esperando que Firebase termine de cargar...';

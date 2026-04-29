@@ -369,6 +369,24 @@
     cursor: pointer;
 }
 
+/* Modo compacto: solo el emoji (cuando el usuario ya vio el texto al menos una vez).
+   Mantiene el color verde/gris según el estado pero ocupa mucho menos espacio
+   para no tapar el resto del menú. */
+.header-right .notification-btn.compact {
+    font-size: 16px;
+    padding: 4px 8px;
+    line-height: 1;
+    min-width: 32px;
+    text-align: center;
+    gap: 0;
+}
+.header-right .notification-btn.compact.active {
+    box-shadow: 0 0 0 1px rgba(0, 255, 136, 0.5) inset;
+}
+.header-right .notification-btn.compact.blocked {
+    box-shadow: 0 0 0 1px rgba(220, 53, 69, 0.5) inset;
+}
+
 /* Botón de instalación APP */
 .app-install-btn {
     background: linear-gradient(135deg, #00ff88 0%, #00cc6a 50%, #00ff88 100%);
