@@ -34,16 +34,21 @@ function generateCode() {
  * @returns {string} Texto del SMS listo para enviar
  */
 function buildOtpMessage(purpose, code) {
+  // El espacio en "vipcargas .com" es intencional: rompe la detección de URL
+  // que usan los filtros antispam de los carriers LATAM (sobre todo Tigo/Claro
+  // en Paraguay y Argentina), evitando que el SMS caiga en spam. El usuario
+  // sigue entendiendo el dominio sin problema. Sigue siendo 1 SMS (GSM-7,
+  // ~80 chars, muy por debajo del límite de 160).
   if (purpose === 'register') {
-    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas.com`;
+    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas .com`;
   } else if (purpose === 'reset') {
-    return `VIPCARGAS: codigo para restablecer contrasena ${code}. Valido 5 min. vipcargas.com`;
+    return `VIPCARGAS: codigo para restablecer contrasena ${code}. Valido 5 min. vipcargas .com`;
   } else if (purpose === 'change-password') {
-    return `VIPCARGAS: codigo para cambiar contrasena ${code}. Valido 5 min. vipcargas.com`;
+    return `VIPCARGAS: codigo para cambiar contrasena ${code}. Valido 5 min. vipcargas .com`;
   } else if (purpose === 'login') {
-    return `VIPCARGAS: codigo de inicio de sesion ${code}. Valido 5 min. vipcargas.com`;
+    return `VIPCARGAS: codigo de inicio de sesion ${code}. Valido 5 min. vipcargas .com`;
   } else {
-    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas.com`;
+    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas .com`;
   }
 }
 

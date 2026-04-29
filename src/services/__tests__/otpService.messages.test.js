@@ -20,7 +20,9 @@ describe('OTP SMS message templates', () => {
       expect(ASCII_REGEX.test(message)).toBe(true);
       expect(message.length).toBeLessThanOrEqual(160);
       expect(message).toContain(SAMPLE_CODE);
-      expect(message).toContain('vipcargas.com');
+      // Espacio intencional para evitar detección como URL por filtros antispam
+      // de los carriers (sobre todo en Paraguay y Argentina).
+      expect(message).toContain('vipcargas .com');
       expect(message).toContain('VIPCARGAS');
     }
   );
