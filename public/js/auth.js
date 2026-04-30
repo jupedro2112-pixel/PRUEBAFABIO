@@ -295,11 +295,75 @@ VIP.auth = (function () {
             });
             if (r.ok) {
                 const d = await r.json();
-                VIP.state.linePhone = d.phone || null;
+                const newPhone = d.phone || null;
+                VIP.state.linePhone = newPhone;
                 renderRefundsHomeUI();
+                checkLineChange(newPhone);
             }
         } catch (_) { /* ignore */ }
     }
+
+    // Compara el número que devolvió el server con el que vimos por última
+    // vez (localStorage). Si cambió, muestra el banner rojo grande para
+    // que el usuario sepa que tiene que agendar el nuevo y borrar el viejo.
+    // En el primer login (no hay valor previo) NO mostramos el banner —
+    // solo guardamos para futuras comparaciones.
+    function checkLineChange(currentPhone) {
+        const banner = document.getElementById('lineChangedAlert');
+        if (!banner) return;
+        if (!currentPhone) {
+            banner.style.display = 'none';
+            return;
+        }
+        // Clave por usuario para que el "último visto" sea per-cuenta
+        const username = (VIP.state.currentUser && VIP.state.currentUser.username) || '_anon';
+        const key = 'lastSeenLinePhone:' + username;
+        let prev = null;
+        try { prev = localStorage.getItem(key); } catch (_) { /* ignore */ }
+
+        if (!prev) {
+            // Primer login: no hay nada con qué comparar, solo guardamos.
+            try { localStorage.setItem(key, currentPhone); } catch (_) {}
+            banner.style.display = 'none';
+            return;
+        }
+        if (prev !== currentPhone) {
+            // ¡Cambió!
+            banner.style.display = 'block';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+
+    // Wire-up del botón "Entendido, ya lo agendé" del banner de cambio de línea.
+    function wireLineChangedDismiss() {
+        const btn = document.getElementById('lineChangedDismiss');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            const banner = document.getElementById('lineChangedAlert');
+            if (banner) banner.style.display = 'none';
+            const username = (VIP.state.currentUser && VIP.state.currentUser.username) || '_anon';
+            const key = 'lastSeenLinePhone:' + username;
+            const phone = VIP.state.linePhone;
+            if (phone) {
+                try { localStorage.setItem(key, phone); } catch (_) {}
+            }
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wireLineChangedDismiss);
+    } else {
+        wireLineChangedDismiss();
+    }
+
+    // Cuando la app vuelve al foreground (ej: el user tocó la notif push
+    // "NUEVA LINEA"), refrescar la línea para detectar cambios y mostrar
+    // el banner si corresponde, sin esperar a un refresh manual.
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible' && VIP.state.currentToken) {
+            refreshLinePhone();
+        }
+    });
 
     async function verifyToken() {
         try {
