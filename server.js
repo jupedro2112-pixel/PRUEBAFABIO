@@ -1744,7 +1744,12 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res) => {
     const userObj = user.toObject ? user.toObject() : user;
     const userId = userObj.id || userObj._id?.toString();
 
-    if (!userObj.isActive) {
+    if (!userId) {
+      logger.error(`[LoginUsernameOnly] User found but has no id (username=${userObj.username})`);
+      return res.status(500).json({ error: 'Error de configuración de usuario' });
+    }
+
+    if (userObj.isActive === false) {
       return res.status(404).json({ error: 'Usuario no disponible' });
     }
     if (userObj.isBlocked === true) {
@@ -1753,22 +1758,36 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res) => {
         code: 'USER_BLOCKED'
       });
     }
-    // Bloquear acceso a roles administrativos por este endpoint (solo para usuarios finales).
     if (isAdminRole(userObj.role)) {
       return res.status(403).json({ error: 'Usuario no disponible' });
     }
 
-    user.lastLogin = new Date();
-    await user.save();
+    // Best-effort: actualizar lastLogin sin romper si el doc viejo falla validación.
+    try {
+      await User.updateOne({ id: userId }, { $set: { lastLogin: new Date() } });
+    } catch (saveErr) {
+      logger.warn(`[LoginUsernameOnly] No se pudo actualizar lastLogin para ${userObj.username}: ${saveErr.message}`);
+    }
 
-    const token = jwt.sign(
-      { userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    let token;
+    try {
+      token = jwt.sign(
+        { userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+    } catch (jwtErr) {
+      logger.error(`[LoginUsernameOnly] jwt.sign falló: ${jwtErr.message}`);
+      return res.status(500).json({ error: 'Error generando token' });
+    }
 
-    const linesConfig = await getConfig('userLinesByPrefix');
-    const linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+    let linePhone = null;
+    try {
+      const linesConfig = await getConfig('userLinesByPrefix');
+      linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+    } catch (cfgErr) {
+      logger.warn(`[LoginUsernameOnly] No se pudo cargar userLinesByPrefix: ${cfgErr.message}`);
+    }
 
     res.json({
       message: 'Login exitoso',
@@ -1781,8 +1800,8 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res) => {
       linePhone
     });
   } catch (error) {
-    logger.error(`Login username-only error: ${error.message}`);
-    res.status(500).json({ error: 'Error del servidor' });
+    logger.error(`Login username-only error (${error.name}): ${error.message}\n${error.stack}`);
+    res.status(500).json({ error: `Error del servidor: ${error.message}` });
   }
 });
 
