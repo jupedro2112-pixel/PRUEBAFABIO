@@ -317,12 +317,17 @@ VIP.refunds = (function () {
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
             claimBtn.onclick = null;
         } else if (!canClaim()) {
-            // Reclamable, pero sin app instalada o sin notificaciones — bloqueo amable.
-            extraInfo.innerHTML = '<span style="color: #ffaa44;">🔒 Para reclamar necesitás instalar la app y activar las notificaciones.</span>';
+            // Reclamable en tiempo, pero sin app instalada o sin notificaciones.
+            // Mostramos el bloque embebido de "Condición para reclamar" + el
+            // botón principal cambia a "Activar para reclamar".
+            extraInfo.innerHTML = '';
             claimBtn.disabled = false;
             claimBtn.textContent = '🔒 Activar para reclamar';
             claimBtn.style.background = 'linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%)';
             claimBtn.onclick = () => {
+                // Reintentar canClaim por si el user activó algo desde los
+                // botones embebidos mientras tenía el modal abierto.
+                if (canClaim()) return claimRefund(type);
                 VIP.ui.hideModal('refundModal');
                 openRequirementsModal(type);
             };
@@ -334,7 +339,68 @@ VIP.refunds = (function () {
             claimBtn.onclick = () => claimRefund(type);
         }
 
+        // Render del bloque de requisitos embebido en el detalle.
+        renderRefundRequirementsBlock(type);
+
         VIP.ui.showModal('refundModal');
+    }
+
+    // Pinta el bloque de requisitos dentro del refundModal según el estado actual.
+    // Si el user ya cumple ambas condiciones, se oculta.
+    function renderRefundRequirementsBlock(claimType) {
+        const block = document.getElementById('refundRequirementsBlock');
+        if (!block) return;
+        if (canClaim()) {
+            block.style.display = 'none';
+            return;
+        }
+        block.style.display = 'block';
+
+        const installOk = isStandalone();
+        const notifOk = isNotifGranted();
+
+        const installBadge = document.getElementById('refundReqInstallBadge');
+        const notifBadge   = document.getElementById('refundReqNotifBadge');
+        const installBtn   = document.getElementById('refundReqInstallBtn');
+        const notifBtn     = document.getElementById('refundReqNotifBtn');
+
+        if (installBadge) installBadge.textContent = installOk ? '✅' : '⏳';
+        if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
+
+        if (installBtn) {
+            installBtn.disabled = installOk;
+            installBtn.textContent = installOk ? '✅ App instalada' : '📱 Instalar la app';
+            installBtn.style.opacity = installOk ? '0.6' : '1';
+            installBtn.onclick = async () => {
+                _pendingClaimType = claimType || null;
+                await handleRequirementInstall();
+                renderRefundRequirementsBlock(claimType);
+                refreshClaimButtonState(claimType);
+            };
+        }
+        if (notifBtn) {
+            notifBtn.disabled = notifOk;
+            notifBtn.textContent = notifOk ? '✅ Notificaciones activas' : '🔔 Activar notificaciones';
+            notifBtn.style.opacity = notifOk ? '0.6' : '1';
+            notifBtn.onclick = async () => {
+                _pendingClaimType = claimType || null;
+                await handleRequirementNotif();
+                renderRefundRequirementsBlock(claimType);
+                refreshClaimButtonState(claimType);
+            };
+        }
+    }
+
+    // Refresca el botón "Reclamar" del refundModal cuando cambia el estado.
+    function refreshClaimButtonState(claimType) {
+        const claimBtn = document.getElementById('claimRefundBtn');
+        if (!claimBtn) return;
+        if (canClaim()) {
+            claimBtn.textContent = '🎁 Reclamar Reembolso';
+            claimBtn.style.background = '';
+            claimBtn.onclick = () => claimRefund(claimType);
+            VIP.ui.showToast('✅ Listo, ya podés reclamar', 'success');
+        }
     }
 
     async function claimRefund(type) {
@@ -410,14 +476,22 @@ VIP.refunds = (function () {
     }
 
     // Si el user instala la app o cambia el permiso de notificaciones mientras
-    // el modal está abierto (ej: vuelve de Settings), refrescamos los badges.
+    // algún modal está abierto (ej: vuelve de Settings), refrescamos los badges.
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-            const modal = document.getElementById('refundRequirementsModal');
-            if (modal && !modal.classList.contains('hidden')) {
-                const ok = refreshRequirementsModal();
-                if (ok) tryResumePendingClaim();
-            }
+        if (document.visibilityState !== 'visible') return;
+
+        // 1) Modal de requisitos standalone
+        const reqModal = document.getElementById('refundRequirementsModal');
+        if (reqModal && !reqModal.classList.contains('hidden')) {
+            const ok = refreshRequirementsModal();
+            if (ok) tryResumePendingClaim();
+        }
+
+        // 2) Bloque embebido dentro del refundModal (detalle del reembolso)
+        const refundModal = document.getElementById('refundModal');
+        if (refundModal && !refundModal.classList.contains('hidden')) {
+            renderRefundRequirementsBlock(_pendingClaimType);
+            refreshClaimButtonState(_pendingClaimType);
         }
     });
 

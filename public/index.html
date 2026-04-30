@@ -1235,7 +1235,47 @@
                 
                 <!-- Info de disponibilidad (solo para semanal y mensual) -->
                 <div id="refundAvailabilityInfo" style="margin-top: 10px; padding: 10px; border-radius: 8px; display: none;"></div>
-                
+
+                <!-- Requisitos para reclamar (PWA + notificaciones) — visible solo
+                     cuando el usuario aún no instaló la app o no activó las notifs -->
+                <div id="refundRequirementsBlock" style="display:none; margin-top:14px; background:rgba(106,13,173,0.10); border:1px solid rgba(157,78,221,0.45); border-radius:12px; padding:14px;">
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                        <span style="font-size:18px;">🔒</span>
+                        <strong style="color:#d4b3ff; font-size:14px;">Condición para reclamar</strong>
+                    </div>
+                    <p style="margin:0 0 12px; color:#ddd; font-size:12px; line-height:1.45;">
+                        Para reclamar este reembolso necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamarlo sin problemas.
+                    </p>
+
+                    <!-- Paso 1: Instalar -->
+                    <div style="background:rgba(0,0,0,0.30); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 12px; margin-bottom:8px;">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <span id="refundReqInstallBadge" style="font-size:18px; line-height:1;">⏳</span>
+                            <strong style="color:#fff; font-size:13px;">1. Instalá la app en tu celular</strong>
+                        </div>
+                        <p style="margin:0 0 8px; color:#bbb; font-size:11px; line-height:1.4;">
+                            Te aparece un acceso directo en la pantalla de inicio.
+                        </p>
+                        <button id="refundReqInstallBtn" type="button" class="btn btn-primary" style="width:100%; font-size:12px; padding:8px;">
+                            📱 Instalar la app
+                        </button>
+                    </div>
+
+                    <!-- Paso 2: Notificaciones -->
+                    <div style="background:rgba(0,0,0,0.30); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px 12px;">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <span id="refundReqNotifBadge" style="font-size:18px; line-height:1;">⏳</span>
+                            <strong style="color:#fff; font-size:13px;">2. Activá las notificaciones</strong>
+                        </div>
+                        <p style="margin:0 0 8px; color:#bbb; font-size:11px; line-height:1.4;">
+                            Cuando el sistema te lo pida, tocá <strong>Permitir</strong>. Sin notificaciones no podemos avisarte cuando se acredite tu reembolso.
+                        </p>
+                        <button id="refundReqNotifBtn" type="button" class="btn btn-primary" style="width:100%; font-size:12px; padding:8px; background:linear-gradient(135deg,#6a0dad 0%,#9d4edd 100%);">
+                            🔔 Activar notificaciones
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Info adicional -->
                 <div id="refundExtraInfo" style="margin-top: 10px; font-size: 11px; color: #888; text-align: center;"></div>
             </div>
