@@ -3841,32 +3841,90 @@ async function getRefundNonDepositCredits(username, fromDate, toDate) {
 // les apareciera el botón de reclamar. Los helpers getUserNet* de
 // jugaygana.js usan fromtime/totime en epoch seconds y leen los totales
 // preprocesados (en centavos) que devuelve la API.
+// Devuelve {deposits, withdrawals, source, period} para uno de los 3 períodos.
+// 1) Primero intenta jugaygana.getUserNet* (ShowUserTransfersByAgent — totales
+//    pre-agregados en cents que devuelve la API admin).
+// 2) Si esa acción devuelve 0/0, hace fallback a jugayganaMovements.getUserMovements
+//    (ShowUserMovements — lista cruda de movimientos que parseamos a mano).
+//    Esto cubre el caso en que el usuario no aparece bajo SESSION_PARENT_ID
+//    como hijo directo, o la otra acción ignora el filtro y devuelve totales
+//    vacíos. Con dos caminos minimizamos los falsos $0.
 async function getRealMovementsTotals(username, period) {
+  const periodToRange = {
+    daily: () => {
+      const r = jugaygana.getYesterdayRangeArgentinaEpoch();
+      return { fromStr: r.dateStr, toStr: r.dateStr };
+    },
+    weekly: () => {
+      const r = jugaygana.getLastWeekRangeArgentinaEpoch();
+      return { fromStr: r.fromDateStr, toStr: r.toDateStr };
+    },
+    monthly: () => {
+      const r = jugaygana.getLastMonthRangeArgentinaEpoch();
+      return { fromStr: r.fromDateStr, toStr: r.toDateStr };
+    }
+  };
+  if (!periodToRange[period]) {
+    logger.warn(`[REFUND] getRealMovementsTotals período inválido: ${period}`);
+    return { deposits: 0, withdrawals: 0, source: 'invalid', period };
+  }
+  const { fromStr, toStr } = periodToRange[period]();
+
+  // 1) Intento principal: ShowUserTransfersByAgent
   try {
-    let result;
-    if (period === 'daily') {
-      result = await jugaygana.getUserNetYesterday(username);
-    } else if (period === 'weekly') {
-      result = await jugaygana.getUserNetLastWeek(username);
-    } else if (period === 'monthly') {
-      result = await jugaygana.getUserNetLastMonth(username);
+    let primary;
+    if (period === 'daily') primary = await jugaygana.getUserNetYesterday(username);
+    else if (period === 'weekly') primary = await jugaygana.getUserNetLastWeek(username);
+    else if (period === 'monthly') primary = await jugaygana.getUserNetLastMonth(username);
+
+    if (primary && primary.success) {
+      const dep = Number(primary.totalDeposits) || 0;
+      const wit = Number(primary.totalWithdraws) || 0;
+      if (dep > 0 || wit > 0) {
+        logger.info(`[REFUND] OK source=AgentTransfers user=${username} period=${period} dep=${dep} wit=${wit} range=${fromStr}..${toStr}`);
+        return { deposits: dep, withdrawals: wit, source: 'AgentTransfers', period: `${fromStr}..${toStr}` };
+      }
+      logger.warn(`[REFUND] AgentTransfers vacío user=${username} period=${period} → probando ShowUserMovements`);
     } else {
-      logger.warn(`[REFUND] getRealMovementsTotals período inválido: ${period}`);
-      return { deposits: 0, withdrawals: 0 };
+      logger.warn(`[REFUND] AgentTransfers ERROR user=${username} period=${period} err=${primary && primary.error} → probando ShowUserMovements`);
     }
-    if (!result || !result.success) {
-      logger.warn(`[REFUND] getRealMovementsTotals FALLBACK {0,0} user=${username} period=${period} error=${result && result.error}`);
-      return { deposits: 0, withdrawals: 0 };
-    }
-    const out = {
-      deposits: Number(result.totalDeposits) || 0,
-      withdrawals: Number(result.totalWithdraws) || 0
-    };
-    logger.info(`[REFUND] getRealMovementsTotals OK user=${username} period=${period} deposits=${out.deposits} withdrawals=${out.withdrawals} range=${result.dateStr || (result.fromDateStr + '..' + result.toDateStr)}`);
-    return out;
   } catch (err) {
-    logger.error(`[REFUND] getRealMovementsTotals EXCEPTION user=${username} period=${period} err=${err.message}`);
-    return { deposits: 0, withdrawals: 0 };
+    logger.error(`[REFUND] AgentTransfers EXCEPTION user=${username} period=${period} err=${err.message}`);
+  }
+
+  // 2) Fallback: ShowUserMovements (lista cruda)
+  try {
+    const fb = await jugayganaMovements.getUserMovements(username, {
+      startDate: fromStr,
+      endDate: toStr,
+      pageSize: 500
+    });
+    if (!fb || !fb.success) {
+      logger.warn(`[REFUND] ShowUserMovements FAIL user=${username} period=${period} err=${fb && fb.error}`);
+      return { deposits: 0, withdrawals: 0, source: 'none', period: `${fromStr}..${toStr}` };
+    }
+    let dep = 0, wit = 0;
+    for (const m of (fb.movements || [])) {
+      const type = (m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toString().toLowerCase();
+      let amount = 0;
+      if (m.amount !== undefined) amount = parseFloat(m.amount);
+      else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
+      else if (m.value !== undefined) amount = parseFloat(m.value);
+      else if (m.Value !== undefined) amount = parseFloat(m.Value);
+      else if (m.monto !== undefined) amount = parseFloat(m.monto);
+      else if (m.Monto !== undefined) amount = parseFloat(m.Monto);
+      const isDep = type.includes('deposit') || type.includes('credit') ||
+                    type.includes('carga') || type.includes('recarga') || amount > 0;
+      const isWit = type.includes('withdraw') || type.includes('debit') ||
+                    type.includes('retiro') || type.includes('extraccion') || amount < 0;
+      if (isDep) dep += Math.abs(amount);
+      else if (isWit) wit += Math.abs(amount);
+    }
+    logger.info(`[REFUND] OK source=ShowUserMovements user=${username} period=${period} dep=${dep} wit=${wit} items=${(fb.movements || []).length} range=${fromStr}..${toStr}`);
+    return { deposits: dep, withdrawals: wit, source: 'ShowUserMovements', period: `${fromStr}..${toStr}` };
+  } catch (err) {
+    logger.error(`[REFUND] ShowUserMovements EXCEPTION user=${username} period=${period} err=${err.message}`);
+    return { deposits: 0, withdrawals: 0, source: 'error', period: `${fromStr}..${toStr}` };
   }
 }
 
@@ -3929,6 +3987,9 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
         ...dailyStatus,
         potentialAmount: dailyPotential,
         netAmount: dailyNetLoss,
+        deposits: dailyDeposits,
+        withdrawals: dailyWithdrawals,
+        source: dailyMov.source,
         percentage: 8,
         period: yesterdayRange.dateStr
       },
@@ -3936,6 +3997,9 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
         ...weeklyStatus,
         potentialAmount: weeklyPotential,
         netAmount: weeklyNetLoss,
+        deposits: weeklyDeposits,
+        withdrawals: weeklyWithdrawals,
+        source: weeklyMov.source,
         percentage: 5,
         period: `${lastWeekRange.fromDateStr} a ${lastWeekRange.toDateStr}`
       },
@@ -3943,6 +4007,9 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
         ...monthlyStatus,
         potentialAmount: monthlyPotential,
         netAmount: monthlyNetLoss,
+        deposits: monthlyDeposits,
+        withdrawals: monthlyWithdrawals,
+        source: monthlyMov.source,
         percentage: 3,
         period: `${lastMonthRange.fromDateStr} a ${lastMonthRange.toDateStr}`
       }

@@ -1649,11 +1649,20 @@
                 <!-- Movimientos del período -->
                 <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 10px;">
                     <p id="refundMovementsTitle" style="color: #aaa; font-size: 11px; margin-bottom: 8px; text-align: center;">📊 BASE DE CÁLCULO</p>
-                    <p style="color: #ff9900; font-size: 11px; margin-bottom: 8px; text-align: center;">⚠️ El reembolso se calcula sobre tus <strong>pérdidas netas</strong> (NETWIN), no sobre el balance de depósitos y retiros.</p>
+                    <p style="color: #ff9900; font-size: 11px; margin-bottom: 8px; text-align: center;">⚠️ El reembolso se calcula sobre tus <strong>pérdidas netas</strong> (cargas - retiros).</p>
                     <div class="refund-info-row">
-                        <span>Pérdidas del período:</span>
-                        <span id="refundNetAmount" style="color: #ff6b6b;">$0</span>
+                        <span>Cargas del período:</span>
+                        <span id="refundDeposits" style="color: #00ff88;">$0</span>
                     </div>
+                    <div class="refund-info-row">
+                        <span>Retiros del período:</span>
+                        <span id="refundWithdrawals" style="color: #88ccff;">$0</span>
+                    </div>
+                    <div class="refund-info-row" style="border-top: 1px dashed rgba(255,255,255,0.15); margin-top: 6px; padding-top: 6px;">
+                        <span><strong>Pérdida neta:</strong></span>
+                        <span id="refundNetAmount" style="color: #ff6b6b;"><strong>$0</strong></span>
+                    </div>
+                    <div id="refundDebugSource" style="margin-top: 6px; color: #888; font-size: 10px; text-align: center;"></div>
                 </div>
                 
                 <!-- Reembolso -->

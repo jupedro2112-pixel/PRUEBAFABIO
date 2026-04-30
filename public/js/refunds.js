@@ -235,6 +235,12 @@ VIP.refunds = (function () {
         document.getElementById('refundPeriod').textContent = typeData.period || '-';
         document.getElementById('refundNetAmount').textContent = `$${(typeData.netAmount || 0).toLocaleString()}`;
         document.getElementById('refundAmount').textContent = `$${(typeData.potentialAmount || 0).toLocaleString()}`;
+        const depEl = document.getElementById('refundDeposits');
+        const witEl = document.getElementById('refundWithdrawals');
+        const srcEl = document.getElementById('refundDebugSource');
+        if (depEl) depEl.textContent = `$${(typeData.deposits || 0).toLocaleString()}`;
+        if (witEl) witEl.textContent = `$${(typeData.withdrawals || 0).toLocaleString()}`;
+        if (srcEl) srcEl.textContent = typeData.source ? `fuente: ${typeData.source}` : '';
 
         const availabilityInfo = document.getElementById('refundAvailabilityInfo');
         availabilityInfo.style.display = 'none';
