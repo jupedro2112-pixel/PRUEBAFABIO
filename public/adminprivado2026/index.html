@@ -64,6 +64,10 @@
                     <span>👥</span>
                     <span>Ingresos diarios</span>
                 </a>
+                <a href="#" class="nav-item" data-section="notifs">
+                    <span>🔔</span>
+                    <span>Notificaciones</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -93,6 +97,9 @@
                         </p>
                     </div>
                     <div id="userLinesSlots" style="display:flex;flex-direction:column;gap:10px;"></div>
+                    <button type="button" id="addLineBtn" onclick="addLineSlot()" style="margin-top:10px;width:100%;padding:10px;font-size:13px;font-weight:700;background:rgba(212,175,55,0.10);border:1.5px dashed rgba(212,175,55,0.45);color:#d4af37;border-radius:10px;cursor:pointer;transition:background 0.18s;">
+                        ➕ Agregar otra línea / equipo
+                    </button>
                     <div style="margin-top:18px;padding-top:14px;border-top:1px dashed rgba(255,255,255,0.1);">
                         <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Número principal predeterminado (si el inicio del usuario no coincide con ningún equipo)</label>
                         <input type="text" id="userLinesDefaultPhone" placeholder="+54 11 0000 0000" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;box-sizing:border-box;">
@@ -155,6 +162,48 @@
                 </div>
                 <div id="monthlyReportContent" class="report-content">
                     <div class="empty-state">Cargá el reporte para ver los reclamos.</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: ENVÍO DE NOTIFICACIONES PUSH MASIVAS
+                 ============================================ -->
+            <section id="notifsSection" class="section">
+                <div class="panel-header">
+                    <h2>🔔 Enviar notificaciones</h2>
+                </div>
+                <div class="cbu-form" style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.18);border-radius:12px;padding:18px;max-width:680px;">
+                    <div style="background:rgba(0,0,0,0.30);border-left:3px solid #d4af37;padding:10px 12px;margin-bottom:16px;border-radius:6px;">
+                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.55;">
+                            La notificación llega a <strong>todos los usuarios con la app instalada y notificaciones activadas</strong>. Útil para avisar de promos, bonus o alertas. Los que no tienen la app instalada no reciben.
+                        </p>
+                    </div>
+
+                    <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+                        <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Título</label>
+                        <input type="text" id="notifTitle" maxlength="60" placeholder="Ej: 🎁 Bonus de fin de semana"
+                               style="padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:14px;font-weight:600;box-sizing:border-box;">
+                        <small style="color:#888;font-size:10px;">Máximo 60 caracteres</small>
+                    </div>
+
+                    <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+                        <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Mensaje</label>
+                        <textarea id="notifBody" maxlength="180" rows="3" placeholder="Ej: Activá tu bono del 50% en cargas de hoy hasta las 23:59."
+                                  style="padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:14px;line-height:1.4;resize:vertical;box-sizing:border-box;font-family:inherit;"></textarea>
+                        <small style="color:#888;font-size:10px;">Máximo 180 caracteres</small>
+                    </div>
+
+                    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin-bottom:14px;">
+                        <p style="margin:0 0 4px;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.8px;">Vista previa</p>
+                        <strong id="notifPreviewTitle" style="color:#fff;font-size:13px;display:block;">Título…</strong>
+                        <span id="notifPreviewBody" style="color:#ccc;font-size:12px;line-height:1.4;">Mensaje…</span>
+                    </div>
+
+                    <button class="btn-primary" onclick="sendBulkNotification()" style="width:100%;padding:12px;font-size:14px;font-weight:700;">
+                        🚀 Enviar a todos los usuarios
+                    </button>
+
+                    <div id="notifResult" style="margin-top:14px;display:none;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;color:#ddd;font-size:12px;"></div>
                 </div>
             </section>
 

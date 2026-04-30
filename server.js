@@ -5954,18 +5954,22 @@ app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, re
 // Se muestran al usuario en la pantalla de reembolsos.
 // 10 slots configurables + un teléfono default si ninguno matchea.
 // ============================================
-const USER_LINES_MAX_SLOTS = 8;
+const USER_LINES_MAX_SLOTS = 30;
 
 app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const config = (await getConfig('userLinesByPrefix')) || {};
     const slots = Array.isArray(config.slots) ? config.slots : [];
-    const padded = [];
-    for (let i = 0; i < USER_LINES_MAX_SLOTS; i++) {
-      const s = slots[i] || {};
-      padded.push({ prefix: s.prefix || '', phone: s.phone || '' });
-    }
-    res.json({ slots: padded, defaultPhone: config.defaultPhone || '' });
+    // Devolvemos solo los slots con datos (no padding); el frontend agrega
+    // un botón "+ Agregar línea" para sumar más, hasta USER_LINES_MAX_SLOTS.
+    const cleaned = slots
+      .filter(s => s && (s.prefix || s.phone))
+      .map(s => ({ prefix: s.prefix || '', phone: s.phone || '' }));
+    res.json({
+      slots: cleaned,
+      defaultPhone: config.defaultPhone || '',
+      maxSlots: USER_LINES_MAX_SLOTS
+    });
   } catch (error) {
     console.error('Error obteniendo user-lines:', error);
     res.status(500).json({ error: 'Error del servidor' });

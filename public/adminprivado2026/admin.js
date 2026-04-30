@@ -7,7 +7,9 @@ const API_URL = '';
 let currentToken = localStorage.getItem('adminToken') || null;
 let currentAdmin = null;
 
-const USER_LINES_SLOTS = 8;
+// Máximo de slots permitidos por el backend (USER_LINES_MAX_SLOTS).
+// Lo descubrimos del response de GET /api/admin/user-lines y lo guardamos acá.
+let USER_LINES_MAX = 30;
 
 // ============================================
 // HELPERS
@@ -155,7 +157,8 @@ function showSection(sectionKey) {
         reportDaily: 'reportDailySection',
         reportWeekly: 'reportWeeklySection',
         reportMonthly: 'reportMonthlySection',
-        ingresos: 'ingresosSection'
+        ingresos: 'ingresosSection',
+        notifs: 'notifsSection'
     };
     const sectionId = map[sectionKey];
     if (sectionId) {
@@ -179,6 +182,9 @@ function showSection(sectionKey) {
         loadRefundsReport('monthly');
     } else if (sectionKey === 'ingresos') {
         loadIngresosReport();
+    } else if (sectionKey === 'notifs') {
+        // Setear vista previa con valores actuales
+        updateNotifPreview();
     }
 }
 
@@ -196,29 +202,91 @@ function renderUserLinesSlots(slots) {
     const container = document.getElementById('userLinesSlots');
     if (!container) return;
     const data = Array.isArray(slots) ? slots : [];
-    let html = '';
-    for (let i = 0; i < USER_LINES_SLOTS; i++) {
-        const s = data[i] || {};
-        const prefix = s.prefix || '';
-        const phone = s.phone || '';
-        html += `
-            <div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;font-weight:800;font-size:11px;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">${i + 1}</span>
-                    <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Equipo ${i + 1}</span>
-                </div>
-                <div style="display:flex;flex-direction:column;gap:4px;">
-                    <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
-                    <input type="text" class="user-line-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
-                </div>
-                <div style="display:flex;flex-direction:column;gap:4px;">
-                    <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
-                    <input type="text" class="user-line-phone" placeholder="+54 9 11 5555 1111" value="${escapeHtml(phone)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(212,175,55,0.25);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;width:100%;box-sizing:border-box;">
-                </div>
+    // Si no hay ningún slot guardado, arrancamos con uno vacío para que el
+    // admin no vea la sección completamente desierta.
+    const items = data.length > 0 ? data : [{ prefix: '', phone: '' }];
+    container.innerHTML = items.map((s, i) => slotHtml(i, s.prefix || '', s.phone || '')).join('');
+    updateAddLineButton();
+}
+
+function slotHtml(i, prefix, phone) {
+    return `
+        <div class="user-line-slot" data-slot-index="${i}" style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;position:relative;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;font-weight:800;font-size:11px;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">${i + 1}</span>
+                <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Equipo ${i + 1}</span>
+                <button type="button" onclick="removeLineSlot(${i})" title="Eliminar este equipo" style="margin-left:auto;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.35);color:#ff8080;font-size:11px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:600;">🗑️ Quitar</button>
             </div>
-        `;
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
+                <input type="text" class="user-line-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
+                <input type="text" class="user-line-phone" placeholder="+54 9 11 5555 1111" value="${escapeHtml(phone)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(212,175,55,0.25);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;width:100%;box-sizing:border-box;">
+            </div>
+        </div>
+    `;
+}
+
+function currentSlotsCount() {
+    const c = document.getElementById('userLinesSlots');
+    return c ? c.querySelectorAll('.user-line-slot').length : 0;
+}
+
+function addLineSlot() {
+    const container = document.getElementById('userLinesSlots');
+    if (!container) return;
+    const i = currentSlotsCount();
+    if (i >= USER_LINES_MAX) {
+        showToast(`Máximo ${USER_LINES_MAX} líneas`, 'error');
+        return;
     }
-    container.innerHTML = html;
+    container.insertAdjacentHTML('beforeend', slotHtml(i, '', ''));
+    updateAddLineButton();
+    // Foco en el primer input del slot recién agregado
+    const last = container.lastElementChild;
+    if (last) {
+        const first = last.querySelector('.user-line-prefix');
+        if (first) first.focus();
+    }
+}
+
+function removeLineSlot(index) {
+    const container = document.getElementById('userLinesSlots');
+    if (!container) return;
+    const slot = container.querySelector(`.user-line-slot[data-slot-index="${index}"]`);
+    if (!slot) return;
+    slot.remove();
+    // Renumerar los slots restantes para que sigan siendo 1, 2, 3…
+    const remaining = container.querySelectorAll('.user-line-slot');
+    remaining.forEach((el, i) => {
+        el.setAttribute('data-slot-index', i);
+        const num = el.querySelector('span'); // primer span = badge con número
+        if (num) num.textContent = String(i + 1);
+        const label = el.querySelectorAll('span')[1];
+        if (label) label.textContent = `Equipo ${i + 1}`;
+        const removeBtn = el.querySelector('button[onclick^="removeLineSlot"]');
+        if (removeBtn) removeBtn.setAttribute('onclick', `removeLineSlot(${i})`);
+    });
+    updateAddLineButton();
+}
+
+function updateAddLineButton() {
+    const btn = document.getElementById('addLineBtn');
+    if (!btn) return;
+    const count = currentSlotsCount();
+    if (count >= USER_LINES_MAX) {
+        btn.disabled = true;
+        btn.textContent = `Máximo alcanzado (${USER_LINES_MAX})`;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+    } else {
+        btn.disabled = false;
+        btn.textContent = `➕ Agregar otra línea / equipo (${count}/${USER_LINES_MAX})`;
+        btn.style.opacity = '1';
+        btn.style.cursor = 'pointer';
+    }
 }
 
 async function loadUserLines() {
@@ -229,6 +297,9 @@ async function loadUserLines() {
             return;
         }
         const data = await r.json();
+        if (typeof data.maxSlots === 'number' && data.maxSlots > 0) {
+            USER_LINES_MAX = data.maxSlots;
+        }
         renderUserLinesSlots(data.slots || []);
         const def = document.getElementById('userLinesDefaultPhone');
         if (def) def.value = data.defaultPhone || '';
@@ -409,6 +480,83 @@ function renderIngresosReport(container, data) {
 }
 
 // ============================================
+// NOTIFICACIONES PUSH MASIVAS
+// ============================================
+function updateNotifPreview() {
+    const titleEl = document.getElementById('notifTitle');
+    const bodyEl = document.getElementById('notifBody');
+    const pTitle = document.getElementById('notifPreviewTitle');
+    const pBody = document.getElementById('notifPreviewBody');
+    if (!titleEl || !bodyEl) return;
+    if (pTitle) pTitle.textContent = titleEl.value.trim() || 'Título…';
+    if (pBody) pBody.textContent = bodyEl.value.trim() || 'Mensaje…';
+}
+
+async function sendBulkNotification() {
+    const title = (document.getElementById('notifTitle').value || '').trim();
+    const body = (document.getElementById('notifBody').value || '').trim();
+    const result = document.getElementById('notifResult');
+
+    if (!title) {
+        showToast('Falta el título', 'error');
+        return;
+    }
+    if (!body) {
+        showToast('Falta el mensaje', 'error');
+        return;
+    }
+
+    const ok = window.confirm(
+        `Vas a enviar esta notificación a TODOS los usuarios con la app instalada y notificaciones activadas.\n\n` +
+        `Título: ${title}\nMensaje: ${body}\n\n¿Confirmás el envío?`
+    );
+    if (!ok) return;
+
+    const btn = document.querySelector('#notifsSection button.btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando…'; }
+    if (result) {
+        result.style.display = 'block';
+        result.innerHTML = '⏳ Enviando notificación a todos los usuarios…';
+    }
+
+    try {
+        const r = await authFetch('/api/notifications/send-all', {
+            method: 'POST',
+            body: JSON.stringify({
+                title,
+                body,
+                data: { source: 'admin-bulk', tag: 'admin-broadcast' }
+            })
+        });
+        const data = await r.json();
+        if (r.ok && data.success) {
+            const summary =
+                `✅ <strong>Envío completado</strong><br>` +
+                `Usuarios alcanzados: <strong>${data.totalUsers ?? '?'}</strong><br>` +
+                `Entregados: <strong>${data.successCount ?? 0}</strong>` +
+                (data.failureCount ? ` · Fallidos: <strong>${data.failureCount}</strong>` : '') +
+                (data.cleanedTokens ? `<br>Tokens inválidos limpiados: ${data.cleanedTokens}` : '');
+            if (result) result.innerHTML = summary;
+            showToast('Notificación enviada', 'success');
+            // Reset form
+            document.getElementById('notifTitle').value = '';
+            document.getElementById('notifBody').value = '';
+            updateNotifPreview();
+        } else {
+            const msg = data.error || data.message || 'Error desconocido';
+            if (result) result.innerHTML = `❌ Error: ${escapeHtml(msg)}`;
+            showToast('Error enviando', 'error');
+        }
+    } catch (err) {
+        console.error('sendBulkNotification error:', err);
+        if (result) result.innerHTML = `❌ Error de conexión: ${escapeHtml(err.message)}`;
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🚀 Enviar a todos los usuarios'; }
+    }
+}
+
+// ============================================
 // INIT
 // ============================================
 document.addEventListener('DOMContentLoaded', function () {
@@ -428,6 +576,12 @@ document.addEventListener('DOMContentLoaded', function () {
             if (key) showSection(key);
         });
     });
+
+    // Live preview de la notificación masiva
+    const ntEl = document.getElementById('notifTitle');
+    const nbEl = document.getElementById('notifBody');
+    if (ntEl) ntEl.addEventListener('input', updateNotifPreview);
+    if (nbEl) nbEl.addEventListener('input', updateNotifPreview);
 
     // Si ya hay token guardado, intentar entrar directo
     if (currentToken) {
