@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v13';
+const CACHE_VERSION = 'v14-refunds';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -45,8 +45,11 @@ const PRECACHE_URLS = [
 // Determina si un asset (no navegación) debe usar network-first.
 // NOTA: Las navigation requests (modo 'navigate') se excluyen antes de
 // llegar aquí, por lo que NO es necesario listar '/' ni '/index.html'.
+// Los .js de la app van por network-first para que los deploys sean inmediatos
+// (y no haya que esperar a que expire el caché tras cada cambio).
 function isNetworkFirst(url) {
   return (
+    url.includes('/js/') ||
     url.includes('/app.js') ||
     url.includes('/manifest.json')
   );
