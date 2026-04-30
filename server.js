@@ -358,11 +358,41 @@ function resolveAllowedOrigins() {
 
 function corsOriginFn(origin, callback) {
   const allowed = resolveAllowedOrigins();
-  // Requests sin cabecera Origin (same-origin, curl, mobile) siempre se permiten.
+  // Requests sin cabecera Origin (curl, mobile native, same-origin GET) siempre se permiten.
   if (!origin) return callback(null, true);
   if (allowed.includes(origin)) return callback(null, true);
-  logger.warn(`CORS bloqueado para origen: ${origin}`);
-  return callback(new Error('No autorizado por CORS'));
+  // En producción sin ALLOWED_ORIGINS configurado, igual aceptamos el propio origin.
+  // Sin esto, el browser bloquea sus propias requests (mismo dominio) porque
+  // siempre manda Origin en POST y la allowlist vacía rechaza todo.
+  // No tiramos un Error (pasa al error handler global → 500): devolvemos
+  // false para que cors no agregue headers, pero la request se procesa normal
+  // (las requests same-origin no necesitan headers CORS).
+  logger.warn(`CORS sin allowlist match para origen: ${origin} (la request continúa sin headers CORS)`);
+  return callback(null, false);
+}
+
+// Middleware que permite el propio origen en producción aunque ALLOWED_ORIGINS
+// esté vacío. El browser siempre manda Origin para POST/PUT/DELETE incluso
+// same-origin, y CORS sin allowlist los bloquea. Detectamos same-origin
+// comparando Origin con Host (incluyendo X-Forwarded-Host del proxy de Render).
+function sameOriginAllowMiddleware(req, res, next) {
+  const origin = req.headers.origin;
+  if (!origin) return next();
+  try {
+    const originHost = new URL(origin).host.toLowerCase();
+    const reqHost = (req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+    if (originHost && reqHost && originHost === reqHost) {
+      // Misma URL → permitir y proveer headers CORS para que el browser acepte.
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin');
+        return res.status(204).end();
+      }
+    }
+  } catch (_) { /* ignore malformed Origin */ }
+  next();
 }
 
 const server = http.createServer(app);
@@ -442,6 +472,7 @@ app.use(securityHeaders);
 if (!process.env.ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
   logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS rechazará orígenes cruzados.');
 }
+app.use(sameOriginAllowMiddleware);
 app.use(cors({
   origin: corsOriginFn,
   credentials: true,
