@@ -6,6 +6,106 @@ window.VIP = window.VIP || {};
 
 VIP.refunds = (function () {
 
+    // ---- Requisitos para reclamar: PWA instalada + notificaciones permitidas ----
+    function isStandalone() {
+        try {
+            return window.matchMedia('(display-mode: standalone)').matches ||
+                   window.navigator.standalone === true;
+        } catch (_) { return false; }
+    }
+
+    function isNotifGranted() {
+        try {
+            return ('Notification' in window) && Notification.permission === 'granted';
+        } catch (_) { return false; }
+    }
+
+    function canClaim() {
+        return isStandalone() && isNotifGranted();
+    }
+
+    // Estado pendiente: si el user intenta reclamar sin cumplir, recordamos el
+    // tipo para retomar automáticamente cuando los requisitos se cumplan.
+    let _pendingClaimType = null;
+
+    function refreshRequirementsModal() {
+        const installOk = isStandalone();
+        const notifOk = isNotifGranted();
+
+        const installBadge = document.getElementById('reqInstallBadge');
+        const notifBadge   = document.getElementById('reqNotifBadge');
+        const installBtn   = document.getElementById('reqInstallBtn');
+        const notifBtn     = document.getElementById('reqNotifBtn');
+
+        if (installBadge) installBadge.textContent = installOk ? '✅' : '⏳';
+        if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
+
+        if (installBtn) {
+            installBtn.disabled = installOk;
+            installBtn.textContent = installOk ? '✅ App instalada' : '📱 Instalar la app';
+            installBtn.style.opacity = installOk ? '0.6' : '1';
+        }
+        if (notifBtn) {
+            notifBtn.disabled = notifOk;
+            notifBtn.textContent = notifOk ? '✅ Notificaciones activas' : '🔔 Activar notificaciones';
+            notifBtn.style.opacity = notifOk ? '0.6' : '1';
+        }
+
+        return installOk && notifOk;
+    }
+
+    function openRequirementsModal(claimType) {
+        _pendingClaimType = claimType || null;
+        refreshRequirementsModal();
+        VIP.ui.showModal('refundRequirementsModal');
+    }
+
+    async function handleRequirementInstall() {
+        try {
+            if (VIP.ui && typeof VIP.ui.installApp === 'function') {
+                await VIP.ui.installApp();
+            } else {
+                VIP.ui.showToast('Buscá "Instalar app" en el menú de tu navegador.', 'info');
+            }
+        } catch (err) {
+            console.error('installApp error:', err);
+        }
+        // Esperar un poco a que el sistema haga el cambio de display-mode
+        setTimeout(() => {
+            const ready = refreshRequirementsModal();
+            if (ready) tryResumePendingClaim();
+        }, 800);
+    }
+
+    async function handleRequirementNotif() {
+        try {
+            if (typeof window.enableNotifications === 'function') {
+                await window.enableNotifications();
+            } else if (VIP.notifications && typeof VIP.notifications.requestNotificationPermission === 'function') {
+                VIP.notifications.requestNotificationPermission();
+            } else if ('Notification' in window) {
+                await Notification.requestPermission();
+            }
+        } catch (err) {
+            console.error('enableNotifications error:', err);
+        }
+        setTimeout(() => {
+            const ready = refreshRequirementsModal();
+            if (ready) tryResumePendingClaim();
+        }, 600);
+    }
+
+    function tryResumePendingClaim() {
+        if (!_pendingClaimType) return;
+        if (!canClaim()) return;
+        const type = _pendingClaimType;
+        _pendingClaimType = null;
+        VIP.ui.showToast('✅ Listo. Continuamos con tu reembolso…', 'success');
+        VIP.ui.hideModal('refundRequirementsModal');
+        // Pequeño delay para que el toast sea visible antes de abrir el modal del reembolso.
+        setTimeout(() => showRefundModal(type), 250);
+    }
+
     async function loadRefundStatus() {
         try {
             const response = await fetch(`${VIP.config.API_URL}/api/refunds/status`, {
@@ -203,29 +303,47 @@ VIP.refunds = (function () {
             claimBtn.disabled = true;
             claimBtn.textContent = '❌ Sin saldo para reembolso';
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            claimBtn.onclick = null;
         } else if (isClaimed) {
             extraInfo.innerHTML = `<span style="color: #ffaa44;">⏳ Ya reclamaste este reembolso. Disponible en: <strong>${timeRemaining}</strong></span>`;
             claimBtn.disabled = true;
             claimBtn.textContent = `⏳ Disponible en ${timeRemaining}`;
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            claimBtn.onclick = null;
         } else if (!typeData.canClaim) {
             extraInfo.innerHTML = '<span style="color: #ffaa44;">⏳ No puedes reclamar este reembolso en este momento.</span>';
             claimBtn.disabled = true;
             claimBtn.textContent = '⏳ No disponible';
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            claimBtn.onclick = null;
+        } else if (!canClaim()) {
+            // Reclamable, pero sin app instalada o sin notificaciones — bloqueo amable.
+            extraInfo.innerHTML = '<span style="color: #ffaa44;">🔒 Para reclamar necesitás instalar la app y activar las notificaciones.</span>';
+            claimBtn.disabled = false;
+            claimBtn.textContent = '🔒 Activar para reclamar';
+            claimBtn.style.background = 'linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%)';
+            claimBtn.onclick = () => {
+                VIP.ui.hideModal('refundModal');
+                openRequirementsModal(type);
+            };
         } else {
             extraInfo.innerHTML = '<span style="color: #00ff88;">✅ ¡Puedes reclamar este reembolso!</span>';
             claimBtn.disabled = false;
             claimBtn.textContent = '🎁 Reclamar Reembolso';
             claimBtn.style.background = '';
+            claimBtn.onclick = () => claimRefund(type);
         }
-
-        claimBtn.onclick = () => claimRefund(type);
 
         VIP.ui.showModal('refundModal');
     }
 
     async function claimRefund(type) {
+        // Guardia de requisitos: app instalada + notificaciones activas.
+        if (!canClaim()) {
+            VIP.ui.hideModal('refundModal');
+            openRequirementsModal(type);
+            return;
+        }
         const claimBtn = document.getElementById('claimRefundBtn');
         if (claimBtn) {
             if (claimBtn.disabled) return;
@@ -269,6 +387,40 @@ VIP.refunds = (function () {
         VIP.ui.showModal('unifiedRefundModal');
     }
 
+    // Wire-up de los botones del modal de requisitos (después de DOM ready).
+    function wireRequirementsModal() {
+        const installBtn = document.getElementById('reqInstallBtn');
+        const notifBtn   = document.getElementById('reqNotifBtn');
+        const retryBtn   = document.getElementById('reqRetryBtn');
+        if (installBtn) installBtn.addEventListener('click', handleRequirementInstall);
+        if (notifBtn)   notifBtn.addEventListener('click', handleRequirementNotif);
+        if (retryBtn)   retryBtn.addEventListener('click', () => {
+            const ok = refreshRequirementsModal();
+            if (ok) {
+                tryResumePendingClaim();
+            } else {
+                VIP.ui.showToast('Todavía falta algún paso. Revisalos arriba.', 'info');
+            }
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wireRequirementsModal);
+    } else {
+        wireRequirementsModal();
+    }
+
+    // Si el user instala la app o cambia el permiso de notificaciones mientras
+    // el modal está abierto (ej: vuelve de Settings), refrescamos los badges.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            const modal = document.getElementById('refundRequirementsModal');
+            if (modal && !modal.classList.contains('hidden')) {
+                const ok = refreshRequirementsModal();
+                if (ok) tryResumePendingClaim();
+            }
+        }
+    });
+
     return {
         loadRefundStatus,
         updateRefundButtons,
@@ -276,7 +428,9 @@ VIP.refunds = (function () {
         startCountdown,
         showRefundModal,
         claimRefund,
-        showUnifiedRefundModal
+        showUnifiedRefundModal,
+        canClaim,
+        openRequirementsModal
     };
 
 })();

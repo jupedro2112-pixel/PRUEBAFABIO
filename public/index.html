@@ -1090,6 +1090,53 @@
         </div>
     </div>
 
+    <!-- Modal Requisitos para reclamar reembolso (PWA + notificaciones) -->
+    <div id="refundRequirementsModal" class="modal hidden" onclick="if(event.target===this)hideModal('refundRequirementsModal')">
+        <div class="modal-content" style="max-width: 480px; position: relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('refundRequirementsModal')" style="position:absolute;top:12px;right:12px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;z-index:10;line-height:1;">✕</button>
+            <div class="modal-header" style="padding-right:30px;">
+                <h2 style="color:#d4af37;">🔒 Para reclamar tu reembolso</h2>
+            </div>
+            <div style="padding: 4px 4px 8px; color:#ddd; font-size:13px; line-height:1.5;">
+                <p style="margin:0 0 14px;">
+                    Necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamar tus reembolsos sin problemas.
+                </p>
+
+                <!-- Paso 1: Instalar app -->
+                <div id="reqStepInstall" style="background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span id="reqInstallBadge" style="font-size:22px;line-height:1;">⏳</span>
+                        <strong style="color:#fff;font-size:14px;">1. Instalar la app</strong>
+                    </div>
+                    <p style="margin:0 0 10px;color:#bbb;font-size:12px;line-height:1.45;">
+                        Instalá esta página como aplicación en tu celular. Te aparece un acceso directo y podés recibir notificaciones.
+                    </p>
+                    <button id="reqInstallBtn" type="button" class="btn btn-primary" style="width:100%;font-size:13px;padding:10px;">
+                        📱 Instalar la app
+                    </button>
+                </div>
+
+                <!-- Paso 2: Activar notificaciones -->
+                <div id="reqStepNotif" style="background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span id="reqNotifBadge" style="font-size:22px;line-height:1;">⏳</span>
+                        <strong style="color:#fff;font-size:14px;">2. Activar las notificaciones</strong>
+                    </div>
+                    <p style="margin:0 0 10px;color:#bbb;font-size:12px;line-height:1.45;">
+                        Cuando el sistema te lo pida, tocá <strong>Permitir</strong>. Sin notificaciones no podemos avisarte cuando tu reembolso se acredite.
+                    </p>
+                    <button id="reqNotifBtn" type="button" class="btn btn-primary" style="width:100%;font-size:13px;padding:10px;background:linear-gradient(135deg,#6a0dad 0%,#9d4edd 100%);">
+                        🔔 Activar notificaciones
+                    </button>
+                </div>
+
+                <button id="reqRetryBtn" type="button" class="btn btn-secondary" style="width:100%;font-size:13px;padding:10px;">
+                    🔄 Verificar y volver a intentar
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Reembolso -->
     <div id="refundModal" class="modal hidden" onclick="if(event.target===this)hideModal('refundModal')">
         <div class="modal-content" style="max-width: 500px; position: relative;" onclick="event.stopPropagation()">
