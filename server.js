@@ -3832,49 +3832,86 @@ async function getRefundNonDepositCredits(username, fromDate, toDate) {
   return result[0]?.total || 0;
 }
 
+// Trae los totales REALES de depósitos y retiros del usuario en un rango
+// de fechas (YYYY-MM-DD), consultando la API de JUGAYGANA. Reusa el mismo
+// pipeline de procesamiento que jugayganaMovements.getDailyMovements pero
+// para rangos arbitrarios. Si JUGAYGANA falla, devuelve {0,0} y loggea —
+// nunca rompe el endpoint que la llama.
+async function getRealMovementsTotals(username, fromDateStr, toDateStr) {
+  try {
+    const result = await jugayganaMovements.getUserMovements(username, {
+      startDate: fromDateStr,
+      endDate: toDateStr,
+      pageSize: 500
+    });
+    if (!result || !result.success) {
+      logger.warn(`[REFUND] getRealMovementsTotals fallback {0,0} para ${username} (${fromDateStr}..${toDateStr}): ${result && result.error}`);
+      return { deposits: 0, withdrawals: 0 };
+    }
+    const movements = result.movements || [];
+    let deposits = 0;
+    let withdrawals = 0;
+    for (const m of movements) {
+      const type = (m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toString().toLowerCase();
+      let amount = 0;
+      if (m.amount !== undefined) amount = parseFloat(m.amount);
+      else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
+      else if (m.value !== undefined) amount = parseFloat(m.value);
+      else if (m.Value !== undefined) amount = parseFloat(m.Value);
+      else if (m.monto !== undefined) amount = parseFloat(m.monto);
+      else if (m.Monto !== undefined) amount = parseFloat(m.Monto);
+      const isDeposit = type.includes('deposit') || type.includes('credit') ||
+                        type.includes('carga') || type.includes('recarga') ||
+                        amount > 0;
+      const isWithdrawal = type.includes('withdraw') || type.includes('debit') ||
+                           type.includes('retiro') || type.includes('extraccion') ||
+                           amount < 0;
+      if (isDeposit) deposits += Math.abs(amount);
+      else if (isWithdrawal) withdrawals += Math.abs(amount);
+    }
+    return { deposits, withdrawals };
+  } catch (err) {
+    logger.error(`[REFUND] getRealMovementsTotals exception para ${username}: ${err.message}`);
+    return { deposits: 0, withdrawals: 0 };
+  }
+}
+
 app.get('/api/refunds/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
-    
+
     const userInfo = await jugaygana.getUserInfoByName(username);
     const currentBalance = userInfo ? userInfo.balance : 0;
-    
+
     // Rangos de fechas (zona horaria Argentina)
     const yesterdayRange = jugaygana.getYesterdayRangeArgentinaEpoch();
     const lastWeekRange = jugaygana.getLastWeekRangeArgentinaEpoch();
     const lastMonthRange = jugaygana.getLastMonthRangeArgentinaEpoch();
-    
+
     const [dailyStatus, weeklyStatus, monthlyStatus] = await Promise.all([
       refunds.canClaimDailyRefund(userId),
       refunds.canClaimWeeklyRefund(userId),
       refunds.canClaimMonthlyRefund(userId)
     ]);
-    
-    // Rangos de fechas para calcular depósitos y retiros reales
-    const dailyFrom = new Date(yesterdayRange.fromEpoch * 1000);
-    const dailyTo = new Date(yesterdayRange.toEpoch * 1000);
-    const weeklyFrom = new Date(lastWeekRange.fromEpoch * 1000);
-    const weeklyTo = new Date(lastWeekRange.toEpoch * 1000);
-    const monthlyFrom = new Date(lastMonthRange.fromEpoch * 1000);
-    const monthlyTo = new Date(lastMonthRange.toEpoch * 1000);
 
-    // Calcular depósitos y retiros reales del período (no GGR de juegos)
-    const [dailyDepositsAgg, dailyWithdrawalsAgg, weeklyDepositsAgg, weeklyWithdrawalsAgg, monthlyDepositsAgg, monthlyWithdrawalsAgg] = await Promise.all([
-      Transaction.aggregate([{ $match: { username, type: 'deposit', createdAt: { $gte: dailyFrom, $lte: dailyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
-      Transaction.aggregate([{ $match: { username, type: 'withdrawal', createdAt: { $gte: dailyFrom, $lte: dailyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
-      Transaction.aggregate([{ $match: { username, type: 'deposit', createdAt: { $gte: weeklyFrom, $lte: weeklyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
-      Transaction.aggregate([{ $match: { username, type: 'withdrawal', createdAt: { $gte: weeklyFrom, $lte: weeklyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
-      Transaction.aggregate([{ $match: { username, type: 'deposit', createdAt: { $gte: monthlyFrom, $lte: monthlyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }]),
-      Transaction.aggregate([{ $match: { username, type: 'withdrawal', createdAt: { $gte: monthlyFrom, $lte: monthlyTo } } }, { $group: { _id: null, total: { $sum: '$amount' } } }])
+    // Movimientos REALES desde JUGAYGANA (deposits/withdrawals).
+    // Antes consultábamos Transaction (Mongo local) pero ahí solo se
+    // guardan los movimientos que pasan por nuestro panel admin; las
+    // cargas/retiros directos del usuario en JUGAYGANA no quedaban
+    // registrados → todos los reembolsos daban $0.
+    const [dailyMov, weeklyMov, monthlyMov] = await Promise.all([
+      getRealMovementsTotals(username, yesterdayRange.dateStr, yesterdayRange.dateStr),
+      getRealMovementsTotals(username, lastWeekRange.fromDateStr, lastWeekRange.toDateStr),
+      getRealMovementsTotals(username, lastMonthRange.fromDateStr, lastMonthRange.toDateStr)
     ]);
 
-    const dailyDeposits = dailyDepositsAgg[0]?.total || 0;
-    const dailyWithdrawals = dailyWithdrawalsAgg[0]?.total || 0;
-    const weeklyDeposits = weeklyDepositsAgg[0]?.total || 0;
-    const weeklyWithdrawals = weeklyWithdrawalsAgg[0]?.total || 0;
-    const monthlyDeposits = monthlyDepositsAgg[0]?.total || 0;
-    const monthlyWithdrawals = monthlyWithdrawalsAgg[0]?.total || 0;
+    const dailyDeposits = dailyMov.deposits;
+    const dailyWithdrawals = dailyMov.withdrawals;
+    const weeklyDeposits = weeklyMov.deposits;
+    const weeklyWithdrawals = weeklyMov.withdrawals;
+    const monthlyDeposits = monthlyMov.deposits;
+    const monthlyWithdrawals = monthlyMov.withdrawals;
 
     const dailyNetLoss = Math.max(0, dailyDeposits - dailyWithdrawals);
     const weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
@@ -3960,23 +3997,12 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         });
       }
       
-      const { fromEpoch, toEpoch, dateStr } = jugaygana.getYesterdayRangeArgentinaEpoch();
-      const fromDate = new Date(fromEpoch * 1000);
-      const toDate = new Date(toEpoch * 1000);
+      const { dateStr } = jugaygana.getYesterdayRangeArgentinaEpoch();
 
-      // Obtener depósitos REALES del período
-      const periodDeposits = await Transaction.aggregate([
-        { $match: { username, type: 'deposit', createdAt: { $gte: fromDate, $lte: toDate } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalDeposits = periodDeposits[0]?.total || 0;
-
-      // Obtener retiros REALES del período
-      const periodWithdrawals = await Transaction.aggregate([
-        { $match: { username, type: 'withdrawal', createdAt: { $gte: fromDate, $lte: toDate } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalWithdrawals = periodWithdrawals[0]?.total || 0;
+      // Obtener movimientos REALES del período desde JUGAYGANA
+      const mov = await getRealMovementsTotals(username, dateStr, dateStr);
+      const totalDeposits = mov.deposits;
+      const totalWithdrawals = mov.withdrawals;
 
       logger.info('[REFUND] daily — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
 
@@ -4089,23 +4115,12 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       }
       
-      const { fromEpoch, toEpoch, fromDateStr, toDateStr } = jugaygana.getLastWeekRangeArgentinaEpoch();
-      const fromDate = new Date(fromEpoch * 1000);
-      const toDate = new Date(toEpoch * 1000);
+      const { fromDateStr, toDateStr } = jugaygana.getLastWeekRangeArgentinaEpoch();
 
-      // Obtener depósitos REALES del período
-      const periodDeposits = await Transaction.aggregate([
-        { $match: { username, type: 'deposit', createdAt: { $gte: fromDate, $lte: toDate } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalDeposits = periodDeposits[0]?.total || 0;
-
-      // Obtener retiros REALES del período
-      const periodWithdrawals = await Transaction.aggregate([
-        { $match: { username, type: 'withdrawal', createdAt: { $gte: fromDate, $lte: toDate } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalWithdrawals = periodWithdrawals[0]?.total || 0;
+      // Obtener movimientos REALES del período desde JUGAYGANA
+      const mov = await getRealMovementsTotals(username, fromDateStr, toDateStr);
+      const totalDeposits = mov.deposits;
+      const totalWithdrawals = mov.withdrawals;
 
       logger.info('[REFUND] weekly — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
 
@@ -4218,23 +4233,12 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       }
       
-      const { fromEpoch, toEpoch, fromDateStr, toDateStr } = jugaygana.getLastMonthRangeArgentinaEpoch();
-      const fromDate = new Date(fromEpoch * 1000);
-      const toDate = new Date(toEpoch * 1000);
+      const { fromDateStr, toDateStr } = jugaygana.getLastMonthRangeArgentinaEpoch();
 
-      // Obtener depósitos REALES del período
-      const periodDeposits = await Transaction.aggregate([
-        { $match: { username, type: 'deposit', createdAt: { $gte: fromDate, $lte: toDate } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalDeposits = periodDeposits[0]?.total || 0;
-
-      // Obtener retiros REALES del período
-      const periodWithdrawals = await Transaction.aggregate([
-        { $match: { username, type: 'withdrawal', createdAt: { $gte: fromDate, $lte: toDate } } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalWithdrawals = periodWithdrawals[0]?.total || 0;
+      // Obtener movimientos REALES del período desde JUGAYGANA
+      const mov = await getRealMovementsTotals(username, fromDateStr, toDateStr);
+      const totalDeposits = mov.deposits;
+      const totalWithdrawals = mov.withdrawals;
 
       logger.info('[REFUND] monthly — usuario:', username, 'depositos:', totalDeposits, 'retiros:', totalWithdrawals);
 
