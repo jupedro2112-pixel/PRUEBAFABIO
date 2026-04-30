@@ -1028,33 +1028,17 @@ const authMiddleware = async (req, res, next) => {
     
     req.user = decoded;
 
-    // Enforce mandatory password change server-side.
-    // If the user has `mustChangePassword: true` (set by JUGAYGANA import,
-    // login default-password detection, or admin reset), only the allow-listed
-    // endpoints are reachable. Any other authenticated request returns 403 so
-    // the SPA can re-open the mandatory change modal — even after a reload.
+    // Mandatory password change: deshabilitado por requerimiento del cliente.
+    // Si el flag está seteado, lo limpiamos en caliente (self-heal universal)
+    // así nunca se vuelve a disparar el bloqueo. Antes solo los admins se
+    // auto-curaban; ahora aplica a cualquier rol.
     if (user.mustChangePassword === true) {
-      if (isAdminRole(user.role)) {
-        // Self-heal: admins must NEVER carry the mustChangePassword flag.
-        // Clean it on the fly so the request proceeds normally. This handles
-        // admins that were marked before the role-isolation fix (PR #286)
-        // and would otherwise be permanently blocked by this middleware.
-        try {
-          user.mustChangePassword = false;
-          await user.save();
-          logger.info(`[authMiddleware] Auto-cleared mustChangePassword for admin ${user.username}`);
-        } catch (e) {
-          logger.warn(`[authMiddleware] Failed to auto-clear mustChangePassword for ${user.username}: ${e.message}`);
-        }
-      } else {
-        const path = req.path || '';
-        const allowed = MUST_CHANGE_PASSWORD_ALLOWED_PATHS.some(p => path === p || path.startsWith(p + '/'));
-        if (!allowed) {
-          return res.status(403).json({
-            error: 'Debés cambiar tu contraseña antes de continuar',
-            code: 'MUST_CHANGE_PASSWORD'
-          });
-        }
+      try {
+        user.mustChangePassword = false;
+        await user.save();
+        logger.info(`[authMiddleware] Auto-cleared mustChangePassword for ${user.username} (role=${user.role})`);
+      } catch (e) {
+        logger.warn(`[authMiddleware] Failed to auto-clear mustChangePassword for ${user.username}: ${e.message}`);
       }
     }
 
@@ -1676,9 +1660,8 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         balance: userObj.balance,
         jugayganaLinked: !!userObj.jugayganaUserId,
         needsPasswordChange: needsPasswordChange,
-        mustChangePassword: isAdminRole(userObj.role)
-          ? false
-          : (needsPasswordChange || userObj.mustChangePassword === true)
+        // Cambio de contraseña obligatorio deshabilitado por requerimiento.
+        mustChangePassword: false
       }
     });
   } catch (error) {
@@ -1937,14 +1920,14 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
     }
     
     res.json({ 
-      valid: true, 
+      valid: true,
       user: {
         userId: user.id,
         username: user.username,
         email: user.email,
         role: user.role,
         balance: user.balance,
-        mustChangePassword: user.mustChangePassword === true
+        mustChangePassword: false
       }
     });
   } catch (error) {
@@ -2442,7 +2425,8 @@ app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
         balance: userObj.balance,
         jugayganaLinked: !!userObj.jugayganaUserId,
         needsPasswordChange: false,
-        mustChangePassword: userObj.mustChangePassword === true,
+        // Cambio de contraseña obligatorio deshabilitado por requerimiento.
+        mustChangePassword: false,
         referralCode: userObj.referralCode
       }
     });
