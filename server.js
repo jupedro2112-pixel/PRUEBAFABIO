@@ -3832,46 +3832,38 @@ async function getRefundNonDepositCredits(username, fromDate, toDate) {
   return result[0]?.total || 0;
 }
 
-// Trae los totales REALES de depósitos y retiros del usuario en un rango
-// de fechas (YYYY-MM-DD), consultando la API de JUGAYGANA. Reusa el mismo
-// pipeline de procesamiento que jugayganaMovements.getDailyMovements pero
-// para rangos arbitrarios. Si JUGAYGANA falla, devuelve {0,0} y loggea —
-// nunca rompe el endpoint que la llama.
-async function getRealMovementsTotals(username, fromDateStr, toDateStr) {
+// Trae los totales REALES de depósitos y retiros del usuario para uno de
+// los tres períodos de reembolso (daily/weekly/monthly), consultando
+// JUGAYGANA via ShowUserTransfersByAgent (la misma acción que usa el panel
+// admin). Antes esto llamaba a ShowUserMovements con startdate/enddate en
+// formato YYYY-MM-DD, pero esa acción ignora los filtros y/o devuelve un
+// shape distinto, lo que hacía que TODOS los usuarios vieran $0 y nunca
+// les apareciera el botón de reclamar. Los helpers getUserNet* de
+// jugaygana.js usan fromtime/totime en epoch seconds y leen los totales
+// preprocesados (en centavos) que devuelve la API.
+async function getRealMovementsTotals(username, period) {
   try {
-    const result = await jugayganaMovements.getUserMovements(username, {
-      startDate: fromDateStr,
-      endDate: toDateStr,
-      pageSize: 500
-    });
-    if (!result || !result.success) {
-      logger.warn(`[REFUND] getRealMovementsTotals fallback {0,0} para ${username} (${fromDateStr}..${toDateStr}): ${result && result.error}`);
+    let result;
+    if (period === 'daily') {
+      result = await jugaygana.getUserNetYesterday(username);
+    } else if (period === 'weekly') {
+      result = await jugaygana.getUserNetLastWeek(username);
+    } else if (period === 'monthly') {
+      result = await jugaygana.getUserNetLastMonth(username);
+    } else {
+      logger.warn(`[REFUND] getRealMovementsTotals período inválido: ${period}`);
       return { deposits: 0, withdrawals: 0 };
     }
-    const movements = result.movements || [];
-    let deposits = 0;
-    let withdrawals = 0;
-    for (const m of movements) {
-      const type = (m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toString().toLowerCase();
-      let amount = 0;
-      if (m.amount !== undefined) amount = parseFloat(m.amount);
-      else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
-      else if (m.value !== undefined) amount = parseFloat(m.value);
-      else if (m.Value !== undefined) amount = parseFloat(m.Value);
-      else if (m.monto !== undefined) amount = parseFloat(m.monto);
-      else if (m.Monto !== undefined) amount = parseFloat(m.Monto);
-      const isDeposit = type.includes('deposit') || type.includes('credit') ||
-                        type.includes('carga') || type.includes('recarga') ||
-                        amount > 0;
-      const isWithdrawal = type.includes('withdraw') || type.includes('debit') ||
-                           type.includes('retiro') || type.includes('extraccion') ||
-                           amount < 0;
-      if (isDeposit) deposits += Math.abs(amount);
-      else if (isWithdrawal) withdrawals += Math.abs(amount);
+    if (!result || !result.success) {
+      logger.warn(`[REFUND] getRealMovementsTotals fallback {0,0} para ${username} (${period}): ${result && result.error}`);
+      return { deposits: 0, withdrawals: 0 };
     }
-    return { deposits, withdrawals };
+    return {
+      deposits: Number(result.totalDeposits) || 0,
+      withdrawals: Number(result.totalWithdraws) || 0
+    };
   } catch (err) {
-    logger.error(`[REFUND] getRealMovementsTotals exception para ${username}: ${err.message}`);
+    logger.error(`[REFUND] getRealMovementsTotals exception para ${username} (${period}): ${err.message}`);
     return { deposits: 0, withdrawals: 0 };
   }
 }
@@ -3901,9 +3893,9 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     // cargas/retiros directos del usuario en JUGAYGANA no quedaban
     // registrados → todos los reembolsos daban $0.
     const [dailyMov, weeklyMov, monthlyMov] = await Promise.all([
-      getRealMovementsTotals(username, yesterdayRange.dateStr, yesterdayRange.dateStr),
-      getRealMovementsTotals(username, lastWeekRange.fromDateStr, lastWeekRange.toDateStr),
-      getRealMovementsTotals(username, lastMonthRange.fromDateStr, lastMonthRange.toDateStr)
+      getRealMovementsTotals(username, 'daily'),
+      getRealMovementsTotals(username, 'weekly'),
+      getRealMovementsTotals(username, 'monthly')
     ]);
 
     const dailyDeposits = dailyMov.deposits;
@@ -4000,7 +3992,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
       const { dateStr } = jugaygana.getYesterdayRangeArgentinaEpoch();
 
       // Obtener movimientos REALES del período desde JUGAYGANA
-      const mov = await getRealMovementsTotals(username, dateStr, dateStr);
+      const mov = await getRealMovementsTotals(username, 'daily');
       const totalDeposits = mov.deposits;
       const totalWithdrawals = mov.withdrawals;
 
@@ -4118,7 +4110,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       const { fromDateStr, toDateStr } = jugaygana.getLastWeekRangeArgentinaEpoch();
 
       // Obtener movimientos REALES del período desde JUGAYGANA
-      const mov = await getRealMovementsTotals(username, fromDateStr, toDateStr);
+      const mov = await getRealMovementsTotals(username, 'weekly');
       const totalDeposits = mov.deposits;
       const totalWithdrawals = mov.withdrawals;
 
@@ -4236,7 +4228,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       const { fromDateStr, toDateStr } = jugaygana.getLastMonthRangeArgentinaEpoch();
 
       // Obtener movimientos REALES del período desde JUGAYGANA
-      const mov = await getRealMovementsTotals(username, fromDateStr, toDateStr);
+      const mov = await getRealMovementsTotals(username, 'monthly');
       const totalDeposits = mov.deposits;
       const totalWithdrawals = mov.withdrawals;
 
