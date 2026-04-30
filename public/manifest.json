@@ -1,7 +1,7 @@
 {
-  "name": "REEMBOLSOSVIP",
-  "short_name": "REEMBOLSOSVIP",
-  "description": "REEMBOLSOSVIP - Reclamá tus reembolsos diarios, semanales y mensuales",
+  "name": "Reembolsos",
+  "short_name": "Reembolsos",
+  "description": "Reembolsos VIP - Reclamá tus reembolsos diarios, semanales y mensuales",
   "id": "/",
   "start_url": "/?source=pwa",
   "display": "standalone",

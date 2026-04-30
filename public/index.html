@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>REEMBOLSOSVIP</title>
+    <title>Reembolsos</title>
     <!-- Ícono de ruleta como favicon SVG (issue #7) -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥈</text></svg>">
     
@@ -12,8 +12,8 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="REEMBOLSOSVIP">
-    <meta name="application-name" content="REEMBOLSOSVIP">
+    <meta name="apple-mobile-web-app-title" content="Reembolsos">
+    <meta name="application-name" content="Reembolsos">
     <meta name="msapplication-TileColor" content="#00ff88">
     <meta name="theme-color" content="#9aa0a6">
     
@@ -692,14 +692,14 @@
            -> grafito (#5a5a5a). Sobrio, sin reflejos exagerados.
            ============================================ */
         .silver-logo {
-            width: 100px;
-            height: 100px;
-            margin: 0 auto 16px;
+            width: 76px;
+            height: 76px;
+            margin: 0 auto 12px;
             border-radius: 50%;
             display: flex !important;
             align-items: center;
             justify-content: center;
-            font-size: 50px;
+            font-size: 38px;
             line-height: 1;
             background: radial-gradient(circle at 32% 28%,
                 #f0f0f0 0%,
@@ -708,18 +708,20 @@
                 #3f3f3f 100%);
             border: 1.5px solid #b0b0b0;
             box-shadow:
-                0 8px 24px rgba(0, 0, 0, 0.55),
-                0 0 0 4px rgba(176, 176, 176, 0.10),
+                0 6px 18px rgba(0, 0, 0, 0.55),
+                0 0 0 3px rgba(176, 176, 176, 0.10),
                 inset 0 2px 4px rgba(255, 255, 255, 0.35),
                 inset 0 -2px 4px rgba(0, 0, 0, 0.35);
         }
         .silver-title {
-            margin: 10px 0 4px;
-            font-size: 28px;
+            margin: 8px 0 4px;
+            font-size: clamp(15px, 4.6vw, 20px);
             font-weight: 800;
-            letter-spacing: 4px;
+            letter-spacing: 1.5px;
             text-align: center;
             text-transform: uppercase;
+            white-space: nowrap;
+            line-height: 1.15;
             background: linear-gradient(135deg,
                 #f0f0f0 0%,
                 #c2c2c2 35%,
@@ -935,7 +937,9 @@
             height: 70%;
             margin: auto;
         }
-        /* Título principal: gradiente plata más mate */
+        /* Título principal: gradiente plata más mate.
+           letter-spacing y font-size reducidos para que "REEMBOLSOSVIP"
+           entre completo en una línea sin desbordarse. */
         .silver-title {
             background: linear-gradient(135deg,
                 #e0e0e0 0%,
@@ -946,7 +950,9 @@
             -webkit-text-fill-color: transparent !important;
             color: transparent !important;
             font-weight: 700 !important;
-            letter-spacing: 5px !important;
+            letter-spacing: 1.5px !important;
+            font-size: clamp(15px, 4.6vw, 20px) !important;
+            white-space: nowrap !important;
             text-transform: uppercase;
         }
     </style>
