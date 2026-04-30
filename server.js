@@ -1719,10 +1719,15 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
       return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intentá más tarde.' });
     }
 
-    // Si no existe localmente, probar JUGAYGANA (mismo flujo que el login normal)
+    // Si no existe localmente, probar JUGAYGANA (mismo flujo que el login normal).
+    // Hard timeout de 8s: si JUGAYGANA está lento o caído, no dejamos colgar
+    // la request completa (Cloudflare/Render mata a los ~30-100s y devuelve 502).
     if (!user) {
       try {
-        const jgUser = await jugaygana.getUserInfoByName(cleanUsername);
+        const jgUser = await Promise.race([
+          jugaygana.getUserInfoByName(cleanUsername),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('JUGAYGANA lookup timeout 8s')), 8000))
+        ]);
         if (jgUser) {
           const userId = uuidv4();
           user = await User.create({
