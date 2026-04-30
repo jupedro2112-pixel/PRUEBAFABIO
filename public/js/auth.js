@@ -207,7 +207,12 @@ VIP.auth = (function () {
             });
             clearTimeout(timeoutId);
 
-            const data = await response.json().catch(() => ({}));
+            let data = {};
+            let rawText = '';
+            try {
+                rawText = await response.text();
+                data = rawText ? JSON.parse(rawText) : {};
+            } catch (_) { data = {}; }
 
             if (response.status === 404) {
                 errorDiv.textContent = data.error || 'Usuario no disponible';
@@ -215,7 +220,10 @@ VIP.auth = (function () {
                 return;
             }
             if (!response.ok) {
-                errorDiv.textContent = data.error || 'No se pudo iniciar sesión';
+                const detail = data.error
+                    ? data.error
+                    : (rawText ? rawText.slice(0, 120) : 'sin respuesta del servidor');
+                errorDiv.textContent = `Error ${response.status}: ${detail}`;
                 errorDiv.classList.add('show');
                 return;
             }
