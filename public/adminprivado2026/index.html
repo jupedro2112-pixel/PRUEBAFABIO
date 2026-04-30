@@ -799,7 +799,7 @@
                     <!-- Controles modo todos con app -->
                     <div id="notifAllAppControls" style="display:none;margin-top:1rem">
                         <div style="padding:.75rem 1rem;background:rgba(0,255,136,.07);border:1px solid rgba(0,255,136,.2);border-radius:8px;margin-bottom:.75rem;font-size:.85rem;color:#86efac">
-                            📱 Se enviará a <strong>TODOS</strong> los usuarios que tengan la app instalada, en lotes automáticos de 200.
+                            📱 Se enviará a <strong>TODOS</strong> los usuarios con app instalada, en lotes automáticos de 100 con pausa entre cada uno (envío lento y seguro). Si un lote falla, el envío se detiene y se muestra exactamente hasta dónde se llegó, con opción manual de reanudar — nunca se duplican mensajes.
                         </div>
                         <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
                             <button id="notifSendAllBtn" class="btn btn-primary" onclick="sendAllWithApp()" style="background:linear-gradient(135deg,#059669,#10b981)">📤 Enviar a TODOS con app</button>

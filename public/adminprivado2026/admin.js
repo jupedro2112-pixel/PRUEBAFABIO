@@ -4657,12 +4657,43 @@ function updateNotifModeUI() {
     }
 }
 
-async function sendAllWithApp() {
+// Tamaño de lote del envío masivo "Todos con app".
+// 100 es conservador (menor riesgo de timeout/504 en el ALB) y match con el modo lote manual.
+const NOTIF_ALL_APP_BATCH_SIZE = 100;
+// Pausa entre lotes: aliviana presión sobre Mongo, FCM y el ALB.
+const NOTIF_ALL_APP_BATCH_DELAY_MS = 800;
+
+function _notifSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Envía notificación a TODOS los usuarios con app, en lotes secuenciales.
+ *
+ * Reglas críticas:
+ * - NO reintenta automáticamente lotes fallidos. Reintentar un lote que ya
+ *   envió parcialmente duplicaría mensajes a usuarios que ya recibieron, lo
+ *   cual es muy molesto. Si un lote falla, se detiene todo y se muestra al
+ *   admin exactamente hasta dónde se llegó, dándole la opción manual de
+ *   reanudar desde el siguiente lote (no se duplica) o reintentar el lote
+ *   fallido (con confirm explícito y aviso de duplicación).
+ * - Avanza usando data.nextOffset (que ya descuenta tokens limpiados gracias
+ *   al fix de notificationRoutes.js). Eso garantiza que ningún usuario se
+ *   saltee aunque haya cleanup de tokens muertos en el medio.
+ * - Limpieza de tokens muertos la hace el endpoint /send-batch en backend.
+ *
+ * @param {number} startOffset - offset desde donde arrancar (0 por default,
+ *   o un valor mayor si el admin pidió reanudar tras una falla previa).
+ */
+async function sendAllWithApp(startOffset = 0) {
     const title = document.getElementById('notifTitle')?.value?.trim();
     const body = document.getElementById('notifBody')?.value?.trim();
     if (!title || !body) {
         showToast('❌ El título y el mensaje son obligatorios', 'error');
         return;
+    }
+
+    // Confirmación al iniciar desde 0 (operación que puede tardar varios minutos)
+    if (startOffset === 0) {
+        if (!confirm('Vas a enviar a TODOS los usuarios con app instalada. Puede tardar varios minutos según la cantidad de usuarios. ¿Continuar?')) return;
     }
 
     const sendBtn = document.getElementById('notifSendAllBtn');
@@ -4671,65 +4702,190 @@ async function sendAllWithApp() {
     const resultContent = document.getElementById('notifResultContent');
 
     if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '⏳ Enviando...'; }
-    if (progressEl) { progressEl.style.display = 'block'; progressEl.textContent = 'Iniciando envío...'; }
+    if (progressEl) {
+        progressEl.style.display = 'block';
+        progressEl.textContent = startOffset === 0
+            ? '🔄 Iniciando envío masivo...'
+            : `🔄 Reanudando desde el usuario N° ${startOffset}...`;
+    }
 
-    let offset = 0;
-    let totalSent = 0;
-    let totalFailed = 0;
-    let totalSegment = 0;
+    let offset = startOffset;
+    let totalSent = 0, totalFailed = 0, totalCleaned = 0, totalSegment = 0;
     let batchNum = 0;
+    let failed = false, failedReason = '', failedAtOffset = null;
+    const startedAt = Date.now();
 
     try {
         while (true) {
             batchNum++;
-            if (progressEl) progressEl.textContent = `Lote ${batchNum}: enviando desde usuario ${offset}...`;
+            const lblOffset = offset;
+            if (progressEl) {
+                progressEl.textContent = `🔄 Lote ${batchNum} (desde usuario N° ${lblOffset})...`;
+            }
 
-            const res = await fetch(`${API_URL}/api/notifications/send-batch`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
-                body: JSON.stringify({ title, body, batchSize: 200, segment: 'all', batchOffset: offset })
-            });
-            const data = await res.json();
-
-            if (!data.success) {
-                showToast(`❌ Error en lote ${batchNum}: ${data.error || 'Error desconocido'}`, 'error');
+            // 1) Llamada al backend con manejo robusto de errores
+            let response;
+            try {
+                response = await fetch(`${API_URL}/api/notifications/send-batch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` },
+                    body: JSON.stringify({
+                        title, body,
+                        batchSize: NOTIF_ALL_APP_BATCH_SIZE,
+                        segment: 'all',
+                        batchOffset: offset
+                    })
+                });
+            } catch (networkErr) {
+                // Error de red: la request puede haber llegado al server o no, no podemos saberlo.
+                // No reintentamos para no duplicar.
+                failed = true;
+                failedAtOffset = offset;
+                failedReason = `Error de red: ${networkErr.message || networkErr}`;
+                console.error('[Notif Panel] Network error en lote', batchNum, networkErr);
                 break;
             }
 
+            if (!response.ok) {
+                failed = true;
+                failedAtOffset = offset;
+                let errMsg = `HTTP ${response.status}`;
+                try {
+                    const errData = await response.json();
+                    if (errData && errData.error) errMsg += ` — ${errData.error}`;
+                } catch (_) { /* respuesta no es JSON parseable */ }
+                failedReason = errMsg;
+                break;
+            }
+
+            let data;
+            try {
+                data = await response.json();
+            } catch (jsonErr) {
+                failed = true;
+                failedAtOffset = offset;
+                failedReason = 'Respuesta del servidor inválida (no es JSON)';
+                break;
+            }
+
+            if (!data.success) {
+                failed = true;
+                failedAtOffset = offset;
+                failedReason = data.error || 'El servidor reportó fallo sin detalle';
+                break;
+            }
+
+            // 2) Lote OK: contabilizar resultados
             totalSent += data.successCount || 0;
             totalFailed += data.failureCount || 0;
+            totalCleaned += data.cleanedTokens || 0;
             totalSegment = data.totalSegmentUsers || totalSegment;
 
             if (progressEl) {
-                progressEl.textContent = `Lote ${batchNum} OK — Enviados: ${totalSent} / ${totalSegment} | Fallidos acumulados: ${totalFailed}`;
+                progressEl.textContent =
+                    `✅ Lote ${batchNum} OK — Enviados acumulados: ${totalSent} | ` +
+                    `Tokens limpiados: ${totalCleaned} | Faltan: ${data.remaining}`;
             }
 
+            // 3) Verificar fin del segmento
             if (!data.remaining || data.remaining <= 0) {
                 break;
             }
-            offset = data.nextOffset;
-        }
 
-        if (resultEl) resultEl.style.display = 'block';
-        if (resultContent) {
-            resultContent.innerHTML = `
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1rem">
-                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${totalSent}</div><div style="color:#aaa;font-size:.8rem">Enviados</div></div>
-                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#f87171">${totalFailed}</div><div style="color:#aaa;font-size:.8rem">Fallidos</div></div>
-                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${totalSegment}</div><div style="color:#aaa;font-size:.8rem">Total con app</div></div>
-                    <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${batchNum}</div><div style="color:#aaa;font-size:.8rem">Lotes usados</div></div>
-                </div>`;
+            // 4) Avanzar al próximo offset confirmado por el server (ya descuenta limpiados)
+            offset = data.nextOffset;
+
+            // 5) Pausa entre lotes para no saturar
+            await _notifSleep(NOTIF_ALL_APP_BATCH_DELAY_MS);
         }
-        if (progressEl) progressEl.textContent = `✅ Envío completo: ${totalSent} enviados de ${totalSegment} con app.`;
-        showToast(`✅ Enviado a ${totalSent} usuarios con app`, 'success');
-        loadNotificationsPanel();
     } catch (e) {
-        showToast('❌ Error de conexión durante el envío masivo', 'error');
-        console.error('[Notif Panel] Error en sendAllWithApp:', e);
-        if (progressEl) progressEl.textContent = `❌ Error en lote ${batchNum}. Enviados hasta ahora: ${totalSent}.`;
+        failed = true;
+        failedReason = `Error inesperado: ${e.message || e}`;
+        console.error('[Notif Panel] Error inesperado en sendAllWithApp:', e);
     } finally {
         if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '📤 Enviar a TODOS con app'; }
     }
+
+    const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+
+    // 6) Render del resultado final
+    if (resultEl) resultEl.style.display = 'block';
+    if (resultContent) {
+        const headerHtml = failed
+            ? `<div style="margin-bottom:.75rem;padding:.7rem 1rem;background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.4);border-radius:8px;color:#fca5a5">
+                 ⚠️ <strong>Envío detenido en el lote ${batchNum}</strong> (offset ${failedAtOffset}) tras ${elapsedSec}s.<br>
+                 <span style="font-size:.85rem">Motivo: ${escapeHtml(failedReason)}</span>
+               </div>`
+            : `<div style="margin-bottom:.75rem;padding:.7rem 1rem;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.4);border-radius:8px;color:#86efac">
+                 ✅ <strong>Envío completo</strong> en ${batchNum} lotes (${elapsedSec}s)
+               </div>`;
+
+        const statsHtml = `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1rem">
+                <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#00ff88">${totalSent}</div><div style="color:#aaa;font-size:.8rem">Enviados</div></div>
+                <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#f87171">${totalFailed}</div><div style="color:#aaa;font-size:.8rem">Fallos individuales</div></div>
+                <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#fbbf24">${totalCleaned}</div><div style="color:#aaa;font-size:.8rem">Tokens limpiados</div></div>
+                <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700;color:#6366f1">${totalSegment}</div><div style="color:#aaa;font-size:.8rem">Total con app</div></div>
+                <div style="text-align:center"><div style="font-size:1.5rem;font-weight:700">${batchNum}</div><div style="color:#aaa;font-size:.8rem">Lotes ejecutados</div></div>
+            </div>`;
+
+        let resumeHtml = '';
+        if (failed && failedAtOffset !== null) {
+            const resumeOffset = failedAtOffset + NOTIF_ALL_APP_BATCH_SIZE;
+            resumeHtml = `
+                <div style="margin-top:1rem;padding:.85rem 1rem;background:rgba(99,102,241,.07);border:1px solid rgba(99,102,241,.3);border-radius:8px;font-size:.88rem;line-height:1.45">
+                    <div style="margin-bottom:.5rem;color:#e0e0e0">
+                        <strong>El lote en offset ${failedAtOffset} NO se reintentó automáticamente</strong> para evitar duplicar mensajes a usuarios que ya hayan recibido.
+                    </div>
+                    <div style="margin-bottom:.7rem;color:#cbd5e1">Tenés dos opciones para continuar:</div>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                        <button class="btn btn-primary btn-sm" onclick="resumeSendAllWithApp(${resumeOffset})" style="background:linear-gradient(135deg,#059669,#10b981)">
+                            ▶ Reanudar desde usuario N° ${resumeOffset} (recomendado)
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="retrySendAllWithApp(${failedAtOffset})">
+                            🔁 Reintentar el lote fallido (offset ${failedAtOffset})
+                        </button>
+                    </div>
+                    <div style="margin-top:.6rem;color:#aaa;font-size:.78rem;line-height:1.4">
+                        ⚠️ <strong>Reanudar</strong> avanza al siguiente lote: cero riesgo de duplicar, pero si el lote ${failedAtOffset} alcanzó a enviar a algunos usuarios antes de fallar, esos usuarios ya recibieron y los demás del mismo lote se saltarán.<br>
+                        ⚠️ <strong>Reintentar</strong> el lote fallido vuelve a procesar los 100 usuarios desde offset ${failedAtOffset}: usalo solo si estás seguro de que el lote NO alcanzó a enviar nada (ej. error de red antes de llegar al server).
+                    </div>
+                </div>`;
+        }
+
+        resultContent.innerHTML = headerHtml + statsHtml + resumeHtml;
+    }
+
+    if (progressEl) {
+        progressEl.textContent = failed
+            ? `❌ Detenido en lote ${batchNum} (offset ${failedAtOffset}). Enviados hasta ahora: ${totalSent}.`
+            : `✅ Envío completo: ${totalSent} enviados a usuarios con app.`;
+    }
+
+    if (!failed) {
+        showToast(`✅ Enviado a ${totalSent} usuarios con app`, 'success');
+    } else {
+        showToast(`⚠️ Envío detenido en lote ${batchNum}. ${totalSent} enviados hasta ahora.`, 'warning');
+    }
+
+    loadNotificationsPanel();
+}
+
+// Reanuda el envío masivo desde un offset específico (sin reintentar el lote fallido).
+function resumeSendAllWithApp(offset) {
+    sendAllWithApp(offset);
+}
+
+// Reintenta el lote fallido (puede duplicar mensajes — requiere confirm explícito).
+function retrySendAllWithApp(offset) {
+    if (!confirm(
+        `¿Reintentar el lote en offset ${offset}?\n\n` +
+        `⚠️ ATENCIÓN: si el lote llegó a enviar a algunos usuarios antes de fallar, ` +
+        `esos usuarios van a recibir el mensaje DOS VECES. ` +
+        `Solo confirmá si estás seguro de que el lote no alcanzó a enviar nada ` +
+        `(por ejemplo, si fue un error de red antes de llegar al servidor).`
+    )) return;
+    sendAllWithApp(offset);
 }
 
 async function cleanInvalidTokens() {
@@ -4794,6 +4950,8 @@ window.resetNotifBatch = resetNotifBatch;
 window.cleanInvalidTokens = cleanInvalidTokens;
 window.updateNotifModeUI = updateNotifModeUI;
 window.sendAllWithApp = sendAllWithApp;
+window.resumeSendAllWithApp = resumeSendAllWithApp;
+window.retrySendAllWithApp = retrySendAllWithApp;
 window.applyDatosRange = applyDatosRange;
 
 // =============================================
