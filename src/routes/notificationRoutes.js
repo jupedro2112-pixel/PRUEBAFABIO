@@ -489,28 +489,37 @@ router.post('/test', requireAdmin, async (req, res) => {
 // ============================================
 router.post('/send-all', requireAdmin, async (req, res) => {
   try {
-    const { title, body, data, filter } = req.body;
-    
+    const { title, body, data, filter, prefix } = req.body;
+
     if (!title || !body) {
-      return res.status(400).json({ 
-        error: 'Título y cuerpo son requeridos' 
+      return res.status(400).json({
+        error: 'Título y cuerpo son requeridos'
       });
     }
 
-    console.log('[FCM] Iniciando envío masivo...');
-    
+    // Combinar el filtro Mongoose raw con el filtro por prefijo de usuario.
+    // El prefijo se escapea para evitar regex injection.
+    const finalFilter = Object.assign({}, filter || {});
+    if (prefix && typeof prefix === 'string' && prefix.trim()) {
+      const safe = prefix.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      finalFilter.username = { $regex: '^' + safe, $options: 'i' };
+    }
+
+    console.log('[FCM] Iniciando envío masivo...', prefix ? `(prefijo: ${prefix})` : '(todos)');
+
     const result = await sendNotificationToAllUsers(
-      User, 
-      title, 
-      body, 
-      data || {}, 
-      filter || {}
+      User,
+      title,
+      body,
+      data || {},
+      finalFilter
     );
-    
+
     if (result.success) {
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         message: 'Notificaciones enviadas',
+        prefix: prefix || null,
         totalUsers: result.totalUsers,
         successCount: result.successCount,
         failureCount: result.failureCount,
@@ -518,9 +527,9 @@ router.post('/send-all', requireAdmin, async (req, res) => {
         failedTokens: result.failedTokens
       });
     } else {
-      res.status(500).json({ 
-        success: false, 
-        error: result.error 
+      res.status(500).json({
+        success: false,
+        error: result.error
       });
     }
   } catch (error) {

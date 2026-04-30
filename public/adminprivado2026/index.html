@@ -175,8 +175,29 @@
                 <div class="cbu-form" style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.18);border-radius:12px;padding:18px;max-width:680px;">
                     <div style="background:rgba(0,0,0,0.30);border-left:3px solid #d4af37;padding:10px 12px;margin-bottom:16px;border-radius:6px;">
                         <p style="margin:0;color:#bbb;font-size:11px;line-height:1.55;">
-                            La notificación llega a <strong>todos los usuarios con la app instalada y notificaciones activadas</strong>. Útil para avisar de promos, bonus o alertas. Los que no tienen la app instalada no reciben.
+                            La notificación llega a los usuarios con la app instalada y notificaciones activadas. Los que no la tienen instalada no reciben.
                         </p>
+                    </div>
+
+                    <!-- Destino: todos o por prefijo de usuario -->
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px;">
+                        <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Enviar a</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <label style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);border-radius:8px;cursor:pointer;">
+                                <input type="radio" name="notifTarget" value="all" checked onchange="updateNotifTargetUI()" style="accent-color:#d4af37;">
+                                <span style="color:#fff;font-size:13px;font-weight:600;">👥 Todos los usuarios</span>
+                            </label>
+                            <label style="flex:1;min-width:160px;display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);border-radius:8px;cursor:pointer;">
+                                <input type="radio" name="notifTarget" value="prefix" onchange="updateNotifTargetUI()" style="accent-color:#d4af37;">
+                                <span style="color:#fff;font-size:13px;font-weight:600;">🎯 Por inicio de usuario</span>
+                            </label>
+                        </div>
+                        <div id="notifPrefixGroup" style="display:none;margin-top:6px;">
+                            <input type="text" id="notifPrefix" placeholder="ej: ato (manda solo a atojoaquin, atomartin, …)"
+                                   style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(212,175,55,0.30);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;box-sizing:border-box;"
+                                   oninput="updateNotifPreview()">
+                            <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Sin distinguir mayúsculas/minúsculas. Si coincide con un prefijo del Número principal vigente, le llega solo a ese equipo.</small>
+                        </div>
                     </div>
 
                     <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
@@ -200,7 +221,7 @@
                     </div>
 
                     <button class="btn-primary" onclick="sendBulkNotification()" style="width:100%;padding:12px;font-size:14px;font-weight:700;">
-                        🚀 Enviar a todos los usuarios
+                        🚀 Enviar notificación
                     </button>
 
                     <div id="notifResult" style="margin-top:14px;display:none;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;color:#ddd;font-size:12px;"></div>

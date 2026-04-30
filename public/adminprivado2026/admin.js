@@ -492,9 +492,25 @@ function updateNotifPreview() {
     if (pBody) pBody.textContent = bodyEl.value.trim() || 'Mensaje…';
 }
 
+function getSelectedNotifTarget() {
+    const r = document.querySelector('input[name="notifTarget"]:checked');
+    return r ? r.value : 'all';
+}
+
+function updateNotifTargetUI() {
+    const group = document.getElementById('notifPrefixGroup');
+    if (!group) return;
+    const isPrefix = getSelectedNotifTarget() === 'prefix';
+    group.style.display = isPrefix ? '' : 'none';
+}
+
 async function sendBulkNotification() {
     const title = (document.getElementById('notifTitle').value || '').trim();
     const body = (document.getElementById('notifBody').value || '').trim();
+    const target = getSelectedNotifTarget();
+    const prefix = target === 'prefix'
+        ? (document.getElementById('notifPrefix').value || '').trim()
+        : '';
     const result = document.getElementById('notifResult');
 
     if (!title) {
@@ -505,40 +521,59 @@ async function sendBulkNotification() {
         showToast('Falta el mensaje', 'error');
         return;
     }
+    if (target === 'prefix' && !prefix) {
+        showToast('Indicá el inicio de usuario (ej: ato)', 'error');
+        return;
+    }
 
+    const audienceLabel = prefix
+        ? `usuarios cuyo nombre empieza con "${prefix}"`
+        : 'TODOS los usuarios';
     const ok = window.confirm(
-        `Vas a enviar esta notificación a TODOS los usuarios con la app instalada y notificaciones activadas.\n\n` +
+        `Vas a enviar esta notificación a ${audienceLabel} (con app instalada y notifs activadas).\n\n` +
         `Título: ${title}\nMensaje: ${body}\n\n¿Confirmás el envío?`
     );
     if (!ok) return;
 
     const btn = document.querySelector('#notifsSection button.btn-primary');
+    const defaultBtnText = '🚀 Enviar notificación';
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando…'; }
     if (result) {
         result.style.display = 'block';
-        result.innerHTML = '⏳ Enviando notificación a todos los usuarios…';
+        result.innerHTML = `⏳ Enviando notificación a ${escapeHtml(audienceLabel)}…`;
     }
 
     try {
+        const payload = {
+            title,
+            body,
+            data: { source: 'admin-bulk', tag: 'admin-broadcast' }
+        };
+        if (prefix) payload.prefix = prefix;
+
         const r = await authFetch('/api/notifications/send-all', {
             method: 'POST',
-            body: JSON.stringify({
-                title,
-                body,
-                data: { source: 'admin-bulk', tag: 'admin-broadcast' }
-            })
+            body: JSON.stringify(payload)
         });
         const data = await r.json();
         if (r.ok && data.success) {
+            const targetLine = data.prefix
+                ? `Audiencia: <strong>usuarios "${escapeHtml(data.prefix)}*"</strong><br>`
+                : `Audiencia: <strong>todos los usuarios</strong><br>`;
             const summary =
                 `✅ <strong>Envío completado</strong><br>` +
+                targetLine +
                 `Usuarios alcanzados: <strong>${data.totalUsers ?? '?'}</strong><br>` +
-                `Entregados: <strong>${data.successCount ?? 0}</strong>` +
-                (data.failureCount ? ` · Fallidos: <strong>${data.failureCount}</strong>` : '') +
-                (data.cleanedTokens ? `<br>Tokens inválidos limpiados: ${data.cleanedTokens}` : '');
+                `Le llegó a: <strong style="color:#3fc886;">${data.successCount ?? 0}</strong>` +
+                (data.failureCount
+                    ? ` · No le llegó a: <strong style="color:#ff8080;">${data.failureCount}</strong>`
+                    : '') +
+                (data.cleanedTokens
+                    ? `<br><small style="color:#888;">Tokens inválidos limpiados: ${data.cleanedTokens}</small>`
+                    : '');
             if (result) result.innerHTML = summary;
             showToast('Notificación enviada', 'success');
-            // Reset form
+            // Reset form (mantener target/prefix por si quiere mandar de nuevo)
             document.getElementById('notifTitle').value = '';
             document.getElementById('notifBody').value = '';
             updateNotifPreview();
@@ -552,7 +587,7 @@ async function sendBulkNotification() {
         if (result) result.innerHTML = `❌ Error de conexión: ${escapeHtml(err.message)}`;
         showToast('Error de conexión', 'error');
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '🚀 Enviar a todos los usuarios'; }
+        if (btn) { btn.disabled = false; btn.textContent = defaultBtnText; }
     }
 }
 
