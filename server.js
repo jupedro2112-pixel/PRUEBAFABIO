@@ -6020,6 +6020,173 @@ app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
 });
 
 // ============================================
+// REPORTES - REEMBOLSOS RECLAMADOS POR TIPO + FECHA
+// GET /api/admin/reports/refunds?type=daily|weekly|monthly&from=YYYY-MM-DD&to=YYYY-MM-DD
+// Devuelve: lista de reclamos en el rango, totales y serie por día.
+// ============================================
+app.get('/api/admin/reports/refunds', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { type, from, to } = req.query;
+    const validTypes = ['daily', 'weekly', 'monthly'];
+    if (type && !validTypes.includes(type)) {
+      return res.status(400).json({ error: `type debe ser uno de: ${validTypes.join(', ')}` });
+    }
+
+    // Parse fechas. Si no vienen, default = últimos 30 días en ART.
+    // ART = UTC-3, día empieza a las 03:00 UTC.
+    const ART_DAY_START_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    let startUTC, endUTC;
+    if (from && to) {
+      const [fy, fm, fd] = String(from).split('-').map(Number);
+      const [ty, tm, td] = String(to).split('-').map(Number);
+      if (!fy || !fm || !fd || !ty || !tm || !td) {
+        return res.status(400).json({ error: 'Formato de fecha inválido. Use YYYY-MM-DD.' });
+      }
+      startUTC = new Date(Date.UTC(fy, fm - 1, fd, 3, 0, 0, 0));
+      endUTC = new Date(Date.UTC(ty, tm - 1, td, 3, 0, 0, 0) + DAY_MS - 1);
+    } else {
+      endUTC = new Date();
+      startUTC = new Date(endUTC.getTime() - 30 * DAY_MS);
+    }
+
+    const filter = { claimedAt: { $gte: startUTC, $lte: endUTC } };
+    if (type) filter.type = type;
+
+    const refunds = await RefundClaim.find(filter).sort({ claimedAt: -1 }).lean();
+
+    // Agregaciones
+    const summary = {
+      totalCount: refunds.length,
+      totalAmount: 0,
+      uniqueUsers: 0,
+      byType: { daily: 0, weekly: 0, monthly: 0 },
+      amountByType: { daily: 0, weekly: 0, monthly: 0 }
+    };
+    const usernamesSet = new Set();
+    const perDay = {}; // { 'YYYY-MM-DD': { count, amount } }
+
+    for (const r of refunds) {
+      const amt = Number(r.amount) || 0;
+      summary.totalAmount += amt;
+      if (r.username) usernamesSet.add(r.username);
+      if (r.type && summary.byType[r.type] != null) {
+        summary.byType[r.type]++;
+        summary.amountByType[r.type] += amt;
+      }
+      // Día en ART (restar 3h y tomar YYYY-MM-DD)
+      const localMs = new Date(r.claimedAt).getTime() - ART_DAY_START_OFFSET_MS;
+      const dayKey = new Date(localMs).toISOString().slice(0, 10);
+      if (!perDay[dayKey]) perDay[dayKey] = { count: 0, amount: 0 };
+      perDay[dayKey].count++;
+      perDay[dayKey].amount += amt;
+    }
+    summary.uniqueUsers = usernamesSet.size;
+
+    const series = Object.keys(perDay)
+      .sort()
+      .map((day) => ({ day, count: perDay[day].count, amount: perDay[day].amount }));
+
+    res.json({
+      type: type || 'all',
+      from: startUTC.toISOString(),
+      to: endUTC.toISOString(),
+      summary,
+      series,
+      refunds: refunds.map((r) => ({
+        id: r.id,
+        username: r.username,
+        type: r.type,
+        amount: r.amount,
+        netAmount: r.netAmount,
+        period: r.period,
+        claimedAt: r.claimedAt
+      }))
+    });
+  } catch (error) {
+    logger.error(`/api/admin/reports/refunds error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// REPORTES - INGRESOS DE USUARIOS POR DÍA
+// GET /api/admin/reports/logins?days=30
+// Devuelve: usuarios nuevos por día (createdAt), activos en últimas 24h y total.
+// ============================================
+app.get('/api/admin/reports/logins', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ART_DAY_START_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));
+
+    const endUTC = new Date();
+    const startUTC = new Date(endUTC.getTime() - days * DAY_MS);
+
+    // Usuarios creados en el rango
+    const newUsers = await User.find(
+      { createdAt: { $gte: startUTC, $lte: endUTC } },
+      { username: 1, createdAt: 1, lastLogin: 1, _id: 0 }
+    ).lean();
+
+    // Agrupar por día (ART)
+    const perDayNew = {};
+    const perDayActive = {};
+    for (const u of newUsers) {
+      const localMs = new Date(u.createdAt).getTime() - ART_DAY_START_OFFSET_MS;
+      const dayKey = new Date(localMs).toISOString().slice(0, 10);
+      perDayNew[dayKey] = (perDayNew[dayKey] || 0) + 1;
+    }
+
+    // Usuarios con lastLogin reciente, agrupados por día (último ingreso de cada uno)
+    const recentlyActive = await User.find(
+      { lastLogin: { $gte: startUTC, $lte: endUTC } },
+      { username: 1, lastLogin: 1, _id: 0 }
+    ).lean();
+    for (const u of recentlyActive) {
+      const localMs = new Date(u.lastLogin).getTime() - ART_DAY_START_OFFSET_MS;
+      const dayKey = new Date(localMs).toISOString().slice(0, 10);
+      perDayActive[dayKey] = (perDayActive[dayKey] || 0) + 1;
+    }
+
+    // Construir serie con todos los días del rango (relleno cero)
+    const series = [];
+    for (let i = 0; i < days; i++) {
+      const dt = new Date(endUTC.getTime() - (days - 1 - i) * DAY_MS);
+      const localMs = dt.getTime() - ART_DAY_START_OFFSET_MS;
+      const dayKey = new Date(localMs).toISOString().slice(0, 10);
+      series.push({
+        day: dayKey,
+        newUsers: perDayNew[dayKey] || 0,
+        activeUsers: perDayActive[dayKey] || 0
+      });
+    }
+
+    // Totales
+    const totalUsers = await User.countDocuments();
+    const last24hWindow = new Date(Date.now() - DAY_MS);
+    const activeLast24h = await User.countDocuments({ lastLogin: { $gte: last24hWindow } });
+    const newLast24h = await User.countDocuments({ createdAt: { $gte: last24hWindow } });
+
+    res.json({
+      from: startUTC.toISOString(),
+      to: endUTC.toISOString(),
+      totals: {
+        totalUsers,
+        activeLast24h,
+        newLast24h,
+        newInRange: newUsers.length
+      },
+      series
+    });
+  } catch (error) {
+    logger.error(`/api/admin/reports/logins error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // BASE DE DATOS - SOLO ADMIN PRINCIPAL
 // ============================================
 
