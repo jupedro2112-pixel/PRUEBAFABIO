@@ -266,7 +266,7 @@ VIP.refunds = (function () {
             }
         } else if (type === 'monthly') {
             const today = new Date().getDate();
-            const isClaimableDay = today >= 7;
+            const isClaimableDay = today >= 7 && today <= 15;
             if (!isClaimableDay) {
                 availabilityInfo.style.display = 'block';
                 availabilityInfo.style.background = 'rgba(255,165,0,0.1)';
@@ -276,7 +276,7 @@ VIP.refunds = (function () {
                         <span style="font-size: 20px;">ℹ️</span>
                         <div>
                             <p style="color: #ffa500; font-weight: bold; margin: 0; font-size: 12px;">Reembolso Mensual</p>
-                            <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable <strong>después del día 7</strong> de cada mes</p>
+                            <p style="color: #ccc; margin: 0; font-size: 11px;">Solo reclamable entre los <strong>días 7 y 15</strong> de cada mes</p>
                             <p style="color: #aaa; margin: 0; font-size: 10px;">Corresponde al mes anterior completo</p>
                         </div>
                     </div>

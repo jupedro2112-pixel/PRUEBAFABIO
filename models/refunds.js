@@ -129,12 +129,15 @@ async function canClaimWeeklyRefund(userId) {
 }
 
 // Verificar si el usuario puede reclamar reembolso mensual
-// Ventana: día 7 en adelante (TZ Argentina). 1 reclamo por mes calendario.
+// Ventana: día 7 al 15 de cada mes (TZ Argentina), para los movimientos
+// del mes anterior. 1 reclamo por mes calendario.
+const MONTHLY_WINDOW_START = 7;
+const MONTHLY_WINDOW_END = 15;
 async function canClaimMonthlyRefund(userId) {
   try {
     const now = new Date();
     const currentDay = _argDayOfMonth(now);
-    const canClaimByDay = currentDay >= 7;
+    const canClaimByDay = currentDay >= MONTHLY_WINDOW_START && currentDay <= MONTHLY_WINDOW_END;
     const currentMonthStart = _argMonthStart(now);
 
     const lastMonthly = await RefundClaim.findOne({
@@ -145,24 +148,31 @@ async function canClaimMonthlyRefund(userId) {
     const claimed = !!(lastMonthly && new Date(lastMonthly.claimedAt) >= currentMonthStart);
     const canClaim = canClaimByDay && !claimed;
 
-    // Día 7 del próximo mes ARG.
+    // Próxima ventana: si todavía no llegó al día 7 de este mes y no
+    // reclamó, es día 7 de este mes; en cualquier otro caso (ya pasó la
+    // ventana o ya reclamó) es día 7 del mes próximo.
     const [yStr, mStr] = _argDateString(now).split('-');
-    let yNext = parseInt(yStr, 10);
-    let mNext = parseInt(mStr, 10) + 1;
-    if (mNext > 12) { mNext = 1; yNext += 1; }
-    const nextMonthDay7 = new Date(`${yNext}-${String(mNext).padStart(2, '0')}-07T00:00:00-03:00`);
+    let nextClaimDate;
+    if (currentDay < MONTHLY_WINDOW_START && !claimed) {
+      nextClaimDate = new Date(`${yStr}-${mStr}-${String(MONTHLY_WINDOW_START).padStart(2, '0')}T00:00:00-03:00`);
+    } else {
+      let yNext = parseInt(yStr, 10);
+      let mNext = parseInt(mStr, 10) + 1;
+      if (mNext > 12) { mNext = 1; yNext += 1; }
+      nextClaimDate = new Date(`${yNext}-${String(mNext).padStart(2, '0')}-${String(MONTHLY_WINDOW_START).padStart(2, '0')}T00:00:00-03:00`);
+    }
 
     return {
       canClaim,
       claimed,
-      nextClaim: canClaim ? null : nextMonthDay7.toISOString(),
+      nextClaim: canClaim ? null : nextClaimDate.toISOString(),
       lastClaim: lastMonthly?.claimedAt || null,
       lastClaimAmount: lastMonthly?.amount || 0,
-      availableFrom: 'Día 7 de cada mes'
+      availableFrom: `Día ${MONTHLY_WINDOW_START} al ${MONTHLY_WINDOW_END} de cada mes`
     };
   } catch (error) {
     console.error('Error verificando reembolso mensual:', error);
-    return { canClaim: false, claimed: false, nextClaim: null, availableFrom: 'Día 7 de cada mes' };
+    return { canClaim: false, claimed: false, nextClaim: null, availableFrom: `Día ${MONTHLY_WINDOW_START} al ${MONTHLY_WINDOW_END} de cada mes` };
   }
 }
 
