@@ -3855,15 +3855,17 @@ async function getRealMovementsTotals(username, period) {
       return { deposits: 0, withdrawals: 0 };
     }
     if (!result || !result.success) {
-      logger.warn(`[REFUND] getRealMovementsTotals fallback {0,0} para ${username} (${period}): ${result && result.error}`);
+      logger.warn(`[REFUND] getRealMovementsTotals FALLBACK {0,0} user=${username} period=${period} error=${result && result.error}`);
       return { deposits: 0, withdrawals: 0 };
     }
-    return {
+    const out = {
       deposits: Number(result.totalDeposits) || 0,
       withdrawals: Number(result.totalWithdraws) || 0
     };
+    logger.info(`[REFUND] getRealMovementsTotals OK user=${username} period=${period} deposits=${out.deposits} withdrawals=${out.withdrawals} range=${result.dateStr || (result.fromDateStr + '..' + result.toDateStr)}`);
+    return out;
   } catch (err) {
-    logger.error(`[REFUND] getRealMovementsTotals exception para ${username} (${period}): ${err.message}`);
+    logger.error(`[REFUND] getRealMovementsTotals EXCEPTION user=${username} period=${period} err=${err.message}`);
     return { deposits: 0, withdrawals: 0 };
   }
 }

@@ -141,10 +141,25 @@ VIP.refunds = (function () {
         const amount = document.getElementById(`${type}RefundAmount`);
         const timer  = document.getElementById(`${type}RefundTimer`);
 
-        amount.textContent = `$${data.potentialAmount.toLocaleString()}`;
-
         btn.disabled = false;
         btn.classList.remove('claimed');
+
+        // Caso "ya reclamado este período": mostramos el monto reclamado en gris
+        // y el countdown al próximo, sin sugerir que se puede volver a reclamar.
+        if (data.claimed) {
+            const claimedAmt = Number(data.lastClaimAmount || 0);
+            amount.textContent = `$${claimedAmt.toLocaleString()}`;
+            btn.classList.add('claimed');
+            btn.style.opacity = '0.55';
+            if (data.nextClaim) {
+                startCountdown(type, data.nextClaim);
+            } else {
+                timer.textContent = '✓ Reclamado';
+            }
+            return;
+        }
+
+        amount.textContent = `$${(data.potentialAmount || 0).toLocaleString()}`;
 
         if (data.canClaim && data.potentialAmount > 0) {
             timer.textContent = '¡Listo!';
@@ -265,58 +280,32 @@ VIP.refunds = (function () {
 
         const extraInfo = document.getElementById('refundExtraInfo');
         const claimBtn  = document.getElementById('claimRefundBtn');
-        let isClaimed     = false;
+        // El backend ahora devuelve `claimed` y `nextClaim` ya calculados en
+        // TZ Argentina, así que no recalculamos en el front (evita drift por
+        // desfase horario y bugs como dejar reclamar cuando ya se reclamó).
+        const isClaimed = !!typeData.claimed;
         let timeRemaining = '';
-
-        if (typeData.lastClaim) {
-            const lastClaim = new Date(typeData.lastClaim);
-            const now = new Date();
-
-            if (type === 'daily') {
-                const tomorrow = new Date(lastClaim);
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                tomorrow.setHours(0, 0, 0, 0);
-                if (now < tomorrow) {
-                    isClaimed = true;
-                    const diff = tomorrow - now;
-                    const hours   = Math.floor(diff / (1000 * 60 * 60));
-                    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                    timeRemaining = `${hours}h ${minutes}m`;
-                }
-            } else if (type === 'weekly') {
-                const nextMonday = new Date(lastClaim);
-                const daysUntilMonday = (8 - lastClaim.getDay()) % 7 || 7;
-                nextMonday.setDate(nextMonday.getDate() + daysUntilMonday);
-                nextMonday.setHours(0, 0, 0, 0);
-                if (now < nextMonday) {
-                    isClaimed = true;
-                    const diff = nextMonday - now;
-                    const days  = Math.floor(diff / (1000 * 60 * 60 * 24));
-                    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                    timeRemaining = `${days}d ${hours}h`;
-                }
-            } else if (type === 'monthly') {
-                const nextMonth = new Date(lastClaim.getFullYear(), lastClaim.getMonth() + 1, 7);
-                nextMonth.setHours(0, 0, 0, 0);
-                if (now < nextMonth) {
-                    isClaimed = true;
-                    const diff = nextMonth - now;
-                    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-                    timeRemaining = `${days}d`;
-                }
+        if (isClaimed && typeData.nextClaim) {
+            const diff = new Date(typeData.nextClaim) - new Date();
+            if (diff > 0) {
+                const days  = Math.floor(diff / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const mins  = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                timeRemaining = days > 0 ? `${days}d ${hours}h` : `${hours}h ${mins}m`;
             }
         }
 
-        if (typeData.potentialAmount <= 0) {
+        if (isClaimed) {
+            const claimedAmt = Number(typeData.lastClaimAmount || 0);
+            extraInfo.innerHTML = `<span style="color: #ffaa44;">✓ Ya reclamaste <strong>$${claimedAmt.toLocaleString()}</strong> en este período. Disponible en: <strong>${timeRemaining || 'pronto'}</strong></span>`;
+            claimBtn.disabled = true;
+            claimBtn.textContent = timeRemaining ? `✓ Reclamado — disponible en ${timeRemaining}` : '✓ Reclamado';
+            claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
+            claimBtn.onclick = null;
+        } else if (typeData.potentialAmount <= 0) {
             extraInfo.innerHTML = '<span style="color: #ff8888;">⚠️ No tienes saldo neto positivo para reclamar reembolso</span>';
             claimBtn.disabled = true;
             claimBtn.textContent = '❌ Sin saldo para reembolso';
-            claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
-            claimBtn.onclick = null;
-        } else if (isClaimed) {
-            extraInfo.innerHTML = `<span style="color: #ffaa44;">⏳ Ya reclamaste este reembolso. Disponible en: <strong>${timeRemaining}</strong></span>`;
-            claimBtn.disabled = true;
-            claimBtn.textContent = `⏳ Disponible en ${timeRemaining}`;
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
             claimBtn.onclick = null;
         } else if (!typeData.canClaim) {
