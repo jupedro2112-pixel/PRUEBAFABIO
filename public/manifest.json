@@ -1,7 +1,7 @@
 {
-  "name": "VIPCARGAS",
-  "short_name": "VIPCARGAS",
-  "description": "VIPCARGAS - Chat y reembolsos con notificaciones push",
+  "name": "REEMBOLSOSVIP",
+  "short_name": "REEMBOLSOSVIP",
+  "description": "REEMBOLSOSVIP - Reclamá tus reembolsos diarios, semanales y mensuales",
   "id": "/",
   "start_url": "/?source=pwa",
   "display": "standalone",
@@ -78,7 +78,7 @@
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "VIPCARGAS - Chat"
+      "label": "REEMBOLSOSVIP"
     }
   ],
   "categories": ["games", "social", "entertainment"],
