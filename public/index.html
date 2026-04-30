@@ -279,11 +279,12 @@
             display: none !important;
         }
 
-        /* Pantalla de chat: ocultar todo lo que no son reembolsos */
+        /* Pantalla de chat: ocultar todo lo que no son reembolsos.
+           OJO: #notifBanner NO va en esta lista — lo necesitamos visible
+           para invitar al usuario a activar notificaciones (regalos+bonus). */
         #chatScreen .header-left,
         #chatScreen .header-right,
         #chatScreen .promo-banner,
-        #chatScreen #notifBanner,
         #chatScreen #notifBlockedModal,
         #chatScreen .chat-section,
         #chatScreen .chat-input-container,
@@ -3319,45 +3320,70 @@
                 const tok = localStorage.getItem('fcmToken');
                 const dismissedThisSession = sessionStorage.getItem('notifBannerDismissedSession') === '1';
 
-                // En navegador puro: no molestar (el flujo PWA es la prioridad).
-                if (!standalone) {
-                    banner.style.display = 'none';
-                    return;
-                }
                 // Si ya tiene permiso y token: ocultar (todo OK).
-                if (perm === 'granted' && tok) {
+                if (standalone && perm === 'granted' && tok) {
                     banner.style.display = 'none';
                     return;
                 }
 
                 const iconEl = document.getElementById('notifBannerIcon');
                 const textEl = document.getElementById('notifBannerText');
+
+                // Caso 1 — En navegador (no instalado): mostrar invitación
+                // a instalar la app primero, así puede recibir notifs.
+                if (!standalone) {
+                    if (dismissedThisSession) {
+                        banner.style.display = 'none';
+                        return;
+                    }
+                    banner.style.background = 'linear-gradient(135deg, #1c1f27 0%, #14161c 100%)';
+                    banner.style.border = '1px solid rgba(184, 152, 70, 0.40)';
+                    banner.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.45)';
+                    if (iconEl) iconEl.textContent = '🎁';
+                    if (textEl) textEl.innerHTML = '<strong>¡Recibí tus REGALOS y BONUS!</strong> Instalá la app y activá las notificaciones para no perderte ninguno.';
+                    if (notifBannerActivate) {
+                        notifBannerActivate.textContent = '📱 Instalar app';
+                        notifBannerActivate.style.color = '#1c1f27';
+                        notifBannerActivate.style.background = '#d4af37';
+                    }
+                    if (notifBannerClose) notifBannerClose.style.display = '';
+                    banner.style.display = '';
+                    return;
+                }
+
+                // Caso 2 — PWA instalada pero notifs bloqueadas (denied):
+                // banner rojo, no se puede cerrar.
                 if (perm === 'denied') {
-                    // BLOQUEADO: rojo, sin opción de cerrar (volvemos a mostrar siempre).
-                    banner.style.background = 'linear-gradient(135deg, #dc2626 0%, #f87171 100%)';
-                    banner.style.boxShadow = '0 4px 15px rgba(220,38,38,.5)';
+                    banner.style.background = 'linear-gradient(135deg, #4a1a1a 0%, #2a0f0f 100%)';
+                    banner.style.border = '1px solid rgba(220, 38, 38, 0.55)';
+                    banner.style.boxShadow = '0 4px 14px rgba(220, 38, 38, 0.35)';
                     if (iconEl) iconEl.textContent = '🔕';
-                    if (textEl) textEl.innerHTML = '<strong>Notificaciones bloqueadas.</strong> Te perdés regalos, bonus y avisos. Tocá "Cómo activar".';
+                    if (textEl) textEl.innerHTML = '<strong>Notificaciones bloqueadas.</strong> Te estás perdiendo <strong>regalos y bonus</strong>. Tocá "Cómo activar" para arreglarlo.';
                     if (notifBannerActivate) {
                         notifBannerActivate.textContent = '🛠️ Cómo activar';
                         notifBannerActivate.style.color = '#dc2626';
+                        notifBannerActivate.style.background = '#fff';
                     }
                     if (notifBannerClose) notifBannerClose.style.display = 'none';
                     banner.style.display = '';
                     return;
                 }
-                // permission === 'default' (todavía no preguntó / o granted sin token aún)
+
+                // Caso 3 — PWA instalada, permission default (todavía no preguntó):
+                // banner principal con copy "regalos y bonus".
                 if (dismissedThisSession) {
                     banner.style.display = 'none';
                     return;
                 }
-                banner.style.background = 'linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%)';
-                banner.style.boxShadow = '0 4px 15px rgba(157,78,221,.5)';
-                if (iconEl) iconEl.textContent = '🔔';
-                if (textEl) textEl.innerHTML = '<strong>¡Activá las notificaciones!</strong> Recibí avisos de cargas, retiros, bonus y soporte 24/7.';
+                banner.style.background = 'linear-gradient(135deg, #1c1f27 0%, #14161c 100%)';
+                banner.style.border = '1px solid rgba(184, 152, 70, 0.40)';
+                banner.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.45)';
+                if (iconEl) iconEl.textContent = '🎁';
+                if (textEl) textEl.innerHTML = '<strong>¡Activá las notificaciones!</strong> Recibí tus <strong>regalos, bonus</strong> y avisos cuando se acrediten tus reembolsos. <em style="display:block;font-size:11px;color:#bbb;margin-top:4px;">Si tocás "No permitir" después es complicado activarlas.</em>';
                 if (notifBannerActivate) {
-                    notifBannerActivate.textContent = '🔔 Activar';
-                    notifBannerActivate.style.color = '#6a0dad';
+                    notifBannerActivate.textContent = '🔔 Sí, activar';
+                    notifBannerActivate.style.color = '#1c1f27';
+                    notifBannerActivate.style.background = '#d4af37';
                 }
                 if (notifBannerClose) notifBannerClose.style.display = '';
                 banner.style.display = '';
@@ -3369,13 +3395,32 @@
 
         if (notifBannerActivate) {
             notifBannerActivate.addEventListener('click', () => {
+                const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                                   window.navigator.standalone === true;
                 const perm = ('Notification' in window) ? Notification.permission : 'default';
+
+                // Caso 1 — Navegador puro: dispara el flujo de instalar PWA
+                // (que tiene instrucciones por OS si beforeinstallprompt no
+                // está disponible).
+                if (!standalone) {
+                    try {
+                        if (window.VIP && VIP.ui && typeof VIP.ui.installApp === 'function') {
+                            VIP.ui.installApp();
+                        } else {
+                            console.warn('[FCM] installApp no disponible');
+                        }
+                    } catch (e) {
+                        console.warn('[FCM] installApp error:', e && e.message);
+                    }
+                    return;
+                }
+                // Caso 2 — PWA con notifs bloqueadas: instrucciones para desbloquear
                 if (perm === 'denied') {
-                    // Mostrar modal con instrucciones específicas para PWA
                     const _modal = document.getElementById('notifBlockedModal');
                     if (_modal) _modal.style.display = 'flex';
                     return;
                 }
+                // Caso 3 — PWA, permission default: pedir permiso real
                 if (typeof enableNotifications === 'function') {
                     enableNotifications();
                 } else {
