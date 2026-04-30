@@ -421,8 +421,8 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
         notification: {
           title: safeTitle,
           body: safeBody,
-          icon: '/icons/icon-192x192.png',
-          badge: '/icons/icon-72x72.png',
+          icon: '/icons/reembolsosvip.svg',
+          badge: '/icons/reembolsosvip.svg',
           requireInteraction: true,
           vibrate: [200, 100, 200]
         },
