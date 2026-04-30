@@ -3977,7 +3977,7 @@ function renderUserLinesSlots(slots) {
                 </div>
                 <div style="display:flex;flex-direction:column;gap:4px;">
                     <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
-                    <input type="text" class="user-line-prefix" placeholder="ej: ignite, argen, ato, mar, tri…" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+                    <input type="text" class="user-line-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
                 </div>
                 <div style="display:flex;flex-direction:column;gap:4px;">
                     <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
@@ -4036,13 +4036,13 @@ async function saveUserLines() {
         });
         const data = await response.json();
         if (response.ok) {
-            showToast('Líneas guardadas correctamente', 'success');
+            showToast('Números guardados correctamente', 'success');
         } else {
-            showToast(data.error || 'Error al guardar líneas', 'error');
+            showToast(data.error || 'Error al guardar números', 'error');
         }
     } catch (error) {
         console.error('Error saving user-lines:', error);
-        showToast('Error al guardar líneas', 'error');
+        showToast('Error al guardar números', 'error');
     }
 }
 

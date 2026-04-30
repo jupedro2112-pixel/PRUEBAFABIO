@@ -336,18 +336,20 @@
             font-size: 15px !important;
             padding: 14px 18px !important;
             display: flex !important;
-            flex-direction: row !important;
+            flex-direction: column !important;
             align-items: center !important;
-            justify-content: space-between !important;
-            text-align: left !important;
+            justify-content: center !important;
+            text-align: center !important;
+            gap: 4px !important;
             border-radius: 14px !important;
             box-sizing: border-box !important;
         }
         #chatScreen .header-center .refund-btn .refund-label-full {
-            display: inline !important;
+            display: inline-block !important;
             font-size: 15px !important;
             line-height: 1.25 !important;
             white-space: normal !important;
+            text-align: center !important;
         }
         #chatScreen .header-center .refund-btn .refund-label-short {
             display: none !important;
@@ -356,10 +358,12 @@
             font-size: 19px !important;
             font-weight: 800 !important;
             white-space: nowrap !important;
+            text-align: center !important;
         }
         #chatScreen .header-center .refund-btn .refund-timer {
             font-size: 11px !important;
             opacity: 0.85;
+            text-align: center !important;
         }
 
         /* Bloque de bienvenida */
@@ -385,19 +389,19 @@
             color: #ccc;
         }
 
-        /* Línea vigente */
+        /* Número principal vigente — anclado al fondo de la pantalla */
         .user-line-vigente {
             text-align: center;
             width: 100%;
             max-width: 460px;
-            margin: 18px auto 0;
+            margin: auto auto 0;
             padding: 16px 18px;
             background: rgba(212,175,55,0.08);
             border: 1px solid rgba(212,175,55,0.35);
             border-radius: 14px;
             color: #fff;
             box-sizing: border-box;
-            order: 3;
+            order: 99;
         }
         .user-line-vigente .line-label {
             display: block;
@@ -409,29 +413,54 @@
             font-weight: 700;
         }
         .user-line-vigente .line-phone {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: clamp(16px, 4.6vw, 20px);
             font-weight: 800;
-            color: #ffd700;
             font-family: monospace;
             letter-spacing: 1px;
             word-break: break-all;
+        }
+        .user-line-vigente .line-phone a {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: #fff;
+            text-decoration: none;
+            padding: 10px 18px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #25d366 0%, #128c7e 100%);
+            border: 1px solid rgba(255,255,255,0.15);
+            box-shadow: 0 4px 14px rgba(37, 211, 102, 0.25);
+            transition: transform 0.12s ease, box-shadow 0.18s ease;
+            -webkit-tap-highlight-color: rgba(255,255,255,0.2);
+            touch-action: manipulation;
+            cursor: pointer;
+        }
+        .user-line-vigente .line-phone a:hover {
+            box-shadow: 0 6px 18px rgba(37, 211, 102, 0.4);
+        }
+        .user-line-vigente .line-phone a:active {
+            transform: scale(0.97);
+        }
+        .user-line-vigente .line-phone a svg {
+            width: 18px;
+            height: 18px;
+            flex-shrink: 0;
+            fill: currentColor;
         }
         .user-line-vigente .line-empty {
             color: #aaa;
             font-style: italic;
             font-size: 13px;
         }
-        .user-line-vigente .line-cta {
-            display: inline-block;
+        .user-line-vigente .line-help {
+            display: block;
             margin-top: 12px;
-            background: linear-gradient(135deg,#25d366 0%,#128c7e 100%);
-            color: #fff;
-            text-decoration: none;
-            padding: 10px 22px;
-            border-radius: 22px;
-            font-weight: 700;
-            font-size: 14px;
+            font-size: 12px;
+            line-height: 1.45;
+            color: #cfcfcf;
         }
 
         /* Logout chico flotando arriba a la derecha (respeta safe-area) */
@@ -632,11 +661,11 @@
             </div>
         </header>
 
-        <!-- Refunds-only: Línea vigente -->
+        <!-- Refunds-only: Número principal vigente -->
         <div class="user-line-vigente" id="userLineVigenteBox">
-            <span class="line-label">📞 Línea vigente</span>
+            <span class="line-label">📞 Número principal vigente</span>
             <span class="line-phone" id="userLinePhone"><span class="line-empty">—</span></span>
-            <a id="userLineWhatsappLink" class="line-cta" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">💬 Abrir WhatsApp</a>
+            <span class="line-help">Iniciá sesión si en algún momento no llegan mensajes al número principal.</span>
         </div>
 
         <!-- Promo Banner -->
