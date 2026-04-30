@@ -469,6 +469,27 @@
             color: #f0f0f0;
             margin-bottom: 12px;
         }
+        .line-changed-alert .line-changed-bonus {
+            background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(212, 175, 55, 0.06));
+            border: 1.5px solid #d4af37;
+            color: #ffeaa0;
+            padding: 12px 14px;
+            border-radius: 12px;
+            margin-bottom: 14px;
+            font-size: clamp(12px, 3.4vw, 14px);
+            line-height: 1.45;
+        }
+        .line-changed-alert .line-changed-bonus strong {
+            color: #ffd700;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+        }
+        .line-changed-alert .line-changed-bonus span {
+            display: inline-block;
+            margin-top: 4px;
+            color: #f0e0a0;
+            font-size: clamp(11px, 3.2vw, 13px);
+        }
         .line-changed-alert button {
             background: #fff;
             color: #4a1010;
@@ -1054,6 +1075,10 @@
             <div class="line-changed-title">¡ATENCIÓN! CAMBIÓ LA LÍNEA PRINCIPAL</div>
             <div class="line-changed-body">
                 Tuvimos un problema con la línea anterior. <strong>Agendá el nuevo número de abajo y borrá el viejo.</strong>
+            </div>
+            <div class="line-changed-bonus">
+                🎁 <strong>BONUS 50%</strong> en tu próxima carga<br>
+                <span>Mandanos por WhatsApp al nuevo número una <strong>captura de que ya lo agendaste</strong> y te lo activamos.</span>
             </div>
             <button id="lineChangedDismiss" type="button">✓ Entendido, ya lo agendé</button>
         </div>
