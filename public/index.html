@@ -311,7 +311,7 @@
         }
 
         /* Header (los 3 botones de reembolso) — centrado vertical en el espacio
-           sobrante entre el bloque de bienvenida/número y el final de pantalla. */
+           sobrante; el número principal queda justo debajo. */
         #chatScreen .header {
             flex-direction: column !important;
             align-items: center !important;
@@ -323,8 +323,8 @@
             border-bottom: none !important;
             width: 100% !important;
             max-width: 460px !important;
-            margin: auto auto !important;
-            order: 3 !important;
+            margin: auto auto 12px !important;
+            order: 2 !important;
         }
         #chatScreen .header-center {
             display: flex !important;
@@ -392,12 +392,14 @@
             color: #ccc;
         }
 
-        /* Número principal vigente — destacado, justo debajo del bienvenido */
+        /* Número principal vigente — destacado, debajo de los reembolsos.
+           margin-bottom: auto empuja el bloque header+vigente al centro vertical
+           del espacio entre el welcome (top) y el final de pantalla. */
         .user-line-vigente {
             text-align: center;
             width: 100%;
             max-width: 460px;
-            margin: 0 auto 8px;
+            margin: 0 auto auto;
             padding: 18px 20px;
             background: linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.06));
             border: 1.5px solid rgba(212,175,55,0.55);
@@ -405,7 +407,7 @@
             color: #fff;
             box-sizing: border-box;
             box-shadow: 0 4px 20px rgba(212,175,55,0.12);
-            order: 2;
+            order: 3;
         }
         .user-line-vigente .line-label {
             display: block;
