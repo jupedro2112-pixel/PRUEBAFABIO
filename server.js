@@ -6273,8 +6273,10 @@ app.post('/api/admin/users/:id/block', authMiddleware, adminMiddleware, async (r
     const { id } = req.params;
     const { reason } = req.body;
 
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Solo el admin general puede bloquear usuarios.' });
+    // Pueden bloquear: admin general y depositor (los que están en el chat).
+    // Withdrawer no, para no darle a una sola persona poder de cortar accesos.
+    if (!['admin', 'depositor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'No tenés permiso para bloquear usuarios.' });
     }
 
     if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
@@ -6306,8 +6308,8 @@ app.post('/api/admin/users/:id/block', authMiddleware, adminMiddleware, async (r
 app.post('/api/admin/users/:id/unblock', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Solo el admin general puede desbloquear usuarios.' });
+    if (!['admin', 'depositor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'No tenés permiso para desbloquear usuarios.' });
     }
     const user = await User.findOne({ id });
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });

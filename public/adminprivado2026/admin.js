@@ -2932,19 +2932,37 @@ window.openBlockModal = openBlockModal;
 window.handleBlockUser = handleBlockUser;
 window.handleUnblockUser = handleUnblockUser;
 
-// Pinta el banner BLOQUEADO + alterna botones Bloquear/Desbloquear según el estado del user
+// Pinta el banner BLOQUEADO + alterna botones Bloquear/Desbloquear según el estado del user.
+// El banner muestra motivo y QUIÉN lo bloqueó — esta info es solo para admins
+// (el usuario nunca la ve: el cliente solo recibe el motivo en el login bloqueado,
+// nunca el blockedBy).
 function applyBlockStateToChatHeader(user) {
     if (!user) return;
     const isBlocked = user.isBlocked === true;
     const reason = user.blockReason || 'Sin motivo registrado';
+    const blockedBy = user.blockedBy || null;
+    const blockedAt = user.blockedAt ? new Date(user.blockedAt) : null;
     const isAdminUser = ['admin', 'depositor', 'withdrawer'].includes(user.role);
-    const canBlock = currentAdmin?.role === 'admin' && !isAdminUser;
+    // Tanto admin general como depositor pueden bloquear (son los que operan en el chat).
+    const canBlock = ['admin', 'depositor'].includes(currentAdmin?.role) && !isAdminUser;
 
     if (elements.chatBlockedBanner) {
         elements.chatBlockedBanner.style.display = isBlocked ? 'block' : 'none';
     }
     if (elements.chatBlockedReason) {
-        elements.chatBlockedReason.textContent = isBlocked ? `Motivo: ${reason}` : '';
+        if (isBlocked) {
+            const lines = [`Motivo: ${reason}`];
+            if (blockedBy) {
+                let byLine = `Bloqueado por: ${blockedBy}`;
+                if (blockedAt && !isNaN(blockedAt.getTime())) {
+                    byLine += ` — ${blockedAt.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}`;
+                }
+                lines.push(byLine);
+            }
+            elements.chatBlockedReason.innerHTML = lines.map(escapeHtml).join('<br>');
+        } else {
+            elements.chatBlockedReason.textContent = '';
+        }
     }
 
     if (elements.btnBlock) {
