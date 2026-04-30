@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="silver" cx="32%" cy="28%" r="80%">
+      <stop offset="0%" stop-color="#f0f0f0"/>
+      <stop offset="35%" stop-color="#c2c2c2"/>
+      <stop offset="75%" stop-color="#7a7a7a"/>
+      <stop offset="100%" stop-color="#3f3f3f"/>
+    </radialGradient>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1a1c22"/>
+      <stop offset="100%" stop-color="#0a0c10"/>
+    </linearGradient>
+    <linearGradient id="silverText" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e0e0e0"/>
+      <stop offset="50%" stop-color="#b0b0b0"/>
+      <stop offset="100%" stop-color="#808080"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)" rx="80"/>
+  <circle cx="256" cy="200" r="140" fill="url(#silver)" stroke="#b0b0b0" stroke-width="4"/>
+  <text x="256" y="260" text-anchor="middle" font-size="170" dominant-baseline="middle">🥈</text>
+  <text x="256" y="430"
+        text-anchor="middle"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
+        font-size="48"
+        font-weight="800"
+        fill="url(#silverText)"
+        letter-spacing="3">REEMBOLSOSVIP</text>
+</svg>
