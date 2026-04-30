@@ -240,7 +240,7 @@ VIP.refunds = (function () {
         const srcEl = document.getElementById('refundDebugSource');
         if (depEl) depEl.textContent = `$${(typeData.deposits || 0).toLocaleString()}`;
         if (witEl) witEl.textContent = `$${(typeData.withdrawals || 0).toLocaleString()}`;
-        if (srcEl) srcEl.textContent = typeData.source ? `fuente: ${typeData.source}` : '';
+        if (srcEl) srcEl.textContent = 'Gracias por confiar en nosotros.';
 
         const availabilityInfo = document.getElementById('refundAvailabilityInfo');
         availabilityInfo.style.display = 'none';
