@@ -294,11 +294,9 @@
             display: none !important;
         }
 
-        /* Pantalla principal: layout vertical, mobile-first
-           Usa 100dvh (dynamic viewport) para iOS Safari y Chrome móvil
-           respetando barras de URL/teclado virtual.
-           Padding-top extra para que el botón Salir (fixed top-right) no
-           pise el bloque de bienvenida. */
+        /* Pantalla principal: layout vertical, mobile-first.
+           overflow-y:auto por si el contenido no entra (último botón se
+           cortaba). Padding-top reducido + safe-area. */
         #chatScreen.chat-screen:not(.hidden) {
             display: flex !important;
             flex-direction: column !important;
@@ -306,7 +304,8 @@
             justify-content: flex-start !important;
             min-height: 100vh !important;
             min-height: 100dvh !important;
-            padding: calc(max(env(safe-area-inset-top), 12px) + 48px) 16px max(env(safe-area-inset-bottom), 16px) !important;
+            overflow-y: auto !important;
+            padding: calc(max(env(safe-area-inset-top), 8px) + 44px) 14px max(env(safe-area-inset-bottom), 14px) !important;
             background: linear-gradient(180deg, #1a0033 0%, #0a0015 100%) !important;
             box-sizing: border-box !important;
         }
@@ -322,8 +321,8 @@
             flex-direction: column !important;
             align-items: center !important;
             justify-content: center !important;
-            gap: 12px !important;
-            padding: 24px 0 0 !important;
+            gap: 8px !important;
+            padding: 12px 0 0 !important;
             min-height: auto !important;
             background: transparent !important;
             border-bottom: none !important;
@@ -342,6 +341,17 @@
             z-index: auto !important;
         }
         #chatScreen .header-center {
+            gap: 8px !important;
+        }
+        /* Bloque welcome más compacto en mobile */
+        .refunds-welcome {
+            margin: 0 auto 12px !important;
+        }
+        .user-line-vigente {
+            padding: 14px 18px !important;
+            margin: 0 auto 10px !important;
+        }
+        #chatScreen .header-center {
             display: flex !important;
             grid-area: auto !important;
             grid-column: auto !important;
@@ -356,16 +366,16 @@
         }
         #chatScreen .header-center .refund-btn {
             width: 100% !important;
-            min-height: 76px !important;
-            font-size: 15px !important;
-            padding: 14px 18px !important;
+            min-height: 60px !important;
+            font-size: 14px !important;
+            padding: 10px 16px !important;
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
             justify-content: center !important;
             text-align: center !important;
-            gap: 4px !important;
-            border-radius: 14px !important;
+            gap: 2px !important;
+            border-radius: 12px !important;
             box-sizing: border-box !important;
         }
         #chatScreen .header-center .refund-btn .refund-label-full {
@@ -896,19 +906,19 @@
             
             <!-- Sección centro: Reembolsos -->
             <div class="header-center">
-                <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 20%">
+                <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 8%">
                     <span class="refund-label-full">📅 Reembolso<br>Diario</span>
                     <span class="refund-label-short">📅</span>
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
-                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 10% (Lun-Mar)">
+                <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 5% (Lun-Mar)">
                     <span class="refund-label-full">📆 Reembolso<br>Semanal</span>
                     <span class="refund-label-short">📆</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
-                <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 5% (Desde día 7)">
+                <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 3% (Desde día 7)">
                     <span class="refund-label-full">🗓️ Reembolso<br>Mensual</span>
                     <span class="refund-label-short">🗓️</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
@@ -1355,13 +1365,13 @@
             </div>
             <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;">
                 <button onclick="VIP.refunds.showRefundModal('daily');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;">
-                    📅 Reembolso Diario (20% pérdidas de ayer)
+                    📅 Reembolso Diario (8% pérdidas de ayer)
                 </button>
                 <button onclick="VIP.refunds.showRefundModal('weekly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a6b3a,#2d9b56);">
-                    📆 Reembolso Semanal (10% pérdidas semana)
+                    📆 Reembolso Semanal (5% pérdidas semana)
                 </button>
                 <button onclick="VIP.refunds.showRefundModal('monthly');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;background:linear-gradient(135deg,#1a3a6b,#2d5b9b);">
-                    🗓️ Reembolso Mensual (5% pérdidas mes)
+                    🗓️ Reembolso Mensual (3% pérdidas mes)
                 </button>
                 <button onclick="VIP.ui.hideModal('unifiedRefundModal')" class="btn btn-secondary">Cerrar</button>
             </div>
@@ -1574,18 +1584,18 @@
             <div class="info-grid">
                 <div class="info-card">
                     <div class="info-card-icon">💰</div>
-                    <div class="info-card-title">Reembolso Diario 20%</div>
-                    <div class="info-card-desc">Recibe el 20% de tus pérdidas del día anterior directamente en tu cuenta</div>
+                    <div class="info-card-title">Reembolso Diario 8%</div>
+                    <div class="info-card-desc">Recibe el 8% de tus pérdidas del día anterior directamente en tu cuenta</div>
                 </div>
                 <div class="info-card">
                     <div class="info-card-icon">📅</div>
-                    <div class="info-card-title">Reembolso Semanal 10%</div>
-                    <div class="info-card-desc">Reclama el 10% de tus pérdidas semanales los lunes y martes</div>
+                    <div class="info-card-title">Reembolso Semanal 5%</div>
+                    <div class="info-card-desc">Reclama el 5% de tus pérdidas semanales los lunes y martes</div>
                 </div>
                 <div class="info-card">
                     <div class="info-card-icon">🗓️</div>
-                    <div class="info-card-title">Reembolso Mensual 5%</div>
-                    <div class="info-card-desc">Obtén el 5% de tus pérdidas del mes pasado después del día 7</div>
+                    <div class="info-card-title">Reembolso Mensual 3%</div>
+                    <div class="info-card-desc">Obtén el 3% de tus pérdidas del mes pasado después del día 7</div>
                 </div>
                 <div class="info-card">
                     <div class="info-card-icon">🔥</div>
