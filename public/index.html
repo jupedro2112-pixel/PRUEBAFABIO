@@ -310,9 +310,9 @@
             box-sizing: border-box !important;
         }
 
-        /* Header (los 3 botones de reembolso) — empujados al centro inferior
-           con margin-top:auto. Quedan debajo del bienvenido y del número
-           vigente. */
+        /* Header (los 3 botones de reembolso) — centrados a media pantalla
+           en el espacio sobrante entre los bloques de arriba (número +
+           bienvenido) y el final de la pantalla. */
         #chatScreen .header {
             flex-direction: column !important;
             align-items: center !important;
@@ -324,7 +324,7 @@
             border-bottom: none !important;
             width: 100% !important;
             max-width: 460px !important;
-            margin: auto auto 0 !important;
+            margin: auto auto !important;
             order: 3 !important;
         }
         #chatScreen .header-center {
@@ -370,7 +370,7 @@
             text-align: center !important;
         }
 
-        /* Bloque de bienvenida */
+        /* Bloque de bienvenida — debajo del número principal */
         .refunds-welcome {
             text-align: center;
             color: #fff;
@@ -378,7 +378,7 @@
             max-width: 460px;
             margin: 0 auto 20px;
             padding: 0 8px;
-            order: 1;
+            order: 2;
         }
         .refunds-welcome h2 {
             margin: 0 0 6px;
@@ -393,14 +393,13 @@
             color: #ccc;
         }
 
-        /* Número principal vigente — justo debajo del bienvenido, arriba.
-           Sin margin auto: queda pegado al welcome y los reembolsos
-           se empujan solos hacia abajo con margin-top:auto. */
+        /* Número principal vigente — PRIMER bloque visible, arriba de todo
+           (incluso del bienvenido). Sin margin auto. */
         .user-line-vigente {
             text-align: center;
             width: 100%;
             max-width: 460px;
-            margin: 0 auto;
+            margin: 0 auto 14px;
             padding: 18px 20px;
             background: linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.06));
             border: 1.5px solid rgba(212,175,55,0.55);
@@ -408,7 +407,7 @@
             color: #fff;
             box-sizing: border-box;
             box-shadow: 0 4px 20px rgba(212,175,55,0.12);
-            order: 2;
+            order: 1;
         }
         .user-line-vigente .line-label {
             display: block;
