@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>REEMBOLSOSVIP</title>
     <!-- Ícono de ruleta como favicon SVG (issue #7) -->
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥈</text></svg>">
     
     <!-- PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes">
@@ -15,7 +15,7 @@
     <meta name="apple-mobile-web-app-title" content="REEMBOLSOSVIP">
     <meta name="application-name" content="REEMBOLSOSVIP">
     <meta name="msapplication-TileColor" content="#00ff88">
-    <meta name="theme-color" content="#c9a043">
+    <meta name="theme-color" content="#9aa0a6">
     
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
@@ -310,8 +310,9 @@
             box-sizing: border-box !important;
         }
 
-        /* Header (los 3 botones de reembolso) — centrado vertical en el espacio
-           sobrante; el número principal queda justo debajo. */
+        /* Header (los 3 botones de reembolso) — empujados al centro inferior
+           con margin-top:auto. Quedan debajo del bienvenido y del número
+           vigente. */
         #chatScreen .header {
             flex-direction: column !important;
             align-items: center !important;
@@ -323,8 +324,8 @@
             border-bottom: none !important;
             width: 100% !important;
             max-width: 460px !important;
-            margin: auto auto 12px !important;
-            order: 2 !important;
+            margin: auto auto 0 !important;
+            order: 3 !important;
         }
         #chatScreen .header-center {
             display: flex !important;
@@ -392,14 +393,14 @@
             color: #ccc;
         }
 
-        /* Número principal vigente — destacado, debajo de los reembolsos.
-           margin-bottom: auto empuja el bloque header+vigente al centro vertical
-           del espacio entre el welcome (top) y el final de pantalla. */
+        /* Número principal vigente — justo debajo del bienvenido, arriba.
+           Sin margin auto: queda pegado al welcome y los reembolsos
+           se empujan solos hacia abajo con margin-top:auto. */
         .user-line-vigente {
             text-align: center;
             width: 100%;
             max-width: 460px;
-            margin: 0 auto auto;
+            margin: 0 auto;
             padding: 18px 20px;
             background: linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.06));
             border: 1.5px solid rgba(212,175,55,0.55);
@@ -407,7 +408,7 @@
             color: #fff;
             box-sizing: border-box;
             box-shadow: 0 4px 20px rgba(212,175,55,0.12);
-            order: 3;
+            order: 2;
         }
         .user-line-vigente .line-label {
             display: block;
@@ -512,11 +513,11 @@
         }
 
         /* ============================================
-           Branding REEMBOLSOSVIP — look dorado profesional
-           Paleta: champagne (#e8c97c) + dorado clásico (#c9a043)
-           + bronce oscuro (#7a5b1c). Sobre fondo oscuro elegante.
+           Branding REEMBOLSOSVIP — look plateado profesional
+           Paleta: plata clara (#e6e6e6) -> plata media (#a0a0a0)
+           -> grafito (#5a5a5a). Sobrio, sin reflejos exagerados.
            ============================================ */
-        .gold-logo {
+        .silver-logo {
             width: 100px;
             height: 100px;
             margin: 0 auto 16px;
@@ -527,18 +528,18 @@
             font-size: 50px;
             line-height: 1;
             background: radial-gradient(circle at 32% 28%,
-                #f3dca0 0%,
-                #d6b35a 30%,
-                #a17c2e 70%,
-                #5b4117 100%);
-            border: 1.5px solid #c9a043;
+                #f0f0f0 0%,
+                #c2c2c2 30%,
+                #7a7a7a 70%,
+                #3f3f3f 100%);
+            border: 1.5px solid #b0b0b0;
             box-shadow:
                 0 8px 24px rgba(0, 0, 0, 0.55),
-                0 0 0 4px rgba(201, 160, 67, 0.10),
-                inset 0 2px 4px rgba(255, 230, 170, 0.45),
+                0 0 0 4px rgba(176, 176, 176, 0.10),
+                inset 0 2px 4px rgba(255, 255, 255, 0.35),
                 inset 0 -2px 4px rgba(0, 0, 0, 0.35);
         }
-        .gold-title {
+        .silver-title {
             margin: 10px 0 4px;
             font-size: 28px;
             font-weight: 800;
@@ -546,10 +547,10 @@
             text-align: center;
             text-transform: uppercase;
             background: linear-gradient(135deg,
-                #f3dca0 0%,
-                #d6b35a 35%,
-                #c9a043 65%,
-                #a17c2e 100%);
+                #f0f0f0 0%,
+                #c2c2c2 35%,
+                #9a9a9a 65%,
+                #6a6a6a 100%);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -557,7 +558,7 @@
             filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
         }
         /* Línea sutil debajo del título para acabado editorial */
-        .login-logo + .gold-title::after {
+        .login-logo + .silver-title::after {
             content: "";
             display: block;
             width: 60px;
@@ -565,7 +566,7 @@
             margin: 10px auto 0;
             background: linear-gradient(90deg,
                 transparent 0%,
-                rgba(201, 160, 67, 0.6) 50%,
+                rgba(176, 176, 176, 0.6) 50%,
                 transparent 100%);
         }
     </style>
@@ -574,8 +575,8 @@
     <!-- Login Screen -->
     <div id="loginScreen" class="login-screen">
         <div class="login-box">
-            <div class="login-logo gold-logo">👑</div>
-            <h1 class="gold-title">REEMBOLSOSVIP</h1>
+            <div class="login-logo silver-logo">🥈</div>
+            <h1 class="silver-title">REEMBOLSOSVIP</h1>
             <p>Inicia sesión para continuar</p>
             
             <form id="loginForm" autocomplete="on">
