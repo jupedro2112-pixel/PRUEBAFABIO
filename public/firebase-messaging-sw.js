@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v22-number-first';
+const CACHE_VERSION = 'v23-refunds-bottom-anchor';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

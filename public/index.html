@@ -310,9 +310,11 @@
             box-sizing: border-box !important;
         }
 
-        /* Header (los 3 botones de reembolso) — centrados a media pantalla
-           en el espacio sobrante entre los bloques de arriba (número +
-           bienvenido) y el final de la pantalla. */
+        /* Header (los 3 botones de reembolso) — anclados al final de la
+           pantalla con margin-top:auto (empuja todo el espacio sobrante
+           hacia arriba). Así nunca se superponen con el número/bienvenido,
+           incluso en viewports chicos. margin-top:24px adicional como
+           respiro mínimo si el espacio sobrante es 0. */
         #chatScreen .header {
             flex-direction: column !important;
             align-items: center !important;
@@ -324,7 +326,11 @@
             border-bottom: none !important;
             width: 100% !important;
             max-width: 460px !important;
-            margin: auto auto !important;
+            margin-top: auto !important;
+            margin-right: auto !important;
+            margin-left: auto !important;
+            margin-bottom: 0 !important;
+            padding-top: 24px !important;
             order: 3 !important;
         }
         #chatScreen .header-center {
