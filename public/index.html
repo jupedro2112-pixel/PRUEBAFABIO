@@ -379,11 +379,14 @@
             box-sizing: border-box !important;
         }
         #chatScreen .header-center .refund-btn .refund-label-full {
-            display: inline-block !important;
-            font-size: 15px !important;
-            line-height: 1.25 !important;
-            white-space: normal !important;
+            display: block !important;
+            font-size: clamp(12px, 3.4vw, 15px) !important;
+            line-height: 1.2 !important;
+            white-space: nowrap !important;
             text-align: center !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: 100% !important;
         }
         #chatScreen .header-center .refund-btn .refund-label-short {
             display: none !important;
@@ -769,7 +772,7 @@
             background: rgba(60, 30, 30, 0.95) !important;
         }
 
-        /* Logo: silver más mate (menos brilloso) */
+        /* Logo: silver más mate (menos brilloso) + SVG monograma centrado. */
         .silver-logo {
             background: radial-gradient(circle at 32% 28%,
                 #d6d6d6 0%,
@@ -781,6 +784,14 @@
                 0 6px 18px rgba(0, 0, 0, 0.55),
                 inset 0 1px 2px rgba(255, 255, 255, 0.20),
                 inset 0 -1px 2px rgba(0, 0, 0, 0.35) !important;
+            padding: 0 !important;
+            overflow: hidden;
+        }
+        .silver-logo svg {
+            display: block;
+            width: 70%;
+            height: 70%;
+            margin: auto;
         }
         /* Título principal: gradiente plata más mate */
         .silver-title {
@@ -802,7 +813,24 @@
     <!-- Login Screen -->
     <div id="loginScreen" class="login-screen">
         <div class="login-box">
-            <div class="login-logo silver-logo">🥈</div>
+            <div class="login-logo silver-logo" aria-label="Logo">
+                <svg viewBox="0 0 100 100" width="100%" height="100%" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="logoR" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#1a1a1a"/>
+                            <stop offset="100%" stop-color="#3a3a3a"/>
+                        </linearGradient>
+                    </defs>
+                    <text x="50" y="50"
+                          text-anchor="middle"
+                          dominant-baseline="central"
+                          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
+                          font-size="58"
+                          font-weight="900"
+                          fill="url(#logoR)"
+                          style="letter-spacing:-2px;">R</text>
+                </svg>
+            </div>
             <h1 class="silver-title">REEMBOLSOSVIP</h1>
             <p>Inicia sesión para continuar</p>
             
@@ -907,19 +935,19 @@
             <!-- Sección centro: Reembolsos -->
             <div class="header-center">
                 <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 8%">
-                    <span class="refund-label-full">📅 Reembolso<br>Diario</span>
+                    <span class="refund-label-full">📅 Reembolso Diario</span>
                     <span class="refund-label-short">📅</span>
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
                 <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 5% (Lun-Mar)">
-                    <span class="refund-label-full">📆 Reembolso<br>Semanal</span>
+                    <span class="refund-label-full">📆 Reembolso Semanal</span>
                     <span class="refund-label-short">📆</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
                 <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 3% (Desde día 7)">
-                    <span class="refund-label-full">🗓️ Reembolso<br>Mensual</span>
+                    <span class="refund-label-full">🗓️ Reembolso Mensual</span>
                     <span class="refund-label-short">🗓️</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
                     <span class="refund-timer" id="monthlyRefundTimer"></span>
