@@ -114,10 +114,19 @@ VIP.refunds = (function () {
             if (response.ok) {
                 VIP.state.refundStatus = await response.json();
                 updateRefundButtons();
+                updateUserBalance();
             }
         } catch (error) {
             console.error('Error cargando reembolsos:', error);
         }
+    }
+
+    // Pinta el saldo del usuario en la plataforma JUGAYGANA en el card del home.
+    function updateUserBalance() {
+        const el = document.getElementById('userBalanceAmount');
+        if (!el) return;
+        const bal = (VIP.state.refundStatus && VIP.state.refundStatus.user && VIP.state.refundStatus.user.currentBalance) || 0;
+        el.textContent = '$' + Number(bal).toLocaleString('es-AR');
     }
 
     function updateRefundButtons() {
@@ -451,6 +460,22 @@ VIP.refunds = (function () {
             await loadRefundStatus();
         }
         VIP.ui.showModal('unifiedRefundModal');
+    }
+
+    // Botón "🎰 Abrir plataforma" del card de saldo: mismo tab/ventana
+    // (window.location.href en vez de window.open con _blank). En PWA
+    // standalone esto mantiene la app activa en lugar de abrir el browser.
+    function wireGoToPlatform() {
+        const btn = document.getElementById('goToPlatformBtn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            window.location.href = 'https://www.jugaygana44.bet';
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wireGoToPlatform);
+    } else {
+        wireGoToPlatform();
     }
 
     // Wire-up de los botones del modal de requisitos (después de DOM ready).

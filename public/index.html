@@ -426,6 +426,67 @@
             color: #ccc;
         }
 
+        /* Card de saldo en la plataforma + acceso directo a JUGAYGANA.
+           Va debajo del bienvenido, arriba del número principal. */
+        .user-balance-card {
+            order: 1.5 !important;
+            width: 100% !important;
+            max-width: 460px !important;
+            margin: 0 auto 12px !important;
+            padding: 14px 18px !important;
+            background: linear-gradient(135deg, rgba(0, 200, 100, 0.10), rgba(0, 150, 75, 0.04)) !important;
+            border: 1.5px solid rgba(0, 220, 130, 0.45) !important;
+            border-radius: 14px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 12px !important;
+            box-sizing: border-box !important;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.30);
+        }
+        .user-balance-card .balance-info {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .user-balance-card .balance-label {
+            font-size: 11px;
+            color: #4ade80;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            font-weight: 700;
+        }
+        .user-balance-card .balance-amount {
+            font-size: clamp(22px, 6vw, 28px);
+            font-weight: 900;
+            color: #00ff99;
+            font-family: monospace;
+            letter-spacing: 1px;
+            text-shadow: 0 1px 4px rgba(0, 255, 153, 0.30);
+        }
+        .user-balance-card .platform-btn-cta {
+            width: 100%;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #6a0dad 0%, #9b30ff 100%);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 10px;
+            font-weight: 800;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 16px rgba(106, 13, 173, 0.45);
+            -webkit-tap-highlight-color: rgba(255, 255, 255, 0.2);
+            touch-action: manipulation;
+            transition: transform 0.12s ease, box-shadow 0.18s ease;
+        }
+        .user-balance-card .platform-btn-cta:hover {
+            box-shadow: 0 6px 22px rgba(106, 13, 173, 0.55);
+        }
+        .user-balance-card .platform-btn-cta:active {
+            transform: scale(0.98);
+        }
+
         /* Banner GRANDE de cambio de línea — rojo, llama la atención.
            Aparece cuando el server devuelve un número distinto al
            guardado en localStorage (admin lo rotó). */
@@ -1081,6 +1142,17 @@
                 <span>Mandanos por WhatsApp al nuevo número una <strong>captura de que ya lo agendaste</strong> y te lo activamos.</span>
             </div>
             <button id="lineChangedDismiss" type="button">✓ Entendido, ya lo agendé</button>
+        </div>
+
+        <!-- Refunds-only: Saldo + acceso a la plataforma JUGAYGANA -->
+        <div id="userBalanceCard" class="user-balance-card">
+            <div class="balance-info">
+                <span class="balance-label">💰 Tu saldo en la plataforma</span>
+                <span id="userBalanceAmount" class="balance-amount">$0</span>
+            </div>
+            <button id="goToPlatformBtn" type="button" class="platform-btn-cta">
+                🎰 Abrir plataforma
+            </button>
         </div>
 
         <!-- Refunds-only: Número principal vigente -->
