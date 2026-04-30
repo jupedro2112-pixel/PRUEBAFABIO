@@ -311,27 +311,40 @@
         }
 
         /* Header (los 3 botones de reembolso) — anclados al final de la
-           pantalla con margin-top:auto (empuja todo el espacio sobrante
-           hacia arriba). Así nunca se superponen con el número/bienvenido,
-           incluso en viewports chicos. margin-top:24px adicional como
-           respiro mínimo si el espacio sobrante es 0. */
+           pantalla con margin-top:auto. CRITICAL: el .header original es
+           position:fixed + display:grid, hay que reset ambas cosas para
+           que entre al flow normal del flex column de #chatScreen. */
         #chatScreen .header {
+            position: static !important;
+            display: flex !important;
+            grid-template-columns: none !important;
             flex-direction: column !important;
             align-items: center !important;
             justify-content: center !important;
             gap: 12px !important;
-            padding: 0 !important;
+            padding: 24px 0 0 !important;
             min-height: auto !important;
             background: transparent !important;
             border-bottom: none !important;
+            box-shadow: none !important;
+            animation: none !important;
+            top: auto !important;
+            left: auto !important;
+            right: auto !important;
             width: 100% !important;
             max-width: 460px !important;
             margin-top: auto !important;
             margin-right: auto !important;
             margin-left: auto !important;
             margin-bottom: 0 !important;
-            padding-top: 24px !important;
             order: 3 !important;
+            z-index: auto !important;
+        }
+        #chatScreen .header-center {
+            display: flex !important;
+            grid-area: auto !important;
+            grid-column: auto !important;
+            grid-row: auto !important;
         }
         #chatScreen .header-center {
             display: flex !important;
