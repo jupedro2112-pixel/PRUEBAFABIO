@@ -3956,9 +3956,9 @@ async function saveCanalUrl() {
 }
 
 // ============================================
-// LÍNEAS POR USUARIO (prefijo → teléfono)
+// LÍNEAS POR EQUIPO (prefijo → teléfono vigente)
 // ============================================
-const USER_LINES_SLOTS = 10;
+const USER_LINES_SLOTS = 8;
 
 function renderUserLinesSlots(slots) {
     const container = document.getElementById('userLinesSlots');
@@ -3970,10 +3970,19 @@ function renderUserLinesSlots(slots) {
         const prefix = s.prefix || '';
         const phone = s.phone || '';
         html += `
-            <div style="display:flex;gap:6px;align-items:center;">
-                <span style="color:#888;width:22px;font-size:12px;">#${i + 1}</span>
-                <input type="text" class="user-line-prefix" placeholder="prefijo (ej: ignite)" value="${escapeHtml(prefix)}" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
-                <input type="text" class="user-line-phone" placeholder="número (ej: +5491155551111)" value="${escapeHtml(phone)}" style="flex:1.3;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+            <div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;font-weight:800;font-size:11px;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">${i + 1}</span>
+                    <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Equipo ${i + 1}</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
+                    <input type="text" class="user-line-prefix" placeholder="ej: ignite, argen, ato, mar, tri…" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
+                    <input type="text" class="user-line-phone" placeholder="+54 9 11 5555 1111" value="${escapeHtml(phone)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(212,175,55,0.25);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;width:100%;box-sizing:border-box;">
+                </div>
             </div>
         `;
     }

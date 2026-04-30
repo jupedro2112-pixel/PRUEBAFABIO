@@ -5970,7 +5970,7 @@ app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, re
 // Se muestran al usuario en la pantalla de reembolsos.
 // 10 slots configurables + un teléfono default si ninguno matchea.
 // ============================================
-const USER_LINES_MAX_SLOTS = 10;
+const USER_LINES_MAX_SLOTS = 8;
 
 app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {

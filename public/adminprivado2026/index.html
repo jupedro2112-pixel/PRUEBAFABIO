@@ -452,21 +452,25 @@
                             </button>
                         </div>
 
-                        <!-- Líneas por prefijo de usuario -->
+                        <!-- Líneas por equipo (prefijo de usuario → teléfono vigente) -->
                         <div class="panel-subheader" style="margin-top: 24px;">
-                            <h3>Líneas por usuario (prefijo → número)</h3>
+                            <h3>📞 Líneas por equipo</h3>
                         </div>
-                        <div class="cbu-form">
-                            <small style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">
-                                Si el username del usuario empieza con el prefijo, se le muestra el número correspondiente. Si no matchea ningún prefijo se muestra el número por defecto. Comparación case-insensitive.
-                            </small>
-                            <div id="userLinesSlots" style="display:flex;flex-direction:column;gap:8px;"></div>
-                            <div class="form-group" style="margin-top:14px;">
-                                <label>Número por defecto (si ningún prefijo matchea):</label>
-                                <input type="text" id="userLinesDefaultPhone" placeholder="+54 11 1234 5678" style="width:100%;">
+                        <div class="cbu-form" style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.18);border-radius:12px;padding:16px;">
+                            <div style="background:rgba(0,0,0,0.3);border-left:3px solid #d4af37;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                                <p style="margin:0 0 4px;color:#d4af37;font-weight:700;font-size:13px;">Cómo funciona</p>
+                                <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                                    Cada equipo tiene un <strong>inicio de usuario</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">ignite</code>) y un <strong>número vigente</strong>. Cuando un usuario entra (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">ignite_pedro</code>), automáticamente se le muestra el número del equipo. Para rotar el número, simplemente lo modificás acá y guardás.
+                                </p>
                             </div>
-                            <button class="btn-primary" onclick="saveUserLines()">
-                                <span class="icon icon-save"></span> Guardar Líneas
+                            <div id="userLinesSlots" style="display:flex;flex-direction:column;gap:10px;"></div>
+                            <div style="margin-top:18px;padding-top:14px;border-top:1px dashed rgba(255,255,255,0.1);">
+                                <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Número de respaldo (si el usuario no coincide con ningún equipo)</label>
+                                <input type="text" id="userLinesDefaultPhone" placeholder="+54 11 0000 0000" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:14px;box-sizing:border-box;">
+                                <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Opcional. Dejalo vacío si querés que esos usuarios no vean ningún número.</small>
+                            </div>
+                            <button class="btn-primary" onclick="saveUserLines()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
+                                <span class="icon icon-save"></span> Guardar líneas
                             </button>
                         </div>
                     </div>
