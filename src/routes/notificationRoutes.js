@@ -204,6 +204,28 @@ router.post('/register-token', async (req, res) => {
     // Garantizar que el token se trate siempre como string para evitar inyección NoSQL
     const tokenStr = String(fcmToken);
 
+    // CRITICAL: si este token estaba registrado bajo OTRO usuario (porque
+    // el dueño del device cambió de cuenta sin hacer logout), sacarlo de
+    // ahí para que no le sigan llegando push notifications del usuario
+    // anterior. Cubre el caso "instalé con atojuan, ahora entro como
+    // royaltomas y me llegan notifs de ato".
+    try {
+      const stripFromOthers = await User.updateMany(
+        { id: { $ne: user.id }, 'fcmTokens.token': tokenStr },
+        { $pull: { fcmTokens: { token: tokenStr } } }
+      );
+      if (stripFromOthers.modifiedCount > 0) {
+        console.log(`[FCM] Token reasignado: removido de ${stripFromOthers.modifiedCount} usuario(s) anteriores`);
+      }
+      // También limpiar los campos legacy (single fcmToken) en otros users
+      await User.updateMany(
+        { id: { $ne: user.id }, fcmToken: tokenStr },
+        { $unset: { fcmToken: 1, fcmTokenContext: 1, fcmTokenUpdatedAt: 1 } }
+      );
+    } catch (e) {
+      console.warn('[FCM] No se pudo limpiar el token en otros usuarios:', e.message);
+    }
+
     // Actualizar el array fcmTokens: upsert por token string.
     // Si el token ya existe, actualizamos contexto/fecha/permiso.
     // Si es nuevo, lo añadimos SIN borrar los tokens anteriores.

@@ -233,6 +233,15 @@ VIP.auth = (function () {
             VIP.state.linePhone = data.linePhone || null;
             localStorage.setItem('userToken', VIP.state.currentToken);
 
+            // Si en el celular hay un FCM token de un user anterior (ej: el
+            // dueño cambió de cuenta sin logout), reasignarlo al user
+            // actual. El backend además limpia el token de otros users.
+            try {
+                if (VIP.notifications && typeof VIP.notifications.sendFcmTokenAfterLogin === 'function') {
+                    VIP.notifications.sendFcmTokenAfterLogin();
+                }
+            } catch (_) { /* best-effort */ }
+
             renderRefundsHomeUI();
 
             VIP.ui.showChatScreen();
