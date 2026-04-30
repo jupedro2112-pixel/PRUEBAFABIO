@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>REEMBOLSOSVIP</title>
     <!-- Ícono de ruleta como favicon SVG (issue #7) -->
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥈</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👑</text></svg>">
     
     <!-- PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes">
@@ -15,7 +15,7 @@
     <meta name="apple-mobile-web-app-title" content="REEMBOLSOSVIP">
     <meta name="application-name" content="REEMBOLSOSVIP">
     <meta name="msapplication-TileColor" content="#00ff88">
-    <meta name="theme-color" content="#00ff88">
+    <meta name="theme-color" content="#c9a043">
     
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
@@ -510,43 +510,61 @@
         }
 
         /* ============================================
-           Branding REEMBOLSOSVIP — look plateado
+           Branding REEMBOLSOSVIP — look dorado profesional
+           Paleta: champagne (#e8c97c) + dorado clásico (#c9a043)
+           + bronce oscuro (#7a5b1c). Sobre fondo oscuro elegante.
            ============================================ */
-        .silver-logo {
-            width: 96px;
-            height: 96px;
-            margin: 0 auto 14px;
+        .gold-logo {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 16px;
             border-radius: 50%;
             display: flex !important;
             align-items: center;
             justify-content: center;
-            font-size: 54px;
+            font-size: 50px;
             line-height: 1;
-            background: radial-gradient(circle at 30% 30%, #ffffff 0%, #d8d8d8 35%, #888888 75%, #5a5a5a 100%);
-            border: 2px solid #e0e0e0;
+            background: radial-gradient(circle at 32% 28%,
+                #f3dca0 0%,
+                #d6b35a 30%,
+                #a17c2e 70%,
+                #5b4117 100%);
+            border: 1.5px solid #c9a043;
             box-shadow:
-                0 6px 22px rgba(0,0,0,0.45),
-                inset 0 2px 6px rgba(255,255,255,0.55),
-                inset 0 -2px 6px rgba(0,0,0,0.25);
+                0 8px 24px rgba(0, 0, 0, 0.55),
+                0 0 0 4px rgba(201, 160, 67, 0.10),
+                inset 0 2px 4px rgba(255, 230, 170, 0.45),
+                inset 0 -2px 4px rgba(0, 0, 0, 0.35);
         }
-        .silver-title {
-            margin: 8px 0 4px;
-            font-size: 30px;
-            font-weight: 900;
-            letter-spacing: 2px;
+        .gold-title {
+            margin: 10px 0 4px;
+            font-size: 28px;
+            font-weight: 800;
+            letter-spacing: 4px;
             text-align: center;
+            text-transform: uppercase;
             background: linear-gradient(135deg,
-                #ffffff 0%,
-                #c9c9c9 25%,
-                #f5f5f5 50%,
-                #b0b0b0 75%,
-                #ffffff 100%);
+                #f3dca0 0%,
+                #d6b35a 35%,
+                #c9a043 65%,
+                #a17c2e 100%);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
             color: transparent;
-            text-shadow: 0 2px 8px rgba(0,0,0,0.35);
-            filter: drop-shadow(0 1px 1px rgba(0,0,0,0.35));
+            filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+        }
+        /* Línea sutil debajo del título para acabado editorial */
+        .login-logo + .gold-title::after {
+            content: "";
+            display: block;
+            width: 60px;
+            height: 1px;
+            margin: 10px auto 0;
+            background: linear-gradient(90deg,
+                transparent 0%,
+                rgba(201, 160, 67, 0.6) 50%,
+                transparent 100%);
         }
     </style>
 </head>
@@ -554,8 +572,8 @@
     <!-- Login Screen -->
     <div id="loginScreen" class="login-screen">
         <div class="login-box">
-            <div class="login-logo silver-logo">🥈</div>
-            <h1 class="silver-title">REEMBOLSOSVIP</h1>
+            <div class="login-logo gold-logo">👑</div>
+            <h1 class="gold-title">REEMBOLSOSVIP</h1>
             <p>Inicia sesión para continuar</p>
             
             <form id="loginForm" autocomplete="on">
