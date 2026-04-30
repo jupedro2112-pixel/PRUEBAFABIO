@@ -730,7 +730,7 @@ const notificationRoutes = require('./src/routes/notificationRoutes');
 app.use('/api/notifications', notificationRoutes);
 notificationRoutes.setIo(io);
 
-const { sendNotificationToUser: _sendPushToUser, pruneInvalidFcmTokens } = require('./src/services/notificationService');
+const { sendNotificationToUser: _sendPushToUser, pruneInvalidFcmTokens, sendNotificationToAllUsers } = require('./src/services/notificationService');
 
 // ============================================
 // CRON DIARIO: LIMPIEZA DE TOKENS FCM MUERTOS
@@ -5999,12 +5999,77 @@ app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
       }
       cleaned.push({ prefix, phone });
     }
+    const newDefaultPhone = (defaultPhone ? String(defaultPhone) : '').trim();
+
+    // Capturar la config previa para detectar qué prefijos cambiaron de
+    // número y disparar push notifications a los usuarios afectados.
+    const oldConfig = (await getConfig('userLinesByPrefix')) || {};
+    const oldSlots = Array.isArray(oldConfig.slots) ? oldConfig.slots : [];
+    const oldDefault = (oldConfig.defaultPhone || '').trim();
+    const oldByPrefix = {};
+    for (const s of oldSlots) {
+      if (s && s.prefix && s.phone) {
+        oldByPrefix[s.prefix.toLowerCase()] = s.phone;
+      }
+    }
+
     const value = {
       slots: cleaned,
-      defaultPhone: (defaultPhone ? String(defaultPhone) : '').trim()
+      defaultPhone: newDefaultPhone
     };
     await setConfig('userLinesByPrefix', value);
     res.json({ success: true, message: 'Líneas actualizadas', value });
+
+    // Después de responder al admin, mandar push (fire & forget) a los
+    // usuarios cuyos prefijos vieron cambio de número. No bloquea la
+    // respuesta — si falla, queda en logs pero el guardado ya fue OK.
+    setImmediate(async () => {
+      try {
+        const changedPrefixes = [];
+        for (const s of cleaned) {
+          if (!s.prefix || !s.phone) continue;
+          const key = s.prefix.toLowerCase();
+          const prev = oldByPrefix[key];
+          if (prev && prev !== s.phone) {
+            changedPrefixes.push(s.prefix);
+          }
+        }
+        const defaultChanged = oldDefault && newDefaultPhone && oldDefault !== newDefaultPhone;
+
+        for (const prefix of changedPrefixes) {
+          const safe = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const filter = { username: { $regex: '^' + safe, $options: 'i' } };
+          const title = '⚠️ NUEVA LINEA · Equipo ' + prefix;
+          const body = 'Cambiamos el número principal. Abrí la app, agendá el nuevo y mandanos la captura para reclamar tu BONUS 50%.';
+          try {
+            const result = await sendNotificationToAllUsers(User, title, body, {
+              source: 'line-change-auto',
+              tag: 'line-change-' + prefix,
+              prefix
+            }, filter);
+            logger.info(`[user-lines auto-notify] prefijo "${prefix}" — alcanzados:${result.totalUsers || 0} ok:${result.successCount || 0} fail:${result.failureCount || 0}`);
+          } catch (e) {
+            logger.warn(`[user-lines auto-notify] error para prefijo "${prefix}": ${e.message}`);
+          }
+        }
+
+        // Si el default phone cambió, avisar a todos (no podemos filtrar
+        // exactamente "los que NO matchean ningún prefix" sin un regex
+        // negativo complejo, así que mandamos broadcast con copy genérico).
+        if (defaultChanged) {
+          try {
+            const result = await sendNotificationToAllUsers(User, '⚠️ NUEVA LINEA principal',
+              'Cambiamos el número principal. Abrí la app, agendá el nuevo y mandanos la captura para reclamar tu BONUS 50%.',
+              { source: 'line-change-auto', tag: 'line-change-default' });
+            logger.info(`[user-lines auto-notify] default cambió — alcanzados:${result.totalUsers || 0} ok:${result.successCount || 0} fail:${result.failureCount || 0}`);
+          } catch (e) {
+            logger.warn(`[user-lines auto-notify] error broadcast default: ${e.message}`);
+          }
+        }
+      } catch (notifyErr) {
+        logger.error(`[user-lines auto-notify] excepción: ${notifyErr.message}`);
+      }
+    });
   } catch (error) {
     console.error('Error actualizando user-lines:', error);
     res.status(500).json({ error: 'Error del servidor' });
