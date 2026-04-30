@@ -244,7 +244,7 @@ VIP.refunds = (function () {
                 VIP.ui.showToast(`✅ ${data.message}`, 'success');
                 VIP.ui.hideModal('refundModal');
                 loadRefundStatus();
-                VIP.chat.sendSystemMessage(`🎁 Reembolso ${type} reclamado: $${data.amount.toLocaleString()}`);
+                try { VIP.chat && VIP.chat.sendSystemMessage && VIP.chat.sendSystemMessage(`🎁 Reembolso ${type} reclamado: $${data.amount.toLocaleString()}`); } catch (_) { /* refunds-only: chat may be hidden */ }
             } else {
                 VIP.ui.showToast(`ℹ️ ${data.message}`, 'info');
                 VIP.ui.hideModal('refundModal');

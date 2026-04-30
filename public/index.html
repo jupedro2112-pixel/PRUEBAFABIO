@@ -250,6 +250,179 @@
         .notif-banner-close:hover {
             background: rgba(255, 255, 255, 0.2);
         }
+
+        /* ============================================
+           REFUNDS-ONLY MODE
+           Página simplificada: solo login con usuario
+           y reclamo de reembolsos.
+           ============================================ */
+        /* Login: ocultar todo menos usuario y submit */
+        #loginScreen #loginByUsernameBtn,
+        #loginScreen #loginByPhoneBtn,
+        #loginScreen #loginByUsernameBtn + button,
+        #loginScreen #loginPhoneGroup,
+        #loginScreen #phoneLoginModeToggle,
+        #loginScreen #phoneOtpStep,
+        #loginScreen .input-group:has(#password),
+        #loginScreen #registerBtn,
+        #loginScreen #findUserBtn,
+        #loginScreen #helpBtn,
+        #loginScreen #installBtn {
+            display: none !important;
+        }
+        /* Tab toggle envoltorio (los dos botones usuario/celular) */
+        #loginScreen form > div:first-child {
+            display: none !important;
+        }
+        /* Ocultar bloques de "no tienes cuenta" / recuperar contraseña */
+        #loginScreen form ~ div {
+            display: none !important;
+        }
+
+        /* Pantalla de chat: ocultar todo lo que no son reembolsos */
+        #chatScreen .header-left,
+        #chatScreen .header-right,
+        #chatScreen .promo-banner,
+        #chatScreen #notifBanner,
+        #chatScreen #notifBlockedModal,
+        #chatScreen .chat-section,
+        #chatScreen .chat-input-container,
+        #chatScreen .drawer-overlay,
+        #chatScreen .mobile-drawer,
+        #chatScreen #unifiedRefundBtn {
+            display: none !important;
+        }
+        /* Header se convierte en contenedor central */
+        #chatScreen .header {
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 18px !important;
+            padding: 20px 16px !important;
+            min-height: auto !important;
+            background: linear-gradient(135deg, #1a0033 0%, #0a0015 100%) !important;
+            border-bottom: 1px solid rgba(212,175,55,0.2) !important;
+        }
+        #chatScreen .header-center {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 14px !important;
+            width: 100% !important;
+            max-width: 420px !important;
+            margin: 0 auto !important;
+        }
+        #chatScreen .header-center .refund-btn {
+            width: 100% !important;
+            min-height: 78px !important;
+            font-size: 16px !important;
+            padding: 16px 18px !important;
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            text-align: left !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-label-full {
+            display: inline !important;
+            font-size: 16px !important;
+            line-height: 1.2 !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-label-short {
+            display: none !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-amount {
+            font-size: 20px !important;
+            font-weight: 800 !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-timer {
+            font-size: 12px !important;
+            opacity: 0.85;
+        }
+
+        /* Bloque de bienvenida */
+        .refunds-welcome {
+            text-align: center;
+            color: #fff;
+            margin: 0 auto;
+            max-width: 480px;
+            padding: 14px 18px 0;
+        }
+        .refunds-welcome h2 {
+            margin: 0 0 6px;
+            font-size: 22px;
+            color: #d4af37;
+            font-weight: 800;
+        }
+        .refunds-welcome p {
+            margin: 0;
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        /* Línea vigente */
+        .user-line-vigente {
+            text-align: center;
+            margin: 18px auto 0;
+            max-width: 420px;
+            padding: 14px 16px;
+            background: rgba(212,175,55,0.08);
+            border: 1px solid rgba(212,175,55,0.35);
+            border-radius: 12px;
+            color: #fff;
+        }
+        .user-line-vigente .line-label {
+            display: block;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #d4af37;
+            margin-bottom: 4px;
+            font-weight: 700;
+        }
+        .user-line-vigente .line-phone {
+            display: block;
+            font-size: 18px;
+            font-weight: 800;
+            color: #ffd700;
+            font-family: monospace;
+            letter-spacing: 1px;
+            word-break: break-all;
+        }
+        .user-line-vigente .line-empty {
+            color: #aaa;
+            font-style: italic;
+            font-size: 13px;
+        }
+        .user-line-vigente .line-cta {
+            display: inline-block;
+            margin-top: 10px;
+            background: linear-gradient(135deg,#25d366 0%,#128c7e 100%);
+            color: #fff;
+            text-decoration: none;
+            padding: 8px 18px;
+            border-radius: 18px;
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        /* Logout chico flotando arriba a la derecha */
+        #refundsLogoutBtn {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #fff;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        #refundsLogoutBtn:hover {
+            background: rgba(255,68,68,0.2);
+            border-color: rgba(255,68,68,0.5);
+        }
     </style>
 </head>
 <body>
@@ -313,9 +486,9 @@
                 </div>
                 <div class="input-group">
                     <label>Contraseña</label>
-                    <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" required autocomplete="current-password">
+                    <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" autocomplete="current-password">
                 </div>
-                <button type="submit" class="btn btn-primary">Ingresar a la Sala</button>
+                <button type="submit" class="btn btn-primary">Ingresar</button>
             </form>
             
             <div style="margin: 15px 0; text-align: center;">
@@ -336,6 +509,13 @@
 
     <!-- Chat Screen -->
     <div id="chatScreen" class="chat-screen hidden">
+        <!-- Refunds-only: logout flotante -->
+        <button id="refundsLogoutBtn" type="button" onclick="VIP.auth.handleLogout()">🚪 Salir</button>
+        <!-- Refunds-only: bloque de bienvenida -->
+        <div class="refunds-welcome">
+            <h2>Bienvenido <span id="refundsWelcomeUser"></span></h2>
+            <p>Reclamá tu reembolso disponible</p>
+        </div>
         <!-- Header -->
         <header class="header">
             <!-- Sección izquierda: Fueguito + Configuración/Cerrar sesión -->
@@ -406,6 +586,13 @@
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
         </header>
+
+        <!-- Refunds-only: Línea vigente -->
+        <div class="user-line-vigente" id="userLineVigenteBox">
+            <span class="line-label">📞 Línea vigente</span>
+            <span class="line-phone" id="userLinePhone"><span class="line-empty">—</span></span>
+            <a id="userLineWhatsappLink" class="line-cta" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">💬 Abrir WhatsApp</a>
+        </div>
 
         <!-- Promo Banner -->
         <div class="promo-banner">

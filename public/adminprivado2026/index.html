@@ -451,6 +451,24 @@
                                 <span class="icon icon-save"></span> Guardar URL Canal
                             </button>
                         </div>
+
+                        <!-- Líneas por prefijo de usuario -->
+                        <div class="panel-subheader" style="margin-top: 24px;">
+                            <h3>Líneas por usuario (prefijo → número)</h3>
+                        </div>
+                        <div class="cbu-form">
+                            <small style="color:#aaa;font-size:11px;display:block;margin-bottom:10px;">
+                                Si el username del usuario empieza con el prefijo, se le muestra el número correspondiente. Si no matchea ningún prefijo se muestra el número por defecto. Comparación case-insensitive.
+                            </small>
+                            <div id="userLinesSlots" style="display:flex;flex-direction:column;gap:8px;"></div>
+                            <div class="form-group" style="margin-top:14px;">
+                                <label>Número por defecto (si ningún prefijo matchea):</label>
+                                <input type="text" id="userLinesDefaultPhone" placeholder="+54 11 1234 5678" style="width:100%;">
+                            </div>
+                            <button class="btn-primary" onclick="saveUserLines()">
+                                <span class="icon icon-save"></span> Guardar Líneas
+                            </button>
+                        </div>
                     </div>
                 </div>
             </section>

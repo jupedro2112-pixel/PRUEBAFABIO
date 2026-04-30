@@ -176,118 +176,60 @@ VIP.auth = (function () {
         }
     }
 
+    // Refunds-only login: solo username, sin contraseña.
     async function handleLogin(e) {
-        e.preventDefault();
+        if (e) e.preventDefault();
 
-        const loginMode = window._loginMode || 'username';
-        const username = loginMode === 'username' ? document.getElementById('username').value : null;
-        const phonePrefix = loginMode === 'phone' ? (document.getElementById('loginPhonePrefix')?.value || '+54') : null;
-        const phoneNumber = loginMode === 'phone' ? document.getElementById('loginPhone')?.value?.trim() : null;
-        const phone = loginMode === 'phone' ? (phonePrefix + (phoneNumber || '').replace(/\D/g, '')) : null;
-        const password = document.getElementById('password').value;
+        const usernameEl = document.getElementById('username');
+        const username = (usernameEl?.value || '').trim();
         const errorDiv = document.getElementById('errorMessage');
         const loginBtn = document.querySelector('#loginForm button[type="submit"]');
 
-        if (loginMode === 'phone' && (!phoneNumber || phoneNumber.replace(/\D/g, '').length < 7)) {
-            errorDiv.textContent = 'Ingresá un número de celular válido';
-            errorDiv.classList.add('show');
-            return;
-        }
+        errorDiv.classList.remove('show');
 
-        if (loginMode === 'username' && !username) {
+        if (!username) {
             errorDiv.textContent = 'Ingresá tu usuario';
             errorDiv.classList.add('show');
             return;
         }
 
         if (loginBtn) { loginBtn.textContent = 'Ingresando...'; loginBtn.disabled = true; }
-        errorDiv.classList.remove('show');
-
-        const loginTimeout = setTimeout(() => {
-            errorDiv.textContent = 'Tiempo de espera agotado. Intenta nuevamente.';
-            errorDiv.classList.add('show');
-            if (loginBtn) { loginBtn.textContent = 'Ingresar a la Sala'; loginBtn.disabled = false; }
-        }, 15000);
 
         try {
-            // OTP login flow for phone mode
-            if (loginMode === 'phone' && window._phoneLoginMode === 'otp') {
-                const response = await fetch(`${VIP.config.API_URL}/api/auth/login-otp-request`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone })
-                });
-                const data = await response.json();
-                if (response.ok && data.success) {
-                    window._phoneOtpFullPhone = phone;
-                    document.getElementById('phoneOtpMsg').textContent = `✅ ${data.message}`;
-                    document.getElementById('phoneOtpStep').classList.remove('hidden');
-                    document.getElementById('phoneOtpCode').value = '';
-                    if (loginBtn) loginBtn.style.display = 'none';
-                } else {
-                    errorDiv.textContent = data.error || 'Error al enviar código';
-                    errorDiv.classList.add('show');
-                }
-                clearTimeout(loginTimeout);
-                if (loginBtn) { loginBtn.textContent = '📱 Enviar código SMS'; loginBtn.disabled = false; }
-                return;
-            }
-
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
+            const timeoutId = setTimeout(() => controller.abort(), 12000);
 
-            const loginPayload = loginMode === 'phone'
-                ? { phone, password }
-                : { username, password };
-
-            const response = await fetch(`${VIP.config.API_URL}/api/auth/login`, {
+            const response = await fetch(`${VIP.config.API_URL}/api/auth/login-username-only`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(loginPayload),
+                body: JSON.stringify({ username }),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
-            clearTimeout(loginTimeout);
 
-            const data = await response.json();
+            const data = await response.json().catch(() => ({}));
 
-            if (response.ok) {
-                VIP.state.currentToken = data.token;
-                VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
-                localStorage.setItem('userToken', VIP.state.currentToken);
-
-                // Guardar contraseña en memoria de sesión para mostrarla en el modal de plataforma
-                VIP.state.sessionPassword = password;
-
-                // Guardar token de JUGAYGANA en sessionStorage (expira al cerrar el navegador)
-                if (data.jugayganaToken) {
-                    VIP.state.jugayganaToken = data.jugayganaToken;
-                    sessionStorage.setItem('jugayganaToken', data.jugayganaToken);
-                } else {
-                    VIP.state.jugayganaToken = null;
-                    sessionStorage.removeItem('jugayganaToken');
-                }
-
-                try {
-                    await initializeSession(false);
-                } catch (initError) {
-                    console.error('Error inicializando sesión:', initError);
-                }
-
-                if (data.user.needsPasswordChange || data.user.mustChangePassword === true) {
-                    VIP.state.passwordChangePending = true;
-                    prepareChangePasswordModal();
-                    VIP.ui.showModal('changePasswordModal');
-                }
-
-                VIP.notifications.requestNotificationPermission();
-                VIP.notifications.sendFcmTokenAfterLogin();
-            } else {
-                errorDiv.textContent = data.error || 'Error de autenticación';
+            if (response.status === 404) {
+                errorDiv.textContent = data.error || 'Usuario no disponible';
                 errorDiv.classList.add('show');
+                return;
             }
+            if (!response.ok) {
+                errorDiv.textContent = data.error || 'No se pudo iniciar sesión';
+                errorDiv.classList.add('show');
+                return;
+            }
+
+            VIP.state.currentToken = data.token;
+            VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
+            VIP.state.linePhone = data.linePhone || null;
+            localStorage.setItem('userToken', VIP.state.currentToken);
+
+            renderRefundsHomeUI();
+
+            VIP.ui.showChatScreen();
+            VIP.refunds.loadRefundStatus();
         } catch (error) {
-            clearTimeout(loginTimeout);
             if (error.name === 'AbortError') {
                 errorDiv.textContent = 'La conexión tardó demasiado. Intenta nuevamente.';
             } else {
@@ -296,10 +238,51 @@ VIP.auth = (function () {
             errorDiv.classList.add('show');
         } finally {
             if (loginBtn) {
-                loginBtn.textContent = window._phoneLoginMode === 'otp' && loginMode === 'phone' ? '📱 Enviar código SMS' : 'Ingresar a la Sala';
+                loginBtn.textContent = 'Ingresar';
                 loginBtn.disabled = false;
             }
         }
+    }
+
+    // Renderiza el bloque "Bienvenido [user]" + "Línea vigente"
+    function renderRefundsHomeUI() {
+        const user = VIP.state.currentUser || {};
+        const welcomeEl = document.getElementById('refundsWelcomeUser');
+        if (welcomeEl) welcomeEl.textContent = user.username || '';
+
+        const phoneEl = document.getElementById('userLinePhone');
+        const waLink = document.getElementById('userLineWhatsappLink');
+        const phone = VIP.state.linePhone || null;
+        if (phoneEl) {
+            if (phone) {
+                phoneEl.textContent = phone;
+            } else {
+                phoneEl.innerHTML = '<span class="line-empty">No disponible</span>';
+            }
+        }
+        if (waLink) {
+            if (phone) {
+                const cleaned = phone.replace(/[^\d+]/g, '');
+                waLink.href = 'https://wa.me/' + cleaned.replace(/^\+/, '');
+                waLink.style.display = 'inline-block';
+            } else {
+                waLink.style.display = 'none';
+            }
+        }
+    }
+
+    // Refrescar línea vigente con el token actual (sirve tras reload).
+    async function refreshLinePhone() {
+        try {
+            const r = await fetch(`${VIP.config.API_URL}/api/user-lines/me`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (r.ok) {
+                const d = await r.json();
+                VIP.state.linePhone = d.phone || null;
+                renderRefundsHomeUI();
+            }
+        } catch (_) { /* ignore */ }
     }
 
     async function verifyToken() {
@@ -339,23 +322,11 @@ VIP.auth = (function () {
                 }
 
                 VIP.ui.showChatScreen();
-                VIP.socket.startMessagePolling();
                 VIP.refunds.loadRefundStatus();
-                VIP.fire.loadFireStatus();
 
-                // Server-side enforcement: if the user must change their
-                // password (flag persisted in DB), re-open the mandatory
-                // change modal even after a page reload.
-                if (VIP.state.currentUser && VIP.state.currentUser.mustChangePassword === true) {
-                    VIP.state.passwordChangePending = true;
-                    try { prepareChangePasswordModal(); } catch (e) { /* DOM not ready */ }
-                    try { VIP.ui.showModal('changePasswordModal'); } catch (e) { /* ignore */ }
-                }
-
-                VIP.notifications.requestNotificationPermission();
-                VIP.notifications.sendFcmTokenAfterLogin().catch(function (e) {
-                    console.warn('[FCM] Error al re-sincronizar token en verifyToken:', e);
-                });
+                // Refunds-only: pintar bienvenida + refrescar línea vigente
+                try { renderRefundsHomeUI(); } catch (_) { /* ignore */ }
+                refreshLinePhone();
             } else {
                 localStorage.removeItem('userToken');
             }
@@ -1024,7 +995,9 @@ VIP.auth = (function () {
         handleVerifyResetOtp,
         handleCompletePasswordReset,
         prepareChangePasswordModal,
-        switchLoginMode
+        switchLoginMode,
+        renderRefundsHomeUI,
+        refreshLinePhone
     };
 
 })();

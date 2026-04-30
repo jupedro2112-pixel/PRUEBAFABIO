@@ -1656,6 +1656,148 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 });
 
+// ============================================
+// LOGIN SOLO-USUARIO (acceso simplificado a reembolsos)
+// El usuario solo ingresa su username; si existe, se le devuelve un token
+// con permisos limitados que sirve para consultar/reclamar reembolsos.
+// Para entrar a la plataforma de juego sigue necesitando su contraseña real.
+// ============================================
+function pickLinePhoneForUsername(linesConfig, username) {
+  if (!linesConfig || typeof linesConfig !== 'object') return null;
+  const slots = Array.isArray(linesConfig.slots) ? linesConfig.slots : [];
+  const defaultPhone = linesConfig.defaultPhone || null;
+  const lower = String(username || '').toLowerCase();
+  let bestMatch = null;
+  for (const slot of slots) {
+    if (!slot || !slot.prefix || !slot.phone) continue;
+    const prefix = String(slot.prefix).toLowerCase().trim();
+    if (!prefix) continue;
+    if (lower.startsWith(prefix)) {
+      if (!bestMatch || prefix.length > bestMatch.prefix.length) {
+        bestMatch = { prefix, phone: String(slot.phone).trim() };
+      }
+    }
+  }
+  return bestMatch ? bestMatch.phone : defaultPhone;
+}
+
+app.post('/api/auth/login-username-only', authLimiter, async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    if (!username || typeof username !== 'string' || !username.trim()) {
+      return res.status(400).json({ error: 'Usuario requerido' });
+    }
+    const cleanUsername = username.trim();
+
+    let user;
+    try {
+      user = await User.findOne({
+        username: { $regex: new RegExp('^' + escapeRegex(cleanUsername) + '$', 'i') }
+      });
+    } catch (dbErr) {
+      logger.error(`[LoginUsernameOnly] DB read failed for ${cleanUsername}: ${dbErr.message}`);
+      return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intentá más tarde.' });
+    }
+
+    // Si no existe localmente, probar JUGAYGANA (mismo flujo que el login normal)
+    if (!user) {
+      try {
+        const jgUser = await jugaygana.getUserInfoByName(cleanUsername);
+        if (jgUser) {
+          const userId = uuidv4();
+          user = await User.create({
+            id: userId,
+            username: jgUser.username,
+            password: 'asd123',
+            email: jgUser.email || null,
+            phone: jgUser.phone || null,
+            role: 'user',
+            accountNumber: generateAccountNumber(),
+            balance: jgUser.balance || 0,
+            createdAt: new Date(),
+            lastLogin: null,
+            isActive: true,
+            jugayganaUserId: jgUser.id,
+            jugayganaUsername: jgUser.username,
+            jugayganaSyncStatus: 'linked',
+            source: 'jugaygana',
+            tokenVersion: 0,
+            mustChangePassword: true
+          });
+          await ChatStatus.create({
+            userId,
+            username: jgUser.username,
+            status: 'open',
+            category: 'cargas'
+          });
+          logger.info(`User ${cleanUsername} auto-created from JUGAYGANA via username-only login`);
+        }
+      } catch (jgErr) {
+        logger.warn(`[LoginUsernameOnly] JUGAYGANA lookup failed: ${jgErr.message}`);
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no disponible' });
+    }
+
+    const userObj = user.toObject ? user.toObject() : user;
+    const userId = userObj.id || userObj._id?.toString();
+
+    if (!userObj.isActive) {
+      return res.status(404).json({ error: 'Usuario no disponible' });
+    }
+    if (userObj.isBlocked === true) {
+      return res.status(403).json({
+        error: `Tu cuenta está bloqueada: ${userObj.blockReason || 'Contactá a soporte.'}`,
+        code: 'USER_BLOCKED'
+      });
+    }
+    // Bloquear acceso a roles administrativos por este endpoint (solo para usuarios finales).
+    if (isAdminRole(userObj.role)) {
+      return res.status(403).json({ error: 'Usuario no disponible' });
+    }
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    const token = jwt.sign(
+      { userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    const linesConfig = await getConfig('userLinesByPrefix');
+    const linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+
+    res.json({
+      message: 'Login exitoso',
+      token,
+      user: {
+        id: userId,
+        username: userObj.username,
+        role: userObj.role
+      },
+      linePhone
+    });
+  } catch (error) {
+    logger.error(`Login username-only error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Devuelve la línea vigente del usuario autenticado (para refrescar sin re-login).
+app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
+  try {
+    const linesConfig = await getConfig('userLinesByPrefix');
+    const phone = pickLinePhoneForUsername(linesConfig, req.user.username);
+    res.json({ phone: phone || null });
+  } catch (error) {
+    logger.error(`user-lines/me error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // User logout — limpia el token FCM actual del backend para que las
 // notificaciones no sigan llegando a este dispositivo después de cerrar
 // sesión. Acepta el fcmToken por body o por query; si no viene, intenta
@@ -5754,13 +5896,67 @@ app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, re
   try {
     const currentCbu = await getConfig('cbu') || {};
     const newCbu = { ...currentCbu, ...req.body };
-    
+
     await setConfig('cbu', newCbu);
-    
+
     res.json({ success: true, message: 'CBU actualizado', cbu: newCbu });
   } catch (error) {
     console.error('Error actualizando CBU:', error);
     res.status(500).json({ error: 'Error actualizando CBU' });
+  }
+});
+
+// ============================================
+// LÍNEAS POR USUARIO (mapeo prefijo → teléfono)
+// Se muestran al usuario en la pantalla de reembolsos.
+// 10 slots configurables + un teléfono default si ninguno matchea.
+// ============================================
+const USER_LINES_MAX_SLOTS = 10;
+
+app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const config = (await getConfig('userLinesByPrefix')) || {};
+    const slots = Array.isArray(config.slots) ? config.slots : [];
+    const padded = [];
+    for (let i = 0; i < USER_LINES_MAX_SLOTS; i++) {
+      const s = slots[i] || {};
+      padded.push({ prefix: s.prefix || '', phone: s.phone || '' });
+    }
+    res.json({ slots: padded, defaultPhone: config.defaultPhone || '' });
+  } catch (error) {
+    console.error('Error obteniendo user-lines:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { slots, defaultPhone } = req.body || {};
+    if (!Array.isArray(slots)) {
+      return res.status(400).json({ error: 'slots debe ser un array' });
+    }
+    if (slots.length > USER_LINES_MAX_SLOTS) {
+      return res.status(400).json({ error: `Máximo ${USER_LINES_MAX_SLOTS} slots` });
+    }
+    const cleaned = [];
+    for (const s of slots) {
+      const prefix = (s && s.prefix ? String(s.prefix) : '').trim();
+      const phone = (s && s.phone ? String(s.phone) : '').trim();
+      if (!prefix && !phone) continue;
+      if (prefix && !phone) {
+        return res.status(400).json({ error: `El prefijo "${prefix}" no tiene número` });
+      }
+      cleaned.push({ prefix, phone });
+    }
+    const value = {
+      slots: cleaned,
+      defaultPhone: (defaultPhone ? String(defaultPhone) : '').trim()
+    };
+    await setConfig('userLinesByPrefix', value);
+    res.json({ success: true, message: 'Líneas actualizadas', value });
+  } catch (error) {
+    console.error('Error actualizando user-lines:', error);
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 

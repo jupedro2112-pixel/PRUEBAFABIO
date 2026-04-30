@@ -3873,6 +3873,8 @@ async function loadCBUConfig() {
     
     // Cargar también la URL del Canal Informativo
     loadCanalUrlConfig();
+    // Cargar líneas por usuario (refunds)
+    loadUserLines();
 }
 
 async function saveCBUConfig() {
@@ -3929,7 +3931,7 @@ async function loadCanalUrlConfig() {
 async function saveCanalUrl() {
     const urlInput = document.getElementById('canalInformativoUrl');
     const url = urlInput ? urlInput.value.trim() : '';
-    
+
     try {
         const response = await fetch(`${API_URL}/api/admin/canal-url`, {
             method: 'POST',
@@ -3939,9 +3941,9 @@ async function saveCanalUrl() {
             },
             body: JSON.stringify({ url })
         });
-        
+
         const data = await response.json();
-        
+
         if (response.ok) {
             showToast('URL del Canal Informativo guardada correctamente', 'success');
         } else {
@@ -3950,6 +3952,88 @@ async function saveCanalUrl() {
     } catch (error) {
         console.error('Error saving canal URL:', error);
         showToast('Error al guardar URL', 'error');
+    }
+}
+
+// ============================================
+// LÍNEAS POR USUARIO (prefijo → teléfono)
+// ============================================
+const USER_LINES_SLOTS = 10;
+
+function renderUserLinesSlots(slots) {
+    const container = document.getElementById('userLinesSlots');
+    if (!container) return;
+    const data = Array.isArray(slots) ? slots : [];
+    let html = '';
+    for (let i = 0; i < USER_LINES_SLOTS; i++) {
+        const s = data[i] || {};
+        const prefix = s.prefix || '';
+        const phone = s.phone || '';
+        html += `
+            <div style="display:flex;gap:6px;align-items:center;">
+                <span style="color:#888;width:22px;font-size:12px;">#${i + 1}</span>
+                <input type="text" class="user-line-prefix" placeholder="prefijo (ej: ignite)" value="${escapeHtml(prefix)}" style="flex:1;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                <input type="text" class="user-line-phone" placeholder="número (ej: +5491155551111)" value="${escapeHtml(phone)}" style="flex:1.3;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+            </div>
+        `;
+    }
+    container.innerHTML = html;
+}
+
+async function loadUserLines() {
+    try {
+        const response = await fetch(`${API_URL}/api/admin/user-lines`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        if (!response.ok) {
+            renderUserLinesSlots([]);
+            return;
+        }
+        const data = await response.json();
+        renderUserLinesSlots(data.slots || []);
+        const def = document.getElementById('userLinesDefaultPhone');
+        if (def) def.value = data.defaultPhone || '';
+    } catch (error) {
+        console.error('Error loading user-lines:', error);
+        renderUserLinesSlots([]);
+    }
+}
+
+async function saveUserLines() {
+    const container = document.getElementById('userLinesSlots');
+    if (!container) return;
+    const prefixInputs = container.querySelectorAll('.user-line-prefix');
+    const phoneInputs = container.querySelectorAll('.user-line-phone');
+    const slots = [];
+    for (let i = 0; i < prefixInputs.length; i++) {
+        const prefix = (prefixInputs[i].value || '').trim();
+        const phone = (phoneInputs[i].value || '').trim();
+        if (!prefix && !phone) continue;
+        if (prefix && !phone) {
+            showToast(`El prefijo "${prefix}" no tiene número`, 'error');
+            return;
+        }
+        slots.push({ prefix, phone });
+    }
+    const defaultPhone = (document.getElementById('userLinesDefaultPhone')?.value || '').trim();
+    try {
+        const response = await fetch(`${API_URL}/api/admin/user-lines`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ slots, defaultPhone })
+        });
+        const data = await response.json();
+        if (response.ok) {
+            showToast('Líneas guardadas correctamente', 'success');
+        } else {
+            showToast(data.error || 'Error al guardar líneas', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving user-lines:', error);
+        showToast('Error al guardar líneas', 'error');
     }
 }
 
