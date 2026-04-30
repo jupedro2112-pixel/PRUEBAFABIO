@@ -1681,7 +1681,13 @@ function pickLinePhoneForUsername(linesConfig, username) {
   return bestMatch ? bestMatch.phone : defaultPhone;
 }
 
-app.post('/api/auth/login-username-only', authLimiter, async (req, res) => {
+// Probe endpoint para verificar versión deployada (no requiere auth)
+app.get('/api/auth/_probe', (req, res) => {
+  res.json({ version: 'refunds-only-v3', endpoint: 'login-username-only', timestamp: new Date().toISOString() });
+});
+
+app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) => {
+  console.log('[LoginUsernameOnly] HIT', { body: req.body, ip: req.ip });
   try {
     const { username } = req.body || {};
     if (!username || typeof username !== 'string' || !username.trim()) {
@@ -1800,8 +1806,11 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res) => {
       linePhone
     });
   } catch (error) {
+    console.error('[LoginUsernameOnly] OUTER CATCH:', error.name, error.message, error.stack);
     logger.error(`Login username-only error (${error.name}): ${error.message}\n${error.stack}`);
-    res.status(500).json({ error: `Error del servidor: ${error.message}` });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: `Error del servidor: ${error.name}: ${error.message}` });
+    }
   }
 });
 
