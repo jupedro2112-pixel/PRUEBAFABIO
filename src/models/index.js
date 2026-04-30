@@ -272,51 +272,53 @@ async function connectDB() {
     // ============================================================
     // Auto-limpieza de mensajes antiguos (3 días)
     // ============================================================
+    // Usamos el campo `timestamp` (declarado explícitamente en el schema con
+    // default: Date.now) en lugar de `createdAt` (auto-generado por
+    // timestamps:true) porque los mensajes viejos creados antes de que el
+    // schema tuviera timestamps:true NO tienen createdAt — y un filtro
+    // { createdAt: { $lt: ... } } nunca los matchea, así como el TTL sobre
+    // createdAt los ignora.  `timestamp` está garantizado en todos los
+    // mensajes, viejos y nuevos.
+    //
     // Estrategia en capas:
-    //   1) TTL index de MongoDB sobre createdAt → barrido automático cada ~60s
-    //      por el motor de la base. Idealmente esto solo ya alcanza.
-    //   2) Auto-reparación: si ya existe un índice createdAt_1 sin TTL (lo crea
-    //      Mongoose por defecto al usar timestamps:true), MongoDB tira
-    //      IndexOptionsConflict y el TTL nunca se aplica. Detectamos el error
-    //      y dropeamos+recreamos el índice automáticamente para no requerir
-    //      intervención manual en Atlas.
-    //   3) Limpieza one-shot al boot: borra todo lo que excede los 3 días al
-    //      arrancar, incluso si el TTL recién se está creando.
-    //   4) Cron periódico cada 6 horas como red de seguridad: si por algún
-    //      motivo el TTL deja de funcionar (replica set sin permisos, índice
-    //      removido manualmente, etc.), el cron mantiene la colección limpia.
+    //   1) TTL index de MongoDB sobre `timestamp` → barrido automático cada
+    //      ~60s por el motor de la base.
+    //   2) Auto-reparación: si ya existe un índice timestamp_1 sin TTL
+    //      (Mongoose lo creó por el `index: true` del schema), dropeamos y
+    //      recreamos con expireAfterSeconds. Sin intervención manual.
+    //   3) Limpieza one-shot al boot por si el TTL recién está activándose.
+    //   4) Cron cada 6h como red de seguridad.
     // ============================================================
     const MESSAGE_TTL_SECONDS = 3 * 24 * 60 * 60; // 3 días = 259200s
 
     async function ensureMessageTtlIndex() {
       try {
         await Message.collection.createIndex(
-          { createdAt: 1 },
-          { expireAfterSeconds: MESSAGE_TTL_SECONDS, name: 'createdAt_1_ttl' }
+          { timestamp: 1 },
+          { expireAfterSeconds: MESSAGE_TTL_SECONDS, name: 'timestamp_1_ttl' }
         );
-        console.log('✅ TTL index para auto-limpieza de mensajes (3 días) creado/verificado');
+        console.log('✅ TTL index sobre `timestamp` (3 días) creado/verificado');
         return true;
       } catch (err) {
         if (err.codeName === 'IndexOptionsConflict' || err.code === 85 /* IndexOptionsConflict */) {
-          console.warn('⚠️ Existe un índice createdAt_1 sin TTL — autorreparando: drop + recreate con TTL...');
+          console.warn('⚠️ Existe un índice sobre `timestamp` sin TTL — autorreparando: drop + recreate con TTL...');
           try {
-            // Buscar todos los índices que toquen createdAt sin TTL y dropearlos.
+            // Buscar todos los índices sobre timestamp sin TTL y dropearlos.
             const indexes = await Message.collection.indexes();
             for (const idx of indexes) {
               const keys = Object.keys(idx.key || {});
-              const isCreatedAtIndex = keys.length === 1 && keys[0] === 'createdAt';
+              const isTimestampIndex = keys.length === 1 && keys[0] === 'timestamp';
               const hasTtl = typeof idx.expireAfterSeconds === 'number';
-              if (isCreatedAtIndex && !hasTtl) {
+              if (isTimestampIndex && !hasTtl) {
                 await Message.collection.dropIndex(idx.name);
                 console.log(`🧹 Índice "${idx.name}" sin TTL dropeado`);
               }
             }
-            // Recrear con TTL.
             await Message.collection.createIndex(
-              { createdAt: 1 },
-              { expireAfterSeconds: MESSAGE_TTL_SECONDS, name: 'createdAt_1_ttl' }
+              { timestamp: 1 },
+              { expireAfterSeconds: MESSAGE_TTL_SECONDS, name: 'timestamp_1_ttl' }
             );
-            console.log('✅ TTL index recreado correctamente tras autorreparación');
+            console.log('✅ TTL index sobre `timestamp` recreado tras autorreparación');
             return true;
           } catch (repairErr) {
             console.error('❌ Autorreparación del TTL index falló:', repairErr.message);
@@ -332,16 +334,39 @@ async function connectDB() {
       }
     }
 
-    // 1+2) Crear/asegurar el TTL index (con autorreparación si hace falta)
-    ensureMessageTtlIndex();
+    // Limpieza adicional: borrar el TTL viejo sobre `createdAt` si quedó de
+    // un deploy anterior. No es crítico pero evita que el motor mantenga
+    // un índice TTL inútil (createdAt no existe en mensajes viejos).
+    async function dropLegacyCreatedAtTtl() {
+      try {
+        const indexes = await Message.collection.indexes();
+        for (const idx of indexes) {
+          if (idx.name === 'createdAt_1_ttl') {
+            await Message.collection.dropIndex(idx.name);
+            console.log('🧹 Índice TTL legacy "createdAt_1_ttl" dropeado (ya no se usa)');
+          }
+        }
+      } catch (err) {
+        // No bloquea: si el índice no existe, perfecto
+        if (!/index not found/i.test(err.message || '')) {
+          console.warn('⚠️ Limpieza de índice legacy createdAt_1_ttl:', err.message);
+        }
+      }
+    }
 
-    // 3) Limpieza one-shot al boot
+    // 1+2) Crear/asegurar el TTL index sobre timestamp
+    ensureMessageTtlIndex();
+    dropLegacyCreatedAtTtl();
+
+    // 3) Limpieza one-shot al boot — usa `timestamp` (no createdAt)
     async function cleanupOldMessages(label) {
       try {
         const cutoff = new Date(Date.now() - MESSAGE_TTL_SECONDS * 1000);
-        const result = await Message.deleteMany({ createdAt: { $lt: cutoff } });
+        const result = await Message.deleteMany({ timestamp: { $lt: cutoff } });
         if (result.deletedCount > 0) {
           console.log(`🧹 [${label}] ${result.deletedCount} mensajes antiguos (>3 días) eliminados`);
+        } else {
+          console.log(`✅ [${label}] No hay mensajes antiguos para eliminar`);
         }
       } catch (err) {
         console.error(`❌ [${label}] Error en limpieza de mensajes antiguos:`, err.message);
@@ -349,11 +374,8 @@ async function connectDB() {
     }
     cleanupOldMessages('boot');
 
-    // 4) Cron de seguridad cada 6h. Solo en el proceso principal — evita
-    //    duplicación si EB levanta múltiples instancias (todas borrarían lo
-    //    mismo, no rompe nada pero genera ruido en logs). 6h es frecuencia
-    //    suficiente para que mensajes >3d nunca sobrevivan más de 6h extra.
-    const SAFETY_CRON_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
+    // 4) Cron de seguridad cada 6h
+    const SAFETY_CRON_INTERVAL_MS = 6 * 60 * 60 * 1000;
     setInterval(() => cleanupOldMessages('cron-6h'), SAFETY_CRON_INTERVAL_MS).unref();
 
     return true;
