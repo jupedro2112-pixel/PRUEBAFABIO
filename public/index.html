@@ -259,11 +259,10 @@
         /* Login: ocultar todo menos usuario y submit */
         #loginScreen #loginByUsernameBtn,
         #loginScreen #loginByPhoneBtn,
-        #loginScreen #loginByUsernameBtn + button,
         #loginScreen #loginPhoneGroup,
         #loginScreen #phoneLoginModeToggle,
         #loginScreen #phoneOtpStep,
-        #loginScreen .input-group:has(#password),
+        #loginScreen #loginPasswordGroup,
         #loginScreen #registerBtn,
         #loginScreen #findUserBtn,
         #loginScreen #helpBtn,
@@ -274,8 +273,9 @@
         #loginScreen form > div:first-child {
             display: none !important;
         }
-        /* Ocultar bloques de "no tienes cuenta" / recuperar contraseña */
-        #loginScreen form ~ div {
+        /* Ocultar wrappers de "registrate" y "recuperar contraseña"
+           sin tocar #errorMessage (que también es div hermano del form). */
+        #loginScreen .login-box > div:not(#errorMessage):not(.login-logo) {
             display: none !important;
         }
 
@@ -484,7 +484,7 @@
                     </div>
                     <button type="button" onclick="handlePhoneOtpVerify()" class="btn btn-primary" id="phoneOtpVerifyBtn">✅ Verificar código</button>
                 </div>
-                <div class="input-group">
+                <div class="input-group" id="loginPasswordGroup">
                     <label>Contraseña</label>
                     <input type="password" id="password" name="password" placeholder="Ingresa tu contraseña" autocomplete="current-password">
                 </div>
