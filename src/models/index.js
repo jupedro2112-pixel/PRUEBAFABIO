@@ -269,31 +269,92 @@ async function connectDB() {
     // Must run AFTER migrateReferralPayoutIndex so the collection and indexes are stable.
     await backfillLegacyPayoutSettlements();
 
-    // Auto-delete messages older than 3 days via MongoDB TTL index
-    Message.collection.createIndex(
-      { createdAt: 1 },
-      { expireAfterSeconds: 259200 } // 3 days = 3 * 24 * 60 * 60
-    ).then(() => {
-      console.log('✅ TTL index para auto-limpieza de mensajes (3 días) creado/verificado');
-    }).catch(err => {
-      if (err.codeName === 'IndexOptionsConflict') {
-        // An existing createdAt_1 index without TTL is present — auto-cleanup will not work
-        // until the conflicting index is manually dropped and this process is restarted
-        console.warn('⚠️ TTL index no creado: existe un índice createdAt_1 sin TTL (IndexOptionsConflict). Para activar auto-limpieza, eliminar el índice manualmente y reiniciar.');
-      } else {
-        console.error('Error creando TTL index:', err.message);
-      }
-    });
+    // ============================================================
+    // Auto-limpieza de mensajes antiguos (3 días)
+    // ============================================================
+    // Estrategia en capas:
+    //   1) TTL index de MongoDB sobre createdAt → barrido automático cada ~60s
+    //      por el motor de la base. Idealmente esto solo ya alcanza.
+    //   2) Auto-reparación: si ya existe un índice createdAt_1 sin TTL (lo crea
+    //      Mongoose por defecto al usar timestamps:true), MongoDB tira
+    //      IndexOptionsConflict y el TTL nunca se aplica. Detectamos el error
+    //      y dropeamos+recreamos el índice automáticamente para no requerir
+    //      intervención manual en Atlas.
+    //   3) Limpieza one-shot al boot: borra todo lo que excede los 3 días al
+    //      arrancar, incluso si el TTL recién se está creando.
+    //   4) Cron periódico cada 6 horas como red de seguridad: si por algún
+    //      motivo el TTL deja de funcionar (replica set sin permisos, índice
+    //      removido manualmente, etc.), el cron mantiene la colección limpia.
+    // ============================================================
+    const MESSAGE_TTL_SECONDS = 3 * 24 * 60 * 60; // 3 días = 259200s
 
-    // One-time cleanup of messages older than 3 days
-    const messageCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-    Message.deleteMany({ createdAt: { $lt: messageCutoff } })
-      .then(result => {
-        if (result.deletedCount > 0) {
-          console.log(`🧹 Limpieza inicial: ${result.deletedCount} mensajes antiguos eliminados`);
+    async function ensureMessageTtlIndex() {
+      try {
+        await Message.collection.createIndex(
+          { createdAt: 1 },
+          { expireAfterSeconds: MESSAGE_TTL_SECONDS, name: 'createdAt_1_ttl' }
+        );
+        console.log('✅ TTL index para auto-limpieza de mensajes (3 días) creado/verificado');
+        return true;
+      } catch (err) {
+        if (err.codeName === 'IndexOptionsConflict' || err.code === 85 /* IndexOptionsConflict */) {
+          console.warn('⚠️ Existe un índice createdAt_1 sin TTL — autorreparando: drop + recreate con TTL...');
+          try {
+            // Buscar todos los índices que toquen createdAt sin TTL y dropearlos.
+            const indexes = await Message.collection.indexes();
+            for (const idx of indexes) {
+              const keys = Object.keys(idx.key || {});
+              const isCreatedAtIndex = keys.length === 1 && keys[0] === 'createdAt';
+              const hasTtl = typeof idx.expireAfterSeconds === 'number';
+              if (isCreatedAtIndex && !hasTtl) {
+                await Message.collection.dropIndex(idx.name);
+                console.log(`🧹 Índice "${idx.name}" sin TTL dropeado`);
+              }
+            }
+            // Recrear con TTL.
+            await Message.collection.createIndex(
+              { createdAt: 1 },
+              { expireAfterSeconds: MESSAGE_TTL_SECONDS, name: 'createdAt_1_ttl' }
+            );
+            console.log('✅ TTL index recreado correctamente tras autorreparación');
+            return true;
+          } catch (repairErr) {
+            console.error('❌ Autorreparación del TTL index falló:', repairErr.message);
+            return false;
+          }
+        } else if (err.code === 86 /* IndexKeySpecsConflict */) {
+          console.warn('⚠️ Conflicto de spec de índice (code 86). Investigar manualmente:', err.message);
+          return false;
+        } else {
+          console.error('❌ Error creando TTL index:', err.message);
+          return false;
         }
-      })
-      .catch(err => console.error('Error en limpieza inicial de mensajes:', err.message));
+      }
+    }
+
+    // 1+2) Crear/asegurar el TTL index (con autorreparación si hace falta)
+    ensureMessageTtlIndex();
+
+    // 3) Limpieza one-shot al boot
+    async function cleanupOldMessages(label) {
+      try {
+        const cutoff = new Date(Date.now() - MESSAGE_TTL_SECONDS * 1000);
+        const result = await Message.deleteMany({ createdAt: { $lt: cutoff } });
+        if (result.deletedCount > 0) {
+          console.log(`🧹 [${label}] ${result.deletedCount} mensajes antiguos (>3 días) eliminados`);
+        }
+      } catch (err) {
+        console.error(`❌ [${label}] Error en limpieza de mensajes antiguos:`, err.message);
+      }
+    }
+    cleanupOldMessages('boot');
+
+    // 4) Cron de seguridad cada 6h. Solo en el proceso principal — evita
+    //    duplicación si EB levanta múltiples instancias (todas borrarían lo
+    //    mismo, no rompe nada pero genera ruido en logs). 6h es frecuencia
+    //    suficiente para que mensajes >3d nunca sobrevivan más de 6h extra.
+    const SAFETY_CRON_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 horas
+    setInterval(() => cleanupOldMessages('cron-6h'), SAFETY_CRON_INTERVAL_MS).unref();
 
     return true;
   } catch (error) {
