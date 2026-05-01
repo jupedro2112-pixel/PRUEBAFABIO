@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v46-no-line-notif-no-bonus50-tagline-on-login';
+const CACHE_VERSION = 'v47-icon-renamed-bag-silver';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -99,8 +99,8 @@ messaging.onBackgroundMessage(function(payload) {
 
   const title = notif.title || webNotif.title || 'REEMBOLSOSVIP';
   const body  = notif.body  || webNotif.body  || 'Tenés una notificación nueva';
-  const icon  = notif.icon  || webNotif.icon  || '/icons/reembolsosvip.svg';
-  const badge = notif.badge || webNotif.badge || '/icons/reembolsosvip.svg';
+  const icon  = notif.icon  || webNotif.icon  || '/icons/bag-silver.svg';
+  const badge = notif.badge || webNotif.badge || '/icons/bag-silver.svg';
   const tag   = (payload.data && payload.data.tag) || 'reembolsosvip';
 
   // Confirmación de entrega: si el envío vino con batchId+userId, avisar al

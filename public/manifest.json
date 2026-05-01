@@ -12,7 +12,7 @@
   "scope": "/",
   "icons": [
     {
-      "src": "/icons/reembolsosvip.svg",
+      "src": "/icons/bag-silver.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
@@ -20,7 +20,7 @@
   ],
   "screenshots": [
     {
-      "src": "/icons/reembolsosvip.svg",
+      "src": "/icons/bag-silver.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "form_factor": "narrow",
