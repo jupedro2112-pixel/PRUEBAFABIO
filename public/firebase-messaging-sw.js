@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v52-quiero-cargar-respaldo';
+const CACHE_VERSION = 'v53-line-help-cargas';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
