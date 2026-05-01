@@ -54,6 +54,7 @@ const {
   Transaction,
   ExternalUser,
   UserActivity,
+  ensureMongoReady,
   getConfig,
   setConfig,
   getAllCommands,
@@ -1709,11 +1710,12 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     }
     const cleanUsername = username.trim();
 
-    // Lookup rápido (max 3s). Sin reintento: si Mongo está caído, mejor fallar
-    // inmediato y que el usuario reintente, en lugar de sumar latencia que dispara
-    // el timeout del frontend.
+    // Lookup rápido (max 3s). Antes del query, ensureMongoReady fuerza una
+    // reconexión si el driver se quedó stuck en disconnected (pasa con blips
+    // de Atlas que el auto-reconnect a veces no rescata).
     let user;
     try {
+      await ensureMongoReady(4000);
       user = await User.findOne({
         username: { $regex: new RegExp('^' + escapeRegex(cleanUsername) + '$', 'i') }
       }).maxTimeMS(3000);
