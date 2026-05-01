@@ -197,7 +197,7 @@ VIP.auth = (function () {
 
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000);
+            const timeoutId = setTimeout(() => controller.abort(), 25000);
 
             const response = await fetch(`${VIP.config.API_URL}/api/auth/login-username-only`, {
                 method: 'POST',
