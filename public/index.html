@@ -425,6 +425,29 @@
             font-size: clamp(13px, 3.6vw, 15px);
             color: #ccc;
         }
+        .refunds-welcome .home-logo {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            margin: 0 auto 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .refunds-welcome .home-tagline {
+            margin: 8px auto 0;
+            max-width: 420px;
+            font-size: clamp(12px, 3.4vw, 14px);
+            color: #ddd;
+            line-height: 1.5;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(212,175,55,0.25);
+            border-radius: 10px;
+            padding: 10px 14px;
+        }
+        .refunds-welcome .home-tagline strong {
+            color: #d4af37;
+        }
 
         /* Card de saldo en la plataforma + acceso directo a JUGAYGANA.
            Va debajo del bienvenido, arriba del número principal. */
@@ -961,22 +984,58 @@
     <!-- Login Screen -->
     <div id="loginScreen" class="login-screen">
         <div class="login-box">
-            <div class="login-logo silver-logo" aria-label="Logo">
+            <div class="login-logo silver-logo" aria-label="Bolsa de plata">
                 <svg viewBox="0 0 100 100" width="100%" height="100%" aria-hidden="true">
                     <defs>
-                        <linearGradient id="logoR" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#1a1a1a"/>
-                            <stop offset="100%" stop-color="#3a3a3a"/>
+                        <linearGradient id="bagSilver" x1="20%" y1="0%" x2="80%" y2="100%">
+                            <stop offset="0%" stop-color="#f4f4f4"/>
+                            <stop offset="40%" stop-color="#c8c8c8"/>
+                            <stop offset="70%" stop-color="#7a7a7a"/>
+                            <stop offset="100%" stop-color="#4a4a4a"/>
                         </linearGradient>
+                        <linearGradient id="bagTie" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#5a5a5a"/>
+                            <stop offset="100%" stop-color="#2a2a2a"/>
+                        </linearGradient>
+                        <radialGradient id="bagShine" cx="35%" cy="40%" r="40%">
+                            <stop offset="0%" stop-color="rgba(255,255,255,0.55)"/>
+                            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+                        </radialGradient>
                     </defs>
-                    <text x="50" y="50"
+                    <!-- Cuerpo de la bolsa -->
+                    <path d="M 28 38
+                             Q 22 50 22 64
+                             Q 22 86 50 86
+                             Q 78 86 78 64
+                             Q 78 50 72 38
+                             Z"
+                          fill="url(#bagSilver)"
+                          stroke="#3a3a3a"
+                          stroke-width="1.2"/>
+                    <!-- Brillo lateral superior -->
+                    <ellipse cx="40" cy="55" rx="14" ry="20" fill="url(#bagShine)"/>
+                    <!-- Cuello/atado de la bolsa -->
+                    <path d="M 30 38
+                             L 70 38
+                             L 66 30
+                             L 34 30
+                             Z"
+                          fill="url(#bagTie)"/>
+                    <!-- Cuerda del atado -->
+                    <path d="M 32 30 Q 50 22 68 30"
+                          fill="none"
+                          stroke="#1a1a1a"
+                          stroke-width="2"
+                          stroke-linecap="round"/>
+                    <!-- Símbolo $ centrado en la bolsa -->
+                    <text x="50" y="64"
                           text-anchor="middle"
                           dominant-baseline="central"
                           font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
-                          font-size="58"
+                          font-size="28"
                           font-weight="900"
-                          fill="url(#logoR)"
-                          style="letter-spacing:-2px;">R</text>
+                          fill="#2a2a2a"
+                          style="letter-spacing:-1px;">$</text>
                 </svg>
             </div>
             <h1 class="silver-title">REEMBOLSOSVIP</h1>
@@ -1062,8 +1121,37 @@
         <button id="refundsLogoutBtn" type="button" onclick="VIP.auth.handleLogout()">🚪 Salir</button>
         <!-- Refunds-only: bloque de bienvenida -->
         <div class="refunds-welcome">
+            <div class="home-logo silver-logo" aria-label="Bolsa de plata">
+                <svg viewBox="0 0 100 100" width="100%" height="100%" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="bagSilverHome" x1="20%" y1="0%" x2="80%" y2="100%">
+                            <stop offset="0%" stop-color="#f4f4f4"/>
+                            <stop offset="40%" stop-color="#c8c8c8"/>
+                            <stop offset="70%" stop-color="#7a7a7a"/>
+                            <stop offset="100%" stop-color="#4a4a4a"/>
+                        </linearGradient>
+                        <linearGradient id="bagTieHome" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="#5a5a5a"/>
+                            <stop offset="100%" stop-color="#2a2a2a"/>
+                        </linearGradient>
+                        <radialGradient id="bagShineHome" cx="35%" cy="40%" r="40%">
+                            <stop offset="0%" stop-color="rgba(255,255,255,0.55)"/>
+                            <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+                        </radialGradient>
+                    </defs>
+                    <path d="M 28 38 Q 22 50 22 64 Q 22 86 50 86 Q 78 86 78 64 Q 78 50 72 38 Z"
+                          fill="url(#bagSilverHome)" stroke="#3a3a3a" stroke-width="1.2"/>
+                    <ellipse cx="40" cy="55" rx="14" ry="20" fill="url(#bagShineHome)"/>
+                    <path d="M 30 38 L 70 38 L 66 30 L 34 30 Z" fill="url(#bagTieHome)"/>
+                    <path d="M 32 30 Q 50 22 68 30" fill="none" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round"/>
+                    <text x="50" y="64" text-anchor="middle" dominant-baseline="central"
+                          font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
+                          font-size="28" font-weight="900" fill="#2a2a2a"
+                          style="letter-spacing:-1px;">$</text>
+                </svg>
+            </div>
             <h2>Bienvenido <span id="refundsWelcomeUser"></span></h2>
-            <p>Reclamá tu reembolso disponible</p>
+            <p class="home-tagline">Acá vas a poder reclamar tus reembolsos <strong>diarios</strong>, <strong>semanales</strong> y <strong>mensuales</strong>. También podés ver la <strong>línea vigente</strong> nuestra por si nos hablás y no te llegan los mensajes a la línea que tenés agendada.</p>
         </div>
         <!-- Header -->
         <header class="header">
