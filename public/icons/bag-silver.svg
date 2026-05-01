@@ -25,8 +25,8 @@
     </linearGradient>
   </defs>
   <rect width="512" height="512" fill="url(#bg)" rx="80"/>
-  <!-- Bolsa de plata grande, centrada en el cuadrante superior -->
-  <g transform="translate(256, 220) scale(2.6) translate(-50, -50)">
+  <!-- Bolsa de plata grande, centrada en el lienzo -->
+  <g transform="translate(256, 256) scale(3.2) translate(-50, -58)">
     <path d="M 28 38 Q 22 50 22 64 Q 22 86 50 86 Q 78 86 78 64 Q 78 50 72 38 Z"
           fill="url(#bagSilver)" stroke="#3a3a3a" stroke-width="1.2"/>
     <ellipse cx="40" cy="55" rx="14" ry="20" fill="url(#bagShine)"/>
@@ -37,11 +37,4 @@
           font-size="28" font-weight="900" fill="#2a2a2a"
           style="letter-spacing:-1px;">$</text>
   </g>
-  <text x="256" y="450"
-        text-anchor="middle"
-        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif"
-        font-size="48"
-        font-weight="800"
-        fill="url(#silverText)"
-        letter-spacing="3">REEMBOLSOSVIP</text>
 </svg>
