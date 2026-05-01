@@ -1709,14 +1709,28 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     }
     const cleanUsername = username.trim();
 
+    // Lookup con 1 reintento: Mongoose a veces tira MongoServerSelectionError
+    // por un blip de Atlas y se recupera en el segundo intento. Solo nos rendimos
+    // si los dos fallan, y en ese caso devolvemos el motivo concreto para
+    // poder distinguir un blip de Atlas de un problema de credenciales/IP.
     let user;
-    try {
-      user = await User.findOne({
-        username: { $regex: new RegExp('^' + escapeRegex(cleanUsername) + '$', 'i') }
-      });
-    } catch (dbErr) {
-      logger.error(`[LoginUsernameOnly] DB read failed for ${cleanUsername}: ${dbErr.message}`);
-      return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intentá más tarde.' });
+    let lastDbErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        user = await User.findOne({
+          username: { $regex: new RegExp('^' + escapeRegex(cleanUsername) + '$', 'i') }
+        }).maxTimeMS(4000);
+        lastDbErr = null;
+        break;
+      } catch (dbErr) {
+        lastDbErr = dbErr;
+        logger.warn(`[LoginUsernameOnly] DB read attempt ${attempt}/2 failed for ${cleanUsername}: ${dbErr.name}: ${dbErr.message}`);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 600));
+      }
+    }
+    if (lastDbErr) {
+      logger.error(`[LoginUsernameOnly] DB read FINAL FAIL for ${cleanUsername}: ${lastDbErr.name}: ${lastDbErr.message}`);
+      return res.status(503).json({ error: `Servicio temporalmente no disponible (${lastDbErr.name || 'DB'}). Intentá en 1 minuto.` });
     }
 
     // Si no existe localmente, probar JUGAYGANA (mismo flujo que el login normal).
