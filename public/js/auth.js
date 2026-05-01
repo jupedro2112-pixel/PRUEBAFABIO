@@ -346,7 +346,7 @@ VIP.auth = (function () {
 
     // Wire-up del botón "Entendido, ya lo agendé" del banner de cambio de línea.
     // Además del dismiss, abre WhatsApp directo al nuevo número con un mensaje
-    // pre-cargado para que el usuario mande la captura y reclame el bonus 50%.
+    // pre-cargado para confirmar que el usuario agendó el número nuevo.
     function wireLineChangedDismiss() {
         const btn = document.getElementById('lineChangedDismiss');
         if (!btn) return;
@@ -366,7 +366,7 @@ VIP.auth = (function () {
                 const waNumber = phone.replace(/[^\d+]/g, '').replace(/^\+/, '');
                 const msg = encodeURIComponent(
                     'Hola! Soy ' + ((VIP.state.currentUser && VIP.state.currentUser.username) || '') +
-                    '. Ya agendé el nuevo número, mando captura para reclamar mi BONUS 50%.'
+                    '. Ya agendé el nuevo número.'
                 );
                 const url = 'https://wa.me/' + waNumber + '?text=' + msg;
                 window.open(url, '_blank');

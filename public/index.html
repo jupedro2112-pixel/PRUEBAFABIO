@@ -434,18 +434,22 @@
             align-items: center;
             justify-content: center;
         }
-        .refunds-welcome .home-tagline {
-            margin: 8px auto 0;
-            max-width: 420px;
-            font-size: clamp(12px, 3.4vw, 14px);
+        /* Tagline en la pantalla de login: explica qué encontrás antes de
+           ingresar (acceso sin contraseña + reembolsos automáticos + línea
+           de respaldo). */
+        .login-tagline {
+            margin: 14px auto 18px;
+            max-width: 360px;
+            font-size: 13px;
             color: #ddd;
-            line-height: 1.5;
+            line-height: 1.6;
             background: rgba(255,255,255,0.04);
             border: 1px solid rgba(212,175,55,0.25);
             border-radius: 10px;
-            padding: 10px 14px;
+            padding: 12px 14px;
+            text-align: left;
         }
-        .refunds-welcome .home-tagline strong {
+        .login-tagline strong {
             color: #d4af37;
         }
 
@@ -1040,7 +1044,12 @@
             </div>
             <h1 class="silver-title">REEMBOLSOSVIP</h1>
             <p>Inicia sesión para continuar</p>
-            
+            <div class="login-tagline">
+                ✅ <strong>Accedés sin contraseña</strong>, solo con tu usuario.<br>
+                💸 Reclamás <strong>automáticamente</strong> tus reembolsos <strong>diarios</strong>, <strong>semanales</strong> y <strong>mensuales</strong>.<br>
+                📞 Vas a poder ver la <strong>línea vigente</strong> nuestra por si nos hablás y no te llegan los mensajes a la línea que tenés agendada.
+            </div>
+
             <form id="loginForm" autocomplete="on">
                 <div style="display:flex;gap:0;margin-bottom:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(212,175,55,0.3);">
                     <!-- iOS Safari fix: touch-action:manipulation evita el delay de 300ms del doble-tap;
@@ -1151,7 +1160,7 @@
                 </svg>
             </div>
             <h2>Bienvenido <span id="refundsWelcomeUser"></span></h2>
-            <p class="home-tagline">Acá vas a poder reclamar tus reembolsos <strong>diarios</strong>, <strong>semanales</strong> y <strong>mensuales</strong>. También podés ver la <strong>línea vigente</strong> nuestra por si nos hablás y no te llegan los mensajes a la línea que tenés agendada.</p>
+            <p>Reclamá tu reembolso disponible</p>
         </div>
         <!-- Header -->
         <header class="header">
@@ -1231,11 +1240,7 @@
             <div class="line-changed-body">
                 Tuvimos un problema con la línea anterior. <strong>Agendá el nuevo número de abajo y borrá el viejo.</strong>
             </div>
-            <div class="line-changed-bonus">
-                🎁 <strong>BONUS 50%</strong> en tu próxima carga<br>
-                <span>Mandanos por WhatsApp al nuevo número una <strong>captura de que ya lo agendaste</strong> y te lo activamos.</span>
-            </div>
-            <button id="lineChangedDismiss" type="button">✓ Entendido, ya lo agendé · enviar captura</button>
+            <button id="lineChangedDismiss" type="button">✓ Entendido, ya lo agendé</button>
         </div>
 
         <!-- Refunds-only: Saldo + acceso a la plataforma JUGAYGANA -->
