@@ -2080,11 +2080,11 @@ async function syncPasswordToJugaygana(user, newPassword, context) {
 // Cambiar contraseña
 app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, res) => {
   try {
-    const { newPassword, whatsapp, phone, otpCode, closeAllSessions } = req.body;
+    const { currentPassword, newPassword, whatsapp, phone, otpCode, closeAllSessions } = req.body;
 
     // Buscar por 'id' primero, luego por '_id' como fallback
     let user = await User.findOne({ id: req.user.userId });
-    
+
     if (!user) {
       try {
         user = await User.findById(req.user.userId);
@@ -2092,13 +2092,33 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
         // _id inválido, ignorar
       }
     }
-    
+
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    // Verificar contrasena actual antes de permitir el cambio. Esto evita que un atacante
+    // que haya capturado un JWT (XSS, malware, sesion abierta en dispositivo prestado) tome
+    // el control permanente de la cuenta. Excepciones legitimas:
+    //  - mustChangePassword === true: el usuario fue importado/reseteado y debe rotar.
+    //  - cambio/alta de telefono: la prueba de posesion es el OTP que se valida mas abajo.
+    const requestedPhonePeek = (typeof phone === 'string' && phone.trim())
+      || (typeof whatsapp === 'string' && whatsapp.trim())
+      || null;
+    const willVerifyOtp = !!(requestedPhonePeek && (!user.phone || !user.phoneVerified || requestedPhonePeek.trim() !== user.phone));
+    if (!user.mustChangePassword && !willVerifyOtp) {
+      if (!currentPassword || typeof currentPassword !== 'string') {
+        return res.status(400).json({ error: 'Debes ingresar tu contraseña actual' });
+      }
+      const ok = await bcrypt.compare(currentPassword, user.password || '');
+      if (!ok) {
+        logger.warn(`change-password: contrasena actual incorrecta para ${user.username}`);
+        return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+      }
     }
 
     // Determinar si el usuario YA tiene un teléfono verificado vía OTP.
@@ -2785,11 +2805,21 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
     }
     
     const user = await User.findOne({ id });
-    
+
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
-    
+
+    // Solo el admin principal puede resetear contrasenas de cuentas con rol admin/depositor/withdrawer.
+    // Sin esta verificacion un depositor/withdrawer podria tomar control del admin principal.
+    if (isAdminRole(user.role) && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el administrador principal puede resetear contraseñas de otros administradores' });
+    }
+    // Withdrawers no pueden resetear contrasenas de nadie (mismo criterio que /api/admin/change-password).
+    if (req.user.role === 'withdrawer') {
+      return res.status(403).json({ error: 'No tienes permiso para resetear contraseñas' });
+    }
+
     user.password = newPassword;
     user.passwordChangedAt = new Date();
     // After an admin resets a regular user's password, force them to change it on
@@ -2798,7 +2828,7 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminMiddleware,
       user.mustChangePassword = true;
     }
     await user.save();
-    
+
     logger.info(`Admin ${req.user.username} reset password for ${user.username}`);
 
     await syncPasswordToJugaygana(user, newPassword, `admin-reset-password by ${req.user.username}`);
@@ -3168,17 +3198,23 @@ app.get('/api/admin/sync-status', authMiddleware, adminMiddleware, async (req, r
 app.delete('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
+    // Withdrawer no puede eliminar usuarios. Mismo criterio que /api/admin/users/:id/block:
+    // borrar es mas destructivo que bloquear, asi que la autorizacion no puede ser mas laxa.
+    if (req.user.role === 'withdrawer') {
+      return res.status(403).json({ error: 'No tienes permiso para eliminar usuarios' });
+    }
+
     const userToDelete = await User.findOne({ id });
     if (!userToDelete) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
-    
+
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     if (adminRoles.includes(userToDelete.role) && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo los administradores pueden eliminar otros administradores' });
     }
-    
+
     await User.deleteOne({ id });
     await ChatStatus.deleteOne({ userId: id });
     
@@ -6012,11 +6048,28 @@ app.post('/api/admin/canal-url', authMiddleware, adminMiddleware, async (req, re
 
 app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const currentCbu = await getConfig('cbu') || {};
-    const newCbu = { ...currentCbu, ...req.body };
+    // Solo el admin principal puede cambiar el CBU. Un depositor/withdrawer comprometido
+    // podria redirigir los depositos de los usuarios a su propia cuenta bancaria.
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el administrador principal puede modificar el CBU' });
+    }
 
+    const currentCbu = await getConfig('cbu') || {};
+    // Whitelist de campos permitidos para evitar inyeccion de propiedades inesperadas.
+    const allowed = {};
+    if (typeof req.body.bank === 'string') allowed.bank = req.body.bank.trim();
+    if (typeof req.body.titular === 'string') allowed.titular = req.body.titular.trim();
+    if (typeof req.body.number === 'string') allowed.number = req.body.number.trim();
+    if (typeof req.body.alias === 'string') allowed.alias = req.body.alias.trim();
+
+    if (allowed.number !== undefined && allowed.number.length > 0 && allowed.number.length < 10) {
+      return res.status(400).json({ error: 'CBU invalido (minimo 10 caracteres)' });
+    }
+
+    const newCbu = { ...currentCbu, ...allowed };
     await setConfig('cbu', newCbu);
 
+    logger.info(`Admin ${req.user.username} updated CBU config`);
     res.json({ success: true, message: 'CBU actualizado', cbu: newCbu });
   } catch (error) {
     console.error('Error actualizando CBU:', error);
@@ -7077,13 +7130,19 @@ app.get('/api/admin/cbu', authMiddleware, adminMiddleware, async (req, res) => {
 // Actualizar CBU
 app.post('/api/admin/cbu', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    // Solo el admin principal puede cambiar el CBU.
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el administrador principal puede modificar el CBU' });
+    }
+
     const { bank, titular, number, alias } = req.body;
-    
+
     if (!number || number.length < 10) {
       return res.status(400).json({ error: 'CBU inválido' });
     }
-    
+
     await setConfig('cbu', { bank, titular, number, alias });
+    logger.info(`Admin ${req.user.username} replaced CBU config`);
     res.json({ success: true, message: 'CBU actualizado correctamente' });
   } catch (error) {
     console.error('Error actualizando CBU:', error);

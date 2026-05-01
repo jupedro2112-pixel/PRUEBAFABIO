@@ -586,14 +586,22 @@ VIP.auth = (function () {
         const closeBtn = document.getElementById('changePasswordCloseBtn');
         const title = document.getElementById('changePasswordTitle');
         const subtitle = document.getElementById('changePasswordSubtitle');
+        const currentPwdGroup = document.getElementById('currentPasswordGroup');
+        const currentPwdInput = document.getElementById('currentPasswordInput');
         if (VIP.state.passwordChangePending) {
             if (closeBtn) closeBtn.style.display = 'none';
             if (title) title.textContent = '🔐 Cambio de Contraseña Obligatorio';
             if (subtitle) subtitle.innerHTML = 'Por seguridad, <strong>debés cambiar tu contraseña</strong> antes de continuar. No podés omitir este paso.';
+            // En el flujo obligatorio el usuario fue importado/reseteado y no necesita
+            // ingresar su contrasena actual.
+            if (currentPwdGroup) currentPwdGroup.style.display = 'none';
+            if (currentPwdInput) { currentPwdInput.value = ''; currentPwdInput.required = false; }
         } else {
             if (closeBtn) closeBtn.style.display = '';
             if (title) title.textContent = '🔐 Cambiar Contraseña';
             if (subtitle) subtitle.textContent = 'Ingresá tu nueva contraseña para actualizarla.';
+            if (currentPwdGroup) currentPwdGroup.style.display = '';
+            if (currentPwdInput) { currentPwdInput.value = ''; currentPwdInput.required = true; }
         }
     }
 
@@ -637,11 +645,19 @@ VIP.auth = (function () {
     async function handleChangePassword(e) {
         if (e) e.preventDefault();
 
+        const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
         const newPassword = document.getElementById('newPasswordInput').value;
         const confirmPassword = document.getElementById('confirmPasswordInput').value;
         const whatsappRaw = (document.getElementById('changePasswordWhatsApp')?.value || '').trim();
         const whatsappPrefix = (document.getElementById('changePasswordWhatsAppPrefix')?.value || '+54').trim();
         const errorDiv = document.getElementById('passwordError');
+
+        // Si no es cambio obligatorio, exigir contrasena actual.
+        if (!VIP.state.passwordChangePending && !currentPassword) {
+            errorDiv.textContent = 'Ingresá tu contraseña actual';
+            errorDiv.classList.add('show');
+            return;
+        }
 
         // Solo consideramos teléfono válido si está VERIFICADO vía OTP.
         const verifiedPhone = VIP.state.currentUser
@@ -672,6 +688,7 @@ VIP.auth = (function () {
         // No se requiere OTP. Solo se cambia la contraseña.
         if (verifiedPhone && !whatsappFull) {
             return _commitPasswordChange({
+                currentPassword,
                 newPassword,
                 closeAllSessions,
                 phone: null,
@@ -696,6 +713,7 @@ VIP.auth = (function () {
         // tratar como CASO A (sin OTP).
         if (verifiedPhone && whatsappFull === verifiedPhone) {
             return _commitPasswordChange({
+                currentPassword,
                 newPassword,
                 closeAllSessions,
                 phone: null,
@@ -724,6 +742,7 @@ VIP.auth = (function () {
             }
             // Guardar contexto pendiente y mostrar paso 2.
             _vipChangePwdPending = {
+                currentPassword,
                 newPassword,
                 phone: whatsappFull,
                 closeAllSessions
@@ -747,9 +766,10 @@ VIP.auth = (function () {
         }
     }
 
-    async function _commitPasswordChange({ newPassword, closeAllSessions, phone, otpCode, errorDiv }) {
+    async function _commitPasswordChange({ currentPassword, newPassword, closeAllSessions, phone, otpCode, errorDiv }) {
         try {
             const body = { newPassword, closeAllSessions };
+            if (currentPassword) body.currentPassword = currentPassword;
             if (phone) {
                 body.phone = phone;
                 // Mantener `whatsapp` por compatibilidad con código existente.
@@ -837,6 +857,7 @@ VIP.auth = (function () {
         }
         if (verifyBtn) { verifyBtn.disabled = true; verifyBtn.textContent = 'Verificando...'; }
         const ok = await _commitPasswordChange({
+            currentPassword: _vipChangePwdPending.currentPassword,
             newPassword: _vipChangePwdPending.newPassword,
             closeAllSessions: _vipChangePwdPending.closeAllSessions,
             phone: _vipChangePwdPending.phone,
