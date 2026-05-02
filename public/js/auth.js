@@ -334,6 +334,15 @@ VIP.auth = (function () {
                     '</a>';
             }
         }
+
+        // Pintar el card del bono de bienvenida de inmediato (con texto por
+        // defecto), asi el boton queda atado antes de que loadRefundStatus
+        // termine el fetch del estado real.
+        try {
+            if (VIP.refunds && typeof VIP.refunds.renderWelcomeBonusCard === 'function') {
+                VIP.refunds.renderWelcomeBonusCard();
+            }
+        } catch (_) { /* ignore */ }
     }
 
     // Refrescar línea vigente + link de comunidad con el token actual (sirve tras reload).

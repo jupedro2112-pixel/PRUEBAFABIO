@@ -1417,12 +1417,12 @@
         </div>
 
         <!-- Refunds-only: Bono de bienvenida $10.000 (PWA + notificaciones) -->
-        <div class="welcome-bonus-card" id="welcomeBonusCard" style="display:none;">
+        <div class="welcome-bonus-card" id="welcomeBonusCard">
             <div class="welcome-bonus-icon">🎁</div>
-            <div class="welcome-bonus-title">BONO DE BIENVENIDA</div>
-            <div class="welcome-bonus-amount" id="welcomeBonusAmount">$10.000</div>
-            <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Instalá la app y activá las notificaciones para reclamarlo</div>
-            <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn">🎁 Reclamar bono</button>
+            <div class="welcome-bonus-title">¡BONO DE BIENVENIDA!</div>
+            <div class="welcome-bonus-amount" id="welcomeBonusAmount">$10.000 GRATIS</div>
+            <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Tocá el botón y seguí los pasos para desbloquearlo.</div>
+            <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn">🎁 RECLAMAR $10.000</button>
         </div>
 
         <!-- Promo Banner -->
@@ -1866,13 +1866,24 @@
                     </button>
                 </div>
 
-                <!-- Paso 2: Activar notificaciones -->
+                <!-- Paso 2: Ingresar desde la app -->
+                <div id="reqStepOpenApp" style="background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                        <span id="reqOpenAppBadge" style="font-size:22px;line-height:1;">⏳</span>
+                        <strong style="color:#fff;font-size:14px;">2. Ingresá desde la app</strong>
+                    </div>
+                    <p id="reqOpenAppHelp" style="margin:0;color:#bbb;font-size:12px;line-height:1.45;">
+                        Una vez instalada, salí del navegador y abrí la app desde el ícono que quedó en tu celular. Después volvé a este botón para completar el último paso.
+                    </p>
+                </div>
+
+                <!-- Paso 3: Activar notificaciones -->
                 <div id="reqStepNotif" style="background:rgba(0,0,0,0.35);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;margin-bottom:14px;">
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
                         <span id="reqNotifBadge" style="font-size:22px;line-height:1;">⏳</span>
-                        <strong style="color:#fff;font-size:14px;">2. Activar las notificaciones</strong>
+                        <strong style="color:#fff;font-size:14px;">3. Activar las notificaciones</strong>
                     </div>
-                    <p style="margin:0 0 10px;color:#bbb;font-size:12px;line-height:1.45;">
+                    <p id="reqNotifHelp" style="margin:0 0 10px;color:#bbb;font-size:12px;line-height:1.45;">
                         Cuando el sistema te lo pida, tocá <strong>Permitir</strong>. Sin notificaciones no podemos avisarte cuando tu reembolso se acredite.
                     </p>
                     <button id="reqNotifBtn" type="button" class="btn btn-primary" style="width:100%;font-size:13px;padding:10px;background:linear-gradient(135deg,#6a0dad 0%,#9d4edd 100%);">

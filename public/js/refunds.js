@@ -54,46 +54,70 @@ VIP.refunds = (function () {
         const isWelcome = _pendingClaimType === 'welcome';
 
         const installBadge = document.getElementById('reqInstallBadge');
+        const openAppBadge = document.getElementById('reqOpenAppBadge');
         const notifBadge   = document.getElementById('reqNotifBadge');
         const installBtn   = document.getElementById('reqInstallBtn');
         const notifBtn     = document.getElementById('reqNotifBtn');
-        const stepInstall  = document.getElementById('reqStepInstall');
         const introMsg     = document.getElementById('reqIntroMsg');
+        const notifHelp    = document.getElementById('reqNotifHelp');
+        const openAppHelp  = document.getElementById('reqOpenAppHelp');
         // Customizacion del titulo del modal segun el origen del trigger.
         const titleEl = document.querySelector('#refundRequirementsModal .modal-header h2');
         if (titleEl) {
             titleEl.textContent = isWelcome
-                ? '🎁 Para reclamar tu bono de bienvenida'
+                ? '🎁 Pasos para tu bono de $10.000'
                 : '🔒 Para reclamar tu reembolso';
         }
 
-        if (installBadge) installBadge.textContent = inApp ? '✅' : '⏳';
+        // 3 estados independientes: instalada, abierta-desde-app, notifs ok.
+        if (installBadge) installBadge.textContent = installed ? '✅' : '⏳';
+        if (openAppBadge) openAppBadge.textContent = inApp ? '✅' : '⏳';
         if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
 
         if (installBtn) {
-            installBtn.disabled = inApp;
-            installBtn.textContent = inApp ? '✅ App instalada' : '📱 Instalar la app';
-            installBtn.style.opacity = inApp ? '0.6' : '1';
-        }
-        if (notifBtn) {
-            notifBtn.disabled = notifOk;
-            notifBtn.textContent = notifOk ? '✅ Notificaciones activas' : '🔔 Activar notificaciones';
-            notifBtn.style.opacity = notifOk ? '0.6' : '1';
+            installBtn.disabled = installed;
+            installBtn.textContent = installed ? '✅ App instalada' : '📱 Instalar la app';
+            installBtn.style.opacity = installed ? '0.6' : '1';
         }
 
-        // UX: si la app ya esta instalada pero el user esta en el navegador,
-        // ocultamos el paso 1 (instrucciones de instalacion) y cambiamos el
-        // mensaje superior a "ingresa desde la aplicacion + activa notifs".
-        const subjectClaim = isWelcome ? 'tu bono de bienvenida' : 'tu reembolso';
-        if (installed && !inApp) {
-            if (stepInstall) stepInstall.style.display = 'none';
-            if (introMsg) {
-                introMsg.innerHTML = '<strong>Ingresá desde la aplicación</strong> para reclamar ' + subjectClaim + '. No olvides <strong>activar las notificaciones</strong> para que se active la opción de reclamar.';
+        // El paso 3 (notificaciones) solo tiene sentido cuando el user ya
+        // esta dentro de la app. Si no, deshabilitamos el boton y avisamos.
+        if (notifBtn) {
+            const canRequestNotif = inApp && !notifOk;
+            notifBtn.disabled = !canRequestNotif;
+            if (notifOk) {
+                notifBtn.textContent = '✅ Notificaciones activas';
+                notifBtn.style.opacity = '0.6';
+            } else if (!inApp) {
+                notifBtn.textContent = '🔒 Primero abrí la app';
+                notifBtn.style.opacity = '0.5';
+            } else {
+                notifBtn.textContent = '🔔 Activar notificaciones';
+                notifBtn.style.opacity = '1';
             }
-        } else {
-            if (stepInstall) stepInstall.style.display = '';
-            if (introMsg) {
-                introMsg.innerHTML = 'Necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamar ' + subjectClaim + '.';
+        }
+        if (notifHelp) {
+            notifHelp.innerHTML = inApp
+                ? 'Cuando el sistema te lo pida, tocá <strong>Permitir</strong>. Sin notificaciones no podemos avisarte cuando tu bono se acredite.'
+                : '<strong>Este paso solo se desbloquea desde la app.</strong> Abrí el ícono de la app en tu celular y volvé acá para activarlas.';
+        }
+        if (openAppHelp) {
+            openAppHelp.innerHTML = inApp
+                ? '✅ Estás dentro de la app. Andá al paso 3.'
+                : 'Una vez instalada, salí del navegador y abrí la app desde el ícono que quedó en tu celular. Después volvé a este botón para completar el último paso.';
+        }
+
+        // Mensaje introductorio: cambia segun en que paso esta el user.
+        const subjectClaim = isWelcome ? 'tu bono de $10.000' : 'tu reembolso';
+        if (introMsg) {
+            if (!installed) {
+                introMsg.innerHTML = 'Para desbloquear ' + subjectClaim + ' tenés que completar 3 pasos. <strong>Empezá instalando la app.</strong>';
+            } else if (!inApp) {
+                introMsg.innerHTML = '✅ App instalada. Ahora <strong>abrí la app desde el ícono</strong> de tu celular para continuar.';
+            } else if (!notifOk) {
+                introMsg.innerHTML = '✅ Estás dentro de la app. Último paso: <strong>activá las notificaciones</strong> para reclamar ' + subjectClaim + '.';
+            } else {
+                introMsg.innerHTML = '🎉 ¡Listo! Cumpliste todos los pasos. Cerrá este aviso y reclamá ' + subjectClaim + '.';
             }
         }
 
@@ -613,11 +637,13 @@ VIP.refunds = (function () {
         const subtitleEl = document.getElementById('welcomeBonusSubtitle');
         const btn = document.getElementById('welcomeBonusBtn');
         if (!card || !btn) return;
-        const s = _welcomeStatus;
-        if (!s) { card.style.display = 'none'; return; }
 
+        // El card SIEMPRE es visible, aunque _welcomeStatus aun no haya cargado.
+        // Hasta que cargue, asumimos no-reclamado y mostramos los pasos.
         card.style.display = '';
-        if (amountEl) amountEl.textContent = '$' + Number(s.amount || 10000).toLocaleString('es-AR');
+        const s = _welcomeStatus || { amount: 10000, claimed: false };
+        const amountNum = Number(s.amount || 10000);
+        if (amountEl) amountEl.textContent = '$' + amountNum.toLocaleString('es-AR') + ' GRATIS';
 
         if (s.claimed) {
             card.classList.add('claimed');
@@ -634,16 +660,19 @@ VIP.refunds = (function () {
         const installed = isAppInstalled();
         const notifOk = isNotifGranted();
         if (!installed) {
-            subtitleEl.textContent = 'Instalá la app y activá las notificaciones para reclamarlo.';
+            subtitleEl.textContent = 'Tocá el botón y empezá por instalar la app.';
+            btn.textContent = '🎁 RECLAMAR $' + amountNum.toLocaleString('es-AR');
         } else if (!inApp) {
-            subtitleEl.textContent = 'Ingresá desde la aplicación instalada para continuar.';
+            subtitleEl.textContent = 'Abrí la app desde el ícono de tu celular para continuar.';
+            btn.textContent = '📱 Continuar (abrir desde la app)';
         } else if (!notifOk) {
-            subtitleEl.textContent = 'Activá las notificaciones para poder reclamarlo.';
+            subtitleEl.textContent = 'Último paso: activá las notificaciones.';
+            btn.textContent = '🔔 Activar notificaciones';
         } else {
-            subtitleEl.textContent = '¡Listo! Tocá el botón para acreditar el bono.';
+            subtitleEl.textContent = '🎉 ¡Listo! Tocá para acreditar tus $' + amountNum.toLocaleString('es-AR') + '.';
+            btn.textContent = '🎁 RECLAMAR $' + amountNum.toLocaleString('es-AR');
         }
         btn.disabled = false;
-        btn.textContent = '🎁 Reclamar bono';
         btn.onclick = handleWelcomeBonusClick;
     }
 
