@@ -2685,9 +2685,16 @@ async function previewLineImport() {
         _lineImportLastPreviewBuffer = buffer;
         _lineImportLastTeamName = teamName;
         renderLineImportResult(d, true);
-        if (confirmBtn && d.summary && d.summary.matched > 0) {
+        // Habilitar el confirm siempre — incluso con 0 matches el admin puede
+        // querer "confirmar" para tener visibilidad/log. Si matched=0 es no-op.
+        if (confirmBtn) {
             confirmBtn.disabled = false;
             confirmBtn.style.opacity = '1';
+            if (d.summary && d.summary.matched === 0) {
+                confirmBtn.textContent = '⚠️ Confirmar (0 matches → no-op)';
+            } else {
+                confirmBtn.textContent = '✅ Confirmar importación (' + (d.summary.matched || 0) + ' usuarios)';
+            }
         }
     } catch (e) {
         console.error(e);

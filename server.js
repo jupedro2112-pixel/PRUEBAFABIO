@@ -6611,6 +6611,26 @@ app.post(
         return res.status(400).json({ error: 'El archivo no tiene hojas' });
       }
 
+      // Extrae el teléfono del nombre de la hoja. El nombre puede venir como
+      // un teléfono puro (ej: "+5491111...") o como "ETIQUETA + número" (ej:
+      // "TIGER 1 39095913748", "Atomic 2 +5493853..."). Devolvemos siempre
+      // un string que arranque con '+' y tenga solo dígitos (formato canónico
+      // para WhatsApp links). Si no se puede extraer, devuelve el sheetName
+      // sin cambios como fallback (legacy).
+      const _extractPhoneFromSheetName = (raw) => {
+        const trimmed = String(raw || '').trim();
+        if (!trimmed) return '';
+        // Buscar la última secuencia de 7+ dígitos (con + opcional al inicio)
+        // al final del string. \d{7,} cubre cualquier teléfono internacional.
+        const m = trimmed.match(/(\+?\d[\d\s\-]{6,})\s*$/);
+        if (m) {
+          // Limpiar todo lo que no sea dígito y reagregar el +
+          const digits = m[1].replace(/[^\d]/g, '');
+          if (digits.length >= 7) return '+' + digits;
+        }
+        return trimmed;
+      };
+
       // -------- Pase 1: extraer (sheetName -> [usernames]) y detectar conflictos
       // dentro del mismo archivo (mismo username en dos hojas distintas).
       const sheetData = []; // [{ sheetName, linePhone, usernamesLower: [] }]
@@ -6619,7 +6639,12 @@ app.post(
       const allUsernamesLower = new Set();
 
       for (const sheetName of workbook.SheetNames) {
-        const linePhone = String(sheetName || '').trim();
+        const sheetTrimmed = String(sheetName || '').trim();
+        if (!sheetTrimmed) continue;
+        // El linePhone que guardamos en User es el teléfono extraído (canonical),
+        // NO el nombre crudo de la hoja. Esto permite que sheets con prefijos
+        // tipo "TIGER 1 39095913748" se almacenen como "+39095913748".
+        const linePhone = _extractPhoneFromSheetName(sheetTrimmed);
         if (!linePhone) continue;
 
         const ws = workbook.Sheets[sheetName];
