@@ -638,21 +638,21 @@ VIP.refunds = (function () {
         const btn = document.getElementById('welcomeBonusBtn');
         if (!card || !btn) return;
 
-        // El card SIEMPRE es visible, aunque _welcomeStatus aun no haya cargado.
-        // Hasta que cargue, asumimos no-reclamado y mostramos los pasos.
-        card.style.display = '';
         const s = _welcomeStatus || { amount: 10000, claimed: false };
         const amountNum = Number(s.amount || 10000);
-        if (amountEl) amountEl.textContent = '$' + amountNum.toLocaleString('es-AR') + ' GRATIS';
 
+        // Si ya reclamo (en este device o cualquier otro: el backend lo
+        // chequea por userId Y username, asi que aunque borre la app y
+        // reinstale, sigue marcado como reclamado), ocultamos el card
+        // entero. El bono es one-time real.
         if (s.claimed) {
-            card.classList.add('claimed');
-            if (subtitleEl) subtitleEl.textContent = '✅ Ya reclamaste tu bono de bienvenida.';
-            btn.disabled = true;
-            btn.textContent = '✅ Reclamado';
-            btn.onclick = null;
+            card.style.display = 'none';
             return;
         }
+
+        // No reclamado: mostramos card con los pasos.
+        card.style.display = '';
+        if (amountEl) amountEl.textContent = '$' + amountNum.toLocaleString('es-AR') + ' GRATIS';
 
         card.classList.remove('claimed');
         // Subtitulo dinamico segun estado actual de instalacion + notifs.
