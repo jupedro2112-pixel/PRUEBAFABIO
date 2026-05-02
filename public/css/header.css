@@ -466,6 +466,23 @@
     font-size: 11px;
 }
 
+/* Mismo tamaño que .user-name pero color para distinguirlo. Aparece solo
+   cuando el admin configuro un nombre de equipo para el prefijo del usuario. */
+.team-name {
+    background: linear-gradient(135deg, rgba(155,48,255,0.18), rgba(106,13,173,0.10));
+    color: #d6b3ff;
+    padding: 5px 10px;
+    border-radius: 12px;
+    font-weight: bold;
+    font-size: 11px;
+    border: 1px solid rgba(155,48,255,0.35);
+    white-space: nowrap;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-right: 6px;
+}
+
 .logout-btn {
     background: linear-gradient(135deg, #ff4444 0%, #cc0000 100%);
     color: #fff;

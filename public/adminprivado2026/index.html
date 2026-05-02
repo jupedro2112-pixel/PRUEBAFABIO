@@ -125,6 +125,11 @@
                         <input type="text" id="userLinesDefaultPhone" placeholder="+54 11 0000 0000" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;box-sizing:border-box;">
                         <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Se usa como número por defecto. Dejalo vacío si querés que esos usuarios no vean ningún número.</small>
                     </div>
+                    <div style="margin-top:14px;">
+                        <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Nombre de equipo por defecto (si el inicio del usuario no coincide con ningún equipo)</label>
+                        <input type="text" id="userLinesDefaultTeam" placeholder="ej: General" maxlength="24" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(155,48,255,0.25);background:rgba(0,0,0,0.4);color:#c89bff;font-size:14px;font-weight:600;box-sizing:border-box;">
+                        <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Se muestra arriba a la izquierda en la app del usuario. Dejalo vacío si no querés que esos usuarios vean ningún nombre de equipo.</small>
+                    </div>
                     <button class="btn-primary" onclick="saveUserLines()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
                         💾 Guardar números
                     </button>

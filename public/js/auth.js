@@ -520,10 +520,28 @@ VIP.auth = (function () {
                 const newPhone = d.phone || null;
                 VIP.state.linePhone = newPhone;
                 VIP.state.communityLink = d.communityLink || null;
+                VIP.state.teamName = d.teamName || null;
                 renderRefundsHomeUI();
+                renderTeamName();
                 checkLineChange(newPhone);
             }
         } catch (_) { /* ignore */ }
+    }
+
+    // Muestra el nombre del equipo arriba a la izquierda del header. Lo
+    // resuelve el backend a partir del prefijo del username (config en
+    // admin > Numero principal). Si no hay teamName, oculta el span.
+    function renderTeamName() {
+        const el = document.getElementById('teamName');
+        if (!el) return;
+        const name = (VIP.state && VIP.state.teamName) || null;
+        if (name && String(name).trim()) {
+            el.textContent = String(name).trim();
+            el.style.display = '';
+        } else {
+            el.textContent = '';
+            el.style.display = 'none';
+        }
     }
 
     // Compara el número que devolvió el server con el que vimos por última

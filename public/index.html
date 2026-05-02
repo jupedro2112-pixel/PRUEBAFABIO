@@ -1508,8 +1508,13 @@
         </div>
         <!-- Header -->
         <header class="header">
-            <!-- Sección izquierda: Configuración/Cerrar sesión -->
+            <!-- Sección izquierda: nombre de equipo + acciones -->
             <div class="header-left">
+                <!-- Nombre de equipo (ej: "Atomic"). Se muestra solo si el
+                     prefijo del usuario matchea un equipo configurado en
+                     admin > Número principal. Mismo tamaño que el username
+                     del header-right. JS lo muestra/oculta segun la API. -->
+                <span class="team-name" id="teamName" style="display:none;"></span>
                 <div class="user-action-btns">
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>

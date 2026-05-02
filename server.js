@@ -1813,6 +1813,32 @@ function pickLinePhoneForUsername(linesConfig, username) {
   return bestMatch ? bestMatch.phone : defaultPhone;
 }
 
+// Mismo criterio que pickLinePhoneForUsername pero para el nombre del equipo.
+// Lee el campo `teamName` del MISMO config 'userLinesByPrefix' (no creamos
+// otra config porque conceptualmente es el mismo equipo: prefijo "ato" =
+// numero "+54..." = nombre "Atomic"). Devuelve el teamName del prefijo mas
+// largo que matchee, o '' si no matchea ninguno y no hay default.
+function pickTeamNameForUsername(linesConfig, username) {
+  if (!linesConfig || typeof linesConfig !== 'object') return '';
+  const slots = Array.isArray(linesConfig.slots) ? linesConfig.slots : [];
+  const defaultName = linesConfig.defaultTeamName || '';
+  const lower = String(username || '').toLowerCase();
+  let bestMatch = null;
+  for (const slot of slots) {
+    if (!slot || !slot.prefix) continue;
+    const prefix = String(slot.prefix).toLowerCase().trim();
+    if (!prefix) continue;
+    const teamName = (slot.teamName ? String(slot.teamName) : '').trim();
+    if (!teamName) continue;
+    if (lower.startsWith(prefix)) {
+      if (!bestMatch || prefix.length > bestMatch.prefix.length) {
+        bestMatch = { prefix, teamName };
+      }
+    }
+  }
+  return bestMatch ? bestMatch.teamName : defaultName;
+}
+
 // Mismo criterio que pickLinePhoneForUsername pero para los links de comunidad.
 // Usa la config 'userCommunitiesByPrefix' con shape { slots: [{prefix, link}], defaultLink }.
 function pickCommunityLinkForUsername(communitiesConfig, username) {
@@ -1981,11 +2007,16 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
   try {
     const linesConfig = await getConfig('userLinesByPrefix');
     const phone = pickLinePhoneForUsername(linesConfig, req.user.username);
+    const teamName = pickTeamNameForUsername(linesConfig, req.user.username);
     // En el mismo response devolvemos el link de comunidad correspondiente
     // para evitar un round-trip adicional desde el cliente.
     const communitiesConfig = await getConfig('userCommunitiesByPrefix');
     const communityLink = pickCommunityLinkForUsername(communitiesConfig, req.user.username);
-    res.json({ phone: phone || null, communityLink: communityLink || null });
+    res.json({
+      phone: phone || null,
+      teamName: teamName || null,
+      communityLink: communityLink || null
+    });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
@@ -6395,12 +6426,19 @@ app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
     const slots = Array.isArray(config.slots) ? config.slots : [];
     // Devolvemos solo los slots con datos (no padding); el frontend agrega
     // un botón "+ Agregar línea" para sumar más, hasta USER_LINES_MAX_SLOTS.
+    // teamName es opcional — se muestra arriba a la izquierda en el header
+    // del usuario cuando el prefijo matchea (ej: 'ato' -> 'Atomic').
     const cleaned = slots
-      .filter(s => s && (s.prefix || s.phone))
-      .map(s => ({ prefix: s.prefix || '', phone: s.phone || '' }));
+      .filter(s => s && (s.prefix || s.phone || s.teamName))
+      .map(s => ({
+        prefix: s.prefix || '',
+        phone: s.phone || '',
+        teamName: s.teamName || ''
+      }));
     res.json({
       slots: cleaned,
       defaultPhone: config.defaultPhone || '',
+      defaultTeamName: config.defaultTeamName || '',
       maxSlots: USER_LINES_MAX_SLOTS
     });
   } catch (error) {
@@ -6411,7 +6449,7 @@ app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
 
 app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { slots, defaultPhone } = req.body || {};
+    const { slots, defaultPhone, defaultTeamName } = req.body || {};
     if (!Array.isArray(slots)) {
       return res.status(400).json({ error: 'slots debe ser un array' });
     }
@@ -6422,17 +6460,28 @@ app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
     for (const s of slots) {
       const prefix = (s && s.prefix ? String(s.prefix) : '').trim();
       const phone = (s && s.phone ? String(s.phone) : '').trim();
-      if (!prefix && !phone) continue;
+      const teamName = (s && s.teamName ? String(s.teamName) : '').trim();
+      if (!prefix && !phone && !teamName) continue;
       if (prefix && !phone) {
         return res.status(400).json({ error: `El prefijo "${prefix}" no tiene número` });
       }
-      cleaned.push({ prefix, phone });
+      // teamName es opcional (no es obligatorio aunque haya prefijo).
+      // Cap visual razonable para que no rompa el layout del header del user.
+      if (teamName.length > 24) {
+        return res.status(400).json({ error: `El nombre de equipo "${teamName.slice(0,30)}…" es demasiado largo (máx 24)` });
+      }
+      cleaned.push({ prefix, phone, teamName });
     }
     const newDefaultPhone = (defaultPhone ? String(defaultPhone) : '').trim();
+    const newDefaultTeamName = (defaultTeamName ? String(defaultTeamName) : '').trim();
+    if (newDefaultTeamName.length > 24) {
+      return res.status(400).json({ error: 'El nombre de equipo por defecto es demasiado largo (máx 24)' });
+    }
 
     const value = {
       slots: cleaned,
-      defaultPhone: newDefaultPhone
+      defaultPhone: newDefaultPhone,
+      defaultTeamName: newDefaultTeamName
     };
     await setConfig('userLinesByPrefix', value);
     res.json({ success: true, message: 'Líneas actualizadas', value });

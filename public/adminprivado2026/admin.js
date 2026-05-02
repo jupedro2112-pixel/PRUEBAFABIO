@@ -226,12 +226,12 @@ function renderUserLinesSlots(slots) {
     const data = Array.isArray(slots) ? slots : [];
     // Si no hay ningún slot guardado, arrancamos con uno vacío para que el
     // admin no vea la sección completamente desierta.
-    const items = data.length > 0 ? data : [{ prefix: '', phone: '' }];
-    container.innerHTML = items.map((s, i) => slotHtml(i, s.prefix || '', s.phone || '')).join('');
+    const items = data.length > 0 ? data : [{ prefix: '', phone: '', teamName: '' }];
+    container.innerHTML = items.map((s, i) => slotHtml(i, s.prefix || '', s.phone || '', s.teamName || '')).join('');
     updateAddLineButton();
 }
 
-function slotHtml(i, prefix, phone) {
+function slotHtml(i, prefix, phone, teamName) {
     return `
         <div class="user-line-slot" data-slot-index="${i}" style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;position:relative;">
             <div style="display:flex;align-items:center;gap:8px;">
@@ -242,6 +242,10 @@ function slotHtml(i, prefix, phone) {
             <div style="display:flex;flex-direction:column;gap:4px;">
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
                 <input type="text" class="user-line-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Nombre del equipo</label>
+                <input type="text" class="user-line-team" placeholder="ej: Atomic (se muestra arriba a la izquierda en la app del usuario)" maxlength="24" value="${escapeHtml(teamName)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(155,48,255,0.25);background:rgba(0,0,0,0.5);color:#c89bff;font-size:13px;font-weight:600;width:100%;box-sizing:border-box;">
             </div>
             <div style="display:flex;flex-direction:column;gap:4px;">
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
@@ -325,6 +329,8 @@ async function loadUserLines() {
         renderUserLinesSlots(data.slots || []);
         const def = document.getElementById('userLinesDefaultPhone');
         if (def) def.value = data.defaultPhone || '';
+        const defTeam = document.getElementById('userLinesDefaultTeam');
+        if (defTeam) defTeam.value = data.defaultTeamName || '';
     } catch (err) {
         console.error('loadUserLines error:', err);
         renderUserLinesSlots([]);
@@ -336,22 +342,26 @@ async function saveUserLines() {
     if (!container) return;
     const prefixInputs = container.querySelectorAll('.user-line-prefix');
     const phoneInputs = container.querySelectorAll('.user-line-phone');
+    const teamInputs = container.querySelectorAll('.user-line-team');
     const slots = [];
     for (let i = 0; i < prefixInputs.length; i++) {
         const prefix = (prefixInputs[i].value || '').trim();
         const phone = (phoneInputs[i].value || '').trim();
-        if (!prefix && !phone) continue;
+        const teamName = (teamInputs[i] && teamInputs[i].value || '').trim();
+        if (!prefix && !phone && !teamName) continue;
         if (prefix && !phone) {
             showToast('El prefijo "' + prefix + '" no tiene número', 'error');
             return;
         }
-        slots.push({ prefix, phone });
+        slots.push({ prefix, phone, teamName });
     }
     const defaultPhone = (document.getElementById('userLinesDefaultPhone').value || '').trim();
+    const defaultTeamEl = document.getElementById('userLinesDefaultTeam');
+    const defaultTeamName = (defaultTeamEl && defaultTeamEl.value || '').trim();
     try {
         const r = await authFetch('/api/admin/user-lines', {
             method: 'PUT',
-            body: JSON.stringify({ slots, defaultPhone })
+            body: JSON.stringify({ slots, defaultPhone, defaultTeamName })
         });
         const data = await r.json();
         if (r.ok) {
