@@ -55,6 +55,8 @@ const {
   ExternalUser,
   UserActivity,
   NotificationHistory,
+  MoneyGiveaway,
+  MoneyGiveawayClaim,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -7072,6 +7074,280 @@ app.post('/api/promo-alert/track-click', authMiddleware, async (req, res) => {
   } catch (error) {
     logger.warn(`/api/promo-alert/track-click error: ${error.message}`);
     res.json({ ok: true, tracked: false });
+  }
+});
+
+// ============================================
+// MONEY GIVEAWAY (regalo de plata por difusion).
+// El admin crea un regalo con monto-por-persona, tope de plata total,
+// tope de cantidad de personas, y duracion en minutos. Mientras este
+// abierto, los users pueden tocar un boton en la home y se les acredita
+// la plata directo en JUGAYGANA.
+//
+// Cierres automaticos (status):
+//   - closed_expired: paso la duracion
+//   - closed_budget:  totalGiven >= totalBudget
+//   - closed_max:     claimedCount >= maxClaims
+//   - cancelled:      el admin lo cancelo manualmente
+// ============================================
+
+// Helper: dado un giveaway "in memory", chequea si deberia cerrarse y lo
+// updateOnece a la BD si corresponde. Devuelve el doc actualizado o el
+// mismo input si sigue activo.
+async function _maybeCloseGiveaway(g) {
+  if (!g || g.status !== 'active') return g;
+  let newStatus = null;
+  if (new Date(g.expiresAt).getTime() <= Date.now()) newStatus = 'closed_expired';
+  else if ((g.totalGiven || 0) >= g.totalBudget) newStatus = 'closed_budget';
+  else if ((g.claimedCount || 0) >= g.maxClaims) newStatus = 'closed_max';
+  if (!newStatus) return g;
+  try {
+    await MoneyGiveaway.updateOne({ id: g.id, status: 'active' }, { $set: { status: newStatus } });
+    g.status = newStatus;
+  } catch (_) { /* ignore */ }
+  return g;
+}
+
+// GET publico (auth): regalo activo para este user.
+app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
+  try {
+    const username = req.user.username || '';
+    const userId = req.user.userId;
+
+    const g = await MoneyGiveaway.findOne({ status: 'active' })
+      .sort({ createdAt: -1 })
+      .lean();
+    if (!g) return res.json({ active: false });
+
+    // Filtro por prefix.
+    if (g.prefix && !username.toLowerCase().startsWith(g.prefix.toLowerCase())) {
+      return res.json({ active: false });
+    }
+
+    // Auto-cierre lazy si vencio o se agoto.
+    const fresh = await _maybeCloseGiveaway({ ...g });
+    if (fresh.status !== 'active') return res.json({ active: false });
+
+    // Chequear si este user ya reclamo.
+    const existing = await MoneyGiveawayClaim.findOne({
+      giveawayId: g.id,
+      $or: [{ username }, { userId }]
+    }).lean();
+
+    res.json({
+      active: true,
+      id: g.id,
+      amount: g.amount,
+      totalBudget: g.totalBudget,
+      maxClaims: g.maxClaims,
+      claimedCount: g.claimedCount || 0,
+      totalGiven: g.totalGiven || 0,
+      expiresAt: g.expiresAt,
+      alreadyClaimed: !!existing,
+      notificationHistoryId: g.notificationHistoryId || null
+    });
+  } catch (error) {
+    logger.error(`/api/money-giveaway/active error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST claim: el user reclama el regalo activo.
+app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+
+    const g = await MoneyGiveaway.findOne({ status: 'active' })
+      .sort({ createdAt: -1 });
+    if (!g) {
+      return res.json({ success: false, message: 'No hay regalo activo en este momento.', closed: true });
+    }
+
+    // Filtro por prefix.
+    if (g.prefix && !username.toLowerCase().startsWith(g.prefix.toLowerCase())) {
+      return res.status(403).json({ success: false, message: 'Este regalo no es para tu cuenta.' });
+    }
+
+    // Auto-cierre lazy.
+    if (new Date(g.expiresAt).getTime() <= Date.now()) {
+      g.status = 'closed_expired';
+      await g.save().catch(() => {});
+      return res.json({ success: false, message: 'El tiempo del regalo terminó.', closed: true });
+    }
+    if ((g.totalGiven || 0) >= g.totalBudget) {
+      g.status = 'closed_budget';
+      await g.save().catch(() => {});
+      return res.json({ success: false, message: 'Se acabó la plata del regalo.', closed: true });
+    }
+    if ((g.claimedCount || 0) >= g.maxClaims) {
+      g.status = 'closed_max';
+      await g.save().catch(() => {});
+      return res.json({ success: false, message: 'Se llegó al máximo de personas.', closed: true });
+    }
+
+    // Lock distribuido por user para serializar reintentos.
+    if (!await acquireRefundLock(userId, 'money_giveaway_' + g.id)) {
+      return res.json({ success: false, message: '⏳ Ya estás procesando el reclamo. Esperá unos segundos…', processing: true });
+    }
+
+    try {
+      // Pre-check: ya reclamo? (busca por userId O username, mismo patron
+      // que welcome bonus).
+      const existing = await MoneyGiveawayClaim.findOne({
+        giveawayId: g.id,
+        $or: [{ userId }, { username }]
+      }).lean();
+      if (existing) {
+        return res.json({ success: false, message: 'Ya reclamaste este regalo.', alreadyClaimed: true });
+      }
+
+      // INSERT antes de creditar (defensa contra credit-then-write):
+      // si el insert falla por unique index → otro reintento ya tomo el slot.
+      let claim;
+      try {
+        claim = await MoneyGiveawayClaim.create({
+          id: uuidv4(),
+          giveawayId: g.id,
+          userId,
+          username,
+          amount: g.amount,
+          claimedAt: new Date()
+        });
+      } catch (e) {
+        if (e && e.code === 11000) {
+          return res.json({ success: false, message: 'Ya reclamaste este regalo.', alreadyClaimed: true });
+        }
+        throw e;
+      }
+
+      // Acreditar en JUGAYGANA.
+      const depositResult = await jugaygana.creditUserBalance(username, g.amount);
+      if (!depositResult.success) {
+        try {
+          claim.status = 'pending_credit_failed';
+          claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
+          await claim.save();
+        } catch (_) {}
+        logger.error(`[GIVEAWAY] credit fallo para ${username} (giveaway ${g.id}): ${depositResult.error}`);
+        return res.json({
+          success: false,
+          message: 'Hubo un problema al acreditar. El admin lo está revisando — no reintentes.',
+          pendingReview: true
+        });
+      }
+
+      // Persistir transactionId.
+      try {
+        claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
+        await claim.save();
+      } catch (_) {}
+
+      // Incrementar contadores atomicos del giveaway. Si tras el incremento
+      // se cumple algun cierre, marcamos status correspondiente en el mismo
+      // updateOne (defensa contra pasarnos del tope por race).
+      const updated = await MoneyGiveaway.findOneAndUpdate(
+        { id: g.id, status: 'active' },
+        { $inc: { claimedCount: 1, totalGiven: g.amount } },
+        { new: true }
+      ).lean();
+      if (updated) await _maybeCloseGiveaway(updated);
+
+      // Tambien sumar al contador del row de NotificationHistory si la
+      // giveaway esta vinculada.
+      if (g.notificationHistoryId) {
+        try {
+          await NotificationHistory.updateOne(
+            { id: g.notificationHistoryId },
+            { $inc: { giveawayClaims: 1 } }
+          );
+        } catch (_) {}
+      }
+
+      // Tambien crear un Transaction para que aparezca en reportes.
+      try {
+        await Transaction.create({
+          id: uuidv4(),
+          type: 'refund',
+          amount: g.amount,
+          username,
+          description: 'Regalo de difusión',
+          transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
+          timestamp: new Date()
+        });
+      } catch (_) {}
+
+      res.json({
+        success: true,
+        message: `¡Reclamaste $${Number(g.amount).toLocaleString('es-AR')}!`,
+        amount: g.amount
+      });
+    } finally {
+      setTimeout(() => releaseRefundLock(userId, 'money_giveaway_' + g.id), 3000);
+    }
+  } catch (error) {
+    console.error('Error reclamando giveaway:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST admin: crear/reemplazar el giveaway. Marca cualquier activo como
+// 'cancelled' y crea uno nuevo. Body: { amount, totalBudget, maxClaims,
+// durationMinutes, prefix?, notificationHistoryId? }.
+app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId } = req.body || {};
+    const a = Number(amount), b = Number(totalBudget), m = Number(maxClaims), d = Number(durationMinutes);
+    if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto por persona inválido' });
+    if (!isFinite(b) || b < a) return res.status(400).json({ error: 'Presupuesto total inválido (debe ser >= monto por persona)' });
+    if (!isFinite(m) || m < 1) return res.status(400).json({ error: 'Cantidad máxima inválida' });
+    if (!isFinite(d) || d < 10 || d > 60 || d % 10 !== 0) {
+      return res.status(400).json({ error: 'Duración inválida (10-60 minutos en bloques de 10)' });
+    }
+
+    // Cerrar cualquier giveaway activo previo.
+    await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+
+    const g = await MoneyGiveaway.create({
+      id: uuidv4(),
+      amount: a,
+      totalBudget: b,
+      maxClaims: m,
+      expiresAt: new Date(Date.now() + d * 60 * 1000),
+      createdBy: req.user.username || null,
+      prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null,
+      notificationHistoryId: notificationHistoryId || null,
+      status: 'active'
+    });
+    res.json({ success: true, giveaway: g.toObject() });
+  } catch (error) {
+    logger.error(`POST /api/admin/money-giveaway error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET admin: ver el giveaway activo + sus claims.
+app.get('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const g = await MoneyGiveaway.findOne({ status: 'active' }).sort({ createdAt: -1 }).lean();
+    if (!g) return res.json({ giveaway: null, claims: [] });
+    const claims = await MoneyGiveawayClaim.find({ giveawayId: g.id })
+      .sort({ claimedAt: -1 }).lean();
+    res.json({ giveaway: g, claims });
+  } catch (error) {
+    logger.error(`GET /api/admin/money-giveaway error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE admin: cancelar el giveaway activo.
+app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`DELETE /api/admin/money-giveaway error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 

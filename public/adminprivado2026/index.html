@@ -265,17 +265,32 @@
                         <span id="notifPreviewBody" style="color:#ccc;font-size:12px;line-height:1.4;">Mensaje…</span>
                     </div>
 
-                    <!-- ===== ALERTA TEMPORAL EN HOME ===== -->
-                    <div style="background:rgba(212,175,55,0.06);border:1px dashed rgba(212,175,55,0.35);border-radius:10px;padding:12px;margin-bottom:14px;">
-                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#ffd700;font-size:13px;font-weight:700;">
-                            <input type="checkbox" id="promoAlertEnabled" onchange="togglePromoAlertFields()" style="accent-color:#d4af37;width:16px;height:16px;">
-                            <span>🎁 Mostrar alerta temporal en el botón QUIERO CARGAR</span>
-                        </label>
-                        <p style="margin:6px 0 10px 24px;color:#aaa;font-size:11px;line-height:1.45;">
-                            Reemplaza el botón "QUIERO CARGAR" del home por un cartel de promo con el código y un timer.
-                            Cuando vence, vuelve a mostrar el botón normal.
-                        </p>
-                        <div id="promoAlertFields" style="display:none;padding-left:24px;display:none;flex-direction:column;gap:10px;">
+                    <!-- ===== TIPO DE EXTRA (promo WA o regalo de plata) ===== -->
+                    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;">
+                        <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:8px;">¿Agregar algo extra al envío?</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <label style="flex:1;min-width:130px;display:flex;align-items:center;gap:6px;padding:8px 10px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);border-radius:8px;cursor:pointer;">
+                                <input type="radio" name="notifExtra" value="none" checked onchange="updateNotifExtraUI()" style="accent-color:#d4af37;">
+                                <span style="color:#fff;font-size:12px;font-weight:600;">Solo notif</span>
+                            </label>
+                            <label style="flex:1;min-width:130px;display:flex;align-items:center;gap:6px;padding:8px 10px;background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:8px;cursor:pointer;">
+                                <input type="radio" name="notifExtra" value="promo" onchange="updateNotifExtraUI()" style="accent-color:#d4af37;">
+                                <span style="color:#ffd700;font-size:12px;font-weight:700;">📲 Promo WA</span>
+                            </label>
+                            <label style="flex:1;min-width:130px;display:flex;align-items:center;gap:6px;padding:8px 10px;background:rgba(0,0,0,0.40);border:1px solid rgba(37,211,102,0.45);border-radius:8px;cursor:pointer;">
+                                <input type="radio" name="notifExtra" value="giveaway" onchange="updateNotifExtraUI()" style="accent-color:#25d366;">
+                                <span style="color:#25d366;font-size:12px;font-weight:700;">💰 Regalo de plata</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- ===== Bloque PROMO WHATSAPP ===== -->
+                    <div id="promoAlertWrap" style="background:rgba(212,175,55,0.06);border:1px dashed rgba(212,175,55,0.35);border-radius:10px;padding:12px;margin-bottom:14px;display:none;">
+                        <p style="margin:0 0 10px;color:#ffd700;font-size:12px;font-weight:700;">🎁 Cartel "RECLAMÁ" sobre el botón QUIERO CARGAR</p>
+                        <!-- checkbox legacy oculto: la JS de send lee .checked. Lo
+                             prendemos automaticamente cuando se elige el radio promo. -->
+                        <input type="checkbox" id="promoAlertEnabled" style="display:none;">
+                        <div id="promoAlertFields" style="display:flex;flex-direction:column;gap:10px;">
                             <div style="display:flex;flex-direction:column;gap:4px;">
                                 <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Mensaje del cartel (lo ve el cliente)</label>
                                 <input type="text" id="promoAlertMessage" maxlength="100" placeholder="Ej: Bono 50% en cargas hoy"
@@ -307,6 +322,48 @@
                     </div>
                     <!-- Estado de promo activa -->
                     <div id="promoAlertStatus" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.40);color:#9bf3c0;font-size:12px;line-height:1.5;"></div>
+
+                    <!-- ===== Bloque REGALO DE PLATA ===== -->
+                    <div id="giveawayWrap" style="background:rgba(37,211,102,0.06);border:1px dashed rgba(37,211,102,0.45);border-radius:10px;padding:12px;margin-bottom:14px;display:none;">
+                        <p style="margin:0 0 10px;color:#25d366;font-size:12px;font-weight:700;">💰 Regalo de plata reclamable on-tap</p>
+                        <p style="margin:0 0 10px;color:#aaa;font-size:11px;line-height:1.45;">
+                            Aparece como una tarjeta verde en el home del usuario. La toca y le acreditamos en JUGAYGANA.
+                            Se cierra cuando se agota la plata, las personas, o el tiempo (lo que pase primero).
+                            <strong style="color:#25d366;">El monto se agrega automáticamente al cuerpo del push.</strong>
+                        </p>
+                        <div style="display:flex;flex-direction:column;gap:10px;">
+                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:120px;">
+                                    <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">$ por persona</label>
+                                    <input type="number" id="giveawayAmountInput" min="1" step="100" placeholder="500"
+                                           style="padding:9px 11px;border-radius:7px;border:1px solid rgba(37,211,102,0.30);background:rgba(0,0,0,0.5);color:#25d366;font-size:14px;font-weight:700;font-family:monospace;box-sizing:border-box;">
+                                </div>
+                                <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:120px;">
+                                    <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Tope plata</label>
+                                    <input type="number" id="giveawayBudgetInput" min="1" step="500" placeholder="50000"
+                                           style="padding:9px 11px;border-radius:7px;border:1px solid rgba(37,211,102,0.30);background:rgba(0,0,0,0.5);color:#25d366;font-size:14px;font-weight:700;font-family:monospace;box-sizing:border-box;">
+                                </div>
+                                <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:120px;">
+                                    <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Máx personas</label>
+                                    <input type="number" id="giveawayMaxClaimsInput" min="1" step="1" placeholder="100"
+                                           style="padding:9px 11px;border-radius:7px;border:1px solid rgba(37,211,102,0.30);background:rgba(0,0,0,0.5);color:#25d366;font-size:14px;font-weight:700;font-family:monospace;box-sizing:border-box;">
+                                </div>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:4px;">
+                                <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Duración</label>
+                                <select id="giveawayDurationInput" style="padding:9px 11px;border-radius:7px;border:1px solid rgba(37,211,102,0.30);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;cursor:pointer;">
+                                    <option value="10">10 minutos</option>
+                                    <option value="20">20 minutos</option>
+                                    <option value="30" selected>30 minutos</option>
+                                    <option value="40">40 minutos</option>
+                                    <option value="50">50 minutos</option>
+                                    <option value="60">1 hora</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Estado de regalo activo -->
+                    <div id="giveawayStatus" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.40);color:#9bf3c0;font-size:12px;line-height:1.5;"></div>
 
                     <button class="btn-primary" onclick="sendBulkNotification()" style="width:100%;padding:12px;font-size:14px;font-weight:700;">
                         🚀 Enviar notificación

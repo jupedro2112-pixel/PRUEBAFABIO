@@ -21,7 +21,9 @@ const {
   FireStreak,
   ChatStatus,
   Transaction,
-  NotificationHistory
+  NotificationHistory,
+  MoneyGiveaway,
+  MoneyGiveawayClaim
 } = require('../src/models');
 
 // ============================================
@@ -316,6 +318,8 @@ module.exports = {
   ExternalUser,
   UserActivity,
   NotificationHistory,
+  MoneyGiveaway,
+  MoneyGiveawayClaim,
   // Helpers
   getConfig,
   setConfig,

@@ -918,6 +918,90 @@
         }
         .welcome-bonus-card.claimed .welcome-bonus-title { color: #25d366; }
 
+        /* Card de regalo de difusion: estilo verde/festivo, mas grande y
+           pulsante para llamar la atencion. order:1.65 para quedar entre
+           userBalanceCard (1.5) y welcomeBonusCard (1.7). */
+        .giveaway-card {
+            text-align: center;
+            width: 100%;
+            max-width: 380px;
+            margin: 0 auto 12px;
+            padding: 12px 14px;
+            background: linear-gradient(135deg, rgba(37,211,102,0.20), rgba(0,200,100,0.08));
+            border: 2px solid #25d366;
+            border-radius: 14px;
+            color: #fff;
+            box-sizing: border-box;
+            box-shadow: 0 6px 20px rgba(37,211,102,0.30);
+            order: 1.65;
+            position: relative;
+            flex: 0 0 auto !important;
+            display: block !important;
+            overflow: hidden;
+            animation: giveawayPulse 2.2s ease-in-out infinite;
+        }
+        @keyframes giveawayPulse {
+            0%, 100% { box-shadow: 0 6px 20px rgba(37,211,102,0.30); }
+            50%      { box-shadow: 0 8px 28px rgba(37,211,102,0.55); }
+        }
+        .giveaway-card-flag {
+            font-size: clamp(10px, 2.6vw, 12px);
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: #cffae0;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .giveaway-card-amount {
+            font-size: clamp(22px, 7vw, 30px);
+            font-weight: 900;
+            color: #fff;
+            text-shadow: 0 2px 6px rgba(0,150,75,0.55);
+            line-height: 1.1;
+            letter-spacing: 0.5px;
+        }
+        .giveaway-card-sub {
+            font-size: clamp(11px, 3vw, 12px);
+            color: #d0f5e0;
+            margin: 4px 0 8px;
+        }
+        .giveaway-card-btn {
+            width: 100%;
+            max-width: 280px;
+            background: linear-gradient(135deg, #fff 0%, #d4f5e0 100%);
+            color: #0a4a2e;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-weight: 900;
+            font-size: clamp(13px, 3.6vw, 15px);
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            -webkit-tap-highlight-color: rgba(255,255,255,0.2);
+            touch-action: manipulation;
+            white-space: normal;
+            line-height: 1.2;
+        }
+        .giveaway-card-btn:active { transform: scale(0.97); }
+        .giveaway-card-btn:disabled {
+            background: linear-gradient(135deg, #888 0%, #555 100%);
+            color: #ddd;
+            cursor: default;
+            box-shadow: none;
+        }
+        .giveaway-card-timer {
+            font-size: 11px;
+            color: #cffae0;
+            margin-top: 6px;
+            font-weight: 600;
+        }
+        .giveaway-card.claimed {
+            animation: none;
+            border-color: #888;
+            background: linear-gradient(135deg, rgba(120,120,120,0.18), rgba(80,80,80,0.10));
+            box-shadow: 0 4px 14px rgba(0,0,0,0.30);
+        }
+
         /* Badge con username flotando arriba a la derecha (respeta safe-area).
            z-index alto para que ningún elemento del flujo lo tape. Antes era
            el boton de Salir pero se desactivo el logout para evitar que la
@@ -1488,6 +1572,17 @@
             <div class="welcome-bonus-amount" id="welcomeBonusAmount">$10.000 GRATIS</div>
             <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Por única vez. Tocá el botón y seguí los pasos para desbloquearlo.</div>
             <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn" onclick="VIP.refunds.handleWelcomeBonusClick()">🎁 RECLAMAR $10.000</button>
+        </div>
+
+        <!-- Refunds-only: Difusion con regalo de plata (temporal, on-demand
+             desde admin). Oculto por default; render dinamico solo cuando
+             hay un giveaway activo. -->
+        <div class="giveaway-card" id="giveawayCard" style="display:none;">
+            <div class="giveaway-card-flag">🎉 REGALO ACTIVO</div>
+            <div class="giveaway-card-amount" id="giveawayAmount">$0</div>
+            <div class="giveaway-card-sub" id="giveawaySub">Tocá el botón para reclamar</div>
+            <button id="giveawayBtn" type="button" class="giveaway-card-btn" onclick="VIP.refunds.handleGiveawayClick()">🎁 RECLAMAR AHORA</button>
+            <div class="giveaway-card-timer" id="giveawayTimer">⏰ vence en —</div>
         </div>
 
         <!-- Refunds-only: Número principal vigente -->

@@ -200,6 +200,8 @@ VIP.refunds = (function () {
         }
         // Cargar estado del bono de bienvenida en paralelo (no bloqueante).
         loadWelcomeBonusStatus();
+        // Cargar estado del regalo de difusion en paralelo (no bloqueante).
+        loadGiveawayStatus();
     }
 
     // Pinta el saldo del usuario en la plataforma JUGAYGANA en el card del home.
@@ -770,6 +772,147 @@ VIP.refunds = (function () {
         }
     }
 
+    // =====================================================
+    // MONEY GIVEAWAY (regalo de plata por difusion del admin)
+    // Card pulsante verde que aparece cuando hay regalo activo. Polling
+    // cada 60s para detectar regalos nuevos sin recargar la pagina.
+    // =====================================================
+    let _giveawayState = null; // datos del regalo activo
+    let _giveawayCountdownId = null;
+    let _giveawayPollId = null;
+
+    function _clearGiveawayCountdown() {
+        if (_giveawayCountdownId) { clearInterval(_giveawayCountdownId); _giveawayCountdownId = null; }
+    }
+
+    async function loadGiveawayStatus() {
+        try {
+            if (!VIP.state.currentToken) return;
+            const r = await fetch(`${VIP.config.API_URL}/api/money-giveaway/active`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (!r.ok) return;
+            const data = await r.json();
+            _giveawayState = data && data.active ? data : null;
+            renderGiveawayCard();
+        } catch (err) {
+            console.warn('loadGiveawayStatus error:', err);
+        }
+    }
+
+    function renderGiveawayCard() {
+        const card = document.getElementById('giveawayCard');
+        if (!card) return;
+        const hide = () => card.style.setProperty('display', 'none', 'important');
+        const show = () => card.style.setProperty('display', 'block', 'important');
+
+        const g = _giveawayState;
+        if (!g) {
+            _clearGiveawayCountdown();
+            hide();
+            return;
+        }
+
+        const amountEl = document.getElementById('giveawayAmount');
+        const subEl = document.getElementById('giveawaySub');
+        const btn = document.getElementById('giveawayBtn');
+        const timerEl = document.getElementById('giveawayTimer');
+
+        const amountStr = '$' + Number(g.amount || 0).toLocaleString('es-AR');
+        if (amountEl) amountEl.textContent = amountStr + ' GRATIS';
+
+        if (g.alreadyClaimed) {
+            card.classList.add('claimed');
+            if (subEl) subEl.textContent = '✅ Ya reclamaste este regalo.';
+            if (btn) { btn.disabled = true; btn.textContent = '✅ Reclamado'; }
+            if (timerEl) timerEl.style.display = 'none';
+            show();
+            return;
+        }
+
+        card.classList.remove('claimed');
+        if (subEl) subEl.textContent = 'Tocá ahora antes que se acabe.';
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🎁 RECLAMAR ' + amountStr;
+        }
+        if (timerEl) timerEl.style.display = '';
+
+        // Countdown vivo.
+        _clearGiveawayCountdown();
+        const expiresMs = new Date(g.expiresAt).getTime();
+        const updateCountdown = () => {
+            const left = expiresMs - Date.now();
+            if (!timerEl) return;
+            if (left <= 0) {
+                timerEl.textContent = '⏰ vencido';
+                _clearGiveawayCountdown();
+                _giveawayState = null;
+                renderGiveawayCard();
+                return;
+            }
+            const totalSec = Math.floor(left / 1000);
+            const m = Math.floor(totalSec / 60);
+            const s = totalSec % 60;
+            timerEl.textContent = '⏰ vence en ' + m + 'm ' + String(s).padStart(2, '0') + 's';
+        };
+        updateCountdown();
+        _giveawayCountdownId = setInterval(updateCountdown, 1000);
+
+        show();
+    }
+
+    async function handleGiveawayClick() {
+        if (!_giveawayState || _giveawayState.alreadyClaimed) return;
+        const btn = document.getElementById('giveawayBtn');
+        if (btn) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.textContent = '⏳ Procesando…';
+        }
+        try {
+            const r = await fetch(`${VIP.config.API_URL}/api/money-giveaway/claim`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            const data = await r.json();
+            if (data.success) {
+                VIP.ui.showToast('✅ ' + data.message, 'success');
+                _giveawayState = { ...(_giveawayState || {}), alreadyClaimed: true };
+                renderGiveawayCard();
+                if (typeof loadRefundStatus === 'function') loadRefundStatus();
+            } else {
+                VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
+                if (data.alreadyClaimed) {
+                    _giveawayState = { ...(_giveawayState || {}), alreadyClaimed: true };
+                    renderGiveawayCard();
+                } else if (data.closed) {
+                    _giveawayState = null;
+                    renderGiveawayCard();
+                } else if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '🎁 RECLAMAR';
+                }
+            }
+        } catch (err) {
+            console.error('giveaway claim error:', err);
+            VIP.ui.showToast('Error de conexión', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🎁 RECLAMAR';
+            }
+        }
+    }
+
+    // Polling cada 60s para detectar regalos nuevos mientras la app esta
+    // abierta. Solo si la pestaña esta visible.
+    if (!_giveawayPollId) {
+        _giveawayPollId = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            loadGiveawayStatus();
+        }, 60 * 1000);
+    }
+
     return {
         loadRefundStatus,
         updateRefundButtons,
@@ -783,7 +926,10 @@ VIP.refunds = (function () {
         loadWelcomeBonusStatus,
         renderWelcomeBonusCard,
         claimWelcomeBonus,
-        handleWelcomeBonusClick
+        handleWelcomeBonusClick,
+        loadGiveawayStatus,
+        renderGiveawayCard,
+        handleGiveawayClick
     };
 
 })();

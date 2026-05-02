@@ -195,8 +195,11 @@ function showSection(sectionKey) {
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
-        // Cargar el estado de la promo activa (si la hay).
+        // Cargar el estado de la promo y del regalo activos (si los hay).
         loadPromoAlertStatus();
+        loadGiveawayStatusAdmin();
+        // Sincronizar la UI del radio extra con el estado inicial.
+        if (typeof updateNotifExtraUI === 'function') updateNotifExtraUI();
     } else if (sectionKey === 'notifsHistory') {
         loadNotifsHistory();
     }
@@ -1217,6 +1220,70 @@ function togglePromoAlertFields() {
     fields.style.display = cb.checked ? 'flex' : 'none';
 }
 
+// ===== Manejador del radio "extra" (none / promo WA / regalo de plata) =====
+function getSelectedNotifExtra() {
+    const r = document.querySelector('input[name="notifExtra"]:checked');
+    return r ? r.value : 'none';
+}
+
+function updateNotifExtraUI() {
+    const extra = getSelectedNotifExtra();
+    const promoWrap = document.getElementById('promoAlertWrap');
+    const giveawayWrap = document.getElementById('giveawayWrap');
+    const promoCheck = document.getElementById('promoAlertEnabled');
+    if (promoWrap) promoWrap.style.display = (extra === 'promo') ? 'block' : 'none';
+    if (giveawayWrap) giveawayWrap.style.display = (extra === 'giveaway') ? 'block' : 'none';
+    if (promoCheck) promoCheck.checked = (extra === 'promo');
+    if (extra === 'promo') {
+        const fields = document.getElementById('promoAlertFields');
+        if (fields) fields.style.display = 'flex';
+    }
+}
+
+async function loadGiveawayStatusAdmin() {
+    const box = document.getElementById('giveawayStatus');
+    if (!box) return;
+    try {
+        const r = await authFetch('/api/admin/money-giveaway');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data.giveaway) { box.style.display = 'none'; return; }
+        const g = data.giveaway;
+        const expiresMs = new Date(g.expiresAt).getTime();
+        const minsLeft = Math.max(0, Math.round((expiresMs - Date.now()) / 60000));
+        if (minsLeft <= 0 && g.status === 'active') { box.style.display = 'none'; return; }
+        const claims = data.claims || [];
+        box.style.display = 'block';
+        box.innerHTML =
+            '✅ <strong>Regalo activo</strong> — vence en <strong>' + minsLeft + ' min</strong><br>' +
+            '<span style="color:#fff;">Por persona:</span> $' + Number(g.amount).toLocaleString('es-AR') +
+            ' · <span style="color:#fff;">Tope plata:</span> $' + Number(g.totalBudget).toLocaleString('es-AR') +
+            ' · <span style="color:#fff;">Máx personas:</span> ' + g.maxClaims + '<br>' +
+            '<span style="color:#fff;">Reclamados hasta ahora:</span> <strong>' + (g.claimedCount || 0) + '</strong>' +
+            ' · <span style="color:#fff;">Plata regalada:</span> <strong>$' + Number(g.totalGiven || 0).toLocaleString('es-AR') + '</strong>' +
+            (g.prefix ? ' · <span style="color:#888;">solo "' + escapeHtml(g.prefix) + '*"</span>' : '') +
+            '<br><button onclick="cancelGiveaway()" style="margin-top:8px;background:rgba(220,38,38,0.85);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">✕ Cancelar regalo ahora</button>';
+    } catch (err) {
+        console.warn('loadGiveawayStatusAdmin error:', err);
+        box.style.display = 'none';
+    }
+}
+
+async function cancelGiveaway() {
+    if (!window.confirm('¿Cancelar el regalo activo? Los usuarios que aún no reclamaron quedan sin poder hacerlo.')) return;
+    try {
+        const r = await authFetch('/api/admin/money-giveaway', { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.success) {
+            showToast('Regalo cancelado', 'success');
+            loadGiveawayStatusAdmin();
+        } else {
+            showToast('Error: ' + (data.error || 'desconocido'), 'error');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 async function loadPromoAlertStatus() {
     const box = document.getElementById('promoAlertStatus');
     if (!box) return;
@@ -1271,18 +1338,28 @@ async function cancelPromoAlert() {
 
 async function sendBulkNotification() {
     const title = (document.getElementById('notifTitle').value || '').trim();
-    const body = (document.getElementById('notifBody').value || '').trim();
+    let body = (document.getElementById('notifBody').value || '').trim();
     const target = getSelectedNotifTarget();
     const prefix = target === 'prefix'
         ? (document.getElementById('notifPrefix').value || '').trim()
         : '';
     const result = document.getElementById('notifResult');
 
-    // Lectura de campos de promo (opcional).
-    const promoEnabled = !!document.getElementById('promoAlertEnabled')?.checked;
+    // Tipo de extra (none / promo WA / regalo de plata).
+    const extra = getSelectedNotifExtra();
+    const promoEnabled = (extra === 'promo');
+    const giveawayEnabled = (extra === 'giveaway');
+
+    // Lectura de campos de promo WA (si aplica).
     const promoMessage = (document.getElementById('promoAlertMessage')?.value || '').trim();
     const promoCode = (document.getElementById('promoAlertCode')?.value || '').trim().toUpperCase();
     const promoDurationHours = Number(document.getElementById('promoAlertDuration')?.value || 1);
+
+    // Lectura de campos de regalo de plata (si aplica).
+    const giveawayAmount = Number(document.getElementById('giveawayAmountInput')?.value || 0);
+    const giveawayBudget = Number(document.getElementById('giveawayBudgetInput')?.value || 0);
+    const giveawayMaxClaims = Number(document.getElementById('giveawayMaxClaimsInput')?.value || 0);
+    const giveawayDurationMinutes = Number(document.getElementById('giveawayDurationInput')?.value || 30);
 
     if (!title) {
         showToast('Falta el título', 'error');
@@ -1302,6 +1379,23 @@ async function sendBulkNotification() {
         if (!isFinite(promoDurationHours) || promoDurationHours <= 0) {
             showToast('Duración de promo inválida', 'error'); return;
         }
+    }
+    if (giveawayEnabled) {
+        if (!isFinite(giveawayAmount) || giveawayAmount <= 0) {
+            showToast('Falta el monto por persona del regalo', 'error'); return;
+        }
+        if (!isFinite(giveawayBudget) || giveawayBudget < giveawayAmount) {
+            showToast('Tope de plata inválido (debe ser >= monto por persona)', 'error'); return;
+        }
+        if (!isFinite(giveawayMaxClaims) || giveawayMaxClaims < 1) {
+            showToast('Falta la cantidad máxima de personas', 'error'); return;
+        }
+        if (![10, 20, 30, 40, 50, 60].includes(giveawayDurationMinutes)) {
+            showToast('Duración del regalo inválida', 'error'); return;
+        }
+        // Auto-mencionar el monto en el body del push.
+        const moneyStr = '$' + giveawayAmount.toLocaleString('es-AR');
+        body = body + ` · 🎁 Te regalamos ${moneyStr} — abrí la app y reclamalo`;
     }
 
     const audienceLabel = prefix
@@ -1328,23 +1422,38 @@ async function sendBulkNotification() {
             data: { source: 'admin-bulk', tag: 'admin-broadcast' }
         };
         if (prefix) payload.prefix = prefix;
-        // Si hay promo, la metemos en el data para que el SW pueda accionarla
-        // al click. La promo SE GUARDA tambien server-side en /admin/promo-alert
-        // (esa es la fuente de verdad para el polling del client).
+
+        // Calcular fechas de vencimiento para snapshots de historial.
         const promoExpiresAtIso = promoEnabled
             ? new Date(Date.now() + promoDurationHours * 3600 * 1000).toISOString()
             : null;
+        const giveawayExpiresAtIso = giveawayEnabled
+            ? new Date(Date.now() + giveawayDurationMinutes * 60 * 1000).toISOString()
+            : null;
+
         if (promoEnabled) {
             payload.data.promoCode = promoCode;
             payload.data.promoMessage = promoMessage;
             payload.data.promoExpiresIn = String(promoDurationHours);
         }
-        // Metadatos para el row de NotificationHistory que crea el server.
+        if (giveawayEnabled) {
+            payload.data.giveawayAmount = String(giveawayAmount);
+            payload.data.giveawayDurationMinutes = String(giveawayDurationMinutes);
+        }
+
+        // Tipo del row de historial.
+        let histType = 'plain';
+        if (promoEnabled) histType = 'whatsapp_promo';
+        else if (giveawayEnabled) histType = 'money_giveaway';
+
         payload.historyMeta = {
-            type: promoEnabled ? 'whatsapp_promo' : 'plain',
+            type: histType,
             promoMessage: promoEnabled ? promoMessage : null,
             promoCode:    promoEnabled ? promoCode : null,
-            promoExpiresAt: promoExpiresAtIso
+            promoExpiresAt: promoExpiresAtIso,
+            giveawayAmount: giveawayEnabled ? giveawayAmount : null,
+            giveawayDurationMins: giveawayEnabled ? giveawayDurationMinutes : null,
+            giveawayExpiresAt: giveawayExpiresAtIso
         };
 
         // 1) Enviar la notificacion. El server crea el row de historial
@@ -1355,8 +1464,7 @@ async function sendBulkNotification() {
         });
         const data = await r.json();
 
-        // 2) Si hay promo, recien ahora creamos la promo (con el historyId
-        //    asociado) asi los clicks del cartel suman al row correcto.
+        // 2a) Si hay promo, crear la promo vinculada al historyId.
         if (promoEnabled && r.ok && data.success) {
             try {
                 const promoR = await authFetch('/api/admin/promo-alert', {
@@ -1377,13 +1485,39 @@ async function sendBulkNotification() {
                 showToast('Notif enviada pero falló crear promo: ' + e.message, 'error');
             }
         }
+
+        // 2b) Si hay regalo, crear el giveaway vinculado al historyId.
+        if (giveawayEnabled && r.ok && data.success) {
+            try {
+                const gR = await authFetch('/api/admin/money-giveaway', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        amount: giveawayAmount,
+                        totalBudget: giveawayBudget,
+                        maxClaims: giveawayMaxClaims,
+                        durationMinutes: giveawayDurationMinutes,
+                        prefix: prefix || null,
+                        notificationHistoryId: data.historyId || null
+                    })
+                });
+                if (!gR.ok) {
+                    const e = await gR.json().catch(() => ({}));
+                    showToast('Notif enviada pero falló crear regalo: ' + (e.error || gR.status), 'error');
+                }
+            } catch (e) {
+                showToast('Notif enviada pero falló crear regalo: ' + e.message, 'error');
+            }
+        }
         if (r.ok && data.success) {
             const targetLine = data.prefix
                 ? `Audiencia: <strong>usuarios "${escapeHtml(data.prefix)}*"</strong><br>`
                 : `Audiencia: <strong>todos los usuarios</strong><br>`;
-            const promoLine = promoEnabled
-                ? `<br>🎁 Promo activa: <strong>${escapeHtml(promoCode)}</strong> por ${promoDurationHours}h`
-                : '';
+            let extraLine = '';
+            if (promoEnabled) {
+                extraLine = `<br>🎁 Promo activa: <strong>${escapeHtml(promoCode)}</strong> por ${promoDurationHours}h`;
+            } else if (giveawayEnabled) {
+                extraLine = `<br>💰 Regalo activo: $${giveawayAmount.toLocaleString('es-AR')}/persona, hasta ${giveawayMaxClaims} personas o $${giveawayBudget.toLocaleString('es-AR')}, por ${giveawayDurationMinutes}min`;
+            }
             const summary =
                 `✅ <strong>Envío completado</strong><br>` +
                 targetLine +
@@ -1395,19 +1529,23 @@ async function sendBulkNotification() {
                 (data.cleanedTokens
                     ? `<br><small style="color:#888;">Tokens inválidos limpiados: ${data.cleanedTokens}</small>`
                     : '') +
-                promoLine;
+                extraLine;
             if (result) result.innerHTML = summary;
             showToast('Notificación enviada', 'success');
             // Reset form (mantener target/prefix por si quiere mandar de nuevo)
             document.getElementById('notifTitle').value = '';
             document.getElementById('notifBody').value = '';
-            // Reset promo fields (asi al siguiente envio no replica sin querer)
+            // Reset extras: volver a "Solo notif".
+            const noneRadio = document.querySelector('input[name="notifExtra"][value="none"]');
+            if (noneRadio) { noneRadio.checked = true; updateNotifExtraUI(); }
             const promoCb = document.getElementById('promoAlertEnabled');
-            if (promoCb) { promoCb.checked = false; togglePromoAlertFields(); }
-            const pm = document.getElementById('promoAlertMessage'); if (pm) pm.value = '';
-            const pc = document.getElementById('promoAlertCode'); if (pc) pc.value = '';
+            if (promoCb) { promoCb.checked = false; }
+            ['promoAlertMessage', 'promoAlertCode',
+             'giveawayAmountInput', 'giveawayBudgetInput', 'giveawayMaxClaimsInput'
+            ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
             updateNotifPreview();
             loadPromoAlertStatus();
+            loadGiveawayStatusAdmin();
         } else {
             const msg = data.error || data.message || 'Error desconocido';
             if (result) result.innerHTML = `❌ Error: ${escapeHtml(msg)}`;

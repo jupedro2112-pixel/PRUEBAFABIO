@@ -19,6 +19,8 @@ const ReferralPayout = require('./ReferralPayout');
 const ReferralEvent = require('./ReferralEvent');
 const OtpCode = require('./OtpCode');
 const NotificationHistory = require('./NotificationHistory');
+const MoneyGiveaway = require('./MoneyGiveaway');
+const MoneyGiveawayClaim = require('./MoneyGiveawayClaim');
 
 
 /**
@@ -410,6 +412,8 @@ module.exports = {
   ReferralEvent,
   OtpCode,
   NotificationHistory,
+  MoneyGiveaway,
+  MoneyGiveawayClaim,
 
   // Funciones de conexión
   connectDB,
