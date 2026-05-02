@@ -226,6 +226,17 @@ router.post('/register-token', async (req, res) => {
       console.warn('[FCM] No se pudo limpiar el token en otros usuarios:', e.message);
     }
 
+    // Detectar plataforma del user-agent para que el panel admin pueda
+    // mostrar si el cliente esta en Android, iPhone o Desktop. Heuristica
+    // simple basada en sustrings; cubre la gran mayoria de casos. iPad
+    // moderno reporta MacIntel + 'Mobile' a veces — incluimos el caso.
+    const ua = (req.headers['user-agent'] || '').toLowerCase();
+    let platform = null;
+    if (ua.includes('android')) platform = 'android';
+    else if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod')) platform = 'ios';
+    else if (ua.includes('macintosh') && ua.includes('mobile')) platform = 'ios'; // iPad moderno
+    else if (ua.includes('windows') || ua.includes('macintosh') || ua.includes('linux')) platform = 'desktop';
+
     // Actualizar el array fcmTokens: upsert por token string.
     // Si el token ya existe, actualizamos contexto/fecha/permiso.
     // Si es nuevo, lo añadimos SIN borrar los tokens anteriores.
@@ -234,7 +245,8 @@ router.post('/register-token', async (req, res) => {
       token: tokenStr,
       context: normalizedCtx,
       updatedAt: new Date(),
-      notifPermission: normalizedPerm || null
+      notifPermission: normalizedPerm || null,
+      platform: platform
     };
     if (!user.fcmTokens) user.fcmTokens = [];
     const existingIdx = user.fcmTokens.findIndex(t => t.token === tokenStr);

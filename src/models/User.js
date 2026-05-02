@@ -160,13 +160,16 @@ const userSchema = new mongoose.Schema({
     default: null
   },
   // Lista de todos los tokens FCM activos del usuario (uno por contexto/dispositivo).
-  // Cada entrada: { token, context, updatedAt, notifPermission }
+  // Cada entrada: { token, context, updatedAt, notifPermission, platform }
   // Permite enviar notificaciones a Chrome Y a la PWA instalada al mismo tiempo.
+  // platform: 'android' | 'ios' | 'desktop' | null (legacy/desconocido) — se
+  // detecta del user-agent en el endpoint /register-token.
   fcmTokens: [{
     token: { type: String, required: true },
     context: { type: String, default: 'browser' },
     updatedAt: { type: Date, default: Date.now },
-    notifPermission: { type: String, default: null }
+    notifPermission: { type: String, default: null },
+    platform: { type: String, default: null }
   }],
 
   // =============================================

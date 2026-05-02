@@ -6811,6 +6811,19 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
         .map(t => t.updatedAt ? new Date(t.updatedAt).getTime() : 0)
         .reduce((a, b) => Math.max(a, b), 0);
 
+      // Plataforma: tomamos la del token standalone mas reciente. Si no hay
+      // standalone token, caemos al token mas reciente de cualquier tipo
+      // (browser) para al menos saber con que dispositivo se loguea.
+      let platform = null;
+      const sourceTokens = standaloneTokens.length > 0 ? standaloneTokens : tokens;
+      const sortedByUpdated = sourceTokens.slice().sort((a, b) => {
+        const ta = a && a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const tb = b && b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return tb - ta;
+      });
+      const newest = sortedByUpdated.find(t => t && t.platform);
+      if (newest) platform = newest.platform;
+
       const hasApp = (
         u.fcmTokenContext === 'standalone' ||
         standaloneTokens.length > 0
@@ -6828,7 +6841,8 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
         createdAt: u.createdAt || null,
         hasApp,
         hasNotifs,
-        appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null
+        appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null,
+        platform: platform
       });
     }
 
@@ -6893,6 +6907,16 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         .map(t => t.updatedAt ? new Date(t.updatedAt).getTime() : 0)
         .reduce((a, b) => Math.max(a, b), 0);
 
+      let platform = null;
+      const sourceTokens = standaloneTokens.length > 0 ? standaloneTokens : tokens;
+      const sortedByUpdated = sourceTokens.slice().sort((a, b) => {
+        const ta = a && a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const tb = b && b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return tb - ta;
+      });
+      const newest = sortedByUpdated.find(t => t && t.platform);
+      if (newest) platform = newest.platform;
+
       const hasApp = (
         u.fcmTokenContext === 'standalone' ||
         standaloneTokens.length > 0
@@ -6912,7 +6936,8 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         hasApp,
         hasNotifs,
         lastLogin: u.lastLogin || null,
-        appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null
+        appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null,
+        platform: platform
       };
     });
 

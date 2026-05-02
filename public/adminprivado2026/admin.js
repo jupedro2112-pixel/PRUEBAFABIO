@@ -807,12 +807,22 @@ function _formatAppLastSeen(iso) {
     return { text, color, staleness };
 }
 
+function _formatPlatform(p) {
+    switch (p) {
+        case 'android': return '<span style="color:#3ddc84;font-weight:700;">🤖 Android</span>';
+        case 'ios':     return '<span style="color:#a3a3a3;font-weight:700;">🍎 iPhone</span>';
+        case 'desktop': return '<span style="color:#888;">💻 Desktop</span>';
+        default:        return '<span style="color:#666;">—</span>';
+    }
+}
+
 function renderEquipmentTableHtml(users) {
     if (!users || users.length === 0) {
         return '<div class="empty-state">No hay usuarios para mostrar.</div>';
     }
     let html = '<table class="report-table"><thead><tr>';
     html += '<th>Usuario</th>';
+    html += '<th>Equipo</th>';
     html += '<th>📱 App</th>';
     html += '<th>Última vez en la app</th>';
     html += '<th>🔔 Notifs</th>';
@@ -837,6 +847,7 @@ function renderEquipmentTableHtml(users) {
             : '<span style="color:#888;">—</span>';
         html += '<tr>';
         html += '<td>' + escapeHtml(u.username) + '</td>';
+        html += '<td>' + _formatPlatform(u.platform) + '</td>';
         html += '<td>' + appCell + '</td>';
         html += '<td>' + seenCell + '</td>';
         html += '<td>' + notifCell + '</td>';
@@ -1012,6 +1023,7 @@ function renderWelcomeBonusTableHtml(claims) {
     }
     let html = '<table class="report-table"><thead><tr>';
     html += '<th>Usuario</th>';
+    html += '<th>Equipo</th>';
     html += '<th>Reclamado</th>';
     html += '<th>📱 App ahora</th>';
     html += '<th>Última vez en la app</th>';
@@ -1040,6 +1052,7 @@ function renderWelcomeBonusTableHtml(claims) {
             : '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">OK</span>';
         html += '<tr>';
         html += '<td>' + escapeHtml(c.username) + '</td>';
+        html += '<td>' + _formatPlatform(c.platform) + '</td>';
         html += '<td><small>' + escapeHtml(claimed) + '</small></td>';
         html += '<td>' + appCell + '</td>';
         html += '<td>' + seenCell + '</td>';
