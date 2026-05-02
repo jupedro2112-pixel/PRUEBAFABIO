@@ -737,7 +737,8 @@ VIP.refunds = (function () {
         openRequirementsModal,
         loadWelcomeBonusStatus,
         renderWelcomeBonusCard,
-        claimWelcomeBonus
+        claimWelcomeBonus,
+        handleWelcomeBonusClick
     };
 
 })();
