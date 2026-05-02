@@ -789,6 +789,46 @@ function filterEquipmentTable() {
 }
 
 // ============================================
+// REVALIDAR TOKENS FCM (on-demand)
+// Dispara la validacion via dry-run de FCM para detectar tokens muertos
+// (usuarios que desinstalaron la app). Despues recarga el reporte que
+// el admin estaba viendo (equipment o welcomebonus).
+// ============================================
+async function revalidateThenReload(which) {
+    // Encontrar el contenedor para mostrar el estado mientras corre.
+    const containerId = which === 'welcomebonus' ? 'welcomeBonusReportContent' : 'equipmentReportContent';
+    const container = document.getElementById(containerId);
+    if (container) {
+        container.innerHTML = '<div class="empty-state">🔍 Revalidando tokens en Google FCM… Puede tardar varios segundos según cantidad de usuarios.</div>';
+    }
+
+    try {
+        const r = await authFetch('/api/admin/reports/revalidate-tokens', { method: 'POST' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data.success) {
+            const msg = data.error || ('HTTP ' + r.status);
+            if (container) container.innerHTML = '<div class="empty-state">❌ ' + escapeHtml(msg) + '</div>';
+            // Recargar de todos modos para que el admin vea el estado.
+            setTimeout(() => {
+                if (which === 'welcomebonus') loadWelcomeBonusReport();
+                else loadEquipmentReport();
+            }, 1500);
+            return;
+        }
+        const seconds = Math.round((data.elapsedMs || 0) / 1000);
+        const msg = `✅ Revalidados ${data.total} tokens en ${seconds}s. Limpiados: ${data.cleaned}. Errores transitorios: ${data.errors}.`;
+        if (typeof showToast === 'function') showToast(msg, 'success');
+        else alert(msg);
+        // Recargar el reporte para reflejar las limpiezas.
+        if (which === 'welcomebonus') loadWelcomeBonusReport();
+        else loadEquipmentReport();
+    } catch (err) {
+        console.error('revalidateThenReload error:', err);
+        if (container) container.innerHTML = '<div class="empty-state">❌ Error de conexión al revalidar.</div>';
+    }
+}
+
+// ============================================
 // REPORTE — BONO DE BIENVENIDA $10.000
 // Usuarios que reclamaron el bono + estado actual de app/notifs.
 // Permite ver quien desinstalo o desactivo notifs despues de cobrar.

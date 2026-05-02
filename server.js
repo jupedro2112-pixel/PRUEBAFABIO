@@ -6918,6 +6918,51 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
 });
 
 // ============================================
+// POST /api/admin/reports/revalidate-tokens
+// Dispara la validacion on-demand de todos los tokens FCM via dry-run.
+// FCM responde "not-found"/"unregistered" para tokens cuya app fue
+// desinstalada → los borramos del array fcmTokens. Resultado: el
+// reporte siguiente refleja el estado real (no el cacheado de hace 24h).
+//
+// Anti-overlap: si el cron ya esta corriendo, devolvemos 409 para que
+// el admin sepa que esperar y no se dispare doble.
+// ============================================
+let _adminRevalidateRunning = false;
+app.post('/api/admin/reports/revalidate-tokens', authMiddleware, adminMiddleware, async (req, res) => {
+  if (_adminRevalidateRunning) {
+    return res.status(409).json({
+      success: false,
+      error: 'Ya hay una revalidación en curso. Esperá unos minutos y volvé a intentar.'
+    });
+  }
+  _adminRevalidateRunning = true;
+  const startedAt = Date.now();
+  try {
+    const result = await pruneInvalidFcmTokens(User);
+    const elapsedMs = Date.now() - startedAt;
+    if (!result || !result.success) {
+      logger.warn(`[admin/revalidate] sin resultado: ${result && result.error}`);
+      return res.json({ success: false, error: (result && result.error) || 'Error desconocido' });
+    }
+    logger.info(`[admin/revalidate] manual: total=${result.total} valid=${result.valid} cleaned=${result.cleaned} errors=${result.errors} (${Math.round(elapsedMs/1000)}s)`);
+    res.json({
+      success: true,
+      total: result.total,
+      valid: result.valid,
+      invalid: result.invalid,
+      cleaned: result.cleaned,
+      errors: result.errors,
+      elapsedMs
+    });
+  } catch (e) {
+    logger.error(`[admin/revalidate] excepción: ${e.message}`);
+    res.status(500).json({ success: false, error: e.message });
+  } finally {
+    _adminRevalidateRunning = false;
+  }
+});
+
+// ============================================
 // BASE DE DATOS - SOLO ADMIN PRINCIPAL
 // ============================================
 

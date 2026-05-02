@@ -300,7 +300,14 @@
             <section id="equipamientoSection" class="section">
                 <div class="panel-header">
                     <h2>📱 Equipamiento de usuarios</h2>
-                    <button class="refresh-btn" onclick="loadEquipmentReport()" title="Actualizar">🔄</button>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="refresh-btn" onclick="revalidateThenReload('equipment')" title="Pregunta a Google si los tokens siguen vivos. Detecta apps desinstaladas. Tarda según la cantidad de usuarios.">🔍 Revalidar tokens</button>
+                        <button class="refresh-btn" onclick="loadEquipmentReport()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
+                    Cuando un usuario desinstala la PWA, el navegador NO le avisa al server: el token FCM queda muerto en silencio.
+                    Cada 24h el sistema lo detecta automáticamente, pero podés tocar <strong>🔍 Revalidar tokens</strong> para forzar la validación ahora.
                 </div>
                 <div id="equipmentReportContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
@@ -314,12 +321,16 @@
             <section id="welcomebonusSection" class="section">
                 <div class="panel-header">
                     <h2>🎁 Bono de bienvenida $10.000</h2>
-                    <button class="refresh-btn" onclick="loadWelcomeBonusReport()" title="Actualizar">🔄</button>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="refresh-btn" onclick="revalidateThenReload('welcomebonus')" title="Pregunta a Google si los tokens siguen vivos. Detecta apps desinstaladas. Tarda según la cantidad de usuarios.">🔍 Revalidar tokens</button>
+                        <button class="refresh-btn" onclick="loadWelcomeBonusReport()" title="Actualizar">🔄</button>
+                    </div>
                 </div>
                 <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
                     Usuarios que reclamaron el bono de $10.000 (one-time).
                     Mostramos el estado <strong>actual</strong> de su app instalada y notificaciones,
                     asi podes detectar quien desinstalo o desactivo notifs despues de cobrar.
+                    Tocá <strong>🔍 Revalidar tokens</strong> para forzar el chequeo ahora (detecta apps desinstaladas en tiempo real).
                 </div>
                 <div id="welcomeBonusReportContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
