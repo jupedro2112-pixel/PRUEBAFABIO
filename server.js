@@ -4185,11 +4185,27 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
 
       logger.info('[REFUND] daily — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
-      // Pre-insertar RefundClaim con periodKey ANTES del credit. El indice
-      // unique { userId, type, periodKey } actua como gatekeeper atomico:
-      // si dos requests llegan al mismo tiempo, solo uno persiste y el otro
-      // recibe E11000. Asi prevenimos doble credito incluso sin Redis.
+      // Pre-insertar RefundClaim con periodKey ANTES del credit. Los indices
+      // unique { userId, type, periodKey } y { username, type, periodKey }
+      // actuan como gatekeeper atomico: si dos requests llegan al mismo
+      // tiempo, solo uno persiste y los demas reciben E11000. Asi prevenimos
+      // doble credito incluso sin Redis y aunque el userId varie.
       const periodKey = computePeriodKey('daily');
+      // Pre-chequeo amigable por userId O username (cualquiera de los dos
+      // alcanza para detectar duplicado y evitar el ida/vuelta a Mongo).
+      const existing = await RefundClaim.findOne({
+        type: 'daily',
+        periodKey,
+        $or: [{ userId }, { username }]
+      }).lean();
+      if (existing) {
+        logger.warn(`[REFUND] daily — pre-check rechazo por claim existente para ${username} en ${periodKey}`);
+        return res.json({
+          success: false,
+          message: 'Ya reclamaste tu reembolso diario. Vuelve mañana!',
+          canClaim: false
+        });
+      }
       let claim;
       try {
         claim = await RefundClaim.create({
@@ -4206,7 +4222,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         });
       } catch (e) {
         if (e && e.code === 11000) {
-          logger.warn(`[REFUND] daily — intento duplicado bloqueado por indice unique para ${username} en ${periodKey}`);
+          logger.warn(`[REFUND] daily — duplicado bloqueado por indice unique para ${username} en ${periodKey} (key: ${JSON.stringify(e.keyValue || e.keyPattern || {})})`);
           return res.json({
             success: false,
             message: 'Ya reclamaste tu reembolso diario. Vuelve mañana!',
@@ -4330,8 +4346,22 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       logger.info('[REFUND] weekly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
       // Pre-insertar RefundClaim con periodKey ANTES del credit (ver comentario
-      // en daily para el racional).
+      // en daily para el racional). Pre-check por userId O username + insert
+      // protegido por dos indices unique (userId+ y username+).
       const periodKey = computePeriodKey('weekly');
+      const existing = await RefundClaim.findOne({
+        type: 'weekly',
+        periodKey,
+        $or: [{ userId }, { username }]
+      }).lean();
+      if (existing) {
+        logger.warn(`[REFUND] weekly — pre-check rechazo por claim existente para ${username} en ${periodKey}`);
+        return res.json({
+          success: false,
+          message: 'Ya reclamaste tu reembolso semanal en este período.',
+          canClaim: false
+        });
+      }
       let claim;
       try {
         claim = await RefundClaim.create({
@@ -4348,7 +4378,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       } catch (e) {
         if (e && e.code === 11000) {
-          logger.warn(`[REFUND] weekly — intento duplicado bloqueado para ${username} en ${periodKey}`);
+          logger.warn(`[REFUND] weekly — duplicado bloqueado por indice unique para ${username} en ${periodKey} (key: ${JSON.stringify(e.keyValue || e.keyPattern || {})})`);
           return res.json({
             success: false,
             message: 'Ya reclamaste tu reembolso semanal en este período.',
@@ -4469,8 +4499,22 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       logger.info('[REFUND] monthly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
       // Pre-insertar RefundClaim con periodKey ANTES del credit (ver comentario
-      // en daily para el racional).
+      // en daily para el racional). Pre-check por userId O username + insert
+      // protegido por dos indices unique (userId+ y username+).
       const periodKey = computePeriodKey('monthly');
+      const existing = await RefundClaim.findOne({
+        type: 'monthly',
+        periodKey,
+        $or: [{ userId }, { username }]
+      }).lean();
+      if (existing) {
+        logger.warn(`[REFUND] monthly — pre-check rechazo por claim existente para ${username} en ${periodKey}`);
+        return res.json({
+          success: false,
+          message: 'Ya reclamaste tu reembolso mensual en este período.',
+          canClaim: false
+        });
+      }
       let claim;
       try {
         claim = await RefundClaim.create({
@@ -4487,7 +4531,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       } catch (e) {
         if (e && e.code === 11000) {
-          logger.warn(`[REFUND] monthly — intento duplicado bloqueado para ${username} en ${periodKey}`);
+          logger.warn(`[REFUND] monthly — duplicado bloqueado por indice unique para ${username} en ${periodKey} (key: ${JSON.stringify(e.keyValue || e.keyPattern || {})})`);
           return res.json({
             success: false,
             message: 'Ya reclamaste tu reembolso mensual en este período.',

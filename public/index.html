@@ -761,31 +761,18 @@
             color: #cfcfcf;
         }
 
-        /* Logout flotando arriba a la derecha (respeta safe-area).
-           z-index alto para que ningún elemento del flujo lo tape. */
+        /* Badge con username flotando arriba a la derecha (respeta safe-area).
+           z-index alto para que ningún elemento del flujo lo tape. Antes era
+           el boton de Salir pero se desactivo el logout para evitar que la
+           gente cambie de usuario constantemente. */
         #refundsLogoutBtn {
             position: fixed;
             top: max(env(safe-area-inset-top), 12px);
             right: max(env(safe-area-inset-right), 12px);
-            background: rgba(255, 68, 68, 0.85);
-            border: 1px solid rgba(255, 68, 68, 0.6);
-            color: #fff;
-            padding: 10px 16px;
-            border-radius: 22px;
-            font-size: 13px;
-            font-weight: 700;
-            cursor: pointer;
             z-index: 9999;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-            -webkit-tap-highlight-color: rgba(255,255,255,0.2);
+            cursor: default;
+            -webkit-tap-highlight-color: transparent;
             touch-action: manipulation;
-        }
-        #refundsLogoutBtn:hover {
-            background: rgba(255, 68, 68, 0.95);
-        }
-        #refundsLogoutBtn:active {
-            background: rgba(220, 30, 30, 1);
-            transform: scale(0.96);
         }
 
         /* Login: también centrado vertical para mobile */
@@ -1016,7 +1003,7 @@
             color: rgba(255, 255, 255, 0.78) !important;
         }
 
-        /* Botón Salir — sobrio, no rojo chillón */
+        /* Badge con el username (antes era boton Salir; ahora es solo info) */
         #refundsLogoutBtn {
             background: rgba(28, 31, 39, 0.92) !important;
             border: 1px solid rgba(184, 152, 70, 0.35) !important;
@@ -1026,21 +1013,18 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
+            cursor: default;
+            padding: 8px 14px;
+            border-radius: 999px;
+            font-size: 13px;
         }
-        #refundsLogoutBtn:hover {
-            background: rgba(40, 44, 54, 0.95) !important;
-            border-color: rgba(212, 175, 55, 0.55) !important;
-        }
-        #refundsLogoutBtn:active {
-            background: rgba(60, 30, 30, 0.95) !important;
-        }
-        /* Username chiquito al lado del boton Salir */
+        /* Username chiquito */
         #refundsLogoutBtn .logout-username {
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 700;
             color: #d4af37;
             letter-spacing: 0.5px;
-            max-width: 110px;
+            max-width: 160px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -1048,6 +1032,9 @@
         }
         #refundsLogoutBtn .logout-username:empty {
             display: none;
+        }
+        #refundsLogoutBtn .logout-username::before {
+            content: '👤 ';
         }
 
         /* Logo: silver más mate (menos brilloso) + SVG monograma centrado. */
@@ -1233,11 +1220,10 @@
 
     <!-- Chat Screen -->
     <div id="chatScreen" class="chat-screen hidden">
-        <!-- Refunds-only: logout flotante con el username chico al lado -->
-        <button id="refundsLogoutBtn" type="button" onclick="VIP.auth.handleLogout()">
+        <!-- Refunds-only: badge con el username (sin opcion de cerrar sesion). -->
+        <div id="refundsLogoutBtn" role="status" aria-label="Sesión iniciada">
             <span class="logout-username" id="refundsLogoutUsername"></span>
-            🚪 Salir
-        </button>
+        </div>
         <!-- Refunds-only: bloque de bienvenida -->
         <div class="refunds-welcome">
             <div class="home-logo silver-logo" aria-label="Bolsa de plata">

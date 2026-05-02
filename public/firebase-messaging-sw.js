@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v57-equipment-panel-and-welcome-rearrange';
+const CACHE_VERSION = 'v58-no-logout-and-refund-defense-in-depth';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

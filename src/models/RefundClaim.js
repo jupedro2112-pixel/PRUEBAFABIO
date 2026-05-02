@@ -86,6 +86,10 @@ refundClaimSchema.index({ claimedAt: -1 });
 refundClaimSchema.index({ type: 1, claimedAt: -1 });
 // Índice único por período para prevenir doble reclamo (sparse permite valores null para registros históricos)
 refundClaimSchema.index({ userId: 1, type: 1, periodKey: 1 }, { unique: true, sparse: true });
+// Indice unique adicional sobre username + type + periodKey. Defensa en
+// profundidad: aunque el userId varie por algun bug futuro (login que crea
+// nuevo record local, etc.), el username sigue siendo barrera atomica.
+refundClaimSchema.index({ username: 1, type: 1, periodKey: 1 }, { unique: true, sparse: true });
 
 // Método estático para verificar si puede reclamar
 refundClaimSchema.statics.canClaim = async function(userId, type) {
