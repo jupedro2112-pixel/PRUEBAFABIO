@@ -662,11 +662,18 @@ VIP.refunds = (function () {
         const btn = document.getElementById('welcomeBonusBtn');
         if (!card || !btn) return;
 
+        // OJO: el card tiene `display:block !important` en el CSS para que
+        // no se aplaste en mobile, asi que un `card.style.display='none'`
+        // simple NO lo oculta (el !important del CSS gana). Usamos
+        // setProperty con flag 'important' para que la JS gane.
+        const hideCard = () => card.style.setProperty('display', 'none', 'important');
+        const showCard = () => card.style.setProperty('display', 'block', 'important');
+
         // Defensa-en-profundidad: si el flag local dice reclamado, ocultamos
         // de entrada (cubre el caso donde el render corre antes de que el
         // fetch de status termine).
         if (_isLocallyMarkedClaimed()) {
-            card.style.display = 'none';
+            hideCard();
             return;
         }
 
@@ -679,12 +686,12 @@ VIP.refunds = (function () {
         // entero. El bono es one-time real.
         if (s.claimed) {
             _markLocallyClaimed();
-            card.style.display = 'none';
+            hideCard();
             return;
         }
 
         // No reclamado: mostramos card con los pasos.
-        card.style.display = '';
+        showCard();
         if (amountEl) amountEl.textContent = '$' + amountNum.toLocaleString('es-AR') + ' GRATIS';
 
         card.classList.remove('claimed');
