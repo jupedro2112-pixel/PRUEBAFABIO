@@ -68,6 +68,10 @@
                     <span>👥</span>
                     <span>Ingresos diarios</span>
                 </a>
+                <a href="#" class="nav-item" data-section="equipamiento">
+                    <span>📱</span>
+                    <span>Equipamiento</span>
+                </a>
                 <a href="#" class="nav-item" data-section="notifs">
                     <span>🔔</span>
                     <span>Notificaciones</span>
@@ -283,6 +287,19 @@
                 </div>
                 <div id="ingresosReportContent" class="report-content">
                     <div class="empty-state">Cargá el reporte para ver los ingresos.</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: EQUIPAMIENTO POR USUARIO
+                 ============================================ -->
+            <section id="equipamientoSection" class="section">
+                <div class="panel-header">
+                    <h2>📱 Equipamiento de usuarios</h2>
+                    <button class="refresh-btn" onclick="loadEquipmentReport()" title="Actualizar">🔄</button>
+                </div>
+                <div id="equipmentReportContent" class="report-content">
+                    <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
 

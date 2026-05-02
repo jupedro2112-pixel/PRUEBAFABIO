@@ -1023,6 +1023,9 @@
             color: #d4d4d4 !important;
             font-weight: 600 !important;
             box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45) !important;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
         #refundsLogoutBtn:hover {
             background: rgba(40, 44, 54, 0.95) !important;
@@ -1030,6 +1033,21 @@
         }
         #refundsLogoutBtn:active {
             background: rgba(60, 30, 30, 0.95) !important;
+        }
+        /* Username chiquito al lado del boton Salir */
+        #refundsLogoutBtn .logout-username {
+            font-size: 11px;
+            font-weight: 700;
+            color: #d4af37;
+            letter-spacing: 0.5px;
+            max-width: 110px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            opacity: 0.95;
+        }
+        #refundsLogoutBtn .logout-username:empty {
+            display: none;
         }
 
         /* Logo: silver más mate (menos brilloso) + SVG monograma centrado. */
@@ -1215,8 +1233,11 @@
 
     <!-- Chat Screen -->
     <div id="chatScreen" class="chat-screen hidden">
-        <!-- Refunds-only: logout flotante -->
-        <button id="refundsLogoutBtn" type="button" onclick="VIP.auth.handleLogout()">🚪 Salir</button>
+        <!-- Refunds-only: logout flotante con el username chico al lado -->
+        <button id="refundsLogoutBtn" type="button" onclick="VIP.auth.handleLogout()">
+            <span class="logout-username" id="refundsLogoutUsername"></span>
+            🚪 Salir
+        </button>
         <!-- Refunds-only: bloque de bienvenida -->
         <div class="refunds-welcome">
             <div class="home-logo silver-logo" aria-label="Bolsa de plata">
@@ -1248,8 +1269,7 @@
                           style="letter-spacing:-1px;">$</text>
                 </svg>
             </div>
-            <h2>Bienvenido <span id="refundsWelcomeUser"></span></h2>
-            <p>Reclamá tu reembolso disponible</p>
+            <h2>Reclamá tu reembolso disponible</h2>
         </div>
         <!-- Header -->
         <header class="header">

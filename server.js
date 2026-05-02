@@ -6398,6 +6398,69 @@ app.get('/api/admin/reports/logins', authMiddleware, adminMiddleware, async (req
 });
 
 // ============================================
+// REPORTES - EQUIPAMIENTO POR USUARIO
+// GET /api/admin/reports/equipment
+// Devuelve quien tiene la PWA instalada y quien tiene notificaciones activas,
+// derivado de fcmTokens[].context === 'standalone' y notifPermission === 'granted'.
+// ============================================
+app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await User.find(
+      { role: 'user' },
+      { username: 1, lastLogin: 1, createdAt: 1, fcmToken: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, _id: 0 }
+    ).lean();
+
+    let withApp = 0;
+    let withNotifs = 0;
+    let withBoth = 0;
+    const list = [];
+
+    for (const u of users) {
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const hasApp = (
+        u.fcmTokenContext === 'standalone' ||
+        tokens.some(t => t && t.context === 'standalone')
+      );
+      const hasNotifs = (
+        u.notifPermission === 'granted' ||
+        tokens.some(t => t && t.notifPermission === 'granted')
+      );
+      if (hasApp) withApp++;
+      if (hasNotifs) withNotifs++;
+      if (hasApp && hasNotifs) withBoth++;
+      list.push({
+        username: u.username || '',
+        lastLogin: u.lastLogin || null,
+        createdAt: u.createdAt || null,
+        hasApp,
+        hasNotifs
+      });
+    }
+
+    // Orden: ultimos en loguearse primero, luego por username.
+    list.sort((a, b) => {
+      const ta = a.lastLogin ? new Date(a.lastLogin).getTime() : 0;
+      const tb = b.lastLogin ? new Date(b.lastLogin).getTime() : 0;
+      if (tb !== ta) return tb - ta;
+      return (a.username || '').localeCompare(b.username || '');
+    });
+
+    res.json({
+      totals: {
+        totalUsers: list.length,
+        withApp,
+        withNotifs,
+        withBoth
+      },
+      users: list
+    });
+  } catch (error) {
+    logger.error(`/api/admin/reports/equipment error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // BASE DE DATOS - SOLO ADMIN PRINCIPAL
 // ============================================
 

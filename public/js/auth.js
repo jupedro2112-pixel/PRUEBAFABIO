@@ -264,8 +264,13 @@ VIP.auth = (function () {
     // Renderiza el bloque "Bienvenido [user]" + "Número principal vigente"
     function renderRefundsHomeUI() {
         const user = VIP.state.currentUser || {};
+        // El "Bienvenido <user>" del bloque grande se reemplazo por
+        // "Reclama tu reembolso disponible". El username ahora va chico al
+        // lado del boton de Salir.
         const welcomeEl = document.getElementById('refundsWelcomeUser');
         if (welcomeEl) welcomeEl.textContent = user.username || '';
+        const logoutUserEl = document.getElementById('refundsLogoutUsername');
+        if (logoutUserEl) logoutUserEl.textContent = user.username || '';
 
         const phoneEl = document.getElementById('userLinePhone');
         const phone = VIP.state.linePhone || null;

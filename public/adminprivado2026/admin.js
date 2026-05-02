@@ -159,6 +159,7 @@ function showSection(sectionKey) {
         reportWeekly: 'reportWeeklySection',
         reportMonthly: 'reportMonthlySection',
         ingresos: 'ingresosSection',
+        equipamiento: 'equipamientoSection',
         notifs: 'notifsSection'
     };
     const sectionId = map[sectionKey];
@@ -185,6 +186,8 @@ function showSection(sectionKey) {
         loadRefundsReport('monthly');
     } else if (sectionKey === 'ingresos') {
         loadIngresosReport();
+    } else if (sectionKey === 'equipamiento') {
+        loadEquipmentReport();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -629,6 +632,78 @@ function renderIngresosReport(container, data) {
         }
         html += '</tbody></table>';
     }
+
+    container.innerHTML = html;
+}
+
+// ============================================
+// REPORTE — EQUIPAMIENTO POR USUARIO
+// Quien tiene la PWA instalada y quien tiene notificaciones activas.
+// ============================================
+async function loadEquipmentReport() {
+    const container = document.getElementById('equipmentReportContent');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+
+    try {
+        const r = await authFetch('/api/admin/reports/equipment');
+        if (!r.ok) {
+            container.innerHTML = '<div class="empty-state">❌ Error cargando reporte</div>';
+            return;
+        }
+        const data = await r.json();
+        renderEquipmentReport(container, data);
+    } catch (err) {
+        console.error('loadEquipmentReport error:', err);
+        container.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function renderEquipmentReport(container, data) {
+    const t = data.totals || {};
+    const users = Array.isArray(data.users) ? data.users : [];
+    const total = t.totalUsers || 0;
+    const pct = (n) => total > 0 ? Math.round((n / total) * 100) : 0;
+
+    let html = '';
+
+    // Resumen
+    html += '<div class="report-summary">';
+    html += '  <div class="stat-card"><span class="label">Total usuarios</span><span class="value">' + total + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">📱 Con app instalada</span><span class="value">' + (t.withApp || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.withApp || 0) + '%)</small></span></div>';
+    html += '  <div class="stat-card"><span class="label">🔔 Con notificaciones</span><span class="value">' + (t.withNotifs || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.withNotifs || 0) + '%)</small></span></div>';
+    html += '  <div class="stat-card"><span class="label">✅ Con ambos</span><span class="value">' + (t.withBoth || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.withBoth || 0) + '%)</small></span></div>';
+    html += '</div>';
+
+    if (users.length === 0) {
+        html += '<div class="empty-state">Sin usuarios registrados.</div>';
+        container.innerHTML = html;
+        return;
+    }
+
+    html += '<h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:18px 0 10px;">Detalle por usuario</h3>';
+    html += '<table class="report-table"><thead><tr>';
+    html += '<th>Usuario</th>';
+    html += '<th>📱 App instalada</th>';
+    html += '<th>🔔 Notificaciones</th>';
+    html += '<th>Último ingreso</th>';
+    html += '</tr></thead><tbody>';
+    for (const u of users) {
+        const lastLogin = u.lastLogin ? new Date(u.lastLogin).toLocaleString('es-AR') : '—';
+        const appCell = u.hasApp
+            ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
+            : '<span style="color:#888;">—</span>';
+        const notifCell = u.hasNotifs
+            ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
+            : '<span style="color:#888;">—</span>';
+        html += '<tr>';
+        html += '<td>' + escapeHtml(u.username) + '</td>';
+        html += '<td>' + appCell + '</td>';
+        html += '<td>' + notifCell + '</td>';
+        html += '<td><small>' + escapeHtml(lastLogin) + '</small></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
 
     container.innerHTML = html;
 }
