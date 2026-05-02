@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v73-admin-revalidate';
+const CACHE_VERSION = 'v74-admin-network-first';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -51,7 +51,12 @@ function isNetworkFirst(url) {
   return (
     url.includes('/js/') ||
     url.includes('/app.js') ||
-    url.includes('/manifest.json')
+    url.includes('/manifest.json') ||
+    // Panel admin: ANTES iba por cache-first, lo que hacia que cambios al
+    // panel (nuevas secciones, botones, fixes) no aparezcan hasta que la
+    // cache expire. Forzamos network-first para que cada deploy sea
+    // visible inmediatamente.
+    url.includes('/adminprivado2026/')
   );
 }
 
