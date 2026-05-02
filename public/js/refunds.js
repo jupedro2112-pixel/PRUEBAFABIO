@@ -618,13 +618,37 @@ VIP.refunds = (function () {
     // =====================================================
     let _welcomeStatus = null; // { amount, claimed, claimedAt, status }
 
+    // Clave por usuario para que si en el mismo dispositivo se loguea otra
+    // persona (poco probable pero posible), no se herede el flag.
+    function _welcomeClaimedKey() {
+        const u = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '';
+        return 'vipWelcomeBonusClaimed:' + u.toLowerCase();
+    }
+    function _isLocallyMarkedClaimed() {
+        try { return localStorage.getItem(_welcomeClaimedKey()) === '1'; }
+        catch (_) { return false; }
+    }
+    function _markLocallyClaimed() {
+        try { localStorage.setItem(_welcomeClaimedKey(), '1'); } catch (_) {}
+    }
+
     async function loadWelcomeBonusStatus() {
+        // Si ya quedo marcado como reclamado en este device, asumimos
+        // claimed=true sin esperar al server (UX: no parpadea el card).
+        // El backend sigue siendo la fuente de verdad real, pero esto
+        // garantiza que el cliente que ya reclamo nunca lo ve devuelta.
+        if (_isLocallyMarkedClaimed()) {
+            _welcomeStatus = { amount: 10000, claimed: true };
+            renderWelcomeBonusCard();
+        }
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/refunds/welcome/status`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (!r.ok) return;
             _welcomeStatus = await r.json();
+            // Sincronizar flag local con la verdad del server.
+            if (_welcomeStatus && _welcomeStatus.claimed) _markLocallyClaimed();
             renderWelcomeBonusCard();
         } catch (err) {
             console.error('loadWelcomeBonusStatus error:', err);
@@ -638,6 +662,14 @@ VIP.refunds = (function () {
         const btn = document.getElementById('welcomeBonusBtn');
         if (!card || !btn) return;
 
+        // Defensa-en-profundidad: si el flag local dice reclamado, ocultamos
+        // de entrada (cubre el caso donde el render corre antes de que el
+        // fetch de status termine).
+        if (_isLocallyMarkedClaimed()) {
+            card.style.display = 'none';
+            return;
+        }
+
         const s = _welcomeStatus || { amount: 10000, claimed: false };
         const amountNum = Number(s.amount || 10000);
 
@@ -646,6 +678,7 @@ VIP.refunds = (function () {
         // reinstale, sigue marcado como reclamado), ocultamos el card
         // entero. El bono es one-time real.
         if (s.claimed) {
+            _markLocallyClaimed();
             card.style.display = 'none';
             return;
         }
@@ -702,13 +735,17 @@ VIP.refunds = (function () {
             const data = await response.json();
             if (data.success) {
                 VIP.ui.showToast('✅ ' + data.message, 'success');
+                _markLocallyClaimed();
                 _welcomeStatus = { ...(_welcomeStatus || {}), claimed: true, claimedAt: new Date().toISOString(), status: 'completed' };
                 renderWelcomeBonusCard();
                 // Refrescar saldo en pantalla.
                 if (typeof loadRefundStatus === 'function') loadRefundStatus();
             } else {
                 VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
+                // canClaim:false → server dice "ya reclamado" o "pending review".
+                // En ambos casos el bono no se puede reintentar, ocultamos.
                 if (data.canClaim === false) {
+                    _markLocallyClaimed();
                     _welcomeStatus = { ...(_welcomeStatus || {}), claimed: true };
                     renderWelcomeBonusCard();
                 } else if (btn) {

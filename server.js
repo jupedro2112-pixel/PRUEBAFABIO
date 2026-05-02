@@ -6518,10 +6518,12 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
     try {
       const periodKey = computePeriodKey('welcome_install');
 
-      // Pre-check rapido por userId O username.
+      // Pre-check rapido por userId O username. Sin filtrar por periodKey:
+      // el bono es one-time absoluto, cualquier claim previo del tipo
+      // 'welcome_install' bloquea para siempre, sin importar que en algun
+      // momento se haya cambiado la convencion de periodKey.
       const existing = await RefundClaim.findOne({
         type: 'welcome_install',
-        periodKey,
         $or: [{ userId }, { username }]
       }).lean();
       if (existing) {
@@ -6529,7 +6531,8 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
         return res.json({
           success: false,
           message: 'Ya reclamaste tu bono de bienvenida.',
-          canClaim: false
+          canClaim: false,
+          claimed: true
         });
       }
 
@@ -6553,7 +6556,8 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
           return res.json({
             success: false,
             message: 'Ya reclamaste tu bono de bienvenida.',
-            canClaim: false
+            canClaim: false,
+            claimed: true
           });
         }
         throw e;
