@@ -267,6 +267,35 @@ const cbuRequestTimestampsMemory = new Map();
 const refundLocks = refundLocksMemory;
 const cbuRequestTimestamps = cbuRequestTimestampsMemory;
 
+// Calcula la clave de periodo (TZ Argentina) que identifica univocamente
+// el reembolso reclamable en este momento. Combinada con el indice unique
+// { userId, type, periodKey } del modelo RefundClaim, garantiza que MongoDB
+// rechace cualquier insert duplicado, incluso si el lock de Redis falla
+// (por ejemplo, multiples instancias EB sin Redis configurado).
+function computePeriodKey(type) {
+  const ART_OFFSET_MS = 3 * 60 * 60 * 1000; // UTC-3
+  const nowArt = new Date(Date.now() - ART_OFFSET_MS);
+  const yyyy = nowArt.getUTCFullYear();
+  const mm = String(nowArt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(nowArt.getUTCDate()).padStart(2, '0');
+  if (type === 'daily') {
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  if (type === 'weekly') {
+    // ISO week number en TZ Argentina
+    const target = new Date(Date.UTC(yyyy, nowArt.getUTCMonth(), nowArt.getUTCDate()));
+    const dayNum = (target.getUTCDay() + 6) % 7; // lunes=0
+    target.setUTCDate(target.getUTCDate() - dayNum + 3);
+    const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+    const week = 1 + Math.round(((target.getTime() - firstThursday.getTime()) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+    return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+  }
+  if (type === 'monthly') {
+    return `${yyyy}-${mm}`;
+  }
+  return null;
+}
+
 async function acquireRefundLock(userId, type) {
   const key = `refund-lock:${userId}:${type}`;
   const redis = getRedisClient();
@@ -4156,9 +4185,43 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
 
       logger.info('[REFUND] daily — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
+      // Pre-insertar RefundClaim con periodKey ANTES del credit. El indice
+      // unique { userId, type, periodKey } actua como gatekeeper atomico:
+      // si dos requests llegan al mismo tiempo, solo uno persiste y el otro
+      // recibe E11000. Asi prevenimos doble credito incluso sin Redis.
+      const periodKey = computePeriodKey('daily');
+      let claim;
+      try {
+        claim = await RefundClaim.create({
+          id: uuidv4(),
+          userId,
+          username,
+          type: 'daily',
+          amount: refundAmount,
+          netAmount: netLoss,
+          percentage: 8,
+          period: dateStr,
+          periodKey,
+          claimedAt: new Date()
+        });
+      } catch (e) {
+        if (e && e.code === 11000) {
+          logger.warn(`[REFUND] daily — intento duplicado bloqueado por indice unique para ${username} en ${periodKey}`);
+          return res.json({
+            success: false,
+            message: 'Ya reclamaste tu reembolso diario. Vuelve mañana!',
+            canClaim: false
+          });
+        }
+        throw e;
+      }
+
       const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
 
       if (!depositResult.success) {
+        // Rollback: el credit fallo, eliminamos el placeholder para que el
+        // usuario pueda reintentar.
+        try { await RefundClaim.deleteOne({ _id: claim._id }); } catch (_) {}
         return res.json({
           success: false,
           message: 'Error al acreditar el reembolso: ' + depositResult.error,
@@ -4166,19 +4229,11 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         });
       }
 
-      // Guardar reclamo en MongoDB
-      await RefundClaim.create({
-        id: uuidv4(),
-        userId,
-        username,
-        type: 'daily',
-        amount: refundAmount,
-        netAmount: netLoss,
-        percentage: 8,
-        period: dateStr,
-        transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
-        claimedAt: new Date()
-      });
+      // Persistir el transactionId real del credit.
+      try {
+        claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
+        await claim.save();
+      } catch (_) { /* best-effort */ }
 
       // Guardar transacción para el dashboard
       await Transaction.create({
@@ -4274,9 +4329,39 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
 
       logger.info('[REFUND] weekly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
+      // Pre-insertar RefundClaim con periodKey ANTES del credit (ver comentario
+      // en daily para el racional).
+      const periodKey = computePeriodKey('weekly');
+      let claim;
+      try {
+        claim = await RefundClaim.create({
+          id: uuidv4(),
+          userId,
+          username,
+          type: 'weekly',
+          amount: refundAmount,
+          netAmount: netLoss,
+          percentage: 5,
+          period: `${fromDateStr} a ${toDateStr}`,
+          periodKey,
+          claimedAt: new Date()
+        });
+      } catch (e) {
+        if (e && e.code === 11000) {
+          logger.warn(`[REFUND] weekly — intento duplicado bloqueado para ${username} en ${periodKey}`);
+          return res.json({
+            success: false,
+            message: 'Ya reclamaste tu reembolso semanal en este período.',
+            canClaim: false
+          });
+        }
+        throw e;
+      }
+
       const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
 
       if (!depositResult.success) {
+        try { await RefundClaim.deleteOne({ _id: claim._id }); } catch (_) {}
         return res.json({
           success: false,
           message: 'Error al acreditar el reembolso: ' + depositResult.error,
@@ -4284,19 +4369,10 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         });
       }
 
-      // Guardar reclamo en MongoDB
-      await RefundClaim.create({
-        id: uuidv4(),
-        userId,
-        username,
-        type: 'weekly',
-        amount: refundAmount,
-        netAmount: netLoss,
-        percentage: 5,
-        period: `${fromDateStr} a ${toDateStr}`,
-        transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
-        claimedAt: new Date()
-      });
+      try {
+        claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
+        await claim.save();
+      } catch (_) { /* best-effort */ }
 
       // Guardar transacción para el dashboard
       await Transaction.create({
@@ -4392,9 +4468,39 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
 
       logger.info('[REFUND] monthly — calculado para', username, 'netLoss:', netLoss, 'refund:', refundAmount);
 
+      // Pre-insertar RefundClaim con periodKey ANTES del credit (ver comentario
+      // en daily para el racional).
+      const periodKey = computePeriodKey('monthly');
+      let claim;
+      try {
+        claim = await RefundClaim.create({
+          id: uuidv4(),
+          userId,
+          username,
+          type: 'monthly',
+          amount: refundAmount,
+          netAmount: netLoss,
+          percentage: 3,
+          period: `${fromDateStr} a ${toDateStr}`,
+          periodKey,
+          claimedAt: new Date()
+        });
+      } catch (e) {
+        if (e && e.code === 11000) {
+          logger.warn(`[REFUND] monthly — intento duplicado bloqueado para ${username} en ${periodKey}`);
+          return res.json({
+            success: false,
+            message: 'Ya reclamaste tu reembolso mensual en este período.',
+            canClaim: false
+          });
+        }
+        throw e;
+      }
+
       const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
 
       if (!depositResult.success) {
+        try { await RefundClaim.deleteOne({ _id: claim._id }); } catch (_) {}
         return res.json({
           success: false,
           message: 'Error al acreditar el reembolso: ' + depositResult.error,
@@ -4402,19 +4508,10 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         });
       }
 
-      // Guardar reclamo en MongoDB
-      await RefundClaim.create({
-        id: uuidv4(),
-        userId,
-        username,
-        type: 'monthly',
-        amount: refundAmount,
-        netAmount: netLoss,
-        percentage: 3,
-        period: `${fromDateStr} a ${toDateStr}`,
-        transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
-        claimedAt: new Date()
-      });
+      try {
+        claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
+        await claim.save();
+      } catch (_) { /* best-effort */ }
 
       // Guardar transacción para el dashboard
       await Transaction.create({
