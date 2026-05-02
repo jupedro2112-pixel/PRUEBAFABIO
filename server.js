@@ -6846,6 +6846,78 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
 });
 
 // ============================================
+// GET /api/admin/reports/welcome-bonus
+// Lista de users que reclamaron el bono de $10.000 + su estado actual
+// de app instalada y notificaciones. Permite ver quien todavia tiene la
+// app + notifs y quien las desactivo o desinstalo despues de cobrar.
+// ============================================
+app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // 1) Todos los claims del bono.
+    const claims = await RefundClaim.find(
+      { type: 'welcome_install' },
+      { username: 1, userId: 1, claimedAt: 1, status: 1, transactionId: 1, _id: 0 }
+    ).sort({ claimedAt: -1 }).lean();
+
+    if (claims.length === 0) {
+      return res.json({
+        totals: { totalClaimed: 0, stillHasApp: 0, stillHasNotifs: 0, stillBoth: 0, lostApp: 0, lostNotifs: 0 },
+        claims: []
+      });
+    }
+
+    // 2) Pull de los users involucrados, una sola query.
+    const usernames = [...new Set(claims.map(c => c.username).filter(Boolean))];
+    const users = await User.find(
+      { username: { $in: usernames } },
+      { username: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, lastLogin: 1, _id: 0 }
+    ).lean();
+    const byUsername = new Map(users.map(u => [(u.username || '').toLowerCase(), u]));
+
+    let stillHasApp = 0, stillHasNotifs = 0, stillBoth = 0, lostApp = 0, lostNotifs = 0;
+    const enriched = claims.map(c => {
+      const u = byUsername.get((c.username || '').toLowerCase()) || {};
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const hasApp = (
+        u.fcmTokenContext === 'standalone' ||
+        tokens.some(t => t && t.context === 'standalone')
+      );
+      const hasNotifs = (
+        u.notifPermission === 'granted' ||
+        tokens.some(t => t && t.notifPermission === 'granted')
+      );
+      if (hasApp) stillHasApp++; else lostApp++;
+      if (hasNotifs) stillHasNotifs++; else lostNotifs++;
+      if (hasApp && hasNotifs) stillBoth++;
+      return {
+        username: c.username || '',
+        claimedAt: c.claimedAt || null,
+        status: c.status || 'completed',
+        transactionId: c.transactionId || null,
+        hasApp,
+        hasNotifs,
+        lastLogin: u.lastLogin || null
+      };
+    });
+
+    res.json({
+      totals: {
+        totalClaimed: claims.length,
+        stillHasApp,
+        stillHasNotifs,
+        stillBoth,
+        lostApp,
+        lostNotifs
+      },
+      claims: enriched
+    });
+  } catch (error) {
+    logger.error(`/api/admin/reports/welcome-bonus error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // BASE DE DATOS - SOLO ADMIN PRINCIPAL
 // ============================================
 

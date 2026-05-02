@@ -72,6 +72,10 @@
                     <span>📱</span>
                     <span>Equipamiento</span>
                 </a>
+                <a href="#" class="nav-item" data-section="welcomebonus">
+                    <span>🎁</span>
+                    <span>Bono $10.000</span>
+                </a>
                 <a href="#" class="nav-item" data-section="notifs">
                     <span>🔔</span>
                     <span>Notificaciones</span>
@@ -299,6 +303,25 @@
                     <button class="refresh-btn" onclick="loadEquipmentReport()" title="Actualizar">🔄</button>
                 </div>
                 <div id="equipmentReportContent" class="report-content">
+                    <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: BONO DE BIENVENIDA $10.000
+                 Lista de quien lo reclamo + estado actual app/notifs.
+                 ============================================ -->
+            <section id="welcomebonusSection" class="section">
+                <div class="panel-header">
+                    <h2>🎁 Bono de bienvenida $10.000</h2>
+                    <button class="refresh-btn" onclick="loadWelcomeBonusReport()" title="Actualizar">🔄</button>
+                </div>
+                <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
+                    Usuarios que reclamaron el bono de $10.000 (one-time).
+                    Mostramos el estado <strong>actual</strong> de su app instalada y notificaciones,
+                    asi podes detectar quien desinstalo o desactivo notifs despues de cobrar.
+                </div>
+                <div id="welcomeBonusReportContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>

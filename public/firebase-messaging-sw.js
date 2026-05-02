@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v70-bonus-onetime-hardened';
+const CACHE_VERSION = 'v71-admin-bonus-report';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

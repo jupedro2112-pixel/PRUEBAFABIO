@@ -160,6 +160,7 @@ function showSection(sectionKey) {
         reportMonthly: 'reportMonthlySection',
         ingresos: 'ingresosSection',
         equipamiento: 'equipamientoSection',
+        welcomebonus: 'welcomebonusSection',
         notifs: 'notifsSection'
     };
     const sectionId = map[sectionKey];
@@ -188,6 +189,8 @@ function showSection(sectionKey) {
         loadIngresosReport();
     } else if (sectionKey === 'equipamiento') {
         loadEquipmentReport();
+    } else if (sectionKey === 'welcomebonus') {
+        loadWelcomeBonusReport();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -781,6 +784,124 @@ function filterEquipmentTable() {
         const hint = document.createElement('div');
         hint.style.cssText = 'color:#888;font-size:12px;margin-top:6px;';
         hint.textContent = `Mostrando ${filtered.length} de ${all.length} usuarios`;
+        tableContainer.appendChild(hint);
+    }
+}
+
+// ============================================
+// REPORTE — BONO DE BIENVENIDA $10.000
+// Usuarios que reclamaron el bono + estado actual de app/notifs.
+// Permite ver quien desinstalo o desactivo notifs despues de cobrar.
+// ============================================
+async function loadWelcomeBonusReport() {
+    const container = document.getElementById('welcomeBonusReportContent');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+
+    try {
+        const r = await authFetch('/api/admin/reports/welcome-bonus');
+        if (!r.ok) {
+            container.innerHTML = '<div class="empty-state">❌ Error cargando reporte</div>';
+            return;
+        }
+        const data = await r.json();
+        renderWelcomeBonusReport(container, data);
+    } catch (err) {
+        console.error('loadWelcomeBonusReport error:', err);
+        container.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+let welcomeBonusDataCache = null;
+
+function renderWelcomeBonusReport(container, data) {
+    const t = data.totals || {};
+    const claims = Array.isArray(data.claims) ? data.claims : [];
+    const total = t.totalClaimed || 0;
+    const pct = (n) => total > 0 ? Math.round((n / total) * 100) : 0;
+
+    welcomeBonusDataCache = data;
+
+    let html = '';
+
+    // Resumen
+    html += '<div class="report-summary">';
+    html += '  <div class="stat-card"><span class="label">🎁 Total reclamos</span><span class="value">' + total + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">📱 Aún con app</span><span class="value">' + (t.stillHasApp || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.stillHasApp || 0) + '%)</small></span></div>';
+    html += '  <div class="stat-card"><span class="label">🔔 Aún con notifs</span><span class="value">' + (t.stillHasNotifs || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.stillHasNotifs || 0) + '%)</small></span></div>';
+    html += '  <div class="stat-card"><span class="label">✅ Aún con ambos</span><span class="value">' + (t.stillBoth || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.stillBoth || 0) + '%)</small></span></div>';
+    html += '  <div class="stat-card"><span class="label">⚠️ Desinstalaron app</span><span class="value" style="color:#ef4444;">' + (t.lostApp || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">⚠️ Desactivaron notifs</span><span class="value" style="color:#ef4444;">' + (t.lostNotifs || 0) + '</span></div>';
+    html += '</div>';
+
+    if (claims.length === 0) {
+        html += '<div class="empty-state">Nadie reclamó el bono todavía.</div>';
+        container.innerHTML = html;
+        return;
+    }
+
+    // Encabezado de detalle + buscador por usuario
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 10px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle por usuario</h3>';
+    html += '  <input type="text" id="welcomeBonusUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterWelcomeBonusTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '</div>';
+    html += '<div id="welcomeBonusTableContainer">' + renderWelcomeBonusTableHtml(claims) + '</div>';
+
+    container.innerHTML = html;
+}
+
+function renderWelcomeBonusTableHtml(claims) {
+    if (!claims || claims.length === 0) {
+        return '<div class="empty-state">No hay reclamos para mostrar.</div>';
+    }
+    let html = '<table class="report-table"><thead><tr>';
+    html += '<th>Usuario</th>';
+    html += '<th>Reclamado</th>';
+    html += '<th>📱 App ahora</th>';
+    html += '<th>🔔 Notifs ahora</th>';
+    html += '<th>Estado</th>';
+    html += '<th>Último ingreso</th>';
+    html += '</tr></thead><tbody>';
+    for (const c of claims) {
+        const claimed = c.claimedAt ? new Date(c.claimedAt).toLocaleString('es-AR') : '—';
+        const lastLogin = c.lastLogin ? new Date(c.lastLogin).toLocaleString('es-AR') : '—';
+        const appCell = c.hasApp
+            ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
+            : '<span style="color:#ef4444;font-weight:700;">⚠️ Borró</span>';
+        const notifCell = c.hasNotifs
+            ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
+            : '<span style="color:#ef4444;font-weight:700;">⚠️ Desactivó</span>';
+        const statusBadge = c.status === 'pending_credit_failed'
+            ? '<span style="background:#7f1d1d;color:#fee;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">PENDIENTE</span>'
+            : '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">OK</span>';
+        html += '<tr>';
+        html += '<td>' + escapeHtml(c.username) + '</td>';
+        html += '<td><small>' + escapeHtml(claimed) + '</small></td>';
+        html += '<td>' + appCell + '</td>';
+        html += '<td>' + notifCell + '</td>';
+        html += '<td>' + statusBadge + '</td>';
+        html += '<td><small>' + escapeHtml(lastLogin) + '</small></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+function filterWelcomeBonusTable() {
+    if (!welcomeBonusDataCache) return;
+    const input = document.getElementById('welcomeBonusUserSearch');
+    const q = (input?.value || '').toLowerCase().trim();
+    const all = welcomeBonusDataCache.claims || [];
+    const filtered = q
+        ? all.filter(c => (c.username || '').toLowerCase().includes(q))
+        : all;
+    const tableContainer = document.getElementById('welcomeBonusTableContainer');
+    if (!tableContainer) return;
+    tableContainer.innerHTML = renderWelcomeBonusTableHtml(filtered);
+    if (q) {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'color:#888;font-size:12px;margin-top:6px;';
+        hint.textContent = `Mostrando ${filtered.length} de ${all.length} reclamos`;
         tableContainer.appendChild(hint);
     }
 }
