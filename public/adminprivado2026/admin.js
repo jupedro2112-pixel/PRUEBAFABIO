@@ -2118,6 +2118,61 @@ function renderCsvImportState(state, lastImport) {
 }
 
 let _csvImportPollInterval = null;
+
+async function handleCsvImportUrl() {
+    const input = document.getElementById('csvImportUrl');
+    const btn = document.getElementById('csvImportUrlBtn');
+    const url = (input && input.value || '').trim();
+    if (!url) {
+        showToast('Pegá un link de Google Sheets', 'info');
+        return;
+    }
+    if (!/docs\.google\.com\/spreadsheets/.test(url)) {
+        showToast('No parece un link de Google Sheets', 'error');
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Descargando…'; }
+    try {
+        const r = await authFetch('/api/admin/stats/import-csv-url', {
+            method: 'POST',
+            body: JSON.stringify({ url })
+        });
+        const d = await r.json();
+        if (d.success === false && d.message) {
+            showToast(d.message, 'info');
+        } else if (d.skipped) {
+            showToast(d.message || 'Sheet ya importado previamente', 'info');
+        } else if (d.error) {
+            showToast(d.error, 'error');
+        } else {
+            showToast('Sheet descargado, procesando…', 'success');
+            startCsvImportPolling();
+            if (input) input.value = '';
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Error iniciando import', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔗 Importar desde link'; }
+    }
+}
+
+function startCsvImportPolling() {
+    if (_csvImportPollInterval) clearInterval(_csvImportPollInterval);
+    _csvImportPollInterval = setInterval(async () => {
+        await loadCsvImportState();
+        const stEl = document.getElementById('csvImportState');
+        if (stEl && stEl.innerHTML.startsWith('✅')) {
+            clearInterval(_csvImportPollInterval);
+            _csvImportPollInterval = null;
+            await loadSegmentsAndWeekly();
+            if (document.getElementById('statsTabPlayers').style.display !== 'none') loadPlayersList();
+            if (document.getElementById('statsTabRoi').style.display !== 'none') loadRoiBucket();
+            showToast('✅ Import completo, panel actualizado', 'success');
+        }
+    }, 2000);
+}
+
 async function handleCsvImport(ev) {
     const file = ev.target.files && ev.target.files[0];
     if (!file) return;
@@ -2149,21 +2204,7 @@ async function handleCsvImport(ev) {
             showToast(d.message || 'Archivo ya importado previamente', 'info');
         } else {
             showToast('Import iniciado en background', 'success');
-            // Polear estado cada 2s.
-            if (_csvImportPollInterval) clearInterval(_csvImportPollInterval);
-            _csvImportPollInterval = setInterval(async () => {
-                await loadCsvImportState();
-                const stEl = document.getElementById('csvImportState');
-                if (stEl && stEl.innerHTML.startsWith('✅')) {
-                    clearInterval(_csvImportPollInterval);
-                    _csvImportPollInterval = null;
-                    // Recargar tablas con datos frescos.
-                    await loadSegmentsAndWeekly();
-                    if (document.getElementById('statsTabPlayers').style.display !== 'none') loadPlayersList();
-                    if (document.getElementById('statsTabRoi').style.display !== 'none') loadRoiBucket();
-                    showToast('✅ Import completo, panel actualizado', 'success');
-                }
-            }, 2000);
+            startCsvImportPolling();
         }
     } catch (e) {
         console.error(e);

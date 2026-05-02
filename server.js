@@ -62,6 +62,7 @@ const {
   PlayerStats,
   RecoveryPush,
   JugayganaImport,
+  DailyPlayerStats,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -8614,159 +8615,8 @@ app.post(
     };
     res.json({ success: true, state: _csvImportState, message: 'Procesando en background...' });
 
-    // Procesar en background.
-    (async () => {
-      const importDoc = await JugayganaImport.create({
-        contentHash,
-        uploadedBy: req.user.username || null,
-        rawSizeBytes: raw.length,
-        status: 'processing'
-      });
-      _csvImportState.importId = importDoc._id;
-
-      try {
-        const parsed = _parseJugayganaCsv(raw);
-        _csvImportState.total = parsed.rows.length + parsed.skipped;
-        _csvImportState.parsed = parsed.rows.length + parsed.skipped;
-        _csvImportState.valid = parsed.rows.length;
-        _csvImportState.skipped = parsed.skipped;
-
-        // Agregar por usuario.
-        const perUser = new Map(); // username -> { dCount, dSum, wCount, wSum, bCount, bSum, lastDeposit, lastAny }
-        let minDate = Infinity, maxDate = -Infinity;
-        let totalDC = 0, totalDS = 0, totalWC = 0, totalWS = 0, totalBC = 0, totalBS = 0;
-
-        for (const r of parsed.rows) {
-          let agg = perUser.get(r.username);
-          if (!agg) {
-            agg = { dCount: 0, dSum: 0, wCount: 0, wSum: 0, bCount: 0, bSum: 0, lastDeposit: 0, lastAny: 0 };
-            perUser.set(r.username, agg);
-          }
-          if (r.type === 'deposit') {
-            agg.dCount++; agg.dSum += r.amount;
-            if (r.dateMs > agg.lastDeposit) agg.lastDeposit = r.dateMs;
-            totalDC++; totalDS += r.amount;
-          } else if (r.type === 'withdraw') {
-            agg.wCount++; agg.wSum += r.amount;
-            totalWC++; totalWS += r.amount;
-          } else if (r.type === 'bonus') {
-            agg.bCount++; agg.bSum += r.amount;
-            totalBC++; totalBS += r.amount;
-          }
-          if (r.dateMs > agg.lastAny) agg.lastAny = r.dateMs;
-          if (r.dateMs < minDate) minDate = r.dateMs;
-          if (r.dateMs > maxDate) maxDate = r.dateMs;
-        }
-
-        // BulkWrite a PlayerStats en batches.
-        const TIER_RULES = STATS_TIER_RULES;
-        const ACTIVITY = STATS_ACTIVITY_DAYS;
-        const NOW = Date.now();
-        const dayMs = 24 * 3600 * 1000;
-        const userOps = [];
-        for (const [username, agg] of perUser.entries()) {
-          const realDeposits = agg.dSum;
-          const realCount = agg.dCount;
-          const withdraws = agg.wSum;
-          const bonusGiven = agg.bSum;
-          const bonusCount = agg.bCount;
-          const lastDeposit = agg.lastDeposit > 0 ? new Date(agg.lastDeposit) : null;
-          const daysSince = lastDeposit ? Math.floor((NOW - agg.lastDeposit) / dayMs) : null;
-          const netToHouse = realDeposits - withdraws - bonusGiven;
-
-          // Tier (re-uso reglas existentes — no necesita accountAge porque
-          // el archivo cubre 45d y eso es base suficiente).
-          let tier = 'SIN_DATOS';
-          if (realCount >= TIER_RULES.vipMinCharges && realDeposits >= TIER_RULES.vipMinAmount) tier = 'VIP';
-          else if (realCount >= TIER_RULES.oroMinCharges && realDeposits >= TIER_RULES.oroMinAmount) tier = 'ORO';
-          else if (realCount >= TIER_RULES.plataMinCharges || realDeposits >= TIER_RULES.plataMinAmount) tier = 'PLATA';
-          else if (realCount >= TIER_RULES.bronceMinCharges) tier = 'BRONCE';
-
-          let activityStatus = 'INACTIVO';
-          if (daysSince == null) activityStatus = 'NUEVO';
-          else if (daysSince <= ACTIVITY.activo) activityStatus = 'ACTIVO';
-          else if (daysSince <= ACTIVITY.enRiesgo) activityStatus = 'EN_RIESGO';
-          else if (daysSince <= ACTIVITY.perdido) activityStatus = 'PERDIDO';
-
-          // Oportunista: bonos sin deposit subsecuente.
-          let bonusesWithoutDeposit = 0;
-          if (bonusCount > 0 && realCount === 0) bonusesWithoutDeposit = bonusCount;
-          else if (bonusCount > realCount * 2) bonusesWithoutDeposit = bonusCount - realCount;
-          const isOpportunist = bonusesWithoutDeposit >= OPPORTUNIST_THRESHOLD;
-
-          userOps.push({
-            updateOne: {
-              filter: { username },
-              update: {
-                $set: {
-                  realDeposits30d: realDeposits,
-                  realChargesCount30d: realCount,
-                  withdraws30d: withdraws,
-                  bonusGiven30d: bonusGiven,
-                  bonusCount30d: bonusCount,
-                  netToHouse30d: netToHouse,
-                  lastRealDepositDate: lastDeposit,
-                  tier,
-                  activityStatus,
-                  bonusesClaimedWithoutDeposit30d: bonusesWithoutDeposit,
-                  isOpportunist,
-                  refreshedAt: new Date()
-                },
-                $setOnInsert: { username }
-              },
-              upsert: true
-            }
-          });
-
-          // Flush en batches de 500.
-          if (userOps.length >= 500) {
-            await PlayerStats.bulkWrite(userOps, { ordered: false });
-            userOps.length = 0;
-          }
-        }
-        if (userOps.length > 0) {
-          await PlayerStats.bulkWrite(userOps, { ordered: false });
-        }
-
-        // Update del audit doc.
-        await JugayganaImport.updateOne(
-          { _id: importDoc._id },
-          {
-            $set: {
-              status: 'completed',
-              totalRows: parsed.rows.length + parsed.skipped,
-              validRows: parsed.rows.length,
-              skippedRows: parsed.skipped,
-              depositCount: totalDC, depositSum: totalDS,
-              withdrawCount: totalWC, withdrawSum: totalWS,
-              bonusCount: totalBC, bonusSum: totalBS,
-              periodFrom: minDate < Infinity ? new Date(minDate) : null,
-              periodTo: maxDate > -Infinity ? new Date(maxDate) : null,
-              uniqueUsers: perUser.size,
-              detectedFormat: {
-                delimiter: parsed.delimiter,
-                dateFormat: parsed.dateFormat,
-                headerRow: parsed.headerRow
-              }
-            }
-          }
-        );
-
-        // Resolver outcomes pendientes de RecoveryPush con la nueva data.
-        await _resolvePendingRecoveryOutcomes();
-
-        logger.info(`[csv-import] OK: ${parsed.rows.length} rows, ${perUser.size} users, ${totalDS.toFixed(0)} deposits, ${totalBS.toFixed(0)} bonus`);
-      } catch (e) {
-        logger.error(`[csv-import] FAILED: ${e.message}\n${e.stack}`);
-        await JugayganaImport.updateOne(
-          { _id: importDoc._id },
-          { $set: { status: 'failed', errorMsg: e.message } }
-        );
-      } finally {
-        _csvImportState.running = false;
-        _csvImportState.finishedAt = new Date().toISOString();
-      }
-    })();
+    // Procesar en background usando el helper centralizado.
+    _processCsvBackground(raw, contentHash, req.user.username || null);
   }
 );
 
@@ -8775,6 +8625,342 @@ app.get('/api/admin/stats/import-csv', authMiddleware, adminMiddleware, async (r
   const lastImport = await JugayganaImport.findOne({}).sort({ uploadedAt: -1 }).lean();
   res.json({ state: _csvImportState, lastImport });
 });
+
+// POST /api/admin/stats/import-csv-url
+// Acepta un link de Google Sheets ("cualquier persona con el enlace puede
+// ver"). Extrae el file ID, construye la URL de export CSV, descarga y
+// procesa igual que el upload directo.
+app.post('/api/admin/stats/import-csv-url', authMiddleware, adminMiddleware, async (req, res) => {
+  if (_csvImportState.running) {
+    return res.json({ success: false, message: 'Ya hay un import corriendo', state: _csvImportState });
+  }
+  const { url, gid } = req.body || {};
+  if (!url || typeof url !== 'string') {
+    return res.status(400).json({ error: 'Falta el link' });
+  }
+
+  // Extraer file ID. Soporta:
+  //   docs.google.com/spreadsheets/d/{ID}/edit?...
+  //   docs.google.com/spreadsheets/d/{ID}/
+  const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]{20,})/);
+  if (!idMatch) {
+    return res.status(400).json({ error: 'No es un link valido de Google Sheets' });
+  }
+  const fileId = idMatch[1];
+
+  // Si el user paso un gid en el link original, lo respetamos. Sino, sheet 0.
+  let gidParam = gid || null;
+  if (!gidParam) {
+    const gidMatch = url.match(/[?&#]gid=(\d+)/);
+    if (gidMatch) gidParam = gidMatch[1];
+  }
+  const exportUrl = `https://docs.google.com/spreadsheets/d/${fileId}/export?format=csv` +
+    (gidParam ? `&gid=${gidParam}` : '');
+
+  // Bajar el CSV. axios sigue redirects por default.
+  let raw = '';
+  try {
+    const resp = await axios.get(exportUrl, {
+      timeout: 90_000,           // 90s, sheets grandes pueden tardar
+      maxContentLength: 100 * 1024 * 1024, // 100MB
+      maxBodyLength: 100 * 1024 * 1024,
+      responseType: 'text',
+      // Si la sheet no es publica Google devuelve HTML de login (200 OK,
+      // text/html). Detectamos eso despues comparando content-type.
+      validateStatus: (s) => s >= 200 && s < 400
+    });
+    const ct = String(resp.headers['content-type'] || '').toLowerCase();
+    if (ct.includes('text/html')) {
+      return res.status(400).json({
+        error: 'El sheet no es publico. Cambialo a "Cualquier persona con el enlace puede ver" e intenta de nuevo.'
+      });
+    }
+    raw = String(resp.data || '');
+  } catch (e) {
+    logger.error(`[csv-import-url] download fail: ${e.message}`);
+    return res.status(400).json({ error: 'No se pudo descargar el sheet: ' + e.message });
+  }
+
+  if (!raw || raw.length < 100) {
+    return res.status(400).json({ error: 'El sheet descargado esta vacio o es muy chico' });
+  }
+
+  // Idempotencia: hash + early-return si ya procesado.
+  const contentHash = crypto.createHash('sha256').update(raw).digest('hex');
+  const existing = await JugayganaImport.findOne({ contentHash, status: 'completed' }).lean();
+  if (existing) {
+    return res.json({
+      success: true,
+      skipped: true,
+      message: 'Esta version del sheet ya fue importada el ' + new Date(existing.uploadedAt).toLocaleString('es-AR') + '. No se reproceso.',
+      importId: existing._id
+    });
+  }
+
+  // Lanzar el procesamiento (mismo flow que el upload directo).
+  _csvImportState = {
+    running: true, total: 0, parsed: 0, valid: 0, skipped: 0,
+    startedAt: new Date().toISOString(), finishedAt: null, importId: null
+  };
+  res.json({ success: true, state: _csvImportState, message: 'Sheet descargado, procesando en background...' });
+
+  _processCsvBackground(raw, contentHash, req.user.username || null);
+});
+
+// VENTANA DE STATS = ultimos N dias rolling. Cuando subis CSVs incrementales
+// (semana a semana), siempre se ven los ultimos 45 dias. Lo que cae fuera
+// se ignora en los agregados (pero queda en DailyPlayerStats hasta el
+// cleanup, que es 60 dias = 45 + buffer de 15).
+const STATS_WINDOW_DAYS = 45;
+const DAILY_CLEANUP_DAYS = 60;
+
+// Trunca un timestamp ms al inicio del dia UTC. Asi (username, dateUtc)
+// es siempre comparable y unico-por-dia.
+function _utcStartOfDay(ms) {
+  const d = new Date(ms);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+// Helper que centraliza el procesamiento — usado por upload directo y por
+// import-csv-url. Estrategia rolling-window:
+//   1. Parsear el CSV
+//   2. Agrupar las transacciones por (username, dia)
+//   3. Upsertear en DailyPlayerStats — incremental, no pisa otros dias
+//   4. Recomputar PlayerStats sumando los ultimos 45 dias de DailyPlayerStats
+//   5. Cleanup: borrar DailyPlayerStats > 60 dias
+async function _processCsvBackground(raw, contentHash, uploadedBy) {
+  const importDoc = await JugayganaImport.create({
+    contentHash,
+    uploadedBy,
+    rawSizeBytes: raw.length,
+    status: 'processing'
+  });
+  _csvImportState.importId = importDoc._id;
+
+  try {
+    const parsed = _parseJugayganaCsv(raw);
+    _csvImportState.total = parsed.rows.length + parsed.skipped;
+    _csvImportState.parsed = parsed.rows.length + parsed.skipped;
+    _csvImportState.valid = parsed.rows.length;
+    _csvImportState.skipped = parsed.skipped;
+
+    // Agrupar por (username, dia UTC). Key: "username|dateMsUtc".
+    const perUserDay = new Map();
+    let minDate = Infinity, maxDate = -Infinity;
+    let totalDC = 0, totalDS = 0, totalWC = 0, totalWS = 0, totalBC = 0, totalBS = 0;
+
+    for (const r of parsed.rows) {
+      const dayMs = _utcStartOfDay(r.dateMs).getTime();
+      const key = r.username + '|' + dayMs;
+      let agg = perUserDay.get(key);
+      if (!agg) {
+        agg = {
+          username: r.username,
+          dayMs,
+          depositCount: 0, depositSum: 0,
+          withdrawCount: 0, withdrawSum: 0,
+          bonusCount: 0, bonusSum: 0
+        };
+        perUserDay.set(key, agg);
+      }
+      if (r.type === 'deposit') {
+        agg.depositCount++; agg.depositSum += r.amount;
+        totalDC++; totalDS += r.amount;
+      } else if (r.type === 'withdraw') {
+        agg.withdrawCount++; agg.withdrawSum += r.amount;
+        totalWC++; totalWS += r.amount;
+      } else if (r.type === 'bonus') {
+        agg.bonusCount++; agg.bonusSum += r.amount;
+        totalBC++; totalBS += r.amount;
+      }
+      if (r.dateMs < minDate) minDate = r.dateMs;
+      if (r.dateMs > maxDate) maxDate = r.dateMs;
+    }
+
+    // Upsert por (username, dateUtc): suma a lo que ya hay si re-importas
+    // datos del mismo dia. PERO si re-importas el MISMO archivo, el hash
+    // ya bloqueo arriba — asi que llegamos aca solo con archivos nuevos
+    // (parciales o de dias distintos). Estrategia: SET (no $inc) para que
+    // cada upload sea idempotente para su periodo — si el CSV trae el dia
+    // X completo, sobrescribe lo que habia para ese dia. Esto es correcto
+    // porque JUGAYGANA exporta el "estado total" del dia, no incrementos.
+    const ops = [];
+    for (const agg of perUserDay.values()) {
+      ops.push({
+        updateOne: {
+          filter: { username: agg.username, dateUtc: new Date(agg.dayMs) },
+          update: {
+            $set: {
+              depositCount: agg.depositCount, depositSum: agg.depositSum,
+              withdrawCount: agg.withdrawCount, withdrawSum: agg.withdrawSum,
+              bonusCount: agg.bonusCount, bonusSum: agg.bonusSum,
+              updatedAt: new Date()
+            },
+            $setOnInsert: { username: agg.username, dateUtc: new Date(agg.dayMs) }
+          },
+          upsert: true
+        }
+      });
+      if (ops.length >= 500) {
+        await DailyPlayerStats.bulkWrite(ops, { ordered: false });
+        ops.length = 0;
+      }
+    }
+    if (ops.length > 0) {
+      await DailyPlayerStats.bulkWrite(ops, { ordered: false });
+    }
+
+    // Recomputar PlayerStats sumando ult. 45 dias de DailyPlayerStats.
+    await _recomputeAllPlayerStatsFromDaily();
+
+    // Cleanup de days > 60.
+    const cleanupCutoff = _utcStartOfDay(Date.now() - DAILY_CLEANUP_DAYS * 24 * 3600 * 1000);
+    const cleanupRes = await DailyPlayerStats.deleteMany({ dateUtc: { $lt: cleanupCutoff } });
+
+    await JugayganaImport.updateOne(
+      { _id: importDoc._id },
+      {
+        $set: {
+          status: 'completed',
+          totalRows: parsed.rows.length + parsed.skipped,
+          validRows: parsed.rows.length,
+          skippedRows: parsed.skipped,
+          depositCount: totalDC, depositSum: totalDS,
+          withdrawCount: totalWC, withdrawSum: totalWS,
+          bonusCount: totalBC, bonusSum: totalBS,
+          periodFrom: minDate < Infinity ? new Date(minDate) : null,
+          periodTo: maxDate > -Infinity ? new Date(maxDate) : null,
+          uniqueUsers: new Set(parsed.rows.map(r => r.username)).size,
+          detectedFormat: {
+            delimiter: parsed.delimiter,
+            dateFormat: parsed.dateFormat,
+            headerRow: parsed.headerRow
+          }
+        }
+      }
+    );
+
+    await _resolvePendingRecoveryOutcomes();
+
+    logger.info(`[csv-import] OK: ${parsed.rows.length} rows, ${perUserDay.size} user-days, cleanup deleted ${cleanupRes.deletedCount} old days`);
+  } catch (e) {
+    logger.error(`[csv-import] FAILED: ${e.message}\n${e.stack}`);
+    await JugayganaImport.updateOne(
+      { _id: importDoc._id },
+      { $set: { status: 'failed', errorMsg: e.message } }
+    );
+  } finally {
+    _csvImportState.running = false;
+    _csvImportState.finishedAt = new Date().toISOString();
+  }
+}
+
+// Suma los ultimos STATS_WINDOW_DAYS dias de DailyPlayerStats por usuario,
+// recalcula tier/activityStatus/oportunista, persiste en PlayerStats.
+// Se llama despues de cada CSV import.
+async function _recomputeAllPlayerStatsFromDaily() {
+  const cutoff = _utcStartOfDay(Date.now() - STATS_WINDOW_DAYS * 24 * 3600 * 1000);
+  const NOW = Date.now();
+  const dayMs = 24 * 3600 * 1000;
+
+  // Agregar por usuario los ultimos N dias.
+  const agg = await DailyPlayerStats.aggregate([
+    { $match: { dateUtc: { $gte: cutoff } } },
+    { $group: {
+        _id: '$username',
+        depositCount: { $sum: '$depositCount' },
+        depositSum: { $sum: '$depositSum' },
+        withdrawSum: { $sum: '$withdrawSum' },
+        bonusCount: { $sum: '$bonusCount' },
+        bonusSum: { $sum: '$bonusSum' },
+        // Para "ultima carga real" buscamos el ultimo dia con depositCount > 0.
+        lastDepositDay: {
+          $max: {
+            $cond: [{ $gt: ['$depositCount', 0] }, '$dateUtc', null]
+          }
+        }
+    }}
+  ]);
+
+  const TIER = STATS_TIER_RULES;
+  const ACT = STATS_ACTIVITY_DAYS;
+  const ops = [];
+
+  for (const u of agg) {
+    const realDeposits = u.depositSum || 0;
+    const realCount = u.depositCount || 0;
+    const withdraws = u.withdrawSum || 0;
+    const bonusGiven = u.bonusSum || 0;
+    const bonusCount = u.bonusCount || 0;
+    const lastDeposit = u.lastDepositDay || null;
+    const daysSince = lastDeposit ? Math.floor((NOW - new Date(lastDeposit).getTime()) / dayMs) : null;
+    const netToHouse = realDeposits - withdraws - bonusGiven;
+
+    let tier = 'SIN_DATOS';
+    if (realCount >= TIER.vipMinCharges && realDeposits >= TIER.vipMinAmount) tier = 'VIP';
+    else if (realCount >= TIER.oroMinCharges && realDeposits >= TIER.oroMinAmount) tier = 'ORO';
+    else if (realCount >= TIER.plataMinCharges || realDeposits >= TIER.plataMinAmount) tier = 'PLATA';
+    else if (realCount >= TIER.bronceMinCharges) tier = 'BRONCE';
+
+    let activityStatus = 'INACTIVO';
+    if (daysSince == null) activityStatus = 'NUEVO';
+    else if (daysSince <= ACT.activo) activityStatus = 'ACTIVO';
+    else if (daysSince <= ACT.enRiesgo) activityStatus = 'EN_RIESGO';
+    else if (daysSince <= ACT.perdido) activityStatus = 'PERDIDO';
+
+    let bonusesWithoutDeposit = 0;
+    if (bonusCount > 0 && realCount === 0) bonusesWithoutDeposit = bonusCount;
+    else if (bonusCount > realCount * 2) bonusesWithoutDeposit = bonusCount - realCount;
+    const isOpportunist = bonusesWithoutDeposit >= OPPORTUNIST_THRESHOLD;
+
+    ops.push({
+      updateOne: {
+        filter: { username: u._id },
+        update: {
+          $set: {
+            realDeposits30d: realDeposits,
+            realChargesCount30d: realCount,
+            withdraws30d: withdraws,
+            bonusGiven30d: bonusGiven,
+            bonusCount30d: bonusCount,
+            netToHouse30d: netToHouse,
+            lastRealDepositDate: lastDeposit,
+            tier,
+            activityStatus,
+            bonusesClaimedWithoutDeposit30d: bonusesWithoutDeposit,
+            isOpportunist,
+            refreshedAt: new Date()
+          },
+          $setOnInsert: { username: u._id }
+        },
+        upsert: true
+      }
+    });
+    if (ops.length >= 500) {
+      await PlayerStats.bulkWrite(ops, { ordered: false });
+      ops.length = 0;
+    }
+  }
+  if (ops.length > 0) {
+    await PlayerStats.bulkWrite(ops, { ordered: false });
+  }
+
+  // OPCIONAL: usuarios que estaban en PlayerStats pero ya no aparecen en
+  // los ult. 45d (cayeron del todo) — los marcamos INACTIVO con valores 0.
+  // Asi se ven en el segmento INACTIVO y no quedan stale con datos viejos.
+  const aliveUsernames = agg.map(u => u._id);
+  await PlayerStats.updateMany(
+    { username: { $nin: aliveUsernames } },
+    {
+      $set: {
+        realDeposits30d: 0, realChargesCount30d: 0, withdraws30d: 0,
+        bonusGiven30d: 0, bonusCount30d: 0, netToHouse30d: 0,
+        activityStatus: 'INACTIVO', tier: 'SIN_DATOS',
+        refreshedAt: new Date()
+      }
+    }
+  );
+}
 
 // ============================================
 // GET /api/admin/reports/top-engagement

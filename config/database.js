@@ -28,7 +28,8 @@ const {
   WaClickLog,
   PlayerStats,
   RecoveryPush,
-  JugayganaImport
+  JugayganaImport,
+  DailyPlayerStats
 } = require('../src/models');
 
 // ============================================
@@ -330,6 +331,7 @@ module.exports = {
   PlayerStats,
   RecoveryPush,
   JugayganaImport,
+  DailyPlayerStats,
   // Helpers
   getConfig,
   setConfig,

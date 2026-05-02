@@ -448,15 +448,21 @@
 
                 <!-- Import CSV de JUGAYGANA -->
                 <div style="background:rgba(106,13,173,0.08);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;">
                         <label for="csvImportFile" id="csvImportBtn" style="padding:10px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#6a0dad);color:#fff;border:none;border-radius:8px;cursor:pointer;display:inline-block;">
-                            📤 Subir CSV de JUGAYGANA
+                            📤 Subir CSV
                         </label>
                         <input type="file" id="csvImportFile" accept=".csv,.txt,text/csv" style="display:none;" onchange="handleCsvImport(event)">
-                        <div id="csvImportState" style="font-size:12px;color:#bbb;flex:1;min-width:200px;">Sin imports todavía.</div>
+                        <span style="color:#888;font-size:11px;">o</span>
+                        <input type="text" id="csvImportUrl" placeholder="Pegá link de Google Sheets (compartido como público)"
+                               style="flex:1;min-width:240px;padding:9px 11px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(155,48,255,0.30);border-radius:8px;font-size:12px;">
+                        <button id="csvImportUrlBtn" onclick="handleCsvImportUrl()" style="padding:10px 14px;font-size:12px;font-weight:700;background:rgba(155,48,255,0.20);border:1px solid rgba(155,48,255,0.45);color:#d6b3ff;border-radius:8px;cursor:pointer;">
+                            🔗 Importar desde link
+                        </button>
                     </div>
+                    <div id="csvImportState" style="font-size:12px;color:#bbb;margin-bottom:8px;">Sin imports todavía.</div>
                     <div style="font-size:11px;color:#888;line-height:1.5;">
-                        Subí el CSV exportado de JUGAYGANA (deposit/withdraw/individual_bonus). Procesa hasta 200k+ filas en 30-60s. Los datos crudos NO se almacenan — solo agregados por jugador. Si subís el mismo archivo dos veces, se detecta y no reprocesa.
+                        Subí el CSV (o pegá link de Google Sheets compartido como <strong>"Cualquier persona con el enlace puede ver"</strong>). Procesa 200k+ filas en 30-60s. <strong>Ventana rolling de 45 días</strong> — podés subir incrementales (día por día / semana por semana) y siempre vas a ver los últimos 45 días desde hoy. Los datos crudos NO se almacenan; queda solo el agregado por (jugador, día). Subir el mismo archivo dos veces no reprocesa.
                     </div>
                 </div>
 
