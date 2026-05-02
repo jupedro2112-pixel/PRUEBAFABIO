@@ -933,12 +933,24 @@ VIP.refunds = (function () {
 
     // Polling cada 60s para detectar regalos nuevos mientras la app esta
     // abierta. Solo si la pestaña esta visible.
+    // Tambien refrescamos el TOTAL regalado para que el cartel del home
+    // se actualice en vivo cuando otros usuarios vayan reclamando — antes
+    // solo se actualizaba al recargar la pagina o al reclamar uno mismo.
     if (!_giveawayPollId) {
         _giveawayPollId = setInterval(() => {
             if (document.visibilityState !== 'visible') return;
             loadGiveawayStatus();
+            loadGiveawayTotal();
         }, 60 * 1000);
     }
+
+    // Cuando la pestaña vuelve a estar visible (user vuelve a la app
+    // despues de tenerla en background), refrescamos al instante.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        try { loadGiveawayStatus(); } catch (_) {}
+        try { loadGiveawayTotal(); } catch (_) {}
+    });
 
     // Escuchar postMessage del Service Worker (notificationclick): asi
     // cuando el user toca el push, el SW nos manda los datos del payload

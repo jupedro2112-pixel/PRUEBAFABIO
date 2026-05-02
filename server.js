@@ -7405,7 +7405,10 @@ let _totalGiveawayCache = { ts: 0, amount: 0, count: 0 };
 app.get('/api/giveaway-stats/total', authMiddleware, async (req, res) => {
   try {
     const NOW = Date.now();
-    const TTL = 5 * 60 * 1000;
+    // 60s TTL: balance entre carga (no recalcular en cada hit) y frescura
+    // (que el numero del home se vea actualizado pronto despues de que
+    // alguien reclame). Cada claim exitoso ademas invalida el cache.
+    const TTL = 60 * 1000;
     if (NOW - _totalGiveawayCache.ts < TTL) {
       return res.json({
         amount: _totalGiveawayCache.amount,
