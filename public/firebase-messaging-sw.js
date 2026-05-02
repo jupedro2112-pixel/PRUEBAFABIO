@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v66-welcome-bonus-mobile-fit';
+const CACHE_VERSION = 'v67-welcome-bonus-noshrink';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [

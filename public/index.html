@@ -781,6 +781,14 @@
             box-shadow: 0 6px 24px rgba(255,200,0,0.22);
             order: 1.7;
             position: relative;
+            /* CRITICAL mobile: el chatScreen es flex column, sin esto el card
+               se aplasta y solo se ve el icono. flex:none impide que flex
+               container lo encoja, y display:block evita que herede flex
+               column desde algun parent. min-height asegura espacio para
+               todo el contenido (icono+titulo+monto+subtitulo+boton). */
+            flex: 0 0 auto !important;
+            display: block !important;
+            min-height: 220px;
             overflow: hidden;
         }
         .welcome-bonus-card::before {
