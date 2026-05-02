@@ -530,10 +530,17 @@ async function loadRefundsReport(type) {
     }
 }
 
+// Cache de la data del reporte por tipo. Lo usa filterRefundsTable para
+// re-renderizar solo la tabla de detalle al filtrar por usuario sin ir
+// nuevamente al backend.
+const refundsDataByType = {};
+
 function renderRefundsReport(container, data, type) {
     const s = data.summary || {};
     const refunds = data.refunds || [];
     const series = data.series || [];
+
+    refundsDataByType[type] = data;
 
     let html = '';
 
@@ -558,29 +565,57 @@ function renderRefundsReport(container, data, type) {
         html += '</tbody></table>';
     }
 
-    // Lista de reclamos
-    html += '<h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:24px 0 10px;">Detalle de reclamos</h3>';
-    if (refunds.length === 0) {
-        html += '<div class="empty-state">No hay reclamos en este rango.</div>';
-    } else {
-        html += '<table class="report-table"><thead><tr><th>Usuario</th><th>Período</th><th>Monto</th><th>Estado</th><th>Reclamado</th></tr></thead><tbody>';
-        for (const ref of refunds) {
-            const status = ref.status || 'completed';
-            const statusCell = status === 'pending_credit_failed'
-                ? '<span style="color:#ff6666;font-weight:700;" title="' + escapeHtml(ref.creditError || '') + '">⚠️ PENDIENTE</span>'
-                : '<span style="color:#25d366;">✅ OK</span>';
-            html += '<tr>';
-            html += '  <td><strong>' + escapeHtml(ref.username) + '</strong></td>';
-            html += '  <td>' + escapeHtml(ref.period || '-') + '</td>';
-            html += '  <td>' + formatMoney(ref.amount) + '</td>';
-            html += '  <td>' + statusCell + '</td>';
-            html += '  <td>' + escapeHtml(formatDate(ref.claimedAt)) + '</td>';
-            html += '</tr>';
-        }
-        html += '</tbody></table>';
-    }
+    // Encabezado de detalle + buscador por usuario
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:24px 0 10px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle de reclamos</h3>';
+    html += '  <input type="text" id="' + type + 'UserSearch" placeholder="🔍 Buscar usuario…" oninput="filterRefundsTable(\'' + type + '\')" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '</div>';
+    html += '<div id="' + type + 'RefundsTableContainer">' + renderRefundsTableHtml(refunds) + '</div>';
 
     container.innerHTML = html;
+}
+
+function renderRefundsTableHtml(refunds) {
+    if (!refunds || refunds.length === 0) {
+        return '<div class="empty-state">No hay reclamos para mostrar.</div>';
+    }
+    let html = '<table class="report-table"><thead><tr><th>Usuario</th><th>Período</th><th>Monto</th><th>Estado</th><th>Reclamado</th></tr></thead><tbody>';
+    for (const ref of refunds) {
+        const status = ref.status || 'completed';
+        const statusCell = status === 'pending_credit_failed'
+            ? '<span style="color:#ff6666;font-weight:700;" title="' + escapeHtml(ref.creditError || '') + '">⚠️ PENDIENTE</span>'
+            : '<span style="color:#25d366;">✅ OK</span>';
+        html += '<tr>';
+        html += '  <td><strong>' + escapeHtml(ref.username) + '</strong></td>';
+        html += '  <td>' + escapeHtml(ref.period || '-') + '</td>';
+        html += '  <td>' + formatMoney(ref.amount) + '</td>';
+        html += '  <td>' + statusCell + '</td>';
+        html += '  <td>' + escapeHtml(formatDate(ref.claimedAt)) + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+function filterRefundsTable(type) {
+    const data = refundsDataByType[type];
+    if (!data) return;
+    const input = document.getElementById(type + 'UserSearch');
+    const q = (input?.value || '').toLowerCase().trim();
+    const all = data.refunds || [];
+    const filtered = q
+        ? all.filter(r => (r.username || '').toLowerCase().includes(q))
+        : all;
+    const tableContainer = document.getElementById(type + 'RefundsTableContainer');
+    if (!tableContainer) return;
+    tableContainer.innerHTML = renderRefundsTableHtml(filtered);
+    // Pequeno hint de cuantos matchearon cuando hay filtro activo
+    if (q) {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'color:#888;font-size:12px;margin-top:6px;';
+        hint.textContent = `Mostrando ${filtered.length} de ${all.length} reclamos`;
+        tableContainer.appendChild(hint);
+    }
 }
 
 // ============================================
@@ -664,11 +699,17 @@ async function loadEquipmentReport() {
     }
 }
 
+// Cache de la data de equipamiento. Lo usa filterEquipmentTable para
+// re-renderizar solo la tabla al filtrar por usuario.
+let equipmentDataCache = null;
+
 function renderEquipmentReport(container, data) {
     const t = data.totals || {};
     const users = Array.isArray(data.users) ? data.users : [];
     const total = t.totalUsers || 0;
     const pct = (n) => total > 0 ? Math.round((n / total) * 100) : 0;
+
+    equipmentDataCache = data;
 
     let html = '';
 
@@ -686,8 +727,21 @@ function renderEquipmentReport(container, data) {
         return;
     }
 
-    html += '<h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:18px 0 10px;">Detalle por usuario</h3>';
-    html += '<table class="report-table"><thead><tr>';
+    // Encabezado de detalle + buscador por usuario
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 10px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle por usuario</h3>';
+    html += '  <input type="text" id="equipmentUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterEquipmentTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '</div>';
+    html += '<div id="equipmentTableContainer">' + renderEquipmentTableHtml(users) + '</div>';
+
+    container.innerHTML = html;
+}
+
+function renderEquipmentTableHtml(users) {
+    if (!users || users.length === 0) {
+        return '<div class="empty-state">No hay usuarios para mostrar.</div>';
+    }
+    let html = '<table class="report-table"><thead><tr>';
     html += '<th>Usuario</th>';
     html += '<th>📱 App instalada</th>';
     html += '<th>🔔 Notificaciones</th>';
@@ -709,8 +763,26 @@ function renderEquipmentReport(container, data) {
         html += '</tr>';
     }
     html += '</tbody></table>';
+    return html;
+}
 
-    container.innerHTML = html;
+function filterEquipmentTable() {
+    if (!equipmentDataCache) return;
+    const input = document.getElementById('equipmentUserSearch');
+    const q = (input?.value || '').toLowerCase().trim();
+    const all = equipmentDataCache.users || [];
+    const filtered = q
+        ? all.filter(u => (u.username || '').toLowerCase().includes(q))
+        : all;
+    const tableContainer = document.getElementById('equipmentTableContainer');
+    if (!tableContainer) return;
+    tableContainer.innerHTML = renderEquipmentTableHtml(filtered);
+    if (q) {
+        const hint = document.createElement('div');
+        hint.style.cssText = 'color:#888;font-size:12px;margin-top:6px;';
+        hint.textContent = `Mostrando ${filtered.length} de ${all.length} usuarios`;
+        tableContainer.appendChild(hint);
+    }
 }
 
 // ============================================
