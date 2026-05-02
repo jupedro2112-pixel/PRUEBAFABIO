@@ -206,12 +206,32 @@ VIP.refunds = (function () {
         loadGiveawayTotal();
     }
 
+    // ---- Cache de montos en localStorage para evitar el flash de $0 en cold-start ----
+    // Cuando el user cierra y reabre la app, mientras la API responde, mostramos
+    // el ultimo valor conocido en vez de $0. Por usuario para no mezclar sesiones.
+    function _cacheKey(field) {
+        const u = (VIP.state && VIP.state.currentUser) || 'anon';
+        return 'vipAmtCache:' + u + ':' + field;
+    }
+    function _saveCachedAmount(field, value) {
+        try { localStorage.setItem(_cacheKey(field), String(value)); } catch (_) {}
+    }
+    function _loadCachedAmount(field) {
+        try {
+            const v = localStorage.getItem(_cacheKey(field));
+            if (v == null) return null;
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+        } catch (_) { return null; }
+    }
+
     // Pinta el saldo del usuario en la plataforma JUGAYGANA en el card del home.
     function updateUserBalance() {
         const el = document.getElementById('userBalanceAmount');
         if (!el) return;
         const bal = (VIP.state.refundStatus && VIP.state.refundStatus.user && VIP.state.refundStatus.user.currentBalance) || 0;
         el.textContent = '$' + Number(bal).toLocaleString('es-AR');
+        _saveCachedAmount('balance', bal);
     }
 
     function updateRefundButtons() {
@@ -234,6 +254,7 @@ VIP.refunds = (function () {
         if (data.claimed) {
             const claimedAmt = Number(data.lastClaimAmount || 0);
             amount.textContent = `$${claimedAmt.toLocaleString()}`;
+            _saveCachedAmount('refund_' + type, claimedAmt);
             btn.classList.add('claimed');
             btn.style.opacity = '0.55';
             if (data.nextClaim) {
@@ -245,6 +266,7 @@ VIP.refunds = (function () {
         }
 
         amount.textContent = `$${(data.potentialAmount || 0).toLocaleString()}`;
+        _saveCachedAmount('refund_' + type, data.potentialAmount || 0);
 
         if (data.canClaim && data.potentialAmount > 0) {
             timer.textContent = '¡Listo!';
@@ -822,6 +844,7 @@ VIP.refunds = (function () {
             }
             amountEl.textContent = '$' + amt.toLocaleString('es-AR');
             line.style.display = '';
+            try { localStorage.setItem('vipGiveawayTotalCache', String(amt)); } catch (_) {}
         } catch (err) {
             console.warn('loadGiveawayTotal error:', err);
         }
@@ -929,6 +952,69 @@ VIP.refunds = (function () {
                 btn.textContent = '🎁 RECLAMAR';
             }
         }
+    }
+
+    // ---- Prefill desde cache para evitar el flash de $0 en cold-start ----
+    // En el cold-start (PWA cerrada y reabierta) el HTML pinta $0 hasta que
+    // la API de /api/refunds/status responde (~3-5s en redes lentas). Para
+    // que el usuario no vea ese parpadeo en cero, leemos el ultimo valor
+    // conocido de localStorage y lo plantamos en el DOM apenas el modulo
+    // carga. Cuando la API responda, los valores se sobreescriben con la
+    // verdad — esta es solo una capa visual.
+    function _prefillFromCache() {
+        try {
+            const balEl = document.getElementById('userBalanceAmount');
+            if (balEl) {
+                const cached = _loadCachedAmount('balance');
+                if (cached != null) {
+                    balEl.textContent = '$' + cached.toLocaleString('es-AR');
+                }
+            }
+            ['daily', 'weekly', 'monthly'].forEach((t) => {
+                const amtEl = document.getElementById(t + 'RefundAmount');
+                if (!amtEl) return;
+                const cached = _loadCachedAmount('refund_' + t);
+                if (cached != null) {
+                    amtEl.textContent = '$' + cached.toLocaleString();
+                }
+            });
+            // Total historico de plata regalada (subtexto del welcome). No
+            // depende del usuario, asi que va en una key global.
+            const totalLine = document.getElementById('giveawayTotalLine');
+            const totalAmt = document.getElementById('giveawayTotalAmount');
+            if (totalLine && totalAmt) {
+                const raw = (function () {
+                    try { return localStorage.getItem('vipGiveawayTotalCache'); }
+                    catch (_) { return null; }
+                })();
+                const cached = raw == null ? null : Number(raw);
+                if (cached != null && Number.isFinite(cached) && cached > 0) {
+                    totalAmt.textContent = '$' + cached.toLocaleString('es-AR');
+                    totalLine.style.display = '';
+                }
+            }
+        } catch (_) {}
+    }
+
+    // Forzar oculto el card de giveaway al iniciar el modulo. La CSS no
+    // pone display:block !important (ya removido), pero por seguridad
+    // garantizamos el oculto desde JS antes de que cualquier render
+    // intermedio lo muestre con $0.
+    function _ensureGiveawayHiddenAtBoot() {
+        try {
+            const c = document.getElementById('giveawayCard');
+            if (c) c.style.setProperty('display', 'none', 'important');
+        } catch (_) {}
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            _prefillFromCache();
+            _ensureGiveawayHiddenAtBoot();
+        });
+    } else {
+        _prefillFromCache();
+        _ensureGiveawayHiddenAtBoot();
     }
 
     // Polling cada 60s para detectar regalos nuevos mientras la app esta

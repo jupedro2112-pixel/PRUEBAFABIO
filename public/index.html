@@ -959,7 +959,10 @@
             order: 1.65;
             position: relative;
             flex: 0 0 auto !important;
-            display: block !important;
+            /* display lo controla JS via setProperty('display', X, 'important').
+               No ponemos display:block !important aqui porque pisaria el
+               style="display:none;" inline del HTML y haria que el card se vea
+               vacio con $0 mientras la API responde en cold-start. */
             overflow: hidden;
             animation: giveawayPulse 2.2s ease-in-out infinite;
         }
