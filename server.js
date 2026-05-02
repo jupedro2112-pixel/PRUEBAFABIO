@@ -6802,9 +6802,18 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
 
     for (const u of users) {
       const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      // Solo tokens con context='standalone' (PWA real instalada).
+      const standaloneTokens = tokens.filter(t => t && t.context === 'standalone');
+      // ultima vez que el cliente refresco el token desde la PWA. Cuando el
+      // user desinstala, no puede abrir la PWA, asi que updatedAt nunca mas
+      // se actualiza. Es la mejor senal de "app realmente activa".
+      const appLastSeen = standaloneTokens
+        .map(t => t.updatedAt ? new Date(t.updatedAt).getTime() : 0)
+        .reduce((a, b) => Math.max(a, b), 0);
+
       const hasApp = (
         u.fcmTokenContext === 'standalone' ||
-        tokens.some(t => t && t.context === 'standalone')
+        standaloneTokens.length > 0
       );
       const hasNotifs = (
         u.notifPermission === 'granted' ||
@@ -6818,7 +6827,8 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
         lastLogin: u.lastLogin || null,
         createdAt: u.createdAt || null,
         hasApp,
-        hasNotifs
+        hasNotifs,
+        appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null
       });
     }
 
@@ -6878,9 +6888,14 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
     const enriched = claims.map(c => {
       const u = byUsername.get((c.username || '').toLowerCase()) || {};
       const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const standaloneTokens = tokens.filter(t => t && t.context === 'standalone');
+      const appLastSeen = standaloneTokens
+        .map(t => t.updatedAt ? new Date(t.updatedAt).getTime() : 0)
+        .reduce((a, b) => Math.max(a, b), 0);
+
       const hasApp = (
         u.fcmTokenContext === 'standalone' ||
-        tokens.some(t => t && t.context === 'standalone')
+        standaloneTokens.length > 0
       );
       const hasNotifs = (
         u.notifPermission === 'granted' ||
@@ -6896,7 +6911,8 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         transactionId: c.transactionId || null,
         hasApp,
         hasNotifs,
-        lastLogin: u.lastLogin || null
+        lastLogin: u.lastLogin || null,
+        appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null
       };
     });
 

@@ -740,27 +740,61 @@ function renderEquipmentReport(container, data) {
     container.innerHTML = html;
 }
 
+// Convierte un ISO string en "hace X dias/horas/min" + estado visual.
+// Si la PWA no se abre desde hace mucho, asumimos desinstalada aunque
+// el token siga vivo en FCM.
+function _formatAppLastSeen(iso) {
+    if (!iso) return { text: 'Nunca', color: '#888', staleness: 'never' };
+    const t = new Date(iso).getTime();
+    const ms = Date.now() - t;
+    if (ms < 0) return { text: 'Ahora', color: '#25d366', staleness: 'fresh' };
+    const min = Math.floor(ms / 60000);
+    const hrs = Math.floor(min / 60);
+    const days = Math.floor(hrs / 24);
+    let text;
+    if (days >= 1) text = 'hace ' + days + (days === 1 ? ' día' : ' días');
+    else if (hrs >= 1) text = 'hace ' + hrs + ' h';
+    else if (min >= 1) text = 'hace ' + min + ' min';
+    else text = 'recién';
+    let color, staleness;
+    if (days >= 14) { color = '#ef4444'; staleness = 'gone'; }       // probablemente borró
+    else if (days >= 7) { color = '#f59e0b'; staleness = 'stale'; }  // sin abrir hace varios días
+    else { color = '#25d366'; staleness = 'fresh'; }
+    return { text, color, staleness };
+}
+
 function renderEquipmentTableHtml(users) {
     if (!users || users.length === 0) {
         return '<div class="empty-state">No hay usuarios para mostrar.</div>';
     }
     let html = '<table class="report-table"><thead><tr>';
     html += '<th>Usuario</th>';
-    html += '<th>📱 App instalada</th>';
-    html += '<th>🔔 Notificaciones</th>';
+    html += '<th>📱 App</th>';
+    html += '<th>Última vez en la app</th>';
+    html += '<th>🔔 Notifs</th>';
     html += '<th>Último ingreso</th>';
     html += '</tr></thead><tbody>';
     for (const u of users) {
         const lastLogin = u.lastLogin ? new Date(u.lastLogin).toLocaleString('es-AR') : '—';
-        const appCell = u.hasApp
-            ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
-            : '<span style="color:#888;">—</span>';
+        const seen = _formatAppLastSeen(u.appLastSeen);
+        let appCell;
+        if (!u.hasApp) {
+            appCell = '<span style="color:#888;">—</span>';
+        } else if (seen.staleness === 'gone') {
+            appCell = '<span style="color:#ef4444;font-weight:700;">⚠️ Inactiva</span>';
+        } else if (seen.staleness === 'stale') {
+            appCell = '<span style="color:#f59e0b;font-weight:700;">⏳ Sin abrir</span>';
+        } else {
+            appCell = '<span style="color:#25d366;font-weight:700;">✅ Activa</span>';
+        }
+        const seenCell = '<small style="color:' + seen.color + ';">' + escapeHtml(seen.text) + '</small>';
         const notifCell = u.hasNotifs
             ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
             : '<span style="color:#888;">—</span>';
         html += '<tr>';
         html += '<td>' + escapeHtml(u.username) + '</td>';
         html += '<td>' + appCell + '</td>';
+        html += '<td>' + seenCell + '</td>';
         html += '<td>' + notifCell + '</td>';
         html += '<td><small>' + escapeHtml(lastLogin) + '</small></td>';
         html += '</tr>';
@@ -898,16 +932,24 @@ function renderWelcomeBonusTableHtml(claims) {
     html += '<th>Usuario</th>';
     html += '<th>Reclamado</th>';
     html += '<th>📱 App ahora</th>';
+    html += '<th>Última vez en la app</th>';
     html += '<th>🔔 Notifs ahora</th>';
     html += '<th>Estado</th>';
-    html += '<th>Último ingreso</th>';
     html += '</tr></thead><tbody>';
     for (const c of claims) {
         const claimed = c.claimedAt ? new Date(c.claimedAt).toLocaleString('es-AR') : '—';
-        const lastLogin = c.lastLogin ? new Date(c.lastLogin).toLocaleString('es-AR') : '—';
-        const appCell = c.hasApp
-            ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
-            : '<span style="color:#ef4444;font-weight:700;">⚠️ Borró</span>';
+        const seen = _formatAppLastSeen(c.appLastSeen);
+        let appCell;
+        if (!c.hasApp) {
+            appCell = '<span style="color:#ef4444;font-weight:700;">⚠️ Borró</span>';
+        } else if (seen.staleness === 'gone') {
+            appCell = '<span style="color:#ef4444;font-weight:700;">⚠️ Inactiva</span>';
+        } else if (seen.staleness === 'stale') {
+            appCell = '<span style="color:#f59e0b;font-weight:700;">⏳ Sin abrir</span>';
+        } else {
+            appCell = '<span style="color:#25d366;font-weight:700;">✅ Activa</span>';
+        }
+        const seenCell = '<small style="color:' + seen.color + ';">' + escapeHtml(seen.text) + '</small>';
         const notifCell = c.hasNotifs
             ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
             : '<span style="color:#ef4444;font-weight:700;">⚠️ Desactivó</span>';
@@ -918,9 +960,9 @@ function renderWelcomeBonusTableHtml(claims) {
         html += '<td>' + escapeHtml(c.username) + '</td>';
         html += '<td><small>' + escapeHtml(claimed) + '</small></td>';
         html += '<td>' + appCell + '</td>';
+        html += '<td>' + seenCell + '</td>';
         html += '<td>' + notifCell + '</td>';
         html += '<td>' + statusBadge + '</td>';
-        html += '<td><small>' + escapeHtml(lastLogin) + '</small></td>';
         html += '</tr>';
     }
     html += '</tbody></table>';
