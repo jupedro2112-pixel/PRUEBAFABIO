@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v81-money-giveaway';
+const CACHE_VERSION = 'v83-pwa-click-cleanup';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -143,26 +143,70 @@ messaging.onBackgroundMessage(function(payload) {
 // ============================================
 // CLICK EN NOTIFICACIÓN
 // ============================================
+// FIX: antes el handler hacia openWindow('/') si no encontraba ventana
+// abierta, lo que dejaba al SO decidir y muchas veces abría Chrome
+// (no la PWA instalada). Ahora:
+//   - Filtramos clients para preferir las ventanas PWA standalone
+//     (frameType==='top-level' + visibilityState).
+//   - Usamos URL absoluta con start_url del manifest para que Android
+//     enrute al WebAPK instalado.
+//   - Pasamos el payload.data al cliente via postMessage para que las
+//     ventanas temporales (regalo, promo) se rendericen al instante
+//     sin esperar el polling de 60s.
 self.addEventListener('notificationclick', function(event) {
-  console.log('[FCM-SW] Click en notificación:', event.action);
+  console.log('[FCM-SW] Click en notificación:', event.action, event.notification.data);
 
   event.notification.close();
 
   if (event.action === 'close') return;
 
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then(function(clientList) {
-        for (const client of clientList) {
-          if (client.url.includes(self.location.origin) && 'focus' in client) {
-            return client.focus();
-          }
-        }
-        if (clients.openWindow) {
-          return clients.openWindow('/');
-        }
-      })
-  );
+  // Datos del push para reenviarlos al cliente.
+  const notifData = event.notification.data || {};
+  const targetUrl = self.location.origin + '/?source=push';
+
+  event.waitUntil((async () => {
+    const allClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+
+    // Preferir un cliente PWA (top-level y mismo origen) que esté visible
+    // o haya estado activo recientemente. Si no hay, tomamos cualquiera.
+    let target = null;
+    for (const c of allClients) {
+      if (!c.url || !c.url.startsWith(self.location.origin)) continue;
+      if (c.frameType !== 'top-level') continue;
+      target = c;
+      break;
+    }
+    if (!target && allClients.length) target = allClients[0];
+
+    if (target) {
+      try {
+        // Push de la data al cliente para render inmediato del cartel
+        // de promo/regalo aunque el polling todavia no haya corrido.
+        target.postMessage({
+          type: 'PUSH_NOTIFICATION_CLICK',
+          data: notifData
+        });
+      } catch (_) {}
+      try { await target.focus(); } catch (_) {}
+      return;
+    }
+
+    // Sin cliente abierto: abrir nueva ventana en la URL del start_url.
+    // Esto es lo que Android enruta al WebAPK (PWA instalada). Si no hay
+    // WebAPK, abre el navegador — eso es comportamiento de Apple/Google.
+    if (clients.openWindow) {
+      const newClient = await clients.openWindow(targetUrl);
+      if (newClient) {
+        // Best-effort: postear la data por si el cliente ya esta listo.
+        try {
+          newClient.postMessage({
+            type: 'PUSH_NOTIFICATION_CLICK',
+            data: notifData
+          });
+        } catch (_) {}
+      }
+    }
+  })());
 });
 
 // ============================================

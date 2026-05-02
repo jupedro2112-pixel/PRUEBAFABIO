@@ -355,6 +355,21 @@ VIP.auth = (function () {
     let _promoCountdownId = null;
     let _promoRefetchId = null;
 
+    // Defensa-en-profundidad: trackeamos en localStorage que promos
+    // ya tocó este user. Una vez tocada, no se vuelve a mostrar aunque
+    // siga activa server-side. Clave por username + promo.id.
+    function _promoUsedKey(promoId) {
+        const u = (VIP.state.currentUser && VIP.state.currentUser.username) || '';
+        return 'vipPromoUsed:' + u.toLowerCase() + ':' + promoId;
+    }
+    function _isPromoLocallyUsed(promoId) {
+        try { return localStorage.getItem(_promoUsedKey(promoId)) === '1'; }
+        catch (_) { return false; }
+    }
+    function _markPromoLocallyUsed(promoId) {
+        try { localStorage.setItem(_promoUsedKey(promoId), '1'); } catch (_) {}
+    }
+
     async function applyPromoAlertIfActive() {
         try {
             if (!VIP.state.currentToken) return;
@@ -366,6 +381,12 @@ VIP.auth = (function () {
             if (!data || !data.active) {
                 // No hay promo o ya vencio: si teniamos overlay, restauramos
                 // el boton normal re-renderizando el home.
+                clearPromoTimers();
+                return;
+            }
+            // Si este user ya tocó esta promo, no la mostramos (vuelve al
+            // estado original con boton QUIERO CARGAR).
+            if (data.id && _isPromoLocallyUsed(data.id)) {
                 clearPromoTimers();
                 return;
             }
@@ -421,6 +442,9 @@ VIP.auth = (function () {
         // Track click → server suma waClicks en el row de NotificationHistory
         // asociado a esta promo (si lo hay). Best-effort: si falla no
         // bloqueamos la apertura de WhatsApp.
+        // Ademas: marcamos la promo como "usada" en localStorage y volvemos
+        // al boton normal QUIERO CARGAR — el user ya la usó, no le seguimos
+        // mostrando el cartel aunque la promo siga activa server-side.
         const ctaAnchor = document.getElementById('promoCtaAnchor');
         if (ctaAnchor) {
             ctaAnchor.addEventListener('click', () => {
@@ -431,6 +455,15 @@ VIP.auth = (function () {
                         keepalive: true
                     }).catch(() => {});
                 } catch (_) {}
+                if (promo && promo.id) {
+                    _markPromoLocallyUsed(promo.id);
+                }
+                // Pequeño delay para que el wa.me alcance a abrirse antes
+                // de que rerenderemos.
+                setTimeout(() => {
+                    clearPromoTimers();
+                    renderRefundsHomeUI();
+                }, 300);
             }, { once: false });
         }
 
@@ -1302,12 +1335,14 @@ VIP.auth = (function () {
         prepareChangePasswordModal,
         switchLoginMode,
         renderRefundsHomeUI,
-        refreshLinePhone
+        refreshLinePhone,
+        applyPromoAlertIfActive
     };
 
 })();
 
 // Window aliases for any HTML onclick / external callers
+window.applyPromoAlertIfActive = VIP.auth.applyPromoAlertIfActive;
 window.checkUsernameAvailability = VIP.auth.checkUsernameAvailability;
 window.handleRegisterSendOtp = VIP.auth.handleRegisterSendOtp;
 window.handleRegisterWithOtp = VIP.auth.handleRegisterWithOtp;

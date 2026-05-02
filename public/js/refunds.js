@@ -813,6 +813,15 @@ VIP.refunds = (function () {
             return;
         }
 
+        // Si este user ya lo reclamo, ocultamos el card por completo aunque
+        // el regalo siga activo para otros — la pantalla vuelve al estado
+        // original sin "Reclamado" residual.
+        if (g.alreadyClaimed) {
+            _clearGiveawayCountdown();
+            hide();
+            return;
+        }
+
         const amountEl = document.getElementById('giveawayAmount');
         const subEl = document.getElementById('giveawaySub');
         const btn = document.getElementById('giveawayBtn');
@@ -820,15 +829,6 @@ VIP.refunds = (function () {
 
         const amountStr = '$' + Number(g.amount || 0).toLocaleString('es-AR');
         if (amountEl) amountEl.textContent = amountStr + ' GRATIS';
-
-        if (g.alreadyClaimed) {
-            card.classList.add('claimed');
-            if (subEl) subEl.textContent = '✅ Ya reclamaste este regalo.';
-            if (btn) { btn.disabled = true; btn.textContent = '✅ Reclamado'; }
-            if (timerEl) timerEl.style.display = 'none';
-            show();
-            return;
-        }
 
         card.classList.remove('claimed');
         if (subEl) subEl.textContent = 'Tocá ahora antes que se acabe.';
@@ -911,6 +911,27 @@ VIP.refunds = (function () {
             if (document.visibilityState !== 'visible') return;
             loadGiveawayStatus();
         }, 60 * 1000);
+    }
+
+    // Escuchar postMessage del Service Worker (notificationclick): asi
+    // cuando el user toca el push, el SW nos manda los datos del payload
+    // y podemos forzar el fetch inmediato del estado de promo/giveaway
+    // sin esperar al polling de 60s.
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', (event) => {
+            const msg = event && event.data;
+            if (!msg || msg.type !== 'PUSH_NOTIFICATION_CLICK') return;
+            const d = msg.data || {};
+            // Forzar fetch INMEDIATO de ambos estados (promo y giveaway)
+            // independientemente de que campos vengan en data — el server
+            // es la fuente de verdad. Esto reemplaza la espera al polling.
+            try { loadGiveawayStatus(); } catch (_) {}
+            try {
+                if (typeof window.applyPromoAlertIfActive === 'function') {
+                    window.applyPromoAlertIfActive();
+                }
+            } catch (_) {}
+        });
     }
 
     return {
