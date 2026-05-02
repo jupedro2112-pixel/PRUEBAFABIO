@@ -749,9 +749,12 @@ VIP.auth = (function () {
         }
 
         VIP.ui.showChatScreen();
-        VIP.socket.startMessagePolling();
+        // Solo inicializar el socket para recibir push_notification en vivo.
+        // Antes era startMessagePolling que llamaba a VIP.chat.loadMessages cada
+        // 30s — el chat ya no existe en esta version, asi que nos ahorramos
+        // ese fetch innecesario en cada user logueado.
+        VIP.socket.initSocket();
         VIP.refunds.loadRefundStatus();
-        VIP.fire.loadFireStatus();
         VIP.ui.loadCanalInformativoUrl();
 
         return userLoaded;

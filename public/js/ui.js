@@ -97,7 +97,8 @@ VIP.ui = (function () {
         adjustLayout();
         syncBalance();
         startBalancePolling();
-        sendWelcomeMessages();
+        // sendWelcomeMessages() removido — esta version no tiene chat,
+        // los "mensajes de bienvenida" iban al chat in-app que sacamos.
     }
 
     // ---- Layout ----
@@ -826,7 +827,6 @@ VIP.ui.toggleDrawer = function() {
 
     const items = [
       { emoji: '👤', text: username, action: null, style: 'drawer-user' },
-      { emoji: '🔥', text: 'Fueguito Diario', action: () => VIP.fire.showFireModal() },
       { emoji: '📅', text: 'Reembolso Diario', action: () => VIP.refunds.showRefundModal('daily') },
       { emoji: '📆', text: 'Reembolso Semanal', action: () => VIP.refunds.showRefundModal('weekly') },
       { emoji: '🗓️', text: 'Reembolso Mensual', action: () => VIP.refunds.showRefundModal('monthly') },
@@ -841,7 +841,6 @@ VIP.ui.toggleDrawer = function() {
       }},
       { emoji: '🤝', text: 'Mis Referidos', action: () => VIP.ui.openReferralModal() },
       { emoji: '💬', text: 'Soporte WhatsApp', action: () => window.open('https://wa.link/metawin2026', '_blank') },
-      { emoji: 'ℹ️', text: 'Información', action: () => VIP.ui.showModal('infoModal') },
       { emoji: '🔔', text: 'Notificaciones', action: () => VIP.notifications.requestNotificationPermission(), pwaOnly: true },
       { emoji: '📱', text: 'APP', action: () => VIP.ui.installApp(), hideStandalone: true },
       { emoji: '🔑', text: 'Cambiar contraseña', action: () => VIP.ui.showModal('settingsModal') },

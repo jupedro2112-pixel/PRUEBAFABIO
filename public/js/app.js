@@ -90,49 +90,6 @@ function setupEventListeners() {
         const registerForm = document.getElementById('registerForm');
         if (registerForm) registerForm.addEventListener('submit', VIP.auth.handleRegister);
 
-        // Chat send
-        const sendBtn = document.getElementById('sendBtn');
-        if (sendBtn) sendBtn.addEventListener('click', VIP.chat.sendMessage);
-
-        const messageInput = document.getElementById('messageInput');
-        if (messageInput) {
-            messageInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    VIP.chat.sendMessage();
-                }
-            });
-
-            // Typing indicator
-            let typingTimeout;
-            messageInput.addEventListener('input', function () {
-                if (VIP.state.socket) {
-                    VIP.state.socket.emit('typing', { isTyping: true });
-                    clearTimeout(typingTimeout);
-                    typingTimeout = setTimeout(() => {
-                        VIP.state.socket.emit('stop_typing', {});
-                    }, 2000);
-                }
-            });
-
-            messageInput.addEventListener('paste', VIP.chat.handlePaste);
-
-            // Auto-resize textarea
-            messageInput.addEventListener('input', function () {
-                this.style.height = 'auto';
-                this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-            });
-        }
-
-        // File attach & paste
-        const attachBtn = document.getElementById('attachBtn');
-        if (attachBtn) attachBtn.addEventListener('click', () => {
-            const fi = document.getElementById('fileInput');
-            if (fi) fi.click();
-        });
-        const fileInput = document.getElementById('fileInput');
-        if (fileInput) fileInput.addEventListener('change', VIP.chat.handleFileSelect);
-
         // Refund buttons
         const dailyRefundBtn = document.getElementById('dailyRefundBtn');
         if (dailyRefundBtn) dailyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('daily'));
@@ -143,34 +100,9 @@ function setupEventListeners() {
         const closeRefundModal = document.getElementById('closeRefundModal');
         if (closeRefundModal) closeRefundModal.addEventListener('click', () => VIP.ui.hideModal('refundModal'));
 
-        // Fire (Fueguito)
-        const fireBtn = document.getElementById('fireBtn');
-        if (fireBtn) {
-            fireBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log('🔥 Fueguito clickeado');
-                VIP.fire.showFireModal();
-            });
-        }
-        const closeFireModal = document.getElementById('closeFireModal');
-        if (closeFireModal) closeFireModal.addEventListener('click', () => VIP.ui.hideModal('fireModal'));
-        const claimFireBtn = document.getElementById('claimFireBtn');
-        if (claimFireBtn) claimFireBtn.addEventListener('click', VIP.fire.claimFire);
-
         // Referrals
         const referralBtn = document.getElementById('referralBtn');
         if (referralBtn) referralBtn.addEventListener('click', () => VIP.ui.openReferralModal());
-
-        // Info modal
-        const infoBtn = document.getElementById('infoBtn');
-        if (infoBtn) infoBtn.addEventListener('click', () => VIP.ui.showModal('infoModal'));
-        const closeInfoModal = document.getElementById('closeInfoModal');
-        if (closeInfoModal) closeInfoModal.addEventListener('click', () => VIP.ui.hideModal('infoModal'));
-
-        // CBU
-        const cbuChatBtn = document.getElementById('cbuChatBtn');
-        if (cbuChatBtn) cbuChatBtn.addEventListener('click', VIP.ui.loadAndShowCBU);
 
         // Settings
         const settingsBtn = document.getElementById('settingsBtn');

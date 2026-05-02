@@ -1508,12 +1508,8 @@
         </div>
         <!-- Header -->
         <header class="header">
-            <!-- Sección izquierda: Fueguito + Configuración/Cerrar sesión -->
+            <!-- Sección izquierda: Configuración/Cerrar sesión -->
             <div class="header-left">
-                <button id="fireBtn" class="fire-btn" title="Racha diaria - Reclama cada día!">
-                    🔥
-                    <span class="fire-streak" id="fireStreak">0</span>
-                </button>
                 <div class="user-action-btns">
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
@@ -1571,7 +1567,6 @@
                     </svg>
                     SOPORTE
                 </a>
-                <button class="info-btn" id="infoBtn" title="Información del servicio">ℹ️ INFO</button>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
@@ -1696,32 +1691,6 @@
                     </ol>
                 </div>
                 <button id="notifBlockedModalClose" style="width:100%; background:#d4af37; color:#000; border:none; border-radius:10px; padding:12px; font-weight:700; font-size:.95rem; cursor:pointer;">Entendido</button>
-            </div>
-        </div>
-
-        <!-- Chat Section -->
-        <section class="chat-section">
-            <div class="chat-container">
-                <div class="chat-messages" id="chatMessages">
-                    <!-- Messages will be loaded here -->
-                </div>
-                <!-- Indicador "Escribiendo..." -->
-                <div id="typingIndicator" style="display: none; padding: 8px 15px; color: #00ff88; font-size: 12px; font-style: italic; text-align: left;"></div>
-            </div>
-        </section>
-
-        <!-- Chat Input -->
-        <div class="chat-input-container">
-            <!-- CORREGIDO: Indicador de envío de imagen -->
-            <div id="sendingIndicator" style="display: none; padding: 8px 15px; background: rgba(212, 175, 55, 0.2); border-radius: 8px; margin-bottom: 8px; color: #d4af37; font-size: 13px; text-align: center;">
-                <span style="display: inline-block; animation: spin 1s linear infinite;">⏳</span> Enviando imagen...
-            </div>
-            <div class="chat-input">
-                <button class="action-btn attach-btn" id="attachBtn" title="Adjuntar imagen">📸</button>
-                <button class="action-btn cbu-chat-btn" id="cbuChatBtn" title="Ver datos CBU para transferir">💳 CBU</button>
-                <input type="file" id="fileInput" accept="image/*,video/*" style="display: none;">
-                <textarea id="messageInput" placeholder="Escribe un mensaje..." rows="1"></textarea>
-                <button class="send-btn" id="sendBtn">📤</button>
             </div>
         </div>
 
@@ -2261,62 +2230,6 @@
             <div class="modal-actions">
                 <button id="claimFireBtn" class="btn btn-primary" style="background: linear-gradient(135deg, #ff4500 0%, #ff6347 100%);">🔥 Reclamar Fueguito</button>
                 <button id="closeFireModal" class="btn btn-secondary">Cerrar</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal Información del Servicio -->
-    <div id="infoModal" class="modal hidden" onclick="if(event.target === this) hideModal('infoModal')">
-        <div class="modal-content" style="max-width: 600px; position: relative;" onclick="event.stopPropagation()">
-            <button onclick="hideModal('infoModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
-            <div class="modal-header">
-                <h2>🎮 Información del Servicio</h2>
-                <p>Descubre todos los beneficios de nuestra Sala de Juegos</p>
-            </div>
-            <div class="info-grid">
-                <div class="info-card">
-                    <div class="info-card-icon">💰</div>
-                    <div class="info-card-title">Reembolso Diario 8%</div>
-                    <div class="info-card-desc">Recibe el 8% de tus pérdidas del día anterior directamente en tu cuenta</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">📅</div>
-                    <div class="info-card-title">Reembolso Semanal 5%</div>
-                    <div class="info-card-desc">Reclama el 5% de tus pérdidas semanales los lunes y martes</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">🗓️</div>
-                    <div class="info-card-title">Reembolso Mensual 3%</div>
-                    <div class="info-card-desc">Obtén el 3% de tus pérdidas del mes pasado después del día 7</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">🔥</div>
-                    <div class="info-card-title">Fueguito Diario</div>
-                    <div class="info-card-desc">Reclama tu fueguito cada día y acumula racha. ¡Al día 10 gana $10.000!</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">🎁</div>
-                    <div class="info-card-title">Bonificaciones</div>
-                    <div class="info-card-desc">Recibe bonificaciones especiales en tus depósitos con porcentajes desde 10% hasta 100%</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">💬</div>
-                    <div class="info-card-title">Atención 24/7</div>
-                    <div class="info-card-desc">Chat en vivo con nuestros agentes las 24 horas del día, los 7 días de la semana</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">⚡</div>
-                    <div class="info-card-title">Retiros Sin Límite</div>
-                    <div class="info-card-desc">Retira tu dinero cuando quieras sin restricciones ni límites</div>
-                </div>
-                <div class="info-card">
-                    <div class="info-card-icon">🔒</div>
-                    <div class="info-card-title">Seguridad Total</div>
-                    <div class="info-card-desc">Tus datos y transacciones están protegidos con la máxima seguridad</div>
-                </div>
-            </div>
-            <div class="modal-actions" style="margin-top: 20px;">
-                <button id="closeInfoModal" class="btn btn-primary" style="width: 100%;">Entendido</button>
             </div>
         </div>
     </div>
