@@ -80,6 +80,10 @@
                     <span>🔔</span>
                     <span>Notificaciones</span>
                 </a>
+                <a href="#" class="nav-item" data-section="notifsHistory">
+                    <span>📜</span>
+                    <span>Historial notifs</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -309,6 +313,45 @@
                     </button>
 
                     <div id="notifResult" style="margin-top:14px;display:none;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;color:#ddd;font-size:12px;"></div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: HISTORIAL DE NOTIFICACIONES
+                 Lista de todas las notifs enviadas con audiencia, tipo,
+                 horario y contadores de respuesta (waClicks / claims).
+                 ============================================ -->
+            <section id="notifsHistorySection" class="section">
+                <div class="panel-header">
+                    <h2>📜 Historial de notificaciones</h2>
+                    <button class="refresh-btn" onclick="loadNotifsHistory()" title="Actualizar">🔄</button>
+                </div>
+                <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
+                    Todas las notificaciones que mandaste, con audiencia, tipo (común / promo WhatsApp / regalo de plata), horario y contadores de respuesta.
+                    <strong>Clicks WA</strong> = veces que un usuario tocó el cartel que abría WhatsApp.
+                    <strong>Reclamos</strong> = veces que un usuario reclamó el regalo de plata.
+                </div>
+                <div class="report-filters">
+                    <label>Tipo:
+                        <select id="notifsHistoryTypeFilter">
+                            <option value="">Todos</option>
+                            <option value="plain">Sin promo</option>
+                            <option value="whatsapp_promo">Promo WhatsApp</option>
+                            <option value="money_giveaway">Regalo de plata</option>
+                        </select>
+                    </label>
+                    <label>Mostrar:
+                        <select id="notifsHistoryLimit">
+                            <option value="20">Últimos 20</option>
+                            <option value="50" selected>Últimos 50</option>
+                            <option value="100">Últimos 100</option>
+                            <option value="200">Últimos 200</option>
+                        </select>
+                    </label>
+                    <button class="btn-primary btn-small" onclick="loadNotifsHistory()">Aplicar</button>
+                </div>
+                <div id="notifsHistoryContent" class="report-content">
+                    <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
 

@@ -411,12 +411,28 @@ VIP.auth = (function () {
             : 'href="javascript:void(0)" role="button" aria-disabled="true"';
 
         phoneEl.innerHTML =
-            '<a ' + linkAttr + ' class="promo-cta" aria-label="Reclamar promo ' + safeCode + '">' +
+            '<a ' + linkAttr + ' class="promo-cta" id="promoCtaAnchor" aria-label="Reclamar promo ' + safeCode + '">' +
                 '<div class="promo-cta-flag">🎁 RECLAMÁ</div>' +
                 '<div class="promo-cta-msg">' + safeMsg + '</div>' +
                 '<div class="promo-cta-code">Código: <strong>' + safeCode + '</strong></div>' +
                 '<div class="promo-cta-timer" id="promoCtaTimer">⏰ vence en —</div>' +
             '</a>';
+
+        // Track click → server suma waClicks en el row de NotificationHistory
+        // asociado a esta promo (si lo hay). Best-effort: si falla no
+        // bloqueamos la apertura de WhatsApp.
+        const ctaAnchor = document.getElementById('promoCtaAnchor');
+        if (ctaAnchor) {
+            ctaAnchor.addEventListener('click', () => {
+                try {
+                    fetch(`${VIP.config.API_URL}/api/promo-alert/track-click`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` },
+                        keepalive: true
+                    }).catch(() => {});
+                } catch (_) {}
+            }, { once: false });
+        }
 
         // Contador en vivo cada 1s (visualmente actualiza min/seg).
         const updateCountdown = () => {

@@ -161,7 +161,8 @@ function showSection(sectionKey) {
         ingresos: 'ingresosSection',
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
-        notifs: 'notifsSection'
+        notifs: 'notifsSection',
+        notifsHistory: 'notifsHistorySection'
     };
     const sectionId = map[sectionKey];
     if (sectionId) {
@@ -196,6 +197,8 @@ function showSection(sectionKey) {
         updateNotifPreview();
         // Cargar el estado de la promo activa (si la hay).
         loadPromoAlertStatus();
+    } else if (sectionKey === 'notifsHistory') {
+        loadNotifsHistory();
     }
 }
 
@@ -879,6 +882,104 @@ function filterEquipmentTable() {
 }
 
 // ============================================
+// HISTORIAL DE NOTIFICACIONES
+// Lista de las notifs enviadas con audiencia, tipo, contadores de
+// respuesta. Permite filtrar por tipo y limitar la cantidad.
+// ============================================
+async function loadNotifsHistory() {
+    const container = document.getElementById('notifsHistoryContent');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+
+    const limit = document.getElementById('notifsHistoryLimit')?.value || '50';
+    const type = document.getElementById('notifsHistoryTypeFilter')?.value || '';
+    const params = new URLSearchParams();
+    params.set('limit', limit);
+    if (type) params.set('type', type);
+
+    try {
+        const r = await authFetch('/api/admin/notifications/history?' + params.toString());
+        if (!r.ok) {
+            container.innerHTML = '<div class="empty-state">❌ Error cargando historial</div>';
+            return;
+        }
+        const data = await r.json();
+        renderNotifsHistory(container, data);
+    } catch (err) {
+        console.error('loadNotifsHistory error:', err);
+        container.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function _typeLabel(t) {
+    if (t === 'whatsapp_promo') return '<span style="background:#1a73e8;color:#fff;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700;">📲 WhatsApp</span>';
+    if (t === 'money_giveaway') return '<span style="background:#d4af37;color:#1a1a1a;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:700;">💰 Regalo</span>';
+    return '<span style="background:rgba(255,255,255,0.10);color:#ccc;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:600;">🔔 Plain</span>';
+}
+
+function renderNotifsHistory(container, data) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (items.length === 0) {
+        container.innerHTML = '<div class="empty-state">No hay notificaciones registradas todavía.</div>';
+        return;
+    }
+
+    let html = '<table class="report-table"><thead><tr>';
+    html += '<th>Fecha</th>';
+    html += '<th>Audiencia</th>';
+    html += '<th>Tipo</th>';
+    html += '<th>Título / mensaje</th>';
+    html += '<th>Detalle promo</th>';
+    html += '<th>Llegó a</th>';
+    html += '<th>📲 Clicks WA</th>';
+    html += '<th>💰 Reclamos</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const it of items) {
+        const sent = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR') : '—';
+        const sched = it.scheduledFor ? new Date(it.scheduledFor).toLocaleString('es-AR') : null;
+        const audience = it.audienceType === 'prefix'
+            ? '<small style="color:#d4af37;">prefix: <strong>' + escapeHtml(it.audiencePrefix || '') + '*</strong></small>'
+            : '<small style="color:#aaa;">Todos</small>';
+
+        let promoDetail = '—';
+        if (it.type === 'whatsapp_promo' && it.promoCode) {
+            const exp = it.promoExpiresAt ? new Date(it.promoExpiresAt).toLocaleString('es-AR') : '?';
+            promoDetail = '<small><code style="background:rgba(0,0,0,0.4);padding:1px 6px;border-radius:4px;color:#ffd700;">' +
+                escapeHtml(it.promoCode) + '</code><br>' +
+                '<span style="color:#888;">Vence: ' + escapeHtml(exp) + '</span></small>';
+        } else if (it.type === 'money_giveaway' && it.giveawayAmount) {
+            promoDetail = '<small><strong style="color:#25d366;">$' + Number(it.giveawayAmount).toLocaleString('es-AR') + '</strong>' +
+                ' / persona<br><span style="color:#888;">Duración: ' + (it.giveawayDurationMins || '?') + ' min</span></small>';
+        }
+
+        const reach = (it.successCount || 0) + ' / ' + (it.totalUsers || 0);
+        const clicks = it.type === 'whatsapp_promo'
+            ? '<strong style="color:#1a73e8;">' + (it.waClicks || 0) + '</strong>'
+            : '<small style="color:#666;">—</small>';
+        const claims = it.type === 'money_giveaway'
+            ? '<strong style="color:#25d366;">' + (it.giveawayClaims || 0) + '</strong>'
+            : '<small style="color:#666;">—</small>';
+
+        html += '<tr>';
+        html += '<td><small>' + escapeHtml(sent) + (sched ? '<br><span style="color:#d4af37;">⏰ programada</span>' : '') + '</small></td>';
+        html += '<td>' + audience + '</td>';
+        html += '<td>' + _typeLabel(it.type) + '</td>';
+        html += '<td><strong style="color:#fff;font-size:12px;">' + escapeHtml(it.title || '') + '</strong>' +
+                '<br><small style="color:#bbb;">' + escapeHtml(it.body || '') + '</small></td>';
+        html += '<td>' + promoDetail + '</td>';
+        html += '<td><small>' + reach + '</small></td>';
+        html += '<td>' + clicks + '</td>';
+        html += '<td>' + claims + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div style="color:#888;font-size:11px;margin-top:8px;">Mostrando ' + items.length + ' notificaciones.</div>';
+
+    container.innerHTML = html;
+}
+
+// ============================================
 // REVALIDAR TOKENS FCM (on-demand)
 // Dispara la validacion via dry-run de FCM para detectar tokens muertos
 // (usuarios que desinstalaron la app). Despues recarga el reporte que
@@ -1230,16 +1331,33 @@ async function sendBulkNotification() {
         // Si hay promo, la metemos en el data para que el SW pueda accionarla
         // al click. La promo SE GUARDA tambien server-side en /admin/promo-alert
         // (esa es la fuente de verdad para el polling del client).
+        const promoExpiresAtIso = promoEnabled
+            ? new Date(Date.now() + promoDurationHours * 3600 * 1000).toISOString()
+            : null;
         if (promoEnabled) {
             payload.data.promoCode = promoCode;
             payload.data.promoMessage = promoMessage;
             payload.data.promoExpiresIn = String(promoDurationHours);
         }
+        // Metadatos para el row de NotificationHistory que crea el server.
+        payload.historyMeta = {
+            type: promoEnabled ? 'whatsapp_promo' : 'plain',
+            promoMessage: promoEnabled ? promoMessage : null,
+            promoCode:    promoEnabled ? promoCode : null,
+            promoExpiresAt: promoExpiresAtIso
+        };
 
-        // Crear/reemplazar la promo activa ANTES del envio. Asi cuando el
-        // user reciba el push y abra la app, el endpoint /promo-alert/active
-        // ya devuelve la promo nueva (no la anterior).
-        if (promoEnabled) {
+        // 1) Enviar la notificacion. El server crea el row de historial
+        //    y nos devuelve historyId.
+        const r = await authFetch('/api/notifications/send-all', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const data = await r.json();
+
+        // 2) Si hay promo, recien ahora creamos la promo (con el historyId
+        //    asociado) asi los clicks del cartel suman al row correcto.
+        if (promoEnabled && r.ok && data.success) {
             try {
                 const promoR = await authFetch('/api/admin/promo-alert', {
                     method: 'POST',
@@ -1247,27 +1365,18 @@ async function sendBulkNotification() {
                         message: promoMessage,
                         code: promoCode,
                         durationHours: promoDurationHours,
-                        prefix: prefix || null
+                        prefix: prefix || null,
+                        notificationHistoryId: data.historyId || null
                     })
                 });
                 if (!promoR.ok) {
                     const e = await promoR.json().catch(() => ({}));
-                    showToast('Error creando promo: ' + (e.error || promoR.status), 'error');
-                    if (btn) { btn.disabled = false; btn.textContent = defaultBtnText; }
-                    return;
+                    showToast('Notif enviada pero falló crear promo: ' + (e.error || promoR.status), 'error');
                 }
             } catch (e) {
-                showToast('Error creando promo: ' + e.message, 'error');
-                if (btn) { btn.disabled = false; btn.textContent = defaultBtnText; }
-                return;
+                showToast('Notif enviada pero falló crear promo: ' + e.message, 'error');
             }
         }
-
-        const r = await authFetch('/api/notifications/send-all', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-        const data = await r.json();
         if (r.ok && data.success) {
             const targetLine = data.prefix
                 ? `Audiencia: <strong>usuarios "${escapeHtml(data.prefix)}*"</strong><br>`

@@ -54,6 +54,7 @@ const {
   Transaction,
   ExternalUser,
   UserActivity,
+  NotificationHistory,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -7045,7 +7046,8 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
       message: promo.message,
       code: promo.code,
       expiresAt: promo.expiresAt,
-      createdAt: promo.createdAt
+      createdAt: promo.createdAt,
+      notificationHistoryId: promo.notificationHistoryId || null
     });
   } catch (error) {
     logger.error(`/api/promo-alert/active error: ${error.message}`);
@@ -7053,11 +7055,53 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
   }
 });
 
+// POST /api/promo-alert/track-click — incrementa contador waClicks del
+// row de historial asociado a la promo activa. Llamado por el cliente
+// cuando el user toca el cartel "RECLAMÁ" (o el QUIERO CARGAR cuando
+// hay promo activa). Idempotente best-effort: si la promo no tiene
+// notificationHistoryId, retornamos 200 sin hacer nada.
+app.post('/api/promo-alert/track-click', authMiddleware, async (req, res) => {
+  try {
+    const promo = await getConfig(PROMO_ALERT_KEY, null);
+    if (!promo || !promo.notificationHistoryId) return res.json({ ok: true, tracked: false });
+    await NotificationHistory.updateOne(
+      { id: promo.notificationHistoryId },
+      { $inc: { waClicks: 1 } }
+    );
+    res.json({ ok: true, tracked: true });
+  } catch (error) {
+    logger.warn(`/api/promo-alert/track-click error: ${error.message}`);
+    res.json({ ok: true, tracked: false });
+  }
+});
+
+// GET admin: lista paginada del historial de notificaciones.
+// Query: ?limit=50&type=plain|whatsapp_promo|money_giveaway
+app.get('/api/admin/notifications/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
+    const filter = {};
+    if (req.query.type && ['plain', 'whatsapp_promo', 'money_giveaway'].includes(req.query.type)) {
+      filter.type = req.query.type;
+    }
+    const list = await NotificationHistory.find(filter)
+      .sort({ sentAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ count: list.length, items: list });
+  } catch (error) {
+    logger.error(`/api/admin/notifications/history error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST admin: crear o reemplazar el promo activo.
-// Body: { message, code, durationHours, prefix? }
+// Body: { message, code, durationHours, prefix?, notificationHistoryId? }
+// notificationHistoryId vincula la promo con el row del historial para
+// que los waClicks que se trackeen sumen al row correcto.
 app.post('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { message, code, durationHours, prefix } = req.body || {};
+    const { message, code, durationHours, prefix, notificationHistoryId } = req.body || {};
     const msg = String(message || '').trim().slice(0, 200);
     const codeNorm = _normalizePromoCode(code);
     const hours = Number(durationHours);
@@ -7075,7 +7119,8 @@ app.post('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, 
       expiresAt: expires.toISOString(),
       createdAt: now.toISOString(),
       createdBy: req.user.username || null,
-      prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null
+      prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null,
+      notificationHistoryId: notificationHistoryId || null
     };
     await setConfig(PROMO_ALERT_KEY, promo);
     res.json({ success: true, promo });

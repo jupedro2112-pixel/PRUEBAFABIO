@@ -18,6 +18,7 @@ const ReferralCommission = require('./ReferralCommission');
 const ReferralPayout = require('./ReferralPayout');
 const ReferralEvent = require('./ReferralEvent');
 const OtpCode = require('./OtpCode');
+const NotificationHistory = require('./NotificationHistory');
 
 
 /**
@@ -408,7 +409,8 @@ module.exports = {
   ReferralPayout,
   ReferralEvent,
   OtpCode,
-  
+  NotificationHistory,
+
   // Funciones de conexión
   connectDB,
   disconnectDB,

@@ -20,7 +20,8 @@ const {
   RefundClaim,
   FireStreak,
   ChatStatus,
-  Transaction
+  Transaction,
+  NotificationHistory
 } = require('../src/models');
 
 // ============================================
@@ -314,6 +315,7 @@ module.exports = {
   Transaction,
   ExternalUser,
   UserActivity,
+  NotificationHistory,
   // Helpers
   getConfig,
   setConfig,

@@ -523,7 +523,7 @@ router.post('/test', requireAdmin, async (req, res) => {
 // ============================================
 router.post('/send-all', requireAdmin, async (req, res) => {
   try {
-    const { title, body, data, filter, prefix } = req.body;
+    const { title, body, data, filter, prefix, historyMeta } = req.body;
 
     if (!title || !body) {
       return res.status(400).json({
@@ -549,6 +549,40 @@ router.post('/send-all', requireAdmin, async (req, res) => {
       finalFilter
     );
 
+    // Registrar en el historial de notificaciones (best-effort, no bloquea
+    // la respuesta si falla). historyMeta lo manda el caller del admin con
+    // info adicional (tipo de notif, datos de promo o giveaway).
+    let historyId = null;
+    try {
+      const NotificationHistory = require('../models/NotificationHistory');
+      const { v4: uuidv4 } = require('uuid');
+      const meta = historyMeta || {};
+      const entry = await NotificationHistory.create({
+        id: uuidv4(),
+        sentAt: new Date(),
+        scheduledFor: meta.scheduledFor ? new Date(meta.scheduledFor) : null,
+        audienceType: prefix ? 'prefix' : 'all',
+        audiencePrefix: prefix || null,
+        title,
+        body,
+        type: meta.type || 'plain',
+        promoMessage: meta.promoMessage || null,
+        promoCode: meta.promoCode || null,
+        promoExpiresAt: meta.promoExpiresAt ? new Date(meta.promoExpiresAt) : null,
+        giveawayAmount: meta.giveawayAmount || null,
+        giveawayDurationMins: meta.giveawayDurationMins || null,
+        giveawayExpiresAt: meta.giveawayExpiresAt ? new Date(meta.giveawayExpiresAt) : null,
+        totalUsers: result.totalUsers || 0,
+        successCount: result.successCount || 0,
+        failureCount: result.failureCount || 0,
+        cleanedTokens: result.cleanedTokens || 0,
+        sentBy: meta.sentBy || null
+      });
+      historyId = entry.id;
+    } catch (histErr) {
+      console.warn('[FCM] No se pudo guardar en NotificationHistory:', histErr.message);
+    }
+
     if (result.success) {
       res.json({
         success: true,
@@ -558,7 +592,8 @@ router.post('/send-all', requireAdmin, async (req, res) => {
         successCount: result.successCount,
         failureCount: result.failureCount,
         cleanedTokens: result.cleanedTokens || 0,
-        failedTokens: result.failedTokens
+        failedTokens: result.failedTokens,
+        historyId
       });
     } else {
       res.status(500).json({
