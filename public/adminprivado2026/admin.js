@@ -563,12 +563,17 @@ function renderRefundsReport(container, data, type) {
     if (refunds.length === 0) {
         html += '<div class="empty-state">No hay reclamos en este rango.</div>';
     } else {
-        html += '<table class="report-table"><thead><tr><th>Usuario</th><th>Período</th><th>Monto</th><th>Reclamado</th></tr></thead><tbody>';
+        html += '<table class="report-table"><thead><tr><th>Usuario</th><th>Período</th><th>Monto</th><th>Estado</th><th>Reclamado</th></tr></thead><tbody>';
         for (const ref of refunds) {
+            const status = ref.status || 'completed';
+            const statusCell = status === 'pending_credit_failed'
+                ? '<span style="color:#ff6666;font-weight:700;" title="' + escapeHtml(ref.creditError || '') + '">⚠️ PENDIENTE</span>'
+                : '<span style="color:#25d366;">✅ OK</span>';
             html += '<tr>';
             html += '  <td><strong>' + escapeHtml(ref.username) + '</strong></td>';
             html += '  <td>' + escapeHtml(ref.period || '-') + '</td>';
             html += '  <td>' + formatMoney(ref.amount) + '</td>';
+            html += '  <td>' + statusCell + '</td>';
             html += '  <td>' + escapeHtml(formatDate(ref.claimedAt)) + '</td>';
             html += '</tr>';
         }

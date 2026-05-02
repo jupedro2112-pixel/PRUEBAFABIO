@@ -272,18 +272,38 @@ const cbuRequestTimestamps = cbuRequestTimestampsMemory;
 // { userId, type, periodKey } del modelo RefundClaim, garantiza que MongoDB
 // rechace cualquier insert duplicado, incluso si el lock de Redis falla
 // (por ejemplo, multiples instancias EB sin Redis configurado).
+//
+// IMPORTANTE: usa Intl.DateTimeFormat para que la conversion a TZ Argentina
+// sea coherente con _argDateString() de models/refunds.js (que tambien usa
+// Intl). Si Argentina cambia su offset alguna vez, ambos seguiran la tzdata
+// del SO sin divergencias entre el check canClaim y el periodKey.
+function _getArgentinaParts(date = new Date()) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = fmt.formatToParts(date);
+  const get = (t) => parts.find(p => p.type === t).value;
+  return {
+    year: parseInt(get('year'), 10),
+    month: parseInt(get('month'), 10),
+    day: parseInt(get('day'), 10)
+  };
+}
+
 function computePeriodKey(type) {
-  const ART_OFFSET_MS = 3 * 60 * 60 * 1000; // UTC-3
-  const nowArt = new Date(Date.now() - ART_OFFSET_MS);
-  const yyyy = nowArt.getUTCFullYear();
-  const mm = String(nowArt.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(nowArt.getUTCDate()).padStart(2, '0');
+  const { year, month, day } = _getArgentinaParts();
+  const yyyy = String(year);
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
   if (type === 'daily') {
     return `${yyyy}-${mm}-${dd}`;
   }
   if (type === 'weekly') {
-    // ISO week number en TZ Argentina
-    const target = new Date(Date.UTC(yyyy, nowArt.getUTCMonth(), nowArt.getUTCDate()));
+    // ISO week number en TZ Argentina, calculado a partir de y/m/d en ART.
+    const target = new Date(Date.UTC(year, month - 1, day));
     const dayNum = (target.getUTCDay() + 6) % 7; // lunes=0
     target.setUTCDate(target.getUTCDate() - dayNum + 3);
     const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
@@ -294,6 +314,63 @@ function computePeriodKey(type) {
     return `${yyyy}-${mm}`;
   }
   return null;
+}
+
+// Backfill de periodKey en RefundClaims viejos creados antes de que el campo
+// fuera obligatorio. Solo se ejecuta una vez por arranque y solo procesa los
+// rows que tienen periodKey null o ausente. Es necesario para que el indice
+// unique partial (que indexa SOLO rows con periodKey string) tenga cobertura
+// completa hacia atras y prevenga retro-claims duplicados de periodos pasados.
+async function backfillRefundClaimPeriodKeys() {
+  try {
+    const RefundClaim = require('./src/models/RefundClaim');
+    const cursor = RefundClaim.find({ periodKey: { $in: [null, undefined] } }).cursor();
+    let scanned = 0, updated = 0;
+    for (let doc = await cursor.next(); doc != null; doc = await cursor.next()) {
+      scanned++;
+      if (!doc.claimedAt || !doc.type) continue;
+      const parts = _getArgentinaParts(new Date(doc.claimedAt));
+      const yyyy = String(parts.year);
+      const mm = String(parts.month).padStart(2, '0');
+      const dd = String(parts.day).padStart(2, '0');
+      let pk = null;
+      if (doc.type === 'daily') pk = `${yyyy}-${mm}-${dd}`;
+      else if (doc.type === 'monthly') pk = `${yyyy}-${mm}`;
+      else if (doc.type === 'weekly') {
+        const t = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+        const dayNum = (t.getUTCDay() + 6) % 7;
+        t.setUTCDate(t.getUTCDate() - dayNum + 3);
+        const ft = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+        const w = 1 + Math.round(((t.getTime() - ft.getTime()) / 86400000 - 3 + ((ft.getUTCDay() + 6) % 7)) / 7);
+        pk = `${t.getUTCFullYear()}-W${String(w).padStart(2, '0')}`;
+      }
+      if (!pk) continue;
+      try {
+        await RefundClaim.updateOne({ _id: doc._id }, { $set: { periodKey: pk } });
+        updated++;
+      } catch (e) {
+        if (e && e.code === 11000) {
+          // El backfill encontro un duplicado historico real: dos claims del
+          // mismo {user, type} en el mismo periodo (datos sucios pre-fix).
+          // No podemos darles ambos el mismo periodKey porque rompe el indice.
+          // Marcamos el mas viejo con un sufijo para que no colisione, asi el
+          // indice queda consistente y el admin puede revisar manualmente.
+          try {
+            await RefundClaim.updateOne(
+              { _id: doc._id },
+              { $set: { periodKey: `${pk}-LEGACY-${doc._id.toString().slice(-6)}` } }
+            );
+            logger.warn(`[backfillRefundClaimPeriodKeys] duplicado historico marcado LEGACY para review: claim ${doc._id} (${doc.username} ${doc.type} ${pk})`);
+          } catch (e2) { /* best-effort */ }
+        }
+      }
+    }
+    if (scanned > 0) {
+      logger.info(`[backfillRefundClaimPeriodKeys] scaneados=${scanned} actualizados=${updated}`);
+    }
+  } catch (err) {
+    logger.error(`[backfillRefundClaimPeriodKeys] error: ${err.message}`);
+  }
 }
 
 async function acquireRefundLock(userId, type) {
@@ -4235,13 +4312,27 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
       const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
 
       if (!depositResult.success) {
-        // Rollback: el credit fallo, eliminamos el placeholder para que el
-        // usuario pueda reintentar.
-        try { await RefundClaim.deleteOne({ _id: claim._id }); } catch (_) {}
+        // CRITICO: NO eliminamos el RefundClaim. Si el credit retorna
+        // success:false por timeout/red, JUGAYGANA pudo haber aplicado el
+        // deposito y la respuesta haberse perdido en el cable. Borrar el
+        // record permitiria al usuario reclamar de nuevo y disparar un
+        // segundo credit. En su lugar marcamos status='pending_credit_failed'
+        // para que el indice unique siga bloqueando re-reclamos y un admin
+        // pueda reconciliar contra JUGAYGANA: si el credito no aplico, borra
+        // el row a mano (admin); si aplico, marca como completed.
+        try {
+          claim.status = 'pending_credit_failed';
+          claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
+          await claim.save();
+        } catch (e) {
+          logger.error(`[REFUND] no se pudo persistir pending_credit_failed para claim ${claim._id}: ${e.message}`);
+        }
+        logger.error(`[REFUND] credit fallo para ${username} (${claim.type} ${claim.periodKey}): ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed`);
         return res.json({
           success: false,
-          message: 'Error al acreditar el reembolso: ' + depositResult.error,
-          canClaim: true
+          message: 'Hubo un problema al acreditar tu reembolso. El administrador lo está revisando — no reintentes, podés contactarte por WhatsApp.',
+          canClaim: false,
+          pendingReview: true
         });
       }
 
@@ -5714,6 +5805,11 @@ async function initializeData() {
   }
   } // end if (adminUsername)
   
+  // Backfill de periodKey en RefundClaim viejos: necesario para que el indice
+  // unique partial cubra retroactivamente los reembolsos anteriores al fix.
+  // Idempotente y barato si no hay rows con periodKey null.
+  await backfillRefundClaimPeriodKeys();
+
   // Verificar/crear configuración CBU por defecto
   const cbuConfig = await getConfig('cbu');
   if (!cbuConfig) {
@@ -6453,6 +6549,9 @@ app.get('/api/admin/reports/refunds', authMiddleware, adminMiddleware, async (re
         amount: r.amount,
         netAmount: r.netAmount,
         period: r.period,
+        periodKey: r.periodKey || null,
+        status: r.status || 'completed',
+        creditError: r.creditError || null,
         claimedAt: r.claimedAt
       }))
     });
