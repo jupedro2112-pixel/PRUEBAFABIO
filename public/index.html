@@ -763,20 +763,22 @@
 
         /* Card del bono de bienvenida ($10.000 one-time). Paleta dorada
            festiva para diferenciarlo de los reembolsos recurrentes.
+           Layout mobile-first: padding compacto, fuentes con clamp y boton
+           a 100% para evitar overflow en pantallas chicas (iPhone SE 320px).
            order:1.7 lo deja entre userBalanceCard (1.5) y refunds-welcome (2)
            en mobile, igual posicion que en desktop (debajo de "Abrir plataforma"). */
         .welcome-bonus-card {
             text-align: center;
             width: 100%;
             max-width: 460px;
-            margin: 0 auto 14px;
-            padding: 18px 20px;
-            background: linear-gradient(135deg, rgba(255,200,0,0.16), rgba(212,175,55,0.06));
+            margin: 0 auto 12px;
+            padding: 14px 14px;
+            background: linear-gradient(135deg, rgba(255,200,0,0.18), rgba(212,175,55,0.08));
             border: 2px solid #ffcc00;
-            border-radius: 18px;
+            border-radius: 16px;
             color: #fff;
             box-sizing: border-box;
-            box-shadow: 0 6px 24px rgba(255,200,0,0.20);
+            box-shadow: 0 6px 24px rgba(255,200,0,0.22);
             order: 1.7;
             position: relative;
             overflow: hidden;
@@ -790,46 +792,55 @@
             pointer-events: none;
         }
         .welcome-bonus-icon {
-            font-size: 32px;
+            font-size: clamp(24px, 7vw, 32px);
             line-height: 1;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
         }
         .welcome-bonus-title {
-            font-size: 12px;
+            font-size: clamp(10px, 3vw, 12px);
             text-transform: uppercase;
-            letter-spacing: 2px;
+            letter-spacing: 1.5px;
             color: #ffd700;
             font-weight: 800;
             text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+            line-height: 1.2;
+            word-break: break-word;
         }
         .welcome-bonus-amount {
-            font-size: clamp(28px, 8vw, 36px);
+            font-size: clamp(22px, 7.5vw, 34px);
             font-weight: 900;
             color: #fff;
             margin: 4px 0 6px;
             text-shadow: 0 2px 6px rgba(255,200,0,0.4);
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
+            line-height: 1.1;
+            word-break: break-word;
         }
         .welcome-bonus-subtitle {
-            font-size: 12px;
+            font-size: clamp(11px, 3vw, 13px);
             color: #ffe9a0;
             line-height: 1.4;
-            margin-bottom: 12px;
+            margin: 0 0 10px;
+            padding: 0 4px;
+            word-break: break-word;
         }
         .welcome-bonus-btn {
             background: linear-gradient(135deg, #ffd700 0%, #f7931e 100%);
             color: #1a1a1a;
             border: none;
-            padding: 12px 22px;
-            border-radius: 14px;
+            padding: 12px 14px;
+            border-radius: 12px;
             font-weight: 800;
-            font-size: 14px;
+            font-size: clamp(13px, 3.6vw, 15px);
             cursor: pointer;
             box-shadow: 0 4px 14px rgba(255,200,0,0.35);
             transition: transform 0.12s ease, box-shadow 0.18s ease;
             -webkit-tap-highlight-color: rgba(255,255,255,0.2);
             touch-action: manipulation;
-            min-width: 200px;
+            width: 100%;
+            max-width: 320px;
+            white-space: normal;
+            line-height: 1.2;
         }
         .welcome-bonus-btn:hover { box-shadow: 0 6px 20px rgba(255,200,0,0.55); }
         .welcome-bonus-btn:active { transform: scale(0.97); }

@@ -656,6 +656,7 @@ VIP.refunds = (function () {
 
         card.classList.remove('claimed');
         // Subtitulo dinamico segun estado actual de instalacion + notifs.
+        // Textos del boton cortos para no romper layout en mobile.
         const inApp = isStandalone();
         const installed = isAppInstalled();
         const notifOk = isNotifGranted();
@@ -663,13 +664,13 @@ VIP.refunds = (function () {
             subtitleEl.textContent = 'Tocá el botón y empezá por instalar la app.';
             btn.textContent = '🎁 RECLAMAR $' + amountNum.toLocaleString('es-AR');
         } else if (!inApp) {
-            subtitleEl.textContent = 'Abrí la app desde el ícono de tu celular para continuar.';
-            btn.textContent = '📱 Continuar (abrir desde la app)';
+            subtitleEl.textContent = 'Abrí la app desde el ícono de tu celular.';
+            btn.textContent = '📱 ABRIR DESDE LA APP';
         } else if (!notifOk) {
             subtitleEl.textContent = 'Último paso: activá las notificaciones.';
-            btn.textContent = '🔔 Activar notificaciones';
+            btn.textContent = '🔔 ACTIVAR NOTIFS';
         } else {
-            subtitleEl.textContent = '🎉 ¡Listo! Tocá para acreditar tus $' + amountNum.toLocaleString('es-AR') + '.';
+            subtitleEl.textContent = '🎉 ¡Listo! Tocá para acreditar.';
             btn.textContent = '🎁 RECLAMAR $' + amountNum.toLocaleString('es-AR');
         }
         btn.disabled = false;
@@ -746,3 +747,22 @@ VIP.refunds = (function () {
 // Window aliases
 window.showRefundModal = VIP.refunds.showRefundModal;
 window.claimRefund     = VIP.refunds.claimRefund;
+
+// Defensa extra para el boton del bono de bienvenida: capturamos clicks
+// en cualquier elemento del card via event delegation a nivel document.
+// Asi funciona aunque el inline onclick haya quedado caido (cache vieja),
+// el render dinamico no haya enlazado btn.onclick aun, o el evento se
+// dispare en un hijo del boton (icono/text node).
+document.addEventListener('click', function (e) {
+    const btn = e.target && e.target.closest && e.target.closest('#welcomeBonusBtn');
+    if (!btn) return;
+    if (btn.disabled) return;
+    e.preventDefault();
+    try {
+        if (VIP && VIP.refunds && typeof VIP.refunds.handleWelcomeBonusClick === 'function') {
+            VIP.refunds.handleWelcomeBonusClick();
+        }
+    } catch (err) {
+        console.error('welcome bonus click failed:', err);
+    }
+}, true);
