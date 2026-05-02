@@ -668,6 +668,10 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 window.addEventListener('appinstalled', () => {
     console.log('PWA: App instalada exitosamente');
+    // Guardamos un flag para que, cuando el usuario vuelva a la web (no standalone),
+    // sepamos que ya instalo la app y mostremos 'Ingresa desde la app' en lugar de
+    // las instrucciones de instalacion.
+    try { localStorage.setItem('vipAppInstalled', '1'); } catch (_) {}
     const loginInstallBtn  = document.getElementById('installBtn');
     const headerInstallBtn = document.getElementById('headerInstallBtn');
     const appInstallBtn    = document.getElementById('appInstallBtn');
@@ -680,6 +684,9 @@ window.addEventListener('appinstalled', () => {
 
 // Hide install buttons if already running as standalone
 if (VIP.ui.isAppStandalone()) {
+    // Si ya esta corriendo como standalone significa que ya esta instalada,
+    // marcamos el flag (cubre el caso de instalaciones previas a este codigo).
+    try { localStorage.setItem('vipAppInstalled', '1'); } catch (_) {}
     const loginInstallBtn  = document.getElementById('installBtn');
     const headerInstallBtn = document.getElementById('headerInstallBtn');
     const appInstallBtn    = document.getElementById('appInstallBtn');

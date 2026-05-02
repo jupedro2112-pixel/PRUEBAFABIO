@@ -28,22 +28,35 @@ VIP.refunds = (function () {
     // tipo para retomar automáticamente cuando los requisitos se cumplan.
     let _pendingClaimType = null;
 
+    // Detecta si la app ya fue instalada en este navegador. Combina dos señales:
+    //  - el flag persistido en localStorage por el handler `appinstalled`,
+    //  - el modo standalone actual (caso de instalaciones previas al flag).
+    function isAppInstalled() {
+        try {
+            if (localStorage.getItem('vipAppInstalled') === '1') return true;
+        } catch (_) {}
+        return isStandalone();
+    }
+
     function refreshRequirementsModal() {
-        const installOk = isStandalone();
+        const inApp = isStandalone();
+        const installed = isAppInstalled();
         const notifOk = isNotifGranted();
 
         const installBadge = document.getElementById('reqInstallBadge');
         const notifBadge   = document.getElementById('reqNotifBadge');
         const installBtn   = document.getElementById('reqInstallBtn');
         const notifBtn     = document.getElementById('reqNotifBtn');
+        const stepInstall  = document.getElementById('reqStepInstall');
+        const introMsg     = document.getElementById('reqIntroMsg');
 
-        if (installBadge) installBadge.textContent = installOk ? '✅' : '⏳';
+        if (installBadge) installBadge.textContent = inApp ? '✅' : '⏳';
         if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
 
         if (installBtn) {
-            installBtn.disabled = installOk;
-            installBtn.textContent = installOk ? '✅ App instalada' : '📱 Instalar la app';
-            installBtn.style.opacity = installOk ? '0.6' : '1';
+            installBtn.disabled = inApp;
+            installBtn.textContent = inApp ? '✅ App instalada' : '📱 Instalar la app';
+            installBtn.style.opacity = inApp ? '0.6' : '1';
         }
         if (notifBtn) {
             notifBtn.disabled = notifOk;
@@ -51,7 +64,22 @@ VIP.refunds = (function () {
             notifBtn.style.opacity = notifOk ? '0.6' : '1';
         }
 
-        return installOk && notifOk;
+        // UX: si la app ya esta instalada pero el user esta en el navegador,
+        // ocultamos el paso 1 (instrucciones de instalacion) y cambiamos el
+        // mensaje superior a "ingresa desde la aplicacion + activa notifs".
+        if (installed && !inApp) {
+            if (stepInstall) stepInstall.style.display = 'none';
+            if (introMsg) {
+                introMsg.innerHTML = '<strong>Ingresá desde la aplicación</strong> para reclamar tu reembolso. No olvides <strong>activar las notificaciones</strong> para que se active la opción de reclamar.';
+            }
+        } else {
+            if (stepInstall) stepInstall.style.display = '';
+            if (introMsg) {
+                introMsg.innerHTML = 'Necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamar tus reembolsos sin problemas.';
+            }
+        }
+
+        return inApp && notifOk;
     }
 
     function openRequirementsModal(claimType) {
@@ -360,21 +388,24 @@ VIP.refunds = (function () {
         }
         block.style.display = 'block';
 
-        const installOk = isStandalone();
+        const inApp = isStandalone();
+        const installed = isAppInstalled();
         const notifOk = isNotifGranted();
 
         const installBadge = document.getElementById('refundReqInstallBadge');
         const notifBadge   = document.getElementById('refundReqNotifBadge');
         const installBtn   = document.getElementById('refundReqInstallBtn');
         const notifBtn     = document.getElementById('refundReqNotifBtn');
+        const stepInstall  = document.getElementById('refundReqStepInstall');
+        const introMsg     = document.getElementById('refundReqIntroMsg');
 
-        if (installBadge) installBadge.textContent = installOk ? '✅' : '⏳';
+        if (installBadge) installBadge.textContent = inApp ? '✅' : '⏳';
         if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
 
         if (installBtn) {
-            installBtn.disabled = installOk;
-            installBtn.textContent = installOk ? '✅ App instalada' : '📱 Instalar la app';
-            installBtn.style.opacity = installOk ? '0.6' : '1';
+            installBtn.disabled = inApp;
+            installBtn.textContent = inApp ? '✅ App instalada' : '📱 Instalar la app';
+            installBtn.style.opacity = inApp ? '0.6' : '1';
             installBtn.onclick = async () => {
                 _pendingClaimType = claimType || null;
                 await handleRequirementInstall();
@@ -392,6 +423,21 @@ VIP.refunds = (function () {
                 renderRefundRequirementsBlock(claimType);
                 refreshClaimButtonState(claimType);
             };
+        }
+
+        // Mismo criterio que refreshRequirementsModal: si ya esta instalada
+        // pero el user esta en navegador, ocultamos el paso 1 y reescribimos
+        // el mensaje superior.
+        if (installed && !inApp) {
+            if (stepInstall) stepInstall.style.display = 'none';
+            if (introMsg) {
+                introMsg.innerHTML = '<strong>Ingresá desde la aplicación</strong> para reclamar tu reembolso. No olvides <strong>activar las notificaciones</strong> para que se active la opción de reclamar.';
+            }
+        } else {
+            if (stepInstall) stepInstall.style.display = '';
+            if (introMsg) {
+                introMsg.innerHTML = 'Para reclamar este reembolso necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamarlo sin problemas.';
+            }
         }
     }
 
