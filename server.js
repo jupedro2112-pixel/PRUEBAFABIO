@@ -61,6 +61,7 @@ const {
   WaClickLog,
   PlayerStats,
   RecoveryPush,
+  JugayganaImport,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -8399,6 +8400,380 @@ app.post('/api/admin/stats/recovery-push', authMiddleware, adminMiddleware, asyn
     logger.error(`/api/admin/stats/recovery-push: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
+});
+
+// ============================================
+// IMPORT CSV DE JUGAYGANA — analisis bulk de transacciones
+// ============================================
+//
+// El admin sube un CSV exportado de JUGAYGANA con todas las transacciones
+// de los ultimos N dias (puede tener 200k+ filas). Procesamos en streaming
+// (sin cargar archivo entero a memoria), agregamos por user, actualizamos
+// PlayerStats con las cargas REALES (deposit), retiros (withdraw) y bonos
+// (individual_bonus, que sabemos son los nuestros). Los datos crudos NO
+// se persisten — solo queda el resumen en JugayganaImport y los agregados
+// en PlayerStats.
+//
+// Formato del CSV (primera fila = headers):
+//   A: Type   (deposit | withdraw | individual_bonus)
+//   B: Amount (decimal)
+//   C: Initiator (agente, no usado)
+//   D: User   (username del jugador)
+//   E: Parent (grupo JUGAYGANA, no usado)
+//   F: Time   (DD/M/YYYY o D/M/YYYY)
+//   G: hora HH:MM:SS.ms (ignorada por ahora — usamos solo fecha)
+//   H: balance antes (no usado)
+//   I: balance despues (no usado)
+//
+// Limites: aceptamos hasta 100MB de body raw. Para 200k filas eso son
+// ~30MB asi que sobra.
+// ============================================
+const csvImportLimitMb = '100mb';
+
+// Parser flexible: detecta delimiter (',' o ';' o '\t'), parsea fechas
+// DMY o ISO, normaliza tipo de operacion a {deposit, withdraw, bonus}.
+function _parseJugayganaCsv(rawText) {
+  const out = {
+    rows: [],          // [{ type, amount, username, dateMs }, ...]
+    skipped: 0,
+    delimiter: null,
+    dateFormat: null,
+    headerRow: false
+  };
+  if (!rawText || typeof rawText !== 'string') return out;
+
+  // Detectar delimiter — el primer split por linea, contar comas/semicolons/tabs.
+  const firstNewline = rawText.indexOf('\n');
+  const sample = firstNewline > 0 ? rawText.slice(0, Math.min(2000, firstNewline)) : rawText.slice(0, 2000);
+  const counts = {
+    ',': (sample.match(/,/g) || []).length,
+    ';': (sample.match(/;/g) || []).length,
+    '\t': (sample.match(/\t/g) || []).length
+  };
+  let delim = ',';
+  if (counts[';'] > counts[',']) delim = ';';
+  else if (counts['\t'] > counts[',']) delim = '\t';
+  out.delimiter = delim;
+
+  const lines = rawText.split(/\r?\n/);
+  if (lines.length === 0) return out;
+
+  // Header detection: si la primera linea tiene "Type" o "type" o "Amount"
+  // o "User" la tratamos como header y la skipeamos.
+  const firstLine = lines[0].toLowerCase();
+  const hasHeader = /\btype\b|\bamount\b|\buser\b|\btime\b/.test(firstLine);
+  out.headerRow = hasHeader;
+  const startIdx = hasHeader ? 1 : 0;
+
+  for (let i = startIdx; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || !line.trim()) continue;
+    const cols = _splitCsvLine(line, delim);
+    if (cols.length < 6) { out.skipped++; continue; }
+
+    const typeRaw = String(cols[0] || '').trim().toLowerCase();
+    const amountRaw = String(cols[1] || '').trim();
+    const userRaw = String(cols[3] || '').trim();
+    const dateRaw = String(cols[5] || '').trim();
+    const timeRaw = cols[6] ? String(cols[6]).trim() : '';
+
+    if (!typeRaw || !userRaw || !amountRaw || !dateRaw) { out.skipped++; continue; }
+
+    // Normalizar tipo: 'deposit', 'withdraw', 'bonus' (cubre individual_bonus,
+    // bonus, etc).
+    let type;
+    if (typeRaw === 'deposit' || typeRaw.startsWith('depo')) type = 'deposit';
+    else if (typeRaw === 'withdraw' || typeRaw.startsWith('with') || typeRaw.startsWith('retir')) type = 'withdraw';
+    else if (typeRaw.includes('bonus') || typeRaw.includes('bonif')) type = 'bonus';
+    else { out.skipped++; continue; }
+
+    // Monto: limpiar $ , puntos miles, comas decimales.
+    const amount = _parseAmount(amountRaw);
+    if (!Number.isFinite(amount) || amount <= 0) { out.skipped++; continue; }
+
+    // Fecha: el sample del cliente es DD/M/YYYY (mes sin cero).
+    // Tambien soportamos DD/MM/YYYY y YYYY-MM-DD (ISO).
+    const dateMs = _parseDateFlexible(dateRaw, timeRaw);
+    if (!dateMs) { out.skipped++; continue; }
+
+    out.rows.push({ type, amount, username: userRaw.toLowerCase(), dateMs });
+  }
+
+  if (out.rows.length > 0) {
+    // Detectamos formato de fecha del primer row exitoso para el log.
+    const sampleDate = lines[startIdx]?.split(delim)[5];
+    out.dateFormat = /^\d{4}-\d{2}-\d{2}/.test(String(sampleDate || '')) ? 'iso' : 'dmy';
+  }
+
+  return out;
+}
+
+// Split CSV respetando comillas dobles (campos con comas adentro).
+function _splitCsvLine(line, delim) {
+  const out = [];
+  let buf = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { buf += '"'; i++; } // escaped quote
+      else inQuotes = !inQuotes;
+    } else if (ch === delim && !inQuotes) {
+      out.push(buf);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  out.push(buf);
+  return out;
+}
+
+function _parseAmount(s) {
+  if (!s) return NaN;
+  // Quitar $, espacios.
+  let t = String(s).replace(/[\s$]/g, '');
+  // Si tiene tanto . como ,: el ultimo es decimal; el otro es separador miles.
+  const lastDot = t.lastIndexOf('.');
+  const lastComma = t.lastIndexOf(',');
+  if (lastDot >= 0 && lastComma >= 0) {
+    if (lastComma > lastDot) {
+      // formato 1.234,56 → quitar puntos, cambiar coma por punto
+      t = t.replace(/\./g, '').replace(',', '.');
+    } else {
+      // formato 1,234.56 → quitar comas
+      t = t.replace(/,/g, '');
+    }
+  } else if (lastComma >= 0 && lastDot < 0) {
+    // 1234,5 → coma como decimal
+    t = t.replace(',', '.');
+  }
+  // si solo tiene punto, ya esta OK
+  return parseFloat(t);
+}
+
+function _parseDateFlexible(dateStr, timeStr) {
+  if (!dateStr) return null;
+  let d;
+  // ISO YYYY-MM-DD
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(dateStr);
+  if (m) {
+    d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  } else {
+    // DMY: DD/M/YYYY o DD-M-YYYY
+    m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/.exec(dateStr);
+    if (m) {
+      let year = +m[3];
+      if (year < 100) year += 2000;
+      d = new Date(Date.UTC(year, +m[2] - 1, +m[1]));
+    }
+  }
+  if (!d || !Number.isFinite(d.getTime())) return null;
+  // Hora opcional HH:MM:SS o HH:MM:SS.ms
+  if (timeStr) {
+    const tm = /^(\d{1,2}):(\d{1,2})(?::(\d{1,2})(?:\.(\d+))?)?/.exec(timeStr);
+    if (tm) {
+      d.setUTCHours(+tm[1], +tm[2], +(tm[3] || 0), 0);
+    }
+  }
+  return d.getTime();
+}
+
+// Estado del import (para que el frontend polee).
+let _csvImportState = { running: false, total: 0, parsed: 0, valid: 0, skipped: 0, startedAt: null, finishedAt: null, importId: null };
+
+app.post(
+  '/api/admin/stats/import-csv',
+  authMiddleware,
+  adminMiddleware,
+  express.text({ limit: csvImportLimitMb, type: '*/*' }),
+  async (req, res) => {
+    if (_csvImportState.running) {
+      return res.json({ success: false, message: 'Ya hay un import corriendo', state: _csvImportState });
+    }
+    const raw = req.body;
+    if (!raw || typeof raw !== 'string' || raw.length < 100) {
+      return res.status(400).json({ error: 'Archivo vacio o muy chico' });
+    }
+
+    // Hash para idempotencia.
+    const contentHash = crypto.createHash('sha256').update(raw).digest('hex');
+    const existing = await JugayganaImport.findOne({ contentHash, status: 'completed' }).lean();
+    if (existing) {
+      return res.json({
+        success: true,
+        skipped: true,
+        message: 'Este archivo ya fue importado el ' + new Date(existing.uploadedAt).toLocaleString('es-AR') + '. No se reproceso.',
+        importId: existing._id
+      });
+    }
+
+    _csvImportState = {
+      running: true, total: 0, parsed: 0, valid: 0, skipped: 0,
+      startedAt: new Date().toISOString(), finishedAt: null, importId: null
+    };
+    res.json({ success: true, state: _csvImportState, message: 'Procesando en background...' });
+
+    // Procesar en background.
+    (async () => {
+      const importDoc = await JugayganaImport.create({
+        contentHash,
+        uploadedBy: req.user.username || null,
+        rawSizeBytes: raw.length,
+        status: 'processing'
+      });
+      _csvImportState.importId = importDoc._id;
+
+      try {
+        const parsed = _parseJugayganaCsv(raw);
+        _csvImportState.total = parsed.rows.length + parsed.skipped;
+        _csvImportState.parsed = parsed.rows.length + parsed.skipped;
+        _csvImportState.valid = parsed.rows.length;
+        _csvImportState.skipped = parsed.skipped;
+
+        // Agregar por usuario.
+        const perUser = new Map(); // username -> { dCount, dSum, wCount, wSum, bCount, bSum, lastDeposit, lastAny }
+        let minDate = Infinity, maxDate = -Infinity;
+        let totalDC = 0, totalDS = 0, totalWC = 0, totalWS = 0, totalBC = 0, totalBS = 0;
+
+        for (const r of parsed.rows) {
+          let agg = perUser.get(r.username);
+          if (!agg) {
+            agg = { dCount: 0, dSum: 0, wCount: 0, wSum: 0, bCount: 0, bSum: 0, lastDeposit: 0, lastAny: 0 };
+            perUser.set(r.username, agg);
+          }
+          if (r.type === 'deposit') {
+            agg.dCount++; agg.dSum += r.amount;
+            if (r.dateMs > agg.lastDeposit) agg.lastDeposit = r.dateMs;
+            totalDC++; totalDS += r.amount;
+          } else if (r.type === 'withdraw') {
+            agg.wCount++; agg.wSum += r.amount;
+            totalWC++; totalWS += r.amount;
+          } else if (r.type === 'bonus') {
+            agg.bCount++; agg.bSum += r.amount;
+            totalBC++; totalBS += r.amount;
+          }
+          if (r.dateMs > agg.lastAny) agg.lastAny = r.dateMs;
+          if (r.dateMs < minDate) minDate = r.dateMs;
+          if (r.dateMs > maxDate) maxDate = r.dateMs;
+        }
+
+        // BulkWrite a PlayerStats en batches.
+        const TIER_RULES = STATS_TIER_RULES;
+        const ACTIVITY = STATS_ACTIVITY_DAYS;
+        const NOW = Date.now();
+        const dayMs = 24 * 3600 * 1000;
+        const userOps = [];
+        for (const [username, agg] of perUser.entries()) {
+          const realDeposits = agg.dSum;
+          const realCount = agg.dCount;
+          const withdraws = agg.wSum;
+          const bonusGiven = agg.bSum;
+          const bonusCount = agg.bCount;
+          const lastDeposit = agg.lastDeposit > 0 ? new Date(agg.lastDeposit) : null;
+          const daysSince = lastDeposit ? Math.floor((NOW - agg.lastDeposit) / dayMs) : null;
+          const netToHouse = realDeposits - withdraws - bonusGiven;
+
+          // Tier (re-uso reglas existentes — no necesita accountAge porque
+          // el archivo cubre 45d y eso es base suficiente).
+          let tier = 'SIN_DATOS';
+          if (realCount >= TIER_RULES.vipMinCharges && realDeposits >= TIER_RULES.vipMinAmount) tier = 'VIP';
+          else if (realCount >= TIER_RULES.oroMinCharges && realDeposits >= TIER_RULES.oroMinAmount) tier = 'ORO';
+          else if (realCount >= TIER_RULES.plataMinCharges || realDeposits >= TIER_RULES.plataMinAmount) tier = 'PLATA';
+          else if (realCount >= TIER_RULES.bronceMinCharges) tier = 'BRONCE';
+
+          let activityStatus = 'INACTIVO';
+          if (daysSince == null) activityStatus = 'NUEVO';
+          else if (daysSince <= ACTIVITY.activo) activityStatus = 'ACTIVO';
+          else if (daysSince <= ACTIVITY.enRiesgo) activityStatus = 'EN_RIESGO';
+          else if (daysSince <= ACTIVITY.perdido) activityStatus = 'PERDIDO';
+
+          // Oportunista: bonos sin deposit subsecuente.
+          let bonusesWithoutDeposit = 0;
+          if (bonusCount > 0 && realCount === 0) bonusesWithoutDeposit = bonusCount;
+          else if (bonusCount > realCount * 2) bonusesWithoutDeposit = bonusCount - realCount;
+          const isOpportunist = bonusesWithoutDeposit >= OPPORTUNIST_THRESHOLD;
+
+          userOps.push({
+            updateOne: {
+              filter: { username },
+              update: {
+                $set: {
+                  realDeposits30d: realDeposits,
+                  realChargesCount30d: realCount,
+                  withdraws30d: withdraws,
+                  bonusGiven30d: bonusGiven,
+                  bonusCount30d: bonusCount,
+                  netToHouse30d: netToHouse,
+                  lastRealDepositDate: lastDeposit,
+                  tier,
+                  activityStatus,
+                  bonusesClaimedWithoutDeposit30d: bonusesWithoutDeposit,
+                  isOpportunist,
+                  refreshedAt: new Date()
+                },
+                $setOnInsert: { username }
+              },
+              upsert: true
+            }
+          });
+
+          // Flush en batches de 500.
+          if (userOps.length >= 500) {
+            await PlayerStats.bulkWrite(userOps, { ordered: false });
+            userOps.length = 0;
+          }
+        }
+        if (userOps.length > 0) {
+          await PlayerStats.bulkWrite(userOps, { ordered: false });
+        }
+
+        // Update del audit doc.
+        await JugayganaImport.updateOne(
+          { _id: importDoc._id },
+          {
+            $set: {
+              status: 'completed',
+              totalRows: parsed.rows.length + parsed.skipped,
+              validRows: parsed.rows.length,
+              skippedRows: parsed.skipped,
+              depositCount: totalDC, depositSum: totalDS,
+              withdrawCount: totalWC, withdrawSum: totalWS,
+              bonusCount: totalBC, bonusSum: totalBS,
+              periodFrom: minDate < Infinity ? new Date(minDate) : null,
+              periodTo: maxDate > -Infinity ? new Date(maxDate) : null,
+              uniqueUsers: perUser.size,
+              detectedFormat: {
+                delimiter: parsed.delimiter,
+                dateFormat: parsed.dateFormat,
+                headerRow: parsed.headerRow
+              }
+            }
+          }
+        );
+
+        // Resolver outcomes pendientes de RecoveryPush con la nueva data.
+        await _resolvePendingRecoveryOutcomes();
+
+        logger.info(`[csv-import] OK: ${parsed.rows.length} rows, ${perUser.size} users, ${totalDS.toFixed(0)} deposits, ${totalBS.toFixed(0)} bonus`);
+      } catch (e) {
+        logger.error(`[csv-import] FAILED: ${e.message}\n${e.stack}`);
+        await JugayganaImport.updateOne(
+          { _id: importDoc._id },
+          { $set: { status: 'failed', errorMsg: e.message } }
+        );
+      } finally {
+        _csvImportState.running = false;
+        _csvImportState.finishedAt = new Date().toISOString();
+      }
+    })();
+  }
+);
+
+// GET state del import en curso o el ultimo terminado.
+app.get('/api/admin/stats/import-csv', authMiddleware, adminMiddleware, async (req, res) => {
+  const lastImport = await JugayganaImport.findOne({}).sort({ uploadedAt: -1 }).lean();
+  res.json({ state: _csvImportState, lastImport });
 });
 
 // ============================================

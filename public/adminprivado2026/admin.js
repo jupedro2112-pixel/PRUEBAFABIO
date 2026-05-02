@@ -2084,7 +2084,99 @@ function showStatsTab(tab) {
 }
 
 async function loadStatsAll() {
-    await Promise.all([loadStatsRefreshState(), loadSegmentsAndWeekly()]);
+    await Promise.all([loadStatsRefreshState(), loadCsvImportState(), loadSegmentsAndWeekly()]);
+}
+
+// --- CSV import desde JUGAYGANA ---
+async function loadCsvImportState() {
+    try {
+        const r = await authFetch('/api/admin/stats/import-csv');
+        if (!r.ok) return;
+        const d = await r.json();
+        renderCsvImportState(d.state || {}, d.lastImport || null);
+    } catch (e) { console.warn('loadCsvImportState', e); }
+}
+
+function renderCsvImportState(state, lastImport) {
+    const el = document.getElementById('csvImportState');
+    if (!el) return;
+    if (state.running) {
+        el.innerHTML = '⏳ Procesando: <strong style="color:#d6b3ff;">' +
+            (state.valid || 0) + ' válidas / ' + (state.skipped || 0) + ' descartadas</strong>';
+    } else if (lastImport) {
+        const when = new Date(lastImport.uploadedAt).toLocaleString('es-AR');
+        const period = lastImport.periodFrom && lastImport.periodTo
+            ? new Date(lastImport.periodFrom).toLocaleDateString('es-AR') + ' - ' + new Date(lastImport.periodTo).toLocaleDateString('es-AR')
+            : 'periodo no detectado';
+        el.innerHTML = '✅ Último import: <strong>' + escapeHtml(when) + '</strong> · ' +
+            (lastImport.uniqueUsers || 0) + ' jugadores · ' +
+            (lastImport.validRows || 0) + ' transacciones · ' +
+            'periodo ' + period;
+    } else {
+        el.innerHTML = 'Sin imports todavía.';
+    }
+}
+
+let _csvImportPollInterval = null;
+async function handleCsvImport(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+        showToast('El archivo supera 100MB. Pediendo a alguien que lo recorte.', 'error');
+        return;
+    }
+    const btn = document.getElementById('csvImportBtn');
+    if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; btn.textContent = '⏳ Leyendo archivo…'; }
+
+    try {
+        // Leer como texto (no binario) — soporta .csv y .txt.
+        const text = await file.text();
+        if (btn) btn.textContent = '⏳ Subiendo (' + Math.round(text.length / 1024) + ' KB)…';
+
+        const r = await fetch(API_URL + '/api/admin/stats/import-csv', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + currentToken,
+                'Content-Type': 'text/csv'
+            },
+            body: text
+        });
+        const d = await r.json();
+
+        if (d.success === false && d.message) {
+            showToast(d.message, 'info');
+        } else if (d.skipped) {
+            showToast(d.message || 'Archivo ya importado previamente', 'info');
+        } else {
+            showToast('Import iniciado en background', 'success');
+            // Polear estado cada 2s.
+            if (_csvImportPollInterval) clearInterval(_csvImportPollInterval);
+            _csvImportPollInterval = setInterval(async () => {
+                await loadCsvImportState();
+                const stEl = document.getElementById('csvImportState');
+                if (stEl && stEl.innerHTML.startsWith('✅')) {
+                    clearInterval(_csvImportPollInterval);
+                    _csvImportPollInterval = null;
+                    // Recargar tablas con datos frescos.
+                    await loadSegmentsAndWeekly();
+                    if (document.getElementById('statsTabPlayers').style.display !== 'none') loadPlayersList();
+                    if (document.getElementById('statsTabRoi').style.display !== 'none') loadRoiBucket();
+                    showToast('✅ Import completo, panel actualizado', 'success');
+                }
+            }, 2000);
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Error procesando el archivo', 'error');
+    } finally {
+        if (btn) {
+            btn.style.opacity = '1';
+            btn.style.pointerEvents = 'auto';
+            btn.textContent = '📤 Subir CSV de JUGAYGANA';
+        }
+        // Reset el input para que se pueda volver a subir el mismo archivo.
+        ev.target.value = '';
+    }
 }
 
 async function loadStatsRefreshState() {

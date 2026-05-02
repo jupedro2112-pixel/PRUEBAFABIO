@@ -446,6 +446,20 @@
                     <div id="statsRefreshState" style="font-size:12px;color:#bbb;flex:1;">Esperando primer refresh…</div>
                 </div>
 
+                <!-- Import CSV de JUGAYGANA -->
+                <div style="background:rgba(106,13,173,0.08);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px;">
+                        <label for="csvImportFile" id="csvImportBtn" style="padding:10px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#6a0dad);color:#fff;border:none;border-radius:8px;cursor:pointer;display:inline-block;">
+                            📤 Subir CSV de JUGAYGANA
+                        </label>
+                        <input type="file" id="csvImportFile" accept=".csv,.txt,text/csv" style="display:none;" onchange="handleCsvImport(event)">
+                        <div id="csvImportState" style="font-size:12px;color:#bbb;flex:1;min-width:200px;">Sin imports todavía.</div>
+                    </div>
+                    <div style="font-size:11px;color:#888;line-height:1.5;">
+                        Subí el CSV exportado de JUGAYGANA (deposit/withdraw/individual_bonus). Procesa hasta 200k+ filas en 30-60s. Los datos crudos NO se almacenan — solo agregados por jugador. Si subís el mismo archivo dos veces, se detecta y no reprocesa.
+                    </div>
+                </div>
+
                 <!-- Sub-tabs internos -->
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:8px;">
                     <button class="stats-tab-btn active" data-tab="segments" onclick="showStatsTab('segments')" style="padding:8px 14px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎯 Segmentación</button>

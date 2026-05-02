@@ -27,7 +27,8 @@ const {
   ScheduledNotification,
   WaClickLog,
   PlayerStats,
-  RecoveryPush
+  RecoveryPush,
+  JugayganaImport
 } = require('../src/models');
 
 // ============================================
@@ -328,6 +329,7 @@ module.exports = {
   WaClickLog,
   PlayerStats,
   RecoveryPush,
+  JugayganaImport,
   // Helpers
   getConfig,
   setConfig,

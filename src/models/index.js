@@ -25,6 +25,7 @@ const ScheduledNotification = require('./ScheduledNotification');
 const WaClickLog = require('./WaClickLog');
 const PlayerStats = require('./PlayerStats');
 const RecoveryPush = require('./RecoveryPush');
+const JugayganaImport = require('./JugayganaImport');
 
 
 /**
@@ -422,6 +423,7 @@ module.exports = {
   WaClickLog,
   PlayerStats,
   RecoveryPush,
+  JugayganaImport,
 
   // Funciones de conexión
   connectDB,
