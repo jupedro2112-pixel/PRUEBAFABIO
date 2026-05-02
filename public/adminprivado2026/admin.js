@@ -161,6 +161,7 @@ function showSection(sectionKey) {
         ingresos: 'ingresosSection',
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
+        topEngagement: 'topEngagementSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection'
     };
@@ -192,6 +193,8 @@ function showSection(sectionKey) {
         loadEquipmentReport();
     } else if (sectionKey === 'welcomebonus') {
         loadWelcomeBonusReport();
+    } else if (sectionKey === 'topEngagement') {
+        loadTopEngagement();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -884,6 +887,121 @@ function filterEquipmentTable() {
         hint.textContent = `Mostrando ${sorted.length} de ${all.length} usuarios`;
         tableContainer.appendChild(hint);
     }
+}
+
+// ============================================
+// TOP 100 ENGAGEMENT
+// Tabla unica con score combinado + breakdowns por reembolsos, clicks
+// WhatsApp, y reclamos de regalo. Sortable por cada columna.
+// ============================================
+let _topEngagementCache = null;
+let _topEngagementSortKey = 'score'; // default
+let _topEngagementSortDir = 'desc';
+
+async function loadTopEngagement() {
+    const container = document.getElementById('topEngagementContent');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">⏳ Calculando ranking…</div>';
+    try {
+        const r = await authFetch('/api/admin/reports/top-engagement');
+        if (!r.ok) {
+            container.innerHTML = '<div class="empty-state">❌ Error cargando ranking</div>';
+            return;
+        }
+        const data = await r.json();
+        _topEngagementCache = data;
+        renderTopEngagement(container, data);
+    } catch (err) {
+        console.error('loadTopEngagement error:', err);
+        container.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function _sortTopEngagement(list, key, dir) {
+    const arr = list.slice();
+    const num = (x) => typeof x === 'number' ? x : 0;
+    const time = (x) => x ? new Date(x).getTime() : 0;
+    const sign = dir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+        let va, vb;
+        switch (key) {
+            case 'username':       va = (a.username || '').toLowerCase(); vb = (b.username || '').toLowerCase(); return va.localeCompare(vb) * sign;
+            case 'refundCount':    va = num(a.refundCount); vb = num(b.refundCount); break;
+            case 'refundTotal':    va = num(a.refundTotal); vb = num(b.refundTotal); break;
+            case 'waClickCount':   va = num(a.waClickCount); vb = num(b.waClickCount); break;
+            case 'giveawayCount':  va = num(a.giveawayCount); vb = num(b.giveawayCount); break;
+            case 'giveawayTotal':  va = num(a.giveawayTotal); vb = num(b.giveawayTotal); break;
+            case 'lastActivityAt': va = time(a.lastActivityAt); vb = time(b.lastActivityAt); break;
+            case 'score':
+            default:               va = num(a.score); vb = num(b.score); break;
+        }
+        return (va - vb) * sign;
+    });
+    return arr;
+}
+
+function changeTopEngagementSort(key) {
+    if (_topEngagementSortKey === key) {
+        _topEngagementSortDir = _topEngagementSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        _topEngagementSortKey = key;
+        _topEngagementSortDir = 'desc';
+    }
+    if (_topEngagementCache) {
+        const container = document.getElementById('topEngagementContent');
+        if (container) renderTopEngagement(container, _topEngagementCache);
+    }
+}
+
+function renderTopEngagement(container, data) {
+    const top = Array.isArray(data.top) ? data.top : [];
+    if (top.length === 0) {
+        container.innerHTML = '<div class="empty-state">Todavía no hay engagement registrado.</div>';
+        return;
+    }
+    const sorted = _sortTopEngagement(top, _topEngagementSortKey, _topEngagementSortDir);
+
+    const sortedAt = data.generatedAt ? new Date(data.generatedAt).toLocaleString('es-AR') : '';
+    const arrow = (k) => _topEngagementSortKey === k ? (_topEngagementSortDir === 'desc' ? ' ↓' : ' ↑') : '';
+    const th = (k, label) => `<th style="cursor:pointer;user-select:none;" onclick="changeTopEngagementSort('${k}')">${label}${arrow(k)}</th>`;
+
+    let html = '';
+    html += '<div style="margin-bottom:10px;color:#888;font-size:11px;">' +
+            'Ranking calculado: ' + escapeHtml(sortedAt) +
+            ' · Usuarios únicos con interacción: <strong style="color:#d4af37;">' + (data.totalUniqueUsers || 0) + '</strong>' +
+            '</div>';
+
+    html += '<table class="report-table"><thead><tr>';
+    html += '<th>#</th>';
+    html += th('username', 'Usuario');
+    html += th('score', '⭐ Score');
+    html += th('refundCount', '💸 Reembolsos');
+    html += th('refundTotal', '💸 Total $');
+    html += th('waClickCount', '📲 Clicks WA');
+    html += th('giveawayCount', '💰 Regalos');
+    html += th('giveawayTotal', '💰 Total $');
+    html += th('lastActivityAt', '📅 Última actividad');
+    html += '</tr></thead><tbody>';
+
+    sorted.forEach((u, idx) => {
+        const rank = idx + 1;
+        const lastAct = u.lastActivityAt ? new Date(u.lastActivityAt).toLocaleString('es-AR') : '—';
+        const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
+        html += '<tr>';
+        html += '<td><strong>' + medal + '</strong></td>';
+        html += '<td><strong style="color:#fff;">' + escapeHtml(u.username || '') + '</strong></td>';
+        html += '<td><strong style="color:#d4af37;">' + (u.score || 0) + '</strong></td>';
+        html += '<td>' + (u.refundCount || 0) + '</td>';
+        html += '<td><small>$' + Number(u.refundTotal || 0).toLocaleString('es-AR') + '</small></td>';
+        html += '<td>' + (u.waClickCount || 0) + '</td>';
+        html += '<td>' + (u.giveawayCount || 0) + '</td>';
+        html += '<td><small>$' + Number(u.giveawayTotal || 0).toLocaleString('es-AR') + '</small></td>';
+        html += '<td><small style="color:#aaa;">' + escapeHtml(lastAct) + '</small></td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+
+    container.innerHTML = html;
 }
 
 // ============================================

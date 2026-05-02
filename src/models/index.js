@@ -22,6 +22,7 @@ const NotificationHistory = require('./NotificationHistory');
 const MoneyGiveaway = require('./MoneyGiveaway');
 const MoneyGiveawayClaim = require('./MoneyGiveawayClaim');
 const ScheduledNotification = require('./ScheduledNotification');
+const WaClickLog = require('./WaClickLog');
 
 
 /**
@@ -416,6 +417,7 @@ module.exports = {
   MoneyGiveaway,
   MoneyGiveawayClaim,
   ScheduledNotification,
+  WaClickLog,
 
   // Funciones de conexión
   connectDB,

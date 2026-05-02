@@ -58,6 +58,7 @@ const {
   MoneyGiveaway,
   MoneyGiveawayClaim,
   ScheduledNotification,
+  WaClickLog,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -7059,18 +7060,35 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
 });
 
 // POST /api/promo-alert/track-click — incrementa contador waClicks del
-// row de historial asociado a la promo activa. Llamado por el cliente
-// cuando el user toca el cartel "RECLAMÁ" (o el QUIERO CARGAR cuando
-// hay promo activa). Idempotente best-effort: si la promo no tiene
-// notificationHistoryId, retornamos 200 sin hacer nada.
+// row de historial asociado a la promo activa Y registra un WaClickLog
+// por-usuario para los reportes de top engagement. Best-effort: errores
+// no bloquean la apertura de WhatsApp en el cliente.
 app.post('/api/promo-alert/track-click', authMiddleware, async (req, res) => {
   try {
     const promo = await getConfig(PROMO_ALERT_KEY, null);
-    if (!promo || !promo.notificationHistoryId) return res.json({ ok: true, tracked: false });
-    await NotificationHistory.updateOne(
-      { id: promo.notificationHistoryId },
-      { $inc: { waClicks: 1 } }
-    );
+    if (!promo) return res.json({ ok: true, tracked: false });
+
+    // 1) Log por-usuario.
+    try {
+      await WaClickLog.create({
+        id: uuidv4(),
+        userId: req.user.userId,
+        username: req.user.username,
+        promoId: promo.id || null,
+        notificationHistoryId: promo.notificationHistoryId || null,
+        clickedAt: new Date()
+      });
+    } catch (e) {
+      logger.warn(`/track-click WaClickLog falló: ${e.message}`);
+    }
+
+    // 2) Contador agregado en NotificationHistory.
+    if (promo.notificationHistoryId) {
+      await NotificationHistory.updateOne(
+        { id: promo.notificationHistoryId },
+        { $inc: { waClicks: 1 } }
+      );
+    }
     res.json({ ok: true, tracked: true });
   } catch (error) {
     logger.warn(`/api/promo-alert/track-click error: ${error.message}`);
@@ -7676,6 +7694,118 @@ async function _executeScheduledNotification(sched) {
 // Arrancar el scheduler 30s despues del boot y correr cada 60s.
 setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
+
+// ============================================
+// GET /api/admin/reports/top-engagement
+// Top usuarios por interaccion: cuentas y montos de
+//   - reembolsos reclamados (RefundClaim)
+//   - clicks en cartel WhatsApp (WaClickLog)
+//   - regalos de difusion reclamados (MoneyGiveawayClaim)
+// + score combinado para ordenar.
+//
+// Devuelve top 100 por score combinado, con todos los breakdowns.
+// El frontend permite re-ordenar por cada metrica.
+// ============================================
+app.get('/api/admin/reports/top-engagement', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // 1) Refunds: agrupar por username, sumar count y amount (excluyendo
+    //    rows pendientes de credit que no llegaron a acreditar).
+    const refundAgg = await RefundClaim.aggregate([
+      { $match: { status: { $ne: 'pending_credit_failed' } } },
+      {
+        $group: {
+          _id: { $toLower: '$username' },
+          username: { $first: '$username' },
+          refundCount: { $sum: 1 },
+          refundTotal: { $sum: '$amount' },
+          lastRefundAt: { $max: '$claimedAt' }
+        }
+      }
+    ]);
+
+    // 2) WA clicks: agrupar por username.
+    const waAgg = await WaClickLog.aggregate([
+      {
+        $group: {
+          _id: { $toLower: '$username' },
+          username: { $first: '$username' },
+          waClickCount: { $sum: 1 },
+          lastWaClickAt: { $max: '$clickedAt' }
+        }
+      }
+    ]);
+
+    // 3) Giveaway claims: agrupar por username (excluye pending_credit_failed).
+    const gAgg = await MoneyGiveawayClaim.aggregate([
+      { $match: { status: { $ne: 'pending_credit_failed' } } },
+      {
+        $group: {
+          _id: { $toLower: '$username' },
+          username: { $first: '$username' },
+          giveawayCount: { $sum: 1 },
+          giveawayTotal: { $sum: '$amount' },
+          lastGiveawayAt: { $max: '$claimedAt' }
+        }
+      }
+    ]);
+
+    // Merge en una map por username (lowercased).
+    const map = new Map();
+    const ensure = (key, username) => {
+      if (!map.has(key)) {
+        map.set(key, {
+          username: username || key,
+          refundCount: 0, refundTotal: 0, lastRefundAt: null,
+          waClickCount: 0, lastWaClickAt: null,
+          giveawayCount: 0, giveawayTotal: 0, lastGiveawayAt: null
+        });
+      }
+      return map.get(key);
+    };
+    for (const r of refundAgg) {
+      const o = ensure(r._id, r.username);
+      o.refundCount = r.refundCount;
+      o.refundTotal = r.refundTotal;
+      o.lastRefundAt = r.lastRefundAt;
+    }
+    for (const r of waAgg) {
+      const o = ensure(r._id, r.username);
+      o.waClickCount = r.waClickCount;
+      o.lastWaClickAt = r.lastWaClickAt;
+    }
+    for (const r of gAgg) {
+      const o = ensure(r._id, r.username);
+      o.giveawayCount = r.giveawayCount;
+      o.giveawayTotal = r.giveawayTotal;
+      o.lastGiveawayAt = r.lastGiveawayAt;
+    }
+
+    // Score combinado para ranking default. Pesos:
+    // - cada reembolso vale 2 puntos (esfuerzo recurrente)
+    // - cada click WA vale 1 (intencion de carga)
+    // - cada giveaway vale 3 (alta interaccion + cobra de inmediato)
+    const list = Array.from(map.values()).map(u => ({
+      ...u,
+      lastActivityAt: [u.lastRefundAt, u.lastWaClickAt, u.lastGiveawayAt]
+        .filter(Boolean)
+        .map(d => new Date(d).getTime())
+        .reduce((a, b) => Math.max(a, b), 0) || null,
+      score: u.refundCount * 2 + u.waClickCount * 1 + u.giveawayCount * 3
+    }));
+
+    list.sort((a, b) => b.score - a.score);
+    const top = list.slice(0, 100);
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      totalUniqueUsers: list.length,
+      top
+    });
+  } catch (error) {
+    logger.error(`/api/admin/reports/top-engagement error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
 
 // GET admin: lista paginada del historial de notificaciones.
 // Query: ?limit=50&type=plain|whatsapp_promo|money_giveaway

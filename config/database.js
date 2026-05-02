@@ -24,7 +24,8 @@ const {
   NotificationHistory,
   MoneyGiveaway,
   MoneyGiveawayClaim,
-  ScheduledNotification
+  ScheduledNotification,
+  WaClickLog
 } = require('../src/models');
 
 // ============================================
@@ -322,6 +323,7 @@ module.exports = {
   MoneyGiveaway,
   MoneyGiveawayClaim,
   ScheduledNotification,
+  WaClickLog,
   // Helpers
   getConfig,
   setConfig,

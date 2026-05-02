@@ -76,6 +76,10 @@
                     <span>🎁</span>
                     <span>Bono $10.000</span>
                 </a>
+                <a href="#" class="nav-item" data-section="topEngagement">
+                    <span>🏆</span>
+                    <span>Top engagement</span>
+                </a>
                 <a href="#" class="nav-item" data-section="notifs">
                     <span>🔔</span>
                     <span>Notificaciones</span>
@@ -398,6 +402,26 @@
                             <span style="color:#666;">Cargando…</span>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: TOP 100 ENGAGEMENT
+                 Ranking de usuarios por interaccion combinada:
+                 reembolsos + clicks WA + reclamos de regalo.
+                 ============================================ -->
+            <section id="topEngagementSection" class="section">
+                <div class="panel-header">
+                    <h2>🏆 Top 100 — Engagement de usuarios</h2>
+                    <button class="refresh-btn" onclick="loadTopEngagement()" title="Actualizar">🔄</button>
+                </div>
+                <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
+                    Top 100 usuarios que más interactúan con la app, para que tengas parámetro de quién engancha.
+                    <strong>Score</strong> combina las 3 métricas (reembolsos × 2 + clicks WhatsApp × 1 + regalos × 3).
+                    Tocá el header de cada columna para ordenar.
+                </div>
+                <div id="topEngagementContent" class="report-content">
+                    <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
 
