@@ -6592,6 +6592,18 @@ app.post(
         return res.status(400).json({ error: 'El nombre del equipo es demasiado largo (máx 24)' });
       }
 
+      // Prefijo de username del equipo (ej: "ato", "argen", "tiger"). El sistema
+      // concatena prefix + valor de celda para reconstruir el username completo
+      // antes de matchear contra la DB. Si la celda ya empieza con el prefix,
+      // se usa la celda tal cual (modo tolerante).
+      const prefix = (req.query.prefix ? String(req.query.prefix) : '').trim().toLowerCase();
+      if (!prefix) {
+        return res.status(400).json({ error: 'Falta el parámetro prefix (las "iniciales" del equipo, ej: ato, argen, tiger)' });
+      }
+      if (prefix.length > 20) {
+        return res.status(400).json({ error: 'El prefijo es demasiado largo (máx 20)' });
+      }
+
       // dryRun por default true. Solo `dryRun=false` ejecuta escrituras.
       const dryRun = String(req.query.dryRun || 'true').toLowerCase() !== 'false';
 
@@ -6664,7 +6676,14 @@ app.post(
           if (raw === null || raw === undefined) continue;
           const cleaned = String(raw).trim();
           if (!cleaned) continue;
-          const lower = cleaned.toLowerCase();
+          const cellLower = cleaned.toLowerCase();
+
+          // Reconstruir el username completo:
+          //   - Si la celda ya empieza con el prefijo, se usa tal cual.
+          //   - Si no, le concatenamos el prefijo (la celda es solo el sufijo).
+          // Ejemplo: prefix='ato', celda='joaquin398' → 'atojoaquin398'.
+          //          prefix='ato', celda='atojoaquin398' → 'atojoaquin398'.
+          const lower = cellLower.startsWith(prefix) ? cellLower : (prefix + cellLower);
 
           // Detectar conflicto entre hojas del mismo upload
           if (seenLowerToSheet.has(lower) && seenLowerToSheet.get(lower) !== sheetName) {
@@ -6773,12 +6792,13 @@ app.post(
         }
       }
 
-      logger.info(`[user-lines/import] team=${teamName} dryRun=${dryRun} sheets=${sheetReports.length} matched=${totalMatched} notFound=${totalNotFound} conflicts=${conflictsInFile.length} by=${adminUsername}`);
+      logger.info(`[user-lines/import] team=${teamName} prefix=${prefix} dryRun=${dryRun} sheets=${sheetReports.length} matched=${totalMatched} notFound=${totalNotFound} conflicts=${conflictsInFile.length} by=${adminUsername}`);
 
       res.json({
         success: true,
         dryRun,
         teamName,
+        prefix,
         summary: {
           totalSheets: sheetReports.length,
           totalRows: totalMatched + totalNotFound,

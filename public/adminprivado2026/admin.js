@@ -2562,16 +2562,21 @@ function openRecoveryModal(tier, status) {
 let _lineImportLastPreviewBuffer = null; // ArrayBuffer del último file leído
 let _lineImportLastTeamName = null;
 
+let _lineImportLastPrefix = null;
+
 function resetLineImportForm() {
     const fileEl = document.getElementById('lineImportFile');
     const teamEl = document.getElementById('lineImportTeamName');
+    const prefixEl = document.getElementById('lineImportPrefix');
     const resultEl = document.getElementById('lineImportResult');
     const confirmBtn = document.getElementById('lineImportConfirmBtn');
     if (fileEl) fileEl.value = '';
     if (teamEl) teamEl.value = '';
+    if (prefixEl) prefixEl.value = '';
     if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; }
     _lineImportLastPreviewBuffer = null;
     _lineImportLastTeamName = null;
+    _lineImportLastPrefix = null;
     if (confirmBtn) {
         confirmBtn.disabled = true;
         confirmBtn.style.opacity = '0.4';
@@ -2637,8 +2642,11 @@ async function _readLineImportFileBuffer() {
     return await file.arrayBuffer();
 }
 
-async function _sendLineImport(buffer, teamName, dryRun) {
-    const url = '/api/admin/user-lines/import?teamName=' + encodeURIComponent(teamName) + '&dryRun=' + (dryRun ? 'true' : 'false');
+async function _sendLineImport(buffer, teamName, prefix, dryRun) {
+    const url = '/api/admin/user-lines/import'
+        + '?teamName=' + encodeURIComponent(teamName)
+        + '&prefix=' + encodeURIComponent(prefix || '')
+        + '&dryRun=' + (dryRun ? 'true' : 'false');
     const r = await fetch(API_URL + url, {
         method: 'POST',
         headers: {
@@ -2653,10 +2661,17 @@ async function _sendLineImport(buffer, teamName, dryRun) {
 
 async function previewLineImport() {
     const teamEl = document.getElementById('lineImportTeamName');
+    const prefixEl = document.getElementById('lineImportPrefix');
     const teamName = teamEl ? teamEl.value.trim() : '';
+    const prefix = prefixEl ? prefixEl.value.trim().toLowerCase() : '';
     if (!teamName) {
         showToast('Falta el nombre del equipo', 'error');
         if (teamEl) teamEl.focus();
+        return;
+    }
+    if (!prefix) {
+        showToast('Falta el prefijo (ej: ato, argen, tiger)', 'error');
+        if (prefixEl) prefixEl.focus();
         return;
     }
 
@@ -2676,14 +2691,15 @@ async function previewLineImport() {
     }
 
     try {
-        const d = await _sendLineImport(buffer, teamName, true);
+        const d = await _sendLineImport(buffer, teamName, prefix, true);
         if (!d.success) {
             showToast(d.error || 'Error en la vista previa', 'error');
             return;
         }
-        // Guardar buffer para que confirmar use exactamente lo mismo (sin re-leer file)
+        // Guardar buffer + params para que confirmar use exactamente lo mismo (sin re-leer file)
         _lineImportLastPreviewBuffer = buffer;
         _lineImportLastTeamName = teamName;
+        _lineImportLastPrefix = prefix;
         renderLineImportResult(d, true);
         // Habilitar el confirm siempre — incluso con 0 matches el admin puede
         // querer "confirmar" para tener visibilidad/log. Si matched=0 es no-op.
@@ -2714,12 +2730,14 @@ async function confirmLineImport() {
         return;
     }
     const teamEl = document.getElementById('lineImportTeamName');
+    const prefixEl = document.getElementById('lineImportPrefix');
     const teamName = teamEl ? teamEl.value.trim() : '';
-    if (teamName !== _lineImportLastTeamName) {
-        showToast('Cambiaste el equipo. Hacé "Vista previa" de nuevo.', 'error');
+    const prefix = prefixEl ? prefixEl.value.trim().toLowerCase() : '';
+    if (teamName !== _lineImportLastTeamName || prefix !== _lineImportLastPrefix) {
+        showToast('Cambiaste prefijo o equipo. Hacé "Vista previa" de nuevo.', 'error');
         return;
     }
-    if (!confirm('¿Confirmar la importación para el equipo "' + teamName + '"? Esta acción modifica usuarios en la base de datos.')) {
+    if (!confirm('¿Confirmar la importación para el equipo "' + teamName + '" (prefijo: ' + prefix + ')? Esta acción modifica usuarios en la base de datos.')) {
         return;
     }
 
@@ -2733,7 +2751,7 @@ async function confirmLineImport() {
     if (previewBtn) { previewBtn.disabled = true; previewBtn.style.opacity = '0.5'; }
 
     try {
-        const d = await _sendLineImport(_lineImportLastPreviewBuffer, teamName, false);
+        const d = await _sendLineImport(_lineImportLastPreviewBuffer, teamName, prefix, false);
         if (!d.success) {
             showToast(d.error || 'Error en la importación', 'error');
             return;
@@ -2742,6 +2760,7 @@ async function confirmLineImport() {
         showToast('✅ Importación aplicada · ' + (d.summary && d.summary.matched || 0) + ' usuarios asignados', 'success');
         _lineImportLastPreviewBuffer = null;
         _lineImportLastTeamName = null;
+        _lineImportLastPrefix = null;
         // Refrescar stats arriba
         loadLineImportStats();
     } catch (e) {

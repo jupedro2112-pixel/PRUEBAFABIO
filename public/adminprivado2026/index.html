@@ -196,6 +196,13 @@
                     <!-- Form -->
                     <div style="display:flex;flex-direction:column;gap:12px;">
                         <div>
+                            <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Prefijo de username (las "iniciales" del equipo)</label>
+                            <input type="text" id="lineImportPrefix" placeholder="ej: ato, argen, tiger" maxlength="20" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,215,0,0.3);background:rgba(0,0,0,0.4);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;box-sizing:border-box;text-transform:lowercase;">
+                            <small style="color:#888;font-size:11px;display:block;margin-top:4px;line-height:1.5;">
+                                En las celdas del .xlsx podés escribir solo el <strong>sufijo</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">joaquin398</code>) — el sistema le concatena el prefijo automáticamente para matchear contra <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">atojoaquin398</code> en la DB. Si la celda ya tiene el prefijo (<code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">atojoaquin398</code>) también funciona.
+                            </small>
+                        </div>
+                        <div>
                             <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Nombre del equipo (se aplica a todas las hojas del archivo)</label>
                             <input type="text" id="lineImportTeamName" placeholder="ej: Atomic" maxlength="24" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(155,48,255,0.25);background:rgba(0,0,0,0.4);color:#c89bff;font-size:14px;font-weight:600;box-sizing:border-box;">
                         </div>
