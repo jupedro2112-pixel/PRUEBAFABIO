@@ -6631,6 +6631,18 @@ app.post(
         return res.status(400).json({ error: 'El archivo no tiene hojas' });
       }
 
+      // Normaliza un string para matcheo fuzzy: quita tildes/diacríticos,
+      // pasa a minúscula, y elimina todo lo que no sea letra/dígito.
+      // Permite que "Argen.Pedro_98", "argenpedro98", "ARGEN PEDRO 98" y
+      // "argén.Pedro 98" matcheen contra el mismo username "argenpedro98".
+      const _normalizeUsername = (raw) => {
+        if (!raw) return '';
+        return String(raw)
+          .normalize('NFD').replace(/[̀-ͯ]/g, '') // strip diacríticos
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '');
+      };
+
       // Extrae el teléfono del nombre de la hoja. El nombre puede venir como
       // un teléfono puro (ej: "+5491111...") o como "ETIQUETA + número" (ej:
       // "TIGER 1 39095913748", "Atomic 2 +5493853..."). Devolvemos siempre
@@ -6651,12 +6663,15 @@ app.post(
         return trimmed;
       };
 
-      // -------- Pase 1: extraer (sheetName -> [usernames]) y detectar conflictos
-      // dentro del mismo archivo (mismo username en dos hojas distintas).
-      const sheetData = []; // [{ sheetName, linePhone, usernamesLower: [] }]
-      const seenLowerToSheet = new Map(); // lower -> first sheetName que lo trajo
+      // -------- Pase 1: extraer (sheetName -> [usernames normalizados]) y detectar
+      // conflictos dentro del mismo archivo (mismo username en dos hojas distintas).
+      // Los usernames se normalizan AGRESIVAMENTE (sin tildes, sin puntuación)
+      // para tolerar variaciones de formato entre el .xlsx y la DB.
+      const prefixNorm = _normalizeUsername(prefix);
+      const sheetData = []; // [{ sheetName, linePhone, usernamesNorm: [], originalByNorm: Map }]
+      const seenNormToSheet = new Map(); // norm -> first sheetName que lo trajo
       const conflictsInFile = []; // [{ username, sheets: [a, b] }]
-      const allUsernamesLower = new Set();
+      const allUsernamesNorm = new Set();
 
       for (const sheetName of workbook.SheetNames) {
         const sheetTrimmed = String(sheetName || '').trim();
@@ -6676,30 +6691,32 @@ app.post(
         // tiene header, queda como hoja sin matches (no error — se reporta).
         const dataRows = rows.length > 1 ? rows.slice(1) : [];
 
-        const usernamesLower = [];
+        const usernamesNorm = [];
+        const originalByNorm = new Map(); // para mostrar el valor original en notFoundSample
         for (const row of dataRows) {
           if (!row) continue;
           const raw = row[0];
           if (raw === null || raw === undefined) continue;
           const cleaned = String(raw).trim();
           if (!cleaned) continue;
-          const cellLower = cleaned.toLowerCase();
+          const cellNorm = _normalizeUsername(cleaned);
+          if (!cellNorm) continue; // la celda no tenía letras/dígitos
 
-          // Reconstruir el username completo:
-          //   - Si la celda ya empieza con el prefijo, se usa tal cual.
+          // Reconstruir el username normalizado completo:
+          //   - Si la celda normalizada ya empieza con el prefijo (norm), se usa tal cual.
           //   - Si no, le concatenamos el prefijo (la celda es solo el sufijo).
           // Ejemplo: prefix='ato', celda='joaquin398' → 'atojoaquin398'.
-          //          prefix='ato', celda='atojoaquin398' → 'atojoaquin398'.
-          const lower = cellLower.startsWith(prefix) ? cellLower : (prefix + cellLower);
+          //          prefix='ato', celda='Ato.Joaquín_398' → 'atojoaquin398'.
+          const fullNorm = cellNorm.startsWith(prefixNorm) ? cellNorm : (prefixNorm + cellNorm);
 
           // Detectar conflicto entre hojas del mismo upload.
           // En modo per-slot (overrideLinePhone), todas las hojas asignan al mismo
           // teléfono — los duplicados no son conflictos, simplemente se deduplican.
-          if (seenLowerToSheet.has(lower) && seenLowerToSheet.get(lower) !== sheetName) {
+          if (seenNormToSheet.has(fullNorm) && seenNormToSheet.get(fullNorm) !== sheetName) {
             if (!overrideLinePhone) {
               conflictsInFile.push({
-                username: lower,
-                sheets: [seenLowerToSheet.get(lower), sheetName]
+                username: fullNorm,
+                sheets: [seenNormToSheet.get(fullNorm), sheetName]
               });
               // El conflicto invalida ambas asignaciones (modo legacy multi-line).
               continue;
@@ -6707,28 +6724,41 @@ app.post(
             // En modo per-slot, simplemente saltear el duplicado (ya está asignado).
             continue;
           }
-          seenLowerToSheet.set(lower, sheetName);
-          usernamesLower.push(lower);
-          allUsernamesLower.add(lower);
+          seenNormToSheet.set(fullNorm, sheetName);
+          usernamesNorm.push(fullNorm);
+          if (!originalByNorm.has(fullNorm)) originalByNorm.set(fullNorm, cleaned);
+          allUsernamesNorm.add(fullNorm);
         }
 
-        sheetData.push({ sheetName, linePhone, usernamesLower });
+        sheetData.push({ sheetName, linePhone, usernamesNorm, originalByNorm });
       }
 
-      // -------- Pase 2: lookup masivo en la DB (un solo query con $in + collation
-      // para case-insensitive). Para 3000 usernames es un IXSCAN/COLLSCAN rápido.
-      const allUsernamesArr = [...allUsernamesLower];
-      let docs = [];
-      if (allUsernamesArr.length > 0) {
-        docs = await User.find({ username: { $in: allUsernamesArr } })
-          .collation({ locale: 'en', strength: 2 })
-          .select('id username linePhone lineTeamName')
-          .lean();
+      // -------- Pase 2: lookup en DB con regex-prefijo y match en memoria.
+      // Cargamos TODOS los users cuyo username arranca con `prefix` (case-insensitive)
+      // y construimos un Map<normalizado, doc>. Esto permite que cosas como
+      // "argen pedro 98", "Argen.Pedro_98" y "argén.Pedro98" en el .xlsx matcheen
+      // contra el username "argenpedro98" de la DB. Es estrictamente más tolerante
+      // que $in + collation porque la collation no normaliza puntuación ni tildes.
+      const escapeRegexLocal = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const prefixRegex = new RegExp('^' + escapeRegexLocal(prefix), 'i');
+
+      // Safety: si el prefijo matchea > 50k users, abortar (algo está mal en config).
+      const candidateCount = await User.countDocuments({ username: { $regex: prefixRegex } });
+      if (candidateCount > 50000) {
+        return res.status(400).json({
+          error: `El prefijo "${prefix}" matchea ${candidateCount} usuarios (>50k). ¿Estás seguro? Achicalo más.`
+        });
       }
 
-      const docByLower = new Map();
-      for (const d of docs) {
-        if (d && d.username) docByLower.set(d.username.toLowerCase(), d);
+      const candidateDocs = candidateCount > 0
+        ? await User.find({ username: { $regex: prefixRegex } })
+            .select('id username linePhone lineTeamName')
+            .lean()
+        : [];
+
+      const docByNorm = new Map();
+      for (const d of candidateDocs) {
+        if (d && d.username) docByNorm.set(_normalizeUsername(d.username), d);
       }
 
       // -------- Pase 3: armar bulkOps y reporte por hoja.
@@ -6746,13 +6776,18 @@ app.post(
         let sheetNotFound = 0;
         let sheetReassigned = 0; // ya tenían linePhone distinto → se sobreescribe
 
-        for (const lower of sd.usernamesLower) {
-          const doc = docByLower.get(lower);
+        for (const fullNorm of sd.usernamesNorm) {
+          const doc = docByNorm.get(fullNorm);
           if (!doc) {
             sheetNotFound++;
             totalNotFound++;
             if (notFoundSample.length < 100) {
-              notFoundSample.push({ username: lower, sheet: sd.sheetName });
+              const original = sd.originalByNorm.get(fullNorm) || fullNorm;
+              notFoundSample.push({
+                username: original, // mostramos lo que el admin escribió
+                normalized: fullNorm,
+                sheet: sd.sheetName
+              });
             }
             continue;
           }
@@ -6783,7 +6818,7 @@ app.post(
         sheetReports.push({
           sheetName: sd.sheetName,
           linePhone: sd.linePhone,
-          totalRows: sd.usernamesLower.length,
+          totalRows: sd.usernamesNorm.length,
           matched: sheetMatched,
           notFound: sheetNotFound,
           reassigned: sheetReassigned
