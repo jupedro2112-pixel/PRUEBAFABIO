@@ -6604,6 +6604,14 @@ app.post(
         return res.status(400).json({ error: 'El prefijo es demasiado largo (máx 20)' });
       }
 
+      // Línea explícita (modo "import per-slot"). Si viene, TODAS las hojas
+      // del archivo se asignan a este teléfono — los nombres de las hojas se
+      // ignoran. Esto permite que el admin suba un .xlsx desde el slot del
+      // panel "Números vigentes" y la línea sea la del slot, no parseada de
+      // la hoja. Si no viene, se usa el comportamiento legacy (parsear cada
+      // sheet name como teléfono).
+      const overrideLinePhone = (req.query.linePhone ? String(req.query.linePhone) : '').trim();
+
       // dryRun por default true. Solo `dryRun=false` ejecuta escrituras.
       const dryRun = String(req.query.dryRun || 'true').toLowerCase() !== 'false';
 
@@ -6653,10 +6661,9 @@ app.post(
       for (const sheetName of workbook.SheetNames) {
         const sheetTrimmed = String(sheetName || '').trim();
         if (!sheetTrimmed) continue;
-        // El linePhone que guardamos en User es el teléfono extraído (canonical),
-        // NO el nombre crudo de la hoja. Esto permite que sheets con prefijos
-        // tipo "TIGER 1 39095913748" se almacenen como "+39095913748".
-        const linePhone = _extractPhoneFromSheetName(sheetTrimmed);
+        // Si vino linePhone explícito (modo per-slot), todas las hojas usan ese.
+        // Si no, parseamos el nombre de la hoja (modo legacy multi-line file).
+        const linePhone = overrideLinePhone || _extractPhoneFromSheetName(sheetTrimmed);
         if (!linePhone) continue;
 
         const ws = workbook.Sheets[sheetName];
@@ -6685,13 +6692,19 @@ app.post(
           //          prefix='ato', celda='atojoaquin398' → 'atojoaquin398'.
           const lower = cellLower.startsWith(prefix) ? cellLower : (prefix + cellLower);
 
-          // Detectar conflicto entre hojas del mismo upload
+          // Detectar conflicto entre hojas del mismo upload.
+          // En modo per-slot (overrideLinePhone), todas las hojas asignan al mismo
+          // teléfono — los duplicados no son conflictos, simplemente se deduplican.
           if (seenLowerToSheet.has(lower) && seenLowerToSheet.get(lower) !== sheetName) {
-            conflictsInFile.push({
-              username: lower,
-              sheets: [seenLowerToSheet.get(lower), sheetName]
-            });
-            // No lo agregamos a esta hoja (el conflicto invalida ambas asignaciones).
+            if (!overrideLinePhone) {
+              conflictsInFile.push({
+                username: lower,
+                sheets: [seenLowerToSheet.get(lower), sheetName]
+              });
+              // El conflicto invalida ambas asignaciones (modo legacy multi-line).
+              continue;
+            }
+            // En modo per-slot, simplemente saltear el duplicado (ya está asignado).
             continue;
           }
           seenLowerToSheet.set(lower, sheetName);
