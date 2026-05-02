@@ -52,6 +52,10 @@
                     <span>💬</span>
                     <span>Comunidad</span>
                 </a>
+                <a href="#" class="nav-item" data-section="importLines">
+                    <span>📥</span>
+                    <span>Importar líneas</span>
+                </a>
                 <a href="#" class="nav-item" data-section="reportDaily">
                     <span>📅</span>
                     <span>Reembolsos diarios</span>
@@ -164,6 +168,67 @@
                     <button class="btn-primary" onclick="saveUserCommunities()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
                         💾 Guardar links de comunidad
                     </button>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: IMPORTAR LÍNEAS DESDE DRIVE (.xlsx)
+                 ============================================ -->
+            <section id="importLinesSection" class="section">
+                <div class="panel-header">
+                    <h2>📥 Importar líneas desde Drive</h2>
+                </div>
+                <div class="cbu-form" style="background:rgba(155,48,255,0.04);border:1px solid rgba(155,48,255,0.20);border-radius:12px;padding:16px;max-width:920px;">
+                    <div style="background:rgba(0,0,0,0.3);border-left:3px solid #9b30ff;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                        <p style="margin:0 0 4px;color:#c89bff;font-weight:700;font-size:13px;">Cómo funciona</p>
+                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                            Subí un archivo <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">.xlsx</code> exportado desde Google Sheets (Archivo → Descargar → Microsoft Excel). Cada <strong>hoja</strong> del archivo representa una línea: el nombre de la hoja debe ser el <strong>número de teléfono</strong> de esa línea (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">+5491111…</code>) y dentro debe haber una columna de usernames (la primera fila se asume header y se ignora).<br><br>
+                            El campo <strong>Nombre del equipo</strong> abajo se aplica a <em>todas</em> las hojas del archivo (ej: "Atomic" o "Argentum"). Para cada Drive distinto subís un archivo distinto.<br><br>
+                            <strong>Vista previa</strong> te muestra qué pasaría sin escribir nada. Después apretás <strong>Confirmar</strong> y se aplica.
+                        </p>
+                    </div>
+
+                    <!-- Stats arriba -->
+                    <div id="lineImportStats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;font-size:11px;">
+                        <span style="color:#888;">Cargando estadísticas…</span>
+                    </div>
+
+                    <!-- Form -->
+                    <div style="display:flex;flex-direction:column;gap:12px;">
+                        <div>
+                            <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Nombre del equipo (se aplica a todas las hojas del archivo)</label>
+                            <input type="text" id="lineImportTeamName" placeholder="ej: Atomic" maxlength="24" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(155,48,255,0.25);background:rgba(0,0,0,0.4);color:#c89bff;font-size:14px;font-weight:600;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Archivo .xlsx</label>
+                            <input type="file" id="lineImportFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="width:100%;padding:10px;border-radius:8px;border:1px dashed rgba(155,48,255,0.4);background:rgba(0,0,0,0.3);color:#ccc;font-size:13px;box-sizing:border-box;">
+                        </div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                            <button type="button" id="lineImportPreviewBtn" onclick="previewLineImport()" style="flex:1;min-width:180px;padding:12px;font-size:13px;font-weight:700;background:rgba(155,48,255,0.15);border:1.5px solid rgba(155,48,255,0.5);color:#c89bff;border-radius:10px;cursor:pointer;">
+                                👁️ Vista previa (no escribe)
+                            </button>
+                            <button type="button" id="lineImportConfirmBtn" onclick="confirmLineImport()" disabled style="flex:1;min-width:180px;padding:12px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#6a0dad);border:none;color:#fff;border-radius:10px;cursor:pointer;opacity:0.4;">
+                                ✅ Confirmar importación
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Resultado del preview/import -->
+                    <div id="lineImportResult" style="margin-top:18px;display:none;"></div>
+
+                    <!-- Limpiar team -->
+                    <div style="margin-top:24px;padding-top:16px;border-top:1px dashed rgba(255,255,255,0.1);">
+                        <p style="margin:0 0 8px;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Zona peligrosa</p>
+                        <p style="margin:0 0 10px;color:#888;font-size:11px;line-height:1.5;">
+                            Si cargaste un Drive equivocado, podés limpiar todas las asignaciones de un equipo. Los usuarios afectados volverán a usar el matcher por prefijo de la sección "Números vigentes".
+                        </p>
+                        <div style="display:flex;gap:8px;align-items:flex-end;">
+                            <input type="text" id="lineImportClearTeamName" placeholder="Nombre exacto del equipo a limpiar" maxlength="24" style="flex:1;padding:9px 11px;border-radius:8px;border:1px solid rgba(255,80,80,0.3);background:rgba(0,0,0,0.4);color:#ffaaaa;font-size:13px;box-sizing:border-box;">
+                            <button type="button" onclick="clearTeamLineAssignments()" style="padding:9px 14px;font-size:12px;font-weight:700;background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.5);color:#ffaaaa;border-radius:8px;cursor:pointer;white-space:nowrap;">
+                                🗑️ Limpiar equipo
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </section>
 

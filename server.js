@@ -2004,8 +2004,17 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
 
     let linePhone = null;
     try {
-      const linesConfig = await getConfig('userLinesByPrefix');
-      linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+      // Prioridad 1: asignación explícita por Drive import (User.linePhone).
+      // Si el admin importó este username desde un .xlsx, ese teléfono manda
+      // por encima del matcher por prefijo. Permite que dos usuarios con el
+      // mismo prefijo caigan en líneas distintas.
+      if (userObj.linePhone) {
+        linePhone = userObj.linePhone;
+      } else {
+        // Fallback: matcher por prefijo (comportamiento legacy).
+        const linesConfig = await getConfig('userLinesByPrefix');
+        linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+      }
     } catch (cfgErr) {
       logger.warn(`[LoginUsernameOnly] No se pudo cargar userLinesByPrefix: ${cfgErr.message}`);
     }
@@ -2032,9 +2041,32 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
 // Devuelve la línea vigente del usuario autenticado (para refrescar sin re-login).
 app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
   try {
-    const linesConfig = await getConfig('userLinesByPrefix');
-    const phone = pickLinePhoneForUsername(linesConfig, req.user.username);
-    const teamName = pickTeamNameForUsername(linesConfig, req.user.username);
+    // Refetch del User para leer linePhone/lineTeamName (no están en el JWT).
+    // Query indexada por `id` — costo despreciable.
+    let userDoc = null;
+    try {
+      userDoc = await User.findOne({ id: req.user.userId })
+        .select('username linePhone lineTeamName')
+        .lean();
+    } catch (lookupErr) {
+      logger.warn(`[user-lines/me] User lookup falló: ${lookupErr.message}`);
+    }
+
+    let phone = null;
+    let teamName = null;
+
+    // Prioridad 1: asignación explícita por Drive import.
+    if (userDoc && userDoc.linePhone) phone = userDoc.linePhone;
+    if (userDoc && userDoc.lineTeamName) teamName = userDoc.lineTeamName;
+
+    // Fallback: matcher por prefijo legacy. Solo se usa si el campo correspondiente
+    // está vacío — permite tener phone explícito y teamName por prefijo (o viceversa).
+    if (!phone || !teamName) {
+      const linesConfig = await getConfig('userLinesByPrefix');
+      if (!phone) phone = pickLinePhoneForUsername(linesConfig, req.user.username);
+      if (!teamName) teamName = pickTeamNameForUsername(linesConfig, req.user.username);
+    }
+
     // En el mismo response devolvemos el link de comunidad correspondiente
     // para evitar un round-trip adicional desde el cliente.
     const communitiesConfig = await getConfig('userCommunitiesByPrefix');
@@ -6518,6 +6550,281 @@ app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
     // visto en localStorage contra el actual).
   } catch (error) {
     console.error('Error actualizando user-lines:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// IMPORT DE LÍNEAS DESDE DRIVE / .XLSX
+// Permite asignar masivamente usuarios a líneas específicas subiendo un .xlsx
+// exportado desde Google Sheets. Cada hoja del archivo representa una línea:
+//   - Nombre de la hoja = teléfono de esa línea (ej: "+5491111...")
+//   - Primera fila (header "name") se ignora
+//   - Filas restantes = usernames que pertenecen a esa línea
+// El parámetro `teamName` (query string) se aplica a todas las hojas del archivo.
+// `dryRun=true` (default) no escribe nada — solo devuelve un reporte para preview.
+// ============================================
+const USER_LINES_IMPORT_LIMIT = '15mb'; // ~15 hojas × 3000 filas, holgado.
+
+app.post(
+  '/api/admin/user-lines/import',
+  authMiddleware,
+  adminMiddleware,
+  express.raw({ limit: USER_LINES_IMPORT_LIMIT, type: '*/*' }),
+  async (req, res) => {
+    // Lazy require — si xlsx no está instalado, devolvemos error claro
+    // (admin debe correr `npm install` después del deploy con este feature).
+    let XLSX;
+    try {
+      XLSX = require('xlsx');
+    } catch (e) {
+      return res.status(503).json({
+        error: 'Falta instalar la dependencia "xlsx" en el servidor. Ejecutá: npm install xlsx'
+      });
+    }
+
+    try {
+      const teamName = (req.query.teamName ? String(req.query.teamName) : '').trim();
+      if (!teamName) {
+        return res.status(400).json({ error: 'Falta el parámetro teamName (nombre del equipo)' });
+      }
+      if (teamName.length > 24) {
+        return res.status(400).json({ error: 'El nombre del equipo es demasiado largo (máx 24)' });
+      }
+
+      // dryRun por default true. Solo `dryRun=false` ejecuta escrituras.
+      const dryRun = String(req.query.dryRun || 'true').toLowerCase() !== 'false';
+
+      const buf = req.body;
+      if (!buf || !Buffer.isBuffer(buf) || buf.length < 100) {
+        return res.status(400).json({ error: 'Archivo vacío o muy chico' });
+      }
+
+      let workbook;
+      try {
+        workbook = XLSX.read(buf, { type: 'buffer', cellDates: false });
+      } catch (parseErr) {
+        return res.status(400).json({ error: `No se pudo leer el .xlsx: ${parseErr.message}` });
+      }
+
+      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        return res.status(400).json({ error: 'El archivo no tiene hojas' });
+      }
+
+      // -------- Pase 1: extraer (sheetName -> [usernames]) y detectar conflictos
+      // dentro del mismo archivo (mismo username en dos hojas distintas).
+      const sheetData = []; // [{ sheetName, linePhone, usernamesLower: [] }]
+      const seenLowerToSheet = new Map(); // lower -> first sheetName que lo trajo
+      const conflictsInFile = []; // [{ username, sheets: [a, b] }]
+      const allUsernamesLower = new Set();
+
+      for (const sheetName of workbook.SheetNames) {
+        const linePhone = String(sheetName || '').trim();
+        if (!linePhone) continue;
+
+        const ws = workbook.Sheets[sheetName];
+        if (!ws) continue;
+
+        // header:1 → array de arrays. blankrows:false → omite filas vacías.
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+
+        // Saltar la primera fila (header "name"). Si el sheet está vacío o solo
+        // tiene header, queda como hoja sin matches (no error — se reporta).
+        const dataRows = rows.length > 1 ? rows.slice(1) : [];
+
+        const usernamesLower = [];
+        for (const row of dataRows) {
+          if (!row) continue;
+          const raw = row[0];
+          if (raw === null || raw === undefined) continue;
+          const cleaned = String(raw).trim();
+          if (!cleaned) continue;
+          const lower = cleaned.toLowerCase();
+
+          // Detectar conflicto entre hojas del mismo upload
+          if (seenLowerToSheet.has(lower) && seenLowerToSheet.get(lower) !== sheetName) {
+            conflictsInFile.push({
+              username: lower,
+              sheets: [seenLowerToSheet.get(lower), sheetName]
+            });
+            // No lo agregamos a esta hoja (el conflicto invalida ambas asignaciones).
+            continue;
+          }
+          seenLowerToSheet.set(lower, sheetName);
+          usernamesLower.push(lower);
+          allUsernamesLower.add(lower);
+        }
+
+        sheetData.push({ sheetName, linePhone, usernamesLower });
+      }
+
+      // -------- Pase 2: lookup masivo en la DB (un solo query con $in + collation
+      // para case-insensitive). Para 3000 usernames es un IXSCAN/COLLSCAN rápido.
+      const allUsernamesArr = [...allUsernamesLower];
+      let docs = [];
+      if (allUsernamesArr.length > 0) {
+        docs = await User.find({ username: { $in: allUsernamesArr } })
+          .collation({ locale: 'en', strength: 2 })
+          .select('id username linePhone lineTeamName')
+          .lean();
+      }
+
+      const docByLower = new Map();
+      for (const d of docs) {
+        if (d && d.username) docByLower.set(d.username.toLowerCase(), d);
+      }
+
+      // -------- Pase 3: armar bulkOps y reporte por hoja.
+      const bulkOps = [];
+      const sheetReports = [];
+      let totalMatched = 0;
+      let totalNotFound = 0;
+      const notFoundSample = []; // sólo guardamos los primeros 100 para no inflar la respuesta
+
+      const now = new Date();
+      const adminUsername = (req.user && req.user.username) || null;
+
+      for (const sd of sheetData) {
+        let sheetMatched = 0;
+        let sheetNotFound = 0;
+        let sheetReassigned = 0; // ya tenían linePhone distinto → se sobreescribe
+
+        for (const lower of sd.usernamesLower) {
+          const doc = docByLower.get(lower);
+          if (!doc) {
+            sheetNotFound++;
+            totalNotFound++;
+            if (notFoundSample.length < 100) {
+              notFoundSample.push({ username: lower, sheet: sd.sheetName });
+            }
+            continue;
+          }
+
+          sheetMatched++;
+          totalMatched++;
+          if (doc.linePhone && doc.linePhone !== sd.linePhone) {
+            sheetReassigned++;
+          }
+
+          if (!dryRun) {
+            bulkOps.push({
+              updateOne: {
+                filter: { id: doc.id },
+                update: {
+                  $set: {
+                    linePhone: sd.linePhone,
+                    lineTeamName: teamName,
+                    lineAssignedAt: now,
+                    lineAssignedBy: adminUsername
+                  }
+                }
+              }
+            });
+          }
+        }
+
+        sheetReports.push({
+          sheetName: sd.sheetName,
+          linePhone: sd.linePhone,
+          totalRows: sd.usernamesLower.length,
+          matched: sheetMatched,
+          notFound: sheetNotFound,
+          reassigned: sheetReassigned
+        });
+      }
+
+      // -------- Escritura (solo si dryRun=false)
+      let writeResult = null;
+      if (!dryRun && bulkOps.length > 0) {
+        try {
+          const r = await User.bulkWrite(bulkOps, { ordered: false });
+          writeResult = {
+            modifiedCount: r.modifiedCount || 0,
+            matchedCount: r.matchedCount || 0
+          };
+        } catch (bulkErr) {
+          logger.error(`[user-lines/import] bulkWrite error: ${bulkErr.message}`);
+          return res.status(500).json({ error: `Error escribiendo en la DB: ${bulkErr.message}` });
+        }
+      }
+
+      logger.info(`[user-lines/import] team=${teamName} dryRun=${dryRun} sheets=${sheetReports.length} matched=${totalMatched} notFound=${totalNotFound} conflicts=${conflictsInFile.length} by=${adminUsername}`);
+
+      res.json({
+        success: true,
+        dryRun,
+        teamName,
+        summary: {
+          totalSheets: sheetReports.length,
+          totalRows: totalMatched + totalNotFound,
+          matched: totalMatched,
+          notFound: totalNotFound,
+          conflicts: conflictsInFile.length
+        },
+        sheets: sheetReports,
+        conflicts: conflictsInFile.slice(0, 100),
+        notFoundSample,
+        writeResult
+      });
+    } catch (error) {
+      logger.error(`[user-lines/import] error: ${error.message}\n${error.stack}`);
+      res.status(500).json({ error: `Error del servidor: ${error.message}` });
+    }
+  }
+);
+
+// Endpoint para limpiar la asignación de línea de TODOS los usuarios de un team
+// (vuelve a usar el matcher por prefijo). Útil si se cargó un Drive equivocado.
+app.post('/api/admin/user-lines/clear-team', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { teamName } = req.body || {};
+    if (!teamName || typeof teamName !== 'string' || !teamName.trim()) {
+      return res.status(400).json({ error: 'Falta teamName' });
+    }
+    const cleanTeam = teamName.trim();
+    const r = await User.updateMany(
+      { lineTeamName: cleanTeam },
+      { $set: { linePhone: null, lineTeamName: null, lineAssignedAt: null, lineAssignedBy: null } }
+    );
+    res.json({
+      success: true,
+      teamName: cleanTeam,
+      cleared: r.modifiedCount || 0
+    });
+  } catch (error) {
+    logger.error(`[user-lines/clear-team] error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Stats de asignaciones de línea (para mostrar resumen en el panel admin).
+app.get('/api/admin/user-lines/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const pipeline = [
+      { $match: { linePhone: { $ne: null, $exists: true } } },
+      {
+        $group: {
+          _id: { teamName: '$lineTeamName', linePhone: '$linePhone' },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { '_id.teamName': 1, '_id.linePhone': 1 } }
+    ];
+    const groups = await User.aggregate(pipeline);
+    const totalAssigned = groups.reduce((acc, g) => acc + (g.count || 0), 0);
+    const totalUsers = await User.countDocuments({});
+    res.json({
+      totalUsers,
+      totalAssigned,
+      totalUnassigned: totalUsers - totalAssigned,
+      lines: groups.map(g => ({
+        teamName: g._id.teamName || '(sin team)',
+        linePhone: g._id.linePhone,
+        count: g.count
+      }))
+    });
+  } catch (error) {
+    logger.error(`[user-lines/stats] error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

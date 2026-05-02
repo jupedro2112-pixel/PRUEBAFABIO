@@ -222,6 +222,34 @@ const userSchema = new mongoose.Schema({
   },
 
   // =============================================
+  // Asignación explícita de línea (Drive import)
+  // Cuando estos campos están seteados, ganan sobre el matcher por prefijo
+  // (userLinesByPrefix). Permite que dos usuarios con el mismo prefijo (ej:
+  // "ato") caigan en líneas distintas (Atomic Línea 1 vs Atomic Línea 2),
+  // según lo que indique el .xlsx importado por el admin.
+  // Si ambos campos están vacíos, el sistema cae al matcher por prefijo.
+  // =============================================
+  linePhone: {
+    type: String,
+    default: null,
+    index: true,
+    trim: true
+  },
+  lineTeamName: {
+    type: String,
+    default: null,
+    trim: true
+  },
+  lineAssignedAt: {
+    type: Date,
+    default: null
+  },
+  lineAssignedBy: {
+    type: String,
+    default: null
+  },
+
+  // =============================================
   // Bloqueo de cuenta (solo admin general puede bloquear/desbloquear)
   // =============================================
   isBlocked: {

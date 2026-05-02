@@ -155,6 +155,7 @@ function showSection(sectionKey) {
     const map = {
         numero: 'numeroSection',
         comunidad: 'comunidadSection',
+        importLines: 'importLinesSection',
         reportDaily: 'reportDailySection',
         reportWeekly: 'reportWeeklySection',
         reportMonthly: 'reportMonthlySection',
@@ -178,6 +179,9 @@ function showSection(sectionKey) {
         loadUserLines();
     } else if (sectionKey === 'comunidad') {
         loadUserCommunities();
+    } else if (sectionKey === 'importLines') {
+        loadLineImportStats();
+        resetLineImportForm();
     } else if (sectionKey === 'reportDaily') {
         ensureRefundDateDefaults('daily');
         loadRefundsReport('daily');
@@ -2550,4 +2554,306 @@ function openRecoveryModal(tier, status) {
             showToast(d.message || 'No se pudo enviar', 'error');
         }
     }).catch(() => showToast('Error de conexión', 'error'));
+}
+
+// ============================================
+// IMPORT DE LÍNEAS DESDE DRIVE / .XLSX
+// ============================================
+let _lineImportLastPreviewBuffer = null; // ArrayBuffer del último file leído
+let _lineImportLastTeamName = null;
+
+function resetLineImportForm() {
+    const fileEl = document.getElementById('lineImportFile');
+    const teamEl = document.getElementById('lineImportTeamName');
+    const resultEl = document.getElementById('lineImportResult');
+    const confirmBtn = document.getElementById('lineImportConfirmBtn');
+    if (fileEl) fileEl.value = '';
+    if (teamEl) teamEl.value = '';
+    if (resultEl) { resultEl.style.display = 'none'; resultEl.innerHTML = ''; }
+    _lineImportLastPreviewBuffer = null;
+    _lineImportLastTeamName = null;
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = '0.4';
+    }
+}
+
+async function loadLineImportStats() {
+    const el = document.getElementById('lineImportStats');
+    if (!el) return;
+    el.innerHTML = '<span style="color:#888;">Cargando estadísticas…</span>';
+    try {
+        const r = await authFetch('/api/admin/user-lines/stats');
+        const d = await r.json();
+        if (!r.ok) {
+            el.innerHTML = '<span style="color:#ff6b6b;">Error: ' + escapeHtml(d.error || 'desconocido') + '</span>';
+            return;
+        }
+        const chips = [];
+        chips.push(_chip('Total usuarios', d.totalUsers, '#888'));
+        chips.push(_chip('Asignados a línea', d.totalAssigned, '#9b30ff'));
+        chips.push(_chip('Sin asignar (usan prefijo)', d.totalUnassigned, '#888'));
+        let html = chips.join('');
+        if (Array.isArray(d.lines) && d.lines.length > 0) {
+            html += '<div style="width:100%;margin-top:8px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:8px;display:flex;flex-direction:column;gap:4px;">';
+            html += '<span style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Distribución actual</span>';
+            for (const l of d.lines) {
+                html += '<div style="display:flex;justify-content:space-between;gap:10px;font-size:11px;color:#bbb;">';
+                html += '<span><strong style="color:#c89bff;">' + escapeHtml(l.teamName || '(sin team)') + '</strong> · <code style="background:rgba(0,0,0,0.4);padding:1px 6px;border-radius:3px;font-family:monospace;">' + escapeHtml(l.linePhone) + '</code></span>';
+                html += '<span style="color:#fff;font-weight:700;">' + (l.count || 0) + ' usuarios</span>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        el.innerHTML = html;
+    } catch (e) {
+        console.error(e);
+        el.innerHTML = '<span style="color:#ff6b6b;">Error de conexión</span>';
+    }
+}
+
+function _chip(label, value, color) {
+    return '<span style="display:inline-flex;align-items:center;gap:6px;background:rgba(0,0,0,0.4);padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);">' +
+        '<span style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">' + escapeHtml(label) + '</span>' +
+        '<strong style="color:' + color + ';font-size:14px;">' + value + '</strong>' +
+        '</span>';
+}
+
+async function _readLineImportFileBuffer() {
+    const fileEl = document.getElementById('lineImportFile');
+    if (!fileEl || !fileEl.files || fileEl.files.length === 0) {
+        showToast('Seleccioná un archivo .xlsx', 'error');
+        return null;
+    }
+    const file = fileEl.files[0];
+    if (file.size > 14 * 1024 * 1024) {
+        showToast('El archivo supera 14 MB. Subir uno más chico.', 'error');
+        return null;
+    }
+    if (!file.name.toLowerCase().endsWith('.xlsx')) {
+        showToast('El archivo debe ser .xlsx (Excel). Si tu Drive es Google Sheets: Archivo → Descargar → Excel.', 'error');
+        return null;
+    }
+    return await file.arrayBuffer();
+}
+
+async function _sendLineImport(buffer, teamName, dryRun) {
+    const url = '/api/admin/user-lines/import?teamName=' + encodeURIComponent(teamName) + '&dryRun=' + (dryRun ? 'true' : 'false');
+    const r = await fetch(API_URL + url, {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Bearer ' + currentToken,
+            'Content-Type': 'application/octet-stream'
+        },
+        body: buffer
+    });
+    if (r.status === 401) { handleLogout(); throw new Error('Sesión expirada'); }
+    return await r.json();
+}
+
+async function previewLineImport() {
+    const teamEl = document.getElementById('lineImportTeamName');
+    const teamName = teamEl ? teamEl.value.trim() : '';
+    if (!teamName) {
+        showToast('Falta el nombre del equipo', 'error');
+        if (teamEl) teamEl.focus();
+        return;
+    }
+
+    const buffer = await _readLineImportFileBuffer();
+    if (!buffer) return;
+
+    const previewBtn = document.getElementById('lineImportPreviewBtn');
+    const confirmBtn = document.getElementById('lineImportConfirmBtn');
+    if (previewBtn) {
+        previewBtn.disabled = true;
+        previewBtn.style.opacity = '0.5';
+        previewBtn.textContent = '⏳ Analizando…';
+    }
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = '0.4';
+    }
+
+    try {
+        const d = await _sendLineImport(buffer, teamName, true);
+        if (!d.success) {
+            showToast(d.error || 'Error en la vista previa', 'error');
+            return;
+        }
+        // Guardar buffer para que confirmar use exactamente lo mismo (sin re-leer file)
+        _lineImportLastPreviewBuffer = buffer;
+        _lineImportLastTeamName = teamName;
+        renderLineImportResult(d, true);
+        if (confirmBtn && d.summary && d.summary.matched > 0) {
+            confirmBtn.disabled = false;
+            confirmBtn.style.opacity = '1';
+        }
+    } catch (e) {
+        console.error(e);
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        if (previewBtn) {
+            previewBtn.disabled = false;
+            previewBtn.style.opacity = '1';
+            previewBtn.textContent = '👁️ Vista previa (no escribe)';
+        }
+    }
+}
+
+async function confirmLineImport() {
+    if (!_lineImportLastPreviewBuffer || !_lineImportLastTeamName) {
+        showToast('Hacé "Vista previa" primero', 'error');
+        return;
+    }
+    const teamEl = document.getElementById('lineImportTeamName');
+    const teamName = teamEl ? teamEl.value.trim() : '';
+    if (teamName !== _lineImportLastTeamName) {
+        showToast('Cambiaste el equipo. Hacé "Vista previa" de nuevo.', 'error');
+        return;
+    }
+    if (!confirm('¿Confirmar la importación para el equipo "' + teamName + '"? Esta acción modifica usuarios en la base de datos.')) {
+        return;
+    }
+
+    const previewBtn = document.getElementById('lineImportPreviewBtn');
+    const confirmBtn = document.getElementById('lineImportConfirmBtn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.style.opacity = '0.5';
+        confirmBtn.textContent = '⏳ Escribiendo…';
+    }
+    if (previewBtn) { previewBtn.disabled = true; previewBtn.style.opacity = '0.5'; }
+
+    try {
+        const d = await _sendLineImport(_lineImportLastPreviewBuffer, teamName, false);
+        if (!d.success) {
+            showToast(d.error || 'Error en la importación', 'error');
+            return;
+        }
+        renderLineImportResult(d, false);
+        showToast('✅ Importación aplicada · ' + (d.summary && d.summary.matched || 0) + ' usuarios asignados', 'success');
+        _lineImportLastPreviewBuffer = null;
+        _lineImportLastTeamName = null;
+        // Refrescar stats arriba
+        loadLineImportStats();
+    } catch (e) {
+        console.error(e);
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = '0.4';
+            confirmBtn.textContent = '✅ Confirmar importación';
+        }
+        if (previewBtn) {
+            previewBtn.disabled = false;
+            previewBtn.style.opacity = '1';
+        }
+    }
+}
+
+function renderLineImportResult(d, isDryRun) {
+    const el = document.getElementById('lineImportResult');
+    if (!el) return;
+
+    const s = d.summary || {};
+    const sheets = Array.isArray(d.sheets) ? d.sheets : [];
+    const conflicts = Array.isArray(d.conflicts) ? d.conflicts : [];
+    const notFoundSample = Array.isArray(d.notFoundSample) ? d.notFoundSample : [];
+
+    const banner = isDryRun
+        ? '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.4);color:#ffd700;padding:10px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:14px;">👁️ Vista previa — no se modificó nada en la DB. Revisá el resultado abajo y apretá "Confirmar" si está OK.</div>'
+        : '<div style="background:rgba(0,255,136,0.10);border:1px solid rgba(0,255,136,0.4);color:#00ff88;padding:10px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:14px;">✅ Importación aplicada · ' + (d.writeResult && d.writeResult.modifiedCount || 0) + ' documentos modificados.</div>';
+
+    let html = banner;
+
+    // Resumen
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">';
+    html += _chip('Equipo', escapeHtml(d.teamName || ''), '#c89bff');
+    html += _chip('Hojas', s.totalSheets || 0, '#fff');
+    html += _chip('Filas totales', s.totalRows || 0, '#fff');
+    html += _chip('Matcheados', s.matched || 0, '#00ff88');
+    html += _chip('No encontrados', s.notFound || 0, (s.notFound > 0 ? '#ffaa00' : '#888'));
+    html += _chip('Conflictos', s.conflicts || 0, (s.conflicts > 0 ? '#ff6b6b' : '#888'));
+    html += '</div>';
+
+    // Tabla por hoja
+    if (sheets.length > 0) {
+        html += '<div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
+        html += '<div style="padding:8px 12px;background:rgba(155,48,255,0.10);color:#c89bff;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Detalle por hoja (línea)</div>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="color:#888;text-align:left;">';
+        html += '<th style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);">Hoja</th>';
+        html += '<th style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);">Línea (teléfono)</th>';
+        html += '<th style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:right;">Filas</th>';
+        html += '<th style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:right;">Match</th>';
+        html += '<th style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:right;">No enc.</th>';
+        html += '<th style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:right;">Reasignados</th>';
+        html += '</tr></thead><tbody>';
+        for (const sh of sheets) {
+            html += '<tr style="color:#ddd;">';
+            html += '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(sh.sheetName || '') + '</td>';
+            html += '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);font-family:monospace;color:#ffd700;">' + escapeHtml(sh.linePhone || '') + '</td>';
+            html += '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:right;">' + (sh.totalRows || 0) + '</td>';
+            html += '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:right;color:#00ff88;font-weight:700;">' + (sh.matched || 0) + '</td>';
+            html += '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:right;color:' + ((sh.notFound || 0) > 0 ? '#ffaa00' : '#666') + ';">' + (sh.notFound || 0) + '</td>';
+            html += '<td style="padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:right;color:' + ((sh.reassigned || 0) > 0 ? '#9b30ff' : '#666') + ';">' + (sh.reassigned || 0) + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+
+    // Conflictos
+    if (conflicts.length > 0) {
+        html += '<details style="background:rgba(255,107,107,0.05);border:1px solid rgba(255,107,107,0.3);border-radius:8px;padding:10px 12px;margin-bottom:10px;">';
+        html += '<summary style="color:#ff6b6b;font-size:12px;font-weight:700;cursor:pointer;">⚠️ ' + conflicts.length + ' username(s) en más de una hoja del archivo (no se asignaron)</summary>';
+        html += '<div style="margin-top:8px;max-height:200px;overflow:auto;font-size:11px;color:#ffaaaa;font-family:monospace;">';
+        for (const c of conflicts) {
+            html += '<div>' + escapeHtml(c.username) + ' → hojas: ' + c.sheets.map(escapeHtml).join(' / ') + '</div>';
+        }
+        html += '</div></details>';
+    }
+
+    // No encontrados (sample)
+    if (notFoundSample.length > 0) {
+        html += '<details style="background:rgba(255,170,0,0.05);border:1px solid rgba(255,170,0,0.3);border-radius:8px;padding:10px 12px;">';
+        html += '<summary style="color:#ffaa00;font-size:12px;font-weight:700;cursor:pointer;">📋 Primeros ' + notFoundSample.length + ' usernames no encontrados en la DB (los ignoramos como pediste)</summary>';
+        html += '<div style="margin-top:8px;max-height:200px;overflow:auto;font-size:11px;color:#ffd9a0;font-family:monospace;">';
+        for (const nf of notFoundSample) {
+            html += '<div>' + escapeHtml(nf.username) + ' <span style="color:#888;">(' + escapeHtml(nf.sheet) + ')</span></div>';
+        }
+        html += '</div></details>';
+    }
+
+    el.innerHTML = html;
+    el.style.display = 'block';
+}
+
+async function clearTeamLineAssignments() {
+    const inp = document.getElementById('lineImportClearTeamName');
+    const team = inp ? inp.value.trim() : '';
+    if (!team) {
+        showToast('Escribí el nombre exacto del equipo', 'error');
+        return;
+    }
+    if (!confirm('¿Limpiar TODAS las asignaciones de línea del equipo "' + team + '"? Los usuarios afectados volverán a usar el matcher por prefijo.')) {
+        return;
+    }
+    try {
+        const r = await authFetch('/api/admin/user-lines/clear-team', {
+            method: 'POST',
+            body: JSON.stringify({ teamName: team })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast(d.error || 'Error', 'error');
+            return;
+        }
+        showToast('✅ Limpiados ' + (d.cleared || 0) + ' usuarios del equipo "' + team + '"', 'success');
+        if (inp) inp.value = '';
+        loadLineImportStats();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
