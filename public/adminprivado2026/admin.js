@@ -706,6 +706,34 @@ async function loadEquipmentReport() {
 // re-renderizar solo la tabla al filtrar por usuario.
 let equipmentDataCache = null;
 
+// Estado de orden actual de la tabla Equipamiento. Persiste entre renders
+// y se aplica en filterEquipmentTable() tambien para que el filtro respete
+// el sort.
+let _equipmentSortKey = 'appLastSeenDesc';
+
+function _sortEquipmentUsers(users, key) {
+    const arr = users.slice();
+    const tsAppSeen = (u) => u && u.appLastSeen ? new Date(u.appLastSeen).getTime() : 0;
+    const tsLastLogin = (u) => u && u.lastLogin ? new Date(u.lastLogin).getTime() : 0;
+    if (key === 'appLastSeenDesc') {
+        arr.sort((a, b) => tsAppSeen(b) - tsAppSeen(a) || (a.username || '').localeCompare(b.username || ''));
+    } else if (key === 'appLastSeenAsc') {
+        arr.sort((a, b) => {
+            const ta = tsAppSeen(a), tb = tsAppSeen(b);
+            // Sin actividad (0) va al final cuando ordenamos ascendente.
+            if (ta === 0 && tb === 0) return (a.username || '').localeCompare(b.username || '');
+            if (ta === 0) return 1;
+            if (tb === 0) return -1;
+            return ta - tb;
+        });
+    } else if (key === 'lastLoginDesc') {
+        arr.sort((a, b) => tsLastLogin(b) - tsLastLogin(a) || (a.username || '').localeCompare(b.username || ''));
+    } else if (key === 'usernameAsc') {
+        arr.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    }
+    return arr;
+}
+
 function renderEquipmentReport(container, data) {
     const t = data.totals || {};
     const users = Array.isArray(data.users) ? data.users : [];
@@ -730,14 +758,28 @@ function renderEquipmentReport(container, data) {
         return;
     }
 
-    // Encabezado de detalle + buscador por usuario
+    // Encabezado de detalle + buscador + selector de orden
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 10px;">';
     html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle por usuario</h3>';
-    html += '  <input type="text" id="equipmentUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterEquipmentTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '    <select id="equipmentSortSelect" onchange="changeEquipmentSort(this.value)" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;cursor:pointer;">';
+    html += '      <option value="appLastSeenDesc"' + (_equipmentSortKey === 'appLastSeenDesc' ? ' selected' : '') + '>↓ Actividad (más reciente)</option>';
+    html += '      <option value="appLastSeenAsc"' + (_equipmentSortKey === 'appLastSeenAsc' ? ' selected' : '') + '>↑ Actividad (más antigua)</option>';
+    html += '      <option value="lastLoginDesc"' + (_equipmentSortKey === 'lastLoginDesc' ? ' selected' : '') + '>↓ Último ingreso</option>';
+    html += '      <option value="usernameAsc"' + (_equipmentSortKey === 'usernameAsc' ? ' selected' : '') + '>A-Z usuario</option>';
+    html += '    </select>';
+    html += '    <input type="text" id="equipmentUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterEquipmentTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '  </div>';
     html += '</div>';
-    html += '<div id="equipmentTableContainer">' + renderEquipmentTableHtml(users) + '</div>';
+    const sorted = _sortEquipmentUsers(users, _equipmentSortKey);
+    html += '<div id="equipmentTableContainer">' + renderEquipmentTableHtml(sorted) + '</div>';
 
     container.innerHTML = html;
+}
+
+function changeEquipmentSort(key) {
+    _equipmentSortKey = key;
+    filterEquipmentTable();
 }
 
 // Convierte un ISO string en "hace X dias/horas/min" + estado visual.
@@ -811,13 +853,14 @@ function filterEquipmentTable() {
     const filtered = q
         ? all.filter(u => (u.username || '').toLowerCase().includes(q))
         : all;
+    const sorted = _sortEquipmentUsers(filtered, _equipmentSortKey);
     const tableContainer = document.getElementById('equipmentTableContainer');
     if (!tableContainer) return;
-    tableContainer.innerHTML = renderEquipmentTableHtml(filtered);
+    tableContainer.innerHTML = renderEquipmentTableHtml(sorted);
     if (q) {
         const hint = document.createElement('div');
         hint.style.cssText = 'color:#888;font-size:12px;margin-top:6px;';
-        hint.textContent = `Mostrando ${filtered.length} de ${all.length} usuarios`;
+        hint.textContent = `Mostrando ${sorted.length} de ${all.length} usuarios`;
         tableContainer.appendChild(hint);
     }
 }
@@ -887,6 +930,29 @@ async function loadWelcomeBonusReport() {
 }
 
 let welcomeBonusDataCache = null;
+let _welcomeBonusSortKey = 'appLastSeenDesc';
+
+function _sortWelcomeBonusClaims(claims, key) {
+    const arr = claims.slice();
+    const tsAppSeen = (c) => c && c.appLastSeen ? new Date(c.appLastSeen).getTime() : 0;
+    const tsClaimed = (c) => c && c.claimedAt ? new Date(c.claimedAt).getTime() : 0;
+    if (key === 'appLastSeenDesc') {
+        arr.sort((a, b) => tsAppSeen(b) - tsAppSeen(a) || (a.username || '').localeCompare(b.username || ''));
+    } else if (key === 'appLastSeenAsc') {
+        arr.sort((a, b) => {
+            const ta = tsAppSeen(a), tb = tsAppSeen(b);
+            if (ta === 0 && tb === 0) return (a.username || '').localeCompare(b.username || '');
+            if (ta === 0) return 1;
+            if (tb === 0) return -1;
+            return ta - tb;
+        });
+    } else if (key === 'claimedDesc') {
+        arr.sort((a, b) => tsClaimed(b) - tsClaimed(a) || (a.username || '').localeCompare(b.username || ''));
+    } else if (key === 'usernameAsc') {
+        arr.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    }
+    return arr;
+}
 
 function renderWelcomeBonusReport(container, data) {
     const t = data.totals || {};
@@ -914,14 +980,28 @@ function renderWelcomeBonusReport(container, data) {
         return;
     }
 
-    // Encabezado de detalle + buscador por usuario
+    // Encabezado de detalle + buscador + selector de orden
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 10px;">';
     html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle por usuario</h3>';
-    html += '  <input type="text" id="welcomeBonusUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterWelcomeBonusTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '    <select id="welcomeBonusSortSelect" onchange="changeWelcomeBonusSort(this.value)" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;cursor:pointer;">';
+    html += '      <option value="appLastSeenDesc"' + (_welcomeBonusSortKey === 'appLastSeenDesc' ? ' selected' : '') + '>↓ Actividad (más reciente)</option>';
+    html += '      <option value="appLastSeenAsc"' + (_welcomeBonusSortKey === 'appLastSeenAsc' ? ' selected' : '') + '>↑ Actividad (más antigua)</option>';
+    html += '      <option value="claimedDesc"' + (_welcomeBonusSortKey === 'claimedDesc' ? ' selected' : '') + '>↓ Fecha de reclamo</option>';
+    html += '      <option value="usernameAsc"' + (_welcomeBonusSortKey === 'usernameAsc' ? ' selected' : '') + '>A-Z usuario</option>';
+    html += '    </select>';
+    html += '    <input type="text" id="welcomeBonusUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterWelcomeBonusTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
+    html += '  </div>';
     html += '</div>';
-    html += '<div id="welcomeBonusTableContainer">' + renderWelcomeBonusTableHtml(claims) + '</div>';
+    const sorted = _sortWelcomeBonusClaims(claims, _welcomeBonusSortKey);
+    html += '<div id="welcomeBonusTableContainer">' + renderWelcomeBonusTableHtml(sorted) + '</div>';
 
     container.innerHTML = html;
+}
+
+function changeWelcomeBonusSort(key) {
+    _welcomeBonusSortKey = key;
+    filterWelcomeBonusTable();
 }
 
 function renderWelcomeBonusTableHtml(claims) {
@@ -977,13 +1057,14 @@ function filterWelcomeBonusTable() {
     const filtered = q
         ? all.filter(c => (c.username || '').toLowerCase().includes(q))
         : all;
+    const sorted = _sortWelcomeBonusClaims(filtered, _welcomeBonusSortKey);
     const tableContainer = document.getElementById('welcomeBonusTableContainer');
     if (!tableContainer) return;
-    tableContainer.innerHTML = renderWelcomeBonusTableHtml(filtered);
+    tableContainer.innerHTML = renderWelcomeBonusTableHtml(sorted);
     if (q) {
         const hint = document.createElement('div');
         hint.style.cssText = 'color:#888;font-size:12px;margin-top:6px;';
-        hint.textContent = `Mostrando ${filtered.length} de ${all.length} reclamos`;
+        hint.textContent = `Mostrando ${sorted.length} de ${all.length} reclamos`;
         tableContainer.appendChild(hint);
     }
 }
