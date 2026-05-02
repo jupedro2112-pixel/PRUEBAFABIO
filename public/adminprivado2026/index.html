@@ -268,6 +268,15 @@
                         <small style="color:#888;font-size:10px;">Máximo 180 caracteres</small>
                     </div>
 
+                    <!-- Picker de emojis: insertan en el ULTIMO campo (título o
+                         mensaje) que el admin clickeó. Si no clickeó ninguno,
+                         por defecto van al mensaje. -->
+                    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;margin-bottom:14px;">
+                        <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Emojis rápidos</label>
+                        <div id="notifEmojiPicker" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+                        <small style="color:#888;font-size:10px;display:block;margin-top:6px;">Tocá un emoji para agregarlo donde está el cursor del título o mensaje.</small>
+                    </div>
+
                     <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin-bottom:14px;">
                         <p style="margin:0 0 4px;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.8px;">Vista previa</p>
                         <strong id="notifPreviewTitle" style="color:#fff;font-size:13px;display:block;">Título…</strong>

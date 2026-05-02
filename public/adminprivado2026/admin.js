@@ -1066,7 +1066,12 @@ function renderNotifsHistory(container, data) {
     html += '<th>Llegó a</th>';
     html += '<th>📲 Clicks WA</th>';
     html += '<th>💰 Reclamos</th>';
+    html += '<th>Acción</th>';
     html += '</tr></thead><tbody>';
+
+    // Stash de los items para que el handler de "Reusar" los pueda leer
+    // sin tener que parsear el DOM.
+    _notifsHistoryStash = {};
 
     for (const it of items) {
         const sent = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR') : '—';
@@ -1094,6 +1099,10 @@ function renderNotifsHistory(container, data) {
             ? '<strong style="color:#25d366;">' + (it.giveawayClaims || 0) + '</strong>'
             : '<small style="color:#666;">—</small>';
 
+        // Guardar el item para que reuseNotif lo encuentre por id.
+        const stashId = it._id || it.id || (it.sentAt + '_' + (it.title || '')).slice(0, 80);
+        _notifsHistoryStash[stashId] = it;
+
         html += '<tr>';
         html += '<td><small>' + escapeHtml(sent) + (sched ? '<br><span style="color:#d4af37;">⏰ programada</span>' : '') + '</small></td>';
         html += '<td>' + audience + '</td>';
@@ -1104,12 +1113,103 @@ function renderNotifsHistory(container, data) {
         html += '<td><small>' + reach + '</small></td>';
         html += '<td>' + clicks + '</td>';
         html += '<td>' + claims + '</td>';
+        html += '<td><button type="button" class="reuse-notif-btn" data-stash-id="' + escapeHtml(String(stashId)) + '" ' +
+                'style="padding:6px 10px;font-size:11px;font-weight:700;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;cursor:pointer;white-space:nowrap;" ' +
+                'title="Cargar título, mensaje y audiencia en el composer">🔄 Reusar</button></td>';
         html += '</tr>';
     }
     html += '</tbody></table>';
     html += '<div style="color:#888;font-size:11px;margin-top:8px;">Mostrando ' + items.length + ' notificaciones.</div>';
 
     container.innerHTML = html;
+
+    // Wireup de los botones "Reusar" via delegacion.
+    container.querySelectorAll('.reuse-notif-btn').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+            const id = btn.getAttribute('data-stash-id');
+            const it = _notifsHistoryStash[id];
+            if (!it) return;
+            reuseNotifInComposer(it);
+        });
+    });
+}
+
+let _notifsHistoryStash = {};
+
+// Toma una notif del historial y la carga en el composer (titulo, mensaje,
+// audiencia, tipo de extra y los campos extra si aplica). Despues hace
+// scroll hasta el composer para que el admin solo le de "Enviar ahora" o
+// edite lo que quiera. NO la envia automaticamente.
+function reuseNotifInComposer(it) {
+    showSection('notifs');
+
+    const titleEl = document.getElementById('notifTitle');
+    const bodyEl = document.getElementById('notifBody');
+    if (titleEl) titleEl.value = it.title || '';
+    if (bodyEl) bodyEl.value = it.body || '';
+
+    // Audiencia: todos vs prefix.
+    const allRadio = document.querySelector('input[name="notifTarget"][value="all"]');
+    const prefixRadio = document.querySelector('input[name="notifTarget"][value="prefix"]');
+    const prefixInput = document.getElementById('notifPrefix');
+    if (it.audienceType === 'prefix' && it.audiencePrefix) {
+        if (prefixRadio) prefixRadio.checked = true;
+        if (prefixInput) prefixInput.value = it.audiencePrefix;
+    } else {
+        if (allRadio) allRadio.checked = true;
+        if (prefixInput) prefixInput.value = '';
+    }
+    if (typeof updateNotifTargetUI === 'function') updateNotifTargetUI();
+
+    // Tipo extra: none / promo / giveaway.
+    let extraType = 'none';
+    if (it.type === 'whatsapp_promo') extraType = 'promo';
+    else if (it.type === 'money_giveaway') extraType = 'giveaway';
+
+    const extraRadio = document.querySelector('input[name="notifExtra"][value="' + extraType + '"]');
+    if (extraRadio) extraRadio.checked = true;
+    if (typeof updateNotifExtraUI === 'function') updateNotifExtraUI();
+
+    // Campos especificos del extra (IDs reales del HTML).
+    if (extraType === 'promo') {
+        const msg = document.getElementById('promoAlertMessage');
+        const code = document.getElementById('promoAlertCode');
+        const dur = document.getElementById('promoAlertDuration'); // <select> con horas
+        if (msg) msg.value = it.promoMessage || '';
+        if (code) code.value = it.promoCode || '';
+        if (dur && it.promoExpiresAt && it.sentAt) {
+            const diffMs = new Date(it.promoExpiresAt).getTime() - new Date(it.sentAt).getTime();
+            const h = Math.round(diffMs / 3600000);
+            if (h > 0) {
+                // Solo setea si la opcion existe en el select.
+                const opt = Array.from(dur.options).find(o => Number(o.value) === h);
+                if (opt) dur.value = String(h);
+            }
+        }
+    } else if (extraType === 'giveaway') {
+        const amount = document.getElementById('giveawayAmountInput');
+        const budget = document.getElementById('giveawayBudgetInput');
+        const max = document.getElementById('giveawayMaxClaimsInput');
+        const dur = document.getElementById('giveawayDurationInput'); // <select> con minutos
+        if (amount) amount.value = it.giveawayAmount || '';
+        if (budget) budget.value = it.giveawayBudget || '';
+        if (max) max.value = it.giveawayMaxClaims || '';
+        if (dur && it.giveawayDurationMins) {
+            const opt = Array.from(dur.options).find(o => Number(o.value) === Number(it.giveawayDurationMins));
+            if (opt) dur.value = String(it.giveawayDurationMins);
+        }
+    }
+
+    if (typeof updateNotifPreview === 'function') updateNotifPreview();
+
+    // Scroll suave al composer para que se vea que se cargo.
+    setTimeout(() => {
+        const t = document.getElementById('notifTitle');
+        if (t && t.scrollIntoView) t.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (t) t.focus();
+    }, 100);
+
+    showToast('Notif cargada en el composer — editá si querés y dale enviar', 'success');
 }
 
 // ============================================
@@ -1868,6 +1968,10 @@ document.addEventListener('DOMContentLoaded', function () {
     if (ntEl) ntEl.addEventListener('input', updateNotifPreview);
     if (nbEl) nbEl.addEventListener('input', updateNotifPreview);
 
+    // Picker de emojis para notif (insertan en title o body segun el ultimo
+    // campo enfocado).
+    initNotifEmojiPicker();
+
     // Si ya hay token guardado, intentar entrar directo
     if (currentToken) {
         // Verificar token contra /api/users/me — si responde 200 y rol válido, mostrar app
@@ -1886,3 +1990,70 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 });
+
+// ============================================
+// EMOJI PICKER PARA NOTIFICACIONES
+// Inserta el emoji clickeado en la posicion del cursor del ULTIMO campo
+// (title o body) que el admin enfoco. Si nunca enfoco ninguno, va al body.
+// ============================================
+const NOTIF_EMOJIS = [
+    '🎁','💰','🤑','💸','💵','🎰','🃏','🎲','🎯','🏆',
+    '🔥','⚡','🚨','📢','📣','🔔','⏰','⏳','🎉','🎊',
+    '🎟️','🎫','💎','⭐','🌟','✨','🚀','🎮','🏅','🥇',
+    '✅','❌','⚠️','💯','🆕','🆓','🔝','🆗','🔄','📲',
+    '💪','👇','👀','🙌','👋','🫵','💬','📩','📌','📍'
+];
+
+let _lastNotifField = 'notifBody';
+
+function initNotifEmojiPicker() {
+    const picker = document.getElementById('notifEmojiPicker');
+    if (!picker) return;
+
+    // Track del ultimo campo enfocado para saber donde insertar el emoji.
+    ['notifTitle', 'notifBody'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('focus', () => { _lastNotifField = id; });
+            // Tambien al hacer click en el campo (por si vienen de blur otro).
+            el.addEventListener('click', () => { _lastNotifField = id; });
+        }
+    });
+
+    // Renderizar los botones de emoji.
+    picker.innerHTML = NOTIF_EMOJIS.map((e) =>
+        `<button type="button" class="notif-emoji-btn" data-emoji="${e}" ` +
+        `style="font-size:18px;line-height:1;padding:6px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);border-radius:6px;cursor:pointer;transition:background 0.15s;" ` +
+        `title="Insertar ${e}">${e}</button>`
+    ).join('');
+
+    picker.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('.notif-emoji-btn');
+        if (!btn) return;
+        const emoji = btn.getAttribute('data-emoji');
+        if (!emoji) return;
+        insertEmojiInField(_lastNotifField, emoji);
+    });
+}
+
+function insertEmojiInField(fieldId, emoji) {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+    const start = el.selectionStart != null ? el.selectionStart : el.value.length;
+    const end = el.selectionEnd != null ? el.selectionEnd : el.value.length;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    // Respeta el maxlength del input — si nos pasariamos, no insertamos.
+    const max = parseInt(el.getAttribute('maxlength') || '0', 10);
+    if (max > 0 && (before.length + emoji.length + after.length) > max) {
+        showToast('No entra el emoji — superaria el límite de ' + max + ' caracteres', 'info');
+        return;
+    }
+    el.value = before + emoji + after;
+    // Posicionar cursor despues del emoji.
+    const newPos = start + emoji.length;
+    try { el.setSelectionRange(newPos, newPos); } catch (_) {}
+    el.focus();
+    // Disparar input event para que la live preview se actualice.
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+}
