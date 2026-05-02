@@ -301,6 +301,12 @@ function computePeriodKey(type) {
   if (type === 'daily') {
     return `${yyyy}-${mm}-${dd}`;
   }
+  if (type === 'welcome_install') {
+    // Bono de bienvenida one-time por usuario. periodKey constante para que
+    // el indice unique { userId/username, type, periodKey } solo permita uno
+    // por cuenta, sin importar cuanto tiempo pase.
+    return 'one-time';
+  }
   if (type === 'weekly') {
     // ISO week number en TZ Argentina, calculado a partir de y/m/d en ART.
     const target = new Date(Date.UTC(year, month - 1, day));
@@ -6463,6 +6469,141 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
     res.json({ success: true, message: 'Links de comunidad actualizados', value });
   } catch (error) {
     console.error('Error actualizando user-communities:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// BONO DE BIENVENIDA — $10.000 one-time por usuario
+// Requisitos client-side: PWA instalada + notificaciones activas. El backend
+// NO los puede verificar (son flags del navegador), confia en que el flujo
+// del cliente solo dispara la request cuando ambos estan OK. La proteccion
+// real contra doble cobro es el indice unique de RefundClaim.
+// ============================================
+const WELCOME_BONUS_AMOUNT = 10000;
+
+app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const claim = await RefundClaim.findOne({
+      type: 'welcome_install',
+      $or: [{ userId }, { username }]
+    }).lean();
+    res.json({
+      amount: WELCOME_BONUS_AMOUNT,
+      claimed: !!claim,
+      claimedAt: claim?.claimedAt || null,
+      status: claim?.status || null
+    });
+  } catch (error) {
+    logger.error(`/api/refunds/welcome/status error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+
+    if (!await acquireRefundLock(userId, 'welcome_install')) {
+      return res.json({
+        success: false,
+        message: '⏳ Ya estás procesando el bono. Por favor espera...',
+        processing: true
+      });
+    }
+
+    try {
+      const periodKey = computePeriodKey('welcome_install');
+
+      // Pre-check rapido por userId O username.
+      const existing = await RefundClaim.findOne({
+        type: 'welcome_install',
+        periodKey,
+        $or: [{ userId }, { username }]
+      }).lean();
+      if (existing) {
+        logger.warn(`[BONUS] welcome — pre-check rechazo por claim existente para ${username}`);
+        return res.json({
+          success: false,
+          message: 'Ya reclamaste tu bono de bienvenida.',
+          canClaim: false
+        });
+      }
+
+      let claim;
+      try {
+        claim = await RefundClaim.create({
+          id: uuidv4(),
+          userId,
+          username,
+          type: 'welcome_install',
+          amount: WELCOME_BONUS_AMOUNT,
+          netAmount: 0,
+          percentage: 0,
+          period: 'Bono de bienvenida',
+          periodKey,
+          claimedAt: new Date()
+        });
+      } catch (e) {
+        if (e && e.code === 11000) {
+          logger.warn(`[BONUS] welcome — duplicado bloqueado por indice unique para ${username} (key: ${JSON.stringify(e.keyValue || e.keyPattern || {})})`);
+          return res.json({
+            success: false,
+            message: 'Ya reclamaste tu bono de bienvenida.',
+            canClaim: false
+          });
+        }
+        throw e;
+      }
+
+      const depositResult = await jugaygana.creditUserBalance(username, WELCOME_BONUS_AMOUNT);
+
+      if (!depositResult.success) {
+        // Mismo criterio que reembolsos: NO eliminar, marcar pending.
+        try {
+          claim.status = 'pending_credit_failed';
+          claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
+          await claim.save();
+        } catch (e) {
+          logger.error(`[BONUS] no se pudo persistir pending_credit_failed para claim ${claim._id}: ${e.message}`);
+        }
+        logger.error(`[BONUS] welcome credit fallo para ${username}: ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed`);
+        return res.json({
+          success: false,
+          message: 'Hubo un problema al acreditar tu bono. El administrador lo está revisando — no reintentes, podés contactarte por WhatsApp.',
+          canClaim: false,
+          pendingReview: true
+        });
+      }
+
+      try {
+        claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
+        await claim.save();
+      } catch (_) { /* best-effort */ }
+
+      await Transaction.create({
+        id: uuidv4(),
+        type: 'refund',
+        amount: WELCOME_BONUS_AMOUNT,
+        username,
+        description: 'Bono de bienvenida (PWA + notificaciones)',
+        transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
+        timestamp: new Date()
+      });
+
+      res.json({
+        success: true,
+        message: `¡Reclamaste tu bono de bienvenida de $${WELCOME_BONUS_AMOUNT.toLocaleString('es-AR')}!`,
+        amount: WELCOME_BONUS_AMOUNT
+      });
+    } finally {
+      setTimeout(() => releaseRefundLock(userId, 'welcome_install'), 3000);
+    }
+  } catch (error) {
+    console.error('Error reclamando bono de bienvenida:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

@@ -23,9 +23,9 @@ const refundClaimSchema = new mongoose.Schema({
     index: true,
     trim: true
   },
-  type: { 
-    type: String, 
-    enum: ['daily', 'weekly', 'monthly'], 
+  type: {
+    type: String,
+    enum: ['daily', 'weekly', 'monthly', 'welcome_install'],
     required: true,
     index: true
   },

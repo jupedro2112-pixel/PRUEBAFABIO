@@ -24,12 +24,12 @@ VIP.refunds = (function () {
         return isStandalone() && isNotifGranted();
     }
 
-    // Solo el reembolso mensual exige PWA instalada + notificaciones activas.
-    // Daily y weekly se reclaman libremente, aunque seguimos sugiriendo
-    // instalar la app y activar notificaciones para que el usuario reciba
-    // los avisos de acreditacion.
+    // Solo el reembolso mensual y el bono de bienvenida exigen PWA instalada
+    // + notificaciones activas. Daily y weekly se reclaman libremente, aunque
+    // seguimos sugiriendo instalar la app y activar notificaciones para que
+    // el usuario reciba los avisos de acreditacion.
     function claimRequirementsMet(type) {
-        if (type === 'monthly') return canClaim();
+        if (type === 'monthly' || type === 'welcome') return canClaim();
         return true;
     }
 
@@ -51,6 +51,7 @@ VIP.refunds = (function () {
         const inApp = isStandalone();
         const installed = isAppInstalled();
         const notifOk = isNotifGranted();
+        const isWelcome = _pendingClaimType === 'welcome';
 
         const installBadge = document.getElementById('reqInstallBadge');
         const notifBadge   = document.getElementById('reqNotifBadge');
@@ -58,6 +59,13 @@ VIP.refunds = (function () {
         const notifBtn     = document.getElementById('reqNotifBtn');
         const stepInstall  = document.getElementById('reqStepInstall');
         const introMsg     = document.getElementById('reqIntroMsg');
+        // Customizacion del titulo del modal segun el origen del trigger.
+        const titleEl = document.querySelector('#refundRequirementsModal .modal-header h2');
+        if (titleEl) {
+            titleEl.textContent = isWelcome
+                ? '🎁 Para reclamar tu bono de bienvenida'
+                : '🔒 Para reclamar tu reembolso';
+        }
 
         if (installBadge) installBadge.textContent = inApp ? '✅' : '⏳';
         if (notifBadge)   notifBadge.textContent   = notifOk ? '✅' : '⏳';
@@ -76,17 +84,22 @@ VIP.refunds = (function () {
         // UX: si la app ya esta instalada pero el user esta en el navegador,
         // ocultamos el paso 1 (instrucciones de instalacion) y cambiamos el
         // mensaje superior a "ingresa desde la aplicacion + activa notifs".
+        const subjectClaim = isWelcome ? 'tu bono de bienvenida' : 'tu reembolso';
         if (installed && !inApp) {
             if (stepInstall) stepInstall.style.display = 'none';
             if (introMsg) {
-                introMsg.innerHTML = '<strong>Ingresá desde la aplicación</strong> para reclamar tu reembolso. No olvides <strong>activar las notificaciones</strong> para que se active la opción de reclamar.';
+                introMsg.innerHTML = '<strong>Ingresá desde la aplicación</strong> para reclamar ' + subjectClaim + '. No olvides <strong>activar las notificaciones</strong> para que se active la opción de reclamar.';
             }
         } else {
             if (stepInstall) stepInstall.style.display = '';
             if (introMsg) {
-                introMsg.innerHTML = 'Necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamar tus reembolsos sin problemas.';
+                introMsg.innerHTML = 'Necesitás <strong>instalar la app</strong> y <strong>activar las notificaciones</strong>. Cuando completes los dos pasos vas a poder reclamar ' + subjectClaim + '.';
             }
         }
+
+        // Sincronizar tambien el subtitulo del card del bono de bienvenida
+        // (refleja el estado actual de instalacion + notifs).
+        try { renderWelcomeBonusCard(); } catch (_) {}
 
         return inApp && notifOk;
     }
@@ -137,8 +150,13 @@ VIP.refunds = (function () {
         if (!claimRequirementsMet(_pendingClaimType)) return;
         const type = _pendingClaimType;
         _pendingClaimType = null;
-        VIP.ui.showToast('✅ Listo. Continuamos con tu reembolso…', 'success');
         VIP.ui.hideModal('refundRequirementsModal');
+        if (type === 'welcome') {
+            VIP.ui.showToast('✅ Listo. Reclamando tu bono de bienvenida…', 'success');
+            setTimeout(() => claimWelcomeBonus(), 250);
+            return;
+        }
+        VIP.ui.showToast('✅ Listo. Continuamos con tu reembolso…', 'success');
         // Pequeño delay para que el toast sea visible antes de abrir el modal del reembolso.
         setTimeout(() => showRefundModal(type), 250);
     }
@@ -156,6 +174,8 @@ VIP.refunds = (function () {
         } catch (error) {
             console.error('Error cargando reembolsos:', error);
         }
+        // Cargar estado del bono de bienvenida en paralelo (no bloqueante).
+        loadWelcomeBonusStatus();
     }
 
     // Pinta el saldo del usuario en la plataforma JUGAYGANA en el card del home.
@@ -569,6 +589,113 @@ VIP.refunds = (function () {
         }
     });
 
+    // =====================================================
+    // BONO DE BIENVENIDA $10.000 (one-time, requiere PWA + notifs)
+    // =====================================================
+    let _welcomeStatus = null; // { amount, claimed, claimedAt, status }
+
+    async function loadWelcomeBonusStatus() {
+        try {
+            const r = await fetch(`${VIP.config.API_URL}/api/refunds/welcome/status`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (!r.ok) return;
+            _welcomeStatus = await r.json();
+            renderWelcomeBonusCard();
+        } catch (err) {
+            console.error('loadWelcomeBonusStatus error:', err);
+        }
+    }
+
+    function renderWelcomeBonusCard() {
+        const card = document.getElementById('welcomeBonusCard');
+        const amountEl = document.getElementById('welcomeBonusAmount');
+        const subtitleEl = document.getElementById('welcomeBonusSubtitle');
+        const btn = document.getElementById('welcomeBonusBtn');
+        if (!card || !btn) return;
+        const s = _welcomeStatus;
+        if (!s) { card.style.display = 'none'; return; }
+
+        card.style.display = '';
+        if (amountEl) amountEl.textContent = '$' + Number(s.amount || 10000).toLocaleString('es-AR');
+
+        if (s.claimed) {
+            card.classList.add('claimed');
+            if (subtitleEl) subtitleEl.textContent = '✅ Ya reclamaste tu bono de bienvenida.';
+            btn.disabled = true;
+            btn.textContent = '✅ Reclamado';
+            btn.onclick = null;
+            return;
+        }
+
+        card.classList.remove('claimed');
+        // Subtitulo dinamico segun estado actual de instalacion + notifs.
+        const inApp = isStandalone();
+        const installed = isAppInstalled();
+        const notifOk = isNotifGranted();
+        if (!installed) {
+            subtitleEl.textContent = 'Instalá la app y activá las notificaciones para reclamarlo.';
+        } else if (!inApp) {
+            subtitleEl.textContent = 'Ingresá desde la aplicación instalada para continuar.';
+        } else if (!notifOk) {
+            subtitleEl.textContent = 'Activá las notificaciones para poder reclamarlo.';
+        } else {
+            subtitleEl.textContent = '¡Listo! Tocá el botón para acreditar el bono.';
+        }
+        btn.disabled = false;
+        btn.textContent = '🎁 Reclamar bono';
+        btn.onclick = handleWelcomeBonusClick;
+    }
+
+    function handleWelcomeBonusClick() {
+        if (!claimRequirementsMet('welcome')) {
+            // Reusamos el modal generico de requisitos. _pendingClaimType
+            // dispara la customizacion de copy y el resume hacia welcome.
+            openRequirementsModal('welcome');
+            return;
+        }
+        claimWelcomeBonus();
+    }
+
+    async function claimWelcomeBonus() {
+        const btn = document.getElementById('welcomeBonusBtn');
+        if (btn) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.textContent = '⏳ Procesando...';
+        }
+        try {
+            const response = await fetch(`${VIP.config.API_URL}/api/refunds/claim/welcome`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            const data = await response.json();
+            if (data.success) {
+                VIP.ui.showToast('✅ ' + data.message, 'success');
+                _welcomeStatus = { ...(_welcomeStatus || {}), claimed: true, claimedAt: new Date().toISOString(), status: 'completed' };
+                renderWelcomeBonusCard();
+                // Refrescar saldo en pantalla.
+                if (typeof loadRefundStatus === 'function') loadRefundStatus();
+            } else {
+                VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
+                if (data.canClaim === false) {
+                    _welcomeStatus = { ...(_welcomeStatus || {}), claimed: true };
+                    renderWelcomeBonusCard();
+                } else if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '🎁 Reclamar bono';
+                }
+            }
+        } catch (err) {
+            console.error('claimWelcomeBonus error:', err);
+            VIP.ui.showToast('Error de conexión', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🎁 Reclamar bono';
+            }
+        }
+    }
+
     return {
         loadRefundStatus,
         updateRefundButtons,
@@ -578,7 +705,10 @@ VIP.refunds = (function () {
         claimRefund,
         showUnifiedRefundModal,
         canClaim,
-        openRequirementsModal
+        openRequirementsModal,
+        loadWelcomeBonusStatus,
+        renderWelcomeBonusCard,
+        claimWelcomeBonus
     };
 
 })();
