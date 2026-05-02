@@ -762,7 +762,9 @@
         }
 
         /* Card del bono de bienvenida ($10.000 one-time). Paleta dorada
-           festiva para diferenciarlo de los reembolsos recurrentes. */
+           festiva para diferenciarlo de los reembolsos recurrentes.
+           order:1.7 lo deja entre userBalanceCard (1.5) y refunds-welcome (2)
+           en mobile, igual posicion que en desktop (debajo de "Abrir plataforma"). */
         .welcome-bonus-card {
             text-align: center;
             width: 100%;
@@ -775,7 +777,7 @@
             color: #fff;
             box-sizing: border-box;
             box-shadow: 0 6px 24px rgba(255,200,0,0.20);
-            order: 1;
+            order: 1.7;
             position: relative;
             overflow: hidden;
         }
@@ -3872,25 +3874,11 @@
                 const iconEl = document.getElementById('notifBannerIcon');
                 const textEl = document.getElementById('notifBannerText');
 
-                // Caso 1 — En navegador (no instalado): mostrar invitación
-                // a instalar la app primero, así puede recibir notifs.
+                // Caso 1 — En navegador (no instalado): el card de bono de
+                // bienvenida ya invita a instalar la app, no duplicamos
+                // mensaje aca para no saturar la pantalla.
                 if (!standalone) {
-                    if (dismissedThisSession) {
-                        banner.style.display = 'none';
-                        return;
-                    }
-                    banner.style.background = 'linear-gradient(135deg, #1c1f27 0%, #14161c 100%)';
-                    banner.style.border = '1px solid rgba(184, 152, 70, 0.40)';
-                    banner.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.45)';
-                    if (iconEl) iconEl.textContent = '🎁';
-                    if (textEl) textEl.innerHTML = '<strong>¡Recibí tus REGALOS y BONUS!</strong> Instalá la app y activá las notificaciones para no perderte ninguno.';
-                    if (notifBannerActivate) {
-                        notifBannerActivate.textContent = '📱 Instalar app';
-                        notifBannerActivate.style.color = '#1c1f27';
-                        notifBannerActivate.style.background = '#d4af37';
-                    }
-                    if (notifBannerClose) notifBannerClose.style.display = '';
-                    banner.style.display = '';
+                    banner.style.display = 'none';
                     return;
                 }
 
