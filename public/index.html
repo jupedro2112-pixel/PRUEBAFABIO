@@ -425,6 +425,23 @@
             font-size: clamp(13px, 3.6vw, 15px);
             color: #ccc;
         }
+        /* Linea informativa de total regalado en el welcome del home. */
+        .refunds-welcome p.giveaway-total-line {
+            margin-top: 6px;
+            font-size: clamp(11px, 3vw, 12px);
+            color: #bbb;
+            line-height: 1.4;
+            background: rgba(37,211,102,0.06);
+            border: 1px solid rgba(37,211,102,0.25);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+        .refunds-welcome p.giveaway-total-line small {
+            font-size: 10px;
+            color: #888;
+            display: block;
+            margin-top: 2px;
+        }
         .refunds-welcome .home-logo {
             width: 70px;
             height: 70px;
@@ -1469,6 +1486,11 @@
         <!-- Refunds-only: bloque de bienvenida (solo texto, sin logo) -->
         <div class="refunds-welcome">
             <h2>Reclamá tu reembolso disponible</h2>
+            <p class="giveaway-total-line" id="giveawayTotalLine" style="display:none;">
+                💰 Total plata regalada a usuarios con nuestra <strong>APP</strong> y <strong>notificaciones</strong>:
+                <strong id="giveawayTotalAmount" style="color:#25d366;">$0</strong>
+                <br><small>Solo cobran jugadores activos con nosotros.</small>
+            </p>
         </div>
         <!-- Header -->
         <header class="header">

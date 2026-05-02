@@ -202,6 +202,8 @@ VIP.refunds = (function () {
         loadWelcomeBonusStatus();
         // Cargar estado del regalo de difusion en paralelo (no bloqueante).
         loadGiveawayStatus();
+        // Cargar total historico para el subtexto del welcome.
+        loadGiveawayTotal();
     }
 
     // Pinta el saldo del usuario en la plataforma JUGAYGANA en el card del home.
@@ -797,6 +799,31 @@ VIP.refunds = (function () {
             renderGiveawayCard();
         } catch (err) {
             console.warn('loadGiveawayStatus error:', err);
+        }
+    }
+
+    // Total historico de plata regalada via giveaway. Lo muestra el home
+    // como prueba social: "Total regalada a usuarios con app+notifs: $X".
+    async function loadGiveawayTotal() {
+        try {
+            if (!VIP.state.currentToken) return;
+            const r = await fetch(`${VIP.config.API_URL}/api/giveaway-stats/total`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (!r.ok) return;
+            const data = await r.json();
+            const line = document.getElementById('giveawayTotalLine');
+            const amountEl = document.getElementById('giveawayTotalAmount');
+            if (!line || !amountEl) return;
+            const amt = Number(data.amount || 0);
+            if (amt <= 0) {
+                line.style.display = 'none';
+                return;
+            }
+            amountEl.textContent = '$' + amt.toLocaleString('es-AR');
+            line.style.display = '';
+        } catch (err) {
+            console.warn('loadGiveawayTotal error:', err);
         }
     }
 

@@ -7340,6 +7340,44 @@ app.get('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req
   }
 });
 
+// GET publico (auth): suma TOTAL de plata regalada via money giveaways
+// (todo el historico, sin filtro de fecha). Lo usa el home para
+// mostrar "Total plata regalada a usuarios con app + notifs: $X".
+// Cache simple in-memory de 5 min para no recalcular en cada hit.
+let _totalGiveawayCache = { ts: 0, amount: 0, count: 0 };
+app.get('/api/giveaway-stats/total', authMiddleware, async (req, res) => {
+  try {
+    const NOW = Date.now();
+    const TTL = 5 * 60 * 1000;
+    if (NOW - _totalGiveawayCache.ts < TTL) {
+      return res.json({
+        amount: _totalGiveawayCache.amount,
+        count: _totalGiveawayCache.count,
+        cached: true
+      });
+    }
+
+    const agg = await MoneyGiveawayClaim.aggregate([
+      { $match: { status: 'completed' } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: '$amount' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    const amount = agg.length > 0 ? Number(agg[0].total || 0) : 0;
+    const count = agg.length > 0 ? Number(agg[0].count || 0) : 0;
+    _totalGiveawayCache = { ts: NOW, amount, count };
+    res.json({ amount, count, cached: false });
+  } catch (error) {
+    logger.error(`/api/giveaway-stats/total error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // DELETE admin: cancelar el giveaway activo.
 app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
   try {
