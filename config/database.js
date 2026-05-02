@@ -29,7 +29,8 @@ const {
   PlayerStats,
   RecoveryPush,
   JugayganaImport,
-  DailyPlayerStats
+  DailyPlayerStats,
+  UserLineLookup
 } = require('../src/models');
 
 // ============================================
@@ -332,6 +333,7 @@ module.exports = {
   RecoveryPush,
   JugayganaImport,
   DailyPlayerStats,
+  UserLineLookup,
   // Helpers
   getConfig,
   setConfig,

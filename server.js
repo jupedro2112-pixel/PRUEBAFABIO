@@ -64,6 +64,7 @@ const {
   RecoveryPush,
   JugayganaImport,
   DailyPlayerStats,
+  UserLineLookup,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -1840,6 +1841,38 @@ function pickLinePhoneForUsername(linesConfig, username) {
   return bestMatch ? bestMatch.phone : defaultPhone;
 }
 
+// Normaliza username para matchear contra UserLineLookup.usernameNorm.
+// Debe coincidir EXACTAMENTE con la normalización usada en el endpoint
+// de import (server.js: _normalizeUsername).
+function normalizeUsernameForLookup(raw) {
+  if (!raw) return '';
+  return String(raw)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Busca en UserLineLookup la asignación pre-cargada para un username.
+// Devuelve { linePhone, lineTeamName } o null si no está mapeado.
+// Maneja errores silenciosamente (la asignación es best-effort).
+async function pickLineFromLookup(username) {
+  try {
+    const norm = normalizeUsernameForLookup(username);
+    if (!norm) return null;
+    const entry = await UserLineLookup.findOne({ usernameNorm: norm })
+      .select('linePhone lineTeamName')
+      .lean();
+    if (!entry) return null;
+    return {
+      linePhone: entry.linePhone || null,
+      lineTeamName: entry.lineTeamName || null
+    };
+  } catch (err) {
+    logger.warn(`[pickLineFromLookup] error: ${err.message}`);
+    return null;
+  }
+}
+
 // Mismo criterio que pickLinePhoneForUsername pero para el nombre del equipo.
 // Lee el campo `teamName` del MISMO config 'userLinesByPrefix' (no creamos
 // otra config porque conceptualmente es el mismo equipo: prefijo "ato" =
@@ -2006,17 +2039,39 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     try {
       // Prioridad 1: asignación explícita por Drive import (User.linePhone).
       // Si el admin importó este username desde un .xlsx, ese teléfono manda
-      // por encima del matcher por prefijo. Permite que dos usuarios con el
-      // mismo prefijo caigan en líneas distintas.
+      // por encima del matcher por prefijo.
       if (userObj.linePhone) {
         linePhone = userObj.linePhone;
       } else {
-        // Fallback: matcher por prefijo (comportamiento legacy).
-        const linesConfig = await getConfig('userLinesByPrefix');
-        linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+        // Prioridad 2: UserLineLookup (mapeo persistido desde un .xlsx que
+        // pre-incluía a este user, aunque el user se haya creado DESPUÉS
+        // del import — caso típico: importás el Drive y luego el user
+        // entra por primera vez via JUGAYGANA). Si hay match, lo
+        // persistimos en User.linePhone para evitar el lookup en futuros
+        // logins (lazy migration).
+        const lookup = await pickLineFromLookup(userObj.username);
+        if (lookup && lookup.linePhone) {
+          linePhone = lookup.linePhone;
+          // Lazy persist (fire-and-forget): no bloquea el login.
+          User.updateOne(
+            { id: userId },
+            {
+              $set: {
+                linePhone: lookup.linePhone,
+                lineTeamName: lookup.lineTeamName || null,
+                lineAssignedAt: new Date(),
+                lineAssignedBy: 'auto-from-lookup'
+              }
+            }
+          ).catch(err => logger.warn(`[LoginUsernameOnly] lazy persist linePhone falló: ${err.message}`));
+        } else {
+          // Prioridad 3: matcher por prefijo (legacy fallback).
+          const linesConfig = await getConfig('userLinesByPrefix');
+          linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+        }
       }
     } catch (cfgErr) {
-      logger.warn(`[LoginUsernameOnly] No se pudo cargar userLinesByPrefix: ${cfgErr.message}`);
+      logger.warn(`[LoginUsernameOnly] No se pudo resolver línea: ${cfgErr.message}`);
     }
 
     res.json({
@@ -2055,11 +2110,35 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     let phone = null;
     let teamName = null;
 
-    // Prioridad 1: asignación explícita por Drive import.
+    // Prioridad 1: asignación explícita ya persistida en User (Drive import).
     if (userDoc && userDoc.linePhone) phone = userDoc.linePhone;
     if (userDoc && userDoc.lineTeamName) teamName = userDoc.lineTeamName;
 
-    // Fallback: matcher por prefijo legacy. Solo se usa si el campo correspondiente
+    // Prioridad 2: UserLineLookup (el usuario está en un .xlsx pero todavía no
+    // tiene linePhone seteado — puede pasar si la User se creó después del
+    // import o si ese campo se limpió). Lazy persist para futuros lookups.
+    if ((!phone || !teamName) && userDoc) {
+      const lookup = await pickLineFromLookup(req.user.username);
+      if (lookup) {
+        if (!phone && lookup.linePhone) phone = lookup.linePhone;
+        if (!teamName && lookup.lineTeamName) teamName = lookup.lineTeamName;
+        if (phone || teamName) {
+          User.updateOne(
+            { id: req.user.userId },
+            {
+              $set: {
+                ...(phone ? { linePhone: phone } : {}),
+                ...(teamName ? { lineTeamName: teamName } : {}),
+                lineAssignedAt: new Date(),
+                lineAssignedBy: 'auto-from-lookup'
+              }
+            }
+          ).catch(err => logger.warn(`[user-lines/me] lazy persist falló: ${err.message}`));
+        }
+      }
+    }
+
+    // Prioridad 3: matcher por prefijo legacy. Solo se usa si el campo correspondiente
     // está vacío — permite tener phone explícito y teamName por prefijo (o viceversa).
     if (!phone || !teamName) {
       const linesConfig = await getConfig('userLinesByPrefix');
@@ -6771,20 +6850,38 @@ app.post(
       const now = new Date();
       const adminUsername = (req.user && req.user.username) || null;
 
+      // Tracking global de las asignaciones para evitar duplicar bulkOps cuando
+      // un mismo doc matchea varias celdas (en contains matching es común).
+      const docAssignmentBySheet = new Map(); // docId → sheetName que lo reclamó
+
       for (const sd of sheetData) {
         let sheetMatched = 0;
         let sheetNotFound = 0;
         let sheetReassigned = 0; // ya tenían linePhone distinto → se sobreescribe
 
         for (const fullNorm of sd.usernamesNorm) {
-          const doc = docByNorm.get(fullNorm);
-          if (!doc) {
+          // CONTAINS matching bidireccional: matchea un User si:
+          //   a) el username (normalizado) contiene la celda normalizada, O
+          //   b) la celda normalizada contiene el username normalizado.
+          // Esto permite que celdas con el username completo+anotaciones
+          // ("argenpedro (líder)" → "argenpedrolider") matcheen contra
+          // "argenpedro", y al revés que celdas con fragmentos cortos
+          // ("pedro") matcheen contra "argenpedro".
+          const matchedDocs = [];
+          for (const [dbNorm, doc] of docByNorm) {
+            if (!dbNorm) continue;
+            if (dbNorm.includes(fullNorm) || fullNorm.includes(dbNorm)) {
+              matchedDocs.push(doc);
+            }
+          }
+
+          if (matchedDocs.length === 0) {
             sheetNotFound++;
             totalNotFound++;
             if (notFoundSample.length < 100) {
               const original = sd.originalByNorm.get(fullNorm) || fullNorm;
               notFoundSample.push({
-                username: original, // mostramos lo que el admin escribió
+                username: original,
                 normalized: fullNorm,
                 sheet: sd.sheetName
               });
@@ -6794,24 +6891,36 @@ app.post(
 
           sheetMatched++;
           totalMatched++;
-          if (doc.linePhone && doc.linePhone !== sd.linePhone) {
-            sheetReassigned++;
-          }
 
-          if (!dryRun) {
-            bulkOps.push({
-              updateOne: {
-                filter: { id: doc.id },
-                update: {
-                  $set: {
-                    linePhone: sd.linePhone,
-                    lineTeamName: teamName,
-                    lineAssignedAt: now,
-                    lineAssignedBy: adminUsername
+          for (const doc of matchedDocs) {
+            // En modo legacy multi-line: si este doc ya fue reclamado por otra
+            // hoja, NO lo re-asignamos (preservamos el primero — comportamiento
+            // determinista). En modo per-slot todas las hojas van al mismo
+            // teléfono, no hay conflicto.
+            if (!overrideLinePhone) {
+              const prevSheet = docAssignmentBySheet.get(doc.id);
+              if (prevSheet && prevSheet !== sd.sheetName) continue;
+            }
+            docAssignmentBySheet.set(doc.id, sd.sheetName);
+
+            if (doc.linePhone && doc.linePhone !== sd.linePhone) {
+              sheetReassigned++;
+            }
+            if (!dryRun) {
+              bulkOps.push({
+                updateOne: {
+                  filter: { id: doc.id },
+                  update: {
+                    $set: {
+                      linePhone: sd.linePhone,
+                      lineTeamName: teamName,
+                      lineAssignedAt: now,
+                      lineAssignedBy: adminUsername
+                    }
                   }
                 }
-              }
-            });
+              });
+            }
           }
         }
 
@@ -6826,14 +6935,58 @@ app.post(
       }
 
       // -------- Escritura (solo si dryRun=false)
+      // Dos bulkWrites en paralelo:
+      //   1) User: asigna linePhone/lineTeamName a los usuarios YA existentes.
+      //   2) UserLineLookup: persiste TODAS las celdas del .xlsx (matched o no)
+      //      para que si después se crea un usuario nuevo (vía JUGAYGANA en
+      //      su primer login) también se le asigne automáticamente la línea
+      //      del archivo.
       let writeResult = null;
-      if (!dryRun && bulkOps.length > 0) {
+      let lookupResult = null;
+      if (!dryRun) {
+        const lookupOps = [];
+        for (const sd of sheetData) {
+          for (const fullNorm of sd.usernamesNorm) {
+            lookupOps.push({
+              updateOne: {
+                filter: { usernameNorm: fullNorm },
+                update: {
+                  $set: {
+                    usernameOriginal: sd.originalByNorm.get(fullNorm) || null,
+                    linePhone: sd.linePhone,
+                    lineTeamName: teamName,
+                    prefix,
+                    importedAt: now,
+                    importedBy: adminUsername
+                  },
+                  $setOnInsert: { usernameNorm: fullNorm }
+                },
+                upsert: true
+              }
+            });
+          }
+        }
+
+        const writePromises = [];
+        if (bulkOps.length > 0) {
+          writePromises.push(
+            User.bulkWrite(bulkOps, { ordered: false }).then(r => {
+              writeResult = { modifiedCount: r.modifiedCount || 0, matchedCount: r.matchedCount || 0 };
+            })
+          );
+        }
+        if (lookupOps.length > 0) {
+          writePromises.push(
+            UserLineLookup.bulkWrite(lookupOps, { ordered: false }).then(r => {
+              lookupResult = {
+                upsertedCount: r.upsertedCount || 0,
+                modifiedCount: r.modifiedCount || 0
+              };
+            })
+          );
+        }
         try {
-          const r = await User.bulkWrite(bulkOps, { ordered: false });
-          writeResult = {
-            modifiedCount: r.modifiedCount || 0,
-            matchedCount: r.matchedCount || 0
-          };
+          await Promise.all(writePromises);
         } catch (bulkErr) {
           logger.error(`[user-lines/import] bulkWrite error: ${bulkErr.message}`);
           return res.status(500).json({ error: `Error escribiendo en la DB: ${bulkErr.message}` });
@@ -6857,7 +7010,8 @@ app.post(
         sheets: sheetReports,
         conflicts: conflictsInFile.slice(0, 100),
         notFoundSample,
-        writeResult
+        writeResult,
+        lookupResult
       });
     } catch (error) {
       logger.error(`[user-lines/import] error: ${error.message}\n${error.stack}`);
