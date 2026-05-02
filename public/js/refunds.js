@@ -186,6 +186,11 @@ VIP.refunds = (function () {
     }
 
     async function loadRefundStatus() {
+        // Prefill desde cache ANTES de la fetch. La primera vez que se llama
+        // este modulo el listener de DOMContentLoaded ya corrio con currentUser
+        // null, por lo que el prefill miro el bucket 'anon'. Aca currentUser
+        // ya esta seteado tras login -> reintentamos con la key correcta.
+        try { _prefillFromCache(); } catch (_) {}
         try {
             const response = await fetch(`${VIP.config.API_URL}/api/refunds/status`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
@@ -210,7 +215,10 @@ VIP.refunds = (function () {
     // Cuando el user cierra y reabre la app, mientras la API responde, mostramos
     // el ultimo valor conocido en vez de $0. Por usuario para no mezclar sesiones.
     function _cacheKey(field) {
-        const u = (VIP.state && VIP.state.currentUser) || 'anon';
+        // currentUser es un OBJETO. Concatenarlo daria "[object Object]"
+        // y mezclaria sesiones entre usuarios + romperia el match write/read.
+        // Usamos .username (puede venir undefined antes del login → 'anon').
+        const u = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || 'anon';
         return 'vipAmtCache:' + u + ':' + field;
     }
     function _saveCachedAmount(field, value) {
@@ -996,25 +1004,30 @@ VIP.refunds = (function () {
         } catch (_) {}
     }
 
-    // Forzar oculto el card de giveaway al iniciar el modulo. La CSS no
-    // pone display:block !important (ya removido), pero por seguridad
-    // garantizamos el oculto desde JS antes de que cualquier render
-    // intermedio lo muestre con $0.
-    function _ensureGiveawayHiddenAtBoot() {
+    // Forzar oculto los cards "condicionales" (giveaway + welcome bonus) al
+    // iniciar el modulo. CSS ya no los pone display:block !important, y el
+    // HTML los trae inline con display:none, pero garantizamos el oculto
+    // desde JS por defensa en profundidad: que ningun render intermedio
+    // los muestre vacios o con un estado falso (ej: usuario que ya
+    // reclamo el welcome bonus pero borro la app -> al reinstalar el
+    // localStorage esta vacio y veria el card hasta que la API responda).
+    function _ensureConditionalCardsHiddenAtBoot() {
         try {
-            const c = document.getElementById('giveawayCard');
-            if (c) c.style.setProperty('display', 'none', 'important');
+            const g = document.getElementById('giveawayCard');
+            if (g) g.style.setProperty('display', 'none', 'important');
+            const w = document.getElementById('welcomeBonusCard');
+            if (w) w.style.setProperty('display', 'none', 'important');
         } catch (_) {}
     }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             _prefillFromCache();
-            _ensureGiveawayHiddenAtBoot();
+            _ensureConditionalCardsHiddenAtBoot();
         });
     } else {
         _prefillFromCache();
-        _ensureGiveawayHiddenAtBoot();
+        _ensureConditionalCardsHiddenAtBoot();
     }
 
     // Polling cada 60s para detectar regalos nuevos mientras la app esta

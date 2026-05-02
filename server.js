@@ -4493,11 +4493,27 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
 
       if (!depositResult.success) {
-        try { await RefundClaim.deleteOne({ _id: claim._id }); } catch (_) {}
+        // CRITICO: NO eliminamos el RefundClaim. Si el credit retorna
+        // success:false por timeout/red, JUGAYGANA pudo haber aplicado el
+        // deposito y la respuesta haberse perdido en el cable. Borrar el
+        // record permitiria al usuario reclamar de nuevo y disparar un
+        // segundo credit. En su lugar marcamos status='pending_credit_failed'
+        // para que el indice unique siga bloqueando re-reclamos y un admin
+        // pueda reconciliar contra JUGAYGANA: si el credito no aplico, borra
+        // el row a mano (admin); si aplico, marca como completed.
+        try {
+          claim.status = 'pending_credit_failed';
+          claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
+          await claim.save();
+        } catch (e) {
+          logger.error(`[REFUND] no se pudo persistir pending_credit_failed para claim ${claim._id}: ${e.message}`);
+        }
+        logger.error(`[REFUND] credit fallo para ${username} (${claim.type} ${claim.periodKey}): ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed`);
         return res.json({
           success: false,
-          message: 'Error al acreditar el reembolso: ' + depositResult.error,
-          canClaim: true
+          message: 'Hubo un problema al acreditar tu reembolso. El administrador lo está revisando — no reintentes, podés contactarte por WhatsApp.',
+          canClaim: false,
+          pendingReview: true
         });
       }
 
@@ -4646,11 +4662,27 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       const depositResult = await jugaygana.creditUserBalance(username, refundAmount);
 
       if (!depositResult.success) {
-        try { await RefundClaim.deleteOne({ _id: claim._id }); } catch (_) {}
+        // CRITICO: NO eliminamos el RefundClaim. Si el credit retorna
+        // success:false por timeout/red, JUGAYGANA pudo haber aplicado el
+        // deposito y la respuesta haberse perdido en el cable. Borrar el
+        // record permitiria al usuario reclamar de nuevo y disparar un
+        // segundo credit. En su lugar marcamos status='pending_credit_failed'
+        // para que el indice unique siga bloqueando re-reclamos y un admin
+        // pueda reconciliar contra JUGAYGANA: si el credito no aplico, borra
+        // el row a mano (admin); si aplico, marca como completed.
+        try {
+          claim.status = 'pending_credit_failed';
+          claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
+          await claim.save();
+        } catch (e) {
+          logger.error(`[REFUND] no se pudo persistir pending_credit_failed para claim ${claim._id}: ${e.message}`);
+        }
+        logger.error(`[REFUND] credit fallo para ${username} (${claim.type} ${claim.periodKey}): ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed`);
         return res.json({
           success: false,
-          message: 'Error al acreditar el reembolso: ' + depositResult.error,
-          canClaim: true
+          message: 'Hubo un problema al acreditar tu reembolso. El administrador lo está revisando — no reintentes, podés contactarte por WhatsApp.',
+          canClaim: false,
+          pendingReview: true
         });
       }
 
@@ -6487,6 +6519,15 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
 // ============================================
 const WELCOME_BONUS_AMOUNT = 10000;
 
+// Caps de seguridad para el money giveaway. Si el admin (o un atacante con
+// la cookie) crea un giveaway con cifras absurdas (typo de un 0 de mas, o
+// drain malicioso) estos topes lo frenan en el endpoint POST. Si el negocio
+// realmente necesita superar estos limites hay que tocar el codigo a
+// proposito — un click accidental no puede vaciar JUGAYGANA.
+const GIVEAWAY_MAX_AMOUNT_PER_USER = 50000;     // 5x el welcome bonus
+const GIVEAWAY_MAX_TOTAL_BUDGET    = 5000000;   // $5M por giveaway
+const GIVEAWAY_MAX_CLAIMS          = 1000;      // 1000 personas por giveaway
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -7368,6 +7409,18 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
     if (!isFinite(d) || d < 10 || d > 60 || d % 10 !== 0) {
       return res.status(400).json({ error: 'Duración inválida (10-60 minutos en bloques de 10)' });
     }
+    // Caps anti-fat-finger / anti-cookie-robada. Si el admin necesita superarlos
+    // hay que tocar el server a proposito — un typo o un atacante con la cookie
+    // no puede drenar JUGAYGANA con un giveaway de $999.999.999 sin pasar por aca.
+    if (a > GIVEAWAY_MAX_AMOUNT_PER_USER) {
+      return res.status(400).json({ error: `Monto por persona excede el tope de seguridad ($${GIVEAWAY_MAX_AMOUNT_PER_USER.toLocaleString('es-AR')})` });
+    }
+    if (b > GIVEAWAY_MAX_TOTAL_BUDGET) {
+      return res.status(400).json({ error: `Presupuesto total excede el tope de seguridad ($${GIVEAWAY_MAX_TOTAL_BUDGET.toLocaleString('es-AR')})` });
+    }
+    if (m > GIVEAWAY_MAX_CLAIMS) {
+      return res.status(400).json({ error: `Cantidad máxima excede el tope de seguridad (${GIVEAWAY_MAX_CLAIMS})` });
+    }
 
     // Cerrar cualquier giveaway activo previo.
     await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
@@ -7519,6 +7572,16 @@ app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, a
       if (!isFinite(mc) || mc < 1) return res.status(400).json({ error: 'Cantidad máxima inválida' });
       if (!isFinite(d) || d < 10 || d > 60 || d % 10 !== 0) {
         return res.status(400).json({ error: 'Duración de regalo inválida (10-60 min en bloques de 10)' });
+      }
+      // Mismos caps anti-fat-finger que el POST inmediato — ver comentario alla.
+      if (a > GIVEAWAY_MAX_AMOUNT_PER_USER) {
+        return res.status(400).json({ error: `Monto del regalo excede el tope de seguridad ($${GIVEAWAY_MAX_AMOUNT_PER_USER.toLocaleString('es-AR')})` });
+      }
+      if (bg > GIVEAWAY_MAX_TOTAL_BUDGET) {
+        return res.status(400).json({ error: `Tope de plata excede el limite de seguridad ($${GIVEAWAY_MAX_TOTAL_BUDGET.toLocaleString('es-AR')})` });
+      }
+      if (mc > GIVEAWAY_MAX_CLAIMS) {
+        return res.status(400).json({ error: `Cantidad máxima excede el tope de seguridad (${GIVEAWAY_MAX_CLAIMS})` });
       }
       doc.giveawayAmount = a;
       doc.giveawayBudget = bg;

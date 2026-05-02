@@ -864,7 +864,12 @@
             order: 1.7;
             position: relative;
             flex: 0 0 auto !important;
-            display: block !important;
+            /* display lo controla JS via setProperty(...,'important').
+               No usar display:block !important — pisaria el style="display:none"
+               inline del HTML y haria flash de "RECLAMA $10.000" en cold-start
+               para usuarios que ya reclamaron pero perdieron localStorage
+               (uninstall+reinstall). El render JS confirma con la API antes
+               de mostrar. */
             min-height: 110px;
             overflow: hidden;
         }
@@ -1597,7 +1602,7 @@
              "Abrir plataforma". Por unica vez por instalar la app.
              onclick inline como fallback: el render tambien lo enlaza,
              pero asi funciona aunque el render aun no haya corrido. -->
-        <div class="welcome-bonus-card" id="welcomeBonusCard">
+        <div class="welcome-bonus-card" id="welcomeBonusCard" style="display:none;">
             <div class="welcome-bonus-icon">🎁</div>
             <div class="welcome-bonus-title">BONO POR BAJAR LA APP</div>
             <div class="welcome-bonus-amount" id="welcomeBonusAmount">$10.000 GRATIS</div>
