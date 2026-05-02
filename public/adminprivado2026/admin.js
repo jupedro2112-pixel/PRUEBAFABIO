@@ -194,7 +194,7 @@ function showSection(sectionKey) {
     } else if (sectionKey === 'welcomebonus') {
         loadWelcomeBonusReport();
     } else if (sectionKey === 'topEngagement') {
-        loadTopEngagement();
+        loadStatsAll();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -2056,4 +2056,365 @@ function insertEmojiInField(fieldId, emoji) {
     el.focus();
     // Disparar input event para que la live preview se actualice.
     el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ============================================
+// TOP ESTADISTICAS — segmentacion + recuperacion + ROI
+// ============================================
+function showStatsTab(tab) {
+    document.querySelectorAll('.stats-tab-pane').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.stats-tab-btn').forEach(b => {
+        b.classList.remove('active');
+        b.style.background = 'rgba(255,255,255,0.06)';
+        b.style.borderColor = 'rgba(255,255,255,0.10)';
+        b.style.color = '#bbb';
+    });
+    const pane = document.getElementById('statsTab' + tab[0].toUpperCase() + tab.slice(1));
+    if (pane) pane.style.display = '';
+    const btn = document.querySelector('.stats-tab-btn[data-tab="' + tab + '"]');
+    if (btn) {
+        btn.classList.add('active');
+        btn.style.background = 'rgba(212,175,55,0.20)';
+        btn.style.borderColor = 'rgba(212,175,55,0.45)';
+        btn.style.color = '#ffd700';
+    }
+    if (tab === 'players') loadPlayersList();
+    if (tab === 'roi') loadRoiBucket();
+    if (tab === 'playbook') renderPlaybook();
+}
+
+async function loadStatsAll() {
+    await Promise.all([loadStatsRefreshState(), loadSegmentsAndWeekly()]);
+}
+
+async function loadStatsRefreshState() {
+    try {
+        const r = await authFetch('/api/admin/stats/refresh', { method: 'GET' });
+        if (!r.ok) return;
+        const d = await r.json();
+        renderRefreshState(d.state || {});
+    } catch (e) { console.warn('loadStatsRefreshState', e); }
+}
+
+function renderRefreshState(s) {
+    const el = document.getElementById('statsRefreshState');
+    if (!el) return;
+    if (s.running) {
+        const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
+        el.innerHTML = '⏳ Refrescando JUGAYGANA: <strong style="color:#ffd700;">' + s.done + ' / ' + s.total + '</strong> (' + pct + '%)' +
+            (s.errors ? ' — <span style="color:#ff8080;">' + s.errors + ' errores</span>' : '');
+    } else if (s.finishedAt) {
+        const when = new Date(s.finishedAt).toLocaleString('es-AR');
+        el.innerHTML = '✅ Último refresh: <strong>' + escapeHtml(when) + '</strong> — ' + (s.done || 0) + ' jugadores procesados' +
+            (s.errors ? ' (' + s.errors + ' errores)' : '');
+    } else {
+        el.innerHTML = 'Esperando primer refresh…';
+    }
+}
+
+let _refreshPollInterval = null;
+async function triggerStatsRefresh() {
+    const btn = document.getElementById('statsRefreshBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Iniciando…'; }
+    try {
+        const r = await authFetch('/api/admin/stats/refresh', { method: 'POST' });
+        const d = await r.json();
+        if (d.success === false && d.message) {
+            showToast(d.message, 'info');
+        } else {
+            showToast('Refresh iniciado en background', 'success');
+        }
+        renderRefreshState(d.state || {});
+        // Polear cada 3s mientras corre.
+        if (_refreshPollInterval) clearInterval(_refreshPollInterval);
+        _refreshPollInterval = setInterval(async () => {
+            await loadStatsRefreshState();
+            const stEl = document.getElementById('statsRefreshState');
+            if (stEl && stEl.innerHTML.startsWith('✅')) {
+                clearInterval(_refreshPollInterval);
+                _refreshPollInterval = null;
+                // Recargar las tablas con datos frescos.
+                await loadSegmentsAndWeekly();
+                if (document.getElementById('statsTabPlayers').style.display !== 'none') loadPlayersList();
+                if (document.getElementById('statsTabRoi').style.display !== 'none') loadRoiBucket();
+            }
+        }, 3000);
+    } catch (e) {
+        showToast('Error iniciando refresh', 'error');
+        console.error(e);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔁 Refrescar JUGAYGANA'; }
+    }
+}
+
+async function loadSegmentsAndWeekly() {
+    try {
+        const r = await authFetch('/api/admin/stats/segments');
+        if (!r.ok) return;
+        const d = await r.json();
+        renderWeeklyHeader(d.weekly || {});
+        renderRecoveryHeader(d.recovery || {});
+        renderSegmentsMatrix(d.matrix || {}, d.tierTotals || {}, d.activityTotals || {});
+    } catch (e) { console.warn('loadSegmentsAndWeekly', e); }
+}
+
+function renderWeeklyHeader(w) {
+    const el = document.getElementById('statsWeeklyHeader');
+    if (!el) return;
+    const arrow = w.delta > 0 ? '📈' : (w.delta < 0 ? '📉' : '➡️');
+    const color = w.delta > 0 ? '#25d366' : (w.delta < 0 ? '#ff5050' : '#aaa');
+    el.innerHTML = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;">' +
+        '<div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Comparativo semanal</div>' +
+        '<div style="font-size:14px;color:#fff;">Jugadores activos esta semana: <strong style="color:#ffd700;font-size:18px;">' + (w.activeThisWeek || 0) + '</strong>' +
+        '   |   Semana pasada: ' + (w.activeLastWeek || 0) +
+        '   |   Δ: <strong style="color:' + color + ';">' + arrow + ' ' + (w.delta > 0 ? '+' : '') + (w.delta || 0) + ' (' + (w.deltaPct >= 0 ? '+' : '') + (w.deltaPct || 0) + '%)</strong></div>' +
+        '</div>';
+}
+
+function renderRecoveryHeader(r) {
+    const el = document.getElementById('statsRecoveryHeader');
+    if (!el) return;
+    if (!r.sent) {
+        el.innerHTML = '<div style="background:rgba(0,0,0,0.30);border:1px dashed rgba(255,255,255,0.10);border-radius:10px;padding:12px;color:#888;font-size:12px;">📲 Sin pushes de recuperación enviados todavía. Mandá uno desde la matriz de abajo.</div>';
+        return;
+    }
+    const recovered = r.recovered || 0;
+    const recPct = r.sent > 0 ? Math.round((recovered / r.sent) * 100) : 0;
+    el.innerHTML = '<div style="background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.25);border-radius:10px;padding:12px;">' +
+        '<div style="color:#25d366;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Efectividad de recuperación (últ. 30d)</div>' +
+        '<div style="font-size:13px;color:#fff;line-height:1.6;">' +
+        'Pushes enviados: <strong>' + r.sent + '</strong>   |   ' +
+        'Recuperaron real: <strong style="color:#25d366;">' + recovered + ' (' + recPct + '%)</strong>   |   ' +
+        'Solo bono (oportunistas): <strong style="color:#ffaa00;">' + (r.opportunist || 0) + '</strong>   |   ' +
+        'Sin respuesta: <strong style="color:#888;">' + (r.no_response || 0) + '</strong>   |   ' +
+        'Pendientes: <strong>' + (r.pending || 0) + '</strong><br>' +
+        'Bonos dados: <strong>$' + Number(r.totalBonus || 0).toLocaleString('es-AR') + '</strong>   →   ' +
+        'Cargas reales generadas: <strong style="color:#25d366;">$' + Number(r.totalRealDeposit || 0).toLocaleString('es-AR') + '</strong>   =   ' +
+        '<strong style="color:#ffd700;">ROI ' + (r.roiX || 0) + '×</strong>' +
+        '</div></div>';
+}
+
+function renderSegmentsMatrix(matrix, tierTotals, activityTotals) {
+    const el = document.getElementById('statsSegmentsMatrix');
+    if (!el) return;
+    const tiers = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO', 'SIN_DATOS'];
+    const states = ['ACTIVO', 'EN_RIESGO', 'PERDIDO', 'INACTIVO', 'NUEVO'];
+    const tierLabel = {VIP:'🏆 VIP', ORO:'🥇 ORO', PLATA:'🥈 PLATA', BRONCE:'🥉 BRONCE', NUEVO:'🆕 NUEVO', SIN_DATOS:'⚪ Sin datos'};
+    const stateLabel = {ACTIVO:'✅ Activo', EN_RIESGO:'⚠️ En riesgo', PERDIDO:'💔 Perdido', INACTIVO:'☠️ Inactivo', NUEVO:'🆕 Nuevo'};
+    const cellColor = {
+        ACTIVO: 'rgba(37,211,102,0.10)',
+        EN_RIESGO: 'rgba(255,170,0,0.15)',
+        PERDIDO: 'rgba(255,80,80,0.18)',
+        INACTIVO: 'rgba(120,120,120,0.10)',
+        NUEVO: 'rgba(26,115,232,0.12)'
+    };
+
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr><th style="text-align:left;padding:8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);">Tier \\ Estado</th>';
+    for (const s of states) {
+        html += '<th style="padding:8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);text-align:center;">' + stateLabel[s] + '<br><small style="color:#666;font-weight:400;">' + (activityTotals[s] || 0) + ' total</small></th>';
+    }
+    html += '<th style="padding:8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);text-align:center;">Σ tier</th></tr></thead><tbody>';
+
+    for (const t of tiers) {
+        html += '<tr>';
+        html += '<td style="padding:8px;color:#fff;font-weight:700;border-bottom:1px solid rgba(255,255,255,0.05);">' + tierLabel[t] + '</td>';
+        for (const s of states) {
+            const c = matrix[t + '-' + s] || 0;
+            const isUrgent = (t === 'VIP' || t === 'ORO') && (s === 'EN_RIESGO' || s === 'PERDIDO');
+            const showBtn = c > 0 && (s === 'EN_RIESGO' || s === 'PERDIDO' || s === 'INACTIVO');
+            html += '<td style="padding:8px;text-align:center;background:' + cellColor[s] + ';border-bottom:1px solid rgba(255,255,255,0.05);' + (isUrgent ? 'border:2px solid #ff5050;' : '') + '">';
+            html += '<div style="font-size:18px;font-weight:800;color:#fff;">' + c + '</div>';
+            if (showBtn) {
+                html += '<button onclick="openRecoveryModal(\'' + t + '\',\'' + s + '\')" style="margin-top:4px;font-size:10px;padding:3px 8px;background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:4px;cursor:pointer;font-weight:600;">📲 Push</button>';
+            }
+            html += '</td>';
+        }
+        html += '<td style="padding:8px;text-align:center;color:#ffd700;font-weight:700;border-bottom:1px solid rgba(255,255,255,0.05);">' + (tierTotals[t] || 0) + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div style="margin-top:10px;color:#888;font-size:11px;">Las celdas con borde rojo (VIP/ORO en riesgo o perdidos) son las más urgentes. Tocá "📲 Push" para mandar recuperación a ese segmento (cooldown 7d por user).</div>';
+    el.innerHTML = html;
+}
+
+async function loadPlayersList() {
+    const c = document.getElementById('statsPlayersContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+    const params = new URLSearchParams();
+    const tier = document.getElementById('playersFilterTier').value;
+    const status = document.getElementById('playersFilterStatus').value;
+    const opp = document.getElementById('playersFilterOpp').value;
+    const sortBy = document.getElementById('playersSortBy').value;
+    if (tier) params.set('tier', tier);
+    if (status) params.set('activityStatus', status);
+    if (opp) params.set('opportunist', opp);
+    if (sortBy) params.set('sortBy', sortBy);
+    params.set('limit', '200');
+    try {
+        const r = await authFetch('/api/admin/stats/players?' + params.toString());
+        if (!r.ok) { c.innerHTML = '<div class="empty-state">Error cargando.</div>'; return; }
+        const d = await r.json();
+        renderPlayersList(c, d.players || []);
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">Error de conexión.</div>';
+    }
+}
+
+function renderPlayersList(container, players) {
+    if (players.length === 0) {
+        container.innerHTML = '<div class="empty-state">No hay jugadores con esos filtros. Tal vez todavía no se ejecutó el refresh.</div>';
+        return;
+    }
+    const tierBadge = {VIP:'🏆', ORO:'🥇', PLATA:'🥈', BRONCE:'🥉', NUEVO:'🆕', SIN_DATOS:'⚪'};
+    const stateBadge = {ACTIVO:'✅', EN_RIESGO:'⚠️', PERDIDO:'💔', INACTIVO:'☠️', NUEVO:'🆕'};
+    let html = '<table class="report-table"><thead><tr>';
+    html += '<th>Tier</th><th>Estado</th><th>Usuario</th><th>Cargas $</th><th>#</th><th>Retiros $</th><th>Bonos dados</th><th>Neto a la casa</th><th>Última carga</th><th>Última app</th><th></th>';
+    html += '</tr></thead><tbody>';
+    for (const p of players) {
+        const last = p.lastRealDepositDate ? new Date(p.lastRealDepositDate).toLocaleDateString('es-AR') : '—';
+        const lastApp = p.lastSeenApp ? new Date(p.lastSeenApp).toLocaleDateString('es-AR') : '—';
+        const oppFlag = p.isOpportunist ? ' <span style="color:#ff5050;font-weight:800;" title="Oportunista — toma bonos sin cargar real">🚩</span>' : '';
+        const netColor = (p.netToHouse30d || 0) >= 0 ? '#25d366' : '#ff5050';
+        html += '<tr>';
+        html += '<td>' + (tierBadge[p.tier] || '') + ' <small>' + escapeHtml(p.tier || '') + '</small></td>';
+        html += '<td>' + (stateBadge[p.activityStatus] || '') + '</td>';
+        html += '<td><strong style="color:#fff;">' + escapeHtml(p.username || '') + '</strong>' + oppFlag + '</td>';
+        html += '<td>$' + Number(p.realDeposits30d || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td>' + (p.realChargesCount30d || 0) + '</td>';
+        html += '<td>$' + Number(p.withdraws30d || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td>$' + Number(p.bonusGiven30d || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td><strong style="color:' + netColor + ';">$' + Number(p.netToHouse30d || 0).toLocaleString('es-AR') + '</strong></td>';
+        html += '<td><small>' + last + '</small></td>';
+        html += '<td><small>' + lastApp + '</small></td>';
+        html += '<td><button onclick="suggestStrategyFor(\'' + escapeHtml(p.username) + '\',\'' + p.tier + '\',\'' + p.activityStatus + '\')" style="padding:4px 8px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:4px;cursor:pointer;font-size:10px;font-weight:700;" title="Ver estrategia recomendada">🎯</button></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div style="color:#888;font-size:11px;margin-top:8px;">Mostrando ' + players.length + ' jugadores. Las columnas son del cache — tocá "Refrescar JUGAYGANA" si están desactualizados.</div>';
+    container.innerHTML = html;
+}
+
+async function loadRoiBucket() {
+    const c = document.getElementById('statsRoiContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/stats/roi-bonus');
+        if (!r.ok) { c.innerHTML = '<div class="empty-state">Error cargando.</div>'; return; }
+        const d = await r.json();
+        renderRoiBuckets(c, d.buckets || []);
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">Error de conexión.</div>';
+    }
+}
+
+function renderRoiBuckets(container, buckets) {
+    if (buckets.length === 0) {
+        container.innerHTML = '<div class="empty-state">Todavía no hay claims de giveaways en los últimos 30 días.</div>';
+        return;
+    }
+    let html = '<table class="report-table"><thead><tr>';
+    html += '<th>Monto del bono</th><th>Veces reclamado</th><th>Total regalado</th><th>Usuarios únicos</th><th>De ellos cargaron real</th><th>Cargas reales generadas</th><th>ROI</th>';
+    html += '</tr></thead><tbody>';
+    for (const b of buckets) {
+        const conv = b.uniqueUsers > 0 ? Math.round((b.usersThatDeposited / b.uniqueUsers) * 100) : 0;
+        const roiColor = b.roiX >= 3 ? '#25d366' : (b.roiX >= 1 ? '#ffd700' : '#ff5050');
+        html += '<tr>';
+        html += '<td><strong style="color:#fff;">$' + Number(b.amount).toLocaleString('es-AR') + '</strong></td>';
+        html += '<td>' + b.count + '</td>';
+        html += '<td>$' + Number(b.totalGiven).toLocaleString('es-AR') + '</td>';
+        html += '<td>' + b.uniqueUsers + '</td>';
+        html += '<td>' + b.usersThatDeposited + ' <small style="color:#888;">(' + conv + '%)</small></td>';
+        html += '<td>$' + Number(b.realDepositsFromThem).toLocaleString('es-AR') + '</td>';
+        html += '<td><strong style="color:' + roiColor + ';font-size:14px;">' + b.roiX + '×</strong></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<div style="color:#888;font-size:11px;margin-top:8px;">ROI = (cargas reales generadas) / (total regalado). Verde ≥ 3× = excelente. Amarillo 1-3× = OK. Rojo &lt;1× = perdés plata regalando.</div>';
+    container.innerHTML = html;
+}
+
+const PLAYBOOK_DATA = [
+    {seg: '🏆 VIP - ACTIVO', strategy: 'Hacerlo sentir único', bonus: 'Giveaway VIP $5k-$10k exclusivo + atención WA preferencial', freq: '1x/mes sorpresa', why: 'Ya está dando. No molestar, solo recordarle que es especial.'},
+    {seg: '🏆 VIP - EN_RIESGO', strategy: '🚨 ALERTA ROJA', bonus: 'Bono $10k+ personalizado + mensaje del "dueño" + WhatsApp directo', freq: '1x máximo', why: 'Vale invertir fuerte en retener al top.'},
+    {seg: '🏆 VIP - PERDIDO', strategy: 'Último intento valor alto', bonus: '$15k + mensaje personal', freq: '1x', why: 'Si no vuelve, abandonar — el LTV ya se cobró.'},
+    {seg: '🥇 ORO - ACTIVO', strategy: 'Mantener engaged', bonus: 'Reembolsos visibles + giveaway $2k-$5k', freq: 'Cada 7-10 días', why: 'Empujoncito constante mantiene el hábito.'},
+    {seg: '🥇 ORO - EN_RIESGO', strategy: 'Push fuerte', bonus: 'Bono $5k + recordatorio WA', freq: '1-2x', why: 'Recuperar rápido antes que sea PERDIDO.'},
+    {seg: '🥇 ORO - PERDIDO', strategy: 'Bono medio + storytelling', bonus: '$5k-$8k + mensaje "volvé hoy"', freq: '1x', why: 'Recuperación con ROI razonable.'},
+    {seg: '🥈 PLATA - ACTIVO', strategy: 'Subir el ticket', bonus: '"Cargá $10k → te damos $2k extra"', freq: 'Quincenal', why: 'Incentivás cargas más grandes.'},
+    {seg: '🥈 PLATA - EN_RIESGO', strategy: 'Reactivar', bonus: 'Bono $1k-$3k', freq: '1x', why: 'Suficiente para tentar sin gastar mucho.'},
+    {seg: '🥈 PLATA - PERDIDO', strategy: 'Bono chico', bonus: '$2k', freq: '1x', why: 'Si no vuelve, no rentable más.'},
+    {seg: '🥉 BRONCE - ACTIVO', strategy: 'Fidelización', bonus: 'Racha de cargas (5 cargas seguidas = $1k extra)', freq: 'Continuo', why: 'Los hacés sentir parte de algo.'},
+    {seg: '🥉 BRONCE - EN_RIESGO/PERDIDO', strategy: 'Bono mínimo', bonus: '$500-$1.500', freq: '1x máximo', why: 'No rentable invertir mucho.'},
+    {seg: '🆕 NUEVO', strategy: 'Onboarding agresivo', bonus: 'Welcome $10k visible + bonus continuidad $3k al hacer 2da carga', freq: 'Período crítico 14 días', why: 'Engancharlo en el hábito.'},
+    {seg: '☠️ INACTIVO 30d+', strategy: 'Último resort', bonus: '$2k-$5k + "te extrañamos"', freq: 'Cada 30-60 días', why: 'Si no responde a la 2da, dejar de gastar.'},
+    {seg: '🚩 OPORTUNISTA', strategy: 'CORTAR BONOS', bonus: 'Solo notifs sin plata', freq: 'Nunca darle bono', why: 'Drenan tu caja sin contraprestación.'},
+    {seg: '💸 GANADOR a la casa', strategy: 'NO inflar con bonos', bonus: 'Servicio premium si es VIP/ORO, pero sin plata extra', freq: '—', why: 'Ya están extrayendo valor.'}
+];
+function renderPlaybook() {
+    const c = document.getElementById('statsPlaybookContent');
+    if (!c) return;
+    let html = '<div style="color:#aaa;font-size:12px;margin-bottom:12px;">Estrategia recomendada por celda. Usá esto como guía rápida cuando mandes pushes individuales o masivos.</div>';
+    html += '<table class="report-table"><thead><tr>';
+    html += '<th>Segmento</th><th>Estrategia</th><th>Bono</th><th>Frecuencia</th><th>Por qué</th>';
+    html += '</tr></thead><tbody>';
+    for (const p of PLAYBOOK_DATA) {
+        html += '<tr>';
+        html += '<td><strong style="color:#fff;">' + p.seg + '</strong></td>';
+        html += '<td><strong style="color:#ffd700;">' + escapeHtml(p.strategy) + '</strong></td>';
+        html += '<td>' + escapeHtml(p.bonus) + '</td>';
+        html += '<td><small>' + escapeHtml(p.freq) + '</small></td>';
+        html += '<td><small style="color:#aaa;">' + escapeHtml(p.why) + '</small></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    c.innerHTML = html;
+}
+
+function suggestStrategyFor(username, tier, status) {
+    // Encontrar la entrada del playbook que corresponde.
+    const segKey = tier + ' - ' + status;
+    let match = PLAYBOOK_DATA.find(p => p.seg.includes(tier) && p.seg.includes(status));
+    if (!match) match = PLAYBOOK_DATA.find(p => p.seg.includes(tier));
+    const bonus = match ? match.bonus : 'A definir';
+    const strategy = match ? match.strategy : 'Sin recomendación';
+    const why = match ? match.why : '';
+    showToast('🎯 ' + username + ' (' + segKey + ')\\nEstrategia: ' + strategy + '\\nBono: ' + bonus + '\\n\\n' + why, 'info');
+}
+
+function openRecoveryModal(tier, status) {
+    const match = PLAYBOOK_DATA.find(p => p.seg.includes(tier) && p.seg.includes(status))
+              || PLAYBOOK_DATA.find(p => p.seg.includes(tier));
+    const bonusHint = match ? match.bonus : 'a tu criterio';
+    const segLabel = tier + ' - ' + status;
+    const title = prompt('Título de la notif para todos los ' + segLabel + ':\\n\\n(Sugerido: "Te extrañamos 🎁")', '🎁 Volvé hoy y aprovechá');
+    if (title == null) return;
+    const body = prompt('Mensaje:\\n\\nEstrategia recomendada para este segmento:\\n→ ' + bonusHint, 'Tenemos algo especial para vos. Entrá ahora a reclamarlo.');
+    if (body == null) return;
+    const bonusAmountStr = prompt('Monto del bono individual (deja 0 para solo notif sin bono):\\n\\nGuía: ' + bonusHint, '0');
+    if (bonusAmountStr == null) return;
+    const bonusAmount = Number(bonusAmountStr) || 0;
+
+    const body2 = {
+        tier, activityStatus: status,
+        excludeOpportunists: true,
+        title, body,
+        bonusType: bonusAmount > 0 ? 'giveaway' : 'none',
+        giveawayAmount: bonusAmount,
+        giveawayBudget: bonusAmount * 1000,  // tope generoso por ahora
+        giveawayMaxClaims: 1000,
+        giveawayDurationMinutes: 60
+    };
+    authFetch('/api/admin/stats/recovery-push', {
+        method: 'POST',
+        body: JSON.stringify(body2)
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            showToast('✅ Push registrado a ' + d.sentCount + ' jugadores' + (d.skipped ? ' (' + d.skipped + ' en cooldown)' : '') + '. Para disparar el envío real, usá el composer de Notificaciones con la lista.', 'success');
+        } else {
+            showToast(d.message || 'No se pudo enviar', 'error');
+        }
+    }).catch(() => showToast('Error de conexión', 'error'));
 }

@@ -428,16 +428,90 @@
                  ============================================ -->
             <section id="topEngagementSection" class="section">
                 <div class="panel-header">
-                    <h2>🏆 Top 100 — Engagement de usuarios</h2>
-                    <button class="refresh-btn" onclick="loadTopEngagement()" title="Actualizar">🔄</button>
+                    <h2>🏆 Top estadísticas — segmentación + recuperación</h2>
+                    <button class="refresh-btn" onclick="loadStatsAll()" title="Actualizar tablas (lectura cache)">🔄</button>
                 </div>
                 <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
-                    Top 100 usuarios que más interactúan con la app, para que tengas parámetro de quién engancha.
-                    <strong>Score</strong> combina las 3 métricas (reembolsos × 2 + clicks WhatsApp × 1 + regalos × 3).
-                    Tocá el header de cada columna para ordenar.
+                    Panel estratégico: jugadores segmentados por tier (VIP/Oro/Plata/Bronce) y estado (Activo/En riesgo/Perdido), con
+                    estrategias de recuperación recomendadas por celda.
+                    <strong>Importante:</strong> los datos se calculan desde cache. Tocá <strong>"🔁 Refrescar JUGAYGANA"</strong> para
+                    actualizar los montos y segmentos desde la plataforma (toma ~3 min con 500 usuarios).
                 </div>
-                <div id="topEngagementContent" class="report-content">
-                    <div class="empty-state">⏳ Cargando…</div>
+
+                <!-- Refresh + estado del batch -->
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+                    <button onclick="triggerStatsRefresh()" id="statsRefreshBtn" style="padding:10px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:8px;cursor:pointer;">
+                        🔁 Refrescar JUGAYGANA
+                    </button>
+                    <div id="statsRefreshState" style="font-size:12px;color:#bbb;flex:1;">Esperando primer refresh…</div>
+                </div>
+
+                <!-- Sub-tabs internos -->
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:8px;">
+                    <button class="stats-tab-btn active" data-tab="segments" onclick="showStatsTab('segments')" style="padding:8px 14px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎯 Segmentación</button>
+                    <button class="stats-tab-btn" data-tab="players" onclick="showStatsTab('players')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">👥 Jugadores</button>
+                    <button class="stats-tab-btn" data-tab="roi" onclick="showStatsTab('roi')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">💰 ROI por bono</button>
+                    <button class="stats-tab-btn" data-tab="playbook" onclick="showStatsTab('playbook')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">📘 Playbook</button>
+                </div>
+
+                <!-- Tab: Segmentación -->
+                <div id="statsTabSegments" class="stats-tab-pane">
+                    <div id="statsWeeklyHeader" style="margin-bottom:14px;"></div>
+                    <div id="statsRecoveryHeader" style="margin-bottom:14px;"></div>
+                    <h3 style="color:#fff;font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">Matriz tier × estado</h3>
+                    <div id="statsSegmentsMatrix" style="overflow-x:auto;"></div>
+                </div>
+
+                <!-- Tab: Jugadores -->
+                <div id="statsTabPlayers" class="stats-tab-pane" style="display:none;">
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                        <select id="playersFilterTier" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                            <option value="">Todos los tiers</option>
+                            <option value="VIP">🏆 VIP</option>
+                            <option value="ORO">🥇 ORO</option>
+                            <option value="PLATA">🥈 PLATA</option>
+                            <option value="BRONCE">🥉 BRONCE</option>
+                            <option value="NUEVO">🆕 NUEVO</option>
+                            <option value="SIN_DATOS">⚪ Sin datos</option>
+                        </select>
+                        <select id="playersFilterStatus" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                            <option value="">Todos los estados</option>
+                            <option value="ACTIVO">✅ Activo (0-7d)</option>
+                            <option value="EN_RIESGO">⚠️ En riesgo (8-15d)</option>
+                            <option value="PERDIDO">💔 Perdido (16-30d)</option>
+                            <option value="INACTIVO">☠️ Inactivo (30d+)</option>
+                            <option value="NUEVO">🆕 Nuevo</option>
+                        </select>
+                        <select id="playersFilterOpp" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                            <option value="">Todos</option>
+                            <option value="false">🟢 Ocultar oportunistas</option>
+                            <option value="true">🚩 Solo oportunistas</option>
+                        </select>
+                        <select id="playersSortBy" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                            <option value="netToHouse30d">Ordenar: Neto a la casa</option>
+                            <option value="realDeposits30d">Ordenar: Cargas $</option>
+                            <option value="realChargesCount30d">Ordenar: Cantidad cargas</option>
+                            <option value="bonusGiven30d">Ordenar: Bonos dados</option>
+                            <option value="lastSeenApp">Ordenar: Última vez en la app</option>
+                            <option value="lastRealDepositDate">Ordenar: Última carga real</option>
+                        </select>
+                    </div>
+                    <div id="statsPlayersContent" style="overflow-x:auto;">
+                        <div class="empty-state">Tocá "Refrescar JUGAYGANA" arriba para poblar el cache.</div>
+                    </div>
+                </div>
+
+                <!-- Tab: ROI -->
+                <div id="statsTabRoi" class="stats-tab-pane" style="display:none;">
+                    <div style="margin-bottom:10px;color:#aaa;font-size:12px;">Por cada monto de bono regalado en los últimos 30 días, cuántos usuarios cargaron real después y el ROI de esa estrategia.</div>
+                    <div id="statsRoiContent" style="overflow-x:auto;">
+                        <div class="empty-state">⏳ Cargando…</div>
+                    </div>
+                </div>
+
+                <!-- Tab: Playbook -->
+                <div id="statsTabPlaybook" class="stats-tab-pane" style="display:none;">
+                    <div id="statsPlaybookContent"></div>
                 </div>
             </section>
 

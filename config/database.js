@@ -25,7 +25,9 @@ const {
   MoneyGiveaway,
   MoneyGiveawayClaim,
   ScheduledNotification,
-  WaClickLog
+  WaClickLog,
+  PlayerStats,
+  RecoveryPush
 } = require('../src/models');
 
 // ============================================
@@ -324,6 +326,8 @@ module.exports = {
   MoneyGiveawayClaim,
   ScheduledNotification,
   WaClickLog,
+  PlayerStats,
+  RecoveryPush,
   // Helpers
   getConfig,
   setConfig,

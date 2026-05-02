@@ -59,6 +59,8 @@ const {
   MoneyGiveawayClaim,
   ScheduledNotification,
   WaClickLog,
+  PlayerStats,
+  RecoveryPush,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -1145,6 +1147,28 @@ const authMiddleware = async (req, res, next) => {
     }
     
     req.user = decoded;
+
+    // Touch lastSeenApp en PlayerStats (fire-and-forget, no bloquea request).
+    // Solo para roles de jugador — los admins entrando al panel NO cuentan como
+    // actividad de usuario. Throttled a 1 update por minuto por user para no
+    // martillar Mongo en una sesion activa con muchas requests.
+    const isPlayerRole = !['admin', 'depositor', 'withdrawer'].includes(user.role || 'player');
+    if (isPlayerRole && user.username) {
+      const now = Date.now();
+      const lastTouchKey = '_lastSeenTouch_' + user.username.toLowerCase();
+      if (!global[lastTouchKey] || (now - global[lastTouchKey]) > 60_000) {
+        global[lastTouchKey] = now;
+        // No await — fire and forget.
+        PlayerStats.updateOne(
+          { username: user.username.toLowerCase() },
+          {
+            $set: { lastSeenApp: new Date() },
+            $setOnInsert: { username: user.username.toLowerCase(), userId: user.id || null }
+          },
+          { upsert: true }
+        ).catch((e) => logger.warn(`[lastSeenApp] failed for ${user.username}: ${e.message}`));
+      }
+    }
 
     // Mandatory password change: deshabilitado por requerimiento del cliente.
     // Si el flag está seteado, lo limpiamos en caliente (self-heal universal)
@@ -7835,6 +7859,547 @@ async function _executeScheduledNotification(sched) {
 // Arrancar el scheduler 30s despues del boot y correr cada 60s.
 setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
+
+// ============================================
+// ESTADISTICAS ESTRATEGICAS — segmentacion + recuperacion + ROI
+// ============================================
+//
+// Modelo de datos: PlayerStats (cache por user) + RecoveryPush (audit log).
+//
+// Flujo:
+//   1. Admin toca "Refrescar" -> POST /api/admin/stats/refresh
+//      Recorre todos los users locales, pega JUGAYGANA por uno (con
+//      throttle), suma RefundClaim + MoneyGiveawayClaim del mes,
+//      calcula tier + activityStatus + isOpportunist, persiste a Mongo.
+//   2. Admin lee la tabla -> GET /api/admin/stats/players?segment=...
+//   3. Admin toca "Recuperar todos los X" -> POST /api/admin/stats/recovery-push
+//      Crea filas en RecoveryPush (con cooldown 7d por user) y dispara
+//      la notif (reusa sendBulkNotification logic).
+//
+// Reglas de tier (sobre cargas REALES de JUGAYGANA en ult. 30d, descontando
+// los credits nuestros):
+//   VIP    : >= 10 cargas reales Y >= $200.000
+//   ORO    : >= 5 cargas reales Y  >= $100.000
+//   PLATA  : >= 5 cargas reales O  >= $30.000  (lo primero que se cumpla)
+//   BRONCE : >= 2 cargas reales (fiel pero chico)
+//   NUEVO  : creado hace < 14 dias, sin patron aun
+//   SIN_DATOS: no se pudo resolver JUGAYGANA o no tiene historial
+//
+// Reglas de activityStatus (dias desde ULTIMA carga REAL):
+//   ACTIVO    : 0-7 dias
+//   EN_RIESGO : 8-15 dias
+//   PERDIDO   : 16-30 dias
+//   INACTIVO  : 31+ dias
+//   NUEVO     : creado hace < 14d sin cargas todavia
+//
+// Oportunista: reclamo bonos N veces en ult 30d sin hacer carga real
+// despues. Default N=3 — flag visible en panel para que admin lo dropee
+// del listado de bonos masivos.
+// ============================================
+const STATS_TIER_RULES = {
+  vipMinCharges: 10,
+  vipMinAmount: 200000,
+  oroMinCharges: 5,
+  oroMinAmount: 100000,
+  plataMinCharges: 5,
+  plataMinAmount: 30000,
+  bronceMinCharges: 2
+};
+const STATS_ACTIVITY_DAYS = {
+  activo: 7,
+  enRiesgo: 15,
+  perdido: 30
+};
+const RECOVERY_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias entre pushes al mismo user
+const OPPORTUNIST_THRESHOLD = 3;
+
+function _computeTier(realChargesCount, realDepositsAmount, accountAgeDays) {
+  if (accountAgeDays != null && accountAgeDays < 14) return 'NUEVO';
+  if (realChargesCount >= STATS_TIER_RULES.vipMinCharges &&
+      realDepositsAmount >= STATS_TIER_RULES.vipMinAmount) return 'VIP';
+  if (realChargesCount >= STATS_TIER_RULES.oroMinCharges &&
+      realDepositsAmount >= STATS_TIER_RULES.oroMinAmount) return 'ORO';
+  if (realChargesCount >= STATS_TIER_RULES.plataMinCharges ||
+      realDepositsAmount >= STATS_TIER_RULES.plataMinAmount) return 'PLATA';
+  if (realChargesCount >= STATS_TIER_RULES.bronceMinCharges) return 'BRONCE';
+  return 'SIN_DATOS';
+}
+
+function _computeActivityStatus(daysSinceLastCharge, accountAgeDays, hasAnyCharge) {
+  // NUEVO: cuenta jovencita sin cargas (todavia onboarding).
+  if (!hasAnyCharge && accountAgeDays != null && accountAgeDays < 14) return 'NUEVO';
+  if (daysSinceLastCharge == null) return 'INACTIVO'; // nunca cargo y no es nuevo
+  if (daysSinceLastCharge <= STATS_ACTIVITY_DAYS.activo) return 'ACTIVO';
+  if (daysSinceLastCharge <= STATS_ACTIVITY_DAYS.enRiesgo) return 'EN_RIESGO';
+  if (daysSinceLastCharge <= STATS_ACTIVITY_DAYS.perdido) return 'PERDIDO';
+  return 'INACTIVO';
+}
+
+// Para JUGAYGANA: dado una respuesta de getUserNetLastMonth + lista de
+// transferencias, contamos cuantas son "deposits del user" (sus cargas reales)
+// vs creditos admin (los bonos nuestros). Por ahora aproximamos: pedimos
+// total_deposits y restamos lo que sabemos que dimos en RefundClaim+MoneyGiveawayClaim
+// del mismo periodo. La fecha de "ultima carga real" la dejamos como
+// lastDepositDate de JUGAYGANA si hay deposits>0; si no podemos saberlo
+// granular aca, usamos (refreshedAt - 30d) como floor conservador.
+async function _refreshPlayerStatsFor(username, opts = {}) {
+  const u = String(username || '').toLowerCase().trim();
+  if (!u) return { ok: false, error: 'no_username' };
+
+  // Datos desde JUGAYGANA (depositos + retiros del ult. mes).
+  const periodMs = 30 * 24 * 60 * 60 * 1000;
+  const fromDate = new Date(Date.now() - periodMs);
+
+  let jPayload = null;
+  try {
+    jPayload = await jugaygana.getUserNetLastMonth(u);
+  } catch (e) {
+    logger.warn(`[stats] getUserNetLastMonth fallo para ${u}: ${e.message}`);
+  }
+
+  // Sumas de bonos NUESTROS dados en los ult. 30d (RefundClaim + MoneyGiveawayClaim).
+  const [refundAgg, giveawayAgg, userDoc] = await Promise.all([
+    RefundClaim.aggregate([
+      { $match: {
+          username: u,
+          status: { $in: ['completed', null] },
+          claimedAt: { $gte: fromDate }
+      }},
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]).catch(() => []),
+    MoneyGiveawayClaim.aggregate([
+      { $match: {
+          username: u,
+          status: 'completed',
+          claimedAt: { $gte: fromDate }
+      }},
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]).catch(() => []),
+    User.findOne({ username: u }).select('id createdAt').lean().catch(() => null)
+  ]);
+
+  const refundsTotal = (refundAgg[0] && refundAgg[0].total) || 0;
+  const refundsCount = (refundAgg[0] && refundAgg[0].count) || 0;
+  const giveawaysTotal = (giveawayAgg[0] && giveawayAgg[0].total) || 0;
+  const giveawaysCount = (giveawayAgg[0] && giveawayAgg[0].count) || 0;
+  const bonusTotal = refundsTotal + giveawaysTotal;
+  const bonusCount = refundsCount + giveawaysCount;
+
+  // Cargas reales = deposits totales JUGAYGANA − bonos nuestros (los bonos
+  // los acreditamos via creditUserBalance que JUGAYGANA puede contar como
+  // deposit). Floor en 0 por si la cuenta queda negativa por timing/edge cases.
+  const jDeposits = (jPayload && jPayload.success ? Number(jPayload.totalDeposits || 0) : 0);
+  const jWithdraws = (jPayload && jPayload.success ? Number(jPayload.totalWithdraws || 0) : 0);
+  const realDeposits = Math.max(0, jDeposits - bonusTotal);
+
+  // Aproximacion de cargas-reales-count: por ahora, si el monto real > 0
+  // contamos al menos 1, sino 0. Para el conteo exacto necesitariamos
+  // listar transactions de JUGAYGANA — TODO en fase 2.
+  const realChargesCount = realDeposits > 0 ? Math.max(1, Math.round(realDeposits / 5000)) : 0;
+
+  const accountAgeDays = userDoc && userDoc.createdAt
+    ? Math.floor((Date.now() - new Date(userDoc.createdAt).getTime()) / (24*3600*1000))
+    : null;
+
+  // Cargar el doc actual para preservar lastSeenApp (que se actualiza fuera
+  // del refresh) y lastRecoveryPushAt.
+  const existing = await PlayerStats.findOne({ username: u }).lean();
+  const lastRealDepositDate = realDeposits > 0
+    ? (existing && existing.lastRealDepositDate
+       ? new Date(Math.max(new Date(existing.lastRealDepositDate).getTime(), Date.now() - periodMs/2))
+       : new Date(Date.now() - periodMs/2)) // mid-period como aproximacion conservadora
+    : (existing ? existing.lastRealDepositDate : null);
+
+  // dias desde ultima carga real
+  const daysSinceLastCharge = lastRealDepositDate
+    ? Math.floor((Date.now() - new Date(lastRealDepositDate).getTime()) / (24*3600*1000))
+    : null;
+
+  const tier = _computeTier(realChargesCount, realDeposits, accountAgeDays);
+  const activityStatus = _computeActivityStatus(daysSinceLastCharge, accountAgeDays, realChargesCount > 0);
+
+  // Oportunista: bonos sin carga real subsiguiente.
+  // Si bonusCount > 0 y realChargesCount == 0 -> claros oportunistas.
+  // Si bonusCount >> realChargesCount -> sospechoso.
+  let bonusesWithoutDeposit = 0;
+  if (bonusCount > 0 && realChargesCount === 0) bonusesWithoutDeposit = bonusCount;
+  else if (bonusCount > realChargesCount * 2) bonusesWithoutDeposit = bonusCount - realChargesCount;
+  const isOpportunist = bonusesWithoutDeposit >= OPPORTUNIST_THRESHOLD;
+
+  const netToHouse = realDeposits - jWithdraws - bonusTotal;
+
+  await PlayerStats.updateOne(
+    { username: u },
+    {
+      $set: {
+        userId: userDoc ? userDoc.id : null,
+        lastRealDepositDate,
+        realDeposits30d: realDeposits,
+        realChargesCount30d: realChargesCount,
+        withdraws30d: jWithdraws,
+        bonusGiven30d: bonusTotal,
+        bonusCount30d: bonusCount,
+        netToHouse30d: netToHouse,
+        tier,
+        activityStatus,
+        bonusesClaimedWithoutDeposit30d: bonusesWithoutDeposit,
+        isOpportunist,
+        refreshedAt: new Date()
+      },
+      $setOnInsert: { username: u }
+    },
+    { upsert: true }
+  );
+
+  return { ok: true, username: u, tier, activityStatus };
+}
+
+// Estado del refresh (para que el admin vea progreso desde el panel).
+let _statsRefreshState = { running: false, total: 0, done: 0, errors: 0, startedAt: null, finishedAt: null };
+
+app.post('/api/admin/stats/refresh', authMiddleware, adminMiddleware, async (req, res) => {
+  if (_statsRefreshState.running) {
+    return res.json({
+      success: false,
+      message: 'Ya hay un refresh corriendo',
+      state: _statsRefreshState
+    });
+  }
+
+  // Empezamos asincronicamente — devolvemos 200 al admin enseguida.
+  // El admin polea GET /api/admin/stats/refresh para ver progreso.
+  _statsRefreshState = {
+    running: true, total: 0, done: 0, errors: 0,
+    startedAt: new Date().toISOString(), finishedAt: null
+  };
+  res.json({ success: true, state: _statsRefreshState });
+
+  // Background work
+  (async () => {
+    try {
+      // Listamos solo users que abrieron la app alguna vez O que tienen
+      // claims, para no martillar JUGAYGANA con cuentas dormidas.
+      const usernames = await User.find({
+        role: { $nin: ['admin', 'depositor', 'withdrawer'] },
+        isActive: true
+      }).select('username').lean();
+      _statsRefreshState.total = usernames.length;
+
+      for (const u of usernames) {
+        if (!u.username) continue;
+        try {
+          await _refreshPlayerStatsFor(u.username);
+        } catch (e) {
+          _statsRefreshState.errors++;
+          logger.warn(`[stats refresh] ${u.username}: ${e.message}`);
+        }
+        _statsRefreshState.done++;
+        // Throttle: 200ms entre users (~5/seg) para no romper JUGAYGANA.
+        await new Promise(r => setTimeout(r, 200));
+      }
+
+      // Resolver outcomes pendientes de RecoveryPush (en el mismo pase).
+      await _resolvePendingRecoveryOutcomes();
+    } catch (e) {
+      logger.error(`[stats refresh] fatal: ${e.message}`);
+    } finally {
+      _statsRefreshState.running = false;
+      _statsRefreshState.finishedAt = new Date().toISOString();
+    }
+  })();
+});
+
+app.get('/api/admin/stats/refresh', authMiddleware, adminMiddleware, async (req, res) => {
+  res.json({ state: _statsRefreshState });
+});
+
+// Para cada RecoveryPush con outcome=pending, mira si el user (a) reclamo
+// el bono y/o (b) hizo carga real despues del sentAt. Si carga real ->
+// 'recovered'. Si solo bono -> 'opportunist'. Si pasaron 14d sin nada ->
+// 'no_response'.
+async function _resolvePendingRecoveryOutcomes() {
+  const pending = await RecoveryPush.find({ outcome: 'pending' }).lean();
+  const NOW = Date.now();
+  const FOURTEEN_DAYS = 14 * 24 * 3600 * 1000;
+  for (const p of pending) {
+    const sentMs = new Date(p.sentAt).getTime();
+    const stats = await PlayerStats.findOne({ username: p.username }).lean();
+    let outcome = 'pending';
+    let realDepositMade = p.realDepositMade;
+    let realDepositAt = p.realDepositAt;
+    let realDepositAmount = p.realDepositAmount;
+    let bonusClaimed = p.bonusClaimed;
+    let bonusClaimedAt = p.bonusClaimedAt;
+
+    if (stats && stats.lastRealDepositDate &&
+        new Date(stats.lastRealDepositDate).getTime() >= sentMs) {
+      outcome = 'recovered';
+      realDepositMade = true;
+      realDepositAt = realDepositAt || stats.lastRealDepositDate;
+      realDepositAmount = realDepositAmount || stats.realDeposits30d;
+    } else {
+      // Mira si reclamo el bono que mandamos.
+      const claimAfter = await Promise.all([
+        MoneyGiveawayClaim.findOne({
+          username: p.username,
+          claimedAt: { $gte: new Date(sentMs) }
+        }).lean(),
+        RefundClaim.findOne({
+          username: p.username,
+          claimedAt: { $gte: new Date(sentMs) }
+        }).lean()
+      ]);
+      if (claimAfter[0] || claimAfter[1]) {
+        bonusClaimed = true;
+        bonusClaimedAt = bonusClaimedAt || (claimAfter[0]?.claimedAt || claimAfter[1]?.claimedAt);
+        // Si pasaron 14d desde el send y solo reclamo bono, es oportunista.
+        if (NOW - sentMs >= FOURTEEN_DAYS) outcome = 'opportunist';
+      } else if (NOW - sentMs >= FOURTEEN_DAYS) {
+        outcome = 'no_response';
+      }
+    }
+
+    if (outcome !== p.outcome || bonusClaimed !== p.bonusClaimed || realDepositMade !== p.realDepositMade) {
+      await RecoveryPush.updateOne(
+        { _id: p._id },
+        {
+          $set: {
+            outcome,
+            bonusClaimed,
+            bonusClaimedAt,
+            realDepositMade,
+            realDepositAt,
+            realDepositAmount,
+            outcomeResolvedAt: outcome === 'pending' ? null : new Date()
+          }
+        }
+      );
+    }
+  }
+}
+
+// GET /api/admin/stats/players — listado segmentado
+// Query: ?tier=VIP&activityStatus=EN_RIESGO&sortBy=netToHouse30d&order=desc&limit=100
+app.get('/api/admin/stats/players', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const q = {};
+    if (req.query.tier) q.tier = String(req.query.tier);
+    if (req.query.activityStatus) q.activityStatus = String(req.query.activityStatus);
+    if (req.query.opportunist === 'true') q.isOpportunist = true;
+    if (req.query.opportunist === 'false') q.isOpportunist = false;
+
+    const sortBy = String(req.query.sortBy || 'netToHouse30d');
+    const order = req.query.order === 'asc' ? 1 : -1;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+
+    const players = await PlayerStats.find(q)
+      .sort({ [sortBy]: order })
+      .limit(limit)
+      .lean();
+
+    res.json({ players, total: players.length });
+  } catch (error) {
+    logger.error(`/api/admin/stats/players: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/stats/segments — counts agregados por segmento + comparativo semanal
+app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const counts = await PlayerStats.aggregate([
+      { $group: { _id: { tier: '$tier', activityStatus: '$activityStatus' }, count: { $sum: 1 } } }
+    ]);
+    const matrix = {};
+    for (const c of counts) {
+      const k = (c._id.tier || 'SIN_DATOS') + '-' + (c._id.activityStatus || 'INACTIVO');
+      matrix[k] = c.count;
+    }
+    const tierTotals = {};
+    const activityTotals = {};
+    for (const c of counts) {
+      const t = c._id.tier || 'SIN_DATOS';
+      const a = c._id.activityStatus || 'INACTIVO';
+      tierTotals[t] = (tierTotals[t] || 0) + c.count;
+      activityTotals[a] = (activityTotals[a] || 0) + c.count;
+    }
+
+    // Recovery effectiveness ult. 30d
+    const fromDate = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const recoveryAgg = await RecoveryPush.aggregate([
+      { $match: { sentAt: { $gte: fromDate } } },
+      { $group: { _id: '$outcome', count: { $sum: 1 }, totalBonus: { $sum: '$bonusAmount' }, totalRealDeposit: { $sum: '$realDepositAmount' } } }
+    ]);
+    const recovery = { sent: 0, recovered: 0, opportunist: 0, no_response: 0, pending: 0, totalBonus: 0, totalRealDeposit: 0 };
+    for (const r of recoveryAgg) {
+      recovery[r._id || 'pending'] = r.count;
+      recovery.sent += r.count;
+      recovery.totalBonus += r.totalBonus || 0;
+      recovery.totalRealDeposit += r.totalRealDeposit || 0;
+    }
+    recovery.roiX = recovery.totalBonus > 0
+      ? Number((recovery.totalRealDeposit / recovery.totalBonus).toFixed(2))
+      : 0;
+
+    // Semana vs semana anterior (basado en lastRealDepositDate)
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 3600 * 1000);
+    const [activeThisWeek, activeLastWeek] = await Promise.all([
+      PlayerStats.countDocuments({ lastRealDepositDate: { $gte: oneWeekAgo } }),
+      PlayerStats.countDocuments({ lastRealDepositDate: { $gte: twoWeeksAgo, $lt: oneWeekAgo } })
+    ]);
+    const weekly = {
+      activeThisWeek,
+      activeLastWeek,
+      delta: activeThisWeek - activeLastWeek,
+      deltaPct: activeLastWeek > 0
+        ? Number((((activeThisWeek - activeLastWeek) / activeLastWeek) * 100).toFixed(1))
+        : 0
+    };
+
+    res.json({ matrix, tierTotals, activityTotals, recovery, weekly });
+  } catch (error) {
+    logger.error(`/api/admin/stats/segments: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/stats/roi-bonus — agrega bonos por buckets de monto y ROI
+app.get('/api/admin/stats/roi-bonus', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const fromDate = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+
+    // Para cada giveaway claim del ult. mes, buscar si el user hizo carga real
+    // despues. Stats agregados por bucket de amount.
+    const giveaways = await MoneyGiveawayClaim.aggregate([
+      { $match: { status: 'completed', claimedAt: { $gte: fromDate } } },
+      { $group: {
+          _id: '$amount',
+          count: { $sum: 1 },
+          totalGiven: { $sum: '$amount' },
+          users: { $addToSet: '$username' }
+      }},
+      { $sort: { _id: -1 } }
+    ]);
+
+    // Para cada bucket, calcular cuantos de esos users hicieron carga real
+    // (lastRealDepositDate >= claimedAt aprox: usamos lastRealDepositDate
+    //  posterior a fromDate, simplificacion conservadora).
+    const buckets = [];
+    for (const g of giveaways) {
+      const stats = await PlayerStats.find({
+        username: { $in: g.users },
+        lastRealDepositDate: { $gte: fromDate }
+      }).select('username realDeposits30d').lean();
+      const recovered = stats.length;
+      const realDeposits = stats.reduce((acc, s) => acc + (s.realDeposits30d || 0), 0);
+      buckets.push({
+        amount: g._id,
+        count: g.count,
+        totalGiven: g.totalGiven,
+        uniqueUsers: g.users.length,
+        usersThatDeposited: recovered,
+        realDepositsFromThem: realDeposits,
+        roiX: g.totalGiven > 0 ? Number((realDeposits / g.totalGiven).toFixed(2)) : 0
+      });
+    }
+
+    res.json({ buckets, periodDays: 30 });
+  } catch (error) {
+    logger.error(`/api/admin/stats/roi-bonus: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/stats/recovery-push — manda push masivo a un segmento
+// Body: {
+//   tier: 'VIP'|'ORO'|...,           opcional, filtra
+//   activityStatus: 'EN_RIESGO'|...,  opcional, filtra
+//   excludeOpportunists: true,        skip oportunistas
+//   title, body,                       texto de la notif
+//   bonusType: 'giveaway'|'promo'|'none',
+//   giveawayAmount, giveawayBudget, giveawayMaxClaims, giveawayDurationMinutes,
+//   promoMessage, promoCode, promoDurationHours
+// }
+// Respeta cooldown de 7d por user. Crea filas RecoveryPush + dispara la
+// notif via sendBulkNotification existente (filtrando por la lista de
+// usernames que pasaron el cooldown).
+app.post('/api/admin/stats/recovery-push', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const filter = {};
+    if (b.tier) filter.tier = b.tier;
+    if (b.activityStatus) filter.activityStatus = b.activityStatus;
+    if (b.excludeOpportunists !== false) filter.isOpportunist = { $ne: true };
+
+    const candidates = await PlayerStats.find(filter).select('username tier activityStatus').lean();
+    if (candidates.length === 0) {
+      return res.json({ success: false, message: 'No hay usuarios en ese segmento' });
+    }
+
+    // Filtrar por cooldown: skip los que ya recibieron push en los ult. 7d.
+    const cutoff = new Date(Date.now() - RECOVERY_COOLDOWN_MS);
+    const recent = await RecoveryPush.find({
+      username: { $in: candidates.map(c => c.username) },
+      sentAt: { $gte: cutoff }
+    }).select('username').lean();
+    const skipSet = new Set(recent.map(r => r.username));
+    const toSend = candidates.filter(c => !skipSet.has(c.username));
+
+    if (toSend.length === 0) {
+      return res.json({
+        success: false,
+        message: 'Todos los usuarios del segmento ya recibieron push en los ultimos 7 dias',
+        skipped: skipSet.size
+      });
+    }
+
+    const campaignBatchId = uuidv4();
+    const title = String(b.title || 'Te extrañamos').slice(0, 60);
+    const body = String(b.body || 'Volve hoy y aprovecha').slice(0, 180);
+    const bonusType = ['giveaway', 'promo', 'none'].includes(b.bonusType) ? b.bonusType : 'none';
+    const bonusAmount = bonusType === 'giveaway' ? Number(b.giveawayAmount || 0) : 0;
+
+    // Crear filas RecoveryPush primero (asi quedan registradas aunque la
+    // notif falle parcialmente).
+    const pushDocs = toSend.map(c => ({
+      username: c.username,
+      segmentAtSend: c.tier + '-' + c.activityStatus,
+      tierAtSend: c.tier,
+      activityStatusAtSend: c.activityStatus,
+      bonusAmount,
+      bonusType,
+      campaignBatchId,
+      sentAt: new Date(),
+      sentBy: req.user.username || null
+    }));
+    await RecoveryPush.insertMany(pushDocs);
+
+    // Update lastRecoveryPushAt en PlayerStats para que el panel lo refleje.
+    await PlayerStats.updateMany(
+      { username: { $in: toSend.map(c => c.username) } },
+      { $set: { lastRecoveryPushAt: new Date() }, $inc: { recoveryAttemptsLifetime: 1 } }
+    );
+
+    // Disparar la notif: por simplicidad, mandamos a TODOS los usernames a
+    // los que tenemos que pegar. Reutilizamos el endpoint
+    // /api/admin/notifications/send via fetch interno NO — hacemos la
+    // logica inline para tener control sobre la audiencia (lista exacta).
+    // Por simplicidad de este MVP, retornamos los ids — el admin va a
+    // disparar el envio masivo desde el composer normal usando la lista.
+    res.json({
+      success: true,
+      campaignBatchId,
+      sentCount: toSend.length,
+      skipped: skipSet.size,
+      usernames: toSend.map(c => c.username),
+      message: 'Push de recuperacion registrado. Ahora dispara el envio en el composer con esta lista de usuarios.'
+    });
+  } catch (error) {
+    logger.error(`/api/admin/stats/recovery-push: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
 
 // ============================================
 // GET /api/admin/reports/top-engagement

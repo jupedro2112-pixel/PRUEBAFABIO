@@ -23,6 +23,8 @@ const MoneyGiveaway = require('./MoneyGiveaway');
 const MoneyGiveawayClaim = require('./MoneyGiveawayClaim');
 const ScheduledNotification = require('./ScheduledNotification');
 const WaClickLog = require('./WaClickLog');
+const PlayerStats = require('./PlayerStats');
+const RecoveryPush = require('./RecoveryPush');
 
 
 /**
@@ -418,6 +420,8 @@ module.exports = {
   MoneyGiveawayClaim,
   ScheduledNotification,
   WaClickLog,
+  PlayerStats,
+  RecoveryPush,
 
   // Funciones de conexión
   connectDB,
