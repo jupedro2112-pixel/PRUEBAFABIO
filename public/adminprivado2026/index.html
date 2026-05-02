@@ -261,6 +261,49 @@
                         <span id="notifPreviewBody" style="color:#ccc;font-size:12px;line-height:1.4;">Mensaje…</span>
                     </div>
 
+                    <!-- ===== ALERTA TEMPORAL EN HOME ===== -->
+                    <div style="background:rgba(212,175,55,0.06);border:1px dashed rgba(212,175,55,0.35);border-radius:10px;padding:12px;margin-bottom:14px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#ffd700;font-size:13px;font-weight:700;">
+                            <input type="checkbox" id="promoAlertEnabled" onchange="togglePromoAlertFields()" style="accent-color:#d4af37;width:16px;height:16px;">
+                            <span>🎁 Mostrar alerta temporal en el botón QUIERO CARGAR</span>
+                        </label>
+                        <p style="margin:6px 0 10px 24px;color:#aaa;font-size:11px;line-height:1.45;">
+                            Reemplaza el botón "QUIERO CARGAR" del home por un cartel de promo con el código y un timer.
+                            Cuando vence, vuelve a mostrar el botón normal.
+                        </p>
+                        <div id="promoAlertFields" style="display:none;padding-left:24px;display:none;flex-direction:column;gap:10px;">
+                            <div style="display:flex;flex-direction:column;gap:4px;">
+                                <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Mensaje del cartel (lo ve el cliente)</label>
+                                <input type="text" id="promoAlertMessage" maxlength="100" placeholder="Ej: Bono 50% en cargas hoy"
+                                       style="padding:9px 11px;border-radius:7px;border:1px solid rgba(212,175,55,0.30);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;box-sizing:border-box;">
+                                <small style="color:#888;font-size:10px;">Máx 100 caracteres. Aparece en grande en el cartel.</small>
+                            </div>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px;">
+                                    <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Código</label>
+                                    <input type="text" id="promoAlertCode" maxlength="20" placeholder="BONO50"
+                                           style="padding:9px 11px;border-radius:7px;border:1px solid rgba(212,175,55,0.30);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;text-transform:uppercase;box-sizing:border-box;">
+                                    <small style="color:#888;font-size:10px;">Solo letras/números. El cliente lo copia y lo manda por WhatsApp.</small>
+                                </div>
+                                <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:140px;">
+                                    <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Duración</label>
+                                    <select id="promoAlertDuration" style="padding:9px 11px;border-radius:7px;border:1px solid rgba(212,175,55,0.30);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;cursor:pointer;">
+                                        <option value="0.5">30 minutos</option>
+                                        <option value="1" selected>1 hora</option>
+                                        <option value="2">2 horas</option>
+                                        <option value="4">4 horas</option>
+                                        <option value="8">8 horas</option>
+                                        <option value="24">24 horas</option>
+                                        <option value="48">2 días</option>
+                                        <option value="72">3 días</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Estado de promo activa -->
+                    <div id="promoAlertStatus" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.40);color:#9bf3c0;font-size:12px;line-height:1.5;"></div>
+
                     <button class="btn-primary" onclick="sendBulkNotification()" style="width:100%;padding:12px;font-size:14px;font-weight:700;">
                         🚀 Enviar notificación
                     </button>

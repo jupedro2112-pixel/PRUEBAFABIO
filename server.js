@@ -6979,6 +6979,113 @@ app.post('/api/admin/reports/revalidate-tokens', authMiddleware, adminMiddleware
 });
 
 // ============================================
+// PROMO ALERT TEMPORAL en boton "QUIERO CARGAR" del home.
+// El admin lo configura junto con la notificacion masiva: titulo,
+// codigo y duracion. Mientras este vigente, el card de WhatsApp del
+// home muestra "🎁 RECLAMÁ <mensaje> · Código: <CODE>" en vez del
+// "QUIERO CARGAR" normal.
+//
+// Storage: usamos getConfig/setConfig (key='activePromoAlert') para
+// no agregar otra coleccion Mongoose. El formato es:
+//   { id, message, code, expiresAt (ISO), createdAt (ISO),
+//     createdBy, prefix (opcional para targetear por prefijo) }
+// Si expiresAt < ahora, el endpoint GET responde null (no esta activo).
+// ============================================
+const PROMO_ALERT_KEY = 'activePromoAlert';
+
+function _normalizePromoCode(raw) {
+  return String(raw || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20);
+}
+
+// GET publico (autenticado): devuelve la promo activa para este user.
+// Si la promo tiene prefix, solo se muestra a usernames que matchean.
+app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
+  try {
+    const promo = await getConfig(PROMO_ALERT_KEY, null);
+    if (!promo || !promo.expiresAt) return res.json({ active: false });
+    const expiresAtMs = new Date(promo.expiresAt).getTime();
+    if (!isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      return res.json({ active: false });
+    }
+    // Filtro por prefijo si esta seteado.
+    const username = (req.user && req.user.username) || '';
+    if (promo.prefix && typeof promo.prefix === 'string') {
+      if (!username.toLowerCase().startsWith(promo.prefix.toLowerCase())) {
+        return res.json({ active: false });
+      }
+    }
+    res.json({
+      active: true,
+      id: promo.id,
+      message: promo.message,
+      code: promo.code,
+      expiresAt: promo.expiresAt,
+      createdAt: promo.createdAt
+    });
+  } catch (error) {
+    logger.error(`/api/promo-alert/active error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST admin: crear o reemplazar el promo activo.
+// Body: { message, code, durationHours, prefix? }
+app.post('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { message, code, durationHours, prefix } = req.body || {};
+    const msg = String(message || '').trim().slice(0, 200);
+    const codeNorm = _normalizePromoCode(code);
+    const hours = Number(durationHours);
+    if (!msg) return res.status(400).json({ error: 'Mensaje requerido' });
+    if (!codeNorm) return res.status(400).json({ error: 'Código requerido (solo letras, números, _ y -)' });
+    if (!isFinite(hours) || hours <= 0 || hours > 168) {
+      return res.status(400).json({ error: 'Duración inválida (entre 1 y 168 horas)' });
+    }
+    const now = new Date();
+    const expires = new Date(now.getTime() + hours * 3600 * 1000);
+    const promo = {
+      id: uuidv4(),
+      message: msg,
+      code: codeNorm,
+      expiresAt: expires.toISOString(),
+      createdAt: now.toISOString(),
+      createdBy: req.user.username || null,
+      prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null
+    };
+    await setConfig(PROMO_ALERT_KEY, promo);
+    res.json({ success: true, promo });
+  } catch (error) {
+    logger.error(`POST /api/admin/promo-alert error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET admin: ver el promo activo (sin filtro por prefix, ve todo).
+app.get('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const promo = await getConfig(PROMO_ALERT_KEY, null);
+    if (!promo) return res.json({ promo: null });
+    const expiresAtMs = promo.expiresAt ? new Date(promo.expiresAt).getTime() : 0;
+    const expired = !isFinite(expiresAtMs) || expiresAtMs <= Date.now();
+    res.json({ promo, expired });
+  } catch (error) {
+    logger.error(`GET /api/admin/promo-alert error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE admin: cancelar el promo activo (lo borra del config).
+app.delete('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await setConfig(PROMO_ALERT_KEY, null);
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`DELETE /api/admin/promo-alert error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // BASE DE DATOS - SOLO ADMIN PRINCIPAL
 // ============================================
 

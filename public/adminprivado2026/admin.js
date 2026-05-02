@@ -194,6 +194,8 @@ function showSection(sectionKey) {
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
+        // Cargar el estado de la promo activa (si la hay).
+        loadPromoAlertStatus();
     }
 }
 
@@ -1094,6 +1096,65 @@ function updateNotifTargetUI() {
     group.style.display = isPrefix ? '' : 'none';
 }
 
+function togglePromoAlertFields() {
+    const cb = document.getElementById('promoAlertEnabled');
+    const fields = document.getElementById('promoAlertFields');
+    if (!cb || !fields) return;
+    fields.style.display = cb.checked ? 'flex' : 'none';
+}
+
+async function loadPromoAlertStatus() {
+    const box = document.getElementById('promoAlertStatus');
+    if (!box) return;
+    try {
+        const r = await authFetch('/api/admin/promo-alert');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { box.style.display = 'none'; return; }
+        const promo = data.promo;
+        if (!promo) { box.style.display = 'none'; return; }
+        const expiresMs = promo.expiresAt ? new Date(promo.expiresAt).getTime() : 0;
+        if (data.expired || expiresMs <= Date.now()) {
+            box.style.display = 'none';
+            return;
+        }
+        const minsLeft = Math.max(1, Math.round((expiresMs - Date.now()) / 60000));
+        let leftText;
+        if (minsLeft >= 60) {
+            const h = Math.floor(minsLeft / 60);
+            const m = minsLeft % 60;
+            leftText = h + 'h' + (m ? ' ' + m + 'min' : '');
+        } else {
+            leftText = minsLeft + ' min';
+        }
+        box.style.display = 'block';
+        box.innerHTML =
+            '✅ <strong>Promo activa</strong> — vence en <strong>' + escapeHtml(leftText) + '</strong><br>' +
+            '<span style="color:#fff;">Mensaje:</span> ' + escapeHtml(promo.message) + '<br>' +
+            '<span style="color:#fff;">Código:</span> <code style="background:rgba(0,0,0,0.4);padding:1px 6px;border-radius:4px;color:#ffd700;">' + escapeHtml(promo.code) + '</code>' +
+            (promo.prefix ? ' · <span style="color:#888;">solo a usernames "' + escapeHtml(promo.prefix) + '*"</span>' : '') +
+            '<br><button onclick="cancelPromoAlert()" style="margin-top:8px;background:rgba(220,38,38,0.85);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">✕ Cancelar promo ahora</button>';
+    } catch (err) {
+        console.warn('loadPromoAlertStatus error:', err);
+        box.style.display = 'none';
+    }
+}
+
+async function cancelPromoAlert() {
+    if (!window.confirm('¿Cancelar la promo activa? Los clientes vuelven a ver el botón QUIERO CARGAR normal.')) return;
+    try {
+        const r = await authFetch('/api/admin/promo-alert', { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.success) {
+            showToast('Promo cancelada', 'success');
+            loadPromoAlertStatus();
+        } else {
+            showToast('Error: ' + (data.error || 'desconocido'), 'error');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 async function sendBulkNotification() {
     const title = (document.getElementById('notifTitle').value || '').trim();
     const body = (document.getElementById('notifBody').value || '').trim();
@@ -1102,6 +1163,12 @@ async function sendBulkNotification() {
         ? (document.getElementById('notifPrefix').value || '').trim()
         : '';
     const result = document.getElementById('notifResult');
+
+    // Lectura de campos de promo (opcional).
+    const promoEnabled = !!document.getElementById('promoAlertEnabled')?.checked;
+    const promoMessage = (document.getElementById('promoAlertMessage')?.value || '').trim();
+    const promoCode = (document.getElementById('promoAlertCode')?.value || '').trim().toUpperCase();
+    const promoDurationHours = Number(document.getElementById('promoAlertDuration')?.value || 1);
 
     if (!title) {
         showToast('Falta el título', 'error');
@@ -1114,6 +1181,13 @@ async function sendBulkNotification() {
     if (target === 'prefix' && !prefix) {
         showToast('Indicá el inicio de usuario (ej: ato)', 'error');
         return;
+    }
+    if (promoEnabled) {
+        if (!promoMessage) { showToast('Falta el mensaje del cartel de promo', 'error'); return; }
+        if (!promoCode) { showToast('Falta el código de promo', 'error'); return; }
+        if (!isFinite(promoDurationHours) || promoDurationHours <= 0) {
+            showToast('Duración de promo inválida', 'error'); return;
+        }
     }
 
     const audienceLabel = prefix
@@ -1140,6 +1214,41 @@ async function sendBulkNotification() {
             data: { source: 'admin-bulk', tag: 'admin-broadcast' }
         };
         if (prefix) payload.prefix = prefix;
+        // Si hay promo, la metemos en el data para que el SW pueda accionarla
+        // al click. La promo SE GUARDA tambien server-side en /admin/promo-alert
+        // (esa es la fuente de verdad para el polling del client).
+        if (promoEnabled) {
+            payload.data.promoCode = promoCode;
+            payload.data.promoMessage = promoMessage;
+            payload.data.promoExpiresIn = String(promoDurationHours);
+        }
+
+        // Crear/reemplazar la promo activa ANTES del envio. Asi cuando el
+        // user reciba el push y abra la app, el endpoint /promo-alert/active
+        // ya devuelve la promo nueva (no la anterior).
+        if (promoEnabled) {
+            try {
+                const promoR = await authFetch('/api/admin/promo-alert', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        message: promoMessage,
+                        code: promoCode,
+                        durationHours: promoDurationHours,
+                        prefix: prefix || null
+                    })
+                });
+                if (!promoR.ok) {
+                    const e = await promoR.json().catch(() => ({}));
+                    showToast('Error creando promo: ' + (e.error || promoR.status), 'error');
+                    if (btn) { btn.disabled = false; btn.textContent = defaultBtnText; }
+                    return;
+                }
+            } catch (e) {
+                showToast('Error creando promo: ' + e.message, 'error');
+                if (btn) { btn.disabled = false; btn.textContent = defaultBtnText; }
+                return;
+            }
+        }
 
         const r = await authFetch('/api/notifications/send-all', {
             method: 'POST',
@@ -1150,6 +1259,9 @@ async function sendBulkNotification() {
             const targetLine = data.prefix
                 ? `Audiencia: <strong>usuarios "${escapeHtml(data.prefix)}*"</strong><br>`
                 : `Audiencia: <strong>todos los usuarios</strong><br>`;
+            const promoLine = promoEnabled
+                ? `<br>🎁 Promo activa: <strong>${escapeHtml(promoCode)}</strong> por ${promoDurationHours}h`
+                : '';
             const summary =
                 `✅ <strong>Envío completado</strong><br>` +
                 targetLine +
@@ -1160,13 +1272,20 @@ async function sendBulkNotification() {
                     : '') +
                 (data.cleanedTokens
                     ? `<br><small style="color:#888;">Tokens inválidos limpiados: ${data.cleanedTokens}</small>`
-                    : '');
+                    : '') +
+                promoLine;
             if (result) result.innerHTML = summary;
             showToast('Notificación enviada', 'success');
             // Reset form (mantener target/prefix por si quiere mandar de nuevo)
             document.getElementById('notifTitle').value = '';
             document.getElementById('notifBody').value = '';
+            // Reset promo fields (asi al siguiente envio no replica sin querer)
+            const promoCb = document.getElementById('promoAlertEnabled');
+            if (promoCb) { promoCb.checked = false; togglePromoAlertFields(); }
+            const pm = document.getElementById('promoAlertMessage'); if (pm) pm.value = '';
+            const pc = document.getElementById('promoAlertCode'); if (pc) pc.value = '';
             updateNotifPreview();
+            loadPromoAlertStatus();
         } else {
             const msg = data.error || data.message || 'Error desconocido';
             if (result) result.innerHTML = `❌ Error: ${escapeHtml(msg)}`;

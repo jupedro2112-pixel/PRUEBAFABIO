@@ -343,6 +343,121 @@ VIP.auth = (function () {
                 VIP.refunds.renderWelcomeBonusCard();
             }
         } catch (_) { /* ignore */ }
+
+        // Chequear si hay promo activa: si la hay, el card #userLinePhone
+        // pasa a mostrar el cartel de RECLAMÁ con codigo y contador en vez
+        // del boton QUIERO CARGAR.
+        try { applyPromoAlertIfActive(); } catch (_) { /* ignore */ }
+    }
+
+    // ===== Promo temporal en boton QUIERO CARGAR =====
+    let _promoTimerId = null;
+    let _promoCountdownId = null;
+    let _promoRefetchId = null;
+
+    async function applyPromoAlertIfActive() {
+        try {
+            if (!VIP.state.currentToken) return;
+            const r = await fetch(`${VIP.config.API_URL}/api/promo-alert/active`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (!r.ok) return;
+            const data = await r.json();
+            if (!data || !data.active) {
+                // No hay promo o ya vencio: si teniamos overlay, restauramos
+                // el boton normal re-renderizando el home.
+                clearPromoTimers();
+                return;
+            }
+            renderPromoOverlay(data);
+        } catch (err) {
+            console.warn('applyPromoAlertIfActive error:', err);
+        }
+    }
+
+    function clearPromoTimers() {
+        if (_promoTimerId) { clearTimeout(_promoTimerId); _promoTimerId = null; }
+        if (_promoCountdownId) { clearInterval(_promoCountdownId); _promoCountdownId = null; }
+    }
+
+    function _waLinkForCharge(extraText) {
+        const phone = (VIP.state.linePhone || '').replace(/[^\d+]/g, '').replace(/^\+/, '');
+        if (!phone) return null;
+        const msg = encodeURIComponent(extraText || '');
+        return 'https://wa.me/' + phone + (msg ? '?text=' + msg : '');
+    }
+
+    function renderPromoOverlay(promo) {
+        const phoneEl = document.getElementById('userLinePhone');
+        if (!phoneEl) return;
+        clearPromoTimers();
+
+        const expiresMs = new Date(promo.expiresAt).getTime();
+        const remainingMs = expiresMs - Date.now();
+        if (remainingMs <= 0) { applyPromoAlertIfActive(); return; }
+
+        const safeMsg = String(promo.message || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const safeCode = String(promo.code || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        // Mensaje de WhatsApp pre-cargado con el codigo. El user toca y
+        // ya abre WA con el texto listo, solo le da Enviar.
+        const waText = `Hola! Quiero usar el código ${promo.code} (${promo.message})`;
+        const waLink = _waLinkForCharge(waText);
+
+        const linkAttr = waLink
+            ? 'href="' + waLink + '" target="_blank" rel="noopener noreferrer"'
+            : 'href="javascript:void(0)" role="button" aria-disabled="true"';
+
+        phoneEl.innerHTML =
+            '<a ' + linkAttr + ' class="promo-cta" aria-label="Reclamar promo ' + safeCode + '">' +
+                '<div class="promo-cta-flag">🎁 RECLAMÁ</div>' +
+                '<div class="promo-cta-msg">' + safeMsg + '</div>' +
+                '<div class="promo-cta-code">Código: <strong>' + safeCode + '</strong></div>' +
+                '<div class="promo-cta-timer" id="promoCtaTimer">⏰ vence en —</div>' +
+            '</a>';
+
+        // Contador en vivo cada 1s (visualmente actualiza min/seg).
+        const updateCountdown = () => {
+            const left = expiresMs - Date.now();
+            const t = document.getElementById('promoCtaTimer');
+            if (!t) return;
+            if (left <= 0) {
+                t.textContent = '⏰ vencida';
+                clearPromoTimers();
+                // Re-render normal del home para volver a poner QUIERO CARGAR.
+                setTimeout(() => renderRefundsHomeUI(), 250);
+                return;
+            }
+            const totalSec = Math.floor(left / 1000);
+            const h = Math.floor(totalSec / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            let str;
+            if (h > 0) str = h + 'h ' + String(m).padStart(2, '0') + 'm';
+            else if (m > 0) str = m + 'm ' + String(s).padStart(2, '0') + 's';
+            else str = s + 's';
+            t.textContent = '⏰ vence en ' + str;
+        };
+        updateCountdown();
+        _promoCountdownId = setInterval(updateCountdown, 1000);
+
+        // Programar el re-render exacto al vencimiento.
+        _promoTimerId = setTimeout(() => {
+            clearPromoTimers();
+            renderRefundsHomeUI();
+        }, Math.min(remainingMs + 500, 2147483000));
+    }
+
+    // Polling defensivo cada 60s para recoger promos creadas mientras la
+    // pagina esta abierta (sin recargar). Idle-friendly: solo si la
+    // pestaña esta visible.
+    if (!_promoRefetchId) {
+        _promoRefetchId = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            applyPromoAlertIfActive();
+        }, 60 * 1000);
     }
 
     // Refrescar línea vigente + link de comunidad con el token actual (sirve tras reload).
