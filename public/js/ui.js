@@ -515,16 +515,129 @@ CBU activo: ${cbuNumber}`;
             return;
         }
 
+        // ===== Caso especial iOS: modal completo y visual =====
+        // Detectamos si esta en Safari o en otro navegador (Chrome iOS, etc),
+        // y le damos a cada uno el flow correcto. Apple solo permite instalar
+        // PWAs desde Safari → si esta en otro navegador, le damos primero
+        // copia de URL + instrucciones para abrirla en Safari.
         if (platform === 'ios') {
-            title = '📱 Instalar en iPhone / iPad';
-            note  = '⚠️ <strong>Solo funciona desde Safari.</strong>';
-            steps = [
-                'Abrí esta página en <strong>Safari</strong> (no Chrome, no otro navegador)',
-                'Tocá el botón <strong>Compartir</strong> <span style="font-size:18px">⬆️</span> en la barra inferior de Safari',
-                'Deslizá hacia abajo y tocá <strong>"Agregar a pantalla de inicio"</strong>',
-                'Presioná <strong>"Agregar"</strong>'
-            ];
-        } else if (platform === 'android') {
+            const ua2 = navigator.userAgent;
+            const isSafariIOS = /^((?!chrome|crios|fxios|edgios|opios|gsa).)*safari/i.test(ua2);
+
+            if (!isSafariIOS) {
+                // Caso Chrome/Firefox/Edge en iPhone: NO se puede instalar.
+                // Mostramos un modal con boton "Copiar URL" que le permite
+                // pegar en Safari y desde ahi instalar.
+                const pageUrl = window.location.href;
+                const safeUrl = pageUrl.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                modal.innerHTML = `
+                    <div class="ios-install-content" style="max-width:380px;">
+                        <h3 style="color:#ff6b35;margin-bottom:6px;">🦊 Estás en Chrome (o similar)</h3>
+                        <p style="color:#fff;font-size:14px;line-height:1.45;margin:0 0 14px;">
+                            Para instalar la app en iPhone <strong>solo funciona desde Safari</strong>.
+                            Apple no permite instalar apps desde otros navegadores en iOS.
+                        </p>
+                        <div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,107,53,0.45);border-radius:10px;padding:12px;margin-bottom:14px;">
+                            <p style="margin:0 0 8px;color:#ffd700;font-size:13px;font-weight:700;">📋 Cómo hacerlo:</p>
+                            <ol style="margin:0;padding-left:22px;color:#eee;font-size:13px;line-height:1.6;">
+                                <li>Tocá <strong>"Copiar enlace"</strong> abajo</li>
+                                <li>Abrí <strong>Safari</strong> en tu iPhone (el ícono de la brújula azul)</li>
+                                <li>Pegá el enlace en la barra de direcciones</li>
+                                <li>Una vez abierto en Safari, vas a poder instalar</li>
+                            </ol>
+                        </div>
+                        <button onclick="(function(b){
+                            var t='${pageUrl.replace(/'/g, "\\'")}';
+                            if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){b.textContent='✅ Enlace copiado';b.style.background='#25d366';},function(){b.textContent='❌ No se pudo copiar';});}
+                            else{var i=document.createElement('input');i.value=t;document.body.appendChild(i);i.select();try{document.execCommand('copy');b.textContent='✅ Enlace copiado';b.style.background='#25d366';}catch(e){b.textContent='❌ No se pudo copiar';}document.body.removeChild(i);}
+                        })(this);" class="btn btn-primary" style="width:100%;margin-bottom:8px;background:#1a73e8;font-weight:700;">
+                            📋 Copiar enlace para abrir en Safari
+                        </button>
+                        <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-secondary" style="width:100%;">
+                            Después
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                return;
+            }
+
+            // Caso Safari iOS: modal visual completo con representacion del
+            // boton Compartir y flechas guia.
+            modal.innerHTML = `
+                <div class="ios-install-content" style="max-width:420px;">
+                    <h3 style="margin-bottom:4px;">📱 Instalar en iPhone</h3>
+                    <p style="color:#cfcfcf;font-size:13px;margin:0 0 14px;">3 pasos rápidos. Tarda 15 segundos.</p>
+
+                    <!-- PASO 1 -->
+                    <div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                            <span style="background:#d4af37;color:#1a1a1a;font-weight:900;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;">1</span>
+                            <strong style="color:#fff;font-size:14px;">Tocá el botón Compartir</strong>
+                        </div>
+                        <p style="margin:0 0 10px 34px;color:#bbb;font-size:12px;line-height:1.5;">
+                            Está abajo de la pantalla, en el medio de la barra de Safari.
+                        </p>
+                        <div style="display:flex;align-items:center;justify-content:center;gap:14px;background:#0a0a0a;border-radius:10px;padding:14px;border:1px dashed rgba(255,255,255,0.15);">
+                            <div style="position:relative;">
+                                <svg width="44" height="56" viewBox="0 0 44 56" style="display:block;">
+                                    <rect x="6" y="14" width="32" height="36" rx="4" fill="#3478f6" stroke="#5b9aff" stroke-width="1.5"/>
+                                    <line x1="22" y1="22" x2="22" y2="42" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+                                    <polyline points="14,30 22,22 30,30" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <div style="font-size:10px;color:#5b9aff;text-align:center;margin-top:2px;font-weight:700;">Compartir</div>
+                            </div>
+                            <span style="font-size:32px;color:#ff6b35;animation: arrowBounce 1s infinite;">←</span>
+                            <span style="color:#ff6b35;font-weight:700;font-size:13px;">Tocá acá</span>
+                        </div>
+                    </div>
+
+                    <!-- PASO 2 -->
+                    <div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                            <span style="background:#d4af37;color:#1a1a1a;font-weight:900;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;">2</span>
+                            <strong style="color:#fff;font-size:14px;">Buscá "Agregar a pantalla de inicio"</strong>
+                        </div>
+                        <p style="margin:0 0 10px 34px;color:#bbb;font-size:12px;line-height:1.5;">
+                            Aparece un menú. Deslizá hacia abajo y tocá:
+                        </p>
+                        <div style="background:#1c1c1c;border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border:1px solid rgba(255,255,255,0.12);">
+                            <span style="color:#fff;font-size:13px;">Agregar a pantalla de inicio</span>
+                            <span style="color:#5b9aff;font-size:18px;">⊕</span>
+                        </div>
+                    </div>
+
+                    <!-- PASO 3 -->
+                    <div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                            <span style="background:#d4af37;color:#1a1a1a;font-weight:900;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;">3</span>
+                            <strong style="color:#fff;font-size:14px;">Tocá "Agregar"</strong>
+                        </div>
+                        <p style="margin:0 0 0 34px;color:#bbb;font-size:12px;line-height:1.5;">
+                            Arriba a la derecha. Listo, ya tenés el ícono en tu pantalla.
+                        </p>
+                    </div>
+
+                    <!-- IMPORTANTE notifs -->
+                    <div style="background:rgba(255,107,53,0.15);border:2px solid #ff6b35;border-radius:10px;padding:12px;margin-bottom:14px;">
+                        <p style="margin:0 0 6px;color:#ff6b35;font-weight:800;font-size:13px;">
+                            ⚠️ DESPUÉS DE INSTALAR
+                        </p>
+                        <p style="margin:0;color:#fff;font-size:12px;line-height:1.5;">
+                            Abrí la app desde el ícono que quedó en tu pantalla y <strong>aceptá las notificaciones</strong>. Sin eso no podés desbloquear el bono de $10.000.
+                        </p>
+                    </div>
+
+                    <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="width:100%;font-weight:700;">
+                        ✅ Entendido, lo voy a hacer
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            return;
+        }
+
+        if (platform === 'android') {
             title = '📱 Instalar en Android';
             note  = '⚠️ <strong>Solo funciona desde Google Chrome.</strong>';
             steps = [

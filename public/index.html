@@ -3698,6 +3698,10 @@
             .ios-install-content .btn {
                 margin-top: 15px;
             }
+            @keyframes arrowBounce {
+                0%, 100% { transform: translateX(0); }
+                50%      { transform: translateX(-6px); }
+            }
         `;
         document.head.appendChild(pwaStyles);
         
