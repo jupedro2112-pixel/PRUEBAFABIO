@@ -57,6 +57,7 @@ const {
   NotificationHistory,
   MoneyGiveaway,
   MoneyGiveawayClaim,
+  ScheduledNotification,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -7202,8 +7203,36 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
         return res.json({ success: false, message: 'Ya reclamaste este regalo.', alreadyClaimed: true });
       }
 
-      // INSERT antes de creditar (defensa contra credit-then-write):
-      // si el insert falla por unique index → otro reintento ya tomo el slot.
+      // 1) RESERVA ATOMICA del slot ANTES de cualquier escritura. Si el
+      //    cap (claimedCount/totalBudget) ya esta agotado, el update
+      //    condicional no matchea y devuelve null → no creditamos ni
+      //    insertamos, asi nunca podemos pasarnos. Esto cubre el caso
+      //    de N usuarios tocando simultaneamente cuando quedan M<N slots.
+      const reserved = await MoneyGiveaway.findOneAndUpdate(
+        {
+          id: g.id,
+          status: 'active',
+          $expr: {
+            $and: [
+              { $lt: ['$claimedCount', '$maxClaims'] },
+              { $lte: [{ $add: ['$totalGiven', g.amount] }, '$totalBudget'] }
+            ]
+          }
+        },
+        { $inc: { claimedCount: 1, totalGiven: g.amount } },
+        { new: true }
+      ).lean();
+      if (!reserved) {
+        // Algun cap se cumplio en el momento. Disparar cierre lazy y
+        // avisar al user con mensaje correcto.
+        const fresh = await MoneyGiveaway.findOne({ id: g.id }).lean();
+        if (fresh) await _maybeCloseGiveaway({ ...fresh });
+        return res.json({ success: false, message: 'Se acabaron los cupos del regalo.', closed: true });
+      }
+
+      // 2) INSERT del claim. Si choca con el unique index → este user ya
+      //    reclamo en otra request paralela; tenemos que devolver el slot
+      //    reservado (decrement) y avisar.
       let claim;
       try {
         claim = await MoneyGiveawayClaim.create({
@@ -7216,12 +7245,22 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
         });
       } catch (e) {
         if (e && e.code === 11000) {
+          // Devolver el slot que reservamos.
+          await MoneyGiveaway.updateOne(
+            { id: g.id },
+            { $inc: { claimedCount: -1, totalGiven: -g.amount } }
+          ).catch(() => {});
           return res.json({ success: false, message: 'Ya reclamaste este regalo.', alreadyClaimed: true });
         }
+        // Otro error: tambien revertir slot.
+        await MoneyGiveaway.updateOne(
+          { id: g.id },
+          { $inc: { claimedCount: -1, totalGiven: -g.amount } }
+        ).catch(() => {});
         throw e;
       }
 
-      // Acreditar en JUGAYGANA.
+      // 3) Acreditar en JUGAYGANA.
       const depositResult = await jugaygana.creditUserBalance(username, g.amount);
       if (!depositResult.success) {
         try {
@@ -7229,7 +7268,10 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
           claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
           await claim.save();
         } catch (_) {}
-        logger.error(`[GIVEAWAY] credit fallo para ${username} (giveaway ${g.id}): ${depositResult.error}`);
+        // NO devolvemos el slot porque el row de claim queda como
+        // pending_credit_failed (bloquea reclamo) y la plata pudo haber
+        // sido enviada y perdida en el cable. Reconciliacion manual.
+        logger.error(`[GIVEAWAY] credit fallo para ${username} (giveaway ${g.id}): ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed`);
         return res.json({
           success: false,
           message: 'Hubo un problema al acreditar. El admin lo está revisando — no reintentes.',
@@ -7237,21 +7279,18 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
         });
       }
 
-      // Persistir transactionId.
+      // 4) Persistir transactionId.
       try {
         claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
         await claim.save();
       } catch (_) {}
 
-      // Incrementar contadores atomicos del giveaway. Si tras el incremento
-      // se cumple algun cierre, marcamos status correspondiente en el mismo
-      // updateOne (defensa contra pasarnos del tope por race).
-      const updated = await MoneyGiveaway.findOneAndUpdate(
-        { id: g.id, status: 'active' },
-        { $inc: { claimedCount: 1, totalGiven: g.amount } },
-        { new: true }
-      ).lean();
-      if (updated) await _maybeCloseGiveaway(updated);
+      // 5) Chequear si tras este claim se cerro el giveaway por cap.
+      await _maybeCloseGiveaway({ ...reserved });
+
+      // Invalidar el cache del total (lo lee /api/giveaway-stats/total)
+      // para que el home muestre el numero actualizado sin esperar 5min.
+      _totalGiveawayCache.ts = 0;
 
       // Tambien sumar al contador del row de NotificationHistory si la
       // giveaway esta vinculada.
@@ -7388,6 +7427,255 @@ app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
+
+// ============================================
+// NOTIFICACIONES PROGRAMADAS (hasta 1 semana adelante)
+// El admin crea una scheduledNotification con todo el payload (titulo,
+// body, audiencia, promo, giveaway). Un worker en background corre
+// cada 60s, busca rows pending vencidas, y dispara el envio replicando
+// exactamente el flujo de "enviar ahora".
+// ============================================
+
+// POST: crea notificacion programada.
+// Body: { scheduledFor (ISO), title, body, prefix?, extraType ('none'|
+//   'promo'|'giveaway'), promo*..., giveaway*... }
+app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const title = String(b.title || '').trim();
+    const body  = String(b.body || '').trim();
+    if (!title || !body) return res.status(400).json({ error: 'Título y mensaje requeridos' });
+
+    const scheduledFor = new Date(b.scheduledFor);
+    if (!isFinite(scheduledFor.getTime())) {
+      return res.status(400).json({ error: 'Fecha programada inválida' });
+    }
+    const now = Date.now();
+    const oneWeekMs = 7 * 24 * 3600 * 1000;
+    if (scheduledFor.getTime() <= now + 60_000) {
+      return res.status(400).json({ error: 'La fecha programada debe ser al menos 1 minuto en el futuro' });
+    }
+    if (scheduledFor.getTime() > now + oneWeekMs) {
+      return res.status(400).json({ error: 'No se puede programar más de 1 semana adelante' });
+    }
+
+    const extraType = ['none', 'promo', 'giveaway'].includes(b.extraType) ? b.extraType : 'none';
+    const doc = {
+      id: uuidv4(),
+      scheduledFor,
+      status: 'pending',
+      title,
+      body,
+      audiencePrefix: b.prefix && typeof b.prefix === 'string' ? b.prefix.trim() : null,
+      extraType,
+      createdBy: req.user.username || null
+    };
+
+    if (extraType === 'promo') {
+      const msg = String(b.promoMessage || '').trim();
+      const code = _normalizePromoCode(b.promoCode);
+      const hours = Number(b.promoDurationHours);
+      if (!msg) return res.status(400).json({ error: 'Falta el mensaje de la promo' });
+      if (!code) return res.status(400).json({ error: 'Falta el código de la promo' });
+      if (!isFinite(hours) || hours <= 0 || hours > 168) {
+        return res.status(400).json({ error: 'Duración de promo inválida (1-168 horas)' });
+      }
+      doc.promoMessage = msg;
+      doc.promoCode = code;
+      doc.promoDurationHours = hours;
+    } else if (extraType === 'giveaway') {
+      const a = Number(b.giveawayAmount), bg = Number(b.giveawayBudget),
+            mc = Number(b.giveawayMaxClaims), d = Number(b.giveawayDurationMinutes);
+      if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto del regalo inválido' });
+      if (!isFinite(bg) || bg < a) return res.status(400).json({ error: 'Tope de plata inválido' });
+      if (!isFinite(mc) || mc < 1) return res.status(400).json({ error: 'Cantidad máxima inválida' });
+      if (!isFinite(d) || d < 10 || d > 60 || d % 10 !== 0) {
+        return res.status(400).json({ error: 'Duración de regalo inválida (10-60 min en bloques de 10)' });
+      }
+      doc.giveawayAmount = a;
+      doc.giveawayBudget = bg;
+      doc.giveawayMaxClaims = mc;
+      doc.giveawayDurationMinutes = d;
+    }
+
+    const created = await ScheduledNotification.create(doc);
+    res.json({ success: true, scheduled: created.toObject() });
+  } catch (error) {
+    logger.error(`POST /api/admin/notifications/schedule error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET admin: lista de notificaciones programadas (pending + recientes).
+app.get('/api/admin/notifications/scheduled', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const list = await ScheduledNotification.find({})
+      .sort({ scheduledFor: -1 })
+      .limit(100)
+      .lean();
+    res.json({ count: list.length, items: list });
+  } catch (error) {
+    logger.error(`GET /api/admin/notifications/scheduled error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE admin: cancelar una notif programada (solo si esta pending).
+app.delete('/api/admin/notifications/scheduled/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const r = await ScheduledNotification.updateOne(
+      { id: req.params.id, status: 'pending' },
+      { $set: { status: 'cancelled' } }
+    );
+    if (r.modifiedCount === 0) {
+      return res.status(404).json({ error: 'No se encontró o ya fue ejecutada/cancelada' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    logger.error(`DELETE /api/admin/notifications/scheduled error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ===== Worker que dispara las notificaciones programadas =====
+// Cada 60s busca pending vencidas y las ejecuta. Marca status='sent' o
+// 'failed' segun resultado. Anti-overlap con flag in-memory para no
+// disparar 2 veces si la corrida anterior aun no termino.
+let _schedulerRunning = false;
+async function _runScheduledNotifications() {
+  if (_schedulerRunning) return;
+  _schedulerRunning = true;
+  try {
+    const due = await ScheduledNotification.find({
+      status: 'pending',
+      scheduledFor: { $lte: new Date() }
+    }).limit(20).lean();
+    for (const sched of due) {
+      // Atomic claim: solo procesamos si seguimos pending (defensa contra
+      // doble-worker o cancelacion entre el find y el update).
+      const claimed = await ScheduledNotification.findOneAndUpdate(
+        { id: sched.id, status: 'pending' },
+        { $set: { status: 'sent', executedAt: new Date() } },
+        { new: true }
+      );
+      if (!claimed) continue;
+
+      try {
+        await _executeScheduledNotification(sched);
+        logger.info(`[scheduler] notif ${sched.id} ejecutada (${sched.title.slice(0, 40)})`);
+      } catch (e) {
+        logger.error(`[scheduler] error ejecutando ${sched.id}: ${e.message}`);
+        await ScheduledNotification.updateOne(
+          { id: sched.id },
+          { $set: { status: 'failed', errorMsg: e.message.slice(0, 500) } }
+        ).catch(() => {});
+      }
+    }
+  } catch (e) {
+    logger.error(`[scheduler] error global: ${e.message}`);
+  } finally {
+    _schedulerRunning = false;
+  }
+}
+// Helper que replica el flujo del admin: send-all + crear promo o giveaway.
+async function _executeScheduledNotification(sched) {
+  const { sendNotificationToAllUsers } = require('./src/services/notificationService');
+
+  // 1) Construir filter por prefix.
+  const filter = {};
+  if (sched.audiencePrefix) {
+    const safe = sched.audiencePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.username = { $regex: '^' + safe, $options: 'i' };
+  }
+
+  // 2) Construir body: si es giveaway, append automatico del monto.
+  let body = sched.body;
+  if (sched.extraType === 'giveaway' && sched.giveawayAmount) {
+    body = body + ` · 🎁 Te regalamos $${Number(sched.giveawayAmount).toLocaleString('es-AR')} — abrí la app y reclamalo`;
+  }
+
+  // 3) Enviar push.
+  const data = { source: 'admin-scheduled', tag: 'admin-broadcast' };
+  if (sched.extraType === 'promo') {
+    data.promoCode = sched.promoCode;
+    data.promoMessage = sched.promoMessage;
+    data.promoExpiresIn = String(sched.promoDurationHours);
+  } else if (sched.extraType === 'giveaway') {
+    data.giveawayAmount = String(sched.giveawayAmount);
+    data.giveawayDurationMinutes = String(sched.giveawayDurationMinutes);
+  }
+  const sendResult = await sendNotificationToAllUsers(User, sched.title, body, data, filter);
+
+  // 4) Crear row en NotificationHistory.
+  let historyId = null;
+  try {
+    const histType = sched.extraType === 'promo' ? 'whatsapp_promo'
+                   : sched.extraType === 'giveaway' ? 'money_giveaway'
+                   : 'plain';
+    const promoExpiresAt = sched.extraType === 'promo'
+      ? new Date(Date.now() + sched.promoDurationHours * 3600 * 1000)
+      : null;
+    const giveawayExpiresAt = sched.extraType === 'giveaway'
+      ? new Date(Date.now() + sched.giveawayDurationMinutes * 60 * 1000)
+      : null;
+    const hist = await NotificationHistory.create({
+      id: uuidv4(),
+      sentAt: new Date(),
+      scheduledFor: sched.scheduledFor,
+      audienceType: sched.audiencePrefix ? 'prefix' : 'all',
+      audiencePrefix: sched.audiencePrefix,
+      title: sched.title,
+      body,
+      type: histType,
+      promoMessage: sched.promoMessage,
+      promoCode: sched.promoCode,
+      promoExpiresAt,
+      giveawayAmount: sched.giveawayAmount,
+      giveawayDurationMins: sched.giveawayDurationMinutes,
+      giveawayExpiresAt,
+      totalUsers: sendResult?.totalUsers || 0,
+      successCount: sendResult?.successCount || 0,
+      failureCount: sendResult?.failureCount || 0,
+      cleanedTokens: sendResult?.cleanedTokens || 0,
+      sentBy: sched.createdBy || null
+    });
+    historyId = hist.id;
+    await ScheduledNotification.updateOne({ id: sched.id }, { $set: { notificationHistoryId: historyId } });
+  } catch (e) {
+    logger.warn(`[scheduler] no se pudo crear historial para ${sched.id}: ${e.message}`);
+  }
+
+  // 5) Crear promo o giveaway si aplica, vinculados al historyId.
+  if (sched.extraType === 'promo') {
+    const promo = {
+      id: uuidv4(),
+      message: sched.promoMessage,
+      code: sched.promoCode,
+      expiresAt: new Date(Date.now() + sched.promoDurationHours * 3600 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+      createdBy: sched.createdBy || null,
+      prefix: sched.audiencePrefix,
+      notificationHistoryId: historyId
+    };
+    await setConfig(PROMO_ALERT_KEY, promo);
+  } else if (sched.extraType === 'giveaway') {
+    await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+    await MoneyGiveaway.create({
+      id: uuidv4(),
+      amount: sched.giveawayAmount,
+      totalBudget: sched.giveawayBudget,
+      maxClaims: sched.giveawayMaxClaims,
+      expiresAt: new Date(Date.now() + sched.giveawayDurationMinutes * 60 * 1000),
+      createdBy: sched.createdBy || null,
+      prefix: sched.audiencePrefix,
+      notificationHistoryId: historyId,
+      status: 'active'
+    });
+  }
+}
+// Arrancar el scheduler 30s despues del boot y correr cada 60s.
+setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
+setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
 
 // GET admin: lista paginada del historial de notificaciones.
 // Query: ?limit=50&type=plain|whatsapp_promo|money_giveaway

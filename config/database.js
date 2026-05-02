@@ -23,7 +23,8 @@ const {
   Transaction,
   NotificationHistory,
   MoneyGiveaway,
-  MoneyGiveawayClaim
+  MoneyGiveawayClaim,
+  ScheduledNotification
 } = require('../src/models');
 
 // ============================================
@@ -320,6 +321,7 @@ module.exports = {
   NotificationHistory,
   MoneyGiveaway,
   MoneyGiveawayClaim,
+  ScheduledNotification,
   // Helpers
   getConfig,
   setConfig,

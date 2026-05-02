@@ -365,11 +365,39 @@
                     <!-- Estado de regalo activo -->
                     <div id="giveawayStatus" style="display:none;margin-bottom:14px;padding:10px 12px;border-radius:8px;background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.40);color:#9bf3c0;font-size:12px;line-height:1.5;"></div>
 
+                    <!-- ===== Programar envio ===== -->
+                    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#fff;font-size:13px;font-weight:600;">
+                            <input type="checkbox" id="scheduleEnabled" onchange="toggleScheduleFields()" style="accent-color:#d4af37;width:16px;height:16px;">
+                            <span>⏰ Programar para más tarde (hasta 1 semana adelante)</span>
+                        </label>
+                        <div id="scheduleFields" style="display:none;margin-top:10px;padding-left:24px;">
+                            <label style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px;">Fecha y hora (Argentina)</label>
+                            <input type="datetime-local" id="scheduleDateTime"
+                                   style="padding:9px 11px;border-radius:7px;border:1px solid rgba(212,175,55,0.30);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;box-sizing:border-box;width:100%;max-width:280px;">
+                            <small style="color:#888;font-size:11px;display:block;margin-top:4px;">
+                                Mínimo 1 minuto en el futuro. Máximo 7 días.
+                                Al programar, la promo / regalo / push se envían automáticamente a esa hora.
+                            </small>
+                        </div>
+                    </div>
+
                     <button class="btn-primary" onclick="sendBulkNotification()" style="width:100%;padding:12px;font-size:14px;font-weight:700;">
                         🚀 Enviar notificación
                     </button>
 
                     <div id="notifResult" style="margin-top:14px;display:none;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;color:#ddd;font-size:12px;"></div>
+
+                    <!-- ===== Lista de programadas ===== -->
+                    <div style="margin-top:18px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                            <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">⏰ Notificaciones programadas</h3>
+                            <button class="refresh-btn" onclick="loadScheduledNotifications()" title="Actualizar">🔄</button>
+                        </div>
+                        <div id="scheduledNotifsList" style="font-size:12px;color:#bbb;">
+                            <span style="color:#666;">Cargando…</span>
+                        </div>
+                    </div>
                 </div>
             </section>
 

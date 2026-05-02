@@ -21,6 +21,7 @@ const OtpCode = require('./OtpCode');
 const NotificationHistory = require('./NotificationHistory');
 const MoneyGiveaway = require('./MoneyGiveaway');
 const MoneyGiveawayClaim = require('./MoneyGiveawayClaim');
+const ScheduledNotification = require('./ScheduledNotification');
 
 
 /**
@@ -414,6 +415,7 @@ module.exports = {
   NotificationHistory,
   MoneyGiveaway,
   MoneyGiveawayClaim,
+  ScheduledNotification,
 
   // Funciones de conexión
   connectDB,

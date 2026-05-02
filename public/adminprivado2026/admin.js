@@ -198,6 +198,8 @@ function showSection(sectionKey) {
         // Cargar el estado de la promo y del regalo activos (si los hay).
         loadPromoAlertStatus();
         loadGiveawayStatusAdmin();
+        // Lista de notifs programadas pendientes.
+        loadScheduledNotifications();
         // Sincronizar la UI del radio extra con el estado inicial.
         if (typeof updateNotifExtraUI === 'function') updateNotifExtraUI();
     } else if (sectionKey === 'notifsHistory') {
@@ -1284,6 +1286,80 @@ async function cancelGiveaway() {
     }
 }
 
+// ===== Programacion de notificaciones =====
+function toggleScheduleFields() {
+    const cb = document.getElementById('scheduleEnabled');
+    const fields = document.getElementById('scheduleFields');
+    if (!cb || !fields) return;
+    fields.style.display = cb.checked ? 'block' : 'none';
+    if (cb.checked) {
+        // Default datetime: ahora + 1 hora.
+        const dt = document.getElementById('scheduleDateTime');
+        if (dt && !dt.value) {
+            const future = new Date(Date.now() + 60 * 60 * 1000);
+            // Convertir a formato datetime-local en TZ local del browser.
+            const pad = n => String(n).padStart(2, '0');
+            dt.value = `${future.getFullYear()}-${pad(future.getMonth()+1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`;
+        }
+    }
+}
+
+async function loadScheduledNotifications() {
+    const box = document.getElementById('scheduledNotifsList');
+    if (!box) return;
+    box.innerHTML = '<span style="color:#666;">Cargando…</span>';
+    try {
+        const r = await authFetch('/api/admin/notifications/scheduled');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { box.innerHTML = '<span style="color:#888;">Error cargando.</span>'; return; }
+        const items = (data.items || []).filter(it => it.status === 'pending');
+        if (items.length === 0) {
+            box.innerHTML = '<span style="color:#666;">No hay notificaciones programadas.</span>';
+            return;
+        }
+        let html = '';
+        for (const s of items) {
+            const when = new Date(s.scheduledFor).toLocaleString('es-AR');
+            const extra = s.extraType === 'promo' ? `<span style="color:#ffd700;">📲 Promo ${escapeHtml(s.promoCode || '')}</span>`
+                        : s.extraType === 'giveaway' ? `<span style="color:#25d366;">💰 Regalo $${Number(s.giveawayAmount||0).toLocaleString('es-AR')}/persona</span>`
+                        : `<span style="color:#aaa;">Sin extra</span>`;
+            const aud = s.audiencePrefix
+                ? `<small style="color:#d4af37;">a "${escapeHtml(s.audiencePrefix)}*"</small>`
+                : `<small style="color:#888;">a todos</small>`;
+            html +=
+              `<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px 12px;margin-bottom:8px;">` +
+                `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">` +
+                  `<div style="flex:1;min-width:200px;">` +
+                    `<strong style="color:#fff;">${escapeHtml(s.title)}</strong> ${aud}<br>` +
+                    `<small style="color:#aaa;">${escapeHtml(s.body)}</small><br>` +
+                    `<small style="color:#d4af37;">⏰ ${escapeHtml(when)}</small> · ${extra}` +
+                  `</div>` +
+                  `<button onclick="cancelScheduledNotif('${escapeHtml(s.id)}')" style="background:rgba(220,38,38,0.85);color:#fff;border:none;padding:6px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0;">✕ Cancelar</button>` +
+                `</div>` +
+              `</div>`;
+        }
+        box.innerHTML = html;
+    } catch (err) {
+        box.innerHTML = '<span style="color:#888;">Error de conexión.</span>';
+    }
+}
+
+async function cancelScheduledNotif(id) {
+    if (!window.confirm('¿Cancelar esta notificación programada? No se enviará.')) return;
+    try {
+        const r = await authFetch('/api/admin/notifications/scheduled/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.success) {
+            showToast('Programación cancelada', 'success');
+            loadScheduledNotifications();
+        } else {
+            showToast('Error: ' + (data.error || 'desconocido'), 'error');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 async function loadPromoAlertStatus() {
     const box = document.getElementById('promoAlertStatus');
     if (!box) return;
@@ -1393,9 +1469,86 @@ async function sendBulkNotification() {
         if (![10, 20, 30, 40, 50, 60].includes(giveawayDurationMinutes)) {
             showToast('Duración del regalo inválida', 'error'); return;
         }
-        // Auto-mencionar el monto en el body del push.
-        const moneyStr = '$' + giveawayAmount.toLocaleString('es-AR');
-        body = body + ` · 🎁 Te regalamos ${moneyStr} — abrí la app y reclamalo`;
+        // Auto-mencionar el monto en el body del push (solo para envio
+        // inmediato; el flujo programado lo agrega el server al ejecutar).
+        if (!document.getElementById('scheduleEnabled')?.checked) {
+            const moneyStr = '$' + giveawayAmount.toLocaleString('es-AR');
+            body = body + ` · 🎁 Te regalamos ${moneyStr} — abrí la app y reclamalo`;
+        }
+    }
+
+    // ===== Si esta programado, NO mandamos el push ahora — creamos un
+    // ScheduledNotification y el worker lo dispara a la hora pactada. =====
+    const scheduleEnabled = !!document.getElementById('scheduleEnabled')?.checked;
+    if (scheduleEnabled) {
+        const dtStr = document.getElementById('scheduleDateTime')?.value;
+        if (!dtStr) { showToast('Falta la fecha/hora programada', 'error'); return; }
+        const scheduledFor = new Date(dtStr);
+        if (!isFinite(scheduledFor.getTime())) {
+            showToast('Fecha programada inválida', 'error'); return;
+        }
+        if (scheduledFor.getTime() <= Date.now() + 60_000) {
+            showToast('La fecha debe ser al menos 1 minuto en el futuro', 'error'); return;
+        }
+        const oneWeek = 7 * 24 * 3600 * 1000;
+        if (scheduledFor.getTime() > Date.now() + oneWeek) {
+            showToast('No se puede programar más de 1 semana adelante', 'error'); return;
+        }
+
+        const ok = window.confirm(
+            `Programar para: ${scheduledFor.toLocaleString('es-AR')}\n\n` +
+            `Título: ${title}\nMensaje: ${body}\n\n¿Confirmás?`
+        );
+        if (!ok) return;
+
+        const btn = document.querySelector('#notifsSection button.btn-primary');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Programando…'; }
+        try {
+            const payload = {
+                scheduledFor: scheduledFor.toISOString(),
+                title,
+                body,
+                prefix: prefix || null,
+                extraType: promoEnabled ? 'promo' : (giveawayEnabled ? 'giveaway' : 'none')
+            };
+            if (promoEnabled) {
+                payload.promoMessage = promoMessage;
+                payload.promoCode = promoCode;
+                payload.promoDurationHours = promoDurationHours;
+            }
+            if (giveawayEnabled) {
+                payload.giveawayAmount = giveawayAmount;
+                payload.giveawayBudget = giveawayBudget;
+                payload.giveawayMaxClaims = giveawayMaxClaims;
+                payload.giveawayDurationMinutes = giveawayDurationMinutes;
+            }
+            const sR = await authFetch('/api/admin/notifications/schedule', {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            const sData = await sR.json().catch(() => ({}));
+            if (sR.ok && sData.success) {
+                showToast('✅ Programada para ' + scheduledFor.toLocaleString('es-AR'), 'success');
+                if (result) {
+                    result.style.display = 'block';
+                    result.innerHTML = '⏰ <strong>Programada</strong> para ' +
+                        escapeHtml(scheduledFor.toLocaleString('es-AR')) +
+                        '. Aparece abajo en "Notificaciones programadas".';
+                }
+                document.getElementById('notifTitle').value = '';
+                document.getElementById('notifBody').value = '';
+                document.getElementById('scheduleEnabled').checked = false;
+                toggleScheduleFields();
+                loadScheduledNotifications();
+            } else {
+                showToast('Error: ' + (sData.error || sR.status), 'error');
+            }
+        } catch (e) {
+            showToast('Error de conexión', 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = '🚀 Enviar notificación'; }
+        }
+        return;
     }
 
     const audienceLabel = prefix
