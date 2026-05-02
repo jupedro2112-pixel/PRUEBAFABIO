@@ -7286,10 +7286,17 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
           claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
           await claim.save();
         } catch (_) {}
-        // NO devolvemos el slot porque el row de claim queda como
-        // pending_credit_failed (bloquea reclamo) y la plata pudo haber
-        // sido enviada y perdida en el cable. Reconciliacion manual.
-        logger.error(`[GIVEAWAY] credit fallo para ${username} (giveaway ${g.id}): ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed`);
+        // El row de claim queda 'pending_credit_failed' (bloquea reclamo
+        // duplicado de este user). Pero el slot del giveaway SI se devuelve
+        // — sino los caps se contaminan con plata no acreditada y el
+        // giveaway cierra antes de tiempo. _totalGiveawayCache se basa
+        // en MoneyGiveawayClaim status='completed' asi que estos rows ya
+        // estan excluidos del agregado.
+        await MoneyGiveaway.updateOne(
+          { id: g.id },
+          { $inc: { claimedCount: -1, totalGiven: -g.amount } }
+        ).catch(() => {});
+        logger.error(`[GIVEAWAY] credit fallo para ${username} (giveaway ${g.id}): ${depositResult.error} - claim ${claim._id} marcado pending_credit_failed, slot devuelto`);
         return res.json({
           success: false,
           message: 'Hubo un problema al acreditar. El admin lo está revisando — no reintentes.',
@@ -7567,28 +7574,47 @@ async function _runScheduledNotifications() {
   if (_schedulerRunning) return;
   _schedulerRunning = true;
   try {
+    // Recuperar rows que quedaron 'processing' por mas de 5 min — significa
+    // que el server crasheo a mitad de ejecutar. Las volvemos a 'pending'
+    // para que un proximo ciclo las reintente.
+    const stuck = new Date(Date.now() - 5 * 60 * 1000);
+    const recovered = await ScheduledNotification.updateMany(
+      { status: 'processing', processingStartedAt: { $lt: stuck } },
+      { $set: { status: 'pending' }, $unset: { processingStartedAt: 1 } }
+    );
+    if (recovered.modifiedCount > 0) {
+      logger.warn(`[scheduler] ${recovered.modifiedCount} notif(s) atascadas en 'processing' devueltas a 'pending' para reintento`);
+    }
+
     const due = await ScheduledNotification.find({
       status: 'pending',
       scheduledFor: { $lte: new Date() }
     }).limit(20).lean();
     for (const sched of due) {
-      // Atomic claim: solo procesamos si seguimos pending (defensa contra
-      // doble-worker o cancelacion entre el find y el update).
+      // Atomic claim: marcamos 'processing' (no 'sent'). Solo flipeamos a
+      // 'sent' DESPUES de que _executeScheduledNotification retorne con
+      // exito. Si crasheamos antes, queda 'processing' con timestamp y el
+      // recovery del proximo ciclo lo vuelve a tomar.
+      const now = new Date();
       const claimed = await ScheduledNotification.findOneAndUpdate(
         { id: sched.id, status: 'pending' },
-        { $set: { status: 'sent', executedAt: new Date() } },
+        { $set: { status: 'processing', processingStartedAt: now } },
         { new: true }
       );
       if (!claimed) continue;
 
       try {
         await _executeScheduledNotification(sched);
+        await ScheduledNotification.updateOne(
+          { id: sched.id },
+          { $set: { status: 'sent', executedAt: new Date() }, $unset: { processingStartedAt: 1 } }
+        ).catch(() => {});
         logger.info(`[scheduler] notif ${sched.id} ejecutada (${sched.title.slice(0, 40)})`);
       } catch (e) {
         logger.error(`[scheduler] error ejecutando ${sched.id}: ${e.message}`);
         await ScheduledNotification.updateOne(
           { id: sched.id },
-          { $set: { status: 'failed', errorMsg: e.message.slice(0, 500) } }
+          { $set: { status: 'failed', errorMsg: e.message.slice(0, 500) }, $unset: { processingStartedAt: 1 } }
         ).catch(() => {});
       }
     }

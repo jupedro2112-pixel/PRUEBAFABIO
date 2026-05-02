@@ -21,9 +21,15 @@
     <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/bag-silver-v2.svg">
     
-    <!-- Firebase SDK (self-hosted para evitar bloqueos de red/CDN/CSP) -->
-    <script src="/lib/firebase/9.1.2/firebase-app-compat.js"></script>
-    <script src="/lib/firebase/9.1.2/firebase-messaging-compat.js"></script>
+    <!-- Firebase SDK (self-hosted para evitar bloqueos de red/CDN/CSP)
+         PERF: async asi no bloquean el parser del head. El loader inline
+         que sigue (window.__firebaseReady) tiene retries propios y solo
+         llama firebase.initializeApp cuando los SDK estan listos. Notif
+         registration tampoco depende de tener Firebase listo en first-paint
+         (solo se invoca tras login + en standalone PWA mode).
+         Estimado: -200ms a -500ms en cold-start. -->
+    <script src="/lib/firebase/9.1.2/firebase-app-compat.js" async></script>
+    <script src="/lib/firebase/9.1.2/firebase-messaging-compat.js" async></script>
     <script>
         // ============================================
         // FIREBASE SDK LOADER ROBUSTO (RETRIES + CDN FALLBACK)
@@ -2402,17 +2408,22 @@
         </div>
     </div>
 
-    <!-- Socket.IO desde el servidor local -->
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="/js/config.js"></script>
-    <script src="/js/auth.js"></script>
-    <script src="/js/socket.js"></script>
-    <script src="/js/chat.js"></script>
-    <script src="/js/refunds.js"></script>
-    <script src="/js/fire.js"></script>
-    <script src="/js/notifications.js"></script>
-    <script src="/js/ui.js"></script>
-    <script src="/js/app.js"></script>
+    <!-- Socket.IO desde el servidor local
+         PERF: defer en los 9 modules. Asi se descargan en paralelo con
+         el parse del HTML y se ejecutan en orden despues. Antes cada uno
+         bloqueaba el parser. Estimado: -1 a -1.5s en cold-start mobile 4G.
+         El inline <script> que sigue (firebase init) es seguro porque
+         referencia VIP.* solo dentro de event handlers (no en top-level). -->
+    <script src="/socket.io/socket.io.js" defer></script>
+    <script src="/js/config.js" defer></script>
+    <script src="/js/auth.js" defer></script>
+    <script src="/js/socket.js" defer></script>
+    <script src="/js/chat.js" defer></script>
+    <script src="/js/refunds.js" defer></script>
+    <script src="/js/fire.js" defer></script>
+    <script src="/js/notifications.js" defer></script>
+    <script src="/js/ui.js" defer></script>
+    <script src="/js/app.js" defer></script>
     
     <!-- ============================================
          FIREBASE CLOUD MESSAGING & PWA
@@ -2562,26 +2573,33 @@
         // Registrar SW e inicializar notificaciones
         // Solo se intenta registrar token cuando el usuario está en la APP PWA instalada
         // (modo standalone). En navegador normal no se registra ningún token push.
-        registerServiceWorker().then(async (swRegistration) => {
-            const _isStandaloneNow = window.matchMedia('(display-mode: standalone)').matches ||
-                                     window.navigator.standalone === true;
+        // PERF: deferimos hasta despues del 'load' event para no competir
+        // con el primer paint. SW registration / FCM init no afectan al
+        // primer render del home — solo importan para pushes futuros.
+        function _bootSwAndNotifs() {
+            registerServiceWorker().then(async (swRegistration) => {
+                const _isStandaloneNow = window.matchMedia('(display-mode: standalone)').matches ||
+                                         window.navigator.standalone === true;
 
-            // Solo en standalone: limpiar token legacy de contexto 'browser' si existe.
-            // Esto migra silenciosamente a usuarios que tenían un token de navegador
-            // guardado antes de este cambio. No se llama deleteToken() para evitar
-            // destruir la suscripción push válida que pueda existir en el backend.
-            if (_isStandaloneNow) {
-                const _ctxStored = localStorage.getItem('fcmTokenContext');
-                if (_ctxStored === 'browser') {
-                    console.log('[FCM] Token de contexto browser encontrado en PWA standalone. Limpiando para obtener token PWA fresco...');
-                    localStorage.removeItem('fcmToken');
-                    localStorage.removeItem('fcmTokenContext');
-                    fcmToken = null;
+                // Solo en standalone: limpiar token legacy de contexto 'browser' si existe.
+                if (_isStandaloneNow) {
+                    const _ctxStored = localStorage.getItem('fcmTokenContext');
+                    if (_ctxStored === 'browser') {
+                        console.log('[FCM] Token de contexto browser encontrado en PWA standalone. Limpiando para obtener token PWA fresco...');
+                        localStorage.removeItem('fcmToken');
+                        localStorage.removeItem('fcmTokenContext');
+                        fcmToken = null;
+                    }
                 }
-            }
 
-            initNotifications(swRegistration);
-        });
+                initNotifications(swRegistration);
+            });
+        }
+        if (document.readyState === 'complete') {
+            _bootSwAndNotifs();
+        } else {
+            window.addEventListener('load', _bootSwAndNotifs, { once: true });
+        }
         
         // ============================================
         // INICIALIZAR NOTIFICACIONES PUSH (AUTOMÁTICO)

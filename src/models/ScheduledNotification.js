@@ -18,10 +18,14 @@ const scheduledNotificationSchema = new mongoose.Schema({
 
   status: {
     type: String,
-    enum: ['pending', 'sent', 'failed', 'cancelled'],
+    enum: ['pending', 'processing', 'sent', 'failed', 'cancelled'],
     default: 'pending',
     index: true
   },
+
+  // Marcado al pasar a 'processing' para detectar rows abandonadas si
+  // el server crashea entre claim y completion.
+  processingStartedAt: { type: Date, default: null },
 
   // Payload completo para replicar el envio. Mismo shape que el admin
   // pasa a sendBulkNotification.
