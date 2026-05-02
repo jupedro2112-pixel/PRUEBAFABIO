@@ -686,6 +686,81 @@
             color: #cfcfcf;
         }
 
+        /* Bloque "Unite a la comunidad" — mismo estilo que .user-line-vigente
+           pero con paleta verde-WhatsApp para diferenciarlo del numero. */
+        .user-community-vigente {
+            text-align: center;
+            width: 100%;
+            max-width: 460px;
+            margin: 0 auto 14px;
+            padding: 14px 18px;
+            background: linear-gradient(135deg, rgba(37,211,102,0.14), rgba(37,211,102,0.04));
+            border: 1.5px solid rgba(37,211,102,0.45);
+            border-radius: 16px;
+            color: #fff;
+            box-sizing: border-box;
+            box-shadow: 0 4px 18px rgba(37,211,102,0.10);
+            order: 1;
+        }
+        .user-community-vigente .community-label {
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: #25d366;
+            margin-bottom: 9px;
+            font-weight: 800;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+        }
+        .user-community-vigente .community-link-wrap {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .user-community-vigente .community-link-wrap a {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: #fff;
+            text-decoration: none;
+            padding: 10px 18px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #25d366 0%, #128c7e 100%);
+            border: 1px solid rgba(255,255,255,0.15);
+            box-shadow: 0 4px 14px rgba(37, 211, 102, 0.25);
+            transition: transform 0.12s ease, box-shadow 0.18s ease;
+            -webkit-tap-highlight-color: rgba(255,255,255,0.2);
+            touch-action: manipulation;
+            cursor: pointer;
+        }
+        .user-community-vigente .community-link-wrap a:hover {
+            box-shadow: 0 6px 18px rgba(37, 211, 102, 0.4);
+        }
+        .user-community-vigente .community-link-wrap a:active {
+            transform: scale(0.97);
+        }
+        .user-community-vigente .community-link-wrap a svg {
+            width: 18px;
+            height: 18px;
+            flex-shrink: 0;
+            fill: currentColor;
+        }
+        .user-community-vigente .community-empty {
+            color: #aaa;
+            font-style: italic;
+            font-size: 13px;
+        }
+        .user-community-vigente .community-help {
+            display: block;
+            margin-top: 10px;
+            font-size: 11px;
+            line-height: 1.4;
+            color: #cfcfcf;
+        }
+
         /* Logout flotando arriba a la derecha (respeta safe-area).
            z-index alto para que ningún elemento del flujo lo tape. */
         #refundsLogoutBtn {
@@ -1273,6 +1348,13 @@
             <span class="line-label">📞 Número respaldo activo</span>
             <span class="line-phone" id="userLinePhone"><span class="line-empty">—</span></span>
             <span class="line-help">⚠️ Si tenés problema con tu número de cargas, escribinos al número de arriba. Este número es el de <strong>respaldo</strong>: usalo si el número que tenés agendado deja de funcionar.</span>
+        </div>
+
+        <!-- Refunds-only: Link de comunidad -->
+        <div class="user-community-vigente" id="userCommunityBox">
+            <span class="community-label">💬 Unite a la comunidad</span>
+            <span class="community-link-wrap" id="userCommunityLink"><span class="community-empty">—</span></span>
+            <span class="community-help">Para estar atentos a nuestras novedades.</span>
         </div>
 
         <!-- Promo Banner -->

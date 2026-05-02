@@ -154,6 +154,7 @@ function showSection(sectionKey) {
 
     const map = {
         numero: 'numeroSection',
+        comunidad: 'comunidadSection',
         reportDaily: 'reportDailySection',
         reportWeekly: 'reportWeeklySection',
         reportMonthly: 'reportMonthlySection',
@@ -171,6 +172,8 @@ function showSection(sectionKey) {
     // Lazy-load por sección
     if (sectionKey === 'numero') {
         loadUserLines();
+    } else if (sectionKey === 'comunidad') {
+        loadUserCommunities();
     } else if (sectionKey === 'reportDaily') {
         ensureRefundDateDefaults('daily');
         loadRefundsReport('daily');
@@ -340,6 +343,157 @@ async function saveUserLines() {
     } catch (err) {
         console.error('saveUserLines error:', err);
         showToast('Error al guardar números', 'error');
+    }
+}
+
+// ============================================
+// LINKS DE COMUNIDAD POR USUARIO — config (slots por prefijo + default)
+// Mismo patron que user-lines pero con campo `link` en lugar de `phone`.
+// ============================================
+let USER_COMMUNITIES_MAX = 30;
+
+function renderUserCommunitiesSlots(slots) {
+    const container = document.getElementById('userCommunitiesSlots');
+    if (!container) return;
+    const data = Array.isArray(slots) ? slots : [];
+    const items = data.length > 0 ? data : [{ prefix: '', link: '' }];
+    container.innerHTML = items.map((s, i) => communitySlotHtml(i, s.prefix || '', s.link || '')).join('');
+    updateAddCommunityButton();
+}
+
+function communitySlotHtml(i, prefix, link) {
+    return `
+        <div class="user-community-slot" data-slot-index="${i}" style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;position:relative;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="background:linear-gradient(135deg,#25d366 0%,#128c7e 100%);color:#000;font-weight:800;font-size:11px;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">${i + 1}</span>
+                <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">Equipo ${i + 1}</span>
+                <button type="button" onclick="removeCommunitySlot(${i})" title="Eliminar este equipo" style="margin-left:auto;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.35);color:#ff8080;font-size:11px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:600;">🗑️ Quitar</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
+                <input type="text" class="user-community-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+                <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Link de comunidad</label>
+                <input type="text" class="user-community-link" placeholder="https://chat.whatsapp.com/..." value="${escapeHtml(link)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(37,211,102,0.25);background:rgba(0,0,0,0.5);color:#25d366;font-size:13px;font-weight:600;font-family:monospace;width:100%;box-sizing:border-box;">
+            </div>
+        </div>
+    `;
+}
+
+function currentCommunitySlotsCount() {
+    const c = document.getElementById('userCommunitiesSlots');
+    return c ? c.querySelectorAll('.user-community-slot').length : 0;
+}
+
+function addCommunitySlot() {
+    const container = document.getElementById('userCommunitiesSlots');
+    if (!container) return;
+    const i = currentCommunitySlotsCount();
+    if (i >= USER_COMMUNITIES_MAX) {
+        showToast(`Máximo ${USER_COMMUNITIES_MAX} links`, 'error');
+        return;
+    }
+    container.insertAdjacentHTML('beforeend', communitySlotHtml(i, '', ''));
+    updateAddCommunityButton();
+    const last = container.lastElementChild;
+    if (last) {
+        const first = last.querySelector('.user-community-prefix');
+        if (first) first.focus();
+    }
+}
+
+function removeCommunitySlot(index) {
+    const container = document.getElementById('userCommunitiesSlots');
+    if (!container) return;
+    const slot = container.querySelector(`.user-community-slot[data-slot-index="${index}"]`);
+    if (!slot) return;
+    slot.remove();
+    const remaining = container.querySelectorAll('.user-community-slot');
+    remaining.forEach((el, i) => {
+        el.setAttribute('data-slot-index', i);
+        const num = el.querySelector('span');
+        if (num) num.textContent = String(i + 1);
+        const label = el.querySelectorAll('span')[1];
+        if (label) label.textContent = `Equipo ${i + 1}`;
+        const removeBtn = el.querySelector('button[onclick^="removeCommunitySlot"]');
+        if (removeBtn) removeBtn.setAttribute('onclick', `removeCommunitySlot(${i})`);
+    });
+    updateAddCommunityButton();
+}
+
+function updateAddCommunityButton() {
+    const btn = document.getElementById('addCommunityBtn');
+    if (!btn) return;
+    const count = currentCommunitySlotsCount();
+    if (count >= USER_COMMUNITIES_MAX) {
+        btn.disabled = true;
+        btn.textContent = `Máximo alcanzado (${USER_COMMUNITIES_MAX})`;
+        btn.style.opacity = '0.5';
+        btn.style.cursor = 'not-allowed';
+    } else {
+        btn.disabled = false;
+        btn.textContent = `➕ Agregar otro link / equipo (${count}/${USER_COMMUNITIES_MAX})`;
+        btn.style.opacity = '1';
+        btn.style.cursor = 'pointer';
+    }
+}
+
+async function loadUserCommunities() {
+    try {
+        const r = await authFetch('/api/admin/user-communities');
+        if (!r.ok) {
+            renderUserCommunitiesSlots([]);
+            return;
+        }
+        const data = await r.json();
+        if (typeof data.maxSlots === 'number' && data.maxSlots > 0) {
+            USER_COMMUNITIES_MAX = data.maxSlots;
+        }
+        renderUserCommunitiesSlots(data.slots || []);
+        const def = document.getElementById('userCommunitiesDefaultLink');
+        if (def) def.value = data.defaultLink || '';
+    } catch (err) {
+        console.error('loadUserCommunities error:', err);
+        renderUserCommunitiesSlots([]);
+    }
+}
+
+async function saveUserCommunities() {
+    const container = document.getElementById('userCommunitiesSlots');
+    if (!container) return;
+    const prefixInputs = container.querySelectorAll('.user-community-prefix');
+    const linkInputs = container.querySelectorAll('.user-community-link');
+    const slots = [];
+    for (let i = 0; i < prefixInputs.length; i++) {
+        const prefix = (prefixInputs[i].value || '').trim();
+        const link = (linkInputs[i].value || '').trim();
+        if (!prefix && !link) continue;
+        if (prefix && !link) {
+            showToast('El prefijo "' + prefix + '" no tiene link', 'error');
+            return;
+        }
+        if (link && !/^https?:\/\//i.test(link)) {
+            showToast('El link "' + link + '" debe empezar con http:// o https://', 'error');
+            return;
+        }
+        slots.push({ prefix, link });
+    }
+    const defaultLink = (document.getElementById('userCommunitiesDefaultLink').value || '').trim();
+    try {
+        const r = await authFetch('/api/admin/user-communities', {
+            method: 'PUT',
+            body: JSON.stringify({ slots, defaultLink })
+        });
+        const data = await r.json();
+        if (r.ok) {
+            showToast('Links de comunidad guardados', 'success');
+        } else {
+            showToast(data.error || 'Error al guardar links', 'error');
+        }
+    } catch (err) {
+        console.error('saveUserCommunities error:', err);
+        showToast('Error al guardar links', 'error');
     }
 }
 

@@ -1696,6 +1696,27 @@ function pickLinePhoneForUsername(linesConfig, username) {
   return bestMatch ? bestMatch.phone : defaultPhone;
 }
 
+// Mismo criterio que pickLinePhoneForUsername pero para los links de comunidad.
+// Usa la config 'userCommunitiesByPrefix' con shape { slots: [{prefix, link}], defaultLink }.
+function pickCommunityLinkForUsername(communitiesConfig, username) {
+  if (!communitiesConfig || typeof communitiesConfig !== 'object') return null;
+  const slots = Array.isArray(communitiesConfig.slots) ? communitiesConfig.slots : [];
+  const defaultLink = communitiesConfig.defaultLink || null;
+  const lower = String(username || '').toLowerCase();
+  let bestMatch = null;
+  for (const slot of slots) {
+    if (!slot || !slot.prefix || !slot.link) continue;
+    const prefix = String(slot.prefix).toLowerCase().trim();
+    if (!prefix) continue;
+    if (lower.startsWith(prefix)) {
+      if (!bestMatch || prefix.length > bestMatch.prefix.length) {
+        bestMatch = { prefix, link: String(slot.link).trim() };
+      }
+    }
+  }
+  return bestMatch ? bestMatch.link : defaultLink;
+}
+
 // Probe endpoint para verificar versión deployada (no requiere auth)
 app.get('/api/auth/_probe', (req, res) => {
   res.json({ version: 'refunds-only-v3', endpoint: 'login-username-only', timestamp: new Date().toISOString() });
@@ -1843,7 +1864,11 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
   try {
     const linesConfig = await getConfig('userLinesByPrefix');
     const phone = pickLinePhoneForUsername(linesConfig, req.user.username);
-    res.json({ phone: phone || null });
+    // En el mismo response devolvemos el link de comunidad correspondiente
+    // para evitar un round-trip adicional desde el cliente.
+    const communitiesConfig = await getConfig('userCommunitiesByPrefix');
+    const communityLink = pickCommunityLinkForUsername(communitiesConfig, req.user.username);
+    res.json({ phone: phone || null, communityLink: communityLink || null });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
@@ -6137,6 +6162,70 @@ app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
     // visto en localStorage contra el actual).
   } catch (error) {
     console.error('Error actualizando user-lines:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// LINKS DE COMUNIDAD POR USUARIO (mapeo prefijo -> link)
+// Mismo patron que user-lines pero para links de WhatsApp/comunidades.
+// ============================================
+const USER_COMMUNITIES_MAX_SLOTS = 30;
+
+app.get('/api/admin/user-communities', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const config = (await getConfig('userCommunitiesByPrefix')) || {};
+    const slots = Array.isArray(config.slots) ? config.slots : [];
+    const cleaned = slots
+      .filter(s => s && (s.prefix || s.link))
+      .map(s => ({ prefix: s.prefix || '', link: s.link || '' }));
+    res.json({
+      slots: cleaned,
+      defaultLink: config.defaultLink || '',
+      maxSlots: USER_COMMUNITIES_MAX_SLOTS
+    });
+  } catch (error) {
+    console.error('Error obteniendo user-communities:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { slots, defaultLink } = req.body || {};
+    if (!Array.isArray(slots)) {
+      return res.status(400).json({ error: 'slots debe ser un array' });
+    }
+    if (slots.length > USER_COMMUNITIES_MAX_SLOTS) {
+      return res.status(400).json({ error: `Máximo ${USER_COMMUNITIES_MAX_SLOTS} slots` });
+    }
+    const cleaned = [];
+    for (const s of slots) {
+      const prefix = (s && s.prefix ? String(s.prefix) : '').trim();
+      const link = (s && s.link ? String(s.link) : '').trim();
+      if (!prefix && !link) continue;
+      if (prefix && !link) {
+        return res.status(400).json({ error: `El prefijo "${prefix}" no tiene link` });
+      }
+      // Validacion minima: que sea http(s) o wa.me/chat link
+      if (link && !/^https?:\/\//i.test(link)) {
+        return res.status(400).json({ error: `El link "${link}" debe empezar con http:// o https://` });
+      }
+      cleaned.push({ prefix, link });
+    }
+    const newDefaultLink = (defaultLink ? String(defaultLink) : '').trim();
+    if (newDefaultLink && !/^https?:\/\//i.test(newDefaultLink)) {
+      return res.status(400).json({ error: 'El link por defecto debe empezar con http:// o https://' });
+    }
+
+    const value = {
+      slots: cleaned,
+      defaultLink: newDefaultLink
+    };
+    await setConfig('userCommunitiesByPrefix', value);
+    res.json({ success: true, message: 'Links de comunidad actualizados', value });
+  } catch (error) {
+    console.error('Error actualizando user-communities:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

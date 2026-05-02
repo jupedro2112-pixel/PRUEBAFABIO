@@ -48,6 +48,10 @@
                     <span>📞</span>
                     <span>Número</span>
                 </a>
+                <a href="#" class="nav-item" data-section="comunidad">
+                    <span>💬</span>
+                    <span>Comunidad</span>
+                </a>
                 <a href="#" class="nav-item" data-section="reportDaily">
                     <span>📅</span>
                     <span>Reembolsos diarios</span>
@@ -107,6 +111,35 @@
                     </div>
                     <button class="btn-primary" onclick="saveUserLines()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
                         💾 Guardar números
+                    </button>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: LINKS DE COMUNIDAD POR USUARIO
+                 ============================================ -->
+            <section id="comunidadSection" class="section">
+                <div class="panel-header">
+                    <h2>💬 Links de comunidad</h2>
+                </div>
+                <div class="cbu-form" style="background:rgba(37,211,102,0.04);border:1px solid rgba(37,211,102,0.18);border-radius:12px;padding:16px;max-width:720px;">
+                    <div style="background:rgba(0,0,0,0.3);border-left:3px solid #25d366;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                        <p style="margin:0 0 4px;color:#25d366;font-weight:700;font-size:13px;">Cómo funciona</p>
+                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                            Cada equipo tiene un <strong>inicio de usuario</strong> (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">ato</code>) y un <strong>link de comunidad</strong> (link de WhatsApp, Telegram, etc.). Cuando el usuario entra (ej: <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">atojoaquin</code>), se le muestra el link de su equipo en el home.
+                        </p>
+                    </div>
+                    <div id="userCommunitiesSlots" style="display:flex;flex-direction:column;gap:10px;"></div>
+                    <button type="button" id="addCommunityBtn" onclick="addCommunitySlot()" style="margin-top:10px;width:100%;padding:10px;font-size:13px;font-weight:700;background:rgba(37,211,102,0.10);border:1.5px dashed rgba(37,211,102,0.45);color:#25d366;border-radius:10px;cursor:pointer;transition:background 0.18s;">
+                        ➕ Agregar otro link / equipo
+                    </button>
+                    <div style="margin-top:18px;padding-top:14px;border-top:1px dashed rgba(255,255,255,0.1);">
+                        <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Link de comunidad por defecto (si el inicio del usuario no coincide con ningún equipo)</label>
+                        <input type="text" id="userCommunitiesDefaultLink" placeholder="https://chat.whatsapp.com/..." style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#25d366;font-size:13px;font-weight:600;font-family:monospace;box-sizing:border-box;">
+                        <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Dejalo vacío si no querés que esos usuarios vean ningún link.</small>
+                    </div>
+                    <button class="btn-primary" onclick="saveUserCommunities()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
+                        💾 Guardar links de comunidad
                     </button>
                 </div>
             </section>
