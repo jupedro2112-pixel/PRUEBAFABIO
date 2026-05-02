@@ -24,6 +24,15 @@ VIP.refunds = (function () {
         return isStandalone() && isNotifGranted();
     }
 
+    // Solo el reembolso mensual exige PWA instalada + notificaciones activas.
+    // Daily y weekly se reclaman libremente, aunque seguimos sugiriendo
+    // instalar la app y activar notificaciones para que el usuario reciba
+    // los avisos de acreditacion.
+    function claimRequirementsMet(type) {
+        if (type === 'monthly') return canClaim();
+        return true;
+    }
+
     // Estado pendiente: si el user intenta reclamar sin cumplir, recordamos el
     // tipo para retomar automáticamente cuando los requisitos se cumplan.
     let _pendingClaimType = null;
@@ -125,7 +134,7 @@ VIP.refunds = (function () {
 
     function tryResumePendingClaim() {
         if (!_pendingClaimType) return;
-        if (!canClaim()) return;
+        if (!claimRequirementsMet(_pendingClaimType)) return;
         const type = _pendingClaimType;
         _pendingClaimType = null;
         VIP.ui.showToast('✅ Listo. Continuamos con tu reembolso…', 'success');
@@ -348,18 +357,16 @@ VIP.refunds = (function () {
             claimBtn.textContent = '⏳ No disponible';
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
             claimBtn.onclick = null;
-        } else if (!canClaim()) {
-            // Reclamable en tiempo, pero sin app instalada o sin notificaciones.
-            // Mostramos el bloque embebido de "Condición para reclamar" + el
-            // botón principal cambia a "Activar para reclamar".
+        } else if (!claimRequirementsMet(type)) {
+            // Solo aplica al reembolso mensual: si no tiene app instalada o no
+            // tiene notificaciones, mostramos el bloque embebido de "Condición
+            // para reclamar" + el botón principal cambia a "Activar para reclamar".
             extraInfo.innerHTML = '';
             claimBtn.disabled = false;
             claimBtn.textContent = '🔒 Activar para reclamar';
             claimBtn.style.background = 'linear-gradient(135deg, #6a0dad 0%, #9d4edd 100%)';
             claimBtn.onclick = () => {
-                // Reintentar canClaim por si el user activó algo desde los
-                // botones embebidos mientras tenía el modal abierto.
-                if (canClaim()) return claimRefund(type);
+                if (claimRequirementsMet(type)) return claimRefund(type);
                 VIP.ui.hideModal('refundModal');
                 openRequirementsModal(type);
             };
@@ -378,11 +385,12 @@ VIP.refunds = (function () {
     }
 
     // Pinta el bloque de requisitos dentro del refundModal según el estado actual.
-    // Si el user ya cumple ambas condiciones, se oculta.
+    // Solo se muestra cuando el reembolso es 'monthly' y aun no estan cumplidos
+    // los requisitos. Para daily/weekly nunca se muestra (no son obligatorios).
     function renderRefundRequirementsBlock(claimType) {
         const block = document.getElementById('refundRequirementsBlock');
         if (!block) return;
-        if (canClaim()) {
+        if (claimType !== 'monthly' || canClaim()) {
             block.style.display = 'none';
             return;
         }
@@ -445,7 +453,7 @@ VIP.refunds = (function () {
     function refreshClaimButtonState(claimType) {
         const claimBtn = document.getElementById('claimRefundBtn');
         if (!claimBtn) return;
-        if (canClaim()) {
+        if (claimRequirementsMet(claimType)) {
             claimBtn.textContent = '🎁 Reclamar Reembolso';
             claimBtn.style.background = '';
             claimBtn.onclick = () => claimRefund(claimType);
@@ -454,8 +462,8 @@ VIP.refunds = (function () {
     }
 
     async function claimRefund(type) {
-        // Guardia de requisitos: app instalada + notificaciones activas.
-        if (!canClaim()) {
+        // Guardia de requisitos: solo el monthly exige app instalada + notificaciones.
+        if (!claimRequirementsMet(type)) {
             VIP.ui.hideModal('refundModal');
             openRequirementsModal(type);
             return;
