@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v89-no-zero-flash';
+const CACHE_VERSION = 'v90-notif-opens-pwa';
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 const PRECACHE_URLS = [
@@ -162,7 +162,12 @@ self.addEventListener('notificationclick', function(event) {
 
   // Datos del push para reenviarlos al cliente.
   const notifData = event.notification.data || {};
-  const targetUrl = self.location.origin + '/?source=push';
+  // CRITICO: la URL debe coincidir EXACTAMENTE con start_url del manifest
+  // (/?source=pwa) para que Android enrute al WebAPK instalado en lugar de
+  // abrir Chrome. Si usamos otro query string (?source=push), Android no
+  // reconoce la PWA y abre el navegador. El "source=push" lo distinguimos
+  // via el postMessage que mandamos al cliente con notifData.
+  const targetUrl = self.location.origin + '/?source=pwa';
 
   event.waitUntil((async () => {
     const allClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
