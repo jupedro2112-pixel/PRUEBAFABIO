@@ -4837,11 +4837,19 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         .select('fcmTokens notifPermission fcmTokenContext')
         .lean();
       const tokens = (userDoc && Array.isArray(userDoc.fcmTokens)) ? userDoc.fcmTokens : [];
+      // Flags sueltos para mensajería al cliente.
       const hasApp = (userDoc && userDoc.fcmTokenContext === 'standalone')
         || tokens.some(t => t && t.context === 'standalone');
       const hasNotifs = (userDoc && userDoc.notifPermission === 'granted')
         || tokens.some(t => t && t.notifPermission === 'granted');
-      if (!hasApp || !hasNotifs) {
+      // Gate REAL: el MISMO token tiene que tener context=standalone Y
+      // notifPermission=granted. Sin esto, un user con split tokens
+      // (PWA-no-permiso + browser-con-permiso) pasaba el gate sin tener
+      // un canal de push real.
+      const legacyPasses = userDoc && userDoc.fcmTokenContext === 'standalone' && userDoc.notifPermission === 'granted';
+      const arrayPasses = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
+      const hasChannel = !!(legacyPasses || arrayPasses);
+      if (!hasChannel) {
         return res.status(403).json({
           success: false,
           message: 'El reembolso mensual requiere tener la app instalada y notificaciones activas.',
@@ -5993,6 +6001,9 @@ async function broadcastStats() {
 // Endpoint para enviar notificación (usado por admin)
 app.post('/api/admin/send-notification', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede enviar notificaciones.' });
+    }
     const { userId, title, body, icon, badge, tag, requireInteraction, data } = req.body;
 
     if (!userId) {
@@ -6638,6 +6649,9 @@ app.get('/api/admin/config', authMiddleware, adminMiddleware, async (req, res) =
 
 app.post('/api/admin/canal-url', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede modificar la URL del canal.' });
+    }
     const { url } = req.body;
     const safeUrl = (url || '').trim();
     if (safeUrl) {
@@ -6725,6 +6739,9 @@ app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
 
 app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede modificar las líneas.' });
+    }
     const { slots, defaultPhone, defaultTeamName } = req.body || {};
     if (!Array.isArray(slots)) {
       return res.status(400).json({ error: 'slots debe ser un array' });
@@ -7608,13 +7625,16 @@ app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, async (req, r
     let totalWithoutTeam = 0;
 
     for (const u of users) {
-      // Calcular si tiene canal abierto (mismo criterio que /reports/equipment).
+      // Calcular si tiene canal abierto. AMBAS condiciones tienen que
+      // estar en el MISMO token (igual que APP_NOTIFS_FILTER con $elemMatch).
       const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
       const hasApp = u.fcmTokenContext === 'standalone'
         || tokens.some(t => t && t.context === 'standalone');
       const hasNotifs = u.notifPermission === 'granted'
         || tokens.some(t => t && t.notifPermission === 'granted');
-      const hasChannel = hasApp && hasNotifs;
+      const legacyMatch = u.fcmTokenContext === 'standalone' && u.notifPermission === 'granted';
+      const arrayMatch = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
+      const hasChannel = legacyMatch || arrayMatch;
       const isActiveThisWeek = u.lastLogin
         && new Date(u.lastLogin).getTime() >= oneWeekAgo;
 
@@ -8932,6 +8952,9 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
 // durationMinutes, prefix?, notificationHistoryId? }.
 app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede crear regalos de plata.' });
+    }
     const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId, requireZeroBalance } = req.body || {};
     const a = Number(amount), b = Number(totalBudget), m = Number(maxClaims), d = Number(durationMinutes);
     if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto por persona inválido' });
@@ -8953,8 +8976,13 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
       return res.status(400).json({ error: `Cantidad máxima excede el tope de seguridad (${GIVEAWAY_MAX_CLAIMS})` });
     }
 
-    // Cerrar cualquier giveaway activo previo.
-    await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+    // Cerrar SOLO giveaways manuales activos previos. Los de estrategia
+    // automática y de reglas aprobadas son intocables — corren en su
+    // propio carril con audienceWhitelist y strategySource distinto.
+    await MoneyGiveaway.updateMany(
+      { status: 'active', $or: [{ strategySource: 'manual' }, { strategySource: null }, { strategySource: { $exists: false } }] },
+      { $set: { status: 'cancelled' } }
+    );
 
     const g = await MoneyGiveaway.create({
       id: uuidv4(),
@@ -8966,6 +8994,7 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
       prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null,
       notificationHistoryId: notificationHistoryId || null,
       requireZeroBalance: !!requireZeroBalance,
+      strategySource: 'manual',
       status: 'active'
     });
     res.json({ success: true, giveaway: g.toObject() });
@@ -9257,7 +9286,15 @@ app.get('/api/admin/giveaways/user/:username', authMiddleware, adminMiddleware, 
 // DELETE admin: cancelar el giveaway activo.
 app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede cancelar regalos.' });
+    }
+    // Solo cancelamos los manuales — la estrategia automática y las reglas
+    // aprobadas tienen su propio ciclo y no deben ser nukeadas por este botón.
+    await MoneyGiveaway.updateMany(
+      { status: 'active', $or: [{ strategySource: 'manual' }, { strategySource: null }, { strategySource: { $exists: false } }] },
+      { $set: { status: 'cancelled' } }
+    );
     res.json({ success: true });
   } catch (error) {
     logger.error(`DELETE /api/admin/money-giveaway error: ${error.message}`);
@@ -9278,6 +9315,9 @@ app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (
 //   'promo'|'giveaway'), promo*..., giveaway*... }
 app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede programar notificaciones.' });
+    }
     const b = req.body || {};
     const title = String(b.title || '').trim();
     const body  = String(b.body || '').trim();
@@ -9371,6 +9411,9 @@ app.get('/api/admin/notifications/scheduled', authMiddleware, adminMiddleware, a
 // DELETE admin: cancelar una notif programada (solo si esta pending).
 app.delete('/api/admin/notifications/scheduled/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede cancelar notificaciones programadas.' });
+    }
     const r = await ScheduledNotification.updateOne(
       { id: req.params.id, status: 'pending' },
       { $set: { status: 'cancelled' } }
@@ -9530,7 +9573,13 @@ async function _executeScheduledNotification(sched) {
     };
     await setConfig(PROMO_ALERT_KEY, promo);
   } else if (sched.extraType === 'giveaway') {
-    await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+    // Cancelar SOLO los giveaways manuales activos (no los de estrategia
+    // automática ni los aprobados de reglas). Sin este filtro, un push
+    // programado del admin cancelaba la campaña netwin/tier-bonus en curso.
+    await MoneyGiveaway.updateMany(
+      { status: 'active', $or: [{ strategySource: 'manual' }, { strategySource: null }, { strategySource: { $exists: false } }] },
+      { $set: { status: 'cancelled' } }
+    );
     await MoneyGiveaway.create({
       id: uuidv4(),
       amount: sched.giveawayAmount,
@@ -9541,6 +9590,7 @@ async function _executeScheduledNotification(sched) {
       prefix: sched.audiencePrefix,
       notificationHistoryId: historyId,
       requireZeroBalance: !!sched.giveawayRequireZeroBalance,
+      strategySource: 'manual',
       status: 'active'
     });
   }
@@ -10083,6 +10133,7 @@ app.post('/api/admin/strategy/adhoc/launch', authMiddleware, adminMiddleware, as
       weeklyService: weeklyStrategyService,
       sendPushFn: sendNotificationToAllUsers,
       setConfig,
+      getConfig,
       PROMO_ALERT_KEY,
       TIER_PROMOS_KEY,
       validUntil: new Date(validUntilMs),
@@ -10427,12 +10478,41 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     {
       username: 1, lineTeamName: 1, linePhone: 1,
       lastLogin: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1,
-      welcomeBonusClaimed: 1, role: 1, createdAt: 1,
+      role: 1, createdAt: 1,
       _id: 0
     }
   ).lean();
   const byUsername = new Map();
   for (const u of users) byUsername.set(String(u.username).toLowerCase(), u);
+
+  // 2.5) Welcome bonus REAL: vive en RefundClaim type='welcome_install',
+  //      no en User. Hago un Set de usernames que ya reclamaron para
+  //      mostrar la flag correcta. Sin esto, todos aparecían como "no
+  //      reclamado" siempre (el campo welcomeBonusClaimed no existe en
+  //      el schema de User).
+  const welcomeClaimedDocs = await RefundClaim.find(
+    { type: 'welcome_install' },
+    { username: 1, _id: 0 }
+  ).lean();
+  const welcomeClaimedSet = new Set(welcomeClaimedDocs.map(r => String(r.username).toLowerCase()));
+
+  // Helper para chequear app+notifs en el MISMO token (evita el bug de
+  // OR-cross-token donde un context-standalone-sin-permiso + otro
+  // browser-con-permiso disparaban hasChannel=true incorrectamente).
+  const _channelOf = (u) => {
+    const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+    const hasApp = u.fcmTokenContext === 'standalone' ||
+                   tokens.some(t => t && t.context === 'standalone');
+    const hasNotifs = u.notifPermission === 'granted' ||
+                      tokens.some(t => t && t.notifPermission === 'granted');
+    // hasChannel ESTRICTO: legacy single-token con AMBOS, o algún
+    // elemento del array con AMBOS en el mismo token (igual que
+    // APP_NOTIFS_FILTER del weeklyStrategyService que usa $elemMatch).
+    const legacyMatch = u.fcmTokenContext === 'standalone' && u.notifPermission === 'granted';
+    const arrayMatch = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
+    const hasChannel = legacyMatch || arrayMatch;
+    return { hasApp, hasNotifs, hasChannel };
+  };
 
   // 3) Enriquecer stats + clasificar por segment.
   const all = []; // todos los users (stats + never), cada uno con .segment
@@ -10442,12 +10522,7 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     const u = byUsername.get(String(s._id).toLowerCase());
     if (!u) continue; // existe en DailyPlayerStats pero no en User (raro)
     if (u.role && u.role !== 'user') continue;
-    const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
-    const hasApp = u.fcmTokenContext === 'standalone' ||
-                   tokens.some(t => t && t.context === 'standalone');
-    const hasNotifs = u.notifPermission === 'granted' ||
-                      tokens.some(t => t && t.notifPermission === 'granted');
-    const hasChannel = hasApp && hasNotifs;
+    const { hasApp, hasNotifs, hasChannel } = _channelOf(u);
     if (hasChannel) totalWithApp++;
     else totalWithoutApp++;
     const lastTs = s.lastActivityDate ? new Date(s.lastActivityDate).getTime() : null;
@@ -10465,7 +10540,7 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
       daysSinceLastActivity: daysSince,
       segment: _classifySegment(daysSince),
       hasApp, hasNotifs, hasChannel,
-      welcomeBonusClaimed: !!u.welcomeBonusClaimed
+      welcomeBonusClaimed: welcomeClaimedSet.has(String(u.username).toLowerCase())
     });
   }
 
@@ -10475,12 +10550,7 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
       const lc = String(u.username).toLowerCase();
       if (statsSet.has(lc)) continue;
       if (u.role && u.role !== 'user') continue;
-      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
-      const hasApp = u.fcmTokenContext === 'standalone' ||
-                     tokens.some(t => t && t.context === 'standalone');
-      const hasNotifs = u.notifPermission === 'granted' ||
-                        tokens.some(t => t && t.notifPermission === 'granted');
-      const hasChannel = hasApp && hasNotifs;
+      const { hasApp, hasNotifs, hasChannel } = _channelOf(u);
       if (hasChannel) totalWithApp++;
       else totalWithoutApp++;
       all.push({
@@ -10496,7 +10566,7 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
         daysSinceLastActivity: null,
         segment: 'never',
         hasApp, hasNotifs, hasChannel,
-        welcomeBonusClaimed: !!u.welcomeBonusClaimed
+        welcomeBonusClaimed: welcomeClaimedSet.has(String(u.username).toLowerCase())
       });
     }
   }
@@ -10982,6 +11052,9 @@ app.patch('/api/admin/notification-rules/:id', authMiddleware, adminMiddleware, 
 // crea suggestion según corresponda).
 app.post('/api/admin/notification-rules/:id/test-fire', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede testear reglas.' });
+    }
     const { id } = req.params;
     const rule = await NotificationRule.findOne({ id }).lean();
     if (!rule) return res.status(404).json({ error: 'Regla no encontrada' });
@@ -11019,6 +11092,9 @@ app.get('/api/admin/notification-rules/suggestions', authMiddleware, adminMiddle
 // Aprobar una suggestion: dispara el push real + crea giveaway si tiene bonus.
 app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede aprobar sugerencias.' });
+    }
     const { id } = req.params;
     const sug = await NotificationRuleSuggestion.findOne({ id }).lean();
     if (!sug) return res.status(404).json({ error: 'Sugerencia no encontrada' });
@@ -11140,6 +11216,9 @@ app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware
 // Descartar una suggestion.
 app.post('/api/admin/notification-rules/suggestions/:id/reject', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede rechazar sugerencias.' });
+    }
     const { id } = req.params;
     const reason = req.body?.reason ? String(req.body.reason).slice(0, 200) : null;
     const r = await NotificationRuleSuggestion.findOneAndUpdate(
@@ -12042,6 +12121,9 @@ app.get('/api/admin/stats/roi-bonus', authMiddleware, adminMiddleware, async (re
 // usernames que pasaron el cooldown).
 app.post('/api/admin/stats/recovery-push', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede mandar recovery push.' });
+    }
     const b = req.body || {};
     const filter = {};
     if (b.tier) filter.tier = b.tier;
@@ -12854,6 +12936,9 @@ app.get('/api/admin/notifications/history', authMiddleware, adminMiddleware, asy
 // que los waClicks que se trackeen sumen al row correcto.
 app.post('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede crear promos.' });
+    }
     const { message, code, durationHours, prefix, notificationHistoryId } = req.body || {};
     const msg = String(message || '').trim().slice(0, 200);
     const codeNorm = _normalizePromoCode(code);
@@ -12900,6 +12985,9 @@ app.get('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, r
 // DELETE admin: cancelar el promo activo (lo borra del config).
 app.delete('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede cancelar promos.' });
+    }
     await setConfig(PROMO_ALERT_KEY, null);
     res.json({ success: true });
   } catch (error) {

@@ -151,14 +151,21 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
   const userIndex = new Map(); // username lower -> { hasChannel, linePhone, lineTeamName }
   for (const u of allUsers) {
     const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+    // hasApp / hasNotifs son flags sueltos (legacy o cualquier token).
     const hasApp = u.fcmTokenContext === 'standalone' ||
                    tokens.some(t => t && t.context === 'standalone');
     const hasNotifs = u.notifPermission === 'granted' ||
                       tokens.some(t => t && t.notifPermission === 'granted');
+    // hasChannel ESTRICTO: AMBAS condiciones tienen que estar en el MISMO
+    // token (legacy single, o algún elemento del array). Mismo criterio
+    // que APP_NOTIFS_FILTER ($elemMatch) — sin esto un user con un
+    // standalone-no-permiso + browser-permiso pasaba como with-channel.
+    const legacyMatch = u.fcmTokenContext === 'standalone' && u.notifPermission === 'granted';
+    const arrayMatch = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
     userIndex.set(String(u.username).toLowerCase(), {
       username: u.username,
       hasApp, hasNotifs,
-      hasChannel: hasApp && hasNotifs,
+      hasChannel: legacyMatch || arrayMatch,
       linePhone: u.linePhone || null,
       lineTeamName: u.lineTeamName || null
     });
@@ -363,7 +370,7 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
  */
 async function executeAdhocPlan({
   plan, models, weeklyService, sendPushFn,
-  setConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY,
+  setConfig, getConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY,
   validUntil, title, body, triggeredBy, logger
 }) {
   const { User, MoneyGiveaway, NotificationHistory, WeeklyNotifBudget } = models;
@@ -449,13 +456,31 @@ async function executeAdhocPlan({
         message: `🎁 ${pctKey}% de bono en tu próxima carga — válido hasta ${validUntil.toLocaleString('es-AR')}. Reclamá por WhatsApp.`,
         expiresAt: validUntil.toISOString(),
         createdAt: new Date().toISOString(),
-        createdBy: triggeredBy || 'adhoc-strategy'
+        createdBy: triggeredBy || 'adhoc-strategy',
+        source: 'adhoc-strategy'
       });
     }
-    // Reemplazar el array entero (los anteriores quedan inválidos al expirar
-    // o al sobreescribir con un nuevo set en una próxima campaña).
+    // MERGE en vez de overwrite: leemos los promos existentes (típicamente
+    // del tier-bonus del jueves, que pueden estar vivos), filtramos los
+    // expirados, y APPENDEAMOS los nuevos del adhoc. Sin esto, un adhoc
+    // del viernes wipeaba la campaña del jueves.
     if (setConfig && TIER_PROMOS_KEY) {
-      await setConfig(TIER_PROMOS_KEY, promoConfigs);
+      let existingPromos = [];
+      if (typeof getConfig === 'function') {
+        try {
+          const cur = await getConfig(TIER_PROMOS_KEY);
+          if (Array.isArray(cur)) {
+            const nowMs = Date.now();
+            existingPromos = cur.filter(p => {
+              try { return p && p.expiresAt && new Date(p.expiresAt).getTime() > nowMs; }
+              catch (_) { return false; }
+            });
+          }
+        } catch (e) {
+          logger && logger.warn(`[adhoc] no se pudo leer TIER_PROMOS_KEY existente: ${e.message}`);
+        }
+      }
+      await setConfig(TIER_PROMOS_KEY, [...existingPromos, ...promoConfigs]);
     }
   }
 
