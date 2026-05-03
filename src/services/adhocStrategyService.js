@@ -371,7 +371,8 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
 async function executeAdhocPlan({
   plan, models, weeklyService, sendPushFn,
   setConfig, getConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY,
-  validUntil, title, body, triggeredBy, logger
+  validUntil, title, body, triggeredBy, logger,
+  bonusPctOverride // { low, mid, high } — opcional, override del % por tier de small_loser
 }) {
   const { User, MoneyGiveaway, NotificationHistory, WeeklyNotifBudget } = models;
   const wk = weeklyService._weekKey();
@@ -394,6 +395,24 @@ async function executeAdhocPlan({
   const droppedAtSend = plan.targets.length - liveTargets.length;
   if (droppedAtSend > 0) {
     logger.warn(`[adhoc] ${droppedAtSend} users perdieron app+notifs entre análisis y launch — excluidos`);
+  }
+
+  // Aplicar override de bonosPct si vino. Solo afecta a los del paquete
+  // small_loser (whatsapp_promo). Tiers segun netwin:
+  //   low  = 10k-20k → default 15
+  //   mid  = 20k-30k → default 20
+  //   high = 30k-50k → default 25
+  if (bonusPctOverride && typeof bonusPctOverride === 'object') {
+    const lo = Number(bonusPctOverride.low);
+    const mi = Number(bonusPctOverride.mid);
+    const hi = Number(bonusPctOverride.high);
+    for (const t of liveTargets) {
+      if (t.package !== 'small_loser') continue;
+      const n = t.netwinARS || 0;
+      if (n >= 30000 && Number.isFinite(hi) && hi >= 1 && hi <= 100) t.bonusPct = Math.round(hi);
+      else if (n >= 20000 && Number.isFinite(mi) && mi >= 1 && mi <= 100) t.bonusPct = Math.round(mi);
+      else if (Number.isFinite(lo) && lo >= 1 && lo <= 100) t.bonusPct = Math.round(lo);
+    }
   }
 
   // Separar por kind: money (giveaway) vs whatsapp_promo (bono % carga).

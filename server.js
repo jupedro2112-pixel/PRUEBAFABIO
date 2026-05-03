@@ -10130,6 +10130,17 @@ app.post('/api/admin/strategy/adhoc/launch', authMiddleware, adminMiddleware, as
     const title = String(body.title || '🎁 Tenés un regalo esperándote').slice(0, 200);
     const bodyText = String(body.body || 'Abrí la app y reclamalo antes de que se termine.').slice(0, 500);
 
+    // Override opcional de bonos % para el paquete small_loser. Cada tier
+    // [low, mid, high] entre 1 y 100 — fuera de rango se ignora.
+    let bonusPctOverride = null;
+    if (body.bonusPctOverride && typeof body.bonusPctOverride === 'object') {
+      bonusPctOverride = {
+        low: Number(body.bonusPctOverride.low),
+        mid: Number(body.bonusPctOverride.mid),
+        high: Number(body.bonusPctOverride.high)
+      };
+    }
+
     const r = await adhocStrategyService.executeAdhocPlan({
       plan,
       models: _strategyModels,
@@ -10143,7 +10154,8 @@ app.post('/api/admin/strategy/adhoc/launch', authMiddleware, adminMiddleware, as
       title,
       body: bodyText,
       triggeredBy: req.user.username || 'admin',
-      logger
+      logger,
+      bonusPctOverride
     });
     res.json({ success: true, result: r });
   } catch (err) {

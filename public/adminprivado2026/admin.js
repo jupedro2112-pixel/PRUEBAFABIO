@@ -6065,11 +6065,61 @@ function _adhocRenderPlan(plan) {
 
     // ============ FORM DE LAUNCH ============
     if (plan.targets && plan.targets.length > 0) {
+        // ¿Hay users en el bucket promo % carga? Si sí, mostrar el override.
+        const hasPromoTier = (plan.targets || []).some(t => t.kind === 'whatsapp_promo' && (t.bonusPct || 0) > 0);
+        const promoCount = (plan.targets || []).filter(t => t.kind === 'whatsapp_promo' && (t.bonusPct || 0) > 0).length;
+
         html += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:12px;padding:16px;">';
         html += '<div style="color:#ff8888;font-weight:800;font-size:14px;margin-bottom:10px;">🚀 Paso 2 · Confirmar y lanzar</div>';
+
+        // Válido hasta + presets
+        html += '<div style="margin-bottom:12px;">';
+        html += '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">⏰ Válido hasta (giveaway expira a esta hora)</label>';
+        html += '<input type="datetime-local" id="adhocValidUntil" value="' + _adhocDatetimeInputDefault(6) + '" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;color-scheme:dark;margin-bottom:6px;">';
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+        html += '<span style="color:#888;font-size:10px;align-self:center;">Presets:</span>';
+        for (const preset of [
+            { label: '+3h',  hours: 3 },
+            { label: '+6h',  hours: 6 },
+            { label: '+12h', hours: 12 },
+            { label: '+24h', hours: 24 },
+            { label: '+48h', hours: 48 },
+            { label: '+72h', hours: 72 }
+        ]) {
+            html += '<button onclick="adhocSetValidUntilPreset(' + preset.hours + ')" style="padding:4px 10px;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.25);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">' + preset.label + '</button>';
+        }
+        html += '</div>';
+        html += '</div>';
+
+        // Override de bonos % (solo si hay users en small_loser)
+        if (hasPromoTier) {
+            html += '<details style="background:rgba(37,211,102,0.04);border:1px solid rgba(37,211,102,0.25);border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
+            html += '<summary style="cursor:pointer;color:#25d366;font-weight:700;font-size:12px;">📱 Personalizar bonos % carga (' + fmt(promoCount) + ' usuarios) — tocá para abrir</summary>';
+            html += '<div style="margin-top:10px;color:#aaa;font-size:11px;">Por defecto el sistema asigna 15% / 20% / 25% según pérdida. Acá podés bumpear a lo que quieras (1-100%).</div>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-top:10px;">';
+            html += '<div><label style="display:block;color:#aaa;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px;">Pérdida $10k–$20k</label>';
+            html += '<input type="number" id="adhocBonusLow" min="1" max="100" value="15" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+            html += '<div><label style="display:block;color:#aaa;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px;">Pérdida $20k–$30k</label>';
+            html += '<input type="number" id="adhocBonusMid" min="1" max="100" value="20" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+            html += '<div><label style="display:block;color:#aaa;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px;">Pérdida $30k–$50k</label>';
+            html += '<input type="number" id="adhocBonusHigh" min="1" max="100" value="25" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+            html += '</div>';
+            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">';
+            html += '<span style="color:#888;font-size:10px;align-self:center;">Atajos:</span>';
+            for (const preset of [
+                { label: 'Default 15/20/25', l: 15, m: 20, h: 25 },
+                { label: 'Boost 20/25/30',   l: 20, m: 25, h: 30 },
+                { label: 'Hot 25/30/35',     l: 25, m: 30, h: 35 },
+                { label: 'Plano 30%',        l: 30, m: 30, h: 30 }
+            ]) {
+                html += '<button onclick="adhocSetBonusPreset(' + preset.l + ',' + preset.m + ',' + preset.h + ')" style="padding:4px 10px;background:rgba(37,211,102,0.10);color:#25d366;border:1px solid rgba(37,211,102,0.25);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">' + escapeHtml(preset.label) + '</button>';
+            }
+            html += '</div>';
+            html += '</details>';
+        }
+
+        // Título / cuerpo del push
         html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;margin-bottom:12px;">';
-        html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Válido hasta</label>';
-        html += '<input type="datetime-local" id="adhocValidUntil" value="' + _adhocDatetimeInputDefault(6) + '" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;color-scheme:dark;"></div>';
         html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Título push</label>';
         html += '<input type="text" id="adhocTitle" value="🎁 Tenés un regalo esperándote" maxlength="200" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
         html += '</div>';
@@ -6188,6 +6238,22 @@ function adhocCancelPlan() {
     _adhocRenderTab();
 }
 
+function adhocSetValidUntilPreset(hours) {
+    const el = document.getElementById('adhocValidUntil');
+    if (!el) return;
+    el.value = _adhocDatetimeInputDefault(hours);
+    showToast('⏰ Válido hasta +' + hours + 'h', 'info');
+}
+
+function adhocSetBonusPreset(low, mid, high) {
+    const lo = document.getElementById('adhocBonusLow');
+    const mi = document.getElementById('adhocBonusMid');
+    const hi = document.getElementById('adhocBonusHigh');
+    if (lo) lo.value = low;
+    if (mi) mi.value = mid;
+    if (hi) hi.value = high;
+}
+
 async function adhocLaunch() {
     if (!_adhocPlanCache || !_adhocPlanCache.planId) {
         showToast('No hay plan en memoria — re-analizá', 'error');
@@ -6200,12 +6266,31 @@ async function adhocLaunch() {
     const title = titleEl.value.trim();
     const body = bodyEl.value.trim();
 
+    // Override de bonos % opcional. Si los inputs existen y son válidos los mando.
+    const lowEl = document.getElementById('adhocBonusLow');
+    const midEl = document.getElementById('adhocBonusMid');
+    const highEl = document.getElementById('adhocBonusHigh');
+    let bonusPctOverride = null;
+    if (lowEl && midEl && highEl) {
+        const lo = parseInt(lowEl.value);
+        const mi = parseInt(midEl.value);
+        const hi = parseInt(highEl.value);
+        // Solo mando override si hay AL MENOS uno distinto del default 15/20/25.
+        if (lo !== 15 || mi !== 20 || hi !== 25) {
+            bonusPctOverride = { low: lo, mid: mi, high: hi };
+        }
+    }
+
     const fmt = n => Number(n || 0).toLocaleString('es-AR');
-    if (!confirm('⚡ LANZAR ESTRATEGIA AHORA\n\n' +
+    let confirmMsg = '⚡ LANZAR ESTRATEGIA AHORA\n\n' +
         '· ' + _adhocPlanCache.targetCount + ' usuarios reciben push\n' +
         '· Costo total: $' + fmt(_adhocPlanCache.totalCostARS) + '\n' +
-        '· Válido hasta: ' + new Date(validUntil).toLocaleString('es-AR') + '\n\n' +
-        'Esto manda push REAL y crea giveaways. ¿Confirmás?')) return;
+        '· Válido hasta: ' + new Date(validUntil).toLocaleString('es-AR') + '\n';
+    if (bonusPctOverride) {
+        confirmMsg += '· Bono override: ' + bonusPctOverride.low + '/' + bonusPctOverride.mid + '/' + bonusPctOverride.high + '%\n';
+    }
+    confirmMsg += '\nEsto manda push REAL y crea giveaways. ¿Confirmás?';
+    if (!confirm(confirmMsg)) return;
 
     const btn = document.getElementById('adhocLaunchBtn');
     btn.disabled = true;
@@ -6216,7 +6301,11 @@ async function adhocLaunch() {
         const r = await authFetch('/api/admin/strategy/adhoc/launch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: _adhocPlanCache.planId, validUntil, title, body })
+            body: JSON.stringify({
+                planId: _adhocPlanCache.planId,
+                validUntil, title, body,
+                bonusPctOverride
+            })
         });
         const j = await r.json();
         if (!r.ok) { showToast(j.error || 'Error', 'error'); btn.disabled = false; return; }
