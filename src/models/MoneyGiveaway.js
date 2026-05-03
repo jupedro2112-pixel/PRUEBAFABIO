@@ -33,6 +33,13 @@ const moneyGiveawaySchema = new mongoose.Schema({
 
   notificationHistoryId: { type: String, default: null, index: true },
 
+  // Si está en true, solo pueden reclamar usuarios con saldo en JUGAYGANA
+  // <= 0. El check se hace en el endpoint POST /api/money-giveaway/claim
+  // consultando jugaygana.getUserInfoByName(username) antes de acreditar.
+  // Si el balance lookup falla (timeout, JUGAYGANA caído), se rechaza por
+  // defecto (fail-safe — no regalamos plata sin verificar).
+  requireZeroBalance: { type: Boolean, default: false, index: true },
+
   // Contadores (incrementos atomicos via $inc).
   claimedCount: { type: Number, default: 0 },
   totalGiven: { type: Number, default: 0 },

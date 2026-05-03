@@ -7850,6 +7850,27 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
       $or: [{ username }, { userId }]
     }).lean();
 
+    // Si el regalo exige saldo cero, pre-chequeamos para que el frontend
+    // pueda mostrar "no disponible" en vez del botón. No tira error si el
+    // lookup falla (el rechazo final está en el endpoint de claim).
+    let notEligibleReason = null;
+    if (g.requireZeroBalance) {
+      try {
+        const jgUser = await Promise.race([
+          jugaygana.getUserInfoByName(username),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('lookup-timeout')), 4000))
+        ]);
+        const userBalance = (jgUser && Number.isFinite(Number(jgUser.balance))) ? Number(jgUser.balance) : null;
+        if (userBalance != null && userBalance > 0) {
+          notEligibleReason = 'has_balance';
+        }
+      } catch (_) {
+        // Si falla el lookup acá, NO marcamos no-elegible (no queremos
+        // ocultar un regalo válido por un blip). El claim hará el check
+        // hard al momento de reclamar.
+      }
+    }
+
     res.json({
       active: true,
       id: g.id,
@@ -7860,7 +7881,9 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
       totalGiven: g.totalGiven || 0,
       expiresAt: g.expiresAt,
       alreadyClaimed: !!existing,
-      notificationHistoryId: g.notificationHistoryId || null
+      notificationHistoryId: g.notificationHistoryId || null,
+      requireZeroBalance: !!g.requireZeroBalance,
+      notEligibleReason
     });
   } catch (error) {
     logger.error(`/api/money-giveaway/active error: ${error.message}`);
@@ -7883,6 +7906,45 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
     // Filtro por prefix.
     if (g.prefix && !username.toLowerCase().startsWith(g.prefix.toLowerCase())) {
       return res.status(403).json({ success: false, message: 'Este regalo no es para tu cuenta.' });
+    }
+
+    // Filtro por saldo cero (regalo exclusivo para clientes sin plata).
+    // Hard-fail si JUGAYGANA no responde — preferimos no dar el regalo a
+    // dejarlo entrar sin verificar. Lookup con timeout corto para no colgar.
+    if (g.requireZeroBalance) {
+      let jgUser = null;
+      try {
+        jgUser = await Promise.race([
+          jugaygana.getUserInfoByName(username),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('balance-lookup-timeout')), 6000))
+        ]);
+      } catch (lookupErr) {
+        logger.warn(`[giveaway/claim] no se pudo verificar saldo de ${username}: ${lookupErr.message}`);
+        return res.status(503).json({
+          success: false,
+          message: 'No pudimos verificar tu saldo en este momento. Intentá en unos minutos.',
+          retry: true
+        });
+      }
+      const userBalance = (jgUser && Number.isFinite(Number(jgUser.balance))) ? Number(jgUser.balance) : null;
+      if (userBalance == null) {
+        // No pudimos resolver el balance (user no encontrado en JUGAYGANA, etc).
+        // Fail-safe: rechazar.
+        logger.warn(`[giveaway/claim] balance no resolvable para ${username} — rechazo`);
+        return res.status(403).json({
+          success: false,
+          message: 'No pudimos verificar tu cuenta. Contactanos por WhatsApp.',
+          notEligible: true
+        });
+      }
+      if (userBalance > 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'No disponible. Tenés saldo en tu cuenta. Regalo exclusivo para clientes sin saldo.',
+          notEligible: true,
+          reason: 'has_balance'
+        });
+      }
     }
 
     // Auto-cierre lazy.
@@ -8057,7 +8119,7 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
 // durationMinutes, prefix?, notificationHistoryId? }.
 app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId } = req.body || {};
+    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId, requireZeroBalance } = req.body || {};
     const a = Number(amount), b = Number(totalBudget), m = Number(maxClaims), d = Number(durationMinutes);
     if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto por persona inválido' });
     if (!isFinite(b) || b < a) return res.status(400).json({ error: 'Presupuesto total inválido (debe ser >= monto por persona)' });
@@ -8090,6 +8152,7 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
       createdBy: req.user.username || null,
       prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null,
       notificationHistoryId: notificationHistoryId || null,
+      requireZeroBalance: !!requireZeroBalance,
       status: 'active'
     });
     res.json({ success: true, giveaway: g.toObject() });
@@ -8432,6 +8495,7 @@ app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, a
       doc.giveawayBudget = bg;
       doc.giveawayMaxClaims = mc;
       doc.giveawayDurationMinutes = d;
+      doc.giveawayRequireZeroBalance = !!b.giveawayRequireZeroBalance;
     }
 
     const created = await ScheduledNotification.create(doc);
@@ -8628,6 +8692,7 @@ async function _executeScheduledNotification(sched) {
       createdBy: sched.createdBy || null,
       prefix: sched.audiencePrefix,
       notificationHistoryId: historyId,
+      requireZeroBalance: !!sched.giveawayRequireZeroBalance,
       status: 'active'
     });
   }

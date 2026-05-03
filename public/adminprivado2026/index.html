@@ -380,6 +380,15 @@
                                     <option value="60">1 hora</option>
                                 </select>
                             </div>
+
+                            <!-- Checkbox: solo para usuarios sin saldo en JUGAYGANA -->
+                            <label style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(255,170,0,0.06);border:1px solid rgba(255,170,0,0.30);border-radius:8px;cursor:pointer;">
+                                <input type="checkbox" id="giveawayRequireZeroBalanceInput" style="margin-top:3px;accent-color:#ffaa00;">
+                                <span style="flex:1;font-size:12px;line-height:1.5;color:#fff;">
+                                    <strong style="color:#ffd700;">🎯 Solo para clientes sin saldo</strong>
+                                    <br><small style="color:#bbb;">Verifica el saldo en JUGAYGANA antes de acreditar. Los que tengan saldo &gt; $0 ven "no disponible — regalo exclusivo para clientes sin saldo" y no pueden reclamar. Sirve para enfocar el regalo en quien realmente está sin plata y no en oportunistas con caja.</small>
+                                </span>
+                            </label>
                         </div>
                     </div>
                     <!-- Estado de regalo activo -->

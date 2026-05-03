@@ -52,6 +52,9 @@ const scheduledNotificationSchema = new mongoose.Schema({
   giveawayBudget:           { type: Number, default: null },
   giveawayMaxClaims:        { type: Number, default: null },
   giveawayDurationMinutes:  { type: Number, default: null },
+  // Si está en true, el regalo creado por esta notif programada solo lo
+  // pueden reclamar usuarios con saldo <= 0 en JUGAYGANA.
+  giveawayRequireZeroBalance: { type: Boolean, default: false },
 
   createdAt: { type: Date, default: Date.now, index: true },
   createdBy: { type: String, default: null },

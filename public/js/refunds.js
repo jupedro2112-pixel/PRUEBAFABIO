@@ -889,12 +889,31 @@ VIP.refunds = (function () {
         if (amountEl) amountEl.textContent = amountStr + ' GRATIS';
 
         card.classList.remove('claimed');
-        if (subEl) subEl.textContent = 'Tocá ahora antes que se acabe.';
-        if (btn) {
-            btn.disabled = false;
-            btn.textContent = '🎁 RECLAMAR ' + amountStr;
+
+        // Si el regalo exige saldo cero y este user tiene saldo, mostramos
+        // el card en modo "no disponible" — visible pero sin posibilidad
+        // de reclamar. Sirve como prueba social de que el regalo existe
+        // pero está dirigido a otros perfiles.
+        if (g.notEligibleReason === 'has_balance') {
+            if (subEl) subEl.textContent = 'No disponible — tenés saldo en tu cuenta. Regalo exclusivo para clientes sin saldo.';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '🚫 No disponible';
+                btn.style.opacity = '0.55';
+                btn.style.cursor = 'not-allowed';
+            }
+            if (timerEl) timerEl.style.display = '';
+            // Aún corremos el countdown para que se cierre solo cuando vence.
+        } else {
+            if (subEl) subEl.textContent = 'Tocá ahora antes que se acabe.';
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🎁 RECLAMAR ' + amountStr;
+                btn.style.opacity = '';
+                btn.style.cursor = '';
+            }
+            if (timerEl) timerEl.style.display = '';
         }
-        if (timerEl) timerEl.style.display = '';
 
         // Countdown vivo.
         _clearGiveawayCountdown();
@@ -922,6 +941,10 @@ VIP.refunds = (function () {
 
     async function handleGiveawayClick() {
         if (!_giveawayState || _giveawayState.alreadyClaimed) return;
+        // Si el card está en modo "no disponible por saldo", el botón ya
+        // está disabled — el handler no debería disparar, pero por las
+        // dudas también lo bloqueamos aquí.
+        if (_giveawayState.notEligibleReason === 'has_balance') return;
         const btn = document.getElementById('giveawayBtn');
         if (btn) {
             if (btn.disabled) return;
@@ -946,6 +969,12 @@ VIP.refunds = (function () {
                     renderGiveawayCard();
                 } else if (data.closed) {
                     _giveawayState = null;
+                    renderGiveawayCard();
+                } else if (data.notEligible && data.reason === 'has_balance') {
+                    // Servidor confirmó que el user tiene saldo — actualizar
+                    // el card para mostrar "no disponible" sin que tenga que
+                    // refrescar la app.
+                    _giveawayState = { ...(_giveawayState || {}), notEligibleReason: 'has_balance' };
                     renderGiveawayCard();
                 } else if (btn) {
                     btn.disabled = false;

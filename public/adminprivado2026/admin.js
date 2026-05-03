@@ -1800,6 +1800,7 @@ async function sendBulkNotification() {
     const giveawayBudget = Number(document.getElementById('giveawayBudgetInput')?.value || 0);
     const giveawayMaxClaims = Number(document.getElementById('giveawayMaxClaimsInput')?.value || 0);
     const giveawayDurationMinutes = Number(document.getElementById('giveawayDurationInput')?.value || 30);
+    const giveawayRequireZeroBalance = !!document.getElementById('giveawayRequireZeroBalanceInput')?.checked;
 
     if (!title) {
         showToast('Falta el título', 'error');
@@ -1885,6 +1886,7 @@ async function sendBulkNotification() {
                 payload.giveawayBudget = giveawayBudget;
                 payload.giveawayMaxClaims = giveawayMaxClaims;
                 payload.giveawayDurationMinutes = giveawayDurationMinutes;
+                payload.giveawayRequireZeroBalance = giveawayRequireZeroBalance;
             }
             const sR = await authFetch('/api/admin/notifications/schedule', {
                 method: 'POST',
@@ -2014,7 +2016,8 @@ async function sendBulkNotification() {
                         maxClaims: giveawayMaxClaims,
                         durationMinutes: giveawayDurationMinutes,
                         prefix: prefix || null,
-                        notificationHistoryId: data.historyId || null
+                        notificationHistoryId: data.historyId || null,
+                        requireZeroBalance: giveawayRequireZeroBalance
                     })
                 });
                 if (!gR.ok) {
