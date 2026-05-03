@@ -4921,6 +4921,9 @@ function _strategyROIRenderDetails(j) {
     html += '<th style="text-align:center;padding:6px 8px;color:#aaa;">Reclamó</th>';
     html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Carga pre</th>';
     html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Carga post</th>';
+    html += '<th style="text-align:center;padding:6px 8px;color:#aaa;" title="Cuántas cargas distintas hizo en las 48h post-push">🔥 # cargas</th>';
+    html += '<th style="text-align:left;padding:6px 8px;color:#aaa;" title="Hora del primer depósito post-push y monto">⏱ 1ra carga post</th>';
+    html += '<th style="text-align:right;padding:6px 8px;color:#aaa;" title="Plata cargada DESPUÉS de reclamar el regalo (atribuible al regalo)">💎 Cargó post-regalo</th>';
     html += '<th style="text-align:left;padding:6px 8px;color:#aaa;">Estado</th>';
     html += '</tr></thead><tbody>';
     // Sort: claimed primero (por categoría), después por monto descendente.
@@ -4942,6 +4945,40 @@ function _strategyROIRenderDetails(j) {
         else if (d.classification === 'regressive') stateCell = '<span style="background:rgba(255,80,80,0.15);color:#ff5050;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🚨 Regresivo</span>';
         const preCell = d.chargedBefore48hARS != null ? '$' + fmt(d.chargedBefore48hARS) : '<span style="color:#666;">—</span>';
         const postCell = d.chargedAfter48hARS != null ? '$' + fmt(d.chargedAfter48hARS) : '<span style="color:#666;">—</span>';
+        // # de cargas post-push: badge color según count
+        let countCell = '<span style="color:#666;">—</span>';
+        if (d.depositCountAfter != null) {
+            const n = d.depositCountAfter || 0;
+            const c = n === 0 ? '#666' : (n === 1 ? '#ffaa44' : (n < 4 ? '#25d366' : '#00ff88'));
+            countCell = '<span style="color:' + c + ';font-weight:700;">' + n + '</span>';
+        }
+        // Primera carga post-push: hora + monto
+        let firstCell = '<span style="color:#666;">—</span>';
+        if (d.firstDepositAfterAt) {
+            const dt = new Date(d.firstDepositAfterAt);
+            const sentAtMs = h.sentAt ? new Date(h.sentAt).getTime() : null;
+            let delay = '';
+            if (sentAtMs) {
+                const diffMin = Math.floor((dt.getTime() - sentAtMs) / 60000);
+                if (diffMin < 60) delay = ' (' + diffMin + 'min)';
+                else if (diffMin < 1440) delay = ' (' + Math.floor(diffMin / 60) + 'h ' + (diffMin % 60) + 'm)';
+                else delay = ' (' + Math.floor(diffMin / 1440) + 'd)';
+            }
+            const amt = d.firstDepositAfterAmountARS ? '$' + fmt(d.firstDepositAfterAmountARS) : '';
+            firstCell = '<span style="color:#fff;font-size:10px;">' + dt.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) + '</span><br><span style="color:#aaa;font-size:10px;">' + amt + delay + '</span>';
+        }
+        // Cargó post-regalo (post-claim)
+        let postClaimCell;
+        if (!d.claimed) {
+            postClaimCell = '<span style="color:#666;font-size:10px;">no reclamó</span>';
+        } else if (d.chargedAfterClaimARS == null) {
+            postClaimCell = '<span style="color:#666;">—</span>';
+        } else if (d.chargedAfterClaimARS > 0) {
+            postClaimCell = '<span style="color:#25d366;font-weight:700;">$' + fmt(d.chargedAfterClaimARS) + '</span>'
+                + (d.depositCountAfterClaim ? '<br><span style="color:#aaa;font-size:10px;">' + d.depositCountAfterClaim + ' cargas</span>' : '');
+        } else {
+            postClaimCell = '<span style="color:#ff8888;font-size:10px;">$0 — no recargó</span>';
+        }
         html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
         html += '<td style="padding:6px 8px;color:#fff;font-weight:600;">' + escapeHtml(d.username) + '</td>';
         if (h.strategyType === 'netwin-gift') {
@@ -4956,6 +4993,9 @@ function _strategyROIRenderDetails(j) {
         html += '<td style="padding:6px 8px;text-align:center;">' + claimedCell + '</td>';
         html += '<td style="padding:6px 8px;text-align:right;color:#aaa;">' + preCell + '</td>';
         html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + postCell + '</td>';
+        html += '<td style="padding:6px 8px;text-align:center;">' + countCell + '</td>';
+        html += '<td style="padding:6px 8px;">' + firstCell + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;">' + postClaimCell + '</td>';
         html += '<td style="padding:6px 8px;">' + stateCell + '</td>';
         html += '</tr>';
     }

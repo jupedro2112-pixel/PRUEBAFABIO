@@ -1136,13 +1136,24 @@ async function classifyHistoryPerUser({ historyId, models, jugayganaMovements, l
   const fromStr = _ymd(new Date(preFromMs));
   const toStr = _ymd(new Date(postToMs));
 
-  async function userCharges(username) {
+  // Devuelve detalle granular post-push: pre/post sumas, count de
+  // depósitos post, primer depósito post (timestamp + monto), y si vino
+  // claimedAt, también la suma/count de depósitos POST-CLAIM (más limpio
+  // para detectar reactivación atribuible al regalo).
+  async function userCharges(username, claimedAtMs) {
     try {
       const r = await jugayganaMovements.getUserMovements(username, {
         startDate: fromStr, endDate: toStr, pageSize: 500
       });
-      if (!r || !r.success) return { pre: 0, post: 0 };
-      let pre = 0, post = 0;
+      if (!r || !r.success) return { pre: 0, post: 0, postCount: 0, firstAt: null, firstAmt: 0, postClaim: null, postClaimCount: null };
+      let pre = 0, post = 0, postCount = 0, firstAt = null, firstAmt = 0;
+      let postClaim = null, postClaimCount = null;
+      const hasClaim = Number.isFinite(claimedAtMs) && claimedAtMs > 0;
+      if (hasClaim) { postClaim = 0; postClaimCount = 0; }
+
+      // Recorremos todos los movimientos. Para timing del primer depósito
+      // post, ordenamos por timestamp asc primero.
+      const deposits = [];
       for (const m of (r.movements || [])) {
         const ts = _parseTimestamp(m);
         if (!ts) continue;
@@ -1157,12 +1168,31 @@ async function classifyHistoryPerUser({ historyId, models, jugayganaMovements, l
                      type.includes('carga') || type.includes('recarga') || amount > 0;
         if (!isDep) continue;
         const a = Math.abs(amount);
-        if (ts >= preFromMs && ts < preToMs) pre += a;
-        else if (ts >= postFromMs && ts < postToMs) post += a;
+        if (a <= 0) continue;
+        deposits.push({ ts, amount: a });
       }
-      return { pre, post };
+      deposits.sort((a, b) => a.ts - b.ts);
+
+      for (const d of deposits) {
+        if (d.ts >= preFromMs && d.ts < preToMs) {
+          pre += d.amount;
+        } else if (d.ts >= postFromMs && d.ts < postToMs) {
+          post += d.amount;
+          postCount++;
+          if (firstAt === null) {
+            firstAt = d.ts;
+            firstAmt = d.amount;
+          }
+          // Si reclamó, contar SOLO los posteriores al claim.
+          if (hasClaim && d.ts >= claimedAtMs) {
+            postClaim += d.amount;
+            postClaimCount++;
+          }
+        }
+      }
+      return { pre, post, postCount, firstAt, firstAmt, postClaim, postClaimCount };
     } catch (_) {
-      return { pre: 0, post: 0 };
+      return { pre: 0, post: 0, postCount: 0, firstAt: null, firstAmt: 0, postClaim: null, postClaimCount: null };
     }
   }
 
@@ -1172,7 +1202,8 @@ async function classifyHistoryPerUser({ historyId, models, jugayganaMovements, l
   for (let i = 0; i < details.length; i += concurrency) {
     const slice = details.slice(i, i + concurrency);
     const results = await Promise.all(slice.map(async (d) => {
-      const c = await userCharges(d.username);
+      const claimedAtMs = d.claimedAt ? new Date(d.claimedAt).getTime() : null;
+      const c = await userCharges(d.username, claimedAtMs);
       let cls = null;
       const post = c.post, pre = c.pre;
       if (!d.claimed) cls = 'no_response';
@@ -1180,22 +1211,37 @@ async function classifyHistoryPerUser({ historyId, models, jugayganaMovements, l
       else if (post > pre) cls = 'converter';
       else cls = 'passive';
       counts[cls]++;
-      return { username: d.username, pre, post, classification: cls };
+      return {
+        username: d.username,
+        pre, post,
+        postCount: c.postCount,
+        firstAt: c.firstAt,
+        firstAmt: c.firstAmt,
+        postClaim: c.postClaim,
+        postClaimCount: c.postClaimCount,
+        classification: cls
+      };
     }));
 
-    const ops = results.map(r => ({
-      updateOne: {
-        filter: { id: historyId, 'strategyDetails.username': r.username },
-        update: {
-          $set: {
-            'strategyDetails.$.chargedBefore48hARS': r.pre,
-            'strategyDetails.$.chargedAfter48hARS': r.post,
-            'strategyDetails.$.perUserChargesTrackedAt': new Date(),
-            'strategyDetails.$.classification': r.classification
-          }
+    const ops = results.map(r => {
+      const setOps = {
+        'strategyDetails.$.chargedBefore48hARS': r.pre,
+        'strategyDetails.$.chargedAfter48hARS': r.post,
+        'strategyDetails.$.depositCountAfter': r.postCount || 0,
+        'strategyDetails.$.firstDepositAfterAt': r.firstAt ? new Date(r.firstAt) : null,
+        'strategyDetails.$.firstDepositAfterAmountARS': r.firstAmt || 0,
+        'strategyDetails.$.chargedAfterClaimARS': r.postClaim,
+        'strategyDetails.$.depositCountAfterClaim': r.postClaimCount,
+        'strategyDetails.$.perUserChargesTrackedAt': new Date(),
+        'strategyDetails.$.classification': r.classification
+      };
+      return {
+        updateOne: {
+          filter: { id: historyId, 'strategyDetails.username': r.username },
+          update: { $set: setOps }
         }
-      }
-    }));
+      };
+    });
     if (ops.length > 0) await NotificationHistory.bulkWrite(ops, { ordered: false });
   }
 

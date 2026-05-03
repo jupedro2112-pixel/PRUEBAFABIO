@@ -109,6 +109,17 @@ const notificationHistorySchema = new mongoose.Schema({
       // Carga per-user (opcional, requiere on-demand recompute):
       chargedBefore48hARS: Number,
       chargedAfter48hARS: Number,
+      // Reactivación: detalle del comportamiento post-push para detectar
+      // si el regalo "despertó" al usuario y cargó nueva plata.
+      depositCountAfter: Number,                  // cuántas cargas distintas hizo en 48h post-push
+      firstDepositAfterAt: Date,                  // timestamp del PRIMER depósito post-push
+      firstDepositAfterAmountARS: Number,         // monto del primer depósito post-push
+      // Si reclamó el regalo, cuánto cargó DESPUÉS de reclamar (ventana de
+      // 48h desde sentAt — solo cuenta lo posterior a claimedAt).
+      // chargedAfterClaimARS=null si no reclamó. Es la métrica más limpia
+      // para "el regalo lo reactivó".
+      chargedAfterClaimARS: Number,
+      depositCountAfterClaim: Number,
       perUserChargesTrackedAt: Date,
       classification: String,     // 'converter' | 'passive' | 'no_response' | 'regressive' | null
       _id: false
