@@ -10260,9 +10260,30 @@ function _activePlayersBuildTeams(players) {
   return Array.from(byTeam.values()).sort((a, b) => b.totalDepositsARS - a.totalDepositsARS);
 }
 
-// Helper: agregada la actividad por user desde DailyPlayerStats.
-async function _computeActivePlayers({ windowDays, minDepositCount, minDepositARS, excludeWithApp, team }) {
+// Clasifica un user en segmento por recency (días desde último depósito):
+//   hot   : 0-30 días (calientes — actividad reciente)
+//   warm  : 30-90 días (tibios — empezaron a despegarse)
+//   cool  : 90-180 días (fríos — semi-perdidos)
+//   cold  : 180+ días (congelados — perdidos hace tiempo)
+//   never : nunca depositaron en la ventana de lookup
+function _classifySegment(daysSince) {
+  if (daysSince === null || daysSince === undefined) return 'never';
+  if (daysSince < 30) return 'hot';
+  if (daysSince < 90) return 'warm';
+  if (daysSince < 180) return 'cool';
+  return 'cold';
+}
+
+// Helper: agrega actividad por user desde DailyPlayerStats y clasifica por
+// segmento de recency. `windowDays` define hasta cuán atrás miramos para
+// armar la base de "alguna vez activos". `segment` filtra el resultado por
+// recency bucket; pasá 'all' (o nada) para todo, 'never' incluye usuarios
+// que NO depositaron en la ventana (tomados de User collection).
+async function _computeActivePlayers({ windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment, includeNeverDeposited }) {
   const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
+  const now = Date.now();
+  const wantNever = segment === 'never' || segment === 'all' || !!includeNeverDeposited;
+
   // 1) Aggregate de DailyPlayerStats: depósitos por username en la ventana.
   const stats = await DailyPlayerStats.aggregate([
     { $match: { dateUtc: { $gte: since } } },
@@ -10287,28 +10308,32 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     { $sort: { totalDepositsARS: -1 } }
   ]);
 
-  if (stats.length === 0) {
-    return { players: [], windowDays, totalActiveAll: 0, totalWithoutApp: 0, totalWithApp: 0 };
-  }
+  // Set de usernames YA presentes en stats (lowercased) para excluir al
+  // armar la lista de "never depositaron" (no doble-contar).
+  const statsSet = new Set();
+  for (const s of stats) statsSet.add(String(s._id).toLowerCase());
 
-  const usernames = stats.map(s => s._id);
+  // 2) Lookup a User. Si querés 'never', traemos a TODOS los users con
+  // role='user' y filtramos los que ya están en stats. Si no, sólo los que
+  // estén en stats (más eficiente).
+  const userQuery = wantNever
+    ? { role: 'user' }
+    : { role: 'user', username: { $in: stats.map(s => s._id) } };
 
-  // 2) Lookup a User para obtener team, linePhone, lastLogin, status app+notifs.
-  // Usamos un map por username (lower) para join eficiente.
   const users = await User.find(
-    { username: { $in: usernames } },
+    userQuery,
     {
       username: 1, lineTeamName: 1, linePhone: 1,
       lastLogin: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1,
-      welcomeBonusClaimed: 1, role: 1,
+      welcomeBonusClaimed: 1, role: 1, createdAt: 1,
       _id: 0
     }
   ).lean();
   const byUsername = new Map();
   for (const u of users) byUsername.set(String(u.username).toLowerCase(), u);
 
-  // 3) Enriquecer + filtrar.
-  const out = [];
+  // 3) Enriquecer stats + clasificar por segment.
+  const all = []; // todos los users (stats + never), cada uno con .segment
   let totalWithApp = 0;
   let totalWithoutApp = 0;
   for (const s of stats) {
@@ -10323,9 +10348,9 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     const hasChannel = hasApp && hasNotifs;
     if (hasChannel) totalWithApp++;
     else totalWithoutApp++;
-    if (excludeWithApp && hasChannel) continue;
-    if (team && (u.lineTeamName || '').trim() !== team) continue;
-    out.push({
+    const lastTs = s.lastActivityDate ? new Date(s.lastActivityDate).getTime() : null;
+    const daysSince = lastTs ? Math.floor((now - lastTs) / (24 * 3600 * 1000)) : null;
+    all.push({
       username: u.username,
       lineTeamName: u.lineTeamName || null,
       linePhone: u.linePhone || null,
@@ -10335,28 +10360,90 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
       totalWithdrawsARS: Number(s.totalWithdrawsARS) || 0,
       withdrawCount: Number(s.withdrawCount) || 0,
       lastActivityDate: s.lastActivityDate,
+      daysSinceLastActivity: daysSince,
+      segment: _classifySegment(daysSince),
       hasApp, hasNotifs, hasChannel,
       welcomeBonusClaimed: !!u.welcomeBonusClaimed
     });
   }
 
+  // 4) Si querés 'never', agregá los users que NO están en stats.
+  if (wantNever) {
+    for (const u of users) {
+      const lc = String(u.username).toLowerCase();
+      if (statsSet.has(lc)) continue;
+      if (u.role && u.role !== 'user') continue;
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const hasApp = u.fcmTokenContext === 'standalone' ||
+                     tokens.some(t => t && t.context === 'standalone');
+      const hasNotifs = u.notifPermission === 'granted' ||
+                        tokens.some(t => t && t.notifPermission === 'granted');
+      const hasChannel = hasApp && hasNotifs;
+      if (hasChannel) totalWithApp++;
+      else totalWithoutApp++;
+      all.push({
+        username: u.username,
+        lineTeamName: u.lineTeamName || null,
+        linePhone: u.linePhone || null,
+        lastLogin: u.lastLogin || null,
+        totalDepositsARS: 0,
+        depositCount: 0,
+        totalWithdrawsARS: 0,
+        withdrawCount: 0,
+        lastActivityDate: null,
+        daysSinceLastActivity: null,
+        segment: 'never',
+        hasApp, hasNotifs, hasChannel,
+        welcomeBonusClaimed: !!u.welcomeBonusClaimed
+      });
+    }
+  }
+
+  // 5) Distribución por segmento (sobre toda la base, antes de filtros).
+  const segmentCounts = { hot: 0, warm: 0, cool: 0, cold: 0, never: 0 };
+  const segmentCountsWithoutApp = { hot: 0, warm: 0, cool: 0, cold: 0, never: 0 };
+  for (const p of all) {
+    segmentCounts[p.segment]++;
+    if (!p.hasChannel) segmentCountsWithoutApp[p.segment]++;
+  }
+
+  // 6) Aplicar filtros finales.
+  const seg = segment && segment !== 'all' ? segment : null;
+  const out = [];
+  for (const p of all) {
+    if (seg && p.segment !== seg) continue;
+    if (excludeWithApp && p.hasChannel) continue;
+    if (team && (p.lineTeamName || '').trim() !== team) continue;
+    out.push(p);
+  }
+
+  // Re-sort: never al final, por depósitos descendente.
+  out.sort((a, b) => {
+    if (a.segment === 'never' && b.segment !== 'never') return 1;
+    if (b.segment === 'never' && a.segment !== 'never') return -1;
+    return (b.totalDepositsARS || 0) - (a.totalDepositsARS || 0);
+  });
+
   return {
     players: out,
     windowDays,
-    totalActiveAll: stats.length,
+    totalActiveAll: all.length,
     totalWithApp,
     totalWithoutApp,
-    matchedUsers: out.length
+    matchedUsers: out.length,
+    segmentCounts,
+    segmentCountsWithoutApp,
+    segment: seg || 'all'
   };
 }
 
 // GET /api/admin/active-players
-// Query: windowDays (default 30), minDepositCount (1), minDepositARS (0),
+// Query: windowDays (default 30, max 730), minDepositCount (1), minDepositARS (0),
 //        excludeWithApp (true), team (optional), limit (200), offset (0),
-//        groupByTeam (false)
+//        groupByTeam (false), segment (all|hot|warm|cool|cold|never)
 app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const windowDays = Math.min(Math.max(parseInt(req.query.windowDays) || 30, 1), 365);
+    const windowDays = Math.min(Math.max(parseInt(req.query.windowDays) || 30, 1), 730);
     const minDepositCount = Math.max(parseInt(req.query.minDepositCount) || 1, 0);
     const minDepositARS = Math.max(parseInt(req.query.minDepositARS) || 0, 0);
     const excludeWithApp = req.query.excludeWithApp !== 'false';
@@ -10364,10 +10451,12 @@ app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req
     const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const groupByTeam = req.query.groupByTeam === 'true';
+    const segmentRaw = req.query.segment ? String(req.query.segment).trim().toLowerCase() : 'all';
+    const segment = ['all','hot','warm','cool','cold','never'].includes(segmentRaw) ? segmentRaw : 'all';
 
     const t0 = Date.now();
     const r = await _computeActivePlayers({
-      windowDays, minDepositCount, minDepositARS, excludeWithApp, team
+      windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment
     });
 
     if (!groupByTeam) {
@@ -10411,6 +10500,9 @@ app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req
       totalWithApp: r.totalWithApp,
       totalWithoutApp: r.totalWithoutApp,
       matchedUsers: r.matchedUsers,
+      segmentCounts: r.segmentCounts,
+      segmentCountsWithoutApp: r.segmentCountsWithoutApp,
+      segment: r.segment,
       teams,
       computedInMs: Date.now() - t0
     });
@@ -10423,14 +10515,16 @@ app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req
 // GET /api/admin/active-players/export — descarga CSV de la lista actual.
 app.get('/api/admin/active-players/export', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const windowDays = Math.min(Math.max(parseInt(req.query.windowDays) || 30, 1), 365);
+    const windowDays = Math.min(Math.max(parseInt(req.query.windowDays) || 30, 1), 730);
     const minDepositCount = Math.max(parseInt(req.query.minDepositCount) || 1, 0);
     const minDepositARS = Math.max(parseInt(req.query.minDepositARS) || 0, 0);
     const excludeWithApp = req.query.excludeWithApp !== 'false';
     const team = req.query.team ? String(req.query.team).trim() : null;
+    const segmentRaw = req.query.segment ? String(req.query.segment).trim().toLowerCase() : 'all';
+    const segment = ['all','hot','warm','cool','cold','never'].includes(segmentRaw) ? segmentRaw : 'all';
 
     const r = await _computeActivePlayers({
-      windowDays, minDepositCount, minDepositARS, excludeWithApp, team
+      windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment
     });
 
     const escapeCsv = (s) => {
@@ -10441,7 +10535,7 @@ app.get('/api/admin/active-players/export', authMiddleware, adminMiddleware, asy
       return v;
     };
     const lines = [];
-    lines.push(['username','equipo','linea_telefono','ultimo_login','depositos_arsacum','cantidad_depositos','retiros_ars','cantidad_retiros','ultima_actividad','tiene_app','tiene_notifs','reclamo_welcome'].join(','));
+    lines.push(['username','equipo','linea_telefono','ultimo_login','depositos_arsacum','cantidad_depositos','retiros_ars','cantidad_retiros','ultima_actividad','dias_sin_actividad','segmento','tiene_app','tiene_notifs','reclamo_welcome'].join(','));
     for (const p of r.players) {
       lines.push([
         escapeCsv(p.username),
@@ -10453,13 +10547,15 @@ app.get('/api/admin/active-players/export', authMiddleware, adminMiddleware, asy
         Math.round(p.totalWithdrawsARS),
         p.withdrawCount,
         escapeCsv(p.lastActivityDate ? new Date(p.lastActivityDate).toISOString() : ''),
+        p.daysSinceLastActivity == null ? '' : p.daysSinceLastActivity,
+        escapeCsv(p.segment || ''),
         p.hasApp ? 'si' : 'no',
         p.hasNotifs ? 'si' : 'no',
         p.welcomeBonusClaimed ? 'si' : 'no'
       ].join(','));
     }
     const csv = lines.join('\n');
-    const fname = `clientes-activos-${windowDays}d-${(team || 'todos').replace(/\W/g,'_')}-${new Date().toISOString().slice(0,10)}.csv`;
+    const fname = `clientes-activos-${segment}-${windowDays}d-${(team || 'todos').replace(/\W/g,'_')}-${new Date().toISOString().slice(0,10)}.csv`;
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
     res.send('﻿' + csv); // BOM para que Excel abra UTF-8 bien
@@ -10561,11 +10657,13 @@ setInterval(async () => {
 app.post('/api/admin/active-players/snapshot', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const body = req.body || {};
+    const segmentRaw = body.segment ? String(body.segment).trim().toLowerCase() : 'all';
     const params = {
-      windowDays: Math.min(Math.max(parseInt(body.windowDays) || 30, 1), 365),
+      windowDays: Math.min(Math.max(parseInt(body.windowDays) || 30, 1), 730),
       minDepositCount: Math.max(parseInt(body.minDepositCount) || 1, 0),
       minDepositARS: Math.max(parseInt(body.minDepositARS) || 0, 0),
-      excludeWithApp: body.excludeWithApp !== false
+      excludeWithApp: body.excludeWithApp !== false,
+      segment: ['all','hot','warm','cool','cold','never'].includes(segmentRaw) ? segmentRaw : 'all'
     };
 
     // Crear el row con status 'queued' antes de devolver.

@@ -167,7 +167,8 @@ function showSection(sectionKey) {
         automations: 'automationsSection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
-        activePlayers: 'activePlayersSection'
+        activePlayers: 'activePlayersSection',
+        help: 'helpSection'
     };
     const sectionId = map[sectionKey];
     if (sectionId) {
@@ -208,6 +209,8 @@ function showSection(sectionKey) {
         loadLineDownHistory();
     } else if (sectionKey === 'activePlayers') {
         loadActivePlayers();
+    } else if (sectionKey === 'help') {
+        loadHelp();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -5042,7 +5045,77 @@ function _apQueryString() {
     const mc = document.getElementById('apMinDepositCount').value;
     const mars = document.getElementById('apMinDepositARS').value;
     const exc = document.getElementById('apExcludeWithApp').value;
-    return 'windowDays=' + wd + '&minDepositCount=' + mc + '&minDepositARS=' + mars + '&excludeWithApp=' + exc + '&groupByTeam=true';
+    const segEl = document.getElementById('apSegment');
+    const seg = segEl ? segEl.value : 'all';
+    return 'windowDays=' + wd + '&minDepositCount=' + mc + '&minDepositARS=' + mars + '&excludeWithApp=' + exc + '&segment=' + seg + '&groupByTeam=true';
+}
+
+const _AP_SEGMENT_META = {
+    hot:   { emoji: '🔥', label: 'Calientes',  range: '0-30 d',    color: '#ff5050', tip: 'Cargaron hace poco — son los más fáciles de retener' },
+    warm:  { emoji: '😴', label: 'Tibios',     range: '30-90 d',   color: '#ffaa44', tip: 'Empezaron a despegarse — bonus de recuperación' },
+    cool:  { emoji: '🥶', label: 'Fríos',      range: '90-180 d',  color: '#00d4ff', tip: 'Semi-perdidos — campaña de re-activación con regalo fuerte' },
+    cold:  { emoji: '❄️', label: 'Congelados', range: '180+ d',    color: '#888',    tip: 'Perdidos hace tiempo — último intento, igual mandales' },
+    never: { emoji: '👻', label: 'Nunca cargaron', range: 'sin depósitos', color: '#a050ff', tip: 'Se registraron pero NUNCA depositaron — welcome bonus + WhatsApp' }
+};
+
+// 🎯 Panorama: muestra distribución por segmento (cards clickeables que
+// cambian el filtro). Siempre visible arriba para que el admin SEPA
+// cuántos calientes/tibios/fríos/congelados/nunca tiene total.
+function _apRenderPanorama(j) {
+    const el = document.getElementById('apPanorama');
+    if (!el) return;
+    const counts = (document.getElementById('apExcludeWithApp').value === 'true')
+        ? (j.segmentCountsWithoutApp || j.segmentCounts || {})
+        : (j.segmentCounts || {});
+    const total = (counts.hot || 0) + (counts.warm || 0) + (counts.cool || 0) + (counts.cold || 0) + (counts.never || 0);
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const currentSeg = (document.getElementById('apSegment') || {}).value || 'all';
+    const onlyNoApp = document.getElementById('apExcludeWithApp').value === 'true';
+
+    let html = '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.05),rgba(160,80,255,0.05));border:1px solid rgba(0,212,255,0.20);border-radius:12px;padding:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+    html += '<div><div style="color:#fff;font-weight:800;font-size:14px;">📊 Panorama por segmento ' + (onlyNoApp ? '(SIN app+notifs)' : '(todos)') + '</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-top:2px;">Tocá un segmento para filtrar la lista de abajo. Total ' + (onlyNoApp ? 'sin app' : 'usuarios') + ': <strong style="color:#fff;">' + fmt(total) + '</strong></div></div>';
+    html += '<div style="color:#666;font-size:10px;text-align:right;">Ventana: ' + (j.windowDays || 0) + ' días</div>';
+    html += '</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;">';
+
+    const segs = ['hot', 'warm', 'cool', 'cold', 'never'];
+    for (const s of segs) {
+        const meta = _AP_SEGMENT_META[s];
+        const count = counts[s] || 0;
+        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+        const isActive = currentSeg === s;
+        const border = isActive ? meta.color : 'rgba(255,255,255,0.10)';
+        const bg = isActive ? `rgba(${parseInt(meta.color.slice(1,3),16)},${parseInt(meta.color.slice(3,5),16)},${parseInt(meta.color.slice(5,7),16)},0.12)` : 'rgba(0,0,0,0.30)';
+        html += '<div onclick="apSelectSegment(\'' + s + '\')" title="' + escapeHtml(meta.tip) + '" style="cursor:pointer;background:' + bg + ';border:1px solid ' + border + ';border-radius:10px;padding:10px 12px;transition:all 0.15s;">';
+        html += '<div style="font-size:18px;line-height:1;">' + meta.emoji + '</div>';
+        html += '<div style="color:' + meta.color + ';font-weight:800;font-size:20px;margin-top:6px;">' + fmt(count) + '</div>';
+        html += '<div style="color:#fff;font-size:11px;font-weight:700;margin-top:2px;">' + meta.label + '</div>';
+        html += '<div style="color:#888;font-size:10px;">' + meta.range + ' · ' + pct + '%</div>';
+        html += '</div>';
+    }
+    // "Todos" card
+    const allActive = currentSeg === 'all';
+    const allBorder = allActive ? '#00d4ff' : 'rgba(255,255,255,0.10)';
+    const allBg = allActive ? 'rgba(0,212,255,0.12)' : 'rgba(0,0,0,0.30)';
+    html += '<div onclick="apSelectSegment(\'all\')" style="cursor:pointer;background:' + allBg + ';border:1px solid ' + allBorder + ';border-radius:10px;padding:10px 12px;transition:all 0.15s;">';
+    html += '<div style="font-size:18px;line-height:1;">🌐</div>';
+    html += '<div style="color:#00d4ff;font-weight:800;font-size:20px;margin-top:6px;">' + fmt(total) + '</div>';
+    html += '<div style="color:#fff;font-size:11px;font-weight:700;margin-top:2px;">Todos</div>';
+    html += '<div style="color:#888;font-size:10px;">sin filtrar segmento</div>';
+    html += '</div>';
+
+    html += '</div>'; // grid
+    html += '</div>'; // wrapper
+    el.innerHTML = html;
+}
+
+function apSelectSegment(seg) {
+    const sel = document.getElementById('apSegment');
+    if (!sel) return;
+    sel.value = seg;
+    loadActivePlayers();
 }
 
 async function loadActivePlayers() {
@@ -5063,6 +5136,7 @@ async function loadActivePlayers() {
         }
         const j = await liveR.json();
         _apCache = j;
+        _apRenderPanorama(j);
         _apRenderSummary(j);
         _apRenderTeams(j);
         if (evoR.ok) {
@@ -5173,10 +5247,12 @@ async function apGenerateSnapshot() {
         const mc = parseInt(document.getElementById('apMinDepositCount').value);
         const mars = parseInt(document.getElementById('apMinDepositARS').value);
         const exc = document.getElementById('apExcludeWithApp').value === 'true';
+        const segEl = document.getElementById('apSegment');
+        const seg = segEl ? segEl.value : 'all';
         const r = await authFetch('/api/admin/active-players/snapshot', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ windowDays: wd, minDepositCount: mc, minDepositARS: mars, excludeWithApp: exc })
+            body: JSON.stringify({ windowDays: wd, minDepositCount: mc, minDepositARS: mars, excludeWithApp: exc, segment: seg })
         });
         const j = await r.json();
         if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
@@ -5379,13 +5455,18 @@ function _apRenderUsersTable(users) {
     html += '<th style="text-align:right;padding:8px;color:#aaa;">Cargas (ARS)</th>';
     html += '<th style="text-align:right;padding:8px;color:#aaa;">#</th>';
     html += '<th style="text-align:left;padding:8px;color:#aaa;">Última actividad</th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">Segmento</th>';
     html += '<th style="text-align:left;padding:8px;color:#aaa;">App</th>';
     html += '<th style="text-align:left;padding:8px;color:#aaa;">Welcome</th>';
     html += '</tr></thead><tbody>';
     for (const u of users) {
         const phoneText = u.linePhone || '—';
         const phoneLink = u.linePhone ? `<a href="https://wa.me/${u.linePhone.replace(/[^\d]/g, '')}" target="_blank" rel="noopener" style="color:#25d366;text-decoration:none;">${escapeHtml(phoneText)}</a>` : '—';
-        const lastAct = u.lastActivityDate ? new Date(u.lastActivityDate).toLocaleDateString('es-AR', {day:'2-digit',month:'short'}) : '—';
+        const lastAct = u.lastActivityDate
+            ? new Date(u.lastActivityDate).toLocaleDateString('es-AR', {day:'2-digit',month:'short'}) + (u.daysSinceLastActivity != null ? ' <span style="color:#666;font-size:10px;">(' + u.daysSinceLastActivity + 'd)</span>' : '')
+            : '<span style="color:#666;">— sin cargas —</span>';
+        const meta = _AP_SEGMENT_META[u.segment] || _AP_SEGMENT_META.never;
+        const segBadge = '<span style="background:rgba(' + parseInt(meta.color.slice(1,3),16) + ',' + parseInt(meta.color.slice(3,5),16) + ',' + parseInt(meta.color.slice(5,7),16) + ',0.15);color:' + meta.color + ';padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">' + meta.emoji + ' ' + meta.label.toUpperCase() + '</span>';
         const appBadge = u.hasChannel
             ? '<span style="background:rgba(37,211,102,0.15);color:#25d366;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ APP+NOTIFS</span>'
             : (u.hasApp ? '<span style="background:rgba(255,170,68,0.15);color:#ffaa44;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">SOLO APP</span>'
@@ -5396,9 +5477,10 @@ function _apRenderUsersTable(users) {
         html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
         html += '<td style="padding:7px;color:#fff;font-weight:600;">' + escapeHtml(u.username) + '</td>';
         html += '<td style="padding:7px;">' + phoneLink + '</td>';
-        html += '<td style="padding:7px;text-align:right;color:#ffd700;font-weight:700;">$' + fmt(Math.round(u.totalDepositsARS)) + '</td>';
+        html += '<td style="padding:7px;text-align:right;color:' + (u.totalDepositsARS > 0 ? '#ffd700' : '#666') + ';font-weight:700;">$' + fmt(Math.round(u.totalDepositsARS)) + '</td>';
         html += '<td style="padding:7px;text-align:right;color:#aaa;">' + u.depositCount + '</td>';
         html += '<td style="padding:7px;color:#aaa;">' + lastAct + '</td>';
+        html += '<td style="padding:7px;">' + segBadge + '</td>';
         html += '<td style="padding:7px;">' + appBadge + '</td>';
         html += '<td style="padding:7px;">' + welcomeBadge + '</td>';
         html += '</tr>';
@@ -5451,4 +5533,335 @@ async function apExportCsv(teamName) {
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
+}
+
+// ============================================
+// ❓ AYUDA Y GUÍA
+// ============================================
+function loadHelp() {
+    const el = document.getElementById('helpContent');
+    if (!el) return;
+    if (el._loaded) return; // render una sola vez
+    el._loaded = true;
+
+    const blocks = _helpBlocks();
+    let html = '';
+    for (const b of blocks) {
+        html += '<details id="' + b.anchor + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:0;overflow:hidden;">';
+        html += '<summary style="cursor:pointer;padding:14px 16px;font-weight:700;color:#fff;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.02);">';
+        html += '<span>' + b.icon + ' ' + b.title + '</span>';
+        html += '<span style="color:#888;font-size:12px;font-weight:400;">tocá para abrir/cerrar ▾</span>';
+        html += '</summary>';
+        html += '<div style="padding:14px 18px;color:#bbb;font-size:13px;line-height:1.7;">' + b.body + '</div>';
+        html += '</details>';
+    }
+    el.innerHTML = html;
+
+    // Auto-abrir si vienen con anchor en URL.
+    if (location.hash && location.hash.length > 1) {
+        const id = location.hash.slice(1);
+        const tgt = document.getElementById(id);
+        if (tgt && tgt.tagName === 'DETAILS') {
+            tgt.open = true;
+            setTimeout(() => tgt.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+        }
+    }
+}
+
+function _helpBlocks() {
+    return [
+        {
+            anchor: 'help-overview',
+            icon: '🌟',
+            title: 'Cómo funciona el panel (vista general)',
+            body: [
+                '<p>Este panel administra <strong>JUGAYGANA</strong> + la app de notificaciones. Cada parte tiene un objetivo:</p>',
+                '<ul>',
+                '<li><strong>Reportes (diarios / semanales / mensuales)</strong>: ves <em>reembolsos</em> e <em>ingresos</em> por equipo/línea para liquidar comisiones y medir rendimiento.</li>',
+                '<li><strong>Equipos</strong>: cada línea de WhatsApp pertenece a un equipo. Acá ves cargas/retiros/comisiones por equipo y reasignás líneas si hace falta.</li>',
+                '<li><strong>Notificaciones push</strong>: mandás aviso a la app (con o sin promo de WhatsApp / regalo de plata).</li>',
+                '<li><strong>Automatizaciones</strong>: el motor decide solo (cada lunes y jueves) a quién y cuánto regalarle.</li>',
+                '<li><strong>Caída de línea</strong>: difundís cambio de número cuando una línea se cae.</li>',
+                '<li><strong>Clientes activos sin app</strong>: lista para fidelizar por WhatsApp a los que <em>todavía no tienen la app</em>.</li>',
+                '</ul>',
+                '<p style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;padding:10px 12px;margin-top:10px;border-radius:6px;"><strong style="color:#ffc850;">Regla de oro:</strong> los <em>topes</em> (cap de notificaciones, presupuesto semanal, cooldown) están para evitar quemar la base. No los toques sin tener claro qué cambia.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-numero',
+            icon: '📞',
+            title: 'Número principal vigente — cómo cambiar el número que ven los jugadores',
+            body: [
+                '<p>El <strong>Número principal vigente</strong> es el WhatsApp que ven todos los jugadores en la app/landing. Es el contacto general — no el de su línea asignada.</p>',
+                '<p><strong>Cómo cambiarlo:</strong></p>',
+                '<ol>',
+                '<li>Andá a <strong>📞 Número principal vigente</strong> en el menú izquierdo.</li>',
+                '<li>Vas a ver el número actual con un botón <strong>"Cambiar número"</strong>.</li>',
+                '<li>Ingresá el nuevo número en formato internacional sin el "+": ej. <code>5491156234567</code>.</li>',
+                '<li>Apretá <strong>Guardar</strong>. El cambio es inmediato — la próxima vez que un jugador abra la app verá el nuevo número.</li>',
+                '</ol>',
+                '<p style="color:#ffc850;"><strong>OJO:</strong> esto NO actualiza las líneas individuales por equipo. Cada equipo tiene su propio número (ver sección Equipos).</p>',
+                '<p>Si lo que se cayó es la línea de <em>un equipo específico</em>, no toques el principal — usá <strong>🚨 Caída de línea</strong>.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-equipamiento',
+            icon: '📊',
+            title: 'Equipos y contactos por línea — cómo se cargan',
+            body: [
+                '<p>Cada equipo (Oro, Plata, Bronce, etc.) tiene <strong>una o más líneas de WhatsApp</strong>. Cada usuario está asignado a una línea según el prefijo de su username (ej: usernames que arrancan con <code>oro_</code> caen al equipo Oro).</p>',
+                '<p><strong>Para cargar/cambiar el listado de líneas:</strong></p>',
+                '<ol>',
+                '<li>Andá a <strong>📊 Equipos</strong>.</li>',
+                '<li>Cada fila es un equipo. Apretá el botón <strong>"📞 Líneas"</strong> al lado del equipo.</li>',
+                '<li>Vas a ver las líneas actuales con su número, prefijo, y cantidad de usuarios.</li>',
+                '<li>Para <strong>agregar línea</strong>: completá <em>nombre interno, número WhatsApp y prefijo</em> (ej: <code>oro_</code>, <code>vip_</code>). Apretá Agregar.</li>',
+                '<li>Para <strong>cambiar número</strong>: tocá el lápiz al lado del número. Confirmá.</li>',
+                '<li>Para <strong>borrar línea</strong>: el botón rojo. <em>Los usuarios asignados a esa línea pasan a "huérfanos"</em> — usá Reasignar Huérfanos para volver a darles línea.</li>',
+                '</ol>',
+                '<h4 style="color:#fff;margin-top:14px;">Columnas de la tabla de equipos:</h4>',
+                '<ul>',
+                '<li><strong>Equipo</strong>: nombre del grupo (Oro, Plata, etc.)</li>',
+                '<li><strong>Líneas</strong>: cantidad de números WhatsApp activos para ese equipo.</li>',
+                '<li><strong>Usuarios</strong>: cuántos jugadores están asignados.</li>',
+                '<li><strong>SIN línea</strong>: huérfanos (ver Reasignar huérfanos).</li>',
+                '<li><strong>REASIGNADO</strong>: usuarios que estaban huérfanos y la reasignación les puso una línea por prefijo o por default.</li>',
+                '<li><strong>Cargas/Retiros (ARS)</strong>: suma de plata movida en la ventana actual.</li>',
+                '<li><strong>Cargas netas</strong>: cargas − retiros (lo que efectivamente quedó dentro).</li>',
+                '<li><strong>Comisión</strong>: porcentaje liquidable para el equipo, según contrato.</li>',
+                '</ul>'
+            ].join('')
+        },
+        {
+            anchor: 'help-stats',
+            icon: '📈',
+            title: 'Estadísticas — Reportes (Diario / Semanal / Mensual) e Ingresos',
+            body: [
+                '<p>Tres reportes que miden lo mismo (cargas, retiros, comisiones) en distinta ventana de tiempo:</p>',
+                '<ul>',
+                '<li><strong>Reporte diario</strong>: lo del día (corte 00:00-23:59 ART).</li>',
+                '<li><strong>Reporte semanal</strong>: 7 días corridos.</li>',
+                '<li><strong>Reporte mensual</strong>: el mes calendario.</li>',
+                '</ul>',
+                '<p>Filtros disponibles: <em>rango de fechas, equipo, línea</em>. El reporte se actualiza al cambiar cualquier filtro.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Columnas del reporte:</h4>',
+                '<ul>',
+                '<li><strong>Equipo / Línea</strong>: agrupación.</li>',
+                '<li><strong>Cargas (ARS)</strong>: total depositado por los usuarios.</li>',
+                '<li><strong>Retiros (ARS)</strong>: total retirado.</li>',
+                '<li><strong>Cargas netas</strong>: <code>cargas − retiros</code>. Es lo que efectivamente queda en la plataforma.</li>',
+                '<li><strong>Reembolsos liquidables</strong>: lo que la línea le devuelve al jugador (porcentaje de las pérdidas, según pacto).</li>',
+                '<li><strong>Comisión equipo</strong>: la parte que cobra el equipo.</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Sección Ingresos:</h4>',
+                '<p>Es el resumen general: <em>cuánto entró menos cuánto salió, cuánto le toca a cada equipo, cuánto queda neto para la casa</em>. Sirve como dashboard de cierre.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Top engagement:</h4>',
+                '<p>Lista los <em>usuarios más activos</em> (más cargas, más logins, más sesiones). Sirve para identificar VIPs y darles trato preferencial.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-notifs',
+            icon: '🔔',
+            title: 'Notificaciones push — cómo enviar avisos a la app',
+            body: [
+                '<p>Mandás push a los celulares de los jugadores que tienen la app instalada y notificaciones activadas.</p>',
+                '<p><strong>Tipos de notificación:</strong></p>',
+                '<ul>',
+                '<li><strong>Plain (sin promo)</strong>: solo el mensaje. Útil para avisos generales.</li>',
+                '<li><strong>WhatsApp Promo</strong>: el push además activa un cartel <em>"Reclamá por WhatsApp"</em> en la app. El usuario lo toca y arranca un chat con la línea con un código que vos decidiste.</li>',
+                '<li><strong>Money giveaway (regalo de plata)</strong>: el push activa un botón <em>"Reclamá $X"</em> en la app. El usuario tap → se le acredita en JUGAYGANA. Tope total + tope por persona.</li>',
+                '</ul>',
+                '<p><strong>Audiencia:</strong></p>',
+                '<ul>',
+                '<li><strong>Todos</strong>: todos los users con app+notifs.</li>',
+                '<li><strong>Por prefijo</strong>: solo los que arrancan con cierto prefijo (ej: <code>oro_</code>).</li>',
+                '<li><strong>Solo a un user</strong>: para tests o casos puntuales.</li>',
+                '</ul>',
+                '<p><strong>Programar para más tarde:</strong> elegís fecha/hora y se manda solo a esa hora. Pendientes se ven en la lista de "Programadas".</p>',
+                '<p><strong>Historial de notificaciones</strong>: todo lo enviado queda guardado con stats (cuántos llegaron, cuántos clickearon, cuántos reclamaron el regalo).</p>',
+                '<p style="background:rgba(255,80,80,0.06);border-left:3px solid #ff5050;padding:10px 12px;margin-top:10px;border-radius:6px;"><strong style="color:#ff5050;">CUIDADO:</strong> mandar push masivos quema la base. La regla del motor automático es <strong>máximo 2 notifs por user por semana</strong> — si mandás manualmente más, los users desinstalan o desactivan notifs.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-automations',
+            icon: '🤖',
+            title: 'Automatizaciones — cómo configurar la estrategia semanal',
+            body: [
+                '<p>El motor automático manda <strong>2 campañas a la semana</strong>:</p>',
+                '<ul>',
+                '<li><strong>Lunes (Netwin Gift)</strong>: regalo de plata a usuarios que <em>perdieron la semana pasada</em>. El monto se calcula por tier según pérdida.</li>',
+                '<li><strong>Jueves (Tier Bonus)</strong>: bonus reclamable por WhatsApp para usuarios <em>fidelizados con muchos reembolsos acumulados</em> en el último período (Oro/Plata/Bronce).</li>',
+                '<li><strong>Miércoles (Reporte ROI)</strong>: NO es push — es un informe interno que mide si las campañas anteriores funcionaron (cargas pre vs post).</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Configuración:</h4>',
+                '<p>En <strong>🤖 Automatizaciones</strong> tenés:</p>',
+                '<ul>',
+                '<li><strong>Pausar / despausar</strong>: por X horas (max 30 días). Útil si vas de viaje o querés freezar la campaña.</li>',
+                '<li><strong>Presupuesto semanal</strong>: monto máximo total que el motor puede regalar/comprometer en la semana (default $500.000).</li>',
+                '<li><strong>Cap por user</strong>: cuántos pushes recibe como máximo cada user por semana (default 2). El motor respeta este tope <em>incluso si manualmente mandaste más</em>.</li>',
+                '<li><strong>Cooldown</strong>: horas mínimas entre dos pushes al mismo user.</li>',
+                '<li><strong>Ejecutar ahora</strong>: dispara la campaña del día (lunes/jueves) sin esperar el cron. Útil para tests.</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Tiers para Netwin Gift (ejemplo):</h4>',
+                '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-top:6px;">',
+                '<tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:6px;color:#aaa;">Pérdida semanal</th><th style="text-align:right;padding:6px;color:#aaa;">Regalo</th></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#fff;">$500.000+</td><td style="padding:6px;text-align:right;color:#ffd700;">$15.000</td></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#fff;">$200k–500k</td><td style="padding:6px;text-align:right;color:#ffd700;">$10.000</td></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#fff;">$100k–200k</td><td style="padding:6px;text-align:right;color:#ffd700;">$5.000</td></tr>',
+                '<tr><td style="padding:6px;color:#fff;">$50k–100k</td><td style="padding:6px;text-align:right;color:#ffd700;">$2.500</td></tr>',
+                '</table>',
+                '<p style="margin-top:10px;">Los montos exactos los ajustás desde el config del motor.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">ROI por difusión:</h4>',
+                '<p>Cada campaña queda con <em>plan detallado per-user</em> (qué se le iba a dar y por qué) + clasificación post-campaña en 4 grupos:</p>',
+                '<ul>',
+                '<li><strong>Converter</strong>: reclamó el regalo y cargó MÁS post-push.</li>',
+                '<li><strong>Passive</strong>: reclamó el regalo pero NO cargó después.</li>',
+                '<li><strong>No response</strong>: ni reclamó ni cargó.</li>',
+                '<li><strong>Regressive</strong>: cargó MENOS después que antes.</li>',
+                '</ul>',
+                '<p>Mirá esto cada semana — te dice si la campaña valió la plata.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-active',
+            icon: '🎯',
+            title: 'Clientes activos sin app — segmentos y campañas WhatsApp',
+            body: [
+                '<p>Lista de jugadores que <strong>NO tienen la app instalada</strong> (o no aceptaron notificaciones). Tu target para fidelizar por WhatsApp.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Segmentos por recency (días desde última carga):</h4>',
+                '<ul>',
+                '<li>🔥 <strong>Calientes</strong> (0-30 días): cargaron hace nada, son los más fáciles. Mandales WhatsApp inmediato con el welcome bonus.</li>',
+                '<li>😴 <strong>Tibios</strong> (30-90 días): empezaron a despegarse. Bonus de recuperación + WhatsApp personalizado.</li>',
+                '<li>🥶 <strong>Fríos</strong> (90-180 días): semi-perdidos. Necesitan un regalo más fuerte para volver.</li>',
+                '<li>❄️ <strong>Congelados</strong> (180+ días): perdidos hace tiempo. Último intento — campaña masiva con bonus alto.</li>',
+                '<li>👻 <strong>Nunca cargaron</strong>: se registraron pero no depositaron. Welcome bonus de $10.000 + WhatsApp es la clave.</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Cómo usar:</h4>',
+                '<ol>',
+                '<li>Apretá un segmento del <em>panorama</em> arriba (o usá el selector "Segmento").</li>',
+                '<li>La lista por equipo se filtra y mostrá solo ese segmento.</li>',
+                '<li>Apretá <strong>📥 Descargar CSV</strong> para bajar la lista completa con username, número, equipo, monto cargado y días de inactividad.</li>',
+                '<li>Pasá el CSV al equipo de WhatsApp para que arranque la campaña.</li>',
+                '</ol>',
+                '<h4 style="color:#fff;margin-top:14px;">Filtros adicionales:</h4>',
+                '<ul>',
+                '<li><strong>Ventana lookup</strong>: hasta cuántos días miramos atrás. Para "fríos" / "congelados" subí a 365 o 730 días.</li>',
+                '<li><strong>Mín. depósitos</strong>: poné 0 si querés incluir users que se registraron pero no depositaron (segmento "nunca").</li>',
+                '<li><strong>Mín. ARS</strong>: filtrá por tamaño — útil para targetear solo a los que cargaron mucho.</li>',
+                '<li><strong>Mostrar</strong>: "Solo SIN app+notifs" (default) vs "Todos".</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Reportes guardados:</h4>',
+                '<p>Apretá <strong>"🛠 Generar reporte ahora"</strong> para crear una <em>foto fija</em> con los filtros actuales. Quedá guardada en la lista de reportes manuales para que cualquiera del equipo la baje sin tener que recalcular.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-linedown',
+            icon: '🚨',
+            title: 'Caída de línea — qué hacer cuando un número se cae',
+            body: [
+                '<p>Cuando WhatsApp baña una línea (la banean por X razón), tenés que avisarle a los jugadores afectados <em>inmediatamente</em> el nuevo número.</p>',
+                '<p><strong>Cómo funciona:</strong></p>',
+                '<ol>',
+                '<li>Andá a <strong>🚨 Caída de línea</strong>.</li>',
+                '<li>Elegí el equipo afectado.</li>',
+                '<li>Ingresá el nuevo número.</li>',
+                '<li>(Opcional) Activá un bonus de regalo de plata como compensación.</li>',
+                '<li>Apretá <strong>"Difundir cambio de número"</strong>.</li>',
+                '</ol>',
+                '<p><strong>Qué hace internamente:</strong></p>',
+                '<ul>',
+                '<li>Le manda push a TODOS los users del equipo con el aviso del cambio.</li>',
+                '<li>Actualiza el <code>linePhone</code> de cada user.</li>',
+                '<li>Guarda el evento en el historial con el número viejo + nuevo + cuántos affected.</li>',
+                '<li>Si activaste bonus, crea un MoneyGiveaway con audienceWhitelist = users del equipo.</li>',
+                '</ul>',
+                '<p style="background:rgba(255,80,80,0.06);border-left:3px solid #ff5050;padding:10px 12px;margin-top:10px;border-radius:6px;"><strong style="color:#ff5050;">OJO:</strong> esto NO cambia el número del listado de líneas en Equipos — ese lo cambiás aparte si querés que el cambio sea permanente. La caída es un aviso de emergencia.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-welcome',
+            icon: '🎁',
+            title: 'Welcome bonus — cómo se reclama y cómo seguir el reporte',
+            body: [
+                '<p>Todo usuario nuevo tiene <strong>$10.000 de welcome bonus</strong> esperándolo. Para reclamarlo necesita:</p>',
+                '<ol>',
+                '<li>Bajar la app.</li>',
+                '<li>Loguearse (con su user de JUGAYGANA).</li>',
+                '<li>Aceptar notificaciones push.</li>',
+                '<li>Apretar el botón "Reclamar" — la plata se le acredita directo en JUGAYGANA.</li>',
+                '</ol>',
+                '<p><strong>El reporte de Welcome Bonus</strong> te muestra:</p>',
+                '<ul>',
+                '<li><strong>Total reclamado</strong>: cuántos lo activaron.</li>',
+                '<li><strong>Por equipo</strong>: distribución de reclamos por línea.</li>',
+                '<li><strong>Conversión</strong>: cuántos cargaron plata DESPUÉS de reclamar el bonus (señal de que vale la pena).</li>',
+                '</ul>',
+                '<p>Si la conversión es baja, hay que ajustar: o subir el monto, o cambiar el copy del aviso, o targetear mejor.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-refunds',
+            icon: '💸',
+            title: 'Reembolsos — qué son y cómo se calculan',
+            body: [
+                '<p>Cada equipo tiene un pacto de <strong>devolverle un porcentaje de las pérdidas</strong> al jugador (típico 10-25%). Eso se llama "reembolso" y se paga semanal o mensual.</p>',
+                '<p><strong>Cómo se calcula:</strong></p>',
+                '<ol>',
+                '<li>Sumamos cargas del jugador en la ventana.</li>',
+                '<li>Restamos retiros del jugador en esa ventana.</li>',
+                '<li>Si <code>cargas − retiros &gt; 0</code>, el jugador <em>perdió plata</em>. La línea le debe el % pactado de esa diferencia.</li>',
+                '<li>Si retiró más de lo que cargó, <em>no hay reembolso</em>.</li>',
+                '</ol>',
+                '<p>El reporte muestra el <strong>total a reembolsar</strong> por equipo y por línea. La línea liquida en mano vía WhatsApp con el jugador — el panel solo te da el monto.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-orphans',
+            icon: '🔁',
+            title: 'Reasignar huérfanos — qué son y cómo asignarles línea',
+            body: [
+                '<p>"Huérfano" = un user que NO tiene línea asignada (<code>lineTeamName=null</code>). Pasa cuando:</p>',
+                '<ul>',
+                '<li>Borraste una línea sin reasignar.</li>',
+                '<li>El user se registró antes de que armaras los equipos.</li>',
+                '<li>Su prefijo no coincide con ninguna línea actual.</li>',
+                '</ul>',
+                '<p><strong>Cómo reasignar:</strong></p>',
+                '<ol>',
+                '<li>En <strong>📊 Equipos</strong> apretá <strong>"🔁 Reasignar huérfanos"</strong>.</li>',
+                '<li>Te muestra <em>preview</em>: cuántos van a hacer match por prefijo, cuántos caen al equipo default ("GENERAL"), cuántos no resuelven.</li>',
+                '<li>Si te parece bien, confirmá. Quedan asignados con <code>lineAssignmentSource=auto-prefix</code> o <code>auto-default</code>.</li>',
+                '</ol>',
+                '<p><strong>Algoritmo:</strong></p>',
+                '<ol>',
+                '<li>Para cada user huérfano, mira si su <em>username arranca con un prefijo</em> de alguna línea (ej: <code>oro_juan</code> → línea con prefix <code>oro_</code>).</li>',
+                '<li>Si match → le asigna esa línea.</li>',
+                '<li>Si NO match → cae al equipo default (si hay uno). Si no hay default, queda sin resolver.</li>',
+                '</ol>'
+            ].join('')
+        },
+        {
+            anchor: 'help-glossary',
+            icon: '📚',
+            title: 'Glosario de términos',
+            body: [
+                '<dl style="display:grid;grid-template-columns:1fr 2fr;gap:6px 14px;font-size:12px;">',
+                '<dt style="color:#00d4ff;font-weight:700;">JUGAYGANA</dt><dd>Plataforma de juego donde se mueve la plata real. Este panel se conecta a su API.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">FCM</dt><dd>Firebase Cloud Messaging — el servicio que entrega los push a los celulares.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">app+notifs</dt><dd>User que tiene la app instalada Y aceptó notificaciones. Solo a estos les podés mandar push.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">netwin</dt><dd>Pérdida del jugador = cargas − retiros. Si es positivo, perdió plata (lo que la casa ganó).</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">cap semanal</dt><dd>Tope de cuántos pushes recibe un user en una semana (default 2).</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">cooldown</dt><dd>Mínimo de horas entre dos pushes al mismo user.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">audienceWhitelist</dt><dd>Lista cerrada de usernames habilitados para reclamar un giveaway.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">tier</dt><dd>Categoría del jugador (Oro/Plata/Bronce) según volumen de cargas y reembolsos.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">recency</dt><dd>Cuánto hace que el jugador hizo su última actividad. Define el segmento (hot/warm/cool/cold).</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">ROI</dt><dd>Return On Investment. Mide si la plata regalada generó más cargas en respuesta.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">control group</dt><dd>Users que cumplían criterio pero NO recibieron (por cap o cooldown). Sirve para comparar y aislar el efecto real de la campaña.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">prefix</dt><dd>Las primeras letras del username que indican a qué línea/equipo pertenece (ej: <code>oro_</code>).</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">huérfano</dt><dd>User sin línea asignada.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">strategySource</dt><dd>Origen de un giveaway: <code>auto-strategy</code> (motor semanal), <code>auto-rule</code> (regla aprobada), <code>manual</code> (admin desde panel).</dd>',
+                '</dl>'
+            ].join('')
+        }
+    ];
 }
