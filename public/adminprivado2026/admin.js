@@ -2451,6 +2451,7 @@ function renderTopMetrics(d) {
     const w = d.weekly || {};
     const rec = d.recoverable || {};
     const recv = d.recovery || {};
+    const an = d.appNotifs || null;
 
     const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
 
@@ -2471,7 +2472,70 @@ function renderTopMetrics(d) {
         'Bonos: ' + fmtMoney(recv.totalBonus) + ' → cargas: ' + fmtMoney(recv.totalRealDeposit),
         '#9b30ff');
 
+    // Chip de salud del canal de push: cuántos tienen app + notifs hoy,
+    // cómo cambió vs ayer / vs hace 7 días, y sparkline de los últimos 30 días.
+    if (an) {
+        html += _appNotifChip(an);
+    }
+
     el.innerHTML = html;
+}
+
+// Chip especial con sparkline del canal app+notifs.
+function _appNotifChip(an) {
+    const today = Number(an.today || 0);
+    const dY = an.deltaYesterday;
+    const d7 = an.delta7d;
+    const cov = Number(an.coveragePct || 0);
+
+    const fmtDelta = (v) => {
+        if (v == null) return '<span style="color:#888;">— sin datos</span>';
+        const n = Number(v);
+        const sign = n > 0 ? '+' : '';
+        const color = n > 0 ? '#25d366' : (n < 0 ? '#ff5050' : '#aaa');
+        const arrow = n > 0 ? '↑' : (n < 0 ? '↓' : '·');
+        return '<span style="color:' + color + ';font-weight:700;">' + arrow + ' ' + sign + n + '</span>';
+    };
+
+    const series = Array.isArray(an.series) ? an.series : [];
+    const sparkline = _renderSparkline(series.map(s => Number(s.withBoth || 0)));
+
+    const sub =
+        '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
+            '<span style="font-size:10px;color:#888;">Ayer:</span> ' + fmtDelta(dY) +
+            '<span style="font-size:10px;color:#888;margin-left:6px;">7d:</span> ' + fmtDelta(d7) +
+        '</div>' +
+        '<div style="color:#aaa;font-size:10px;margin-bottom:4px;">' +
+            cov + '% del total · ' + (an.totalUsersToday || 0) + ' usuarios' +
+        '</div>' +
+        sparkline;
+
+    return _bigChip('📲 Con app + notifs', String(today), sub, '#00d4ff');
+}
+
+// Sparkline simple en SVG: 30 puntos, polyline, sin labels.
+// Sin librerías — un SVG inline pequeño.
+function _renderSparkline(values) {
+    if (!Array.isArray(values) || values.length < 2) {
+        return '<div style="color:#666;font-size:10px;">Acumulando datos…</div>';
+    }
+    const w = 200, h = 36;
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, 0);
+    const range = max - min || 1;
+    const stepX = w / (values.length - 1);
+    const points = values.map((v, i) => {
+        const x = i * stepX;
+        const y = h - ((v - min) / range) * (h - 4) - 2;
+        return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    const last = values[values.length - 1];
+    const lastX = (values.length - 1) * stepX;
+    const lastY = h - ((last - min) / range) * (h - 4) - 2;
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" style="width:100%;height:36px;display:block;">' +
+        '<polyline points="' + points + '" fill="none" stroke="#00d4ff" stroke-width="1.5" stroke-linejoin="round"/>' +
+        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="2.5" fill="#00d4ff"/>' +
+    '</svg>';
 }
 
 function _bigChip(label, value, sub, color) {

@@ -30,7 +30,8 @@ const {
   RecoveryPush,
   JugayganaImport,
   DailyPlayerStats,
-  UserLineLookup
+  UserLineLookup,
+  AppNotifSnapshot
 } = require('../src/models');
 
 // ============================================
@@ -334,6 +335,7 @@ module.exports = {
   JugayganaImport,
   DailyPlayerStats,
   UserLineLookup,
+  AppNotifSnapshot,
   // Helpers
   getConfig,
   setConfig,

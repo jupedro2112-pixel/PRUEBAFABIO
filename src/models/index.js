@@ -28,6 +28,7 @@ const RecoveryPush = require('./RecoveryPush');
 const JugayganaImport = require('./JugayganaImport');
 const DailyPlayerStats = require('./DailyPlayerStats');
 const UserLineLookup = require('./UserLineLookup');
+const AppNotifSnapshot = require('./AppNotifSnapshot');
 
 
 /**
@@ -428,6 +429,7 @@ module.exports = {
   JugayganaImport,
   DailyPlayerStats,
   UserLineLookup,
+  AppNotifSnapshot,
 
   // Funciones de conexión
   connectDB,

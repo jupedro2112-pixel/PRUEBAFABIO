@@ -65,6 +65,7 @@ const {
   JugayganaImport,
   DailyPlayerStats,
   UserLineLookup,
+  AppNotifSnapshot,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -8733,6 +8734,164 @@ async function _executeScheduledNotification(sched) {
 setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
 
+// ============================================================
+// SNAPSHOT DIARIO DE SALUD DEL CANAL DE PUSH
+// ============================================================
+// Cada día a las 00:05 ART contamos cuántos usuarios tienen PWA instalada
+// (algún fcmToken con context='standalone') y notificaciones concedidas
+// (algún fcmToken con notifPermission='granted'). Es la métrica que importa
+// para saber si el canal de re-engagement crece o se erosiona.
+//
+// Bootstrap: al primer arranque después del deploy, si no hay snapshots,
+// reconstruimos los últimos 30 días aproximadamente desde fcmToken.updatedAt.
+// La aproximación NO resta desinstalaciones del pasado, así que la curva
+// histórica es un piso, no un valor exacto. Desde el primer cron real, los
+// snapshots son exactos.
+// ============================================================
+function _appNotifTodayKey() {
+  const { year, month, day } = _getArgentinaParts();
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function _appNotifKeyFromMs(ms) {
+  const { year, month, day } = _getArgentinaParts(new Date(ms));
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+// Cuenta los 4 totales con la misma lógica que /api/admin/reports/equipment
+// para que las cifras sean consistentes entre paneles.
+async function _computeAppNotifTotalsNow() {
+  const users = await User.find(
+    { role: 'user' },
+    { fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, _id: 0 }
+  ).lean();
+
+  let withApp = 0, withNotifs = 0, withBoth = 0;
+  for (const u of users) {
+    const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+    const standaloneTokens = tokens.filter(t => t && t.context === 'standalone');
+    const hasApp = (u.fcmTokenContext === 'standalone' || standaloneTokens.length > 0);
+    const hasNotifs = (
+      u.notifPermission === 'granted' ||
+      tokens.some(t => t && t.notifPermission === 'granted')
+    );
+    if (hasApp) withApp++;
+    if (hasNotifs) withNotifs++;
+    if (hasApp && hasNotifs) withBoth++;
+  }
+  return { totalUsers: users.length, withApp, withNotifs, withBoth };
+}
+
+async function _writeAppNotifSnapshot(dateKey, source = 'cron') {
+  try {
+    const totals = await _computeAppNotifTotalsNow();
+    await AppNotifSnapshot.findOneAndUpdate(
+      { dateKey },
+      { $set: { ...totals, source } },
+      { upsert: true, new: true }
+    );
+    logger.info(`[app-notif-snapshot] ${dateKey} (${source}): app=${totals.withApp} notif=${totals.withNotifs} both=${totals.withBoth} / ${totals.totalUsers}`);
+  } catch (err) {
+    logger.error(`[app-notif-snapshot] error: ${err.message}`);
+  }
+}
+
+// Reconstrucción aproximada de los últimos 30 días leyendo fcmToken.updatedAt.
+// Para cada día D del rango, contamos usuarios donde:
+//  - createdAt <= fin del día D, Y
+//  - tienen al menos un fcmToken con context='standalone' Y updatedAt <= fin
+//    del día D, Y notifPermission='granted' (o el campo legacy).
+// Limitación: usuarios que se instalaron Y desinstalaron antes del rango
+// no figuran; usuarios que se instalaron en el rango y luego desinstalaron
+// figurarán como instalados (sobrestima). Es un piso aproximado.
+async function _bootstrapAppNotifSnapshots() {
+  try {
+    const existingCount = await AppNotifSnapshot.countDocuments({});
+    if (existingCount > 0) return; // ya hay datos, no rehacemos
+
+    const todayKey = _appNotifTodayKey();
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000; // ART es UTC-3
+    const todayStartArtMs = new Date(todayKey + 'T00:00:00Z').getTime() + ART_OFFSET_MS;
+
+    // Traemos la base completa una sola vez (heavy pero one-shot).
+    const users = await User.find(
+      { role: 'user' },
+      { createdAt: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, _id: 0 }
+    ).lean();
+
+    const ops = [];
+    for (let d = 30; d >= 1; d--) {
+      const dayEndMs = todayStartArtMs - (d - 1) * 24 * 60 * 60 * 1000 - 1; // fin del día D
+      const dayKeyMs = todayStartArtMs - d * 24 * 60 * 60 * 1000;
+      const dateKey = _appNotifKeyFromMs(dayKeyMs);
+
+      let totalUsers = 0, withApp = 0, withNotifs = 0, withBoth = 0;
+      for (const u of users) {
+        const createdMs = u.createdAt ? new Date(u.createdAt).getTime() : 0;
+        if (!createdMs || createdMs > dayEndMs) continue;
+        totalUsers++;
+
+        const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+        const standaloneTokens = tokens.filter(t =>
+          t && t.context === 'standalone' &&
+          t.updatedAt && new Date(t.updatedAt).getTime() <= dayEndMs
+        );
+        const grantedTokens = tokens.filter(t =>
+          t && t.notifPermission === 'granted' &&
+          t.updatedAt && new Date(t.updatedAt).getTime() <= dayEndMs
+        );
+        const hasApp = standaloneTokens.length > 0;
+        const hasNotifs = grantedTokens.length > 0 || u.notifPermission === 'granted';
+        if (hasApp) withApp++;
+        if (hasNotifs) withNotifs++;
+        if (hasApp && hasNotifs) withBoth++;
+      }
+
+      ops.push({
+        updateOne: {
+          filter: { dateKey },
+          update: { $set: { dateKey, totalUsers, withApp, withNotifs, withBoth, source: 'bootstrap-approx' } },
+          upsert: true
+        }
+      });
+    }
+
+    if (ops.length > 0) {
+      await AppNotifSnapshot.bulkWrite(ops, { ordered: false });
+      logger.info(`[app-notif-snapshot] bootstrap aproximado: ${ops.length} días reconstruidos`);
+    }
+  } catch (err) {
+    logger.error(`[app-notif-snapshot] bootstrap error: ${err.message}`);
+  }
+}
+
+// Cron: corre cada hora y dispara el snapshot del día solo si la hora ART
+// es 00 (00:00-00:59). Idempotente vía upsert por dateKey, así si el server
+// se reinicia justo a esa hora no perdemos el snapshot.
+function _maybeRunAppNotifSnapshotHourly() {
+  try {
+    const { year, month, day } = _getArgentinaParts();
+    const nowArtParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      hour: '2-digit', hour12: false
+    }).formatToParts(new Date());
+    const hour = parseInt(nowArtParts.find(p => p.type === 'hour').value, 10);
+    if (hour !== 0) return; // solo al cambio de día ART
+
+    const dateKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    _writeAppNotifSnapshot(dateKey, 'cron');
+  } catch (err) {
+    logger.error(`[app-notif-snapshot] hourly check error: ${err.message}`);
+  }
+}
+
+// Bootstrap al boot (con delay para no chocar con la conexión a Mongo) +
+// cron cada hora.
+setTimeout(() => { _bootstrapAppNotifSnapshots(); }, 90 * 1000);
+// Snapshot adicional al boot (best-effort, si todavía no existe el del día)
+setTimeout(() => { _writeAppNotifSnapshot(_appNotifTodayKey(), 'cron'); }, 120 * 1000);
+setInterval(() => { _maybeRunAppNotifSnapshotHourly(); }, 60 * 60 * 1000);
+
 // ============================================
 // ESTADISTICAS ESTRATEGICAS — segmentacion + recuperacion + ROI
 // ============================================
@@ -9480,6 +9639,56 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
         : 0
     };
 
+    // Salud del canal de push (app instalada + notifs concedidas).
+    // Mezclamos el snapshot persistido (cron diario) con el conteo en vivo
+    // para que el "hoy" sea siempre exacto, aunque el cron de las 00:05 no
+    // haya corrido todavía.
+    let appNotifs = null;
+    try {
+      const todayKey = _appNotifTodayKey();
+      // Live count para "hoy" (refleja altas/bajas del día corriente).
+      const live = await _computeAppNotifTotalsNow();
+      // Histórico: traemos los últimos 30 snapshots distintos del de hoy.
+      const past = await AppNotifSnapshot.find({ dateKey: { $lt: todayKey } })
+        .sort({ dateKey: -1 }).limit(30).lean();
+      // Orden cronológico ASC para la sparkline.
+      const series = past.slice().reverse().map(s => ({
+        dateKey: s.dateKey,
+        withBoth: s.withBoth || 0,
+        withApp: s.withApp || 0,
+        withNotifs: s.withNotifs || 0,
+        totalUsers: s.totalUsers || 0,
+        source: s.source
+      }));
+      // Le pegamos el dato de hoy al final.
+      series.push({
+        dateKey: todayKey,
+        withBoth: live.withBoth,
+        withApp: live.withApp,
+        withNotifs: live.withNotifs,
+        totalUsers: live.totalUsers,
+        source: 'live'
+      });
+
+      const today = live.withBoth;
+      const yesterday = series.length >= 2 ? series[series.length - 2].withBoth : null;
+      const sevenAgo = series.length >= 8 ? series[series.length - 8].withBoth : null;
+      appNotifs = {
+        today,
+        totalUsersToday: live.totalUsers,
+        withAppToday: live.withApp,
+        withNotifsToday: live.withNotifs,
+        deltaYesterday: yesterday != null ? today - yesterday : null,
+        delta7d: sevenAgo != null ? today - sevenAgo : null,
+        coveragePct: live.totalUsers > 0
+          ? Number(((today / live.totalUsers) * 100).toFixed(1))
+          : 0,
+        series
+      };
+    } catch (e) {
+      logger.warn(`/api/admin/stats/segments appNotifs error: ${e.message}`);
+    }
+
     res.json({
       matrix,
       tierTotals,
@@ -9492,7 +9701,8 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
         byTier: recoverableByTier,
         potentialRevenue: Math.round(potentialRevenue)
       },
-      urgentSegments
+      urgentSegments,
+      appNotifs
     });
   } catch (error) {
     logger.error(`/api/admin/stats/segments: ${error.message}`);
