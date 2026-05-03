@@ -1582,9 +1582,17 @@ function _renderGiveawayStatusBox() {
     box.style.fontSize = '13px';
     box.style.lineHeight = '1.6';
 
+    // Badge prominente que muestra si el regalo está restringido a usuarios
+    // sin saldo. Si NO lo está, mostramos un warning rojo para que el admin
+    // se dé cuenta a simple vista de que cualquiera puede reclamarlo.
+    const zeroBalanceBadge = g.requireZeroBalance
+        ? '<span style="background:#ffaa00;color:#000;font-weight:800;padding:4px 10px;border-radius:6px;font-size:11px;text-transform:uppercase;letter-spacing:1px;" title="Solo usuarios con saldo $0 en JUGAYGANA pueden reclamar">🎯 Solo sin saldo</span>'
+        : '<span style="background:#ff5050;color:#fff;font-weight:800;padding:4px 10px;border-radius:6px;font-size:11px;text-transform:uppercase;letter-spacing:1px;" title="Cualquier usuario puede reclamar — no se verifica saldo">⚠ Abierto a todos</span>';
+
     box.innerHTML =
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">' +
             '<span style="background:#25d366;color:#000;font-weight:800;padding:4px 10px;border-radius:6px;font-size:12px;text-transform:uppercase;letter-spacing:1px;">🎁 Regalo activo</span>' +
+            zeroBalanceBadge +
             '<span style="color:#fff;font-weight:700;font-size:14px;">Vence en <span style="color:#ffd700;font-family:monospace;font-size:16px;">' + countdownStr + '</span></span>' +
         '</div>' +
         '<div style="margin-bottom:6px;">' + audienceLine + '</div>' +
