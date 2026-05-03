@@ -4536,6 +4536,9 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         timestamp: new Date()
       });
 
+      // Invalidar cache del total regalado para que el home se actualice.
+      _totalGiveawayCache.ts = 0;
+
       res.json({
         success: true,
         message: `¡Reembolso diario de $${refundAmount} acreditado!`,
@@ -4704,6 +4707,9 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
         timestamp: new Date()
       });
+
+      // Invalidar cache del total regalado.
+      _totalGiveawayCache.ts = 0;
 
       res.json({
         success: true,
@@ -4906,6 +4912,9 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         transactionId: depositResult.data?.transfer_id || depositResult.data?.transferId,
         timestamp: new Date()
       });
+
+      // Invalidar cache del total regalado.
+      _totalGiveawayCache.ts = 0;
 
       res.json({
         success: true,
@@ -7733,6 +7742,9 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
         timestamp: new Date()
       });
 
+      // Invalidar cache del total regalado.
+      _totalGiveawayCache.ts = 0;
+
       // Programar notif a 10 min para informar el código de retiro RETIRO10.
       // Filtra a la gente que reclama el bono y desinstala antes de cargar:
       // si la app fue desinstalada en esos 10min, la push no llega y no
@@ -8713,7 +8725,7 @@ app.get('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req
 // (todo el historico, sin filtro de fecha). Lo usa el home para
 // mostrar "Total plata regalada a usuarios con app + notifs: $X".
 // Cache simple in-memory de 5 min para no recalcular en cada hit.
-let _totalGiveawayCache = { ts: 0, amount: 0, count: 0 };
+let _totalGiveawayCache = { ts: 0, amount: 0, count: 0, breakdown: null };
 app.get('/api/giveaway-stats/total', authMiddleware, async (req, res) => {
   try {
     const NOW = Date.now();
@@ -8721,29 +8733,64 @@ app.get('/api/giveaway-stats/total', authMiddleware, async (req, res) => {
     // (que el numero del home se vea actualizado pronto despues de que
     // alguien reclame). Cada claim exitoso ademas invalida el cache.
     const TTL = 60 * 1000;
-    if (NOW - _totalGiveawayCache.ts < TTL) {
+    if (NOW - _totalGiveawayCache.ts < TTL && _totalGiveawayCache.breakdown) {
       return res.json({
         amount: _totalGiveawayCache.amount,
         count: _totalGiveawayCache.count,
+        breakdown: _totalGiveawayCache.breakdown,
         cached: true
       });
     }
 
-    const agg = await MoneyGiveawayClaim.aggregate([
-      { $match: { status: 'completed' } },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$amount' },
-          count: { $sum: 1 }
+    // Sumamos TODA la plata que la casa regaló a usuarios desde la app:
+    //   1) Money giveaways (campañas de difusión) — MoneyGiveawayClaim status=completed
+    //   2) Bono de bienvenida $10.000 — RefundClaim type=welcome_install (claims completados)
+    //   3) Reembolsos daily/weekly/monthly — RefundClaim type ∈ {daily,weekly,monthly}
+    //
+    // Solo cuentan claims acreditados (status='completed' / status default
+    // en RefundClaim) — los pending_credit_failed NO suman porque la plata
+    // nunca se acreditó realmente al usuario.
+    const [giveawayAgg, refundAgg] = await Promise.all([
+      MoneyGiveawayClaim.aggregate([
+        { $match: { status: 'completed' } },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+      ]),
+      RefundClaim.aggregate([
+        { $match: { status: { $ne: 'pending_credit_failed' } } },
+        {
+          $group: {
+            _id: '$type',
+            total: { $sum: '$amount' },
+            count: { $sum: 1 }
+          }
         }
-      }
+      ])
     ]);
 
-    const amount = agg.length > 0 ? Number(agg[0].total || 0) : 0;
-    const count = agg.length > 0 ? Number(agg[0].count || 0) : 0;
-    _totalGiveawayCache = { ts: NOW, amount, count };
-    res.json({ amount, count, cached: false });
+    const giveawayAmount = giveawayAgg.length > 0 ? Number(giveawayAgg[0].total || 0) : 0;
+    const giveawayCount = giveawayAgg.length > 0 ? Number(giveawayAgg[0].count || 0) : 0;
+
+    const breakdown = {
+      giveaway: { amount: giveawayAmount, count: giveawayCount },
+      welcome:  { amount: 0, count: 0 },
+      daily:    { amount: 0, count: 0 },
+      weekly:   { amount: 0, count: 0 },
+      monthly:  { amount: 0, count: 0 }
+    };
+    for (const r of refundAgg) {
+      const key = r._id; // 'welcome_install' | 'daily' | 'weekly' | 'monthly'
+      const bucket = key === 'welcome_install' ? 'welcome' : key;
+      if (breakdown[bucket]) {
+        breakdown[bucket].amount = Number(r.total || 0);
+        breakdown[bucket].count = Number(r.count || 0);
+      }
+    }
+
+    const amount = giveawayAmount + breakdown.welcome.amount + breakdown.daily.amount + breakdown.weekly.amount + breakdown.monthly.amount;
+    const count = giveawayCount + breakdown.welcome.count + breakdown.daily.count + breakdown.weekly.count + breakdown.monthly.count;
+
+    _totalGiveawayCache = { ts: NOW, amount, count, breakdown };
+    res.json({ amount, count, breakdown, cached: false });
   } catch (error) {
     logger.error(`/api/giveaway-stats/total error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
