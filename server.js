@@ -7825,14 +7825,26 @@ async function _maybeCloseGiveaway(g) {
 }
 
 // GET publico (auth): regalo activo para este user.
+//
+// Devuelve el regalo MIENTRAS esté dentro de la ventana original de tiempo,
+// incluso si se agotó el cupo o el presupuesto antes — en esos casos
+// soldOut=true para que el frontend lo muestre como "llegaste tarde".
+// Solo se oculta cuando expiresAt vence (closed_expired) o si el admin lo
+// canceló manualmente.
 app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
   try {
     const username = req.user.username || '';
     const userId = req.user.userId;
 
-    const g = await MoneyGiveaway.findOne({ status: 'active' })
-      .sort({ createdAt: -1 })
-      .lean();
+    // Buscar el regalo más reciente que aún esté dentro del tiempo programado:
+    // - status='active': normal
+    // - status='closed_max'/'closed_budget': agotado pero sigue visible hasta expirar
+    // El status='cancelled'/'closed_expired' los excluye.
+    const now = new Date();
+    const g = await MoneyGiveaway.findOne({
+      status: { $in: ['active', 'closed_max', 'closed_budget'] },
+      expiresAt: { $gt: now }
+    }).sort({ createdAt: -1 }).lean();
     if (!g) return res.json({ active: false });
 
     // Filtro por prefix.
@@ -7840,9 +7852,24 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
       return res.json({ active: false });
     }
 
-    // Auto-cierre lazy si vencio o se agoto.
-    const fresh = await _maybeCloseGiveaway({ ...g });
-    if (fresh.status !== 'active') return res.json({ active: false });
+    // Auto-cierre lazy SOLO por expiración o por reservas (cupo/budget).
+    // Si está en closed_max/closed_budget pero todavía no venció, no lo cerramos a closed_expired.
+    if (g.status === 'active') {
+      const fresh = await _maybeCloseGiveaway({ ...g });
+      if (fresh.status === 'closed_expired' || fresh.status === 'cancelled') {
+        return res.json({ active: false });
+      }
+      // Si se cerró por cupo/budget acá, sigue siendo soldOut (continuamos abajo).
+      g.status = fresh.status;
+      g.claimedCount = fresh.claimedCount;
+      g.totalGiven = fresh.totalGiven;
+    }
+
+    // Detectar sold-out.
+    const soldOut = g.status === 'closed_max' || g.status === 'closed_budget';
+    const soldOutReason = g.status === 'closed_max' ? 'max'
+                       : g.status === 'closed_budget' ? 'budget'
+                       : null;
 
     // Chequear si este user ya reclamo.
     const existing = await MoneyGiveawayClaim.findOne({
@@ -7853,8 +7880,9 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
     // Si el regalo exige saldo cero, pre-chequeamos para que el frontend
     // pueda mostrar "no disponible" en vez del botón. No tira error si el
     // lookup falla (el rechazo final está en el endpoint de claim).
+    // Si ya está soldOut o el user ya reclamó, no hace falta el lookup.
     let notEligibleReason = null;
-    if (g.requireZeroBalance) {
+    if (g.requireZeroBalance && !soldOut && !existing) {
       try {
         const jgUser = await Promise.race([
           jugaygana.getUserInfoByName(username),
@@ -7881,9 +7909,13 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
       totalGiven: g.totalGiven || 0,
       expiresAt: g.expiresAt,
       alreadyClaimed: !!existing,
+      claimedAmount: existing ? existing.amount : null,
+      claimedAt: existing ? existing.claimedAt : null,
       notificationHistoryId: g.notificationHistoryId || null,
       requireZeroBalance: !!g.requireZeroBalance,
-      notEligibleReason
+      notEligibleReason,
+      soldOut,
+      soldOutReason
     });
   } catch (error) {
     logger.error(`/api/money-giveaway/active error: ${error.message}`);
