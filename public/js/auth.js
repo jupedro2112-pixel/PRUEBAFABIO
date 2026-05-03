@@ -627,6 +627,25 @@ VIP.auth = (function () {
     }
 
     // ============================================================
+    // BOTÓN 🚪 LOGOUT TEMPORAL — click directo, con confirmación.
+    // ============================================================
+    function wireLogoutButton() {
+        const btn = document.getElementById('logoutBtn');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            if (!VIP.state.currentToken) return;
+            if (window.confirm('¿Cerrar sesión y volver al login?')) {
+                handleLogout();
+            }
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wireLogoutButton);
+    } else {
+        wireLogoutButton();
+    }
+
+    // ============================================================
     // LOGOUT MANUAL — caminos discretos para testing.
     // El botón 🚪 está oculto a propósito (decisión vieja: evitar
     // que los jugadores cambien de cuenta constantemente). Pero el
