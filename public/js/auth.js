@@ -611,6 +611,84 @@ VIP.auth = (function () {
         wireLineChangedDismiss();
     }
 
+    // ============================================================
+    // LOGOUT MANUAL — caminos discretos para testing.
+    // El botón 🚪 está oculto a propósito (decisión vieja: evitar
+    // que los jugadores cambien de cuenta constantemente). Pero el
+    // operador necesita poder loguearse con otra cuenta para probar
+    // features. Dos atajos:
+    //   1) Long-press de 1.5s en el badge del username arriba a la
+    //      derecha → confirma → logout.
+    //   2) URL con ?logout=1 → logout instantáneo (también acepta
+    //      ?logout=now y #logout para tolerancia).
+    // ============================================================
+    function wireDiscreteLogout() {
+        const badge = document.getElementById('refundsLogoutBtn');
+        if (!badge) return;
+
+        let pressTimer = null;
+        let pressed = false;
+
+        const startPress = (e) => {
+            if (!VIP.state.currentToken) return; // no hay sesión
+            pressed = false;
+            if (pressTimer) clearTimeout(pressTimer);
+            pressTimer = setTimeout(() => {
+                pressed = true;
+                if (window.confirm('¿Cerrar sesión y volver al login?')) {
+                    handleLogout();
+                }
+            }, 1500);
+        };
+
+        const cancelPress = () => {
+            if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+        };
+
+        // Mouse
+        badge.addEventListener('mousedown', startPress);
+        badge.addEventListener('mouseup', cancelPress);
+        badge.addEventListener('mouseleave', cancelPress);
+        // Touch
+        badge.addEventListener('touchstart', startPress, { passive: true });
+        badge.addEventListener('touchend', cancelPress);
+        badge.addEventListener('touchcancel', cancelPress);
+        // Tip visual: cursor + título
+        badge.style.cursor = 'pointer';
+        badge.title = 'Mantené presionado 1.5s para cerrar sesión';
+    }
+
+    // URL trigger ?logout=1 — logout inmediato sin confirmación.
+    // Útil para testing rápido desde la barra del navegador.
+    function checkUrlLogoutTrigger() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const flag = params.get('logout');
+            const hashFlag = window.location.hash === '#logout';
+            if ((flag && (flag === '1' || flag === 'now' || flag === 'true')) || hashFlag) {
+                if (VIP.state.currentToken) {
+                    handleLogout();
+                }
+                // Limpiar la URL para que un refresh no vuelva a triggerlo.
+                params.delete('logout');
+                const newSearch = params.toString();
+                const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
+                history.replaceState(null, '', newUrl);
+            }
+        } catch (_) {}
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            wireDiscreteLogout();
+            // Pequeño delay para que el módulo de auth haya leído el token.
+            setTimeout(checkUrlLogoutTrigger, 200);
+        });
+    } else {
+        wireDiscreteLogout();
+        setTimeout(checkUrlLogoutTrigger, 200);
+    }
+
     // Cuando la app vuelve al foreground (ej: el user tocó la notif push
     // "NUEVA LINEA"), refrescar la línea para detectar cambios y mostrar
     // el banner si corresponde, sin esperar a un refresh manual.
