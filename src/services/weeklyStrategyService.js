@@ -459,6 +459,21 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
   // Filtramos también por app+notifs (deberían estarlo ya, pero defensiva).
   const blockedUsernames = blocked.map(b => b.username);
   const controlUsernames = await filterToEligibleUsernames(User, blockedUsernames);
+  // Plan per-user para forecast detallado en ROI por difusión.
+  // Se construye desde `targets` (los que efectivamente recibieron;
+  // si alguno se cayó en el re-check post-send queda fuera).
+  const allUsernamesSet = new Set(allUsernames);
+  const strategyDetails = targets
+    .filter(t => allUsernamesSet.has(t.username))
+    .map(t => ({
+      username: t.username,
+      lossARS: t.lossARS,
+      giftAmount: t.tier.giftAmount,
+      tierLabel: `${t.tier.minLoss.toLocaleString('es-AR')}–${t.tier.maxLoss.toLocaleString('es-AR')}`,
+      claimed: false,
+      classification: null
+    }));
+
   await NotificationHistory.create({
     id: historyId,
     sentAt: new Date(),
@@ -478,6 +493,7 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
       escalatedCount: escalated.length,
       escalatedSample: escalated.slice(0, 5)
     },
+    strategyDetails,
     audienceUsernames: allUsernames,
     controlGroupCount: controlUsernames.length,
     controlGroupUsernames: controlUsernames,
@@ -679,6 +695,18 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
   const allUsernames = targets.map(t => t.username);
   const blockedUsernames = blocked.map(b => b.username);
   const controlUsernames = await filterToEligibleUsernames(User, blockedUsernames);
+
+  // Plan per-user para forecast en ROI por difusión.
+  const strategyDetails = targets.map(t => ({
+    username: t.username,
+    tier: t.tier.code,
+    bonusPct: t.tier.bonusPct,
+    refundsARS: t.totalRefundsARS,
+    percentile: Math.round(t.percentile * 10) / 10,
+    claimed: false,
+    classification: null
+  }));
+
   await NotificationHistory.create({
     id: historyId,
     sentAt: new Date(),
@@ -690,6 +718,7 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
     strategyType: 'tier-bonus',
     strategyWeekKey: wk,
     strategyMeta: { tierResults, distribution },
+    strategyDetails,
     audienceUsernames: allUsernames,
     controlGroupCount: controlUsernames.length,
     controlGroupUsernames: controlUsernames,

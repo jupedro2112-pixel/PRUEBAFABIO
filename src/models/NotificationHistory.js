@@ -84,6 +84,48 @@ const notificationHistorySchema = new mongoose.Schema({
   // weekKey al que pertenece este push (si es de estrategia).
   strategyWeekKey: { type: String, default: null, index: true },
 
+  // FORECAST per-user: snapshot del plan ejecutado, una entrada por user.
+  // Incluye QUÉ se le iba a dar y CONTEXTO usado (pérdida de la semana,
+  // acumulado de reembolsos, percentil, etc). Se llena cuando se dispara
+  // la campaña, antes/durante el envío. Es el "detalle del plan" que
+  // pediste para ver en ROI por difusión apenas se confirma la estrategia.
+  strategyDetails: {
+    type: [{
+      username: String,
+      // Para netwin-gift:
+      lossARS: Number,            // pérdida computada de la semana
+      giftAmount: Number,         // monto ARS regalado
+      tierLabel: String,          // "200k–500k", "100k–200k", etc.
+      // Para tier-bonus:
+      tier: String,               // 'oro' | 'plata' | 'bronce'
+      bonusPct: Number,
+      refundsARS: Number,         // reembolsos acumulados en lookback
+      percentile: Number,         // posición en ranking
+      // Comunes (post-fact, llenados por el ROI tracker o claim handler):
+      claimed: { type: Boolean, default: false },     // ¿reclamó el regalo?
+      claimedAt: Date,
+      claimedAmount: Number,                          // monto efectivamente acreditado
+      pushDelivered: { type: Boolean, default: null },// ¿le llegó el push? (per-user FCM result)
+      // Carga per-user (opcional, requiere on-demand recompute):
+      chargedBefore48hARS: Number,
+      chargedAfter48hARS: Number,
+      perUserChargesTrackedAt: Date,
+      classification: String,     // 'converter' | 'passive' | 'no_response' | 'regressive' | null
+      _id: false
+    }],
+    default: []
+  },
+
+  // Resumen de clasificación per-user (lo computa el endpoint de
+  // performance, así no recalculamos cada vez que se abre el detalle).
+  classificationCounts: {
+    converter: { type: Number, default: 0 },     // claimed + cargó más
+    passive: { type: Number, default: 0 },       // claimed pero no cargó más
+    no_response: { type: Number, default: 0 },   // no claimed
+    regressive: { type: Number, default: 0 },    // cargó MENOS post-push
+    classifiedAt: Date
+  },
+
   // ============= TRACKING DE ROI =============
   // Cuándo el cron de tracking corrió y llenó los campos de carga.
   // Si null, todavía no se midió. El cron busca histories con

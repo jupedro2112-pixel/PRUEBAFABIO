@@ -4735,6 +4735,10 @@ async function strategyRunNow(campaign) {
 // ============================================
 // 📈 ROI POR DIFUSIÓN (tab)
 // ============================================
+let _strategyROIItemsCache = [];
+let _strategyROIExpanded = new Set();
+let _strategyROIDetailsCache = new Map(); // historyId → details JSON
+
 async function _strategyRenderROITab() {
     const c = document.getElementById('automationsContent');
     if (!c) return;
@@ -4743,61 +4747,239 @@ async function _strategyRenderROITab() {
         const r = await authFetch('/api/admin/strategy/roi?limit=50');
         if (!r.ok) { c.innerHTML = '<div class="empty-state">❌ Error</div>'; return; }
         const j = await r.json();
-        const items = j.items || [];
-        if (items.length === 0) {
-            c.innerHTML = '<div class="empty-state" style="font-size:13px;color:#888;line-height:1.6;">No hay difusiones de estrategia todavía.<br><br>Cuando se disparen el lunes/jueves, vas a verlas acá con sus métricas de ROI.<br>El cálculo se completa 48h después del envío (el tracker corre cada 30 min).</div>';
-            return;
-        }
-        const fmt = n => Number(n || 0).toLocaleString('es-AR');
-        let html = '<div style="margin-bottom:12px;color:#aaa;font-size:11px;">' + items.length + ' difusiones · ROI calculado 48h post-envío comparando carga del segmento vs grupo control (gente que cumplía pero no recibió)</div>';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-        html += '<thead><tr style="background:rgba(255,255,255,0.05);">';
-        html += '<th style="text-align:left;padding:8px;color:#aaa;">Cuándo</th>';
-        html += '<th style="text-align:left;padding:8px;color:#aaa;">Tipo</th>';
-        html += '<th style="text-align:right;padding:8px;color:#aaa;">Audiencia</th>';
-        html += '<th style="text-align:right;padding:8px;color:#aaa;">Entregados</th>';
-        html += '<th style="text-align:right;padding:8px;color:#aaa;">Carga 48h pre</th>';
-        html += '<th style="text-align:right;padding:8px;color:#aaa;">Carga 48h post</th>';
-        html += '<th style="text-align:right;padding:8px;color:#aaa;">Δ vs control</th>';
-        html += '<th style="text-align:right;padding:8px;color:#aaa;">ROI estim.</th>';
-        html += '</tr></thead><tbody>';
-        for (const it of items) {
-            const when = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
-            const tracked = !!it.roiTrackedAt;
-            const tgtPre = Number(it.chargesBefore48hARS) || 0;
-            const tgtPost = Number(it.chargesAfter48hARS) || 0;
-            const ctlPre = Number(it.controlChargesBefore48hARS) || 0;
-            const ctlPost = Number(it.controlChargesAfter48hARS) || 0;
-            // Δ atribuible: (post-pre del target) - (post-pre del control)
-            // Pero hay que normalizar por tamaño del segmento sino es injusto.
-            const tgtSize = Number(it.audienceCount) || 1;
-            const ctlSize = Number(it.controlGroupCount) || 1;
-            const tgtDelta = (tgtPost - tgtPre) / tgtSize;
-            const ctlDelta = ctlSize > 0 ? (ctlPost - ctlPre) / ctlSize : 0;
-            const deltaPerUser = tgtDelta - ctlDelta;
-            const totalDelta = deltaPerUser * tgtSize;
-            const dColor = totalDelta >= 0 ? '#25d366' : '#ff5050';
-            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
-            html += '<td style="padding:8px;color:#aaa;">' + escapeHtml(when) + '</td>';
-            html += '<td style="padding:8px;"><span style="color:' + (it.strategyType === 'netwin-gift' ? '#ffd700' : '#00d4ff') + ';font-weight:700;">' + (it.strategyType === 'netwin-gift' ? '🎁 Netwin' : '⚡ Tier %') + '</span></td>';
-            html += '<td style="padding:8px;text-align:right;color:#fff;">' + fmt(it.audienceCount) + '</td>';
-            html += '<td style="padding:8px;text-align:right;color:#25d366;">' + fmt(it.successCount) + '</td>';
-            if (tracked) {
-                html += '<td style="padding:8px;text-align:right;color:#aaa;">$' + fmt(tgtPre) + '</td>';
-                html += '<td style="padding:8px;text-align:right;color:#fff;font-weight:700;">$' + fmt(tgtPost) + '</td>';
-                html += '<td style="padding:8px;text-align:right;color:' + dColor + ';font-weight:700;">' + (totalDelta >= 0 ? '+' : '') + '$' + fmt(totalDelta) + '</td>';
-                html += '<td style="padding:8px;text-align:right;color:' + dColor + ';font-weight:700;">' + (totalDelta >= 0 ? '↑' : '↓') + '</td>';
-            } else {
-                const ageHours = it.sentAt ? Math.floor((Date.now() - new Date(it.sentAt).getTime()) / 3600000) : 0;
-                const left = Math.max(0, 48 - ageHours);
-                html += '<td colspan="4" style="padding:8px;text-align:center;color:#888;font-style:italic;">⏳ Tracking en ' + left + 'h…</td>';
-            }
-            html += '</tr>';
-        }
-        html += '</tbody></table>';
-        c.innerHTML = html;
+        _strategyROIItemsCache = j.items || [];
+        _strategyROIRenderTable();
     } catch (e) {
         c.innerHTML = '<div class="empty-state">❌ Error</div>';
+    }
+}
+
+function _strategyROIRenderTable() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    const items = _strategyROIItemsCache;
+    if (items.length === 0) {
+        c.innerHTML = '<div class="empty-state" style="font-size:13px;color:#888;line-height:1.6;">No hay difusiones de estrategia todavía.<br><br>Cuando se disparen el lunes/jueves, vas a verlas acá con sus métricas de ROI.<br>El cálculo se completa 48h después del envío (el tracker corre cada 30 min).</div>';
+        return;
+    }
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<div style="margin-bottom:12px;color:#aaa;font-size:11px;">' + items.length + ' difusiones · Tocá una fila para ver el detalle por usuario (qué se le iba a dar y cómo respondió). ROI 48h post-envío vs grupo control.</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="background:rgba(255,255,255,0.05);">';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;width:24px;"></th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">Cuándo</th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">Tipo</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Audiencia</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Entregados</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Reclamaron</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Carga 48h pre</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Carga 48h post</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Δ vs control</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">ROI</th>';
+    html += '</tr></thead><tbody>';
+    for (const it of items) {
+        const when = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+        const tracked = !!it.roiTrackedAt;
+        const tgtPre = Number(it.chargesBefore48hARS) || 0;
+        const tgtPost = Number(it.chargesAfter48hARS) || 0;
+        const ctlPre = Number(it.controlChargesBefore48hARS) || 0;
+        const ctlPost = Number(it.controlChargesAfter48hARS) || 0;
+        const tgtSize = Number(it.audienceCount) || 1;
+        const ctlSize = Number(it.controlGroupCount) || 1;
+        const tgtDelta = (tgtPost - tgtPre) / tgtSize;
+        const ctlDelta = ctlSize > 0 ? (ctlPost - ctlPre) / ctlSize : 0;
+        const deltaPerUser = tgtDelta - ctlDelta;
+        const totalDelta = deltaPerUser * tgtSize;
+        const dColor = totalDelta >= 0 ? '#25d366' : '#ff5050';
+        const expanded = _strategyROIExpanded.has(it.id);
+        html += '<tr onclick="_strategyROIToggle(\'' + it.id + '\')" style="border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;background:' + (expanded ? 'rgba(255,200,80,0.04)' : 'transparent') + ';">';
+        html += '<td style="padding:8px;color:#888;">' + (expanded ? '▼' : '▶') + '</td>';
+        html += '<td style="padding:8px;color:#aaa;">' + escapeHtml(when) + '</td>';
+        html += '<td style="padding:8px;"><span style="color:' + (it.strategyType === 'netwin-gift' ? '#ffd700' : '#00d4ff') + ';font-weight:700;">' + (it.strategyType === 'netwin-gift' ? '🎁 Netwin' : '⚡ Tier %') + '</span></td>';
+        html += '<td style="padding:8px;text-align:right;color:#fff;">' + fmt(it.audienceCount) + '</td>';
+        html += '<td style="padding:8px;text-align:right;color:#25d366;">' + fmt(it.successCount) + '</td>';
+        html += '<td style="padding:8px;text-align:right;color:#ffd700;font-weight:700;">' + fmt(it.giveawayClaims || 0) + '</td>';
+        if (tracked) {
+            html += '<td style="padding:8px;text-align:right;color:#aaa;">$' + fmt(tgtPre) + '</td>';
+            html += '<td style="padding:8px;text-align:right;color:#fff;font-weight:700;">$' + fmt(tgtPost) + '</td>';
+            html += '<td style="padding:8px;text-align:right;color:' + dColor + ';font-weight:700;">' + (totalDelta >= 0 ? '+' : '') + '$' + fmt(totalDelta) + '</td>';
+            html += '<td style="padding:8px;text-align:right;color:' + dColor + ';font-weight:700;">' + (totalDelta >= 0 ? '↑' : '↓') + '</td>';
+        } else {
+            const ageHours = it.sentAt ? Math.floor((Date.now() - new Date(it.sentAt).getTime()) / 3600000) : 0;
+            const left = Math.max(0, 48 - ageHours);
+            html += '<td colspan="4" style="padding:8px;text-align:center;color:#888;font-style:italic;">⏳ Tracking en ' + left + 'h…</td>';
+        }
+        html += '</tr>';
+        if (expanded) {
+            html += '<tr><td colspan="10" style="padding:0;background:rgba(0,0,0,0.30);"><div id="strategyDetail_' + it.id + '" style="padding:14px;">⏳ Cargando detalle…</div></td></tr>';
+        }
+    }
+    html += '</tbody></table>';
+    c.innerHTML = html;
+
+    // Cargar detalles de los expandidos.
+    for (const id of _strategyROIExpanded) {
+        _strategyROILoadDetails(id);
+    }
+}
+
+function _strategyROIToggle(historyId) {
+    if (_strategyROIExpanded.has(historyId)) _strategyROIExpanded.delete(historyId);
+    else _strategyROIExpanded.add(historyId);
+    _strategyROIRenderTable();
+}
+
+async function _strategyROILoadDetails(historyId) {
+    const el = document.getElementById('strategyDetail_' + historyId);
+    if (!el) return;
+    try {
+        const r = await authFetch('/api/admin/strategy/roi/' + encodeURIComponent(historyId) + '/details');
+        if (!r.ok) { el.innerHTML = '<div style="color:#ff5050;">❌ Error cargando detalle</div>'; return; }
+        const j = await r.json();
+        _strategyROIDetailsCache.set(historyId, j);
+        el.innerHTML = _strategyROIRenderDetails(j);
+    } catch (e) {
+        el.innerHTML = '<div style="color:#ff5050;">❌ Error de conexión</div>';
+    }
+}
+
+function _strategyROIRenderDetails(j) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const h = j.history;
+    const s = j.summary;
+    const details = j.details || [];
+    const alerts = j.alerts || [];
+    let html = '';
+
+    // Banner alerts.
+    if (alerts.length > 0) {
+        html += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.40);border-radius:8px;padding:10px 12px;margin-bottom:12px;">';
+        html += '<div style="color:#ff5050;font-weight:800;font-size:12px;margin-bottom:6px;">⚠ ALERTAS DETECTADAS</div>';
+        for (const a of alerts) html += '<div style="color:#ffaa88;font-size:12px;line-height:1.5;">' + escapeHtml(a) + '</div>';
+        html += '</div>';
+    }
+
+    // Métricas de la difusión.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;margin-bottom:14px;">';
+    html += _strategyMetric('AUDIENCIA', fmt(s.totalUsers), '#fff', null);
+    html += _strategyMetric('ENTREGADOS', fmt(h.successCount), '#25d366', s.deliveryRate != null ? Math.round(s.deliveryRate * 100) + '% del audience' : null);
+    html += _strategyMetric('RECLAMARON', fmt(s.claimed), '#ffd700', s.claimRate != null ? Math.round(s.claimRate * 100) + '% claim rate' : null);
+    html += _strategyMetric('NO RECLAMARON', fmt(s.notClaimed), '#888', null);
+    if (h.roiTrackedAt) {
+        html += _strategyMetric('PLATA REGALADA', '$' + fmt(s.totalGiftedARS), '#ffd700', null);
+        html += _strategyMetric('Δ VENTA', (s.attributableDeltaTotal >= 0 ? '+' : '') + '$' + fmt(Math.round(s.attributableDeltaTotal)), s.attributableDeltaTotal >= 0 ? '#25d366' : '#ff5050', 'vs grupo control');
+        if (s.roi != null) {
+            html += _strategyMetric('ROI', (s.roi >= 0 ? '+' : '') + Math.round(s.roi * 100) + '%', s.roi >= 0 ? '#25d366' : '#ff5050', null);
+        }
+    }
+    html += '</div>';
+
+    // Clasificación per-user (si ya se computó).
+    if (h.classificationCounts && h.classificationCounts.classifiedAt) {
+        const cc = h.classificationCounts;
+        html += '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin-bottom:12px;">';
+        html += '<div style="color:#fff;font-weight:700;font-size:12px;margin-bottom:8px;">🎯 Cómo respondió cada usuario</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;">';
+        html += _strategyMetric('🟢 CONVERSORES', fmt(cc.converter), '#25d366', 'Reclamaron y cargaron más');
+        html += _strategyMetric('🟡 PASIVOS', fmt(cc.passive), '#ffaa44', 'Reclamaron pero no cargaron más');
+        html += _strategyMetric('🔴 SIN RESPUESTA', fmt(cc.no_response), '#ff8888', 'No reclamaron el push');
+        html += _strategyMetric('🚨 REGRESIVOS', fmt(cc.regressive), '#ff5050', 'Cargaron MENOS post-push');
+        html += '</div>';
+        html += '<div style="color:#666;font-size:10px;margin-top:6px;">Análisis hecho ' + new Date(cc.classifiedAt).toLocaleString('es-AR') + '</div>';
+        html += '</div>';
+    } else if (h.roiTrackedAt) {
+        html += '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">';
+        html += '<div style="color:#00d4ff;font-size:12px;line-height:1.5;">¿Querés ver cómo respondió cada usuario individualmente? Hace 1 llamada a JUGAYGANA por user (~' + s.totalUsers + ' requests, ~30 seg).</div>';
+        html += '<button onclick="strategyRecomputePerUser(\'' + h.id + '\')" style="padding:7px 14px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">🔍 Calcular per-user</button>';
+        html += '</div>';
+    }
+
+    // Tabla per-user.
+    html += '<div style="color:#fff;font-weight:700;font-size:12px;margin-bottom:6px;">📋 Detalle por usuario (' + details.length + ')</div>';
+    if (details.length === 0) {
+        html += '<div style="color:#888;font-size:11px;font-style:italic;">No hay detalle por usuario para esta difusión (es de antes de que esto se registrara).</div>';
+        return html;
+    }
+    html += '<div style="max-height:400px;overflow-y:auto;border:1px solid rgba(255,255,255,0.08);border-radius:6px;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+    html += '<thead style="position:sticky;top:0;background:rgba(20,20,25,0.98);z-index:1;"><tr>';
+    html += '<th style="text-align:left;padding:6px 8px;color:#aaa;">Usuario</th>';
+    if (h.strategyType === 'netwin-gift') {
+        html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Pérdida semana</th>';
+        html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Regalo</th>';
+        html += '<th style="text-align:left;padding:6px 8px;color:#aaa;">Tier</th>';
+    } else {
+        html += '<th style="text-align:left;padding:6px 8px;color:#aaa;">Tier</th>';
+        html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Bono %</th>';
+        html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Reembolsos 30d</th>';
+    }
+    html += '<th style="text-align:center;padding:6px 8px;color:#aaa;">Reclamó</th>';
+    html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Carga pre</th>';
+    html += '<th style="text-align:right;padding:6px 8px;color:#aaa;">Carga post</th>';
+    html += '<th style="text-align:left;padding:6px 8px;color:#aaa;">Estado</th>';
+    html += '</tr></thead><tbody>';
+    // Sort: claimed primero (por categoría), después por monto descendente.
+    const sorted = details.slice().sort((a, b) => {
+        const order = { converter: 0, passive: 1, regressive: 2, no_response: 3 };
+        const oa = order[a.classification] != null ? order[a.classification] : 4;
+        const ob = order[b.classification] != null ? order[b.classification] : 4;
+        if (oa !== ob) return oa - ob;
+        return (b.giftAmount || b.bonusPct || 0) - (a.giftAmount || a.bonusPct || 0);
+    });
+    for (const d of sorted) {
+        const claimedCell = d.claimed
+            ? '<span style="color:#25d366;font-weight:700;">✓ Sí</span>'
+            : '<span style="color:#888;">—</span>';
+        let stateCell = '<span style="color:#666;">—</span>';
+        if (d.classification === 'converter') stateCell = '<span style="background:rgba(37,211,102,0.15);color:#25d366;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🟢 Convirtió</span>';
+        else if (d.classification === 'passive') stateCell = '<span style="background:rgba(255,170,68,0.15);color:#ffaa44;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🟡 Pasivo</span>';
+        else if (d.classification === 'no_response') stateCell = '<span style="background:rgba(136,136,136,0.15);color:#888;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🔴 Ignoró</span>';
+        else if (d.classification === 'regressive') stateCell = '<span style="background:rgba(255,80,80,0.15);color:#ff5050;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">🚨 Regresivo</span>';
+        const preCell = d.chargedBefore48hARS != null ? '$' + fmt(d.chargedBefore48hARS) : '<span style="color:#666;">—</span>';
+        const postCell = d.chargedAfter48hARS != null ? '$' + fmt(d.chargedAfter48hARS) : '<span style="color:#666;">—</span>';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:6px 8px;color:#fff;font-weight:600;">' + escapeHtml(d.username) + '</td>';
+        if (h.strategyType === 'netwin-gift') {
+            html += '<td style="padding:6px 8px;text-align:right;color:#ff8888;">$' + fmt(Math.round(d.lossARS || 0)) + '</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#ffd700;font-weight:700;">$' + fmt(d.giftAmount) + '</td>';
+            html += '<td style="padding:6px 8px;color:#aaa;">' + escapeHtml(d.tierLabel || '') + '</td>';
+        } else {
+            html += '<td style="padding:6px 8px;color:#00d4ff;font-weight:700;">' + escapeHtml(d.tier || '') + '</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#ffd700;">+' + (d.bonusPct || 0) + '%</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#aaa;">$' + fmt(Math.round(d.refundsARS || 0)) + '</td>';
+        }
+        html += '<td style="padding:6px 8px;text-align:center;">' + claimedCell + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#aaa;">' + preCell + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + postCell + '</td>';
+        html += '<td style="padding:6px 8px;">' + stateCell + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '</div>';
+    return html;
+}
+
+function _strategyMetric(label, value, color, sub) {
+    return '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;">'
+        + '<div style="color:#888;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">' + escapeHtml(label) + '</div>'
+        + '<div style="color:' + color + ';font-size:16px;font-weight:800;margin-top:3px;">' + value + '</div>'
+        + (sub ? '<div style="color:#666;font-size:9px;margin-top:2px;">' + escapeHtml(sub) + '</div>' : '')
+        + '</div>';
+}
+
+async function strategyRecomputePerUser(historyId) {
+    if (!confirm('¿Calcular respuesta per-user con JUGAYGANA?\n\nEsto hace ~1 request por usuario al API externo. Puede tardar ~30 segundos. Refresá la difusión cuando termine para ver la clasificación.')) return;
+    try {
+        const r = await authFetch('/api/admin/strategy/roi/' + encodeURIComponent(historyId) + '/recompute-perf', { method: 'POST' });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        showToast('🔍 Cálculo iniciado en background — refrescá en ~30s', 'success');
+        // Auto-refresh tras 35 seg.
+        setTimeout(() => {
+            _strategyROILoadDetails(historyId);
+        }, 35000);
+    } catch (e) {
+        showToast('Error de conexión', 'error');
     }
 }
 
