@@ -1856,7 +1856,15 @@ async function sendBulkNotification() {
     if (scheduleEnabled) {
         const dtStr = document.getElementById('scheduleDateTime')?.value;
         if (!dtStr) { showToast('Falta la fecha/hora programada', 'error'); return; }
-        const scheduledFor = new Date(dtStr);
+        // El input <type="datetime-local"> devuelve "YYYY-MM-DDTHH:mm" sin
+        // timezone. La label del form dice "(Argentina)", así que parseamos
+        // SIEMPRE como ART (-03:00) explícitamente, sin importar la TZ del
+        // navegador del admin (si está de viaje o accede desde otro huso).
+        const m = String(dtStr).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+        if (!m) {
+            showToast('Fecha programada inválida (formato)', 'error'); return;
+        }
+        const scheduledFor = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00-03:00`);
         if (!isFinite(scheduledFor.getTime())) {
             showToast('Fecha programada inválida', 'error'); return;
         }
