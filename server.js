@@ -7021,6 +7021,283 @@ app.post(
   }
 );
 
+// =============================================================
+// Import simple: 1 archivo = 1 línea, match EXACTO de username.
+// =============================================================
+// Pensado para listados que ya tienen el username completo en la primer
+// columna (no fragmentos, no abreviaciones). Usa match exacto sobre el
+// username normalizado (lowercase + sin acentos + sin puntuación). NO
+// concatena prefijos ni hace contains-matching — eso evita los falsos
+// positivos que tuvimos antes con archivos grandes.
+//
+// Inputs (query params):
+//   teamName: nombre del equipo (label).
+//   lineLabel: etiqueta amigable de la línea (opcional, ej "Principal", "Línea 2").
+//   linePhone: teléfono WhatsApp en formato +5491... (canónico, con +).
+//   dryRun: 'true' por default (solo cuenta), 'false' ejecuta.
+// Body: archivo binario (.xlsx). Se lee la primera columna de la primera
+// hoja con datos. Si la primera fila parece header (no contiene letras/dígitos
+// pegados o es muy corta tipo "name"), se saltea.
+//
+// Comportamiento:
+//   - Para cada nombre del archivo: busca User con username normalizado igual.
+//     Si lo encuentra, le seta linePhone + lineTeamName.
+//   - Siempre upsertea en UserLineLookup así si después de la importación
+//     se crea un usuario nuevo con ese username (vía login a JUGAYGANA),
+//     también recibe la línea automáticamente.
+//   - Devuelve un reporte con matched / notFound + sample de los primeros 100
+//     no-encontrados para que el admin pueda revisar typos.
+app.post(
+  '/api/admin/user-lines/import-exact',
+  authMiddleware,
+  adminMiddleware,
+  express.raw({ limit: USER_LINES_IMPORT_LIMIT, type: '*/*' }),
+  async (req, res) => {
+    let XLSX;
+    try {
+      XLSX = require('xlsx');
+    } catch (e) {
+      return res.status(503).json({
+        error: 'Falta instalar la dependencia "xlsx" en el servidor. Ejecutá: npm install xlsx'
+      });
+    }
+
+    try {
+      const teamName = (req.query.teamName ? String(req.query.teamName) : '').trim();
+      if (!teamName) {
+        return res.status(400).json({ error: 'Falta teamName' });
+      }
+      if (teamName.length > 32) {
+        return res.status(400).json({ error: 'teamName demasiado largo (máx 32)' });
+      }
+
+      const lineLabel = (req.query.lineLabel ? String(req.query.lineLabel) : '').trim().slice(0, 32);
+      // teamName + lineLabel se concatenan para mostrar al usuario "Equipo · Línea".
+      const fullTeamLabel = lineLabel ? `${teamName} · ${lineLabel}` : teamName;
+
+      const linePhoneRaw = (req.query.linePhone ? String(req.query.linePhone) : '').trim();
+      if (!linePhoneRaw) {
+        return res.status(400).json({ error: 'Falta linePhone (número de WhatsApp)' });
+      }
+      // Canonicalizar: solo dígitos, prefijar con + si no lo trae.
+      const digits = linePhoneRaw.replace(/[^\d]/g, '');
+      if (digits.length < 7 || digits.length > 18) {
+        return res.status(400).json({ error: `linePhone inválido (${digits.length} dígitos)` });
+      }
+      const linePhone = '+' + digits;
+
+      const dryRun = String(req.query.dryRun || 'true').toLowerCase() !== 'false';
+
+      const buf = req.body;
+      if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
+        return res.status(400).json({ error: 'Archivo vacío o muy chico' });
+      }
+
+      let workbook;
+      try {
+        workbook = XLSX.read(buf, { type: 'buffer', cellDates: false });
+      } catch (parseErr) {
+        return res.status(400).json({ error: `No se pudo leer el .xlsx: ${parseErr.message}` });
+      }
+      if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+        return res.status(400).json({ error: 'El archivo no tiene hojas' });
+      }
+
+      // Dos normalizaciones distintas:
+      //   - normLight: para matchear contra User.username. Solo trim + lowercase,
+      //     sin tocar acentos ni puntuación. El username en el archivo tiene
+      //     que coincidir EXACTO con el username de JUGAYGANA / login (como
+      //     entra el jugador a la plataforma a jugar).
+      //   - normHeavy: la misma que usa el login (normalizeUsernameForLookup)
+      //     para guardar en UserLineLookup.usernameNorm. Así un usuario nuevo
+      //     que se registra después de la importación encuentra su línea
+      //     mediante el helper pickLineFromLookup.
+      const normLight = (raw) => {
+        if (!raw) return '';
+        return String(raw).trim().toLowerCase();
+      };
+      const normHeavy = (raw) => {
+        if (!raw) return '';
+        return String(raw)
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '');
+      };
+
+      // Recolectar usernames del archivo (primera columna de la primera hoja
+      // con datos). Saltea header si la primera fila parece una etiqueta
+      // ("name", "username", "usuario", etc).
+      // Estructura: Map<normLight, { original, normHeavy }> — guardamos ambas
+      // normalizaciones para usar la light en el match con User (estricto) y
+      // la heavy en el upsert a UserLineLookup (consistente con el login).
+      const entries = new Map();
+      let totalRowsRead = 0;
+
+      for (const sheetName of workbook.SheetNames) {
+        const ws = workbook.Sheets[sheetName];
+        if (!ws) continue;
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+        if (rows.length === 0) continue;
+
+        // Saltar primera fila si parece header.
+        const firstCell = String((rows[0] && rows[0][0]) || '').trim().toLowerCase();
+        const isHeader = ['name', 'username', 'usuario', 'nombre', 'user'].includes(firstCell);
+        const dataRows = isHeader ? rows.slice(1) : rows;
+
+        for (const row of dataRows) {
+          if (!row) continue;
+          const raw = row[0];
+          if (raw === null || raw === undefined) continue;
+          const cleaned = String(raw).trim();
+          if (!cleaned) continue;
+          totalRowsRead++;
+          const lite = normLight(cleaned);
+          if (!lite) continue;
+          if (!entries.has(lite)) {
+            entries.set(lite, { original: cleaned, normHeavy: normHeavy(cleaned) });
+          }
+        }
+        // Solo leemos la primera hoja con datos — el contrato es 1 archivo = 1 línea.
+        if (entries.size > 0) break;
+      }
+
+      if (entries.size === 0) {
+        return res.status(400).json({ error: 'El archivo no tiene usernames legibles en la primera columna' });
+      }
+
+      // Lookup en DB: traemos todos los usernames y normalizamos en memoria
+      // con la misma función light. Match es 1:1 con la versión lowercased
+      // del username — exacto como entra el jugador a JUGAYGANA / login.
+      const allUsernames = await User.find(
+        { username: { $exists: true, $ne: null } },
+        { id: 1, username: 1, linePhone: 1, lineTeamName: 1, _id: 0 }
+      ).lean();
+
+      const liteToDoc = new Map();
+      for (const d of allUsernames) {
+        if (!d || !d.username) continue;
+        const lite = normLight(d.username);
+        if (lite) liteToDoc.set(lite, d);
+      }
+
+      let matched = 0;
+      let alreadyOnSameLine = 0;
+      let reassignedFromOtherLine = 0;
+      const notFoundSample = [];
+      const bulkOps = [];
+      const lookupOps = [];
+
+      const now = new Date();
+      const adminUsername = (req.user && req.user.username) || null;
+
+      for (const [lite, info] of entries) {
+        const doc = liteToDoc.get(lite);
+        if (!doc) {
+          if (notFoundSample.length < 100) {
+            notFoundSample.push({
+              username: info.original,
+              normalized: lite
+            });
+          }
+          continue;
+        }
+        matched++;
+        if (doc.linePhone === linePhone) {
+          alreadyOnSameLine++;
+        } else if (doc.linePhone) {
+          reassignedFromOtherLine++;
+        }
+        if (!dryRun) {
+          bulkOps.push({
+            updateOne: {
+              filter: { id: doc.id },
+              update: {
+                $set: {
+                  linePhone,
+                  lineTeamName: fullTeamLabel,
+                  lineAssignedAt: now,
+                  lineAssignedBy: adminUsername
+                }
+              }
+            }
+          });
+        }
+      }
+
+      // UserLineLookup: persistimos TODAS las entradas del archivo (matched o
+      // no) para que un futuro registro con ese username reciba la línea sin
+      // tener que re-importar. Acá usamos normHeavy porque el helper
+      // pickLineFromLookup (login) busca con la misma normalización heavy.
+      if (!dryRun) {
+        for (const [lite, info] of entries) {
+          if (!info.normHeavy) continue; // sin caracteres alfanuméricos: no se puede indexar
+          lookupOps.push({
+            updateOne: {
+              filter: { usernameNorm: info.normHeavy },
+              update: {
+                $set: {
+                  usernameOriginal: info.original,
+                  linePhone,
+                  lineTeamName: fullTeamLabel,
+                  prefix: '',
+                  importedAt: now,
+                  importedBy: adminUsername
+                },
+                $setOnInsert: { usernameNorm: info.normHeavy }
+              },
+              upsert: true
+            }
+          });
+        }
+      }
+
+      let writeResult = null;
+      let lookupResult = null;
+      if (!dryRun) {
+        try {
+          if (bulkOps.length > 0) {
+            const r = await User.bulkWrite(bulkOps, { ordered: false });
+            writeResult = { modifiedCount: r.modifiedCount || 0, matchedCount: r.matchedCount || 0 };
+          }
+          if (lookupOps.length > 0) {
+            const r2 = await UserLineLookup.bulkWrite(lookupOps, { ordered: false });
+            lookupResult = {
+              upsertedCount: r2.upsertedCount || 0,
+              modifiedCount: r2.modifiedCount || 0
+            };
+          }
+        } catch (bulkErr) {
+          logger.error(`[user-lines/import-exact] bulkWrite error: ${bulkErr.message}`);
+          return res.status(500).json({ error: `Error escribiendo en la DB: ${bulkErr.message}` });
+        }
+      }
+
+      logger.info(`[user-lines/import-exact] team="${fullTeamLabel}" phone=${linePhone} dryRun=${dryRun} rows=${totalRowsRead} unique=${entries.size} matched=${matched} notFound=${entries.size - matched} by=${adminUsername}`);
+
+      res.json({
+        success: true,
+        dryRun,
+        teamName: fullTeamLabel,
+        linePhone,
+        summary: {
+          totalRowsRead,
+          uniqueUsernames: entries.size,
+          matched,
+          notFound: entries.size - matched,
+          alreadyOnSameLine,
+          reassignedFromOtherLine
+        },
+        notFoundSample,
+        writeResult,
+        lookupResult
+      });
+    } catch (error) {
+      logger.error(`[user-lines/import-exact] error: ${error.message}\n${error.stack}`);
+      res.status(500).json({ error: `Error del servidor: ${error.message}` });
+    }
+  }
+);
+
 // Endpoint para limpiar la asignación de línea de TODOS los usuarios de un team
 // (vuelve a usar el matcher por prefijo). Útil si se cargó un Drive equivocado.
 app.post('/api/admin/user-lines/clear-team', authMiddleware, adminMiddleware, async (req, res) => {

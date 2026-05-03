@@ -3200,3 +3200,170 @@ async function showUserGiveawayDetail(username) {
         showToast('Error de conexión', 'error');
     }
 }
+
+// =====================================================================
+// IMPORT EXACTO DE LÍNEA POR LISTADO (.xlsx con 1 columna de usernames)
+// =====================================================================
+//
+// Flujo: el admin carga equipo + etiqueta + teléfono + archivo, hace
+// "Vista previa" (dryRun=true) para ver cuántos matchean / no matchean,
+// y recién ahí "Confirmar" (dryRun=false) ejecuta los updates en la DB.
+//
+// El backend valida y reporta. La UI solo orquesta y muestra resultados.
+
+let _exactImportLastFile = null; // archivo cacheado entre preview y confirm
+
+function _exactImportFormValid() {
+    const team = (document.getElementById('exactImportTeam').value || '').trim();
+    const phone = (document.getElementById('exactImportPhone').value || '').trim();
+    const fileInput = document.getElementById('exactImportFile');
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (!team) { showToast('Falta el nombre del equipo', 'error'); return null; }
+    if (!phone) { showToast('Falta el teléfono de la línea', 'error'); return null; }
+    const digits = phone.replace(/[^\d]/g, '');
+    if (digits.length < 7) { showToast('Teléfono inválido (faltan dígitos)', 'error'); return null; }
+    if (!file) { showToast('Subí un archivo .xlsx', 'error'); return null; }
+    if (file.size > 10 * 1024 * 1024) { showToast('El archivo es muy grande (>10MB)', 'error'); return null; }
+    const label = (document.getElementById('exactImportLabel').value || '').trim();
+    return { team, label, phone: digits, file };
+}
+
+async function _exactImportRequest(dryRun) {
+    const data = _exactImportFormValid();
+    if (!data) return null;
+    _exactImportLastFile = data.file;
+
+    const params = new URLSearchParams();
+    params.set('teamName', data.team);
+    if (data.label) params.set('lineLabel', data.label);
+    params.set('linePhone', '+' + data.phone);
+    params.set('dryRun', dryRun ? 'true' : 'false');
+
+    try {
+        const r = await authFetch('/api/admin/user-lines/import-exact?' + params.toString(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: data.file
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            const msg = (j && j.error) || ('HTTP ' + r.status);
+            showToast('Error: ' + msg, 'error');
+            return null;
+        }
+        return j;
+    } catch (e) {
+        console.error('exactImport error:', e);
+        showToast('Error de conexión', 'error');
+        return null;
+    }
+}
+
+async function exactImportPreview() {
+    const out = document.getElementById('exactImportResult');
+    if (out) out.innerHTML = '<div style="color:#aaa;font-size:12px;">⏳ Procesando archivo…</div>';
+
+    const j = await _exactImportRequest(true);
+    if (!j) {
+        if (out) out.innerHTML = '';
+        const btn = document.getElementById('exactImportConfirmBtn');
+        if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+        return;
+    }
+    _renderExactImportResult(j, true);
+    // Habilitar el botón confirmar.
+    const btn = document.getElementById('exactImportConfirmBtn');
+    if (btn) { btn.disabled = false; btn.style.cursor = 'pointer'; btn.style.opacity = '1'; }
+}
+
+async function exactImportConfirm() {
+    if (!_exactImportLastFile) {
+        showToast('Hacé primero la vista previa', 'error');
+        return;
+    }
+    const ok = window.confirm('¿Confirmás la importación? Esto va a modificar los usuarios matched.');
+    if (!ok) return;
+
+    const out = document.getElementById('exactImportResult');
+    if (out) out.innerHTML = '<div style="color:#aaa;font-size:12px;">⏳ Escribiendo en la DB…</div>';
+
+    const j = await _exactImportRequest(false);
+    if (!j) {
+        if (out) out.innerHTML = '';
+        return;
+    }
+    _renderExactImportResult(j, false);
+    showToast('✅ Importación completada', 'success');
+    // Bloquear de nuevo el botón hasta que se haga otra preview.
+    const btn = document.getElementById('exactImportConfirmBtn');
+    if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+}
+
+function _renderExactImportResult(j, isPreview) {
+    const out = document.getElementById('exactImportResult');
+    if (!out) return;
+    const s = j.summary || {};
+    const matched = s.matched || 0;
+    const notFound = s.notFound || 0;
+    const total = s.uniqueUsernames || 0;
+    const reassigned = s.reassignedFromOtherLine || 0;
+    const sameLine = s.alreadyOnSameLine || 0;
+    const matchPct = total > 0 ? Math.round((matched / total) * 100) : 0;
+
+    let html = '<div style="background:rgba(0,0,0,0.3);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;">';
+    html += '<div style="color:#00d4ff;font-weight:700;font-size:13px;margin-bottom:8px;">';
+    html += isPreview ? '👁 Vista previa' : '✅ Importación ejecutada';
+    html += '</div>';
+
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">';
+    html += '<div><span style="color:#888;">Equipo:</span> <strong style="color:#fff;">' + escapeHtml(j.teamName || '—') + '</strong></div>';
+    html += '<div><span style="color:#888;">Teléfono:</span> <strong style="color:#ffd700;font-family:monospace;">' + escapeHtml(j.linePhone || '—') + '</strong></div>';
+    html += '<div><span style="color:#888;">Total leídos:</span> <strong style="color:#fff;">' + (s.totalRowsRead || 0) + '</strong></div>';
+    html += '<div><span style="color:#888;">Únicos:</span> <strong style="color:#fff;">' + total + '</strong></div>';
+    html += '<div><span style="color:#888;">Matched:</span> <strong style="color:#25d366;">' + matched + ' (' + matchPct + '%)</strong></div>';
+    html += '<div><span style="color:#888;">No encontrados:</span> <strong style="color:#ff8888;">' + notFound + '</strong></div>';
+    if (reassigned > 0) {
+        html += '<div style="grid-column:span 2;"><span style="color:#888;">Cambian de línea:</span> <strong style="color:#ffaa44;">' + reassigned + '</strong> ya tenían otra línea asignada (esta los pisa)</div>';
+    }
+    if (sameLine > 0) {
+        html += '<div style="grid-column:span 2;"><span style="color:#888;">Sin cambios:</span> ' + sameLine + ' ya estaban en esta misma línea</div>';
+    }
+    html += '</div>';
+
+    if (notFound > 0 && Array.isArray(j.notFoundSample) && j.notFoundSample.length > 0) {
+        html += '<details style="margin-top:10px;"><summary style="cursor:pointer;color:#ff8888;font-size:12px;">Ver muestra de no encontrados (' + j.notFoundSample.length + ')</summary>';
+        html += '<div style="background:rgba(0,0,0,0.4);border-radius:6px;padding:8px;margin-top:6px;font-family:monospace;font-size:11px;color:#ccc;max-height:180px;overflow-y:auto;">';
+        for (const item of j.notFoundSample) {
+            html += escapeHtml(item.username) + '<br>';
+        }
+        html += '</div></details>';
+    }
+
+    if (isPreview) {
+        html += '<div style="margin-top:10px;color:#aaa;font-size:11px;font-style:italic;">Si los números te cierran, tocá "Confirmar importación".</div>';
+    } else {
+        const w = j.writeResult || {};
+        const lk = j.lookupResult || {};
+        html += '<div style="margin-top:10px;color:#aaa;font-size:11px;">Users actualizados: <strong style="color:#fff;">' + (w.modifiedCount || 0) + '</strong> · Lookups guardados: <strong style="color:#fff;">' + ((lk.upsertedCount || 0) + (lk.modifiedCount || 0)) + '</strong></div>';
+    }
+
+    html += '</div>';
+    out.innerHTML = html;
+}
+
+// Limpiar el resultado y deshabilitar el botón "confirmar" si el admin
+// edita cualquier campo después de la preview (los datos podrían no
+// corresponderse con el archivo cacheado).
+document.addEventListener('DOMContentLoaded', () => {
+    const fields = ['exactImportTeam', 'exactImportLabel', 'exactImportPhone', 'exactImportFile'];
+    for (const id of fields) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        el.addEventListener('input', () => {
+            const btn = document.getElementById('exactImportConfirmBtn');
+            if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+            const out = document.getElementById('exactImportResult');
+            if (out) out.innerHTML = '';
+        });
+    }
+});
