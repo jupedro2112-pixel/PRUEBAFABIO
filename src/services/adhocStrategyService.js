@@ -139,9 +139,31 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
   const config = await weeklyService.getOrCreateConfig(WeeklyStrategyConfig);
   const wk = weeklyService._weekKey();
 
-  // 1) Universo: solo users con app+notifs.
-  const candidates = await weeklyService.getAppNotifsCandidates(User);
-  const candidateSet = new Set(candidates.map(u => String(u.username).toLowerCase()));
+  // 1) Universo: TODOS los users role='user'. Marcamos por separado quién
+  //    tiene app+notifs (canal de push) y quién no — para que el admin
+  //    sepa a quiénes targetear por WhatsApp manual aunque no le podamos
+  //    mandar push directo.
+  const allUsers = await User.find(
+    { role: 'user' },
+    { username: 1, lineTeamName: 1, linePhone: 1,
+      fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, _id: 0 }
+  ).lean();
+  const userIndex = new Map(); // username lower -> { hasChannel, linePhone, lineTeamName }
+  for (const u of allUsers) {
+    const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+    const hasApp = u.fcmTokenContext === 'standalone' ||
+                   tokens.some(t => t && t.context === 'standalone');
+    const hasNotifs = u.notifPermission === 'granted' ||
+                      tokens.some(t => t && t.notifPermission === 'granted');
+    userIndex.set(String(u.username).toLowerCase(), {
+      username: u.username,
+      hasApp, hasNotifs,
+      hasChannel: hasApp && hasNotifs,
+      linePhone: u.linePhone || null,
+      lineTeamName: u.lineTeamName || null
+    });
+  }
+  const candidatesAppNotifs = Array.from(userIndex.values()).filter(u => u.hasChannel).length;
 
   // 2) Aggregate de DailyPlayerStats en el rango.
   const stats = await DailyPlayerStats.aggregate([
@@ -158,25 +180,32 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
     }
   ]);
 
-  // 3) Filtrar a los que están en el set de candidatos (app+notifs).
+  // 3) Enriquecer con info de canal (sin filtrar por app+notifs todavía).
+  //    Todo el que tenga actividad en el rango Y exista en User entra.
   const now = Date.now();
-  const enrichedStats = stats
-    .filter(s => candidateSet.has(String(s._id).toLowerCase()))
-    .map(s => {
-      const netwin = (Number(s.totalDepositsARS) || 0) - (Number(s.totalWithdrawsARS) || 0);
-      const lastDep = s.lastDepositDate ? new Date(s.lastDepositDate).getTime() : null;
-      const daysSinceLastDeposit = lastDep ? Math.floor((now - lastDep) / 86400000) : null;
-      return {
-        username: s._id,
-        totalDepositsARS: Number(s.totalDepositsARS) || 0,
-        depositCount: s.depositCount || 0,
-        totalWithdrawsARS: Number(s.totalWithdrawsARS) || 0,
-        withdrawCount: s.withdrawCount || 0,
-        netwinARS: netwin,
-        lastDepositDate: s.lastDepositDate || null,
-        daysSinceLastDeposit
-      };
+  const enrichedStats = [];
+  for (const s of stats) {
+    const u = userIndex.get(String(s._id).toLowerCase());
+    if (!u) continue; // existe en stats pero no en users (raro)
+    const netwin = (Number(s.totalDepositsARS) || 0) - (Number(s.totalWithdrawsARS) || 0);
+    const lastDep = s.lastDepositDate ? new Date(s.lastDepositDate).getTime() : null;
+    const daysSinceLastDeposit = lastDep ? Math.floor((now - lastDep) / 86400000) : null;
+    enrichedStats.push({
+      username: u.username,
+      totalDepositsARS: Number(s.totalDepositsARS) || 0,
+      depositCount: s.depositCount || 0,
+      totalWithdrawsARS: Number(s.totalWithdrawsARS) || 0,
+      withdrawCount: s.withdrawCount || 0,
+      netwinARS: netwin,
+      lastDepositDate: s.lastDepositDate || null,
+      daysSinceLastDeposit,
+      hasApp: u.hasApp,
+      hasNotifs: u.hasNotifs,
+      hasChannel: u.hasChannel,
+      linePhone: u.linePhone,
+      lineTeamName: u.lineTeamName
     });
+  }
 
   // 4) Filtrar por focus. 'mix' = todos.
   let filtered = enrichedStats;
@@ -188,15 +217,16 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
     filtered = enrichedStats.filter(s => s.totalDepositsARS > 0 && s.daysSinceLastDeposit != null && s.daysSinceLastDeposit >= 3 && s.daysSinceLastDeposit <= 14);
   }
 
-  // 5) Asignar paquete a cada user.
-  const audience = [];
+  // 5) Asignar paquete a cada user (con o sin app).
+  const audienceWithChannel = [];   // pueden recibir push
+  const audienceNoChannel = [];     // hicieron match pero sin app+notifs (target WhatsApp manual)
   const noMatch = [];
   for (const s of filtered) {
     const pkg = ADHOC_PACKAGES.find(p => p.matcher(s));
     if (!pkg) { noMatch.push(s); continue; }
     const giftAmount = pkg.giftAmount(s);
     const bonusPct = pkg.bonusPct(s);
-    audience.push({
+    const item = {
       username: s.username,
       package: pkg.code,
       packageLabel: pkg.label,
@@ -205,14 +235,22 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
       bonusPct,
       netwinARS: s.netwinARS,
       totalDepositsARS: s.totalDepositsARS,
-      daysSinceLastDeposit: s.daysSinceLastDeposit
-    });
+      daysSinceLastDeposit: s.daysSinceLastDeposit,
+      hasApp: s.hasApp,
+      hasNotifs: s.hasNotifs,
+      hasChannel: s.hasChannel,
+      linePhone: s.linePhone,
+      lineTeamName: s.lineTeamName
+    };
+    if (s.hasChannel) audienceWithChannel.push(item);
+    else audienceNoChannel.push(item);
   }
 
-  // 6) Cap + cooldown gate (reusa el del semanal).
+  // 6) Cap + cooldown gate SOLO sobre los que pueden recibir push.
+  //    Los sin app no aplican porque no se les manda nada por la app.
   const targets = [];
   const blocked = [];
-  for (const item of audience) {
+  for (const item of audienceWithChannel) {
     const gate = await weeklyService.canSendToUser({
       username: item.username,
       weekKey: wk,
@@ -264,6 +302,20 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
     delete b.bonusPctSum;
   }
 
+  // 9) Resumen de los matches SIN app (para campaña WhatsApp manual).
+  const noAppBreakdown = {};
+  for (const t of audienceNoChannel) {
+    if (!noAppBreakdown[t.package]) {
+      const pkg = ADHOC_PACKAGES.find(p => p.code === t.package);
+      noAppBreakdown[t.package] = {
+        code: t.package, label: pkg.label, kind: pkg.kind,
+        count: 0, totalGiftARS: 0
+      };
+    }
+    noAppBreakdown[t.package].count++;
+    noAppBreakdown[t.package].totalGiftARS += (t.giftAmount || 0);
+  }
+
   return {
     id: uuidv4(),
     createdAt: new Date(),
@@ -271,14 +323,18 @@ async function computeAdhocPlan({ models, weeklyService, analysisFrom, analysisT
     analysisTo,
     focus,
     maxBudgetARS,
-    candidatesAppNotifs: candidates.length,
+    candidatesAppNotifs,
     statsCount: enrichedStats.length,
-    audienceCount: audience.length,
+    audienceCount: audienceWithChannel.length + audienceNoChannel.length,
+    audienceWithChannelCount: audienceWithChannel.length,
+    audienceNoChannelCount: audienceNoChannel.length,
     blockedCount: blocked.length,
     droppedByBudget,
     targetCount: capped.length,
     totalCostARS: runningCost,
     breakdown: Object.values(breakdown),
+    noAppBreakdown: Object.values(noAppBreakdown),
+    noAppTargets: audienceNoChannel, // detalle per-user de los sin app
     targets: capped, // detalle per-user
     blocked // para visualizar quién quedó afuera (cap/cooldown)
   };

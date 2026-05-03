@@ -5872,6 +5872,7 @@ function _helpBlocks() {
 // ============================================
 let _adhocPlanCache = null; // último plan analizado en esta sesión
 let _adhocExpandedTargets = false;
+let _adhocExpandedNoApp = false;
 
 function _adhocDateInputDefault(daysAgo) {
     const d = new Date();
@@ -5987,9 +5988,11 @@ function _adhocRenderPlan(plan) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;">';
     html += _adhocChip('Universo elegible', fmt(plan.candidatesAppNotifs), '#fff', 'Users con app+notifs');
     html += _adhocChip('Aplicaron filtro', fmt(plan.statsCount), '#aaa', 'Tuvieron actividad en el rango');
-    html += _adhocChip('Audiencia', fmt(plan.audienceCount), '#00d4ff', 'Hacen match con un paquete');
+    html += _adhocChip('Audiencia total', fmt(plan.audienceCount), '#00d4ff', 'Hacen match con paquete');
+    html += _adhocChip('Con app+notifs', fmt(plan.audienceWithChannelCount || 0), '#25d366', 'Pueden recibir push');
+    html += _adhocChip('SIN app+notifs', fmt(plan.audienceNoChannelCount || 0), '#ff8888', 'Target WhatsApp manual');
     html += _adhocChip('Bloqueados', fmt(plan.blockedCount), '#ffaa44', 'Cap o cooldown');
-    html += _adhocChip('Cortados por tope', fmt(plan.droppedByBudget), '#888', 'No entraron en el budget');
+    html += _adhocChip('Cortados por tope', fmt(plan.droppedByBudget), '#888', 'No entraron en budget');
     html += _adhocChip('Reciben push', fmt(plan.targetCount), '#25d366', 'TARGET final');
     html += _adhocChip('Costo total', '$' + fmt(plan.totalCostARS), '#ffd700', 'De $' + fmt(plan.maxBudgetARS) + ' tope');
     html += '</div>';
@@ -6021,24 +6024,40 @@ function _adhocRenderPlan(plan) {
     if (plan.targets && plan.targets.length > 0) {
         html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:14px;margin-bottom:14px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
-        html += '<div style="color:#fff;font-weight:700;font-size:13px;">👥 Detalle per-user (' + fmt(plan.targets.length) + ')</div>';
+        html += '<div style="color:#fff;font-weight:700;font-size:13px;">👥 Detalle per-user · CON app (' + fmt(plan.targets.length) + ')</div>';
         html += '<button onclick="adhocToggleDetail()" style="padding:5px 12px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:11px;cursor:pointer;">' + (_adhocExpandedTargets ? '⤴ Ocultar' : '⤵ Mostrar') + '</button>';
         html += '</div>';
         if (_adhocExpandedTargets) {
             html += '<div style="max-height:400px;overflow-y:auto;">';
-            html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
-            html += '<thead><tr style="background:rgba(255,255,255,0.05);position:sticky;top:0;"><th style="text-align:left;padding:6px;color:#aaa;">Usuario</th><th style="text-align:left;padding:6px;color:#aaa;">Paquete</th><th style="text-align:right;padding:6px;color:#aaa;">Netwin</th><th style="text-align:right;padding:6px;color:#aaa;">Días</th><th style="text-align:right;padding:6px;color:#aaa;">Regalo</th><th style="text-align:right;padding:6px;color:#aaa;">Bono %</th></tr></thead><tbody>';
-            for (const t of plan.targets) {
-                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
-                html += '<td style="padding:5px;color:#fff;">' + escapeHtml(t.username) + '</td>';
-                html += '<td style="padding:5px;color:#aaa;font-size:10px;">' + escapeHtml(t.packageLabel || t.package) + '</td>';
-                html += '<td style="padding:5px;text-align:right;color:' + (t.netwinARS > 0 ? '#ff8888' : '#25d366') + ';">$' + fmt(t.netwinARS) + '</td>';
-                html += '<td style="padding:5px;text-align:right;color:#888;">' + (t.daysSinceLastDeposit != null ? t.daysSinceLastDeposit + 'd' : '—') + '</td>';
-                html += '<td style="padding:5px;text-align:right;color:#ffd700;">' + (t.giftAmount ? '$' + fmt(t.giftAmount) : '—') + '</td>';
-                html += '<td style="padding:5px;text-align:right;color:#25d366;">' + (t.bonusPct ? t.bonusPct + '%' : '—') + '</td>';
-                html += '</tr>';
+            html += _adhocRenderUserTable(plan.targets, true);
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+
+    // ============ DETALLE SIN APP (target WhatsApp manual) ============
+    if (plan.noAppTargets && plan.noAppTargets.length > 0) {
+        html += '<div style="background:rgba(255,170,68,0.06);border:1px solid rgba(255,170,68,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+        html += '<div><div style="color:#ffaa44;font-weight:700;font-size:13px;">📱 SIN app+notifs · target WhatsApp manual (' + fmt(plan.noAppTargets.length) + ')</div>';
+        html += '<div style="color:#888;font-size:11px;margin-top:2px;">Hicieron match con un paquete pero no podemos pushear. Pasalos por WhatsApp con la línea asignada.</div></div>';
+        html += '<div style="display:flex;gap:6px;">';
+        html += '<button onclick="adhocToggleNoApp()" style="padding:5px 12px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:11px;cursor:pointer;">' + (_adhocExpandedNoApp ? '⤴ Ocultar' : '⤵ Mostrar') + '</button>';
+        html += '<button onclick="adhocDownloadNoAppCSV()" style="padding:5px 12px;background:rgba(37,211,102,0.15);color:#25d366;border:1px solid rgba(37,211,102,0.30);border-radius:6px;font-size:11px;cursor:pointer;">📥 CSV</button>';
+        html += '</div>';
+        html += '</div>';
+        // Mini-breakdown por paquete
+        if (plan.noAppBreakdown && plan.noAppBreakdown.length > 0) {
+            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;font-size:11px;">';
+            for (const b of plan.noAppBreakdown) {
+                html += '<span style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);padding:4px 8px;border-radius:6px;color:#aaa;">' + escapeHtml(b.label) + ': <strong style="color:#fff;">' + fmt(b.count) + '</strong></span>';
             }
-            html += '</tbody></table></div>';
+            html += '</div>';
+        }
+        if (_adhocExpandedNoApp) {
+            html += '<div style="max-height:400px;overflow-y:auto;">';
+            html += _adhocRenderUserTable(plan.noAppTargets, false);
+            html += '</div>';
         }
         html += '</div>';
     }
@@ -6078,6 +6097,88 @@ function _adhocChip(label, value, color, sub) {
 function adhocToggleDetail() {
     _adhocExpandedTargets = !_adhocExpandedTargets;
     if (_adhocPlanCache) _adhocRenderPlan(_adhocPlanCache);
+}
+
+function adhocToggleNoApp() {
+    _adhocExpandedNoApp = !_adhocExpandedNoApp;
+    if (_adhocPlanCache) _adhocRenderPlan(_adhocPlanCache);
+}
+
+function _adhocRenderUserTable(rows, hasChannelGroup) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+    html += '<thead><tr style="background:rgba(255,255,255,0.05);position:sticky;top:0;">';
+    html += '<th style="text-align:left;padding:6px;color:#aaa;">Usuario</th>';
+    html += '<th style="text-align:left;padding:6px;color:#aaa;">Paquete</th>';
+    html += '<th style="text-align:right;padding:6px;color:#aaa;">Netwin</th>';
+    html += '<th style="text-align:right;padding:6px;color:#aaa;">Días</th>';
+    html += '<th style="text-align:left;padding:6px;color:#aaa;">App</th>';
+    if (!hasChannelGroup) {
+        html += '<th style="text-align:left;padding:6px;color:#aaa;">📞 Línea</th>';
+    }
+    html += '<th style="text-align:right;padding:6px;color:#aaa;">Regalo</th>';
+    html += '<th style="text-align:right;padding:6px;color:#aaa;">Bono %</th>';
+    html += '</tr></thead><tbody>';
+    for (const t of rows) {
+        const appBadge = t.hasChannel
+            ? '<span style="background:rgba(37,211,102,0.15);color:#25d366;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;">✓ APP+NOTIFS</span>'
+            : (t.hasApp
+                ? '<span style="background:rgba(255,170,68,0.15);color:#ffaa44;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;">SOLO APP</span>'
+                : '<span style="background:rgba(255,80,80,0.15);color:#ff5050;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:700;">✗ SIN APP</span>');
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:5px;color:#fff;">' + escapeHtml(t.username) + '</td>';
+        html += '<td style="padding:5px;color:#aaa;font-size:10px;">' + escapeHtml(t.packageLabel || t.package) + '</td>';
+        html += '<td style="padding:5px;text-align:right;color:' + (t.netwinARS > 0 ? '#ff8888' : '#25d366') + ';">$' + fmt(t.netwinARS) + '</td>';
+        html += '<td style="padding:5px;text-align:right;color:#888;">' + (t.daysSinceLastDeposit != null ? t.daysSinceLastDeposit + 'd' : '—') + '</td>';
+        html += '<td style="padding:5px;">' + appBadge + '</td>';
+        if (!hasChannelGroup) {
+            const phoneText = t.linePhone || '—';
+            const phoneLink = t.linePhone
+                ? '<a href="https://wa.me/' + t.linePhone.replace(/[^\d]/g, '') + '" target="_blank" rel="noopener" style="color:#25d366;text-decoration:none;font-size:10px;">' + escapeHtml(phoneText) + '</a>'
+                : '<span style="color:#666;font-size:10px;">— sin línea —</span>';
+            html += '<td style="padding:5px;">' + phoneLink + '</td>';
+        }
+        html += '<td style="padding:5px;text-align:right;color:#ffd700;">' + (t.giftAmount ? '$' + fmt(t.giftAmount) : '—') + '</td>';
+        html += '<td style="padding:5px;text-align:right;color:#25d366;">' + (t.bonusPct ? t.bonusPct + '%' : '—') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+function adhocDownloadNoAppCSV() {
+    if (!_adhocPlanCache || !_adhocPlanCache.noAppTargets || _adhocPlanCache.noAppTargets.length === 0) {
+        showToast('No hay usuarios sin app para descargar', 'warning');
+        return;
+    }
+    const escapeCsv = (s) => {
+        const v = String(s == null ? '' : s);
+        if (v.includes(',') || v.includes('"') || v.includes('\n')) return '"' + v.replace(/"/g, '""') + '"';
+        return v;
+    };
+    const lines = [];
+    lines.push(['username','equipo','linea_telefono','paquete','netwin_ars','dias_sin_cargar','regalo_sugerido_ars','bono_pct_sugerido'].join(','));
+    for (const t of _adhocPlanCache.noAppTargets) {
+        lines.push([
+            escapeCsv(t.username),
+            escapeCsv(t.lineTeamName || ''),
+            escapeCsv(t.linePhone || ''),
+            escapeCsv(t.packageLabel || t.package || ''),
+            Math.round(t.netwinARS || 0),
+            t.daysSinceLastDeposit != null ? t.daysSinceLastDeposit : '',
+            t.giftAmount || 0,
+            t.bonusPct || 0
+        ].join(','));
+    }
+    const csv = '﻿' + lines.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'adhoc-sin-app-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('📥 CSV descargado · ' + _adhocPlanCache.noAppTargets.length + ' contactos', 'success');
 }
 
 function adhocCancelPlan() {
