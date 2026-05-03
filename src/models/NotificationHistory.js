@@ -20,8 +20,8 @@ const notificationHistorySchema = new mongoose.Schema({
   // cuando se ejecuto. scheduledFor=null significa envio inmediato.
   scheduledFor: { type: Date, default: null },
 
-  // Audiencia: 'all' o 'prefix'. Si prefix, guardamos el prefix usado.
-  audienceType: { type: String, enum: ['all', 'prefix'], default: 'all' },
+  // Audiencia: 'all', 'prefix', o 'single' (a un user específico).
+  audienceType: { type: String, enum: ['all', 'prefix', 'single'], default: 'all' },
   audiencePrefix: { type: String, default: null, trim: true },
 
   // Contenido del push.

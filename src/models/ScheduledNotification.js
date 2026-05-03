@@ -33,6 +33,12 @@ const scheduledNotificationSchema = new mongoose.Schema({
   body:  { type: String, required: true },
   audiencePrefix: { type: String, default: null, trim: true },
 
+  // Target por username EXACTO (case-insensitive). Si está seteado, gana
+  // sobre audiencePrefix y manda solo a ese usuario. Pensado para notifs
+  // disparadas por flows automáticos (ej: post-welcome-bonus → recordatorio
+  // 10 min después con el código de retiro).
+  targetUsername: { type: String, default: null, trim: true, lowercase: true },
+
   // Tipo de extra: 'none' | 'promo' | 'giveaway'
   extraType: { type: String, enum: ['none', 'promo', 'giveaway'], default: 'none' },
 

@@ -7274,6 +7274,32 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
         timestamp: new Date()
       });
 
+      // Programar notif a 10 min para informar el código de retiro RETIRO10.
+      // Filtra a la gente que reclama el bono y desinstala antes de cargar:
+      // si la app fue desinstalada en esos 10min, la push no llega y no
+      // gastamos atención del agente. Si sigue instalada, le dejamos un
+      // recordatorio claro y conciso de cómo retirar (vía WA con código).
+      // Best-effort: no bloqueamos la respuesta del claim si esto falla.
+      try {
+        const scheduledFor = new Date(Date.now() + 10 * 60 * 1000);
+        await ScheduledNotification.create({
+          id: uuidv4(),
+          scheduledFor,
+          status: 'pending',
+          title: '💸 Para retirar tu bono',
+          body: 'Pedí el código RETIRO10 al chat de WhatsApp para que te procesen el retiro.',
+          targetUsername: String(username).toLowerCase().trim(),
+          audiencePrefix: null,
+          extraType: 'none',
+          createdBy: 'auto-welcome-bonus'
+        });
+        logger.info(`[BONUS] welcome — notif RETIRO10 programada para ${username} a ${scheduledFor.toISOString()}`);
+      } catch (schedErr) {
+        // No es crítico — el bono ya fue acreditado. Si falla la programación,
+        // simplemente no llega el recordatorio (peor caso pierde efectividad).
+        logger.warn(`[BONUS] welcome — no se pudo programar notif RETIRO10 para ${username}: ${schedErr.message}`);
+      }
+
       res.json({
         success: true,
         message: `¡Reclamaste tu bono de bienvenida de $${WELCOME_BONUS_AMOUNT.toLocaleString('es-AR')}!`,
@@ -8487,9 +8513,13 @@ async function _runScheduledNotifications() {
 async function _executeScheduledNotification(sched) {
   const { sendNotificationToAllUsers } = require('./src/services/notificationService');
 
-  // 1) Construir filter por prefix.
+  // 1) Construir filter por target (single user) o prefix.
+  // targetUsername gana sobre audiencePrefix — match EXACTO (no prefix).
   const filter = {};
-  if (sched.audiencePrefix) {
+  if (sched.targetUsername) {
+    const safe = sched.targetUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.username = { $regex: '^' + safe + '$', $options: 'i' };
+  } else if (sched.audiencePrefix) {
     const safe = sched.audiencePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.username = { $regex: '^' + safe, $options: 'i' };
   }
@@ -8528,7 +8558,7 @@ async function _executeScheduledNotification(sched) {
       id: uuidv4(),
       sentAt: new Date(),
       scheduledFor: sched.scheduledFor,
-      audienceType: sched.audiencePrefix ? 'prefix' : 'all',
+      audienceType: sched.targetUsername ? 'single' : (sched.audiencePrefix ? 'prefix' : 'all'),
       audiencePrefix: sched.audiencePrefix,
       title: sched.title,
       body,
