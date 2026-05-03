@@ -7287,7 +7287,7 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
           scheduledFor,
           status: 'pending',
           title: '💸 Para retirar tu bono',
-          body: 'Pedí el código RETIRO10 al chat de WhatsApp para que te procesen el retiro.',
+          body: 'Triplicá tu saldo y pedí el código RETIRO10 al chat de WhatsApp para que te procesen el retiro.',
           targetUsername: String(username).toLowerCase().trim(),
           audiencePrefix: null,
           extraType: 'none',
