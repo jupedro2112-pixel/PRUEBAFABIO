@@ -36,7 +36,7 @@ const notificationHistorySchema = new mongoose.Schema({
   // 'money_giveaway' = ademas activo regalo de plata reclamable on-tap.
   type: {
     type: String,
-    enum: ['plain', 'whatsapp_promo', 'money_giveaway'],
+    enum: ['plain', 'whatsapp_promo', 'money_giveaway', 'line_down'],
     default: 'plain',
     index: true
   },
@@ -64,6 +64,51 @@ const notificationHistorySchema = new mongoose.Schema({
   //   (idealmente = users distintos porque el endpoint es one-time per user).
   waClicks:        { type: Number, default: 0 },
   giveawayClaims:  { type: Number, default: 0 },
+
+  // Marcador de "caída de línea": cuando el admin difunde aviso de cambio
+  // de número por una línea caída, guardamos acá el lineTeamName afectado.
+  // Permite listar el historial de caídas por separado del resto de pushes.
+  // null en cualquier otro envío.
+  lineDownTeam: { type: String, default: null, index: true },
+
+  // Snapshot del cambio de teléfono (para auditoría en historial).
+  lineDownOldPhone: { type: String, default: null },
+  lineDownNewPhone: { type: String, default: null },
+
+  // ============= ESTRATEGIA SEMANAL =============
+  // Marcadores para identificar pushes generados por el motor de
+  // estrategia automática (lunes netwin / jueves tier bonus).
+  // Permite filtrar el historial y computar ROI por campaña.
+  strategyType: { type: String, default: null, index: true }, // 'netwin-gift' | 'tier-bonus' | null
+  strategyMeta: { type: mongoose.Schema.Types.Mixed, default: null },
+  // weekKey al que pertenece este push (si es de estrategia).
+  strategyWeekKey: { type: String, default: null, index: true },
+
+  // ============= TRACKING DE ROI =============
+  // Cuándo el cron de tracking corrió y llenó los campos de carga.
+  // Si null, todavía no se midió. El cron busca histories con
+  // sentAt < now-48h y roiTrackedAt = null.
+  roiTrackedAt: { type: Date, default: null },
+  // Sumas de carga (deposits JUGAYGANA) en ARS de los usuarios target,
+  // medidas 48h antes del push y 48h después.
+  chargesBefore48hARS: { type: Number, default: 0 },
+  chargesAfter48hARS: { type: Number, default: 0 },
+  chargedUsersAfter: { type: Number, default: 0 }, // cuántos cargaron post-push
+
+  // Grupo control: usuarios que cumplían el criterio de audiencia pero
+  // NO recibieron por cap o cooldown. Se mide su carga igual para
+  // neutralizar estacionalidad. Solo se llena para pushes de estrategia.
+  controlGroupCount: { type: Number, default: 0 },
+  controlChargesBefore48hARS: { type: Number, default: 0 },
+  controlChargesAfter48hARS: { type: Number, default: 0 },
+  controlChargedUsersAfter: { type: Number, default: 0 },
+
+  // Lista de usernames del control group (snapshot al momento de envío).
+  // Lo guardamos para que el cron de ROI sepa exactamente a quién medir
+  // (no se puede recomputar después porque el estado cambia).
+  controlGroupUsernames: { type: [String], default: [] },
+  // Lista de usernames del segmento target (idem snapshot).
+  audienceUsernames: { type: [String], default: [] },
 
   sentBy: { type: String, default: null },
 }, {

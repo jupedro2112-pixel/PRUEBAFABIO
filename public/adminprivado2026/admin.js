@@ -165,7 +165,9 @@ function showSection(sectionKey) {
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
-        teams: 'teamsSection'
+        teams: 'teamsSection',
+        lineDown: 'lineDownSection',
+        activePlayers: 'activePlayersSection'
     };
     const sectionId = map[sectionKey];
     if (sectionId) {
@@ -201,6 +203,11 @@ function showSection(sectionKey) {
         loadAutomations();
     } else if (sectionKey === 'teams') {
         loadTeams();
+    } else if (sectionKey === 'lineDown') {
+        loadLineDownTeams();
+        loadLineDownHistory();
+    } else if (sectionKey === 'activePlayers') {
+        loadActivePlayers();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -3537,6 +3544,8 @@ function _autoRenderActiveTab() {
     else if (_autoActiveTab === 'pending') c.innerHTML = _autoRenderPendingTab();
     else if (_autoActiveTab === 'history') _autoRenderHistoryTab();
     else if (_autoActiveTab === 'calendar') c.innerHTML = _autoRenderCalendarTab();
+    else if (_autoActiveTab === 'strategy') _strategyRenderTab();
+    else if (_autoActiveTab === 'roi') _strategyRenderROITab();
 }
 
 // ============= TAB: REGLAS =============
@@ -4116,4 +4125,1069 @@ function _renderSlotImportResultHtml(j, isPreview) {
     }
     html += '</div>';
     return html;
+}
+
+// ============================================
+// CAÍDA DE LÍNEA — broadcast + reemplazo de número
+// ============================================
+let _lineDownTeamsCache = null;
+let _lineDownPreviewTimer = null;
+
+async function loadLineDownTeams() {
+    const sel = document.getElementById('lineDownTeamSelect');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Cargando…</option>';
+    try {
+        const r = await authFetch('/api/admin/teams/stats');
+        if (!r.ok) {
+            sel.innerHTML = '<option value="">❌ Error cargando equipos</option>';
+            return;
+        }
+        const j = await r.json();
+        _lineDownTeamsCache = j;
+        const teams = Array.isArray(j.teams) ? j.teams : [];
+        // Construir options:
+        //  - 1 opción por TEAM (modo prefix se aplica desde el dropdown de modo)
+        //  - 1 opción por sub-LÍNEA (con · y telefono al lado)
+        let opts = '<option value="">— Elegí equipo o línea —</option>';
+        const sortedTeams = teams.slice().sort((a, b) => (b.totalUsers || 0) - (a.totalUsers || 0));
+        for (const t of sortedTeams) {
+            opts += '<optgroup label="' + escapeHtml(t.teamName) + ' (' + (t.totalUsers || 0) + ' users)">';
+            opts += '<option value="' + escapeHtml(t.teamName) + '" data-mode="exact">' + escapeHtml(t.teamName) + ' · TODO el equipo</option>';
+            const lines = Array.isArray(t.lines) ? t.lines : [];
+            for (const l of lines) {
+                const lbl = (l.fullLabel || '').trim();
+                if (!lbl || lbl === t.teamName) continue;
+                const phone = l.linePhone ? ' (' + l.linePhone + ')' : '';
+                opts += '<option value="' + escapeHtml(lbl) + '" data-mode="exact">' + escapeHtml(lbl) + ' — ' + (l.count || 0) + ' users' + escapeHtml(phone) + '</option>';
+            }
+            opts += '</optgroup>';
+        }
+        sel.innerHTML = opts;
+    } catch (e) {
+        console.error('loadLineDownTeams error:', e);
+        sel.innerHTML = '<option value="">❌ Error de conexión</option>';
+    }
+}
+
+function onLineDownTeamChange() {
+    // Debounce el preview para no spamear en cambios rápidos.
+    if (_lineDownPreviewTimer) clearTimeout(_lineDownPreviewTimer);
+    _lineDownPreviewTimer = setTimeout(loadLineDownPreview, 200);
+}
+
+async function loadLineDownPreview() {
+    const sel = document.getElementById('lineDownTeamSelect');
+    const modeSel = document.getElementById('lineDownTeamMode');
+    const preview = document.getElementById('lineDownPreview');
+    const previewContent = document.getElementById('lineDownPreviewContent');
+    const oldPhoneInput = document.getElementById('lineDownOldPhone');
+    if (!sel || !modeSel || !preview || !previewContent || !oldPhoneInput) return;
+
+    const teamName = sel.value;
+    if (!teamName) {
+        preview.style.display = 'none';
+        oldPhoneInput.value = '';
+        return;
+    }
+    const mode = modeSel.value || 'exact';
+
+    preview.style.display = 'block';
+    previewContent.innerHTML = '⏳ Calculando…';
+    oldPhoneInput.value = '';
+
+    try {
+        const url = '/api/admin/line-down/preview?teamName=' + encodeURIComponent(teamName) + '&teamMode=' + encodeURIComponent(mode);
+        const r = await authFetch(url);
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            previewContent.innerHTML = '❌ ' + escapeHtml(err.error || 'Error');
+            return;
+        }
+        const j = await r.json();
+        const slots = Array.isArray(j.matchingSlots) ? j.matchingSlots : [];
+        const phones = [...new Set(slots.map(s => s.phone).filter(Boolean))];
+        if (phones.length > 0) oldPhoneInput.value = phones[0];
+
+        let html = '';
+        html += '<span style="color:#fff;font-weight:700;">' + (j.affected || 0) + '</span> usuarios afectados';
+        html += ' · <span style="color:#25d366;">' + (j.withChannel || 0) + '</span> con app+notifs';
+        if (j.lookupPending) html += ' · <span style="color:#ffaa44;">' + j.lookupPending + '</span> pre-asignados';
+        if (slots.length > 0) {
+            html += '<br><span style="color:#888;font-size:11px;">Slots de "Números vigentes" afectados: ' + slots.map(s => escapeHtml(s.teamName) + ' (' + escapeHtml(s.phone) + ')').join(', ') + '</span>';
+        } else {
+            html += '<br><span style="color:#ffaa44;font-size:11px;">⚠ No hay slot configurado en "Números vigentes" para este equipo. Solo se actualizarán User + UserLineLookup.</span>';
+        }
+        previewContent.innerHTML = html;
+    } catch (e) {
+        previewContent.innerHTML = '❌ Error de conexión';
+    }
+}
+
+function toggleLineDownPromoFields() {
+    const cb = document.getElementById('lineDownPromoEnabled');
+    const fields = document.getElementById('lineDownPromoFields');
+    if (!cb || !fields) return;
+    fields.style.display = cb.checked ? 'block' : 'none';
+}
+
+async function submitLineDown() {
+    const sel = document.getElementById('lineDownTeamSelect');
+    const modeSel = document.getElementById('lineDownTeamMode');
+    const newPhoneEl = document.getElementById('lineDownNewPhone');
+    const titleEl = document.getElementById('lineDownTitle');
+    const messageEl = document.getElementById('lineDownMessage');
+    const promoEnabledEl = document.getElementById('lineDownPromoEnabled');
+    const bonusPctEl = document.getElementById('lineDownBonusPct');
+    const durationDaysEl = document.getElementById('lineDownDurationDays');
+    const promoMessageEl = document.getElementById('lineDownPromoMessage');
+    const promoCodeEl = document.getElementById('lineDownPromoCode');
+    const submitBtn = document.getElementById('lineDownSubmitBtn');
+
+    const teamName = (sel.value || '').trim();
+    if (!teamName) { showToast('Elegí un equipo o línea', 'error'); return; }
+    const teamMode = modeSel.value || 'exact';
+    const newPhone = (newPhoneEl.value || '').trim();
+    if (!newPhone) { showToast('Falta el nuevo número', 'error'); return; }
+    const message = (messageEl.value || '').trim();
+    if (!message) { showToast('Falta el mensaje del push', 'error'); return; }
+    const title = (titleEl.value || '').trim();
+
+    const promoBody = promoEnabledEl.checked ? {
+        enabled: true,
+        bonusPct: Number(bonusPctEl.value),
+        durationDays: Number(durationDaysEl.value),
+        promoMessage: (promoMessageEl.value || '').trim(),
+        promoCode: (promoCodeEl.value || '').trim()
+    } : { enabled: false };
+
+    // Confirmación: una vez disparado, el push sale y el número cambia.
+    const confirmMsg = '¿Confirmás difundir caída de "' + teamName + '"?\n\n' +
+        '• El número de los usuarios afectados se actualizará a: ' + newPhone + '\n' +
+        '• Se enviará push con el mensaje configurado\n' +
+        (promoBody.enabled ? ('• Promo activa: ' + promoBody.bonusPct + '% por ' + promoBody.durationDays + ' día(s)\n') : '');
+    if (!window.confirm(confirmMsg)) return;
+
+    submitBtn.disabled = true;
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '⏳ Enviando…';
+
+    try {
+        const r = await authFetch('/api/admin/line-down', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                teamName,
+                teamMode,
+                newPhone,
+                title,
+                message,
+                promo: promoBody
+            })
+        });
+        const j = await r.json();
+        if (!r.ok) {
+            showToast(j.error || 'Error al difundir', 'error');
+            return;
+        }
+        const summary = '✅ ' + j.audienceCount + ' afectados · ' +
+            j.pushDelivered + ' entregados · ' +
+            j.usersUpdated + ' users actualizados · ' +
+            j.slotsUpdated + ' slot(s)';
+        showToast(summary, 'success');
+
+        // Reset del formulario.
+        newPhoneEl.value = '';
+        titleEl.value = '';
+        messageEl.value = '';
+        promoEnabledEl.checked = false;
+        toggleLineDownPromoFields();
+        loadLineDownPreview();
+        loadLineDownHistory();
+    } catch (e) {
+        console.error('submitLineDown error:', e);
+        showToast('Error de conexión', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
+}
+
+// ============================================
+// 🎯 ESTRATEGIA SEMANAL (tab dentro de Automatizaciones)
+// ============================================
+let _strategyConfigCache = null;
+let _strategyBudgetCache = null;
+let _strategyReportsCache = [];
+
+async function _strategyRenderTab() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando estrategia…</div>';
+    try {
+        const [cfgR, budR, repR] = await Promise.all([
+            authFetch('/api/admin/strategy/config'),
+            authFetch('/api/admin/strategy/budget-status'),
+            authFetch('/api/admin/strategy/reports?limit=4')
+        ]);
+        if (!cfgR.ok || !budR.ok) {
+            c.innerHTML = '<div class="empty-state">❌ Error cargando estrategia</div>';
+            return;
+        }
+        _strategyConfigCache = (await cfgR.json()).config;
+        _strategyBudgetCache = await budR.json();
+        const repJ = repR.ok ? await repR.json() : { reports: [] };
+        _strategyReportsCache = repJ.reports || [];
+        c.innerHTML = _strategyBuildHtml();
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function _strategyBuildHtml() {
+    const cfg = _strategyConfigCache;
+    const bud = _strategyBudgetCache;
+    if (!cfg) return '<div class="empty-state">Sin config</div>';
+
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const isPaused = (cfg.pausedUntil && new Date(cfg.pausedUntil) > new Date()) || cfg.emergencyStop;
+    const stateColor = !cfg.enabled ? '#888' : (isPaused ? '#ff5050' : '#25d366');
+    const stateLabel = !cfg.enabled ? 'DESACTIVADA' : (cfg.emergencyStop ? '⛔ PARO DE EMERGENCIA' : (cfg.pausedUntil && new Date(cfg.pausedUntil) > new Date() ? ('PAUSADA HASTA ' + new Date(cfg.pausedUntil).toLocaleString('es-AR', {dateStyle:'short',timeStyle:'short'})) : 'ACTIVA'));
+
+    const wkPctBar = bud ? `<div style="height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden;margin-top:6px;"><div style="width:${Math.min(100,bud.pctUsed)}%;height:100%;background:${bud.pctUsed > 90 ? '#ff5050' : (bud.pctUsed > 60 ? '#ffaa44' : '#25d366')};"></div></div>` : '';
+
+    let html = '';
+
+    // Banner de estado + budget.
+    html += '<div style="background:rgba(255,200,80,0.04);border:1px solid rgba(255,200,80,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:start;gap:14px;flex-wrap:wrap;">';
+    html += '<div>';
+    html += '<div style="color:' + stateColor + ';font-weight:800;font-size:13px;">● ' + stateLabel + '</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-top:4px;">Lunes ' + String(cfg.netwinGift.hour).padStart(2,'0') + ':' + String(cfg.netwinGift.minute).padStart(2,'0') + ' regalo netwin · Jueves ' + String(cfg.tierBonus.hour).padStart(2,'0') + ':' + String(cfg.tierBonus.minute).padStart(2,'0') + ' bono % · Miércoles ' + String(cfg.weeklyReport.hour).padStart(2,'0') + ':' + String(cfg.weeklyReport.minute).padStart(2,'0') + ' reporte ROI</div>';
+    html += '</div>';
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    if (isPaused) {
+        html += '<button onclick="strategyResume()" style="padding:8px 14px;background:linear-gradient(135deg,#25d366,#0a7a3a);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">▶ Reanudar</button>';
+    } else {
+        html += '<button onclick="strategyPause(24)" style="padding:8px 14px;background:rgba(255,170,68,0.15);color:#ffaa44;border:1px solid rgba(255,170,68,0.40);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">⏸ Pausar 24h</button>';
+        html += '<button onclick="strategyPause(168)" style="padding:8px 14px;background:rgba(255,170,68,0.15);color:#ffaa44;border:1px solid rgba(255,170,68,0.40);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">⏸ Pausar 1 sem</button>';
+        html += '<button onclick="strategyEmergencyStop()" style="padding:8px 14px;background:linear-gradient(135deg,#ff5050,#cc0000);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:800;cursor:pointer;">⛔ PARAR TODO</button>';
+    }
+    html += '</div>';
+    html += '</div>';
+    if (bud) {
+        html += '<div style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:10px;">';
+        html += '<div><div style="color:#888;font-size:10px;font-weight:700;">SEMANA</div><div style="color:#fff;font-weight:800;font-size:16px;">' + bud.weekKey + '</div></div>';
+        html += '<div><div style="color:#888;font-size:10px;font-weight:700;">GASTADO</div><div style="color:#ffd700;font-weight:800;font-size:16px;">$' + fmt(bud.spentARS) + '</div></div>';
+        html += '<div><div style="color:#888;font-size:10px;font-weight:700;">TOPE</div><div style="color:#fff;font-weight:800;font-size:16px;">$' + fmt(bud.capARS) + '</div></div>';
+        html += '<div><div style="color:#888;font-size:10px;font-weight:700;">DISPONIBLE</div><div style="color:#25d366;font-weight:800;font-size:16px;">$' + fmt(bud.remainingARS) + '</div></div>';
+        html += '</div>' + wkPctBar;
+    }
+    // Banner de audiencia base elegible (regla hard: solo app+notifs).
+    if (bud && bud.eligibleUsersCount !== undefined) {
+        html += '<div style="margin-top:14px;padding:10px 12px;background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.30);border-radius:8px;font-size:12px;color:#bbb;line-height:1.6;">';
+        html += '<strong style="color:#25d366;">📲 Audiencia base elegible: ' + fmt(bud.eligibleUsersCount) + ' usuarios</strong> con app instalada + notificaciones aceptadas (' + bud.eligiblePct + '% de los ' + fmt(bud.totalRealUsers) + ' totales). ';
+        html += '<span style="color:#888;">Los ' + fmt(bud.excludedNoChannel) + ' restantes NO entran a la estrategia automática (son target del análisis externo "Clientes activos").</span>';
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // Último reporte (si hay).
+    if (_strategyReportsCache.length > 0) {
+        const last = _strategyReportsCache[0];
+        html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">';
+        html += '<div style="color:#00d4ff;font-weight:800;font-size:13px;margin-bottom:6px;">📊 Último reporte: ' + last.weekKey + '</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;font-size:12px;">';
+        html += '<div><div style="color:#888;font-size:10px;">Gastado</div><div style="color:#fff;font-weight:700;">$' + fmt(last.totalSpentARS) + '</div></div>';
+        html += '<div><div style="color:#888;font-size:10px;">Δ Venta atribuible</div><div style="color:' + (last.totalDeltaSalesARS >= 0 ? '#25d366' : '#ff5050') + ';font-weight:700;">' + (last.totalDeltaSalesARS >= 0 ? '+' : '') + '$' + fmt(last.totalDeltaSalesARS) + '</div></div>';
+        html += '<div><div style="color:#888;font-size:10px;">ROI</div><div style="color:' + ((last.totalROI || 0) >= 0 ? '#25d366' : '#ff5050') + ';font-weight:700;">' + ((last.totalROI || 0) >= 0 ? '+' : '') + ((last.totalROI || 0) * 100).toFixed(0) + '%</div></div>';
+        html += '<div><div style="color:#888;font-size:10px;">Campañas</div><div style="color:#fff;font-weight:700;">' + (last.campaigns || []).length + '</div></div>';
+        html += '</div>';
+        if ((last.recommendations || []).length > 0) {
+            html += '<div style="margin-top:10px;padding:8px 10px;background:rgba(0,0,0,0.30);border-radius:6px;font-size:11px;color:#bbb;line-height:1.6;">';
+            html += '<div style="color:#fff;font-weight:700;margin-bottom:4px;">💡 Recomendaciones para esta semana:</div>';
+            for (const r of last.recommendations) html += '<div>• ' + escapeHtml(r) + '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+
+    // === Form: parámetros editables ===
+    html += '<form id="strategyForm" onsubmit="strategySaveConfig(event)">';
+
+    html += '<h3 style="color:#fff;font-size:14px;margin:18px 0 10px;">⚙️ Parámetros globales</h3>';
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:14px;display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:14px;">';
+    html += _strategyField('Estrategia activa', '<input type="checkbox" name="enabled" ' + (cfg.enabled ? 'checked' : '') + ' style="width:18px;height:18px;">');
+    html += _strategyField('Tope semanal de regalos (ARS)', '<input type="number" name="weeklyBudgetCapARS" value="' + cfg.weeklyBudgetCapARS + '" min="0" max="50000000" required>', 'Si la audiencia computada supera este número, la campaña no se manda y se loguea para revisión.');
+    html += _strategyField('Cap notifs por usuario / semana', '<input type="number" name="capPerUserPerWeek" value="' + cfg.capPerUserPerWeek + '" min="0" max="7" required>', 'Por defecto 2: lunes + jueves.');
+    html += _strategyField('Cooldown entre notifs (horas)', '<input type="number" name="cooldownHours" value="' + cfg.cooldownHours + '" min="0" max="168" required>');
+    html += '</div>';
+
+    // === Campaña 1: Netwin Gift ===
+    html += '<h3 style="color:#fff;font-size:14px;margin:18px 0 10px;">🎁 Lunes — Regalo de plata a perdedores semana previa</h3>';
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:14px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;margin-bottom:12px;">';
+    html += _strategyField('Activa', '<input type="checkbox" name="ng_enabled" ' + (cfg.netwinGift.enabled ? 'checked' : '') + ' style="width:18px;height:18px;">');
+    html += _strategyField('Día semana', _strategyDaySelect('ng_dayOfWeek', cfg.netwinGift.dayOfWeek));
+    html += _strategyField('Hora (ART)', '<input type="number" name="ng_hour" value="' + cfg.netwinGift.hour + '" min="0" max="23" style="width:80px;">');
+    html += _strategyField('Min', '<input type="number" name="ng_minute" value="' + cfg.netwinGift.minute + '" min="0" max="59" style="width:80px;">');
+    html += _strategyField('Escalar a humano si pérdida >', '<input type="number" name="ng_escalateAboveARS" value="' + cfg.netwinGift.escalateAboveARS + '" min="0">', 'Pérdidas mayores no se autoejecutan.');
+    html += _strategyField('Duración del regalo (min)', '<input type="number" name="ng_durationMinutes" value="' + cfg.netwinGift.durationMinutes + '" min="60">', 'Default 2880 = 48h.');
+    html += '</div>';
+    html += '<div style="color:#888;font-size:11px;margin-bottom:6px;">Tiers de pérdida → monto a regalar:</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px;">';
+    html += '<thead><tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:6px;color:#aaa;">Pérdida desde</th><th style="text-align:left;padding:6px;color:#aaa;">Hasta</th><th style="text-align:left;padding:6px;color:#aaa;">Regalar (ARS)</th><th></th></tr></thead><tbody id="ngTiersBody">';
+    for (let i = 0; i < cfg.netwinGift.tiers.length; i++) {
+        const t = cfg.netwinGift.tiers[i];
+        html += '<tr>';
+        html += '<td style="padding:5px;"><input type="number" data-ng-tier="' + i + '" data-key="minLoss" value="' + t.minLoss + '" min="0" style="width:120px;"></td>';
+        html += '<td style="padding:5px;"><input type="number" data-ng-tier="' + i + '" data-key="maxLoss" value="' + t.maxLoss + '" min="0" style="width:120px;"></td>';
+        html += '<td style="padding:5px;"><input type="number" data-ng-tier="' + i + '" data-key="giftAmount" value="' + t.giftAmount + '" min="0" style="width:120px;"></td>';
+        html += '<td style="padding:5px;"><button type="button" onclick="strategyRemoveNgTier(' + i + ')" style="background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;">×</button></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<button type="button" onclick="strategyAddNgTier()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:5px;padding:6px 12px;cursor:pointer;font-size:11px;">+ Agregar tier</button>';
+
+    html += '<div style="margin-top:12px;">';
+    html += _strategyField('Título push', '<input type="text" name="ng_title" value="' + escapeHtml(cfg.netwinGift.title) + '" maxlength="100" style="width:100%;">');
+    html += _strategyField('Cuerpo push (soporta {{username}}, {{amount}})', '<textarea name="ng_body" maxlength="500" rows="2" style="width:100%;">' + escapeHtml(cfg.netwinGift.body) + '</textarea>');
+    html += '</div>';
+
+    // Botones de preview / run-now para netwin.
+    html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '<button type="button" onclick="strategyPreview(\'netwin\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:700;">👁 Preview audiencia</button>';
+    html += '<button type="button" onclick="strategyRunNow(\'netwin\')" style="background:rgba(255,80,80,0.10);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:700;">⚡ Ejecutar AHORA (test)</button>';
+    html += '</div>';
+    html += '</div>';
+
+    // === Campaña 2: Tier Bonus ===
+    html += '<h3 style="color:#fff;font-size:14px;margin:18px 0 10px;">⚡ Jueves — Bono % carga por tier</h3>';
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:14px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;margin-bottom:12px;">';
+    html += _strategyField('Activa', '<input type="checkbox" name="tb_enabled" ' + (cfg.tierBonus.enabled ? 'checked' : '') + ' style="width:18px;height:18px;">');
+    html += _strategyField('Día semana', _strategyDaySelect('tb_dayOfWeek', cfg.tierBonus.dayOfWeek));
+    html += _strategyField('Hora (ART)', '<input type="number" name="tb_hour" value="' + cfg.tierBonus.hour + '" min="0" max="23" style="width:80px;">');
+    html += _strategyField('Min', '<input type="number" name="tb_minute" value="' + cfg.tierBonus.minute + '" min="0" max="59" style="width:80px;">');
+    html += _strategyField('Ventana de reembolsos (días)', '<input type="number" name="tb_refundsLookbackDays" value="' + cfg.tierBonus.refundsLookbackDays + '" min="1" max="365">', 'Cuántos días atrás se suman reembolsos para tierización.');
+    html += _strategyField('Duración del bono (horas)', '<input type="number" name="tb_promoDurationHours" value="' + cfg.tierBonus.promoDurationHours + '" min="1" max="168">');
+    html += '</div>';
+    html += '<div style="color:#888;font-size:11px;margin-bottom:6px;">Tiers (orden: el primero que matchee gana — ordenar de mejor a peor):</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px;">';
+    html += '<thead><tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:6px;color:#aaa;">Code</th><th style="text-align:left;padding:6px;color:#aaa;">Label</th><th style="text-align:left;padding:6px;color:#aaa;">Min %ile</th><th style="text-align:left;padding:6px;color:#aaa;">Min reemb. ARS</th><th style="text-align:left;padding:6px;color:#aaa;">Bono %</th><th></th></tr></thead><tbody id="tbTiersBody">';
+    for (let i = 0; i < cfg.tierBonus.tiers.length; i++) {
+        const t = cfg.tierBonus.tiers[i];
+        html += '<tr>';
+        html += '<td style="padding:5px;"><input type="text" data-tb-tier="' + i + '" data-key="code" value="' + escapeHtml(t.code) + '" maxlength="20" style="width:80px;"></td>';
+        html += '<td style="padding:5px;"><input type="text" data-tb-tier="' + i + '" data-key="label" value="' + escapeHtml(t.label) + '" maxlength="40" style="width:140px;"></td>';
+        html += '<td style="padding:5px;"><input type="number" data-tb-tier="' + i + '" data-key="minPercentile" value="' + t.minPercentile + '" min="0" max="100" style="width:80px;"></td>';
+        html += '<td style="padding:5px;"><input type="number" data-tb-tier="' + i + '" data-key="minRefundsARS" value="' + t.minRefundsARS + '" min="0" style="width:120px;"></td>';
+        html += '<td style="padding:5px;"><input type="number" data-tb-tier="' + i + '" data-key="bonusPct" value="' + t.bonusPct + '" min="0" max="500" style="width:80px;"></td>';
+        html += '<td style="padding:5px;"><button type="button" onclick="strategyRemoveTbTier(' + i + ')" style="background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;">×</button></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<button type="button" onclick="strategyAddTbTier()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:5px;padding:6px 12px;cursor:pointer;font-size:11px;">+ Agregar tier</button>';
+
+    html += '<div style="margin-top:12px;">';
+    html += _strategyField('Título push (soporta {{tier}}, {{bonusPct}})', '<input type="text" name="tb_title" value="' + escapeHtml(cfg.tierBonus.title) + '" maxlength="100" style="width:100%;">');
+    html += _strategyField('Cuerpo push (soporta {{username}}, {{tier}}, {{bonusPct}}, {{validHours}})', '<textarea name="tb_body" maxlength="500" rows="2" style="width:100%;">' + escapeHtml(cfg.tierBonus.body) + '</textarea>');
+    html += '</div>';
+
+    html += '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '<button type="button" onclick="strategyPreview(\'tier\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:700;">👁 Preview audiencia</button>';
+    html += '<button type="button" onclick="strategyRunNow(\'tier\')" style="background:rgba(255,80,80,0.10);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:700;">⚡ Ejecutar AHORA (test)</button>';
+    html += '</div>';
+    html += '</div>';
+
+    // === Reporte miércoles ===
+    html += '<h3 style="color:#fff;font-size:14px;margin:18px 0 10px;">📊 Miércoles — Reporte ROI semanal</h3>';
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:14px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;">';
+    html += _strategyField('Activo', '<input type="checkbox" name="rep_enabled" ' + (cfg.weeklyReport.enabled ? 'checked' : '') + ' style="width:18px;height:18px;">');
+    html += _strategyField('Día semana', _strategyDaySelect('rep_dayOfWeek', cfg.weeklyReport.dayOfWeek));
+    html += _strategyField('Hora (ART)', '<input type="number" name="rep_hour" value="' + cfg.weeklyReport.hour + '" min="0" max="23" style="width:80px;">');
+    html += _strategyField('Min', '<input type="number" name="rep_minute" value="' + cfg.weeklyReport.minute + '" min="0" max="59" style="width:80px;">');
+    html += '</div>';
+    html += '<button type="button" onclick="strategyRunNow(\'report\')" style="margin-top:10px;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:700;">⚡ Generar reporte AHORA</button>';
+    html += '</div>';
+
+    html += '<div style="margin-top:18px;display:flex;gap:8px;">';
+    html += '<button type="submit" style="flex:1;padding:12px;background:linear-gradient(135deg,#ffc850,#cc8800);color:#000;border:none;border-radius:8px;font-size:14px;font-weight:800;cursor:pointer;">💾 Guardar configuración</button>';
+    html += '<button type="button" onclick="_strategyRenderTab()" style="padding:12px 20px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;font-size:13px;cursor:pointer;">↻</button>';
+    html += '</div>';
+
+    html += '</form>';
+
+    // Reportes históricos.
+    if (_strategyReportsCache.length > 1) {
+        html += '<h3 style="color:#fff;font-size:14px;margin:24px 0 10px;">📚 Historial de reportes</h3>';
+        html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+        for (let i = 1; i < _strategyReportsCache.length; i++) {
+            const r = _strategyReportsCache[i];
+            const roiColor = (r.totalROI || 0) >= 0 ? '#25d366' : '#ff5050';
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">';
+            html += '<div><div style="color:#fff;font-weight:700;">' + r.weekKey + '</div><div style="color:#888;font-size:11px;">' + (r.campaigns || []).length + ' campañas · ' + (r.recommendations || []).length + ' recos</div></div>';
+            html += '<div style="display:flex;gap:14px;font-size:12px;">';
+            html += '<div><span style="color:#888;">Gastado:</span> <strong>$' + fmt(r.totalSpentARS) + '</strong></div>';
+            html += '<div><span style="color:#888;">Δ:</span> <strong style="color:' + ((r.totalDeltaSalesARS||0) >= 0 ? '#25d366' : '#ff5050') + ';">' + ((r.totalDeltaSalesARS||0) >= 0 ? '+' : '') + '$' + fmt(r.totalDeltaSalesARS) + '</strong></div>';
+            html += '<div><span style="color:#888;">ROI:</span> <strong style="color:' + roiColor + ';">' + ((r.totalROI||0) >= 0 ? '+' : '') + ((r.totalROI||0)*100).toFixed(0) + '%</strong></div>';
+            html += '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+
+    return html;
+}
+
+function _strategyField(label, controlHtml, hint) {
+    return '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px;">' + escapeHtml(label) + '</label>' + controlHtml + (hint ? '<div style="color:#666;font-size:10px;margin-top:3px;">' + escapeHtml(hint) + '</div>' : '') + '</div>';
+}
+
+function _strategyDaySelect(name, current) {
+    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    let opts = '';
+    for (let i = 0; i < 7; i++) {
+        opts += '<option value="' + i + '"' + (i === current ? ' selected' : '') + '>' + days[i] + '</option>';
+    }
+    return '<select name="' + name + '">' + opts + '</select>';
+}
+
+function strategyAddNgTier() {
+    if (!_strategyConfigCache) return;
+    _strategyConfigCache.netwinGift.tiers.push({ minLoss: 0, maxLoss: 0, giftAmount: 0 });
+    _strategyRenderTab();
+}
+function strategyRemoveNgTier(idx) {
+    if (!_strategyConfigCache) return;
+    _strategyConfigCache.netwinGift.tiers.splice(idx, 1);
+    _strategyRenderTab();
+}
+function strategyAddTbTier() {
+    if (!_strategyConfigCache) return;
+    _strategyConfigCache.tierBonus.tiers.push({ code: 'nuevo', label: 'Nuevo', minPercentile: 0, minRefundsARS: 0, bonusPct: 10 });
+    _strategyRenderTab();
+}
+function strategyRemoveTbTier(idx) {
+    if (!_strategyConfigCache) return;
+    _strategyConfigCache.tierBonus.tiers.splice(idx, 1);
+    _strategyRenderTab();
+}
+
+async function strategySaveConfig(e) {
+    e.preventDefault();
+    const f = e.target;
+    // Recolectar tiers desde los inputs.
+    const ngTiers = [];
+    document.querySelectorAll('#ngTiersBody tr').forEach((tr, i) => {
+        const inputs = tr.querySelectorAll('input[data-ng-tier]');
+        const t = {};
+        inputs.forEach(inp => { t[inp.getAttribute('data-key')] = Number(inp.value); });
+        if (t.giftAmount > 0) ngTiers.push(t);
+    });
+    const tbTiers = [];
+    document.querySelectorAll('#tbTiersBody tr').forEach((tr, i) => {
+        const inputs = tr.querySelectorAll('input[data-tb-tier]');
+        const t = {};
+        inputs.forEach(inp => {
+            const k = inp.getAttribute('data-key');
+            t[k] = (k === 'code' || k === 'label') ? inp.value.trim() : Number(inp.value);
+        });
+        if (t.code) tbTiers.push(t);
+    });
+    const body = {
+        enabled: f.enabled.checked,
+        weeklyBudgetCapARS: Number(f.weeklyBudgetCapARS.value),
+        capPerUserPerWeek: Number(f.capPerUserPerWeek.value),
+        cooldownHours: Number(f.cooldownHours.value),
+        netwinGift: {
+            enabled: f.ng_enabled.checked,
+            dayOfWeek: Number(f.ng_dayOfWeek.value),
+            hour: Number(f.ng_hour.value),
+            minute: Number(f.ng_minute.value),
+            escalateAboveARS: Number(f.ng_escalateAboveARS.value),
+            durationMinutes: Number(f.ng_durationMinutes.value),
+            title: f.ng_title.value,
+            body: f.ng_body.value,
+            tiers: ngTiers
+        },
+        tierBonus: {
+            enabled: f.tb_enabled.checked,
+            dayOfWeek: Number(f.tb_dayOfWeek.value),
+            hour: Number(f.tb_hour.value),
+            minute: Number(f.tb_minute.value),
+            refundsLookbackDays: Number(f.tb_refundsLookbackDays.value),
+            promoDurationHours: Number(f.tb_promoDurationHours.value),
+            title: f.tb_title.value,
+            body: f.tb_body.value,
+            tiers: tbTiers
+        },
+        weeklyReport: {
+            enabled: f.rep_enabled.checked,
+            dayOfWeek: Number(f.rep_dayOfWeek.value),
+            hour: Number(f.rep_hour.value),
+            minute: Number(f.rep_minute.value)
+        }
+    };
+    try {
+        const r = await authFetch('/api/admin/strategy/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        showToast('✅ Configuración guardada', 'success');
+        _strategyRenderTab();
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function strategyPause(hours) {
+    if (!confirm('¿Pausar la estrategia por ' + hours + 'h?\n\nNo se mandarán pushes automáticos hasta que la reanudes o pase el tiempo.')) return;
+    try {
+        const r = await authFetch('/api/admin/strategy/pause', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hours })
+        });
+        if (!r.ok) { const j = await r.json(); showToast(j.error || 'Error', 'error'); return; }
+        showToast('⏸ Estrategia pausada por ' + hours + 'h', 'success');
+        _strategyRenderTab();
+    } catch (e) { showToast('Error', 'error'); }
+}
+
+async function strategyEmergencyStop() {
+    if (!confirm('⛔ PARO DE EMERGENCIA\n\nEsto frena TODO de inmediato. No se ejecuta ninguna automatización hasta que reanudes manualmente.\n\n¿Confirmás?')) return;
+    try {
+        const r = await authFetch('/api/admin/strategy/pause', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        if (!r.ok) { const j = await r.json(); showToast(j.error || 'Error', 'error'); return; }
+        showToast('⛔ Estrategia FRENADA', 'success');
+        _strategyRenderTab();
+    } catch (e) { showToast('Error', 'error'); }
+}
+
+async function strategyResume() {
+    try {
+        const r = await authFetch('/api/admin/strategy/resume', { method: 'POST' });
+        if (!r.ok) { const j = await r.json(); showToast(j.error || 'Error', 'error'); return; }
+        showToast('▶ Estrategia reanudada', 'success');
+        _strategyRenderTab();
+    } catch (e) { showToast('Error', 'error'); }
+}
+
+async function strategyPreview(campaign) {
+    showToast('⏳ Calculando audiencia (puede tardar — 1 lookup por user)…', 'info');
+    try {
+        const r = await authFetch('/api/admin/strategy/preview?campaign=' + campaign);
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        const p = j.preview || {};
+        let msg = '👁 PREVIEW: ' + campaign.toUpperCase() + '\n\n';
+        msg += 'Audiencia bruta: ' + (p.audienceSize || 0) + '\n';
+        msg += 'Bloqueados (cap/cooldown): ' + (p.blockedCount || 0) + '\n';
+        msg += 'Targets reales: ' + (p.targetCount || 0) + '\n';
+        if (p.totalCost != null) msg += 'Costo estimado: $' + Number(p.totalCost).toLocaleString('es-AR') + '\n';
+        if (p.escalatedCount) msg += '⚠ Escalados a humano: ' + p.escalatedCount + '\n';
+        if (p.byTier) msg += '\nPor tier: ' + JSON.stringify(p.byTier);
+        if (p.breakdown) msg += '\nBreakdown: ' + JSON.stringify(p.breakdown);
+        if (p.skipped) msg += '\n\n⚠ SKIPPED: ' + p.skipped;
+        alert(msg);
+    } catch (e) { showToast('Error', 'error'); }
+}
+
+async function strategyRunNow(campaign) {
+    const labels = { netwin: 'regalo netwin (LUNES)', tier: 'bono % carga (JUEVES)', report: 'reporte ROI' };
+    if (!confirm('⚡ Ejecutar AHORA: ' + labels[campaign] + '\n\nEsto va a mandar pushes y crear giveaways de verdad. ¿Seguro?')) return;
+    showToast('⏳ Ejecutando…', 'info');
+    try {
+        const r = await authFetch('/api/admin/strategy/run-now', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaign })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        showToast('✅ ' + JSON.stringify(j.result), 'success');
+        _strategyRenderTab();
+    } catch (e) { showToast('Error', 'error'); }
+}
+
+// ============================================
+// 📈 ROI POR DIFUSIÓN (tab)
+// ============================================
+async function _strategyRenderROITab() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando ROI…</div>';
+    try {
+        const r = await authFetch('/api/admin/strategy/roi?limit=50');
+        if (!r.ok) { c.innerHTML = '<div class="empty-state">❌ Error</div>'; return; }
+        const j = await r.json();
+        const items = j.items || [];
+        if (items.length === 0) {
+            c.innerHTML = '<div class="empty-state" style="font-size:13px;color:#888;line-height:1.6;">No hay difusiones de estrategia todavía.<br><br>Cuando se disparen el lunes/jueves, vas a verlas acá con sus métricas de ROI.<br>El cálculo se completa 48h después del envío (el tracker corre cada 30 min).</div>';
+            return;
+        }
+        const fmt = n => Number(n || 0).toLocaleString('es-AR');
+        let html = '<div style="margin-bottom:12px;color:#aaa;font-size:11px;">' + items.length + ' difusiones · ROI calculado 48h post-envío comparando carga del segmento vs grupo control (gente que cumplía pero no recibió)</div>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="background:rgba(255,255,255,0.05);">';
+        html += '<th style="text-align:left;padding:8px;color:#aaa;">Cuándo</th>';
+        html += '<th style="text-align:left;padding:8px;color:#aaa;">Tipo</th>';
+        html += '<th style="text-align:right;padding:8px;color:#aaa;">Audiencia</th>';
+        html += '<th style="text-align:right;padding:8px;color:#aaa;">Entregados</th>';
+        html += '<th style="text-align:right;padding:8px;color:#aaa;">Carga 48h pre</th>';
+        html += '<th style="text-align:right;padding:8px;color:#aaa;">Carga 48h post</th>';
+        html += '<th style="text-align:right;padding:8px;color:#aaa;">Δ vs control</th>';
+        html += '<th style="text-align:right;padding:8px;color:#aaa;">ROI estim.</th>';
+        html += '</tr></thead><tbody>';
+        for (const it of items) {
+            const when = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+            const tracked = !!it.roiTrackedAt;
+            const tgtPre = Number(it.chargesBefore48hARS) || 0;
+            const tgtPost = Number(it.chargesAfter48hARS) || 0;
+            const ctlPre = Number(it.controlChargesBefore48hARS) || 0;
+            const ctlPost = Number(it.controlChargesAfter48hARS) || 0;
+            // Δ atribuible: (post-pre del target) - (post-pre del control)
+            // Pero hay que normalizar por tamaño del segmento sino es injusto.
+            const tgtSize = Number(it.audienceCount) || 1;
+            const ctlSize = Number(it.controlGroupCount) || 1;
+            const tgtDelta = (tgtPost - tgtPre) / tgtSize;
+            const ctlDelta = ctlSize > 0 ? (ctlPost - ctlPre) / ctlSize : 0;
+            const deltaPerUser = tgtDelta - ctlDelta;
+            const totalDelta = deltaPerUser * tgtSize;
+            const dColor = totalDelta >= 0 ? '#25d366' : '#ff5050';
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+            html += '<td style="padding:8px;color:#aaa;">' + escapeHtml(when) + '</td>';
+            html += '<td style="padding:8px;"><span style="color:' + (it.strategyType === 'netwin-gift' ? '#ffd700' : '#00d4ff') + ';font-weight:700;">' + (it.strategyType === 'netwin-gift' ? '🎁 Netwin' : '⚡ Tier %') + '</span></td>';
+            html += '<td style="padding:8px;text-align:right;color:#fff;">' + fmt(it.audienceCount) + '</td>';
+            html += '<td style="padding:8px;text-align:right;color:#25d366;">' + fmt(it.successCount) + '</td>';
+            if (tracked) {
+                html += '<td style="padding:8px;text-align:right;color:#aaa;">$' + fmt(tgtPre) + '</td>';
+                html += '<td style="padding:8px;text-align:right;color:#fff;font-weight:700;">$' + fmt(tgtPost) + '</td>';
+                html += '<td style="padding:8px;text-align:right;color:' + dColor + ';font-weight:700;">' + (totalDelta >= 0 ? '+' : '') + '$' + fmt(totalDelta) + '</td>';
+                html += '<td style="padding:8px;text-align:right;color:' + dColor + ';font-weight:700;">' + (totalDelta >= 0 ? '↑' : '↓') + '</td>';
+            } else {
+                const ageHours = it.sentAt ? Math.floor((Date.now() - new Date(it.sentAt).getTime()) / 3600000) : 0;
+                const left = Math.max(0, 48 - ageHours);
+                html += '<td colspan="4" style="padding:8px;text-align:center;color:#888;font-style:italic;">⏳ Tracking en ' + left + 'h…</td>';
+            }
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error</div>';
+    }
+}
+
+async function loadLineDownHistory() {
+    const el = document.getElementById('lineDownHistory');
+    if (!el) return;
+    el.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/line-down/history?limit=50');
+        if (!r.ok) { el.innerHTML = '<div class="empty-state">❌ Error</div>'; return; }
+        const j = await r.json();
+        const items = Array.isArray(j.items) ? j.items : [];
+        if (items.length === 0) {
+            el.innerHTML = '<div class="empty-state" style="color:#888;font-size:12px;">No hay difusiones registradas todavía.</div>';
+            return;
+        }
+        let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+        for (const it of items) {
+            const when = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+            const team = escapeHtml(it.lineDownTeam || it.audiencePrefix || '—');
+            const oldP = escapeHtml(it.lineDownOldPhone || '—');
+            const newP = escapeHtml(it.lineDownNewPhone || '—');
+            const audience = it.audienceCount || it.totalUsers || 0;
+            const delivered = it.successCount || 0;
+            const promoLine = it.promoMessage
+                ? '<div style="color:#00d4ff;font-size:11px;margin-top:4px;">🎁 Promo: ' + escapeHtml(it.promoCode || '') + ' — ' + escapeHtml(it.promoMessage) + '</div>'
+                : '';
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,80,80,0.25);border-radius:8px;padding:10px 12px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:0;">';
+            html += '<div style="color:#ff5050;font-weight:700;font-size:13px;">🚨 ' + team + '</div>';
+            html += '<div style="color:#bbb;font-size:11px;margin-top:2px;">' + escapeHtml(it.title || '') + '</div>';
+            html += '<div style="color:#888;font-size:11px;margin-top:2px;">' + escapeHtml(it.body || '') + '</div>';
+            html += '<div style="color:#aaa;font-size:11px;margin-top:4px;">📞 <span style="text-decoration:line-through;color:#888;">' + oldP + '</span> → <span style="color:#ffd700;">' + newP + '</span></div>';
+            html += promoLine;
+            html += '</div>';
+            html += '<div style="text-align:right;font-size:11px;color:#888;flex-shrink:0;">';
+            html += '<div>' + escapeHtml(when) + '</div>';
+            html += '<div style="margin-top:3px;color:#fff;"><span style="color:#25d366;font-weight:700;">' + delivered + '</span> / ' + audience + '</div>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
+    } catch (e) {
+        console.error('loadLineDownHistory error:', e);
+        el.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+// ============================================
+// 🎯 CLIENTES ACTIVOS SIN APP
+// ============================================
+let _apCache = null;
+let _apExpandedTeams = new Set();
+
+function _apQueryString() {
+    const wd = document.getElementById('apWindowDays').value;
+    const mc = document.getElementById('apMinDepositCount').value;
+    const mars = document.getElementById('apMinDepositARS').value;
+    const exc = document.getElementById('apExcludeWithApp').value;
+    return 'windowDays=' + wd + '&minDepositCount=' + mc + '&minDepositARS=' + mars + '&excludeWithApp=' + exc + '&groupByTeam=true';
+}
+
+async function loadActivePlayers() {
+    const list = document.getElementById('apTeamsList');
+    const summary = document.getElementById('apSummary');
+    if (!list) return;
+    list.innerHTML = '<div class="empty-state">⏳ Calculando…</div>';
+    if (summary) summary.innerHTML = '';
+    try {
+        const [liveR, evoR, snapsR] = await Promise.all([
+            authFetch('/api/admin/active-players?' + _apQueryString()),
+            authFetch('/api/admin/active-players/evolution?days=30'),
+            authFetch('/api/admin/active-players/snapshots?kind=manual&limit=20')
+        ]);
+        if (!liveR.ok) {
+            list.innerHTML = '<div class="empty-state">❌ Error</div>';
+            return;
+        }
+        const j = await liveR.json();
+        _apCache = j;
+        _apRenderSummary(j);
+        _apRenderTeams(j);
+        if (evoR.ok) {
+            const ev = await evoR.json();
+            _apRenderEvolution(ev);
+        }
+        if (snapsR.ok) {
+            const sn = await snapsR.json();
+            _apRenderSnapshotsList(sn.items || []);
+        }
+    } catch (e) {
+        list.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function _apRenderEvolution(ev) {
+    const el = document.getElementById('apEvolution');
+    if (!el) return;
+    const items = ev.items || [];
+    if (items.length === 0) {
+        el.innerHTML = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;color:#888;font-size:12px;text-align:center;">📊 Evolución diaria — todavía no hay snapshots. Se toman automáticamente cada día a las 03:00 ART. Vuelven a aparecer acá mañana.</div>';
+        return;
+    }
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const w = 600, h = 90, pad = 8;
+    const xs = items.length;
+    const maxV = Math.max(...items.map(i => i.totalWithoutApp || 0), 10);
+    const stepX = (w - 2 * pad) / Math.max(1, xs - 1);
+    let pathTotal = '', pathWithout = '', pathWith = '';
+    items.forEach((it, idx) => {
+        const x = pad + idx * stepX;
+        const yT = h - pad - ((it.totalActiveAll || 0) / maxV) * (h - 2 * pad);
+        const yW = h - pad - ((it.totalWithoutApp || 0) / maxV) * (h - 2 * pad);
+        const yA = h - pad - ((it.totalWithApp || 0) / maxV) * (h - 2 * pad);
+        pathTotal += (idx === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + yT.toFixed(1) + ' ';
+        pathWithout += (idx === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + yW.toFixed(1) + ' ';
+        pathWith += (idx === 0 ? 'M' : 'L') + x.toFixed(1) + ',' + yA.toFixed(1) + ' ';
+    });
+    const last = items[items.length - 1];
+    const first = items[0];
+    const trend = last.totalWithoutApp - first.totalWithoutApp;
+    const trendColor = trend > 0 ? '#ff5050' : (trend < 0 ? '#25d366' : '#aaa');
+    const trendArrow = trend > 0 ? '↑' : (trend < 0 ? '↓' : '→');
+    let html = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:10px;margin-bottom:8px;">';
+    html += '<div><div style="color:#fff;font-weight:700;font-size:13px;">📊 Evolución últimos ' + items.length + ' días</div>';
+    html += '<div style="color:#aaa;font-size:11px;">Snapshot automático todos los días a las 03:00 ART · <a href="javascript:void(0)" onclick="apRefreshToday()" style="color:#00d4ff;text-decoration:none;">🔄 Actualizar punto de hoy</a></div></div>';
+    html += '<div style="text-align:right;">';
+    html += '<div style="color:#888;font-size:10px;font-weight:700;">Sin app: ' + fmt(first.totalWithoutApp) + ' → ' + fmt(last.totalWithoutApp) + '</div>';
+    html += '<div style="color:' + trendColor + ';font-weight:800;font-size:14px;">' + trendArrow + ' ' + Math.abs(trend) + '</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:auto;display:block;">';
+    html += '<path d="' + pathTotal + '" fill="none" stroke="rgba(255,255,255,0.30)" stroke-width="1.5"/>';
+    html += '<path d="' + pathWithout + '" fill="none" stroke="#ff8888" stroke-width="2"/>';
+    html += '<path d="' + pathWith + '" fill="none" stroke="#25d366" stroke-width="2"/>';
+    html += '</svg>';
+    html += '<div style="display:flex;gap:14px;font-size:11px;color:#aaa;margin-top:6px;flex-wrap:wrap;">';
+    html += '<span><span style="display:inline-block;width:10px;height:2px;background:rgba(255,255,255,0.30);vertical-align:middle;margin-right:4px;"></span>Total activos</span>';
+    html += '<span><span style="display:inline-block;width:10px;height:2px;background:#ff8888;vertical-align:middle;margin-right:4px;"></span>SIN app+notifs (target)</span>';
+    html += '<span><span style="display:inline-block;width:10px;height:2px;background:#25d366;vertical-align:middle;margin-right:4px;"></span>CON app+notifs (fidelizados)</span>';
+    html += '</div>';
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function _apRenderSnapshotsList(items) {
+    const el = document.getElementById('apSnapshotsList');
+    if (!el) return;
+    if (items.length === 0) {
+        el.innerHTML = '<div style="color:#666;font-size:11px;font-style:italic;">No hay reportes manuales generados todavía. Apretá "🛠 Generar reporte ahora" para crear el primero.</div>';
+        return;
+    }
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<div style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;">';
+    for (const s of items) {
+        const when = s.generatedAt ? new Date(s.generatedAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+        const statusColor = { ready: '#25d366', queued: '#ffaa44', running: '#00d4ff', error: '#ff5050' }[s.status] || '#888';
+        const statusLabel = { ready: '✓ LISTO', queued: '⏳ EN COLA', running: '⚙ GENERANDO', error: '❌ ERROR' }[s.status] || s.status;
+        html += '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:11px;">';
+        html += '<div>';
+        html += '<span style="color:' + statusColor + ';font-weight:700;">' + statusLabel + '</span>';
+        html += ' <span style="color:#aaa;">· ' + escapeHtml(when) + ' · por ' + escapeHtml(s.generatedBy || '—') + '</span>';
+        if (s.status === 'ready') html += ' <span style="color:#fff;">· ' + fmt(s.matchedUsers) + ' contactos</span>';
+        if (s.params) html += ' <span style="color:#666;">· ventana ' + s.params.windowDays + 'd, mín ' + s.params.minDepositCount + ' cargas</span>';
+        html += '</div>';
+        if (s.status === 'ready') {
+            html += '<button onclick="apDownloadSnapshot(\'' + s.id + '\')" style="padding:5px 10px;background:rgba(37,211,102,0.10);color:#25d366;border:1px solid rgba(37,211,102,0.30);border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">📥 Descargar CSV</button>';
+        } else if (s.status === 'error') {
+            html += '<span style="color:#ff5050;font-size:10px;">' + escapeHtml(s.errorMessage || 'error desconocido') + '</span>';
+        } else {
+            html += '<span style="color:#aaa;font-size:10px;font-style:italic;">…esperá unos segundos y refrescá</span>';
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+async function apGenerateSnapshot() {
+    const btn = document.getElementById('apGenerateBtn');
+    if (!btn) return;
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Encolando…';
+    try {
+        const wd = parseInt(document.getElementById('apWindowDays').value);
+        const mc = parseInt(document.getElementById('apMinDepositCount').value);
+        const mars = parseInt(document.getElementById('apMinDepositARS').value);
+        const exc = document.getElementById('apExcludeWithApp').value === 'true';
+        const r = await authFetch('/api/admin/active-players/snapshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ windowDays: wd, minDepositCount: mc, minDepositARS: mars, excludeWithApp: exc })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        showToast('🛠 Reporte encolado · ID: ' + j.id.slice(0, 8) + '… (se genera en segundos)', 'success');
+        // Pollear cada 2s hasta que termine, o dejar que el user refresque.
+        _apPollSnapshot(j.id);
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
+async function _apPollSnapshot(id, attempts) {
+    attempts = attempts || 0;
+    if (attempts > 30) return; // 60s max
+    try {
+        const r = await authFetch('/api/admin/active-players/snapshot/' + encodeURIComponent(id));
+        if (r.ok) {
+            const j = await r.json();
+            const s = j.snapshot;
+            if (s.status === 'ready') {
+                showToast('✅ Reporte listo (' + (s.matchedUsers || 0) + ' contactos) — bajá el CSV', 'success');
+                // Refrescar la lista de snapshots.
+                const listR = await authFetch('/api/admin/active-players/snapshots?kind=manual&limit=20');
+                if (listR.ok) {
+                    const sn = await listR.json();
+                    _apRenderSnapshotsList(sn.items || []);
+                }
+                return;
+            }
+            if (s.status === 'error') {
+                showToast('❌ Error generando reporte: ' + (s.errorMessage || ''), 'error');
+                return;
+            }
+        }
+    } catch (_) {}
+    setTimeout(() => _apPollSnapshot(id, attempts + 1), 2000);
+}
+
+async function apRefreshToday() {
+    try {
+        showToast('🔄 Recalculando snapshot de hoy…', 'info');
+        const r = await authFetch('/api/admin/active-players/refresh-today', { method: 'POST' });
+        if (!r.ok) { showToast('Error', 'error'); return; }
+        showToast('✅ Punto de hoy actualizado', 'success');
+        loadActivePlayers();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function apDownloadSnapshot(id) {
+    try {
+        const token = (typeof currentToken !== 'undefined' && currentToken) ? currentToken : localStorage.getItem('adminToken');
+        const r = await fetch('/api/admin/active-players/snapshot/' + encodeURIComponent(id) + '/csv', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!r.ok) { showToast('Error descargando', 'error'); return; }
+        const blob = await r.blob();
+        const cd = r.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="([^"]+)"/);
+        const fname = m ? m[1] : ('snapshot-' + id.slice(0, 8) + '.csv');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fname;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('📥 ' + fname + ' descargado', 'success');
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+function _apRenderSummary(j) {
+    const el = document.getElementById('apSummary');
+    if (!el) return;
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:10px;margin-bottom:12px;">';
+    html += _apChip('Activos totales', fmt(j.totalActiveAll || 0), '#fff', 'En la ventana de ' + j.windowDays + ' días');
+    html += _apChip('SIN app+notifs', fmt(j.totalWithoutApp || 0), '#ff8888', 'Tu target principal');
+    html += _apChip('Con app+notifs', fmt(j.totalWithApp || 0), '#25d366', 'Ya están fidelizados');
+    html += _apChip('Mostrando', fmt(j.matchedUsers || 0), '#00d4ff', 'Después de filtros');
+    html += '</div>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '<button onclick="apExportCsv()" style="padding:8px 16px;background:linear-gradient(135deg,#25d366,#0a7a3a);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">📥 Descargar CSV (' + fmt(j.matchedUsers || 0) + ' contactos)</button>';
+    html += '<button onclick="apExpandAll()" style="padding:8px 14px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;font-size:12px;cursor:pointer;">⤵ Expandir todo</button>';
+    html += '<button onclick="apCollapseAll()" style="padding:8px 14px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;font-size:12px;cursor:pointer;">⤴ Contraer todo</button>';
+    html += '<div style="margin-left:auto;color:#666;font-size:11px;align-self:center;">Calculado en ' + (j.computedInMs || 0) + ' ms · ' + (j.teams || []).length + ' equipos</div>';
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function _apChip(label, value, color, sub) {
+    return '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;">' +
+        '<div style="color:#888;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">' + escapeHtml(label) + '</div>' +
+        '<div style="color:' + color + ';font-size:22px;font-weight:800;margin-top:4px;">' + value + '</div>' +
+        (sub ? '<div style="color:#888;font-size:10px;margin-top:2px;">' + escapeHtml(sub) + '</div>' : '') +
+        '</div>';
+}
+
+function _apRenderTeams(j) {
+    const list = document.getElementById('apTeamsList');
+    if (!list) return;
+    const teams = j.teams || [];
+    if (teams.length === 0) {
+        list.innerHTML = '<div class="empty-state" style="font-size:13px;color:#888;line-height:1.6;">No hay clientes activos con esos filtros.<br>Probá ampliar la ventana o reducir el mínimo de depósitos.</div>';
+        return;
+    }
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+    for (const t of teams) {
+        const tn = t.teamName;
+        const expanded = _apExpandedTeams.has(tn);
+        const safeId = 'apTeam_' + tn.replace(/\W/g, '_');
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;overflow:hidden;">';
+        html += '<div onclick="apToggleTeam(\'' + tn.replace(/'/g, "\\'") + '\')" style="padding:12px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;background:rgba(255,255,255,0.02);">';
+        html += '<div>';
+        html += '<div style="color:#fff;font-weight:700;font-size:14px;">' + (expanded ? '▼' : '▶') + ' ' + escapeHtml(tn) + ' <span style="color:#888;font-size:11px;font-weight:400;">· ' + t.count + ' jugadores</span></div>';
+        html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">Cargas en ventana: <strong style="color:#ffd700;">$' + fmt(Math.round(t.totalDepositsARS)) + '</strong> · ' + fmt(t.totalDepositCount) + ' transacciones</div>';
+        html += '</div>';
+        html += '<button onclick="event.stopPropagation();apExportCsv(\'' + tn.replace(/'/g, "\\'") + '\')" style="padding:6px 12px;background:rgba(37,211,102,0.10);color:#25d366;border:1px solid rgba(37,211,102,0.30);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">📥 CSV equipo</button>';
+        html += '</div>';
+        if (expanded) {
+            html += '<div id="' + safeId + '" style="padding:0 14px 12px;">';
+            html += _apRenderUsersTable(t.users);
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    list.innerHTML = html;
+}
+
+function _apRenderUsersTable(users) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;">';
+    html += '<thead><tr style="background:rgba(255,255,255,0.05);">';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">Usuario</th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">📞 Línea</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">Cargas (ARS)</th>';
+    html += '<th style="text-align:right;padding:8px;color:#aaa;">#</th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">Última actividad</th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">App</th>';
+    html += '<th style="text-align:left;padding:8px;color:#aaa;">Welcome</th>';
+    html += '</tr></thead><tbody>';
+    for (const u of users) {
+        const phoneText = u.linePhone || '—';
+        const phoneLink = u.linePhone ? `<a href="https://wa.me/${u.linePhone.replace(/[^\d]/g, '')}" target="_blank" rel="noopener" style="color:#25d366;text-decoration:none;">${escapeHtml(phoneText)}</a>` : '—';
+        const lastAct = u.lastActivityDate ? new Date(u.lastActivityDate).toLocaleDateString('es-AR', {day:'2-digit',month:'short'}) : '—';
+        const appBadge = u.hasChannel
+            ? '<span style="background:rgba(37,211,102,0.15);color:#25d366;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ APP+NOTIFS</span>'
+            : (u.hasApp ? '<span style="background:rgba(255,170,68,0.15);color:#ffaa44;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">SOLO APP</span>'
+                       : '<span style="background:rgba(255,80,80,0.15);color:#ff5050;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✗ SIN APP</span>');
+        const welcomeBadge = u.welcomeBonusClaimed
+            ? '<span style="color:#888;font-size:11px;">✓ Reclamó</span>'
+            : '<span style="color:#ffd700;font-weight:700;font-size:11px;">$10.000 disponibles</span>';
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:7px;color:#fff;font-weight:600;">' + escapeHtml(u.username) + '</td>';
+        html += '<td style="padding:7px;">' + phoneLink + '</td>';
+        html += '<td style="padding:7px;text-align:right;color:#ffd700;font-weight:700;">$' + fmt(Math.round(u.totalDepositsARS)) + '</td>';
+        html += '<td style="padding:7px;text-align:right;color:#aaa;">' + u.depositCount + '</td>';
+        html += '<td style="padding:7px;color:#aaa;">' + lastAct + '</td>';
+        html += '<td style="padding:7px;">' + appBadge + '</td>';
+        html += '<td style="padding:7px;">' + welcomeBadge + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+function apToggleTeam(teamName) {
+    if (_apExpandedTeams.has(teamName)) _apExpandedTeams.delete(teamName);
+    else _apExpandedTeams.add(teamName);
+    if (_apCache) _apRenderTeams(_apCache);
+}
+
+function apExpandAll() {
+    if (!_apCache) return;
+    for (const t of (_apCache.teams || [])) _apExpandedTeams.add(t.teamName);
+    _apRenderTeams(_apCache);
+}
+
+function apCollapseAll() {
+    _apExpandedTeams.clear();
+    if (_apCache) _apRenderTeams(_apCache);
+}
+
+async function apExportCsv(teamName) {
+    let qs = _apQueryString().replace('&groupByTeam=true', '');
+    if (teamName) qs += '&team=' + encodeURIComponent(teamName);
+    // Fetch con auth y disparar download.
+    try {
+        showToast('⏳ Generando CSV…', 'info');
+        const token = (typeof currentToken !== 'undefined' && currentToken) ? currentToken : localStorage.getItem('adminToken');
+        const r = await fetch('/api/admin/active-players/export?' + qs, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!r.ok) { showToast('Error generando CSV', 'error'); return; }
+        const blob = await r.blob();
+        const cd = r.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="([^"]+)"/);
+        const fname = m ? m[1] : 'clientes-activos.csv';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('✅ ' + fname + ' descargado', 'success');
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }

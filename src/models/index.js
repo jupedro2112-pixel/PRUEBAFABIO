@@ -31,6 +31,10 @@ const UserLineLookup = require('./UserLineLookup');
 const AppNotifSnapshot = require('./AppNotifSnapshot');
 const NotificationRule = require('./NotificationRule');
 const NotificationRuleSuggestion = require('./NotificationRuleSuggestion');
+const WeeklyStrategyConfig = require('./WeeklyStrategyConfig');
+const WeeklyNotifBudget = require('./WeeklyNotifBudget');
+const WeeklyStrategyReport = require('./WeeklyStrategyReport');
+const ActivePlayersSnapshot = require('./ActivePlayersSnapshot');
 
 
 /**
@@ -434,6 +438,10 @@ module.exports = {
   AppNotifSnapshot,
   NotificationRule,
   NotificationRuleSuggestion,
+  WeeklyStrategyConfig,
+  WeeklyNotifBudget,
+  WeeklyStrategyReport,
+  ActivePlayersSnapshot,
 
   // Funciones de conexión
   connectDB,

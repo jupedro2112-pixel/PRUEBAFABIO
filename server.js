@@ -68,6 +68,10 @@ const {
   AppNotifSnapshot,
   NotificationRule,
   NotificationRuleSuggestion,
+  WeeklyStrategyConfig,
+  WeeklyNotifBudget,
+  WeeklyStrategyReport,
+  ActivePlayersSnapshot,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -8207,10 +8211,18 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
     if (!isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
       return res.json({ active: false });
     }
-    // Filtro por prefijo si esta seteado.
     const username = (req.user && req.user.username) || '';
-    if (promo.prefix && typeof promo.prefix === 'string') {
-      if (!username.toLowerCase().startsWith(promo.prefix.toLowerCase())) {
+    const usernameLower = username.toLowerCase();
+
+    // Filtro de audiencia: si tiene audienceWhitelist (promo dirigida a la
+    // audiencia de una línea caída, por ejemplo), gana sobre prefix.
+    if (Array.isArray(promo.audienceWhitelist) && promo.audienceWhitelist.length > 0) {
+      const wl = new Set(promo.audienceWhitelist.map(u => String(u).toLowerCase()));
+      if (!wl.has(usernameLower)) {
+        return res.json({ active: false });
+      }
+    } else if (promo.prefix && typeof promo.prefix === 'string') {
+      if (!usernameLower.startsWith(promo.prefix.toLowerCase())) {
         return res.json({ active: false });
       }
     }
@@ -8221,7 +8233,8 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
       code: promo.code,
       expiresAt: promo.expiresAt,
       createdAt: promo.createdAt,
-      notificationHistoryId: promo.notificationHistoryId || null
+      notificationHistoryId: promo.notificationHistoryId || null,
+      lineDown: !!promo.lineDown // bandera para que el frontend pueda darle estilo distinto
     });
   } catch (error) {
     logger.error(`/api/promo-alert/active error: ${error.message}`);
@@ -9467,6 +9480,813 @@ async function _runNotifRulesEvaluator() {
 }
 setTimeout(() => { _runNotifRulesEvaluator(); }, 3 * 60 * 1000);
 setInterval(() => { _runNotifRulesEvaluator(); }, 5 * 60 * 1000);
+
+// ============================================================
+// MOTOR DE ESTRATEGIA SEMANAL (lunes/jueves/miércoles)
+// ============================================================
+// Ver src/services/weeklyStrategyService.js para detalle.
+//
+// Cron 1 (cada 5 min): chequea si toca disparar netwin (lun) /
+//   tier-bonus (jue) / reporte (mié) según hora ART configurada.
+// Cron 2 (cada 30 min): tracker de ROI — busca pushes de estrategia
+//   con sentAt > 48h y mide carga pre/post para llenar el reporte.
+const weeklyStrategyService = require('./src/services/weeklyStrategyService');
+const _strategyModels = {
+  User, RefundClaim, MoneyGiveaway, MoneyGiveawayClaim,
+  NotificationHistory,
+  WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport
+};
+
+async function _runWeeklyStrategyChecker() {
+  try {
+    await weeklyStrategyService.checkAndFireScheduledRuns({
+      models: _strategyModels,
+      jugaygana,
+      jugayganaMovements,
+      sendPushFn: sendNotificationToAllUsers,
+      setConfig,
+      PROMO_ALERT_KEY,
+      logger
+    });
+  } catch (err) {
+    logger.error(`[strategy] checker error: ${err.message}`);
+  }
+}
+async function _runStrategyROITracker() {
+  try {
+    const r = await weeklyStrategyService.runROITracker({
+      models: _strategyModels,
+      jugayganaMovements,
+      logger
+    });
+    if (r.tracked > 0) logger.info(`[strategy] ROI tracker procesó ${r.tracked} histories`);
+  } catch (err) {
+    logger.error(`[strategy] ROI tracker error: ${err.message}`);
+  }
+}
+// Disparo inicial diferido + intervalos.
+setTimeout(() => { _runWeeklyStrategyChecker(); }, 4 * 60 * 1000);
+setInterval(() => { _runWeeklyStrategyChecker(); }, 5 * 60 * 1000);
+setTimeout(() => { _runStrategyROITracker(); }, 8 * 60 * 1000);
+setInterval(() => { _runStrategyROITracker(); }, 30 * 60 * 1000);
+
+// ============================================================
+// ENDPOINTS ADMIN — ESTRATEGIA SEMANAL
+// ============================================================
+// GET /api/admin/strategy/config — leer config actual.
+app.get('/api/admin/strategy/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const cfg = await weeklyStrategyService.getOrCreateConfig(WeeklyStrategyConfig);
+    res.json({ success: true, config: cfg.toObject() });
+  } catch (err) {
+    logger.error(`GET strategy/config: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/strategy/config — actualizar config.
+// Body: cualquier subset de campos. No permite tocar lastFire* (read-only).
+app.put('/api/admin/strategy/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    // Whitelist de campos editables. No incluye lastFire* ni totals.
+    const allowedTop = ['enabled', 'pausedUntil', 'emergencyStop', 'weeklyBudgetCapARS', 'capPerUserPerWeek', 'cooldownHours'];
+    const allowedSubObjects = ['netwinGift', 'tierBonus', 'weeklyReport'];
+
+    const update = {};
+    for (const k of allowedTop) {
+      if (body[k] !== undefined) update[k] = body[k];
+    }
+    for (const k of allowedSubObjects) {
+      if (body[k] && typeof body[k] === 'object') {
+        // Merge con el actual.
+        const cur = await weeklyStrategyService.getOrCreateConfig(WeeklyStrategyConfig);
+        const merged = Object.assign({}, cur[k].toObject ? cur[k].toObject() : cur[k], body[k]);
+        update[k] = merged;
+      }
+    }
+
+    // Validaciones de safety mínimas.
+    if (update.weeklyBudgetCapARS !== undefined) {
+      const v = Number(update.weeklyBudgetCapARS);
+      if (!isFinite(v) || v < 0 || v > 50000000) {
+        return res.status(400).json({ error: 'weeklyBudgetCapARS inválido (0–50M)' });
+      }
+      update.weeklyBudgetCapARS = v;
+    }
+    if (update.capPerUserPerWeek !== undefined) {
+      const v = Number(update.capPerUserPerWeek);
+      if (!isFinite(v) || v < 0 || v > 7) return res.status(400).json({ error: 'capPerUserPerWeek inválido (0–7)' });
+      update.capPerUserPerWeek = v;
+    }
+    if (update.cooldownHours !== undefined) {
+      const v = Number(update.cooldownHours);
+      if (!isFinite(v) || v < 0 || v > 168) return res.status(400).json({ error: 'cooldownHours inválido (0–168)' });
+      update.cooldownHours = v;
+    }
+
+    await WeeklyStrategyConfig.updateOne({ id: 'main' }, { $set: update }, { upsert: true });
+    const cfg = await WeeklyStrategyConfig.findOne({ id: 'main' });
+    res.json({ success: true, config: cfg.toObject(), updatedBy: req.user.username });
+  } catch (err) {
+    logger.error(`PUT strategy/config: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/strategy/pause — pausar la estrategia.
+// Body: { hours: 24 } pausa por X horas. Sin body → emergencyStop=true.
+app.post('/api/admin/strategy/pause', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const hours = Number(req.body && req.body.hours);
+    const update = {};
+    if (isFinite(hours) && hours > 0) {
+      update.pausedUntil = new Date(Date.now() + hours * 3600 * 1000);
+    } else {
+      update.emergencyStop = true;
+    }
+    await WeeklyStrategyConfig.updateOne({ id: 'main' }, { $set: update }, { upsert: true });
+    res.json({ success: true, ...update });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/strategy/resume — limpiar pause + emergencyStop.
+app.post('/api/admin/strategy/resume', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await WeeklyStrategyConfig.updateOne({ id: 'main' }, { $set: { pausedUntil: null, emergencyStop: false } }, { upsert: true });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/strategy/preview — dry-run de cualquier campaña.
+// Query: campaign=netwin|tier
+app.get('/api/admin/strategy/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const camp = req.query.campaign;
+    if (camp === 'netwin') {
+      const r = await weeklyStrategyService.runMondayNetwinGift({
+        models: _strategyModels, jugaygana, sendPushFn: sendNotificationToAllUsers, logger,
+        dryRun: true, force: true
+      });
+      res.json({ success: true, preview: r });
+    } else if (camp === 'tier') {
+      const r = await weeklyStrategyService.runThursdayTierBonus({
+        models: _strategyModels, sendPushFn: sendNotificationToAllUsers, setConfig, PROMO_ALERT_KEY, logger,
+        dryRun: true, force: true
+      });
+      res.json({ success: true, preview: r });
+    } else {
+      res.status(400).json({ error: 'campaign debe ser "netwin" o "tier"' });
+    }
+  } catch (err) {
+    logger.error(`GET strategy/preview: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/strategy/run-now — disparar manualmente una campaña
+// (tipicamente para testear, no para uso normal).
+// Body: { campaign: 'netwin' | 'tier' | 'report' }
+app.post('/api/admin/strategy/run-now', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const camp = req.body && req.body.campaign;
+    const trigger = req.user.username || 'admin';
+    if (camp === 'netwin') {
+      const r = await weeklyStrategyService.runMondayNetwinGift({
+        models: _strategyModels, jugaygana, sendPushFn: sendNotificationToAllUsers, logger,
+        force: true, manualTrigger: trigger
+      });
+      res.json({ success: true, result: r });
+    } else if (camp === 'tier') {
+      const r = await weeklyStrategyService.runThursdayTierBonus({
+        models: _strategyModels, sendPushFn: sendNotificationToAllUsers, setConfig, PROMO_ALERT_KEY, logger,
+        force: true, manualTrigger: trigger
+      });
+      res.json({ success: true, result: r });
+    } else if (camp === 'report') {
+      const r = await weeklyStrategyService.runWednesdayReport({
+        models: _strategyModels, jugaygana, logger, force: true,
+        weekKey: req.body.weekKey || undefined
+      });
+      res.json({ success: true, result: r });
+    } else {
+      res.status(400).json({ error: 'campaign debe ser "netwin", "tier" o "report"' });
+    }
+  } catch (err) {
+    logger.error(`POST strategy/run-now: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/strategy/reports — lista de reportes semanales.
+app.get('/api/admin/strategy/reports', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 12, 52);
+    const reports = await WeeklyStrategyReport.find({})
+      .sort({ generatedAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ success: true, reports });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/strategy/roi — ROI por difusión (paginado).
+// Query: limit, offset, strategyType
+app.get('/api/admin/strategy/roi', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const filter = { strategyType: { $ne: null } };
+    if (req.query.strategyType) filter.strategyType = req.query.strategyType;
+    const items = await NotificationHistory.find(filter)
+      .sort({ sentAt: -1 })
+      .skip(offset)
+      .limit(limit)
+      .select({
+        id: 1, sentAt: 1, strategyType: 1, strategyWeekKey: 1, strategyMeta: 1,
+        title: 1, audienceCount: 1, controlGroupCount: 1,
+        successCount: 1, failureCount: 1, waClicks: 1, giveawayClaims: 1,
+        chargesBefore48hARS: 1, chargesAfter48hARS: 1, chargedUsersAfter: 1,
+        controlChargesBefore48hARS: 1, controlChargesAfter48hARS: 1,
+        controlChargedUsersAfter: 1, roiTrackedAt: 1, _id: 0
+      })
+      .lean();
+    res.json({ success: true, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/strategy/budget-status — cuánto se gastó esta semana
+// + conteo de la audiencia base elegible (app + notifs).
+app.get('/api/admin/strategy/budget-status', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const cfg = await weeklyStrategyService.getOrCreateConfig(WeeklyStrategyConfig);
+    const wk = weeklyStrategyService._weekKey();
+    // Suma claims de giveaways de esta weekKey.
+    const claimsAgg = await MoneyGiveawayClaim.aggregate([
+      {
+        $lookup: {
+          from: 'notificationhistories',
+          localField: 'notificationHistoryId',
+          foreignField: 'id',
+          as: 'h'
+        }
+      },
+      { $unwind: { path: '$h', preserveNullAndEmptyArrays: false } },
+      { $match: { 'h.strategyWeekKey': wk } },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+    ]);
+    const spent = claimsAgg[0] ? Number(claimsAgg[0].total) || 0 : 0;
+    const claimsCount = claimsAgg[0] ? Number(claimsAgg[0].count) || 0 : 0;
+
+    // Audiencia base elegible: la regla HARD del producto.
+    const eligibleUsersCount = await weeklyStrategyService.countAppNotifsCandidates(User);
+    const totalRealUsers = await weeklyStrategyService.countTotalRealUsers(User);
+
+    res.json({
+      success: true,
+      weekKey: wk,
+      spentARS: spent,
+      capARS: cfg.weeklyBudgetCapARS,
+      remainingARS: Math.max(0, cfg.weeklyBudgetCapARS - spent),
+      pctUsed: cfg.weeklyBudgetCapARS > 0 ? Math.round(100 * spent / cfg.weeklyBudgetCapARS) : 0,
+      claimsCount,
+      lastNetwinFireWeek: cfg.lastNetwinFireWeek,
+      lastTierBonusFireWeek: cfg.lastTierBonusFireWeek,
+      lastReportWeek: cfg.lastReportWeek,
+      // Audiencia base — quiénes son elegibles para CUALQUIER campaña
+      // de la estrategia automática.
+      eligibleUsersCount,
+      totalRealUsers,
+      excludedNoChannel: totalRealUsers - eligibleUsersCount,
+      eligiblePct: totalRealUsers > 0 ? Math.round(100 * eligibleUsersCount / totalRealUsers) : 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// CLIENTES ACTIVOS SIN APP — análisis para campaña externa
+// ============================================================
+// Lista de jugadores ACTIVOS en la plataforma (depositaron en JUGAYGANA
+// en los últimos N días) que NO tienen app+notifs. Es el target de la
+// campaña externa de WhatsApp para fidelizarlos: mandarles un mensaje
+// "bajate la app y reclamá tus 10.000 de bienvenida".
+//
+// Definición de ACTIVO (default): depositó >= 1 vez en últimos 30 días
+// según DailyPlayerStats (que se llena con los imports CSV de JUGAYGANA).
+// El admin puede ajustar la ventana y los umbrales por query string.
+//
+// Performance: una sola aggregation pipeline en Mongo, sin llamadas
+// externas. Apto para refresh manual a demanda.
+
+// Helper: dateKey YYYY-MM-DD en TZ Argentina, mismo formato que el resto del sistema.
+function _activePlayersTodayKey() {
+  const { year, month, day } = _getArgentinaParts();
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+// Construye los agregados por equipo a partir de la lista de players.
+function _activePlayersBuildTeams(players) {
+  const byTeam = new Map();
+  for (const p of players) {
+    const tn = p.lineTeamName || '— Sin equipo asignado —';
+    if (!byTeam.has(tn)) {
+      byTeam.set(tn, {
+        teamName: tn,
+        count: 0, countWithApp: 0, countWithoutApp: 0,
+        totalDepositsARS: 0, totalDepositCount: 0
+      });
+    }
+    const t = byTeam.get(tn);
+    t.count++;
+    if (p.hasChannel) t.countWithApp++; else t.countWithoutApp++;
+    t.totalDepositsARS += p.totalDepositsARS || 0;
+    t.totalDepositCount += p.depositCount || 0;
+  }
+  return Array.from(byTeam.values()).sort((a, b) => b.totalDepositsARS - a.totalDepositsARS);
+}
+
+// Helper: agregada la actividad por user desde DailyPlayerStats.
+async function _computeActivePlayers({ windowDays, minDepositCount, minDepositARS, excludeWithApp, team }) {
+  const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
+  // 1) Aggregate de DailyPlayerStats: depósitos por username en la ventana.
+  const stats = await DailyPlayerStats.aggregate([
+    { $match: { dateUtc: { $gte: since } } },
+    {
+      $group: {
+        _id: '$username',
+        totalDepositsARS: { $sum: '$depositSum' },
+        depositCount: { $sum: '$depositCount' },
+        totalWithdrawsARS: { $sum: '$withdrawSum' },
+        withdrawCount: { $sum: '$withdrawCount' },
+        lastActivityDate: { $max: '$dateUtc' }
+      }
+    },
+    {
+      $match: {
+        $and: [
+          { depositCount: { $gte: minDepositCount } },
+          { totalDepositsARS: { $gte: minDepositARS } }
+        ]
+      }
+    },
+    { $sort: { totalDepositsARS: -1 } }
+  ]);
+
+  if (stats.length === 0) {
+    return { players: [], windowDays, totalActiveAll: 0, totalWithoutApp: 0, totalWithApp: 0 };
+  }
+
+  const usernames = stats.map(s => s._id);
+
+  // 2) Lookup a User para obtener team, linePhone, lastLogin, status app+notifs.
+  // Usamos un map por username (lower) para join eficiente.
+  const users = await User.find(
+    { username: { $in: usernames } },
+    {
+      username: 1, lineTeamName: 1, linePhone: 1,
+      lastLogin: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1,
+      welcomeBonusClaimed: 1, role: 1,
+      _id: 0
+    }
+  ).lean();
+  const byUsername = new Map();
+  for (const u of users) byUsername.set(String(u.username).toLowerCase(), u);
+
+  // 3) Enriquecer + filtrar.
+  const out = [];
+  let totalWithApp = 0;
+  let totalWithoutApp = 0;
+  for (const s of stats) {
+    const u = byUsername.get(String(s._id).toLowerCase());
+    if (!u) continue; // existe en DailyPlayerStats pero no en User (raro)
+    if (u.role && u.role !== 'user') continue;
+    const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+    const hasApp = u.fcmTokenContext === 'standalone' ||
+                   tokens.some(t => t && t.context === 'standalone');
+    const hasNotifs = u.notifPermission === 'granted' ||
+                      tokens.some(t => t && t.notifPermission === 'granted');
+    const hasChannel = hasApp && hasNotifs;
+    if (hasChannel) totalWithApp++;
+    else totalWithoutApp++;
+    if (excludeWithApp && hasChannel) continue;
+    if (team && (u.lineTeamName || '').trim() !== team) continue;
+    out.push({
+      username: u.username,
+      lineTeamName: u.lineTeamName || null,
+      linePhone: u.linePhone || null,
+      lastLogin: u.lastLogin || null,
+      totalDepositsARS: Number(s.totalDepositsARS) || 0,
+      depositCount: Number(s.depositCount) || 0,
+      totalWithdrawsARS: Number(s.totalWithdrawsARS) || 0,
+      withdrawCount: Number(s.withdrawCount) || 0,
+      lastActivityDate: s.lastActivityDate,
+      hasApp, hasNotifs, hasChannel,
+      welcomeBonusClaimed: !!u.welcomeBonusClaimed
+    });
+  }
+
+  return {
+    players: out,
+    windowDays,
+    totalActiveAll: stats.length,
+    totalWithApp,
+    totalWithoutApp,
+    matchedUsers: out.length
+  };
+}
+
+// GET /api/admin/active-players
+// Query: windowDays (default 30), minDepositCount (1), minDepositARS (0),
+//        excludeWithApp (true), team (optional), limit (200), offset (0),
+//        groupByTeam (false)
+app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const windowDays = Math.min(Math.max(parseInt(req.query.windowDays) || 30, 1), 365);
+    const minDepositCount = Math.max(parseInt(req.query.minDepositCount) || 1, 0);
+    const minDepositARS = Math.max(parseInt(req.query.minDepositARS) || 0, 0);
+    const excludeWithApp = req.query.excludeWithApp !== 'false';
+    const team = req.query.team ? String(req.query.team).trim() : null;
+    const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const groupByTeam = req.query.groupByTeam === 'true';
+
+    const t0 = Date.now();
+    const r = await _computeActivePlayers({
+      windowDays, minDepositCount, minDepositARS, excludeWithApp, team
+    });
+
+    if (!groupByTeam) {
+      const slice = r.players.slice(offset, offset + limit);
+      return res.json({
+        success: true,
+        ...r,
+        players: slice,
+        total: r.players.length,
+        offset, limit,
+        computedInMs: Date.now() - t0
+      });
+    }
+
+    // Agrupar por equipo.
+    const byTeam = new Map();
+    for (const p of r.players) {
+      const tn = p.lineTeamName || '— Sin equipo asignado —';
+      if (!byTeam.has(tn)) {
+        byTeam.set(tn, {
+          teamName: tn,
+          count: 0,
+          totalDepositsARS: 0,
+          totalWithdrawsARS: 0,
+          totalDepositCount: 0,
+          users: []
+        });
+      }
+      const t = byTeam.get(tn);
+      t.count++;
+      t.totalDepositsARS += p.totalDepositsARS;
+      t.totalWithdrawsARS += p.totalWithdrawsARS;
+      t.totalDepositCount += p.depositCount;
+      t.users.push(p);
+    }
+    const teams = Array.from(byTeam.values()).sort((a, b) => b.totalDepositsARS - a.totalDepositsARS);
+    res.json({
+      success: true,
+      windowDays: r.windowDays,
+      totalActiveAll: r.totalActiveAll,
+      totalWithApp: r.totalWithApp,
+      totalWithoutApp: r.totalWithoutApp,
+      matchedUsers: r.matchedUsers,
+      teams,
+      computedInMs: Date.now() - t0
+    });
+  } catch (err) {
+    logger.error(`GET active-players: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/active-players/export — descarga CSV de la lista actual.
+app.get('/api/admin/active-players/export', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const windowDays = Math.min(Math.max(parseInt(req.query.windowDays) || 30, 1), 365);
+    const minDepositCount = Math.max(parseInt(req.query.minDepositCount) || 1, 0);
+    const minDepositARS = Math.max(parseInt(req.query.minDepositARS) || 0, 0);
+    const excludeWithApp = req.query.excludeWithApp !== 'false';
+    const team = req.query.team ? String(req.query.team).trim() : null;
+
+    const r = await _computeActivePlayers({
+      windowDays, minDepositCount, minDepositARS, excludeWithApp, team
+    });
+
+    const escapeCsv = (s) => {
+      const v = String(s == null ? '' : s);
+      if (v.includes(',') || v.includes('"') || v.includes('\n')) {
+        return '"' + v.replace(/"/g, '""') + '"';
+      }
+      return v;
+    };
+    const lines = [];
+    lines.push(['username','equipo','linea_telefono','ultimo_login','depositos_arsacum','cantidad_depositos','retiros_ars','cantidad_retiros','ultima_actividad','tiene_app','tiene_notifs','reclamo_welcome'].join(','));
+    for (const p of r.players) {
+      lines.push([
+        escapeCsv(p.username),
+        escapeCsv(p.lineTeamName || ''),
+        escapeCsv(p.linePhone || ''),
+        escapeCsv(p.lastLogin ? new Date(p.lastLogin).toISOString() : ''),
+        Math.round(p.totalDepositsARS),
+        p.depositCount,
+        Math.round(p.totalWithdrawsARS),
+        p.withdrawCount,
+        escapeCsv(p.lastActivityDate ? new Date(p.lastActivityDate).toISOString() : ''),
+        p.hasApp ? 'si' : 'no',
+        p.hasNotifs ? 'si' : 'no',
+        p.welcomeBonusClaimed ? 'si' : 'no'
+      ].join(','));
+    }
+    const csv = lines.join('\n');
+    const fname = `clientes-activos-${windowDays}d-${(team || 'todos').replace(/\W/g,'_')}-${new Date().toISOString().slice(0,10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send('﻿' + csv); // BOM para que Excel abra UTF-8 bien
+  } catch (err) {
+    logger.error(`GET active-players/export: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// SNAPSHOTS DE CLIENTES ACTIVOS — diario auto + manual on-demand
+// ============================================================
+// Cron 03:00 ART: snapshot agregado (counts/sums por equipo, sin
+// usernames). Sirve para ver evolución día a día — qué tan rápido
+// crece o decrece el universo de "activos sin app".
+//
+// Manual: el admin aprieta "Generar reporte ahora" → se crea un
+// snapshot kind='manual' con la lista completa de usernames para
+// poder descargar CSV. El status pasa de queued → running → ready.
+// El cómputo es rápido (~1 seg) pero lo hacemos async para que el
+// admin no quede bloqueado y pueda navegar mientras.
+
+async function _runActivePlayersDailySnapshot() {
+  const todayKey = _activePlayersTodayKey();
+  // Idempotente: si ya existe el de hoy, skip.
+  const existing = await ActivePlayersSnapshot.findOne({ dateKey: todayKey, kind: 'auto-daily' }).lean();
+  if (existing) {
+    logger.info(`[active-players] snapshot diario ${todayKey} ya existe, skip`);
+    return;
+  }
+  const t0 = Date.now();
+  try {
+    // Defaults del cron: ventana 30d, mín 1 carga, sin filtrar app (queremos
+    // saber el total y el split). El UI puede pedir snapshots manuales
+    // con filtros distintos.
+    const r = await _computeActivePlayers({
+      windowDays: 30, minDepositCount: 1, minDepositARS: 0,
+      excludeWithApp: false, team: null
+    });
+    const teams = _activePlayersBuildTeams(r.players);
+    await ActivePlayersSnapshot.create({
+      id: uuidv4(),
+      dateKey: todayKey,
+      kind: 'auto-daily',
+      status: 'ready',
+      params: { windowDays: 30, minDepositCount: 1, minDepositARS: 0, excludeWithApp: false },
+      totalActiveAll: r.totalActiveAll,
+      totalWithApp: r.totalWithApp,
+      totalWithoutApp: r.totalWithoutApp,
+      matchedUsers: r.matchedUsers,
+      teams,
+      users: [], // auto-daily NO guarda usernames
+      generatedAt: new Date(),
+      generatedBy: 'cron',
+      computedInMs: Date.now() - t0
+    });
+    logger.info(`[active-players] snapshot diario ${todayKey} OK: ${r.totalActiveAll} activos (${r.totalWithoutApp} sin app)`);
+  } catch (err) {
+    logger.error(`[active-players] snapshot diario ${todayKey} error: ${err.message}`);
+  }
+}
+
+// Bootstrap: 5 min después del boot tomamos uno (por si el server
+// arrancó después del horario del cron). Después corre 3am todos
+// los días según hora ART.
+setTimeout(() => { _runActivePlayersDailySnapshot(); }, 5 * 60 * 1000);
+// Checker cada 10 min: si son las 03:0X ART y no hay snapshot de hoy, lo toma.
+setInterval(async () => {
+  try {
+    const now = _getArgentinaParts();
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false
+    });
+    const hour = parseInt(fmt.format(new Date()), 10);
+    if (hour === 3) {
+      await _runActivePlayersDailySnapshot();
+    }
+  } catch (_) {}
+}, 10 * 60 * 1000);
+
+// Cleanup: cada 24h borrar snapshots manuales > 30 días.
+setInterval(async () => {
+  try {
+    const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const r = await ActivePlayersSnapshot.deleteMany({
+      kind: 'manual',
+      generatedAt: { $lt: cutoff }
+    });
+    if (r.deletedCount > 0) logger.info(`[active-players] cleanup: ${r.deletedCount} snapshots manuales viejos eliminados`);
+  } catch (err) {
+    logger.warn(`[active-players] cleanup error: ${err.message}`);
+  }
+}, 24 * 60 * 60 * 1000);
+
+// POST /api/admin/active-players/snapshot — pedir un reporte manual.
+// Devuelve { id, status: 'queued' } inmediatamente. El cómputo se hace
+// async (en background con setImmediate). El admin polea GET /:id
+// hasta que status='ready' y entonces baja el CSV.
+app.post('/api/admin/active-players/snapshot', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const params = {
+      windowDays: Math.min(Math.max(parseInt(body.windowDays) || 30, 1), 365),
+      minDepositCount: Math.max(parseInt(body.minDepositCount) || 1, 0),
+      minDepositARS: Math.max(parseInt(body.minDepositARS) || 0, 0),
+      excludeWithApp: body.excludeWithApp !== false
+    };
+
+    // Crear el row con status 'queued' antes de devolver.
+    const id = uuidv4();
+    const todayKey = _activePlayersTodayKey();
+    await ActivePlayersSnapshot.create({
+      id,
+      dateKey: todayKey,
+      kind: 'manual',
+      status: 'queued',
+      params,
+      generatedAt: new Date(),
+      generatedBy: req.user.username || 'admin'
+    });
+
+    // Disparar el cómputo async. No await — el cliente recibe la
+    // respuesta inmediatamente con jobId.
+    setImmediate(async () => {
+      const t0 = Date.now();
+      try {
+        await ActivePlayersSnapshot.updateOne({ id }, { $set: { status: 'running' } });
+        const r = await _computeActivePlayers(params);
+        const teams = _activePlayersBuildTeams(r.players);
+        await ActivePlayersSnapshot.updateOne({ id }, {
+          $set: {
+            status: 'ready',
+            totalActiveAll: r.totalActiveAll,
+            totalWithApp: r.totalWithApp,
+            totalWithoutApp: r.totalWithoutApp,
+            matchedUsers: r.matchedUsers,
+            teams,
+            users: r.players,
+            computedInMs: Date.now() - t0
+          }
+        });
+        logger.info(`[active-players] snapshot manual ${id} OK en ${Date.now() - t0}ms (${r.matchedUsers} users)`);
+      } catch (err) {
+        await ActivePlayersSnapshot.updateOne({ id }, {
+          $set: { status: 'error', errorMessage: err.message, computedInMs: Date.now() - t0 }
+        });
+        logger.error(`[active-players] snapshot manual ${id} error: ${err.message}`);
+      }
+    });
+
+    res.json({ success: true, id, status: 'queued' });
+  } catch (err) {
+    logger.error(`POST active-players/snapshot: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/active-players/snapshot/:id — estado y datos de un snapshot.
+app.get('/api/admin/active-players/snapshot/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const includeUsers = req.query.includeUsers === 'true';
+    const select = includeUsers ? '-_id' : '-_id -users';
+    const snap = await ActivePlayersSnapshot.findOne({ id: req.params.id }).select(select).lean();
+    if (!snap) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ success: true, snapshot: snap });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/active-players/snapshots — lista paginada.
+// Query: kind (auto-daily | manual), limit, offset
+app.get('/api/admin/active-players/snapshots', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.kind) filter.kind = req.query.kind;
+    const limit = Math.min(parseInt(req.query.limit) || 60, 365);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const items = await ActivePlayersSnapshot.find(filter)
+      .sort({ generatedAt: -1 })
+      .skip(offset)
+      .limit(limit)
+      .select('-_id -users') // sin lista de usuarios para que sea liviano
+      .lean();
+    res.json({ success: true, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/active-players/snapshot/:id/csv — descargar CSV.
+app.get('/api/admin/active-players/snapshot/:id/csv', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const snap = await ActivePlayersSnapshot.findOne({ id: req.params.id }).lean();
+    if (!snap) return res.status(404).json({ error: 'No encontrado' });
+    if (snap.status !== 'ready') return res.status(409).json({ error: 'Snapshot todavía no está listo (status=' + snap.status + ')' });
+    if (!snap.users || snap.users.length === 0) {
+      return res.status(400).json({ error: 'Este snapshot no incluye lista de usuarios (es agregado solamente)' });
+    }
+    const teamFilter = req.query.team ? String(req.query.team).trim() : null;
+    const players = teamFilter
+      ? snap.users.filter(u => (u.lineTeamName || '— Sin equipo asignado —') === teamFilter)
+      : snap.users;
+
+    const escapeCsv = (s) => {
+      const v = String(s == null ? '' : s);
+      if (v.includes(',') || v.includes('"') || v.includes('\n')) return '"' + v.replace(/"/g, '""') + '"';
+      return v;
+    };
+    const lines = [];
+    lines.push(['username','equipo','linea_telefono','ultimo_login','depositos_arsacum','cantidad_depositos','retiros_ars','cantidad_retiros','ultima_actividad','tiene_app','tiene_notifs','reclamo_welcome'].join(','));
+    for (const p of players) {
+      lines.push([
+        escapeCsv(p.username),
+        escapeCsv(p.lineTeamName || ''),
+        escapeCsv(p.linePhone || ''),
+        escapeCsv(p.lastLogin ? new Date(p.lastLogin).toISOString() : ''),
+        Math.round(p.totalDepositsARS || 0),
+        p.depositCount || 0,
+        Math.round(p.totalWithdrawsARS || 0),
+        p.withdrawCount || 0,
+        escapeCsv(p.lastActivityDate ? new Date(p.lastActivityDate).toISOString() : ''),
+        p.hasApp ? 'si' : 'no',
+        p.hasNotifs ? 'si' : 'no',
+        p.welcomeBonusClaimed ? 'si' : 'no'
+      ].join(','));
+    }
+    const fname = `clientes-activos-snapshot-${snap.dateKey}-${(teamFilter || 'todos').replace(/\W/g,'_')}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send('﻿' + lines.join('\n'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/active-players/refresh-today — forzar recompute
+// del punto de HOY en el chart de evolución. Útil si querés ver cómo
+// cambió la métrica desde la mañana (cuando corrió el cron a las 3am)
+// hasta la tarde sin esperar al cron de mañana.
+app.post('/api/admin/active-players/refresh-today', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const todayKey = _activePlayersTodayKey();
+    // Borrar el de hoy (si existe) para que el helper lo recompute.
+    await ActivePlayersSnapshot.deleteOne({ dateKey: todayKey, kind: 'auto-daily' });
+    await _runActivePlayersDailySnapshot();
+    const fresh = await ActivePlayersSnapshot.findOne({ dateKey: todayKey, kind: 'auto-daily' })
+      .select('-_id -users').lean();
+    res.json({ success: true, refreshed: !!fresh, snapshot: fresh });
+  } catch (err) {
+    logger.error(`POST refresh-today: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/active-players/evolution — datos para el chart de
+// evolución diaria. Devuelve los últimos N días (default 30) de
+// snapshots auto-daily.
+app.get('/api/admin/active-players/evolution', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 7), 180);
+    const items = await ActivePlayersSnapshot.find({ kind: 'auto-daily' })
+      .sort({ dateKey: -1 })
+      .limit(days)
+      .select('dateKey totalActiveAll totalWithApp totalWithoutApp generatedAt -_id')
+      .lean();
+    items.reverse(); // cronológico
+    res.json({ success: true, items, days });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ============================================================
 // ENDPOINTS ADMIN para Automatizaciones
@@ -11433,6 +12253,335 @@ app.delete('/api/admin/promo-alert', authMiddleware, adminMiddleware, async (req
     res.json({ success: true });
   } catch (error) {
     logger.error(`DELETE /api/admin/promo-alert error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// CAÍDA DE LÍNEA — broadcast + reemplazo de número
+// ============================================
+// Cuando una línea de WhatsApp/teléfono se cae (suspendida, baneada,
+// reemplazada), el admin entra acá:
+//   1) Elige el equipo / sub-línea afectada (lineTeamName).
+//   2) Pone el nuevo número que reemplaza al caído.
+//   3) Opcional: define un % de bonus por X días para incentivar carga
+//      de los clientes de esa línea mientras se acomodan al nuevo nro.
+//   4) Mensaje del push (default: aviso genérico).
+//
+// El servidor:
+//   - Resuelve el set de usernames afectados (User.lineTeamName == X).
+//   - Bulk-actualiza User.linePhone y UserLineLookup.linePhone al nuevo nro.
+//   - Actualiza el slot del config 'userLinesByPrefix' que tenga ese
+//     teamName para que los registros futuros también vean el nuevo nro.
+//   - Si hay promo, setea PROMO_ALERT_KEY con audienceWhitelist =
+//     usernames afectados + lineDown:true para que solo ellos vean el
+//     banner de "RECLAMÁ" sin filtrar por prefix.
+//   - Manda push real solo a los usernames afectados (filter).
+//   - Crea un row de NotificationHistory con type='line_down',
+//     lineDownTeam, lineDownOldPhone, lineDownNewPhone para auditoría.
+//
+// Si la promo se setea pero el push falla totalmente (successCount=0,
+// error), revertimos la promo (no queda banner activo "huérfano").
+// ============================================
+
+// GET preview: sin escribir, devuelve cuántos usuarios serán afectados
+// y cuál es el teléfono actual del slot. Útil para mostrar confirmación
+// en el frontend antes de apretar "Difundir".
+app.get('/api/admin/line-down/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = (req.query.teamName ? String(req.query.teamName) : '').trim();
+    const teamMode = (req.query.teamMode === 'prefix') ? 'prefix' : 'exact';
+    if (!teamName) return res.status(400).json({ error: 'Falta teamName' });
+
+    const userFilter = teamMode === 'prefix'
+      ? { lineTeamName: { $regex: '^' + teamName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: '' } }
+      : { lineTeamName: teamName };
+
+    const [affected, withChannel, lookupPending] = await Promise.all([
+      User.countDocuments({ ...userFilter, role: 'user' }),
+      User.countDocuments({
+        ...userFilter,
+        role: 'user',
+        $or: [
+          { fcmTokenContext: 'standalone', notifPermission: 'granted' },
+          { 'fcmTokens.context': 'standalone', 'fcmTokens.notifPermission': 'granted' }
+        ]
+      }),
+      UserLineLookup.countDocuments(
+        teamMode === 'prefix'
+          ? { lineTeamName: { $regex: '^' + teamName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: '' } }
+          : { lineTeamName: teamName }
+      )
+    ]);
+
+    // Snapshot del slot actual del config para mostrar el "antes/después".
+    const linesCfg = (await getConfig('userLinesByPrefix')) || {};
+    const slots = Array.isArray(linesCfg.slots) ? linesCfg.slots : [];
+    const matchingSlots = slots
+      .filter(s => {
+        const tn = (s.teamName || '').trim();
+        if (!tn) return false;
+        return teamMode === 'prefix' ? tn.startsWith(teamName) : tn === teamName;
+      })
+      .map(s => ({ prefix: s.prefix, phone: s.phone, teamName: s.teamName }));
+
+    res.json({
+      success: true,
+      teamName,
+      teamMode,
+      affected,
+      withChannel,
+      lookupPending,
+      matchingSlots
+    });
+  } catch (error) {
+    logger.error(`GET /api/admin/line-down/preview error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST broadcast: ejecuta el cambio de número + push + (opcional) promo.
+app.post('/api/admin/line-down', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const {
+      teamName,
+      teamMode,
+      newPhone,
+      title,
+      message,
+      promo
+    } = req.body || {};
+
+    const tn = (teamName ? String(teamName) : '').trim();
+    if (!tn) return res.status(400).json({ error: 'Falta teamName' });
+    const mode = (teamMode === 'prefix') ? 'prefix' : 'exact';
+
+    const newPhoneClean = (newPhone ? String(newPhone) : '').trim();
+    if (!newPhoneClean) return res.status(400).json({ error: 'Falta el nuevo número' });
+    if (newPhoneClean.length > 32) return res.status(400).json({ error: 'Nuevo número demasiado largo' });
+
+    const titleClean = (title ? String(title) : '').trim() || '📵 Línea fuera de servicio';
+    const messageClean = (message ? String(message) : '').trim();
+    if (!messageClean) return res.status(400).json({ error: 'Falta el mensaje del push' });
+    if (titleClean.length > 100) return res.status(400).json({ error: 'Título demasiado largo (máx 100)' });
+    if (messageClean.length > 500) return res.status(400).json({ error: 'Mensaje demasiado largo (máx 500)' });
+
+    let promoCfg = null;
+    if (promo && promo.enabled) {
+      const bonusPct = Number(promo.bonusPct);
+      const durationDays = Number(promo.durationDays);
+      if (!isFinite(bonusPct) || bonusPct <= 0 || bonusPct > 200) {
+        return res.status(400).json({ error: 'Bonus inválido (1–200%)' });
+      }
+      if (!isFinite(durationDays) || durationDays <= 0 || durationDays > 30) {
+        return res.status(400).json({ error: 'Duración inválida (1–30 días)' });
+      }
+      const promoMessage = (promo.promoMessage ? String(promo.promoMessage) : '').trim()
+        || `🚨 Línea caída — reclamá ${bonusPct}% extra en tu carga por ${durationDays} día${durationDays > 1 ? 's' : ''}.`;
+      const promoCode = _normalizePromoCode(promo.promoCode || `LINE${bonusPct}`);
+      if (!promoCode) return res.status(400).json({ error: 'Código de promo inválido' });
+      promoCfg = {
+        bonusPct,
+        durationDays,
+        promoMessage,
+        promoCode
+      };
+    }
+
+    // Filtro para resolver audiencia.
+    const escTn = tn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const userFilter = mode === 'prefix'
+      ? { lineTeamName: { $regex: '^' + escTn, $options: '' }, role: 'user' }
+      : { lineTeamName: tn, role: 'user' };
+    const lookupFilter = mode === 'prefix'
+      ? { lineTeamName: { $regex: '^' + escTn, $options: '' } }
+      : { lineTeamName: tn };
+
+    // 1) Resolver usernames afectados.
+    const affectedDocs = await User.find(userFilter, { username: 1, linePhone: 1, _id: 0 }).lean();
+    const usernames = affectedDocs.map(u => u.username).filter(Boolean);
+    const audienceCount = usernames.length;
+
+    // Snapshot del teléfono "viejo" (mayoritario) para auditoría.
+    const phoneCounts = new Map();
+    for (const u of affectedDocs) {
+      const p = (u.linePhone || '').trim();
+      if (!p) continue;
+      phoneCounts.set(p, (phoneCounts.get(p) || 0) + 1);
+    }
+    let oldPhone = null;
+    let oldPhoneCount = 0;
+    for (const [p, c] of phoneCounts) {
+      if (c > oldPhoneCount) { oldPhone = p; oldPhoneCount = c; }
+    }
+
+    if (audienceCount === 0) {
+      return res.status(400).json({
+        error: `No hay usuarios registrados con equipo "${tn}". El cambio se aplicaría sólo a UserLineLookup y al slot del config; usá el panel "Números vigentes" para eso.`
+      });
+    }
+
+    // 2) Bulk update User.linePhone.
+    const userUpdate = await User.updateMany(
+      userFilter,
+      { $set: { linePhone: newPhoneClean, lineAssignedAt: new Date(), lineAssignedBy: req.user.username || null } }
+    );
+
+    // 3) Bulk update UserLineLookup.linePhone (para que los registros
+    //    futuros / re-resolves también vean el nuevo número).
+    const lookupUpdate = await UserLineLookup.updateMany(
+      lookupFilter,
+      { $set: { linePhone: newPhoneClean } }
+    );
+
+    // 4) Update slot(s) del config 'userLinesByPrefix'.
+    let slotsUpdated = 0;
+    try {
+      const linesCfg = (await getConfig('userLinesByPrefix')) || {};
+      const slots = Array.isArray(linesCfg.slots) ? linesCfg.slots : [];
+      const newSlots = slots.map(s => {
+        const stn = (s.teamName || '').trim();
+        const matches = mode === 'prefix' ? stn.startsWith(tn) : stn === tn;
+        if (matches) {
+          slotsUpdated++;
+          return { ...s, phone: newPhoneClean };
+        }
+        return s;
+      });
+      if (slotsUpdated > 0) {
+        await setConfig('userLinesByPrefix', { ...linesCfg, slots: newSlots });
+      }
+    } catch (cfgErr) {
+      logger.warn(`[line-down] no se pudo actualizar config de slots: ${cfgErr.message}`);
+    }
+
+    // 5) Si hay promo, setearla con audienceWhitelist + lineDown=true.
+    let promoSet = null;
+    if (promoCfg) {
+      const now = new Date();
+      const expires = new Date(now.getTime() + promoCfg.durationDays * 24 * 3600 * 1000);
+      promoSet = {
+        id: uuidv4(),
+        message: promoCfg.promoMessage,
+        code: promoCfg.promoCode,
+        expiresAt: expires.toISOString(),
+        createdAt: now.toISOString(),
+        createdBy: req.user.username || null,
+        prefix: null,
+        audienceWhitelist: usernames.map(u => String(u).toLowerCase()),
+        lineDown: true,
+        lineDownTeam: tn,
+        notificationHistoryId: null // se vincula abajo
+      };
+      await setConfig(PROMO_ALERT_KEY, promoSet);
+    }
+
+    // 6) Mandar push real.
+    const data = {
+      source: 'line-down',
+      lineDownTeam: tn,
+      newPhone: newPhoneClean,
+      tag: 'line-down-' + Date.now()
+    };
+    if (promoCfg) {
+      data.promoCode = promoCfg.promoCode;
+      data.promoBonusPct = String(promoCfg.bonusPct);
+      data.promoDurationDays = String(promoCfg.durationDays);
+    }
+    let sendResult = { successCount: 0, failureCount: 0, error: null };
+    try {
+      sendResult = await sendNotificationToAllUsers(
+        User,
+        titleClean,
+        messageClean,
+        data,
+        { username: { $in: usernames } }
+      );
+    } catch (sendErr) {
+      sendResult.error = sendErr.message;
+    }
+
+    // 6.5) Si se había seteado promo y el push fracasó por completo,
+    // limpiar la promo (nadie iba a verla y sería falso engagement).
+    if (promoSet && sendResult.error && (sendResult.successCount || 0) === 0) {
+      await setConfig(PROMO_ALERT_KEY, null).catch(() => {});
+      logger.error(`[line-down] promo CANCELADA porque el push falló totalmente: ${sendResult.error}`);
+      promoSet = null;
+    }
+
+    // 7) NotificationHistory.
+    const historyId = uuidv4();
+    try {
+      await NotificationHistory.create({
+        id: historyId,
+        sentAt: new Date(),
+        audienceType: 'list',
+        audienceCount,
+        audiencePrefix: tn, // guardamos el equipo en este campo para reusar filtros
+        title: titleClean,
+        body: messageClean,
+        type: 'line_down',
+        promoMessage: promoCfg ? promoCfg.promoMessage : null,
+        promoCode: promoCfg ? promoCfg.promoCode : null,
+        promoExpiresAt: promoSet ? new Date(promoSet.expiresAt) : null,
+        lineDownTeam: tn,
+        lineDownOldPhone: oldPhone,
+        lineDownNewPhone: newPhoneClean,
+        totalUsers: audienceCount,
+        successCount: sendResult.successCount || 0,
+        failureCount: sendResult.failureCount || 0,
+        sentBy: req.user.username || null
+      });
+
+      // Vincular el promo al historial para tracking de waClicks.
+      if (promoSet) {
+        const cur = await getConfig(PROMO_ALERT_KEY, null);
+        if (cur && cur.id === promoSet.id) {
+          await setConfig(PROMO_ALERT_KEY, { ...cur, notificationHistoryId: historyId });
+        }
+      }
+    } catch (histErr) {
+      logger.warn(`[line-down] no se pudo crear NotificationHistory: ${histErr.message}`);
+    }
+
+    res.json({
+      success: true,
+      historyId,
+      teamName: tn,
+      teamMode: mode,
+      audienceCount,
+      oldPhone,
+      newPhone: newPhoneClean,
+      usersUpdated: userUpdate.modifiedCount || 0,
+      lookupUpdated: lookupUpdate.modifiedCount || 0,
+      slotsUpdated,
+      pushDelivered: sendResult.successCount || 0,
+      pushFailed: sendResult.failureCount || 0,
+      pushError: sendResult.error || null,
+      promo: promoSet ? {
+        id: promoSet.id,
+        bonusPct: promoCfg.bonusPct,
+        durationDays: promoCfg.durationDays,
+        expiresAt: promoSet.expiresAt
+      } : null
+    });
+  } catch (error) {
+    logger.error(`POST /api/admin/line-down error: ${error.message}`);
+    res.status(500).json({ error: error.message || 'Error del servidor' });
+  }
+});
+
+// GET history: lista las últimas difusiones de caída de línea.
+app.get('/api/admin/line-down/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const list = await NotificationHistory.find({ type: 'line_down' })
+      .sort({ sentAt: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ success: true, items: list });
+  } catch (error) {
+    logger.error(`GET /api/admin/line-down/history error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

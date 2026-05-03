@@ -33,7 +33,11 @@ const {
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,
-  NotificationRuleSuggestion
+  NotificationRuleSuggestion,
+  WeeklyStrategyConfig,
+  WeeklyNotifBudget,
+  WeeklyStrategyReport,
+  ActivePlayersSnapshot
 } = require('../src/models');
 
 // ============================================
@@ -340,6 +344,10 @@ module.exports = {
   AppNotifSnapshot,
   NotificationRule,
   NotificationRuleSuggestion,
+  WeeklyStrategyConfig,
+  WeeklyNotifBudget,
+  WeeklyStrategyReport,
+  ActivePlayersSnapshot,
   // Helpers
   getConfig,
   setConfig,

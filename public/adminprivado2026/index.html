@@ -98,6 +98,14 @@
                     <span>🤖</span>
                     <span>Automatizaciones <span id="automationsBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
                 </a>
+                <a href="#" class="nav-item" data-section="lineDown">
+                    <span>🚨</span>
+                    <span>Caída de línea</span>
+                </a>
+                <a href="#" class="nav-item" data-section="activePlayers">
+                    <span>🎯</span>
+                    <span>Clientes activos sin app</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -813,6 +821,8 @@
                     <button class="auto-tab-btn" data-tab="pending" onclick="switchAutomationsTab('pending')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">✋ Pendientes <span id="autoPendingCountBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;padding:1px 5px;border-radius:6px;margin-left:3px;"></span></button>
                     <button class="auto-tab-btn" data-tab="history" onclick="switchAutomationsTab('history')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">📊 Historial</button>
                     <button class="auto-tab-btn" data-tab="calendar" onclick="switchAutomationsTab('calendar')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">⏰ Calendario semanal</button>
+                    <button class="auto-tab-btn" data-tab="strategy" onclick="switchAutomationsTab('strategy')" style="padding:9px 14px;background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-bottom:none;color:#ffc850;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">🎯 Estrategia semanal</button>
+                    <button class="auto-tab-btn" data-tab="roi" onclick="switchAutomationsTab('roi')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">📈 ROI por difusión</button>
                 </div>
 
                 <!-- Contenido de cada tab (un solo container, contenido cambia) -->
@@ -830,6 +840,179 @@
                             <button onclick="saveAutoRuleEdit()" style="flex:1;padding:10px;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;">💾 Guardar</button>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: CAÍDA DE LÍNEA
+                 ============================================ -->
+            <section id="lineDownSection" class="section">
+                <div class="panel-header">
+                    <h2>🚨 Caída de línea</h2>
+                    <button class="refresh-btn" onclick="loadLineDownHistory()" title="Refrescar historial">🔄</button>
+                </div>
+                <div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#ff5050;font-weight:700;font-size:13px;">¿Se cayó una línea?</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                        Elegí el equipo afectado, poné el nuevo número y mandá un push solo a esos clientes.
+                        Opcionalmente activá una promo (% extra por X días) para incentivar la migración.
+                        El número se actualiza automáticamente en User, UserLineLookup y en el slot de "Números vigentes".
+                    </p>
+                </div>
+
+                <!-- Formulario -->
+                <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:18px;margin-bottom:18px;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                        <div>
+                            <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Equipo / Línea</label>
+                            <select id="lineDownTeamSelect" onchange="onLineDownTeamChange()" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                                <option value="">— Cargando…</option>
+                            </select>
+                            <p style="margin:5px 0 0;font-size:11px;color:#888;">Tip: elegí "modo prefijo" si tenés varias sub-líneas y se cayó todo el grupo.</p>
+                        </div>
+                        <div>
+                            <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Modo</label>
+                            <select id="lineDownTeamMode" onchange="loadLineDownPreview()" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                                <option value="exact">Línea exacta</option>
+                                <option value="prefix">Equipo entero (prefijo)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Preview de afectados -->
+                    <div id="lineDownPreview" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#bbb;display:none;">
+                        <span id="lineDownPreviewContent">…</span>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                        <div>
+                            <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">📞 Número anterior (auto)</label>
+                            <input id="lineDownOldPhone" type="text" disabled placeholder="—" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.5);color:#888;font-size:13px;" />
+                        </div>
+                        <div>
+                            <label style="display:block;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">📞 Nuevo número *</label>
+                            <input id="lineDownNewPhone" type="text" placeholder="+5491100000000" maxlength="32" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(0,212,255,0.30);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;" />
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Título del push</label>
+                        <input id="lineDownTitle" type="text" placeholder="📵 Línea fuera de servicio" maxlength="100" style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;" />
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Mensaje del push *</label>
+                        <textarea id="lineDownMessage" rows="3" maxlength="500" placeholder="Hola, nuestra línea cambió. Tu nuevo número es ..." style="width:100%;padding:9px 10px;border-radius:8px;border:1px solid rgba(0,212,255,0.30);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;resize:vertical;"></textarea>
+                    </div>
+
+                    <!-- Promo opcional -->
+                    <div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.18);border-radius:8px;padding:12px;margin-bottom:12px;">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#00d4ff;font-weight:700;font-size:13px;">
+                            <input type="checkbox" id="lineDownPromoEnabled" onchange="toggleLineDownPromoFields()" style="width:16px;height:16px;cursor:pointer;" />
+                            <span>🎁 Activar promo "RECLAMÁ %X" para incentivar la migración</span>
+                        </label>
+                        <div id="lineDownPromoFields" style="display:none;margin-top:12px;">
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                                <div>
+                                    <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">% Bonus</label>
+                                    <input id="lineDownBonusPct" type="number" min="1" max="200" value="50" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;" />
+                                </div>
+                                <div>
+                                    <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Duración (días)</label>
+                                    <input id="lineDownDurationDays" type="number" min="1" max="30" value="2" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;" />
+                                </div>
+                            </div>
+                            <div style="margin-bottom:8px;">
+                                <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Mensaje del banner (lo que ven en "Quiero cargar")</label>
+                                <input id="lineDownPromoMessage" type="text" maxlength="200" placeholder="🚨 Nueva línea — reclamá 50% extra por 2 días" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;" />
+                            </div>
+                            <div>
+                                <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Código (auto si vacío)</label>
+                                <input id="lineDownPromoCode" type="text" maxlength="20" placeholder="LINE50" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;text-transform:uppercase;" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="lineDownSubmitBtn" onclick="submitLineDown()" style="width:100%;padding:12px;background:linear-gradient(135deg,#ff5050,#cc0000);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:800;letter-spacing:0.5px;cursor:pointer;">
+                        🚨 Difundir caída de línea
+                    </button>
+                </div>
+
+                <!-- Historial -->
+                <h3 style="color:#fff;font-size:14px;margin:20px 0 10px;">📜 Historial de difusiones</h3>
+                <div id="lineDownHistory">
+                    <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: CLIENTES ACTIVOS SIN APP
+                 ============================================ -->
+            <section id="activePlayersSection" class="section">
+                <div class="panel-header">
+                    <h2>🎯 Clientes activos sin app</h2>
+                    <button class="refresh-btn" onclick="loadActivePlayers()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">Tu lista para fidelizar por WhatsApp</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                        Jugadores que están activos en la plataforma (cargaron en los últimos N días) pero NO tienen la app instalada o no aceptaron notificaciones.
+                        Son tu target para mandarles WhatsApp y convencerlos de bajar la app + reclamar los $10.000 de bienvenida.
+                        Agrupados por equipo para que organices la campaña por línea.
+                    </p>
+                </div>
+
+                <!-- Filtros -->
+                <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:12px;">
+                    <div>
+                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Ventana (días)</label>
+                        <select id="apWindowDays" onchange="loadActivePlayers()" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                            <option value="7">Últimos 7 días</option>
+                            <option value="14">Últimos 14 días</option>
+                            <option value="30" selected>Últimos 30 días</option>
+                            <option value="45">Últimos 45 días</option>
+                            <option value="60">Últimos 60 días</option>
+                            <option value="90">Últimos 90 días</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Mín. depósitos</label>
+                        <input id="apMinDepositCount" type="number" min="0" value="1" onchange="loadActivePlayers()" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Mín. ARS depositados</label>
+                        <input id="apMinDepositARS" type="number" min="0" value="0" step="1000" onchange="loadActivePlayers()" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Mostrar</label>
+                        <select id="apExcludeWithApp" onchange="loadActivePlayers()" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">
+                            <option value="true" selected>Solo SIN app+notifs</option>
+                            <option value="false">Todos los activos</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Resumen + acciones -->
+                <div id="apSummary" style="margin-bottom:14px;"></div>
+
+                <!-- Evolución diaria (últimos 30 días) -->
+                <div id="apEvolution" style="margin-bottom:18px;"></div>
+
+                <!-- Generar reporte manual + lista de snapshots -->
+                <div style="background:rgba(255,200,80,0.04);border:1px solid rgba(255,200,80,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                        <div>
+                            <div style="color:#ffc850;font-weight:700;font-size:13px;">📦 Reportes manuales</div>
+                            <div style="color:#aaa;font-size:11px;margin-top:2px;">Generá una foto fija del listado actual con los filtros de arriba — queda guardada para que la bajes cuando quieras (o la baje tu equipo).</div>
+                        </div>
+                        <button id="apGenerateBtn" onclick="apGenerateSnapshot()" style="padding:10px 18px;background:linear-gradient(135deg,#ffc850,#cc8800);color:#000;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;">🛠 Generar reporte ahora</button>
+                    </div>
+                    <div id="apSnapshotsList" style="margin-top:12px;"></div>
+                </div>
+
+                <!-- Tabla por equipos (live) -->
+                <h3 style="color:#fff;font-size:14px;margin:16px 0 8px;">📊 Vista en vivo (con filtros aplicados)</h3>
+                <div id="apTeamsList">
+                    <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
 
