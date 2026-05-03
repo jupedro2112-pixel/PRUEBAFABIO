@@ -9769,9 +9769,10 @@ setInterval(() => { _runNotifRulesEvaluator(); }, 5 * 60 * 1000);
 // Cron 2 (cada 30 min): tracker de ROI — busca pushes de estrategia
 //   con sentAt > 48h y mide carga pre/post para llenar el reporte.
 const weeklyStrategyService = require('./src/services/weeklyStrategyService');
+const adhocStrategyService = require('./src/services/adhocStrategyService');
 const _strategyModels = {
   User, RefundClaim, MoneyGiveaway, MoneyGiveawayClaim,
-  NotificationHistory,
+  NotificationHistory, DailyPlayerStats,
   WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport
 };
 
@@ -9992,6 +9993,107 @@ app.post('/api/admin/strategy/run-now', authMiddleware, adminMiddleware, async (
     }
   } catch (err) {
     logger.error(`POST strategy/run-now: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// ESTRATEGIA AD-HOC (analizar + lanzar bajo demanda)
+// ============================================================
+// El admin elige un rango de fechas para analizar cómo jugó cada
+// usuario, le mostramos un plan per-user, y si confirma, lo lanzamos.
+// El plan vive en memoria 1 hora; si pasa más tiempo hay que re-analizar.
+
+// POST /api/admin/strategy/adhoc/analyze — devuelve un plan accionable.
+app.post('/api/admin/strategy/adhoc/analyze', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede analizar estrategias.' });
+    }
+    const body = req.body || {};
+    const analysisFromMs = Date.parse(body.analysisFrom);
+    const analysisToMs = Date.parse(body.analysisTo);
+    if (!Number.isFinite(analysisFromMs)) return res.status(400).json({ error: 'analysisFrom inválido' });
+    if (!Number.isFinite(analysisToMs)) return res.status(400).json({ error: 'analysisTo inválido' });
+    if (analysisToMs <= analysisFromMs) return res.status(400).json({ error: 'analysisTo debe ser posterior a analysisFrom' });
+    if (analysisToMs - analysisFromMs > 90 * 86400000) return res.status(400).json({ error: 'rango máximo 90 días' });
+
+    const maxBudgetARS = Math.min(Math.max(parseInt(body.maxBudgetARS) || 200000, 1000), 5000000);
+    const focus = ['lift_today', 'reactivate_dormant', 'mix'].includes(body.focus) ? body.focus : 'mix';
+
+    const t0 = Date.now();
+    const plan = await adhocStrategyService.computeAdhocPlan({
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      analysisFrom: new Date(analysisFromMs),
+      analysisTo: new Date(analysisToMs),
+      maxBudgetARS, focus, logger
+    });
+    const planId = adhocStrategyService.storeAdhocPlan(plan);
+    res.json({
+      success: true,
+      planId,
+      plan,
+      computedInMs: Date.now() - t0,
+      ttlMinutes: 60
+    });
+  } catch (err) {
+    logger.error(`POST adhoc/analyze: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/strategy/adhoc/plan/:planId — recuperar plan en memoria.
+app.get('/api/admin/strategy/adhoc/plan/:planId', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const plan = adhocStrategyService.getAdhocPlan(req.params.planId);
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado o expirado. Volvé a analizar.' });
+    res.json({ success: true, plan });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/strategy/adhoc/launch — ejecuta un plan analizado.
+// Body: { planId, validUntil, title, body }
+app.post('/api/admin/strategy/adhoc/launch', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede lanzar estrategias.' });
+    }
+    const body = req.body || {};
+    const planId = String(body.planId || '').trim();
+    if (!planId) return res.status(400).json({ error: 'Falta planId' });
+
+    // Consume (one-shot) — si fallás el launch, hay que re-analizar.
+    const plan = adhocStrategyService.consumeAdhocPlan(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado o expirado. Volvé a analizar.' });
+
+    const validUntilMs = Date.parse(body.validUntil);
+    if (!Number.isFinite(validUntilMs)) return res.status(400).json({ error: 'validUntil inválido' });
+    if (validUntilMs <= Date.now()) return res.status(400).json({ error: 'validUntil debe ser futuro' });
+    if (validUntilMs - Date.now() > 7 * 86400000) return res.status(400).json({ error: 'validUntil no puede ser >7 días' });
+
+    const title = String(body.title || '🎁 Tenés un regalo esperándote').slice(0, 200);
+    const bodyText = String(body.body || 'Abrí la app y reclamalo antes de que se termine.').slice(0, 500);
+
+    const r = await adhocStrategyService.executeAdhocPlan({
+      plan,
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      sendPushFn: sendNotificationToAllUsers,
+      setConfig,
+      PROMO_ALERT_KEY,
+      TIER_PROMOS_KEY,
+      validUntil: new Date(validUntilMs),
+      title,
+      body: bodyText,
+      triggeredBy: req.user.username || 'admin',
+      logger
+    });
+    res.json({ success: true, result: r });
+  } catch (err) {
+    logger.error(`POST adhoc/launch: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

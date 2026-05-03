@@ -3569,6 +3569,7 @@ function _autoRenderActiveTab() {
     else if (_autoActiveTab === 'history') _autoRenderHistoryTab();
     else if (_autoActiveTab === 'calendar') c.innerHTML = _autoRenderCalendarTab();
     else if (_autoActiveTab === 'strategy') _strategyRenderTab();
+    else if (_autoActiveTab === 'adhoc') _adhocRenderTab();
     else if (_autoActiveTab === 'roi') _strategyRenderROITab();
 }
 
@@ -5864,4 +5865,274 @@ function _helpBlocks() {
             ].join('')
         }
     ];
+}
+
+// ============================================
+// 🚀 LANZADOR AD-HOC (tab "Lanzar ahora")
+// ============================================
+let _adhocPlanCache = null; // último plan analizado en esta sesión
+let _adhocExpandedTargets = false;
+
+function _adhocDateInputDefault(daysAgo) {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return d.toISOString().slice(0, 10);
+}
+
+function _adhocDatetimeInputDefault(hoursFromNow) {
+    const d = new Date(Date.now() + hoursFromNow * 3600 * 1000);
+    // formato yyyy-MM-ddTHH:mm en hora local
+    const pad = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function _adhocRenderTab() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '';
+
+    html += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:10px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="color:#ff8888;font-weight:800;font-size:14px;">🚀 Lanzar estrategia ahora</div>';
+    html += '<div style="color:#bbb;font-size:12px;margin-top:6px;line-height:1.6;">';
+    html += 'Elegí <strong>fechas para analizar</strong> cómo jugó cada cliente, <strong>tope de presupuesto</strong>, y el <strong>foco</strong>. ';
+    html += 'Te armo el plan per-user (qué se le da a quién y por qué). Si te gusta, lo confirmás y se lanza al toque.';
+    html += '<br><span style="color:#ffc850;">Respeta cap semanal (' + (typeof _strategyConfigCache !== "undefined" && _strategyConfigCache ? _strategyConfigCache.capPerUserPerWeek : 2) + ') + cooldown — los que ya recibieron 2 pushes esta semana NO se les manda.</span>';
+    html += '</div>';
+    html += '</div>';
+
+    // ============ FORM DE ANÁLISIS ============
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:16px;margin-bottom:14px;">';
+    html += '<div style="color:#fff;font-weight:700;font-size:13px;margin-bottom:12px;">🎯 Paso 1 · Configurar análisis</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;margin-bottom:12px;">';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Desde (analizar juego)</label>';
+    html += '<input type="date" id="adhocFrom" value="' + _adhocDateInputDefault(7) + '" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;color-scheme:dark;"></div>';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Hasta</label>';
+    html += '<input type="date" id="adhocTo" value="' + _adhocDateInputDefault(0) + '" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;color-scheme:dark;"></div>';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Tope total ARS</label>';
+    html += '<input type="number" id="adhocBudget" value="200000" min="1000" step="10000" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Foco</label>';
+    html += '<select id="adhocFocus" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">';
+    html += '<option value="lift_today" selected>📈 Levantar la venta del día (perdedores recientes)</option>';
+    html += '<option value="reactivate_dormant">💤 Re-activar dormidos</option>';
+    html += '<option value="mix">🌐 Mix (todos los perfiles)</option>';
+    html += '</select></div>';
+    html += '</div>';
+    html += '<button id="adhocAnalyzeBtn" onclick="adhocAnalyze()" style="padding:10px 18px;background:linear-gradient(135deg,#ffc850,#cc8800);color:#000;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;">🔍 Analizar</button>';
+    html += '</div>';
+
+    // ============ RESULTADO DEL ANÁLISIS ============
+    html += '<div id="adhocPlanContainer"></div>';
+
+    c.innerHTML = html;
+    if (_adhocPlanCache) _adhocRenderPlan(_adhocPlanCache);
+}
+
+async function adhocAnalyze() {
+    const btn = document.getElementById('adhocAnalyzeBtn');
+    const fromEl = document.getElementById('adhocFrom');
+    const toEl = document.getElementById('adhocTo');
+    const budEl = document.getElementById('adhocBudget');
+    const focusEl = document.getElementById('adhocFocus');
+    if (!btn || !fromEl || !toEl || !budEl || !focusEl) return;
+
+    const analysisFrom = new Date(fromEl.value + 'T00:00:00').toISOString();
+    const analysisTo = new Date(toEl.value + 'T23:59:59').toISOString();
+    const maxBudgetARS = parseInt(budEl.value) || 200000;
+    const focus = focusEl.value;
+
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.innerHTML = '⏳ Analizando…';
+    document.getElementById('adhocPlanContainer').innerHTML = '<div class="empty-state">⏳ Calculando plan…</div>';
+
+    try {
+        const r = await authFetch('/api/admin/strategy/adhoc/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ analysisFrom, analysisTo, maxBudgetARS, focus })
+        });
+        const j = await r.json();
+        if (!r.ok) {
+            showToast(j.error || 'Error', 'error');
+            document.getElementById('adhocPlanContainer').innerHTML = '<div class="empty-state">❌ ' + escapeHtml(j.error || 'Error') + '</div>';
+            return;
+        }
+        _adhocPlanCache = { ...j.plan, planId: j.planId };
+        _adhocRenderPlan(_adhocPlanCache);
+        showToast('✅ Plan listo · ' + j.plan.targetCount + ' usuarios · $' + Number(j.plan.totalCostARS).toLocaleString('es-AR'), 'success');
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+    }
+}
+
+function _adhocRenderPlan(plan) {
+    const el = document.getElementById('adhocPlanContainer');
+    if (!el) return;
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+
+    let html = '';
+
+    // ============ RESUMEN ============
+    html += '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.25);border-radius:12px;padding:16px;margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:10px;margin-bottom:12px;">';
+    html += '<div><div style="color:#00d4ff;font-weight:800;font-size:14px;">📋 Plan listo</div>';
+    html += '<div style="color:#888;font-size:11px;">El plan vive 60 min en memoria. Si tarda más, hay que re-analizar.</div></div>';
+    html += '<div style="color:#888;font-size:10px;text-align:right;">Plan ID: ' + escapeHtml(plan.planId.slice(0, 8)) + '…</div>';
+    html += '</div>';
+
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;">';
+    html += _adhocChip('Universo elegible', fmt(plan.candidatesAppNotifs), '#fff', 'Users con app+notifs');
+    html += _adhocChip('Aplicaron filtro', fmt(plan.statsCount), '#aaa', 'Tuvieron actividad en el rango');
+    html += _adhocChip('Audiencia', fmt(plan.audienceCount), '#00d4ff', 'Hacen match con un paquete');
+    html += _adhocChip('Bloqueados', fmt(plan.blockedCount), '#ffaa44', 'Cap o cooldown');
+    html += _adhocChip('Cortados por tope', fmt(plan.droppedByBudget), '#888', 'No entraron en el budget');
+    html += _adhocChip('Reciben push', fmt(plan.targetCount), '#25d366', 'TARGET final');
+    html += _adhocChip('Costo total', '$' + fmt(plan.totalCostARS), '#ffd700', 'De $' + fmt(plan.maxBudgetARS) + ' tope');
+    html += '</div>';
+    html += '</div>';
+
+    // ============ BREAKDOWN POR PAQUETE ============
+    if (plan.breakdown && plan.breakdown.length > 0) {
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:14px;margin-bottom:14px;">';
+        html += '<div style="color:#fff;font-weight:700;font-size:13px;margin-bottom:10px;">🎯 Distribución por paquete</div>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:8px;color:#aaa;">Paquete</th><th style="text-align:left;padding:8px;color:#aaa;">Tipo</th><th style="text-align:right;padding:8px;color:#aaa;">Users</th><th style="text-align:right;padding:8px;color:#aaa;">Costo total ARS</th><th style="text-align:right;padding:8px;color:#aaa;">Bono % avg</th></tr></thead><tbody>';
+        for (const b of plan.breakdown) {
+            const kindBadge = b.kind === 'money'
+                ? '<span style="background:rgba(255,215,0,0.15);color:#ffd700;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">💰 PLATA</span>'
+                : '<span style="background:rgba(37,211,102,0.15);color:#25d366;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">📱 BONO % WA</span>';
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+            html += '<td style="padding:7px;color:#fff;">' + escapeHtml(b.label) + '</td>';
+            html += '<td style="padding:7px;">' + kindBadge + '</td>';
+            html += '<td style="padding:7px;text-align:right;color:#fff;font-weight:700;">' + fmt(b.count) + '</td>';
+            html += '<td style="padding:7px;text-align:right;color:#ffd700;">$' + fmt(b.totalGiftARS) + '</td>';
+            html += '<td style="padding:7px;text-align:right;color:#25d366;">' + (b.avgBonusPct || 0) + '%</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        html += '</div>';
+    }
+
+    // ============ DETALLE PER-USER (collapsible) ============
+    if (plan.targets && plan.targets.length > 0) {
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:14px;margin-bottom:14px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+        html += '<div style="color:#fff;font-weight:700;font-size:13px;">👥 Detalle per-user (' + fmt(plan.targets.length) + ')</div>';
+        html += '<button onclick="adhocToggleDetail()" style="padding:5px 12px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:11px;cursor:pointer;">' + (_adhocExpandedTargets ? '⤴ Ocultar' : '⤵ Mostrar') + '</button>';
+        html += '</div>';
+        if (_adhocExpandedTargets) {
+            html += '<div style="max-height:400px;overflow-y:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+            html += '<thead><tr style="background:rgba(255,255,255,0.05);position:sticky;top:0;"><th style="text-align:left;padding:6px;color:#aaa;">Usuario</th><th style="text-align:left;padding:6px;color:#aaa;">Paquete</th><th style="text-align:right;padding:6px;color:#aaa;">Netwin</th><th style="text-align:right;padding:6px;color:#aaa;">Días</th><th style="text-align:right;padding:6px;color:#aaa;">Regalo</th><th style="text-align:right;padding:6px;color:#aaa;">Bono %</th></tr></thead><tbody>';
+            for (const t of plan.targets) {
+                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+                html += '<td style="padding:5px;color:#fff;">' + escapeHtml(t.username) + '</td>';
+                html += '<td style="padding:5px;color:#aaa;font-size:10px;">' + escapeHtml(t.packageLabel || t.package) + '</td>';
+                html += '<td style="padding:5px;text-align:right;color:' + (t.netwinARS > 0 ? '#ff8888' : '#25d366') + ';">$' + fmt(t.netwinARS) + '</td>';
+                html += '<td style="padding:5px;text-align:right;color:#888;">' + (t.daysSinceLastDeposit != null ? t.daysSinceLastDeposit + 'd' : '—') + '</td>';
+                html += '<td style="padding:5px;text-align:right;color:#ffd700;">' + (t.giftAmount ? '$' + fmt(t.giftAmount) : '—') + '</td>';
+                html += '<td style="padding:5px;text-align:right;color:#25d366;">' + (t.bonusPct ? t.bonusPct + '%' : '—') + '</td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+        html += '</div>';
+    }
+
+    // ============ FORM DE LAUNCH ============
+    if (plan.targets && plan.targets.length > 0) {
+        html += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:12px;padding:16px;">';
+        html += '<div style="color:#ff8888;font-weight:800;font-size:14px;margin-bottom:10px;">🚀 Paso 2 · Confirmar y lanzar</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:12px;margin-bottom:12px;">';
+        html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Válido hasta</label>';
+        html += '<input type="datetime-local" id="adhocValidUntil" value="' + _adhocDatetimeInputDefault(6) + '" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;color-scheme:dark;"></div>';
+        html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Título push</label>';
+        html += '<input type="text" id="adhocTitle" value="🎁 Tenés un regalo esperándote" maxlength="200" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+        html += '</div>';
+        html += '<div style="margin-bottom:12px;"><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:5px;">Cuerpo</label>';
+        html += '<textarea id="adhocBody" maxlength="500" rows="2" style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;resize:vertical;">Abrí la app y reclamalo antes de que se termine.</textarea></div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+        html += '<button id="adhocLaunchBtn" onclick="adhocLaunch()" style="padding:11px 22px;background:linear-gradient(135deg,#ff5050,#cc2222);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;">⚡ CONFIRMAR Y LANZAR · ' + fmt(plan.targetCount) + ' pushes · $' + fmt(plan.totalCostARS) + '</button>';
+        html += '<button onclick="adhocCancelPlan()" style="padding:11px 16px;background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;font-size:12px;cursor:pointer;">Descartar plan</button>';
+        html += '</div>';
+        html += '</div>';
+    } else {
+        html += '<div class="empty-state" style="font-size:13px;color:#888;line-height:1.6;padding:30px;">No hay usuarios para targetear con esos criterios.<br>Probá ampliar el rango de fechas, subir el budget, o cambiar el foco.</div>';
+    }
+
+    el.innerHTML = html;
+}
+
+function _adhocChip(label, value, color, sub) {
+    return '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 12px;">' +
+        '<div style="color:#888;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">' + escapeHtml(label) + '</div>' +
+        '<div style="color:' + color + ';font-size:18px;font-weight:800;margin-top:3px;">' + value + '</div>' +
+        (sub ? '<div style="color:#888;font-size:10px;margin-top:1px;">' + escapeHtml(sub) + '</div>' : '') +
+        '</div>';
+}
+
+function adhocToggleDetail() {
+    _adhocExpandedTargets = !_adhocExpandedTargets;
+    if (_adhocPlanCache) _adhocRenderPlan(_adhocPlanCache);
+}
+
+function adhocCancelPlan() {
+    if (!confirm('¿Descartar el plan? Vas a tener que re-analizar.')) return;
+    _adhocPlanCache = null;
+    _adhocRenderTab();
+}
+
+async function adhocLaunch() {
+    if (!_adhocPlanCache || !_adhocPlanCache.planId) {
+        showToast('No hay plan en memoria — re-analizá', 'error');
+        return;
+    }
+    const validUntilEl = document.getElementById('adhocValidUntil');
+    const titleEl = document.getElementById('adhocTitle');
+    const bodyEl = document.getElementById('adhocBody');
+    const validUntil = new Date(validUntilEl.value).toISOString();
+    const title = titleEl.value.trim();
+    const body = bodyEl.value.trim();
+
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    if (!confirm('⚡ LANZAR ESTRATEGIA AHORA\n\n' +
+        '· ' + _adhocPlanCache.targetCount + ' usuarios reciben push\n' +
+        '· Costo total: $' + fmt(_adhocPlanCache.totalCostARS) + '\n' +
+        '· Válido hasta: ' + new Date(validUntil).toLocaleString('es-AR') + '\n\n' +
+        'Esto manda push REAL y crea giveaways. ¿Confirmás?')) return;
+
+    const btn = document.getElementById('adhocLaunchBtn');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Lanzando…';
+    showToast('⏳ Ejecutando…', 'info');
+
+    try {
+        const r = await authFetch('/api/admin/strategy/adhoc/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ planId: _adhocPlanCache.planId, validUntil, title, body })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); btn.disabled = false; return; }
+        if (j.result && j.result.error) {
+            showToast('❌ ' + j.result.error, 'error');
+            btn.disabled = false;
+            return;
+        }
+        if (j.result && j.result.skipped) {
+            showToast('⚠ Skip: ' + j.result.skipped, 'warning');
+            btn.disabled = false;
+            return;
+        }
+        showToast('✅ Lanzada · ' + (j.result.sentCount || 0) + ' pushes enviados · $' + fmt(j.result.totalCostARS), 'success');
+        _adhocPlanCache = null;
+        _adhocRenderTab();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+        btn.disabled = false;
+    }
 }
