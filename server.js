@@ -8953,6 +8953,224 @@ app.get('/api/admin/stats/players', authMiddleware, adminMiddleware, async (req,
   }
 });
 
+// ============================================
+// EXPORT DEL PLAN SEMANAL DE RECUPERACIÓN A .XLSX
+// ============================================
+// Genera un workbook con:
+//   - Hoja "Resumen": totales por (equipo × estado) y $ potencial.
+//   - Una hoja por (equipo, estado): cada fila es un usuario recuperable
+//     con todos los datos para que un agente de WhatsApp trabaje sin
+//     tener que abrir nada más (usuario, WA, línea del equipo, tier,
+//     días sin cargar, estrategia/bono/frecuencia/por qué del playbook,
+//     y dos columnas vacías "Notas" + "Resultado" para que el agente
+//     complete a mano cuando contacte).
+// Excluye automáticamente oportunistas (isOpportunist=true).
+
+// Playbook duplicado en backend — debe mantenerse sincronizado con
+// PLAYBOOK_DATA en public/adminprivado2026/admin.js. Si en el futuro
+// se mueve a Config DB, ambas lecturas leen de ahí.
+const _PLAYBOOK_BACKEND = [
+  {tierKey: 'VIP', stateKey: 'ACTIVO', strategy: 'Hacerlo sentir único', bonus: 'Giveaway VIP $5k-$10k exclusivo + atención WA preferencial', freq: '1x/mes sorpresa', why: 'Ya está dando. No molestar, solo recordarle que es especial.'},
+  {tierKey: 'VIP', stateKey: 'EN_RIESGO', strategy: '🚨 ALERTA ROJA', bonus: 'Bono $10k+ personalizado + mensaje del "dueño" + WhatsApp directo', freq: '1x máximo', why: 'Vale invertir fuerte en retener al top.'},
+  {tierKey: 'VIP', stateKey: 'PERDIDO', strategy: 'Último intento valor alto', bonus: '$15k + mensaje personal', freq: '1x', why: 'Si no vuelve, abandonar — el LTV ya se cobró.'},
+  {tierKey: 'VIP', stateKey: 'INACTIVO', strategy: 'Último intento valor alto', bonus: '$15k + mensaje personal', freq: '1x', why: 'Si no vuelve, abandonar — el LTV ya se cobró.'},
+  {tierKey: 'ORO', stateKey: 'ACTIVO', strategy: 'Mantener engaged', bonus: 'Reembolsos visibles + giveaway $2k-$5k', freq: 'Cada 7-10 días', why: 'Empujoncito constante mantiene el hábito.'},
+  {tierKey: 'ORO', stateKey: 'EN_RIESGO', strategy: 'Push fuerte', bonus: 'Bono $5k + recordatorio WA', freq: '1-2x', why: 'Recuperar rápido antes que sea PERDIDO.'},
+  {tierKey: 'ORO', stateKey: 'PERDIDO', strategy: 'Bono medio + storytelling', bonus: '$5k-$8k + mensaje "volvé hoy"', freq: '1x', why: 'Recuperación con ROI razonable.'},
+  {tierKey: 'ORO', stateKey: 'INACTIVO', strategy: 'Último resort', bonus: '$2k-$5k + "te extrañamos"', freq: 'Cada 30-60 días', why: 'Si no responde a la 2da, dejar de gastar.'},
+  {tierKey: 'PLATA', stateKey: 'ACTIVO', strategy: 'Subir el ticket', bonus: '"Cargá $10k → te damos $2k extra"', freq: 'Quincenal', why: 'Incentivás cargas más grandes.'},
+  {tierKey: 'PLATA', stateKey: 'EN_RIESGO', strategy: 'Reactivar', bonus: 'Bono $1k-$3k', freq: '1x', why: 'Suficiente para tentar sin gastar mucho.'},
+  {tierKey: 'PLATA', stateKey: 'PERDIDO', strategy: 'Bono chico', bonus: '$2k', freq: '1x', why: 'Si no vuelve, no rentable más.'},
+  {tierKey: 'PLATA', stateKey: 'INACTIVO', strategy: 'Último resort', bonus: '$2k-$5k + "te extrañamos"', freq: 'Cada 30-60 días', why: 'Si no responde a la 2da, dejar de gastar.'},
+  {tierKey: 'BRONCE', stateKey: 'ACTIVO', strategy: 'Fidelización', bonus: 'Racha de cargas (5 cargas seguidas = $1k extra)', freq: 'Continuo', why: 'Los hacés sentir parte de algo.'},
+  {tierKey: 'BRONCE', stateKey: 'EN_RIESGO', strategy: 'Bono mínimo', bonus: '$500-$1.500', freq: '1x máximo', why: 'No rentable invertir mucho.'},
+  {tierKey: 'BRONCE', stateKey: 'PERDIDO', strategy: 'Bono mínimo', bonus: '$500-$1.500', freq: '1x máximo', why: 'No rentable invertir mucho.'},
+  {tierKey: 'BRONCE', stateKey: 'INACTIVO', strategy: 'Último resort', bonus: '$2k-$5k + "te extrañamos"', freq: 'Cada 30-60 días', why: 'Si no responde a la 2da, dejar de gastar.'},
+  {tierKey: 'NUEVO', stateKey: '*', strategy: 'Onboarding agresivo', bonus: 'Welcome $10k visible + bonus continuidad $3k al hacer 2da carga', freq: 'Período crítico 14 días', why: 'Engancharlo en el hábito.'},
+  {tierKey: 'SIN_DATOS', stateKey: '*', strategy: 'Identificar primero', bonus: '—', freq: '—', why: 'Sin data de cargas/retiros, no sabemos cómo tratarlo.'}
+];
+function _playbookFor(tier, state) {
+  return _PLAYBOOK_BACKEND.find(p => p.tierKey === tier && p.stateKey === state)
+      || _PLAYBOOK_BACKEND.find(p => p.tierKey === tier && p.stateKey === '*')
+      || { strategy: 'Recuperación estándar', bonus: '—', freq: '1x', why: '' };
+}
+
+app.get('/api/admin/stats/recovery-export.xlsx', authMiddleware, adminMiddleware, async (req, res) => {
+  let XLSX;
+  try {
+    XLSX = require('xlsx');
+  } catch (e) {
+    return res.status(503).json({ error: 'Falta instalar xlsx en el server. Ejecutá: npm install xlsx' });
+  }
+
+  try {
+    // 1) Players recuperables (no oportunistas, no activos, no nuevos sin datos).
+    const recoverableStates = ['EN_RIESGO', 'PERDIDO', 'INACTIVO'];
+    const players = await PlayerStats.find({
+      activityStatus: { $in: recoverableStates },
+      isOpportunist: { $ne: true }
+    }).lean();
+
+    if (players.length === 0) {
+      return res.status(200).json({ error: 'No hay jugadores recuperables para exportar.' });
+    }
+
+    // 2) Bulk lookup en User para traer phone/whatsapp + lineTeamName/linePhone.
+    //    PlayerStats.username está siempre lowercase; matcheo por collation.
+    const usernames = players.map(p => p.username).filter(Boolean);
+    const userDocs = await User.find({ username: { $in: usernames } })
+      .collation({ locale: 'en', strength: 2 })
+      .select('username phone whatsapp linePhone lineTeamName')
+      .lean();
+    const userByLower = new Map();
+    for (const u of userDocs) userByLower.set(u.username.toLowerCase(), u);
+
+    // 3) Cargar config de líneas por prefijo para fallback team/phone.
+    let prefixConfig = null;
+    try { prefixConfig = await getConfig('userLinesByPrefix'); } catch (_) {}
+
+    // 4) Agrupar por (team, state). Si el user no tiene team asignado por
+    //    import ni por prefijo, va a "Sin equipo".
+    const groups = new Map(); // key = "Team|State" → [rows]
+    const teamStateCount = new Map(); // para Resumen
+    let totalRecoverable = 0;
+    let totalPotential = 0;
+    const conversionByState = { EN_RIESGO: 0.35, PERDIDO: 0.15, INACTIVO: 0.07 };
+
+    for (const p of players) {
+      const u = userByLower.get((p.username || '').toLowerCase());
+      let team = (u && u.lineTeamName) || pickTeamNameForUsername(prefixConfig, p.username) || '';
+      let linePhone = (u && u.linePhone) || pickLinePhoneForUsername(prefixConfig, p.username) || '';
+      if (!team) team = 'Sin equipo';
+
+      const state = p.activityStatus;
+      const pb = _playbookFor(p.tier, state);
+      const daysSinceLast = p.lastRealDepositDate
+        ? Math.floor((Date.now() - new Date(p.lastRealDepositDate).getTime()) / (24*3600*1000))
+        : null;
+
+      const conv = conversionByState[state] || 0;
+      const projected = Math.round((p.realDeposits30d || 0) * conv);
+      totalRecoverable++;
+      totalPotential += projected;
+
+      const row = {
+        'Usuario': p.username || '',
+        'WhatsApp / Teléfono del usuario': (u && (u.whatsapp || u.phone)) || '',
+        'Línea de WhatsApp del equipo': linePhone,
+        'Equipo': team,
+        'Tier': p.tier || 'SIN_DATOS',
+        'Estado': state,
+        'Última carga real': p.lastRealDepositDate ? new Date(p.lastRealDepositDate).toLocaleDateString('es-AR') : '',
+        'Días sin cargar': daysSinceLast == null ? '' : daysSinceLast,
+        'Cargado 30d ($)': p.realDeposits30d || 0,
+        'Cargas 30d (#)': p.realChargesCount30d || 0,
+        'Retirado 30d ($)': p.withdraws30d || 0,
+        'Bonos recibidos 30d ($)': p.bonusGiven30d || 0,
+        'Neto a la casa 30d ($)': p.netToHouse30d || 0,
+        'Estrategia recomendada': pb.strategy,
+        'Bono sugerido': pb.bonus,
+        'Frecuencia': pb.freq,
+        'Por qué': pb.why,
+        '$ potencial recuperable': projected,
+        'Notas (completar agente)': '',
+        'Resultado (completar agente)': ''
+      };
+
+      const key = team + '|' + state;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+      teamStateCount.set(key, (teamStateCount.get(key) || 0) + 1);
+    }
+
+    // 5) Construir workbook.
+    const wb = XLSX.utils.book_new();
+
+    // Hoja "Resumen" primero
+    const stateLabel = { EN_RIESGO: 'En riesgo', PERDIDO: 'Perdido', INACTIVO: 'Inactivo' };
+    const summaryRows = [];
+    const teamsSet = new Set();
+    for (const k of teamStateCount.keys()) teamsSet.add(k.split('|')[0]);
+    const teamsSorted = [...teamsSet].sort();
+
+    for (const team of teamsSorted) {
+      let teamTotal = 0;
+      const enRiesgo = teamStateCount.get(team + '|EN_RIESGO') || 0;
+      const perdido = teamStateCount.get(team + '|PERDIDO') || 0;
+      const inactivo = teamStateCount.get(team + '|INACTIVO') || 0;
+      teamTotal = enRiesgo + perdido + inactivo;
+
+      // $ potencial por team-state agregado
+      let teamPotential = 0;
+      for (const [k, rows] of groups) {
+        if (k.startsWith(team + '|')) {
+          for (const r of rows) teamPotential += r['$ potencial recuperable'] || 0;
+        }
+      }
+
+      summaryRows.push({
+        'Equipo': team,
+        'En riesgo': enRiesgo,
+        'Perdidos': perdido,
+        'Inactivos': inactivo,
+        'Total recuperables': teamTotal,
+        '$ potencial estimado': teamPotential
+      });
+    }
+    summaryRows.push({}); // separador
+    summaryRows.push({
+      'Equipo': 'TOTAL GENERAL',
+      'En riesgo': teamsSorted.reduce((s, t) => s + (teamStateCount.get(t + '|EN_RIESGO') || 0), 0),
+      'Perdidos': teamsSorted.reduce((s, t) => s + (teamStateCount.get(t + '|PERDIDO') || 0), 0),
+      'Inactivos': teamsSorted.reduce((s, t) => s + (teamStateCount.get(t + '|INACTIVO') || 0), 0),
+      'Total recuperables': totalRecoverable,
+      '$ potencial estimado': totalPotential
+    });
+    summaryRows.push({});
+    summaryRows.push({ 'Equipo': 'Generado en:', 'En riesgo': new Date().toLocaleString('es-AR') });
+    summaryRows.push({ 'Equipo': 'Cobertura:', 'En riesgo': 'PlayerStats actualizados — refrescá JUGAYGANA antes de exportar para tener data fresca.' });
+    summaryRows.push({ 'Equipo': 'Conversión esperada:', 'En riesgo': 'En riesgo 35% · Perdidos 15% · Inactivos 7% (heurísticas del playbook)' });
+
+    const summarySheet = XLSX.utils.json_to_sheet(summaryRows, {
+      header: ['Equipo', 'En riesgo', 'Perdidos', 'Inactivos', 'Total recuperables', '$ potencial estimado']
+    });
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'Resumen');
+
+    // Hojas por (team, state). Limitamos cada nombre a 31 chars (Excel).
+    const sortedKeys = [...groups.keys()].sort();
+    for (const key of sortedKeys) {
+      const [team, state] = key.split('|');
+      const rows = groups.get(key);
+      const sheetName = (team + ' · ' + (stateLabel[state] || state)).slice(0, 31);
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      // Ajustar ancho de columnas básico (XLSX no calcula auto-fit por sí solo)
+      const colKeys = Object.keys(rows[0] || {});
+      sheet['!cols'] = colKeys.map(k => {
+        if (k.includes('Notas') || k.includes('Resultado') || k.includes('Por qué') || k.includes('Bono sugerido')) return { wch: 36 };
+        if (k.includes('Estrategia') || k.includes('WhatsApp')) return { wch: 28 };
+        if (k.includes('Línea')) return { wch: 22 };
+        return { wch: 14 };
+      });
+      XLSX.utils.book_append_sheet(wb, sheet, sheetName);
+    }
+
+    // 6) Stream como descarga.
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const filename = 'plan-recuperacion-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+    res.setHeader('Content-Length', buf.length);
+    res.send(buf);
+
+    logger.info(`[recovery-export] generado para ${(req.user && req.user.username) || '?'} — ${totalRecoverable} jugadores en ${groups.size} hojas`);
+  } catch (error) {
+    logger.error(`/api/admin/stats/recovery-export: ${error.message}\n${error.stack}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Error generando export: ' + error.message });
+    }
+  }
+});
+
 // GET /api/admin/stats/segments — counts agregados por segmento + comparativo semanal
 //
 // Devuelve, además de la matriz tier×estado y métricas semanales:

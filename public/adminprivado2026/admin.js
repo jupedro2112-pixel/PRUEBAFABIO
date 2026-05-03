@@ -3461,6 +3461,46 @@ function closeGiveawayDrillDown() {
     if (dd) { dd.style.display = 'none'; dd.innerHTML = ''; }
 }
 
+// Descarga el .xlsx con el plan semanal de recuperación.
+async function downloadRecoveryPlan() {
+    const btn = document.getElementById('downloadRecoveryPlanBtn');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = '⏳ Generando…'; }
+    try {
+        const r = await fetch(API_URL + '/api/admin/stats/recovery-export.xlsx', {
+            headers: { 'Authorization': 'Bearer ' + currentToken }
+        });
+        if (r.status === 401) { handleLogout(); return; }
+        if (!r.ok) {
+            // El server devuelve JSON con error si algo falla (ej: 0 recuperables o falta xlsx).
+            const ct = r.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+                const d = await r.json();
+                showToast(d.error || 'Error generando el plan', 'error');
+            } else {
+                showToast('Error generando el plan (status ' + r.status + ')', 'error');
+            }
+            return;
+        }
+        // 200 OK con .xlsx — disparamos descarga via blob.
+        const blob = await r.blob();
+        const today = new Date().toISOString().slice(0, 10);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'plan-recuperacion-' + today + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('✅ Plan descargado', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '📥 Descargar plan (.xlsx)'; }
+    }
+}
+
 // Modal con detalle de reclamos de un usuario específico (desde la tab Jugadores).
 async function showUserGiveawayDetail(username) {
     try {

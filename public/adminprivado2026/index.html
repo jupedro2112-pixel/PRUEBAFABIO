@@ -548,6 +548,15 @@
 
                 <!-- Tab: Segmentación + Recuperación (todo integrado en un solo recuadro) -->
                 <div id="statsTabSegments" class="stats-tab-pane">
+                    <!-- Botón de export del plan semanal a .xlsx -->
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;align-items:center;background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.25);border-radius:10px;padding:12px;">
+                        <div style="flex:1;min-width:240px;">
+                            <div style="color:#25d366;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:4px;">📥 Plan semanal de recuperación</div>
+                            <div style="color:#bbb;font-size:12px;line-height:1.5;">Descarga un .xlsx con todos los jugadores recuperables (en riesgo / perdidos / inactivos), separados por equipo y estado en hojas distintas. Incluye WhatsApp del usuario, línea del equipo, estrategia y bono sugerido. Listo para que un agente trabaje desde WA. Excluye oportunistas.</div>
+                        </div>
+                        <button onclick="downloadRecoveryPlan()" id="downloadRecoveryPlanBtn" style="padding:12px 20px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px;white-space:nowrap;">📥 Descargar plan (.xlsx)</button>
+                    </div>
+
                     <!-- Métricas globales arriba: cargas semana actual vs pasada + recuperables totales + $ potencial -->
                     <div id="statsTopMetrics" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;"></div>
 
