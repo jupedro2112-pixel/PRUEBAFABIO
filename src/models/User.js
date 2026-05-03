@@ -248,6 +248,26 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Cómo se asignó la línea actual:
+  //   'drive-import' = por import .xlsx de Drive (admin o auto)
+  //   'lookup'       = match en UserLineLookup (pre-asignación)
+  //   'prefix-fallback' = matcheo por prefijo del username (longest-match)
+  //   'general-default' = no matcheó nada → línea genérica del config
+  //   'admin-manual' = admin lo seteó a mano
+  //   null = sin asignación
+  lineAssignmentSource: {
+    type: String,
+    enum: ['drive-import', 'lookup', 'prefix-fallback', 'general-default', 'admin-manual', null],
+    default: null,
+    index: true
+  },
+  // Nota human-readable de cómo se asignó: "argen → Argen 1 (+5491...)"
+  // Útil en el panel admin para ver de un vistazo qué pasó con cada user.
+  lineAssignmentNote: {
+    type: String,
+    default: null,
+    trim: true
+  },
 
   // =============================================
   // Bloqueo de cuenta (solo admin general puede bloquear/desbloquear)

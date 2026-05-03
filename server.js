@@ -1848,6 +1848,54 @@ function pickLinePhoneForUsername(linesConfig, username) {
   return bestMatch ? bestMatch.phone : defaultPhone;
 }
 
+// Devuelve toda la info necesaria para asignar línea por matcheo de
+// prefijo. Diferencia entre match real (longest-prefix) y caída al
+// general default. Es el pegamento entre pickLinePhoneForUsername y
+// el persist al User: la versión "boba" devuelve solo el teléfono,
+// esta devuelve también source + note + teamName.
+//
+// Retorna: { linePhone, lineTeamName, source, note } o null si no
+// hay nada para asignar (ni match ni default).
+function resolveLineByPrefixFallback(linesConfig, username) {
+  if (!linesConfig || typeof linesConfig !== 'object') return null;
+  const slots = Array.isArray(linesConfig.slots) ? linesConfig.slots : [];
+  const defaultPhone = (linesConfig.defaultPhone || '').trim();
+  const defaultTeamName = (linesConfig.defaultTeamName || '').trim();
+  const lower = String(username || '').toLowerCase();
+  let bestMatch = null;
+  for (const slot of slots) {
+    if (!slot || !slot.prefix || !slot.phone) continue;
+    const prefix = String(slot.prefix).toLowerCase().trim();
+    if (!prefix) continue;
+    if (lower.startsWith(prefix)) {
+      if (!bestMatch || prefix.length > bestMatch.prefix.length) {
+        bestMatch = {
+          prefix,
+          phone: String(slot.phone).trim(),
+          teamName: (slot.teamName || '').trim()
+        };
+      }
+    }
+  }
+  if (bestMatch) {
+    return {
+      linePhone: bestMatch.phone,
+      lineTeamName: bestMatch.teamName || null,
+      source: 'prefix-fallback',
+      note: `${bestMatch.prefix} → ${bestMatch.teamName || 'línea'} (${bestMatch.phone})`
+    };
+  }
+  if (defaultPhone) {
+    return {
+      linePhone: defaultPhone,
+      lineTeamName: defaultTeamName || null,
+      source: 'general-default',
+      note: `Sin prefijo coincidente → línea general${defaultTeamName ? ` (${defaultTeamName})` : ''}`
+    };
+  }
+  return null;
+}
+
 // Normaliza username para matchear contra UserLineLookup.usernameNorm.
 // Debe coincidir EXACTAMENTE con la normalización usada en el endpoint
 // de import (server.js: _normalizeUsername).
@@ -2067,14 +2115,33 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
                 linePhone: lookup.linePhone,
                 lineTeamName: lookup.lineTeamName || null,
                 lineAssignedAt: new Date(),
-                lineAssignedBy: 'auto-from-lookup'
+                lineAssignedBy: 'auto-from-lookup',
+                lineAssignmentSource: 'lookup',
+                lineAssignmentNote: 'Pre-asignado desde import .xlsx'
               }
             }
           ).catch(err => logger.warn(`[LoginUsernameOnly] lazy persist linePhone falló: ${err.message}`));
         } else {
-          // Prioridad 3: matcher por prefijo (legacy fallback).
+          // Prioridad 3: matcher por prefijo + persist con marker
+          // 'prefix-fallback' o 'general-default' según corresponda.
           const linesConfig = await getConfig('userLinesByPrefix');
-          linePhone = pickLinePhoneForUsername(linesConfig, userObj.username);
+          const resolved = resolveLineByPrefixFallback(linesConfig, userObj.username);
+          if (resolved && resolved.linePhone) {
+            linePhone = resolved.linePhone;
+            User.updateOne(
+              { id: userId },
+              {
+                $set: {
+                  linePhone: resolved.linePhone,
+                  lineTeamName: resolved.lineTeamName,
+                  lineAssignedAt: new Date(),
+                  lineAssignedBy: 'auto-fallback',
+                  lineAssignmentSource: resolved.source,
+                  lineAssignmentNote: resolved.note
+                }
+              }
+            ).catch(err => logger.warn(`[LoginUsernameOnly] lazy persist fallback falló: ${err.message}`));
+          }
         }
       }
     } catch (cfgErr) {
@@ -2137,7 +2204,9 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
                 ...(phone ? { linePhone: phone } : {}),
                 ...(teamName ? { lineTeamName: teamName } : {}),
                 lineAssignedAt: new Date(),
-                lineAssignedBy: 'auto-from-lookup'
+                lineAssignedBy: 'auto-from-lookup',
+                lineAssignmentSource: 'lookup',
+                lineAssignmentNote: 'Pre-asignado desde import .xlsx'
               }
             }
           ).catch(err => logger.warn(`[user-lines/me] lazy persist falló: ${err.message}`));
@@ -2145,12 +2214,32 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       }
     }
 
-    // Prioridad 3: matcher por prefijo legacy. Solo se usa si el campo correspondiente
-    // está vacío — permite tener phone explícito y teamName por prefijo (o viceversa).
+    // Prioridad 3: matcher por prefijo (longest-prefix-match). Persistir
+    // al User con marker 'prefix-fallback' o 'general-default'.
     if (!phone || !teamName) {
       const linesConfig = await getConfig('userLinesByPrefix');
-      if (!phone) phone = pickLinePhoneForUsername(linesConfig, req.user.username);
-      if (!teamName) teamName = pickTeamNameForUsername(linesConfig, req.user.username);
+      const resolved = resolveLineByPrefixFallback(linesConfig, req.user.username);
+      if (resolved) {
+        if (!phone) phone = resolved.linePhone;
+        if (!teamName) teamName = resolved.lineTeamName;
+        // Persistir si el User no tenía ya línea (no pisar lo que vino
+        // de Drive import o lookup).
+        if (userDoc && !userDoc.linePhone) {
+          User.updateOne(
+            { id: req.user.userId },
+            {
+              $set: {
+                linePhone: resolved.linePhone,
+                lineTeamName: resolved.lineTeamName,
+                lineAssignedAt: new Date(),
+                lineAssignedBy: 'auto-fallback',
+                lineAssignmentSource: resolved.source,
+                lineAssignmentNote: resolved.note
+              }
+            }
+          ).catch(err => logger.warn(`[user-lines/me] lazy persist fallback falló: ${err.message}`));
+        }
+      }
     }
 
     // En el mismo response devolvemos el link de comunidad correspondiente
@@ -7348,6 +7437,119 @@ app.post(
 
 // Endpoint para limpiar la asignación de línea de TODOS los usuarios de un team
 // (vuelve a usar el matcher por prefijo). Útil si se cargó un Drive equivocado.
+// POST /api/admin/user-lines/reassign-orphans
+// Backfill: para todos los users SIN linePhone, intenta asignar línea
+// por matcheo de prefijo del username. Si el prefijo no matchea ningún
+// slot del config 'userLinesByPrefix', cae a la línea general.
+//
+// dryRun=true (default) → no escribe, solo cuenta. Pasa dryRun=false
+// en el body para ejecutar.
+//
+// Marca cada asignación con lineAssignmentSource='prefix-fallback' o
+// 'general-default' según corresponda + lineAssignmentNote con la
+// explicación humana ("argen → Argen 1 (+5491...)").
+app.post('/api/admin/user-lines/reassign-orphans', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dryRun = req.body && req.body.dryRun !== false; // default true
+    const linesConfig = await getConfig('userLinesByPrefix');
+    if (!linesConfig) {
+      return res.status(400).json({ error: 'No hay config de líneas (userLinesByPrefix). Configurá primero "Números vigentes".' });
+    }
+
+    // Encontrar huérfanos: users con role='user' y sin linePhone.
+    // Limit alto pero acotado para evitar OOM en bases enormes.
+    const orphans = await User.find(
+      {
+        role: 'user',
+        $or: [{ linePhone: null }, { linePhone: '' }, { linePhone: { $exists: false } }]
+      },
+      { id: 1, username: 1, _id: 0 }
+    ).limit(50000).lean();
+
+    const adminUsername = req.user.username || 'admin';
+    const now = new Date();
+
+    // Computar resoluciones primero (sin escribir).
+    const plan = []; // [{userId, username, resolved}]
+    const breakdown = {
+      total: orphans.length,
+      matchedPrefix: 0,
+      fellToDefault: 0,
+      noResolution: 0,
+      byTeam: {}
+    };
+    for (const u of orphans) {
+      const r = resolveLineByPrefixFallback(linesConfig, u.username);
+      if (!r) {
+        breakdown.noResolution++;
+        continue;
+      }
+      if (r.source === 'prefix-fallback') breakdown.matchedPrefix++;
+      else if (r.source === 'general-default') breakdown.fellToDefault++;
+      const teamKey = r.lineTeamName || '— Sin equipo —';
+      breakdown.byTeam[teamKey] = (breakdown.byTeam[teamKey] || 0) + 1;
+      plan.push({ userId: u.id, username: u.username, resolved: r });
+    }
+
+    if (dryRun) {
+      // Devolvemos solo el resumen para que el admin confirme.
+      return res.json({
+        success: true,
+        dryRun: true,
+        summary: breakdown,
+        sampleAssignments: plan.slice(0, 20).map(p => ({
+          username: p.username,
+          linePhone: p.resolved.linePhone,
+          lineTeamName: p.resolved.lineTeamName,
+          source: p.resolved.source,
+          note: p.resolved.note
+        }))
+      });
+    }
+
+    // Ejecutar bulkWrite.
+    if (plan.length === 0) {
+      return res.json({ success: true, dryRun: false, summary: breakdown, applied: 0 });
+    }
+
+    const ops = plan.map(p => ({
+      updateOne: {
+        filter: { id: p.userId },
+        update: {
+          $set: {
+            linePhone: p.resolved.linePhone,
+            lineTeamName: p.resolved.lineTeamName,
+            lineAssignedAt: now,
+            lineAssignedBy: adminUsername + ':reassign-orphans',
+            lineAssignmentSource: p.resolved.source,
+            lineAssignmentNote: p.resolved.note
+          }
+        }
+      }
+    }));
+
+    // bulkWrite en chunks para no estresar Mongo.
+    let applied = 0;
+    const CHUNK = 500;
+    for (let i = 0; i < ops.length; i += CHUNK) {
+      const slice = ops.slice(i, i + CHUNK);
+      const r = await User.bulkWrite(slice, { ordered: false });
+      applied += r.modifiedCount || 0;
+    }
+
+    logger.info(`[reassign-orphans] aplicado: ${applied}/${plan.length} (matched=${breakdown.matchedPrefix}, default=${breakdown.fellToDefault}, sin-resolución=${breakdown.noResolution})`);
+    res.json({
+      success: true,
+      dryRun: false,
+      summary: breakdown,
+      applied
+    });
+  } catch (err) {
+    logger.error(`POST reassign-orphans: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/admin/user-lines/clear-team', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { teamName } = req.body || {};
@@ -7969,7 +8171,7 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
   try {
     const users = await User.find(
       { role: 'user' },
-      { username: 1, lastLogin: 1, createdAt: 1, fcmToken: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
+      { username: 1, lastLogin: 1, createdAt: 1, fcmToken: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, lineTeamName: 1, linePhone: 1, lineAssignmentSource: 1, lineAssignmentNote: 1, _id: 0 }
     ).lean();
 
     let withApp = 0;
@@ -8021,7 +8223,9 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
         appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null,
         platform: platform,
         lineTeamName: u.lineTeamName || null,
-        linePhone: u.linePhone || null
+        linePhone: u.linePhone || null,
+        lineAssignmentSource: u.lineAssignmentSource || null,
+        lineAssignmentNote: u.lineAssignmentNote || null
       });
     }
 

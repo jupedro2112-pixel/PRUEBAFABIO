@@ -792,6 +792,15 @@
                 <!-- Resumen global -->
                 <div id="teamsSummary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;"></div>
 
+                <!-- Botón reasignar huérfanos -->
+                <div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                    <div>
+                        <div style="color:#00d4ff;font-weight:700;font-size:13px;">🔁 Reasignar usuarios sin línea</div>
+                        <div style="color:#aaa;font-size:11px;margin-top:2px;">Para los usuarios que aparecen "Sin equipo asignado": busca su prefijo en los slots de Números vigentes (ej. "argen…" → línea Argentina) y les asigna la primera línea coincidente. Si ningún prefijo matchea, usa la línea general.</div>
+                    </div>
+                    <button onclick="reassignOrphansPreview()" style="padding:9px 16px;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap;">🔁 Reasignar huérfanos</button>
+                </div>
+
                 <!-- Lista de equipos -->
                 <div id="teamsList">
                     <div class="empty-state">⏳ Cargando…</div>

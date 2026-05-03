@@ -882,6 +882,7 @@ function renderEquipmentTableHtml(users) {
     let html = '<table class="report-table"><thead><tr>';
     html += '<th>Usuario</th>';
     html += '<th>📞 Línea asignada</th>';
+    html += '<th>🔁 Reasignado</th>';
     html += '<th>📱 Dispositivo</th>';
     html += '<th>App</th>';
     html += '<th>Última vez en la app</th>';
@@ -919,9 +920,29 @@ function renderEquipmentTableHtml(users) {
             lineCell = '<span style="color:#666;">— sin línea —</span>';
         }
 
+        // Celda de REASIGNADO: solo aplica si la línea fue auto-asignada
+        // por matcheo de prefijo o por default general. Si fue por Drive
+        // import, lookup, o admin manual, queda en blanco (es la
+        // asignación "original" pensada para ese user).
+        let reassignCell = '<span style="color:#444;">—</span>';
+        if (u.lineAssignmentSource === 'prefix-fallback') {
+            reassignCell = '<div style="line-height:1.3;">'
+                + '<span style="background:rgba(0,212,255,0.15);color:#00d4ff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ POR PREFIJO</span>'
+                + (u.lineAssignmentNote ? '<small style="display:block;color:#888;margin-top:3px;">' + escapeHtml(u.lineAssignmentNote) + '</small>' : '')
+                + '</div>';
+        } else if (u.lineAssignmentSource === 'general-default') {
+            reassignCell = '<div style="line-height:1.3;">'
+                + '<span style="background:rgba(255,170,68,0.15);color:#ffaa44;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✓ GENERAL</span>'
+                + (u.lineAssignmentNote ? '<small style="display:block;color:#888;margin-top:3px;">' + escapeHtml(u.lineAssignmentNote) + '</small>' : '')
+                + '</div>';
+        } else if (u.lineAssignmentSource === 'lookup') {
+            reassignCell = '<span style="color:#666;font-size:11px;" title="Pre-asignado desde import">📋 Pre-asignado</span>';
+        }
+
         html += '<tr>';
         html += '<td>' + escapeHtml(u.username) + '</td>';
         html += '<td>' + lineCell + '</td>';
+        html += '<td>' + reassignCell + '</td>';
         html += '<td>' + _formatPlatform(u.platform) + '</td>';
         html += '<td>' + appCell + '</td>';
         html += '<td>' + seenCell + '</td>';
@@ -5013,6 +5034,64 @@ async function _apPollSnapshot(id, attempts) {
         }
     } catch (_) {}
     setTimeout(() => _apPollSnapshot(id, attempts + 1), 2000);
+}
+
+// ============================================
+// 🔁 REASIGNAR HUÉRFANOS (botón en sección Equipos)
+// ============================================
+async function reassignOrphansPreview() {
+    showToast('⏳ Calculando preview…', 'info');
+    try {
+        const r = await authFetch('/api/admin/user-lines/reassign-orphans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dryRun: true })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        const s = j.summary || {};
+        const sample = j.sampleAssignments || [];
+        let msg = '🔁 PREVIEW: REASIGNAR HUÉRFANOS\n\n';
+        msg += 'Total usuarios sin línea: ' + s.total + '\n';
+        msg += '  ✅ Match por prefijo: ' + s.matchedPrefix + '\n';
+        msg += '  🟡 Caen al GENERAL: ' + s.fellToDefault + '\n';
+        msg += '  ⚠ Sin resolución (no hay default): ' + s.noResolution + '\n\n';
+        if (s.byTeam) {
+            msg += 'Por equipo destino:\n';
+            for (const [team, count] of Object.entries(s.byTeam)) {
+                msg += '  ' + team + ': ' + count + '\n';
+            }
+        }
+        if (sample.length > 0) {
+            msg += '\nEjemplos (primeros ' + sample.length + '):\n';
+            for (const a of sample.slice(0, 10)) {
+                msg += '  ' + a.username + ' → ' + (a.note || '') + '\n';
+            }
+        }
+        msg += '\n¿Aplicar los cambios? Esto modifica ' + (s.matchedPrefix + s.fellToDefault) + ' usuarios.';
+        if (confirm(msg)) {
+            reassignOrphansExecute();
+        }
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function reassignOrphansExecute() {
+    showToast('⏳ Aplicando reasignaciones…', 'info');
+    try {
+        const r = await authFetch('/api/admin/user-lines/reassign-orphans', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dryRun: false })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        showToast('✅ ' + (j.applied || 0) + ' usuarios reasignados', 'success');
+        loadTeams();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 async function apRefreshToday() {
