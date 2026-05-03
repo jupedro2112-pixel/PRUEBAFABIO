@@ -246,6 +246,12 @@ VIP.auth = (function () {
 
             VIP.ui.showChatScreen();
             VIP.refunds.loadRefundStatus();
+            // Resolver el nombre del equipo apenas entra. El login solo
+            // devuelve linePhone — para el teamName completo (con prioridad
+            // User.lineTeamName > UserLineLookup > prefix-config), llamamos
+            // a /api/user-lines/me. Sin esto el header arranca vacío y
+            // recién aparece tras un visibility-change.
+            refreshLinePhone();
         } catch (error) {
             if (error.name === 'AbortError') {
                 errorDiv.textContent = 'La conexión tardó demasiado. Intenta nuevamente.';
@@ -530,13 +536,22 @@ VIP.auth = (function () {
 
     // Muestra el nombre del equipo arriba a la izquierda del header. Lo
     // resuelve el backend a partir del prefijo del username (config en
-    // admin > Numero principal). Si no hay teamName, oculta el span.
+    // admin > Numero principal) o de la asignación explícita por listado.
+    // Si no hay teamName, oculta el span.
+    //
+    // Formato: el lineTeamName guardado puede ser "TIGER" o
+    // "TIGER · TIGER 1" (cuando se importa con etiqueta de línea). Para
+    // el display recortamos la parte después del " · " — al jugador le
+    // alcanza con saber su equipo, la línea exacta es para soporte/admin.
     function renderTeamName() {
         const el = document.getElementById('teamName');
         if (!el) return;
-        const name = (VIP.state && VIP.state.teamName) || null;
-        if (name && String(name).trim()) {
-            el.textContent = String(name).trim();
+        const raw = (VIP.state && VIP.state.teamName) || null;
+        if (raw && String(raw).trim()) {
+            const trimmed = String(raw).trim();
+            const sepIdx = trimmed.indexOf(' · ');
+            const display = sepIdx >= 0 ? trimmed.slice(0, sepIdx) : trimmed;
+            el.textContent = display;
             el.style.display = '';
         } else {
             el.textContent = '';
