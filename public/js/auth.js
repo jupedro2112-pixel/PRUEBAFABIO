@@ -703,6 +703,29 @@ VIP.auth = (function () {
         localStorage.removeItem('fcmTokenContext');
         localStorage.removeItem('fcmTokenUserId');
         sessionStorage.removeItem('sessionPassword');
+
+        // Limpiar TODAS las keys per-user del usuario que se está deslogueando
+        // para evitar que un user B (logueado después en el mismo device) vea
+        // estado del user A:
+        //   - vipWelcomeBonusClaimed:* → si A reclamó el bono, B veía el card oculto.
+        //   - vipAmtCache:*           → cache de saldo/reembolsos.
+        //   - vipAppInstalled         → si A instaló, B veía "✅ App instalada"
+        //                                aunque nunca instaló nada en su cuenta.
+        try {
+            const keysToRemove = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (!k) continue;
+                if (k.startsWith('vipWelcomeBonusClaimed:') ||
+                    k.startsWith('vipAmtCache:') ||
+                    k === 'vipAppInstalled' ||
+                    k === 'vipGiveawayTotalCache') {
+                    keysToRemove.push(k);
+                }
+            }
+            for (const k of keysToRemove) localStorage.removeItem(k);
+        } catch (_) { /* localStorage podría estar bloqueado */ }
+
         VIP.ui.showLoginScreen();
     }
 
