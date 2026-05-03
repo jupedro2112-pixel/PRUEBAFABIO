@@ -2302,7 +2302,7 @@ function showStatsTab(tab) {
     }
     if (tab === 'players') loadPlayersList();
     if (tab === 'roi') loadRoiBucket();
-    if (tab === 'playbook') renderPlaybook();
+    // 'playbook' fue eliminado: ahora vive integrado en la tab 'segments'.
 }
 
 async function loadStatsAll() {
@@ -2507,10 +2507,183 @@ async function loadSegmentsAndWeekly() {
         const r = await authFetch('/api/admin/stats/segments');
         if (!r.ok) return;
         const d = await r.json();
+        renderTopMetrics(d);
+        renderUrgentFocus(d.urgentSegments || []);
         renderWeeklyHeader(d.weekly || {});
         renderRecoveryHeader(d.recovery || {});
         renderSegmentsMatrix(d.matrix || {}, d.tierTotals || {}, d.activityTotals || {});
+        renderTierDeepDive(d);
     } catch (e) { console.warn('loadSegmentsAndWeekly', e); }
+}
+
+// ============================================
+// NUEVAS MÉTRICAS GLOBALES — chips arriba del panel
+// ============================================
+function renderTopMetrics(d) {
+    const el = document.getElementById('statsTopMetrics');
+    if (!el) return;
+    const w = d.weekly || {};
+    const rec = d.recoverable || {};
+    const recv = d.recovery || {};
+
+    const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+
+    const arrow = (w.delta || 0) > 0 ? '📈' : ((w.delta || 0) < 0 ? '📉' : '➡️');
+    const arrowColor = (w.delta || 0) > 0 ? '#25d366' : ((w.delta || 0) < 0 ? '#ff5050' : '#aaa');
+
+    let html = '';
+    html += _bigChip('💰 Activos esta semana', String(w.activeThisWeek || 0),
+        '<span style="color:' + arrowColor + ';font-size:11px;font-weight:700;">' + arrow + ' ' + (w.delta > 0 ? '+' : '') + (w.delta || 0) + ' (' + (w.deltaPct >= 0 ? '+' : '') + (w.deltaPct || 0) + '%)</span>',
+        '#ffd700');
+    html += _bigChip('🎯 Recuperables totales', String(rec.total || 0),
+        'En riesgo + perdidos + inactivos<br>(sin oportunistas)',
+        '#ff7f50');
+    html += _bigChip('💎 Potencial de recuperación', fmtMoney(rec.potentialRevenue),
+        'Estimación según ticket avg × conv. esperada',
+        '#25d366');
+    html += _bigChip('📲 ROI pushes (30d)', (recv.roiX || 0) + '×',
+        'Bonos: ' + fmtMoney(recv.totalBonus) + ' → cargas: ' + fmtMoney(recv.totalRealDeposit),
+        '#9b30ff');
+
+    el.innerHTML = html;
+}
+
+function _bigChip(label, value, sub, color) {
+    return '<div style="flex:1;min-width:200px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:14px 16px;">' +
+        '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">' + escapeHtml(label) + '</div>' +
+        '<div style="color:' + color + ';font-size:24px;font-weight:800;line-height:1;margin-bottom:6px;">' + escapeHtml(value) + '</div>' +
+        '<div style="color:#aaa;font-size:11px;line-height:1.4;">' + sub + '</div>' +
+        '</div>';
+}
+
+// ============================================
+// FOCO URGENTE — top 5 segmentos por urgencia
+// ============================================
+function renderUrgentFocus(segments) {
+    const el = document.getElementById('statsUrgentFocus');
+    if (!el) return;
+    if (!segments || segments.length === 0) {
+        el.innerHTML = '<div style="background:rgba(0,255,136,0.06);border:1px solid rgba(0,255,136,0.25);border-radius:10px;padding:12px;color:#25d366;font-size:13px;font-weight:600;">✅ No hay segmentos urgentes. Todo bajo control.</div>';
+        return;
+    }
+
+    const tierLabel = {VIP:'🏆 VIP', ORO:'🥇 ORO', PLATA:'🥈 PLATA', BRONCE:'🥉 BRONCE', NUEVO:'🆕 NUEVO', SIN_DATOS:'⚪ Sin datos'};
+    const stateLabel = {ACTIVO:'Activo', EN_RIESGO:'En riesgo', PERDIDO:'Perdido', INACTIVO:'Inactivo', NUEVO:'Nuevo'};
+
+    let html = '<div style="background:linear-gradient(135deg, rgba(255,80,80,0.08), rgba(212,175,55,0.06));border:1px solid rgba(255,80,80,0.30);border-radius:12px;padding:14px;">';
+    html += '<div style="color:#ff7f50;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:10px;">🔴 Foco urgente — atacá esto primero</div>';
+    html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+
+    for (const seg of segments) {
+        const playbook = _findPlaybook(seg.tier, seg.state);
+        const segLabel = tierLabel[seg.tier] + ' · ' + stateLabel[seg.state];
+        const $ = '$' + Number(seg.potentialRevenue || 0).toLocaleString('es-AR');
+        const strategy = playbook ? playbook.strategy : 'Recuperación estándar';
+        const bonusHint = playbook ? playbook.bonus : '—';
+
+        html += '<div style="display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.35);padding:10px 12px;border-radius:8px;border-left:3px solid #ff7f50;">';
+        html += '<div style="flex:0 0 auto;background:rgba(255,127,80,0.12);color:#ff7f50;font-size:18px;font-weight:800;padding:8px 12px;border-radius:8px;min-width:64px;text-align:center;">' + (seg.count || 0) + '</div>';
+        html += '<div style="flex:1;min-width:0;">';
+        html += '<div style="color:#fff;font-size:13px;font-weight:700;margin-bottom:2px;">' + escapeHtml(segLabel) + '</div>';
+        html += '<div style="color:#aaa;font-size:11px;line-height:1.4;">🎯 <strong style="color:#ffd700;">' + escapeHtml(strategy) + '</strong> · ' + escapeHtml(bonusHint) + ' · ~' + $ + ' potencial</div>';
+        html += '</div>';
+        html += '<button onclick="openRecoveryModal(\'' + seg.tier + '\',\'' + seg.state + '\')" style="flex:0 0 auto;padding:8px 14px;background:linear-gradient(135deg,#ff7f50,#ff5050);color:#fff;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap;">📲 Push (' + (seg.count || 0) + ')</button>';
+        html += '</div>';
+    }
+    html += '</div></div>';
+
+    el.innerHTML = html;
+}
+
+function _findPlaybook(tier, state) {
+    return PLAYBOOK_DATA.find(p => p.seg.includes(tier) && p.seg.includes(state))
+        || PLAYBOOK_DATA.find(p => p.seg.includes(tier));
+}
+
+// ============================================
+// BLOQUES POR TIER — debajo de la matriz
+// ============================================
+function renderTierDeepDive(d) {
+    const el = document.getElementById('statsTierDeepDive');
+    if (!el) return;
+    const matrix = d.matrix || {};
+    const tierTotals = d.tierTotals || {};
+    const recoverableByTier = (d.recoverable && d.recoverable.byTier) || {};
+    const avgTicketByTier = d.avgTicketByTier || {};
+
+    const tiers = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO', 'SIN_DATOS'];
+    const states = ['ACTIVO', 'EN_RIESGO', 'PERDIDO', 'INACTIVO', 'NUEVO'];
+    const tierLabel = {VIP:'🏆 VIP', ORO:'🥇 ORO', PLATA:'🥈 PLATA', BRONCE:'🥉 BRONCE', NUEVO:'🆕 NUEVO', SIN_DATOS:'⚪ Sin datos'};
+    const stateLabel = {ACTIVO:'✅ Activo', EN_RIESGO:'⚠️ En riesgo', PERDIDO:'💔 Perdido', INACTIVO:'☠️ Inactivo', NUEVO:'🆕 Nuevo'};
+    const stateColor = {ACTIVO:'#25d366', EN_RIESGO:'#ffaa00', PERDIDO:'#ff5050', INACTIVO:'#888', NUEVO:'#1a73e8'};
+    const tierColor = {VIP:'#ffd700', ORO:'#f7931e', PLATA:'#c0c0c0', BRONCE:'#cd7f32', NUEVO:'#1a73e8', SIN_DATOS:'#666'};
+    const tierAccent = {VIP:'rgba(255,215,0,0.25)', ORO:'rgba(247,147,30,0.25)', PLATA:'rgba(192,192,192,0.20)', BRONCE:'rgba(205,127,50,0.20)', NUEVO:'rgba(26,115,232,0.20)', SIN_DATOS:'rgba(102,102,102,0.20)'};
+
+    let html = '';
+    for (const t of tiers) {
+        const total = tierTotals[t] || 0;
+        if (total === 0 && t !== 'VIP') continue; // ocultamos tiers vacíos salvo VIP siempre visible
+        const recov = recoverableByTier[t] || { count: 0, potentialRevenue: 0 };
+        const ticket = avgTicketByTier[t] || 0;
+
+        html += '<div style="background:rgba(0,0,0,0.35);border:1px solid ' + tierAccent[t] + ';border-radius:12px;padding:14px;">';
+
+        // Header del tier
+        html += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed rgba(255,255,255,0.10);">';
+        html += '<div style="color:' + tierColor[t] + ';font-size:18px;font-weight:800;">' + tierLabel[t] + '</div>';
+        html += '<div style="color:#888;font-size:11px;">' + total + ' jugadores</div>';
+        if (ticket > 0) html += '<div style="color:#888;font-size:11px;">·  Ticket avg: <strong style="color:#ffd700;">$' + Number(ticket).toLocaleString('es-AR') + '</strong></div>';
+        if (recov.count > 0) html += '<div style="margin-left:auto;background:rgba(255,127,80,0.10);color:#ff7f50;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;">🎯 ' + recov.count + ' recuperables · ~$' + Number(recov.potentialRevenue).toLocaleString('es-AR') + '</div>';
+        html += '</div>';
+
+        // Chips por estado
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
+        for (const s of states) {
+            const c = matrix[t + '-' + s] || 0;
+            if (c === 0) continue;
+            html += '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 10px;font-size:11px;">';
+            html += '<span style="color:' + stateColor[s] + ';font-weight:700;">' + stateLabel[s] + '</span>: ';
+            html += '<strong style="color:#fff;">' + c + '</strong>';
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Estrategia recomendada (última fila destacada — embedded del playbook)
+        const recoverableStates = ['EN_RIESGO', 'PERDIDO', 'INACTIVO'];
+        const hasRecoverable = recoverableStates.some(s => (matrix[t + '-' + s] || 0) > 0);
+        if (hasRecoverable) {
+            html += '<div style="background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.25);border-radius:8px;padding:10px 12px;">';
+            html += '<div style="color:#ffd700;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;">🎯 Recontactación recomendada</div>';
+            html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+            for (const s of recoverableStates) {
+                const c = matrix[t + '-' + s] || 0;
+                if (c === 0) continue;
+                const pb = _findPlaybook(t, s);
+                if (!pb) continue;
+                html += '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed rgba(255,255,255,0.06);flex-wrap:wrap;">';
+                html += '<span style="color:' + stateColor[s] + ';font-weight:700;font-size:11px;min-width:90px;">' + stateLabel[s] + ' (' + c + ')</span>';
+                html += '<span style="color:#fff;font-size:12px;flex:1;min-width:200px;"><strong>' + escapeHtml(pb.strategy) + '</strong> · ' + escapeHtml(pb.bonus) + '</span>';
+                html += '<span style="color:#888;font-size:10px;font-style:italic;">' + escapeHtml(pb.why) + '</span>';
+                html += '<button onclick="openRecoveryModal(\'' + t + '\',\'' + s + '\')" style="padding:5px 10px;background:linear-gradient(135deg,#9b30ff,#6a0dad);color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700;white-space:nowrap;">📲 Push (' + c + ')</button>';
+                html += '</div>';
+            }
+            html += '</div></div>';
+        } else if (total > 0) {
+            // Sólo activos — sugerencia de retención
+            const pb = _findPlaybook(t, 'ACTIVO');
+            if (pb) {
+                html += '<div style="background:rgba(37,211,102,0.05);border:1px solid rgba(37,211,102,0.20);border-radius:8px;padding:10px 12px;">';
+                html += '<div style="color:#25d366;font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px;">✅ Mantenimiento (todos activos)</div>';
+                html += '<div style="color:#fff;font-size:12px;line-height:1.5;"><strong>' + escapeHtml(pb.strategy) + '</strong> · ' + escapeHtml(pb.bonus);
+                html += '<br><span style="color:#aaa;font-size:11px;">' + escapeHtml(pb.why) + '</span></div>';
+                html += '</div>';
+            }
+        }
+
+        html += '</div>';
+    }
+
+    el.innerHTML = html;
 }
 
 function renderWeeklyHeader(w) {
@@ -2708,25 +2881,9 @@ const PLAYBOOK_DATA = [
     {seg: '🚩 OPORTUNISTA', strategy: 'CORTAR BONOS', bonus: 'Solo notifs sin plata', freq: 'Nunca darle bono', why: 'Drenan tu caja sin contraprestación.'},
     {seg: '💸 GANADOR a la casa', strategy: 'NO inflar con bonos', bonus: 'Servicio premium si es VIP/ORO, pero sin plata extra', freq: '—', why: 'Ya están extrayendo valor.'}
 ];
-function renderPlaybook() {
-    const c = document.getElementById('statsPlaybookContent');
-    if (!c) return;
-    let html = '<div style="color:#aaa;font-size:12px;margin-bottom:12px;">Estrategia recomendada por celda. Usá esto como guía rápida cuando mandes pushes individuales o masivos.</div>';
-    html += '<table class="report-table"><thead><tr>';
-    html += '<th>Segmento</th><th>Estrategia</th><th>Bono</th><th>Frecuencia</th><th>Por qué</th>';
-    html += '</tr></thead><tbody>';
-    for (const p of PLAYBOOK_DATA) {
-        html += '<tr>';
-        html += '<td><strong style="color:#fff;">' + p.seg + '</strong></td>';
-        html += '<td><strong style="color:#ffd700;">' + escapeHtml(p.strategy) + '</strong></td>';
-        html += '<td>' + escapeHtml(p.bonus) + '</td>';
-        html += '<td><small>' + escapeHtml(p.freq) + '</small></td>';
-        html += '<td><small style="color:#aaa;">' + escapeHtml(p.why) + '</small></td>';
-        html += '</tr>';
-    }
-    html += '</tbody></table>';
-    c.innerHTML = html;
-}
+// renderPlaybook() fue eliminada: la información del playbook ahora se muestra
+// integrada en renderUrgentFocus() y renderTierDeepDive() dentro del tab
+// "Segmentación + Recuperación", para que todo viva en un solo recuadro.
 
 function suggestStrategyFor(username, tier, status) {
     // Encontrar la entrada del playbook que corresponde.

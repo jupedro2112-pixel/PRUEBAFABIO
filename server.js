@@ -8762,16 +8762,49 @@ app.get('/api/admin/stats/players', authMiddleware, adminMiddleware, async (req,
 });
 
 // GET /api/admin/stats/segments — counts agregados por segmento + comparativo semanal
+//
+// Devuelve, además de la matriz tier×estado y métricas semanales:
+//   - avgTicketByTier: ticket promedio (realDeposits30d) por tier
+//   - recoverable: total de jugadores recuperables (EN_RIESGO + PERDIDO + INACTIVO,
+//     excluyendo oportunistas). Es el target del panel de recuperación.
+//   - potentialRevenue: estimación de cargas a recuperar (Σ count × ticket avg
+//     del tier × conversión esperada según playbook)
+//   - urgentSegments: top 5 (tier, state) combinaciones por puntaje de urgencia
+//     (count × tier weight × state weight). Para mostrar arriba como foco.
 app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    // Una sola agregación: counts por (tier, state) y avg de realDeposits30d.
+    // El avg sirve para estimar cuánto recuperamos por jugador rescatado.
+    // Excluimos oportunistas (no se recupera con bono) e usuarios sin datos
+    // del cálculo de avgTicket — pero los seguimos contando en la matriz para
+    // que el admin los vea.
     const counts = await PlayerStats.aggregate([
-      { $group: { _id: { tier: '$tier', activityStatus: '$activityStatus' }, count: { $sum: 1 } } }
+      {
+        $group: {
+          _id: { tier: '$tier', activityStatus: '$activityStatus' },
+          count: { $sum: 1 },
+          opportunists: { $sum: { $cond: ['$isOpportunist', 1, 0] } },
+          avgTicket: { $avg: '$realDeposits30d' }
+        }
+      }
     ]);
     const matrix = {};
+    const opportunistMatrix = {};
+    const ticketByTierAccum = {}; // tier → { sum, n } para weighted avg
     for (const c of counts) {
-      const k = (c._id.tier || 'SIN_DATOS') + '-' + (c._id.activityStatus || 'INACTIVO');
+      const t = c._id.tier || 'SIN_DATOS';
+      const a = c._id.activityStatus || 'INACTIVO';
+      const k = t + '-' + a;
       matrix[k] = c.count;
+      opportunistMatrix[k] = c.opportunists || 0;
+      const avgT = c.avgTicket || 0;
+      if (avgT > 0) {
+        if (!ticketByTierAccum[t]) ticketByTierAccum[t] = { sum: 0, n: 0 };
+        ticketByTierAccum[t].sum += avgT * c.count;
+        ticketByTierAccum[t].n += c.count;
+      }
     }
+
     const tierTotals = {};
     const activityTotals = {};
     for (const c of counts) {
@@ -8780,6 +8813,70 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
       tierTotals[t] = (tierTotals[t] || 0) + c.count;
       activityTotals[a] = (activityTotals[a] || 0) + c.count;
     }
+
+    const avgTicketByTier = {};
+    for (const t in ticketByTierAccum) {
+      const acc = ticketByTierAccum[t];
+      avgTicketByTier[t] = acc.n > 0 ? Math.round(acc.sum / acc.n) : 0;
+    }
+
+    // Total recuperable y potencial de revenue.
+    // Recuperable = (EN_RIESGO + PERDIDO + INACTIVO) por tier, restando oportunistas.
+    // Tasa de conversión esperada por playbook (rough, podemos ajustar con data real luego):
+    //   EN_RIESGO: 35% (acaban de empezar a alejarse)
+    //   PERDIDO: 15% (ya están dudando)
+    //   INACTIVO: 7% (muy difícil)
+    const conversionByState = { EN_RIESGO: 0.35, PERDIDO: 0.15, INACTIVO: 0.07 };
+    const recoverableStates = ['EN_RIESGO', 'PERDIDO', 'INACTIVO'];
+    const allTiers = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO', 'SIN_DATOS'];
+
+    let recoverableTotal = 0;
+    let potentialRevenue = 0;
+    const recoverableByTier = {};
+    const segmentDetails = []; // para urgentSegments
+
+    for (const t of allTiers) {
+      let tierRecoverable = 0;
+      let tierPotential = 0;
+      for (const s of recoverableStates) {
+        const k = t + '-' + s;
+        const total = matrix[k] || 0;
+        const opps = opportunistMatrix[k] || 0;
+        const recoverable = Math.max(0, total - opps);
+        const ticket = avgTicketByTier[t] || 0;
+        const conv = conversionByState[s] || 0;
+        const projected = recoverable * ticket * conv;
+
+        tierRecoverable += recoverable;
+        tierPotential += projected;
+        recoverableTotal += recoverable;
+        potentialRevenue += projected;
+
+        if (recoverable > 0) {
+          // urgencyScore: prioriza VIP/ORO + EN_RIESGO (recuperables más fáciles
+          // y de mayor LTV). Es heurística para ordenar el "Foco urgente".
+          const tierWeight = { VIP: 5, ORO: 3.5, PLATA: 2, BRONCE: 1, NUEVO: 0.5, SIN_DATOS: 0.2 }[t] || 0.5;
+          const stateWeight = { EN_RIESGO: 3, PERDIDO: 2, INACTIVO: 1 }[s] || 1;
+          const urgencyScore = recoverable * tierWeight * stateWeight;
+          segmentDetails.push({
+            tier: t,
+            state: s,
+            count: recoverable,
+            countTotal: total,
+            opportunists: opps,
+            avgTicket: ticket,
+            conversionRate: conv,
+            potentialRevenue: Math.round(projected),
+            urgencyScore: Math.round(urgencyScore)
+          });
+        }
+      }
+      recoverableByTier[t] = { count: tierRecoverable, potentialRevenue: Math.round(tierPotential) };
+    }
+
+    // Top 5 segmentos urgentes para mostrar arriba como "foco de la semana".
+    segmentDetails.sort((a, b) => b.urgencyScore - a.urgencyScore);
+    const urgentSegments = segmentDetails.slice(0, 5);
 
     // Recovery effectiveness ult. 30d
     const fromDate = new Date(Date.now() - 30 * 24 * 3600 * 1000);
@@ -8814,7 +8911,20 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
         : 0
     };
 
-    res.json({ matrix, tierTotals, activityTotals, recovery, weekly });
+    res.json({
+      matrix,
+      tierTotals,
+      activityTotals,
+      recovery,
+      weekly,
+      avgTicketByTier,
+      recoverable: {
+        total: recoverableTotal,
+        byTier: recoverableByTier,
+        potentialRevenue: Math.round(potentialRevenue)
+      },
+      urgentSegments
+    });
   } catch (error) {
     logger.error(`/api/admin/stats/segments: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });

@@ -538,20 +538,34 @@
                     </div>
                 </div>
 
-                <!-- Sub-tabs internos -->
+                <!-- Sub-tabs internos (Playbook fue eliminado: ahora vive integrado en Segmentación) -->
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:8px;">
-                    <button class="stats-tab-btn active" data-tab="segments" onclick="showStatsTab('segments')" style="padding:8px 14px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎯 Segmentación</button>
+                    <button class="stats-tab-btn active" data-tab="segments" onclick="showStatsTab('segments')" style="padding:8px 14px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎯 Segmentación + Recuperación</button>
                     <button class="stats-tab-btn" data-tab="players" onclick="showStatsTab('players')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">👥 Jugadores</button>
                     <button class="stats-tab-btn" data-tab="roi" onclick="showStatsTab('roi')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">💰 ROI por bono</button>
-                    <button class="stats-tab-btn" data-tab="playbook" onclick="showStatsTab('playbook')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">📘 Playbook</button>
                 </div>
 
-                <!-- Tab: Segmentación -->
+                <!-- Tab: Segmentación + Recuperación (todo integrado en un solo recuadro) -->
                 <div id="statsTabSegments" class="stats-tab-pane">
+                    <!-- Métricas globales arriba: cargas semana actual vs pasada + recuperables totales + $ potencial -->
+                    <div id="statsTopMetrics" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;"></div>
+
+                    <!-- Foco urgente: top 5 segmentos por urgencia -->
+                    <div id="statsUrgentFocus" style="margin-bottom:18px;"></div>
+
+                    <!-- Comparativa semanal compacta -->
                     <div id="statsWeeklyHeader" style="margin-bottom:14px;"></div>
+
+                    <!-- Efectividad de pushes de recuperación -->
                     <div id="statsRecoveryHeader" style="margin-bottom:14px;"></div>
+
+                    <!-- Matriz tier × estado (panorama general) -->
                     <h3 style="color:#fff;font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">Matriz tier × estado</h3>
-                    <div id="statsSegmentsMatrix" style="overflow-x:auto;"></div>
+                    <div id="statsSegmentsMatrix" style="overflow-x:auto;margin-bottom:18px;"></div>
+
+                    <!-- Bloques por tier con estrategia y botones de push -->
+                    <h3 style="color:#fff;font-size:14px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:1px;">Plan de acción por tier</h3>
+                    <div id="statsTierDeepDive" style="display:flex;flex-direction:column;gap:14px;"></div>
                 </div>
 
                 <!-- Tab: Jugadores -->
@@ -601,10 +615,6 @@
                     </div>
                 </div>
 
-                <!-- Tab: Playbook -->
-                <div id="statsTabPlaybook" class="stats-tab-pane" style="display:none;">
-                    <div id="statsPlaybookContent"></div>
-                </div>
             </section>
 
             <!-- ============================================
