@@ -9747,6 +9747,28 @@ setInterval(() => { _runWeeklyStrategyChecker(); }, 5 * 60 * 1000);
 setTimeout(() => { _runStrategyROITracker(); }, 8 * 60 * 1000);
 setInterval(() => { _runStrategyROITracker(); }, 30 * 60 * 1000);
 
+// Auto-classifier: cada 3h procesa 1 difusión vieja sin clasificar.
+// Es caro (1 request JUGAYGANA por user del audience), por eso 1
+// por corrida. Como hay máximo 2 difusiones por semana (lun + jue),
+// 8 corridas/día es más que suficiente para mantenerse al día.
+async function _runStrategyAutoClassifier() {
+  try {
+    const r = await weeklyStrategyService.runAutoClassifier({
+      models: _strategyModels,
+      jugayganaMovements,
+      logger,
+      batchLimit: 1
+    });
+    if (r.processed > 0) logger.info(`[strategy] auto-classifier procesó ${r.processed} difusión(es)`);
+  } catch (err) {
+    logger.error(`[strategy] auto-classifier error: ${err.message}`);
+  }
+}
+// Disparo inicial 15 min después del boot (después de que el ROI
+// tracker haya tenido chance de correr al menos 1 vez).
+setTimeout(() => { _runStrategyAutoClassifier(); }, 15 * 60 * 1000);
+setInterval(() => { _runStrategyAutoClassifier(); }, 3 * 60 * 60 * 1000);
+
 // ============================================================
 // ENDPOINTS ADMIN — ESTRATEGIA SEMANAL
 // ============================================================
@@ -10052,102 +10074,15 @@ app.post('/api/admin/strategy/roi/:historyId/recompute-perf', authMiddleware, ad
 
     res.json({ success: true, queued: true, message: 'Recompute iniciado en background. Refrescá en ~30s.' });
 
-    // Async work.
+    // Async — reusa la función compartida que también usa el cron.
     setImmediate(async () => {
       try {
-        const preFromMs = sentAtMs - 48 * 3600 * 1000;
-        const preToMs = sentAtMs;
-        const postFromMs = sentAtMs;
-        const postToMs = sentAtMs + 48 * 3600 * 1000;
-        const fmt = (date) => new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit'
-        }).format(date);
-        const fromStr = fmt(new Date(preFromMs));
-        const toStr = fmt(new Date(postToMs));
-
-        // Función helper local: consume jugayganaMovements per user
-        // y separa pre vs post por timestamp del movimiento.
-        async function userCharges(username) {
-          try {
-            const r = await jugayganaMovements.getUserMovements(username, {
-              startDate: fromStr, endDate: toStr, pageSize: 500
-            });
-            if (!r || !r.success) return { pre: 0, post: 0 };
-            let pre = 0, post = 0;
-            for (const m of (r.movements || [])) {
-              const tsCands = [m.timestamp, m.Timestamp, m.date, m.Date, m.datetime, m.fecha, m.Fecha, m.createdAt];
-              let ts = null;
-              for (const c of tsCands) {
-                if (!c) continue;
-                const t = new Date(c).getTime();
-                if (isFinite(t) && t > 0) { ts = t; break; }
-              }
-              if (!ts) continue;
-              const type = String(m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toLowerCase();
-              let amount = 0;
-              if (m.amount !== undefined) amount = parseFloat(m.amount);
-              else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
-              else if (m.value !== undefined) amount = parseFloat(m.value);
-              else if (m.Value !== undefined) amount = parseFloat(m.Value);
-              else if (m.monto !== undefined) amount = parseFloat(m.monto);
-              const isDep = type.includes('deposit') || type.includes('credit') ||
-                           type.includes('carga') || type.includes('recarga') || amount > 0;
-              if (!isDep) continue;
-              const a = Math.abs(amount);
-              if (ts >= preFromMs && ts < preToMs) pre += a;
-              else if (ts >= postFromMs && ts < postToMs) post += a;
-            }
-            return { pre, post };
-          } catch (_) {
-            return { pre: 0, post: 0 };
-          }
-        }
-
-        const details = h.strategyDetails || [];
-        const counts = { converter: 0, passive: 0, no_response: 0, regressive: 0 };
-        const concurrency = 5;
-        for (let i = 0; i < details.length; i += concurrency) {
-          const slice = details.slice(i, i + concurrency);
-          const results = await Promise.all(slice.map(async (d) => {
-            const c = await userCharges(d.username);
-            // Clasificación:
-            //   converter: claimed && post > pre (cargó más después)
-            //   passive:   claimed && post <= pre (recibió y no cargó más)
-            //   no_response: !claimed
-            //   regressive: claimed && post < pre * 0.5 (cargó MUCHO menos)
-            let cls = null;
-            const post = c.post, pre = c.pre;
-            if (!d.claimed) cls = 'no_response';
-            else if (pre > 0 && post < pre * 0.5) cls = 'regressive';
-            else if (post > pre) cls = 'converter';
-            else cls = 'passive';
-            counts[cls]++;
-            return { username: d.username, pre, post, classification: cls };
-          }));
-
-          // Persistir por usuario.
-          const ops = results.map(r => ({
-            updateOne: {
-              filter: { id: h.id, 'strategyDetails.username': r.username },
-              update: {
-                $set: {
-                  'strategyDetails.$.chargedBefore48hARS': r.pre,
-                  'strategyDetails.$.chargedAfter48hARS': r.post,
-                  'strategyDetails.$.perUserChargesTrackedAt': new Date(),
-                  'strategyDetails.$.classification': r.classification
-                }
-              }
-            }
-          }));
-          if (ops.length > 0) await NotificationHistory.bulkWrite(ops, { ordered: false });
-        }
-
-        // Guardar agregado.
-        await NotificationHistory.updateOne(
-          { id: h.id },
-          { $set: { classificationCounts: { ...counts, classifiedAt: new Date() } } }
-        );
-        logger.info(`[strategy] perf recompute ${h.id}: ${JSON.stringify(counts)}`);
+        await weeklyStrategyService.classifyHistoryPerUser({
+          historyId: h.id,
+          models: _strategyModels,
+          jugayganaMovements,
+          logger
+        });
       } catch (err) {
         logger.error(`[strategy] perf recompute error ${h.id}: ${err.message}`);
       }

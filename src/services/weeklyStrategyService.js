@@ -1029,6 +1029,139 @@ function _parseTimestamp(m) {
   return null;
 }
 
+// ============================================
+// CLASIFICADOR PER-USER (caro, on-demand o cron lento)
+// ============================================
+// Mide carga 48h pre/post POR usuario (1 llamada JUGAYGANA por user)
+// y clasifica cada uno como converter / passive / no_response /
+// regressive. Persiste en strategyDetails.$.classification y guarda
+// classificationCounts agregado.
+//
+// Pensado para correr UNA vez por difusión: el cron auto-classifier
+// (server.js) lo llama cada 3h sobre la más vieja sin clasificar.
+async function classifyHistoryPerUser({ historyId, models, jugayganaMovements, logger }) {
+  const { NotificationHistory } = models;
+  const h = await NotificationHistory.findOne({ id: historyId }).lean();
+  if (!h) throw new Error('History not found');
+  if (!h.sentAt) throw new Error('sentAt empty');
+  const sentAtMs = new Date(h.sentAt).getTime();
+  const ageHours = (Date.now() - sentAtMs) / 3600000;
+  if (ageHours < 48) {
+    return { skipped: 'too-recent', ageHours };
+  }
+
+  const preFromMs = sentAtMs - 48 * 3600 * 1000;
+  const preToMs = sentAtMs;
+  const postFromMs = sentAtMs;
+  const postToMs = sentAtMs + 48 * 3600 * 1000;
+  const fromStr = _ymd(new Date(preFromMs));
+  const toStr = _ymd(new Date(postToMs));
+
+  async function userCharges(username) {
+    try {
+      const r = await jugayganaMovements.getUserMovements(username, {
+        startDate: fromStr, endDate: toStr, pageSize: 500
+      });
+      if (!r || !r.success) return { pre: 0, post: 0 };
+      let pre = 0, post = 0;
+      for (const m of (r.movements || [])) {
+        const ts = _parseTimestamp(m);
+        if (!ts) continue;
+        const type = String(m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toLowerCase();
+        let amount = 0;
+        if (m.amount !== undefined) amount = parseFloat(m.amount);
+        else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
+        else if (m.value !== undefined) amount = parseFloat(m.value);
+        else if (m.Value !== undefined) amount = parseFloat(m.Value);
+        else if (m.monto !== undefined) amount = parseFloat(m.monto);
+        const isDep = type.includes('deposit') || type.includes('credit') ||
+                     type.includes('carga') || type.includes('recarga') || amount > 0;
+        if (!isDep) continue;
+        const a = Math.abs(amount);
+        if (ts >= preFromMs && ts < preToMs) pre += a;
+        else if (ts >= postFromMs && ts < postToMs) post += a;
+      }
+      return { pre, post };
+    } catch (_) {
+      return { pre: 0, post: 0 };
+    }
+  }
+
+  const details = h.strategyDetails || [];
+  const counts = { converter: 0, passive: 0, no_response: 0, regressive: 0 };
+  const concurrency = 5;
+  for (let i = 0; i < details.length; i += concurrency) {
+    const slice = details.slice(i, i + concurrency);
+    const results = await Promise.all(slice.map(async (d) => {
+      const c = await userCharges(d.username);
+      let cls = null;
+      const post = c.post, pre = c.pre;
+      if (!d.claimed) cls = 'no_response';
+      else if (pre > 0 && post < pre * 0.5) cls = 'regressive';
+      else if (post > pre) cls = 'converter';
+      else cls = 'passive';
+      counts[cls]++;
+      return { username: d.username, pre, post, classification: cls };
+    }));
+
+    const ops = results.map(r => ({
+      updateOne: {
+        filter: { id: historyId, 'strategyDetails.username': r.username },
+        update: {
+          $set: {
+            'strategyDetails.$.chargedBefore48hARS': r.pre,
+            'strategyDetails.$.chargedAfter48hARS': r.post,
+            'strategyDetails.$.perUserChargesTrackedAt': new Date(),
+            'strategyDetails.$.classification': r.classification
+          }
+        }
+      }
+    }));
+    if (ops.length > 0) await NotificationHistory.bulkWrite(ops, { ordered: false });
+  }
+
+  await NotificationHistory.updateOne(
+    { id: historyId },
+    { $set: { classificationCounts: { ...counts, classifiedAt: new Date() } } }
+  );
+  if (logger) logger.info(`[strategy] perf clasificado ${historyId}: ${JSON.stringify(counts)}`);
+  return { classified: details.length, counts };
+}
+
+// Cron: encuentra la difusión más vieja con roiTrackedAt y SIN
+// classificationCounts.classifiedAt, y la clasifica.
+// Procesa 1 por vez para no saturar JUGAYGANA. Como la cadencia
+// del cron en server.js es ~3h, en el peor caso clasifica 1
+// difusión cada 3h — suficiente para el ritmo de la estrategia
+// (lunes + jueves = 2 difusiones/semana).
+async function runAutoClassifier({ models, jugayganaMovements, logger, batchLimit = 1 }) {
+  const { NotificationHistory } = models;
+  const pending = await NotificationHistory.find({
+    strategyType: { $ne: null },
+    roiTrackedAt: { $ne: null },
+    sentAt: { $lt: new Date(Date.now() - 48 * 3600 * 1000) },
+    $or: [
+      { 'classificationCounts.classifiedAt': null },
+      { 'classificationCounts.classifiedAt': { $exists: false } }
+    ]
+  }).sort({ sentAt: 1 }).limit(batchLimit);
+
+  if (pending.length === 0) return { processed: 0 };
+
+  let processed = 0;
+  for (const h of pending) {
+    try {
+      await classifyHistoryPerUser({
+        historyId: h.id, models, jugayganaMovements, logger
+      });
+      processed++;
+    } catch (err) {
+      logger.error(`[strategy] auto-classifier error en ${h.id}: ${err.message}`);
+    }
+  }
+  return { processed };
+}
+
 function _ymd(date) {
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Argentina/Buenos_Aires',
@@ -1097,6 +1230,8 @@ module.exports = {
   runThursdayTierBonus,
   runWednesdayReport,
   runROITracker,
+  runAutoClassifier,
+  classifyHistoryPerUser,
   checkAndFireScheduledRuns,
   computeNetwinGiftAudience,
   computeTierBonusAudience,
