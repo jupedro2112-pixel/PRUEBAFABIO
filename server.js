@@ -8106,7 +8106,30 @@ app.get('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req
     if (!g) return res.json({ giveaway: null, claims: [] });
     const claims = await MoneyGiveawayClaim.find({ giveawayId: g.id })
       .sort({ claimedAt: -1 }).lean();
-    res.json({ giveaway: g, claims });
+
+    // Hidratar con la audiencia alcanzada por la notif vinculada (si existe).
+    // Útil para que el admin sepa "cuánta gente compite por el regalo".
+    let audience = null;
+    if (g.notificationHistoryId) {
+      try {
+        const hist = await NotificationHistory.findOne({ id: g.notificationHistoryId })
+          .select('totalUsers successCount failureCount audienceType audiencePrefix')
+          .lean();
+        if (hist) {
+          audience = {
+            totalUsers: hist.totalUsers || 0,        // a cuántos se intentó
+            delivered: hist.successCount || 0,       // a cuántos llegó push real
+            failed: hist.failureCount || 0,          // tokens muertos / errores
+            audienceType: hist.audienceType || 'all',
+            audiencePrefix: hist.audiencePrefix || null
+          };
+        }
+      } catch (auxErr) {
+        logger.warn(`[admin/money-giveaway] no se pudo hidratar audiencia: ${auxErr.message}`);
+      }
+    }
+
+    res.json({ giveaway: g, claims, audience });
   } catch (error) {
     logger.error(`GET /api/admin/money-giveaway error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });

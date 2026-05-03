@@ -1478,31 +1478,159 @@ function updateNotifExtraUI() {
     }
 }
 
+// Cache del último estado del giveaway activo. Se usa para:
+//   - poder formatear el countdown sin re-fetchar cada segundo
+//   - decidir si bloquear el radio "Regalo de plata" en el form de notif
+let _activeGiveawayCache = null;
+let _giveawayTickerInterval = null;
+
 async function loadGiveawayStatusAdmin() {
     const box = document.getElementById('giveawayStatus');
     if (!box) return;
     try {
         const r = await authFetch('/api/admin/money-giveaway');
         const data = await r.json().catch(() => ({}));
-        if (!r.ok || !data.giveaway) { box.style.display = 'none'; return; }
+        if (!r.ok || !data.giveaway) {
+            box.style.display = 'none';
+            _activeGiveawayCache = null;
+            _stopGiveawayTicker();
+            _toggleGiveawayRadioLock(false);
+            return;
+        }
         const g = data.giveaway;
         const expiresMs = new Date(g.expiresAt).getTime();
         const minsLeft = Math.max(0, Math.round((expiresMs - Date.now()) / 60000));
-        if (minsLeft <= 0 && g.status === 'active') { box.style.display = 'none'; return; }
-        const claims = data.claims || [];
-        box.style.display = 'block';
-        box.innerHTML =
-            '✅ <strong>Regalo activo</strong> — vence en <strong>' + minsLeft + ' min</strong><br>' +
-            '<span style="color:#fff;">Por persona:</span> $' + Number(g.amount).toLocaleString('es-AR') +
-            ' · <span style="color:#fff;">Tope plata:</span> $' + Number(g.totalBudget).toLocaleString('es-AR') +
-            ' · <span style="color:#fff;">Máx personas:</span> ' + g.maxClaims + '<br>' +
-            '<span style="color:#fff;">Reclamados hasta ahora:</span> <strong>' + (g.claimedCount || 0) + '</strong>' +
-            ' · <span style="color:#fff;">Plata regalada:</span> <strong>$' + Number(g.totalGiven || 0).toLocaleString('es-AR') + '</strong>' +
-            (g.prefix ? ' · <span style="color:#888;">solo "' + escapeHtml(g.prefix) + '*"</span>' : '') +
-            '<br><button onclick="cancelGiveaway()" style="margin-top:8px;background:rgba(220,38,38,0.85);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">✕ Cancelar regalo ahora</button>';
+        if (minsLeft <= 0 && g.status === 'active') {
+            box.style.display = 'none';
+            _activeGiveawayCache = null;
+            _stopGiveawayTicker();
+            _toggleGiveawayRadioLock(false);
+            return;
+        }
+        _activeGiveawayCache = { giveaway: g, audience: data.audience || null, expiresMs };
+        _renderGiveawayStatusBox();
+        _startGiveawayTicker();
+        _toggleGiveawayRadioLock(true);
     } catch (err) {
         console.warn('loadGiveawayStatusAdmin error:', err);
         box.style.display = 'none';
+        _activeGiveawayCache = null;
+        _stopGiveawayTicker();
+        _toggleGiveawayRadioLock(false);
+    }
+}
+
+// Bloquea el radio "Regalo de plata" del form de notificaciones cuando hay
+// un giveaway activo. Evita que el admin pise el regalo activo con uno nuevo.
+function _toggleGiveawayRadioLock(lock) {
+    const radio = document.querySelector('input[name="notifExtra"][value="giveaway"]');
+    if (!radio) return;
+    const labelWrap = radio.closest('label') || radio.parentElement;
+    if (lock) {
+        radio.disabled = true;
+        if (radio.checked) {
+            // Si estaba seleccionado, lo movemos a "ninguno"
+            const noneRadio = document.querySelector('input[name="notifExtra"][value="none"]');
+            if (noneRadio) {
+                noneRadio.checked = true;
+                noneRadio.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }
+        if (labelWrap) {
+            labelWrap.style.opacity = '0.45';
+            labelWrap.style.cursor = 'not-allowed';
+            labelWrap.title = 'Hay un regalo activo. Cancelalo o esperá a que venza para crear otro.';
+        }
+    } else {
+        radio.disabled = false;
+        if (labelWrap) {
+            labelWrap.style.opacity = '';
+            labelWrap.style.cursor = '';
+            labelWrap.title = '';
+        }
+    }
+}
+
+function _renderGiveawayStatusBox() {
+    const box = document.getElementById('giveawayStatus');
+    if (!box || !_activeGiveawayCache) return;
+    const { giveaway: g, audience, expiresMs } = _activeGiveawayCache;
+    const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+
+    // Countdown formato MM:SS
+    const msLeft = Math.max(0, expiresMs - Date.now());
+    const totalSecs = Math.floor(msLeft / 1000);
+    const minsPart = Math.floor(totalSecs / 60);
+    const secsPart = totalSecs % 60;
+    const countdownStr = String(minsPart).padStart(2, '0') + ':' + String(secsPart).padStart(2, '0');
+
+    // Progreso (lo que ya se reclamó)
+    const claimedPct = g.maxClaims > 0 ? Math.round((g.claimedCount / g.maxClaims) * 100) : 0;
+    const givenPct = g.totalBudget > 0 ? Math.round((g.totalGiven / g.totalBudget) * 100) : 0;
+
+    // Audiencia: a cuánta gente le llegó el push (compite por reclamar)
+    const audienceLine = audience
+        ? '<span style="color:#fff;">📲 Llegó a:</span> <strong style="color:#ffd700;">' + (audience.delivered || 0) + ' personas</strong>'
+            + (audience.totalUsers > audience.delivered ? ' <small style="color:#888;">(de ' + audience.totalUsers + ' targeteados, ' + audience.failed + ' tokens muertos)</small>' : '')
+            + (audience.audiencePrefix ? ' · <span style="color:#888;">target: ' + escapeHtml(audience.audiencePrefix) + '*</span>' : '')
+        : '<span style="color:#888;">📲 Audiencia: sin notif vinculada</span>';
+
+    box.style.display = 'block';
+    box.style.padding = '14px 16px';
+    box.style.background = 'rgba(37,211,102,0.12)';
+    box.style.border = '2px solid rgba(37,211,102,0.55)';
+    box.style.fontSize = '13px';
+    box.style.lineHeight = '1.6';
+
+    box.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">' +
+            '<span style="background:#25d366;color:#000;font-weight:800;padding:4px 10px;border-radius:6px;font-size:12px;text-transform:uppercase;letter-spacing:1px;">🎁 Regalo activo</span>' +
+            '<span style="color:#fff;font-weight:700;font-size:14px;">Vence en <span style="color:#ffd700;font-family:monospace;font-size:16px;">' + countdownStr + '</span></span>' +
+        '</div>' +
+        '<div style="margin-bottom:6px;">' + audienceLine + '</div>' +
+        '<div style="margin-bottom:6px;">' +
+            '<span style="color:#fff;">💰 Por persona:</span> ' + fmtMoney(g.amount) +
+            ' · <span style="color:#fff;">Tope plata:</span> ' + fmtMoney(g.totalBudget) +
+            ' · <span style="color:#fff;">Máx personas:</span> ' + g.maxClaims +
+            (g.prefix ? ' · <span style="color:#888;">solo "' + escapeHtml(g.prefix) + '*"</span>' : '') +
+        '</div>' +
+        '<div style="margin-bottom:6px;">' +
+            '<span style="color:#fff;">✅ Reclamados:</span> <strong>' + (g.claimedCount || 0) + ' / ' + g.maxClaims + '</strong> ' +
+            '<small style="color:#888;">(' + claimedPct + '%)</small>' +
+            ' · <span style="color:#fff;">Plata regalada:</span> <strong>' + fmtMoney(g.totalGiven) + '</strong> ' +
+            '<small style="color:#888;">(' + givenPct + '%)</small>' +
+        '</div>' +
+        '<div style="background:rgba(255,255,255,0.05);border-left:3px solid #ffaa00;padding:8px 10px;margin:10px 0;border-radius:4px;font-size:11px;color:#ffd9a0;">' +
+            '⚠️ Mientras este regalo esté activo, el botón "Regalo de plata" en el form está bloqueado. Cancelalo o esperá a que venza para crear otro.' +
+        '</div>' +
+        '<button onclick="cancelGiveaway()" style="background:rgba(220,38,38,0.85);color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">✕ Cancelar regalo ahora</button>';
+}
+
+function _startGiveawayTicker() {
+    _stopGiveawayTicker();
+    _giveawayTickerInterval = setInterval(() => {
+        if (!_activeGiveawayCache) { _stopGiveawayTicker(); return; }
+        // Si ya venció, refrescar desde el server (probablemente cerró)
+        if (Date.now() >= _activeGiveawayCache.expiresMs) {
+            loadGiveawayStatusAdmin();
+            return;
+        }
+        // Cada 30s refrescamos los counters reales (claimedCount cambia con
+        // cada claim de un user). El countdown lo pintamos cada segundo.
+        const tickCount = (_activeGiveawayCache._tick || 0) + 1;
+        _activeGiveawayCache._tick = tickCount;
+        if (tickCount % 30 === 0) {
+            loadGiveawayStatusAdmin();
+        } else {
+            _renderGiveawayStatusBox();
+        }
+    }, 1000);
+}
+
+function _stopGiveawayTicker() {
+    if (_giveawayTickerInterval) {
+        clearInterval(_giveawayTickerInterval);
+        _giveawayTickerInterval = null;
     }
 }
 
