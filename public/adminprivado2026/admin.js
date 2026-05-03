@@ -164,7 +164,8 @@ function showSection(sectionKey) {
         topEngagement: 'topEngagementSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
-        automations: 'automationsSection'
+        automations: 'automationsSection',
+        teams: 'teamsSection'
     };
     const sectionId = map[sectionKey];
     if (sectionId) {
@@ -198,6 +199,8 @@ function showSection(sectionKey) {
         loadStatsAll();
     } else if (sectionKey === 'automations') {
         loadAutomations();
+    } else if (sectionKey === 'teams') {
+        loadTeams();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -3825,3 +3828,133 @@ setInterval(() => {
         _autoFetchSuggestions().then(() => _autoUpdatePendingBadge()).catch(() => {});
     }
 }, 60 * 1000);
+
+// =====================================================================
+// EQUIPOS — stats agregados por equipo (con desglose por línea)
+// =====================================================================
+let _teamsCache = null;
+const _teamsExpanded = new Set(); // equipos cuyo desglose está abierto
+
+async function loadTeams() {
+    const list = document.getElementById('teamsList');
+    if (list) list.innerHTML = '<div class="empty-state">⏳ Cargando estadísticas…</div>';
+    try {
+        const r = await authFetch('/api/admin/teams/stats');
+        if (!r.ok) {
+            if (list) list.innerHTML = '<div class="empty-state">❌ Error cargando equipos</div>';
+            return;
+        }
+        const j = await r.json();
+        _teamsCache = j;
+        _renderTeamsSummary(j);
+        _renderTeamsList(j);
+    } catch (e) {
+        console.error('loadTeams error:', e);
+        if (list) list.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function _renderTeamsSummary(j) {
+    const el = document.getElementById('teamsSummary');
+    if (!el) return;
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const totalPending = (j.teams || []).reduce((s, t) => s + (t.pendingPreAssigned || 0), 0);
+
+    let html = '';
+    html += _teamsChip('Total usuarios', fmt(j.totalUsers || 0), '#fff', 'En toda la plataforma');
+    html += _teamsChip('Con equipo asignado', fmt(j.totalWithTeam || 0), '#25d366', 'Ya están en algún equipo');
+    html += _teamsChip('Sin equipo', fmt(j.totalWithoutTeam || 0), '#ff8888', 'Caen al número genérico');
+    html += _teamsChip('Pre-asignados (esperando)', fmt(totalPending), '#ffaa44', 'Listados pero todavía no se registraron');
+    el.innerHTML = html;
+}
+
+function _teamsChip(label, value, color, sub) {
+    return '<div style="flex:1;min-width:180px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;">' +
+        '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">' + escapeHtml(label) + '</div>' +
+        '<div style="color:' + color + ';font-size:22px;font-weight:800;line-height:1;margin-bottom:4px;">' + escapeHtml(value) + '</div>' +
+        '<div style="color:#aaa;font-size:10px;">' + escapeHtml(sub) + '</div>' +
+    '</div>';
+}
+
+function _renderTeamsList(j) {
+    const el = document.getElementById('teamsList');
+    if (!el) return;
+    const teams = j.teams || [];
+    if (teams.length === 0) {
+        el.innerHTML = '<div class="empty-state" style="padding:24px;text-align:center;color:#aaa;">Todavía no hay equipos cargados. Andá a "Número principal vigente" → "Asignar línea por listado" para empezar.</div>';
+        return;
+    }
+
+    let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+    for (const t of teams) {
+        const isExpanded = _teamsExpanded.has(t.teamName);
+        html += _renderTeamCard(t, isExpanded);
+    }
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function _renderTeamCard(t, isExpanded) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const hasLines = Array.isArray(t.lines) && t.lines.length > 0;
+    const arrowSym = isExpanded ? '▼' : '▶';
+
+    let html = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;">';
+    // Header del equipo (clickeable si tiene líneas)
+    html += '<div onclick="toggleTeamExpand(\'' + escapeHtml(t.teamName).replace(/'/g, "\\'") + '\')" style="padding:14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;' + (hasLines ? '' : 'cursor:default;') + '">';
+    html += '<div style="flex:1;min-width:200px;">';
+    html += '<div style="color:#ffd700;font-size:16px;font-weight:800;margin-bottom:3px;">' + (hasLines ? arrowSym + ' ' : '') + escapeHtml(t.teamName) + '</div>';
+    html += '<div style="color:#888;font-size:11px;">' + (t.lines.length) + ' línea' + (t.lines.length === 1 ? '' : 's') + '</div>';
+    html += '</div>';
+    // Stats inline
+    html += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">';
+    html += _teamStat('Asignados', fmt(t.totalUsers), '#25d366');
+    if (t.pendingPreAssigned > 0) {
+        html += _teamStat('Pre-asignados', fmt(t.pendingPreAssigned), '#ffaa44');
+    }
+    html += _teamStat('Con app+notifs', fmt(t.withChannel) + ' (' + t.channelPct + '%)', '#00d4ff');
+    html += _teamStat('Activos 7d', fmt(t.activeThisWeek) + ' (' + t.activePct + '%)', '#9b30ff');
+    html += '</div>';
+    html += '</div>';
+
+    // Desglose por línea (collapsable)
+    if (isExpanded && hasLines) {
+        html += '<div style="border-top:1px solid rgba(255,255,255,0.08);padding:12px 14px 14px;background:rgba(0,0,0,0.20);">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="color:#888;text-align:left;">';
+        html += '<th style="padding:6px 8px;font-weight:600;">Línea</th>';
+        html += '<th style="padding:6px 8px;font-weight:600;">Teléfono</th>';
+        html += '<th style="padding:6px 8px;font-weight:600;text-align:right;">Usuarios</th>';
+        html += '<th style="padding:6px 8px;font-weight:600;text-align:right;">Con canal</th>';
+        html += '<th style="padding:6px 8px;font-weight:600;text-align:right;">Activos 7d</th>';
+        html += '</tr></thead><tbody>';
+        for (const ln of t.lines) {
+            const channelPct = ln.count > 0 ? Math.round((ln.withChannel / ln.count) * 100) : 0;
+            const activePct = ln.count > 0 ? Math.round((ln.activeThisWeek / ln.count) * 100) : 0;
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+            html += '<td style="padding:8px;color:#fff;">' + escapeHtml(ln.fullLabel) + '</td>';
+            html += '<td style="padding:8px;color:#ffd700;font-family:monospace;font-size:11px;">' + escapeHtml(ln.linePhone || '—') + '</td>';
+            html += '<td style="padding:8px;color:#fff;text-align:right;font-weight:700;">' + fmt(ln.count) + '</td>';
+            html += '<td style="padding:8px;color:#00d4ff;text-align:right;">' + fmt(ln.withChannel) + ' <span style="color:#666;font-size:10px;">(' + channelPct + '%)</span></td>';
+            html += '<td style="padding:8px;color:#9b30ff;text-align:right;">' + fmt(ln.activeThisWeek) + ' <span style="color:#666;font-size:10px;">(' + activePct + '%)</span></td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function _teamStat(label, value, color) {
+    return '<div style="text-align:center;min-width:80px;">' +
+        '<div style="color:' + color + ';font-size:16px;font-weight:800;line-height:1;">' + value + '</div>' +
+        '<div style="color:#888;font-size:10px;margin-top:3px;">' + escapeHtml(label) + '</div>' +
+    '</div>';
+}
+
+function toggleTeamExpand(teamName) {
+    if (_teamsExpanded.has(teamName)) _teamsExpanded.delete(teamName);
+    else _teamsExpanded.add(teamName);
+    if (_teamsCache) _renderTeamsList(_teamsCache);
+}

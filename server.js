@@ -7358,6 +7358,152 @@ app.post('/api/admin/user-lines/clear-team', authMiddleware, adminMiddleware, as
 });
 
 // Stats de asignaciones de línea (para mostrar resumen en el panel admin).
+// =============================================================
+// Stats por equipo: agrupa lineTeamName por la parte antes del " · "
+// y devuelve, para cada equipo, total de usuarios + canal abierto +
+// activos en la semana + desglose por línea dentro del equipo.
+// =============================================================
+app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Una sola query trae todo lo necesario para construir el agregado.
+    // role='user' para excluir admins. Solo campos requeridos para no
+    // saturar memoria en bases grandes.
+    const users = await User.find(
+      { role: 'user' },
+      {
+        username: 1,
+        lineTeamName: 1,
+        linePhone: 1,
+        lastLogin: 1,
+        fcmTokens: 1,
+        fcmTokenContext: 1,
+        notifPermission: 1,
+        _id: 0
+      }
+    ).lean();
+
+    const oneWeekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const teams = new Map(); // teamPrefix -> { totalUsers, withChannel, activeThisWeek, lines: Map }
+
+    let totalWithTeam = 0;
+    let totalWithoutTeam = 0;
+
+    for (const u of users) {
+      // Calcular si tiene canal abierto (mismo criterio que /reports/equipment).
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const hasApp = u.fcmTokenContext === 'standalone'
+        || tokens.some(t => t && t.context === 'standalone');
+      const hasNotifs = u.notifPermission === 'granted'
+        || tokens.some(t => t && t.notifPermission === 'granted');
+      const hasChannel = hasApp && hasNotifs;
+      const isActiveThisWeek = u.lastLogin
+        && new Date(u.lastLogin).getTime() >= oneWeekAgo;
+
+      const fullLabel = (u.lineTeamName || '').trim();
+      if (!fullLabel) {
+        totalWithoutTeam++;
+        continue;
+      }
+      totalWithTeam++;
+
+      // Equipo = parte antes del primer " · " (si existe). Si no hay " · ",
+      // el label completo ES el equipo (sin sub-línea).
+      const sepIdx = fullLabel.indexOf(' · ');
+      const teamPrefix = sepIdx >= 0 ? fullLabel.slice(0, sepIdx) : fullLabel;
+
+      let team = teams.get(teamPrefix);
+      if (!team) {
+        team = {
+          teamName: teamPrefix,
+          totalUsers: 0,
+          withChannel: 0,
+          activeThisWeek: 0,
+          lines: new Map() // fullLabel -> { fullLabel, linePhone, count, withChannel, activeThisWeek }
+        };
+        teams.set(teamPrefix, team);
+      }
+      team.totalUsers++;
+      if (hasChannel) team.withChannel++;
+      if (isActiveThisWeek) team.activeThisWeek++;
+
+      // Sub-grupo por línea exacta (incluye la etiqueta opcional).
+      let line = team.lines.get(fullLabel);
+      if (!line) {
+        line = {
+          fullLabel,
+          linePhone: u.linePhone || null,
+          count: 0,
+          withChannel: 0,
+          activeThisWeek: 0
+        };
+        team.lines.set(fullLabel, line);
+      }
+      line.count++;
+      if (hasChannel) line.withChannel++;
+      if (isActiveThisWeek) line.activeThisWeek++;
+    }
+
+    // Pre-asignaciones pendientes (UserLineLookup): cuenta por equipo de los
+    // usuarios que están en el archivo pero todavía NO se registraron.
+    let pendingByTeam = new Map();
+    try {
+      const pendings = await UserLineLookup.aggregate([
+        { $match: { lineTeamName: { $ne: null } } },
+        { $group: { _id: '$lineTeamName', count: { $sum: 1 } } }
+      ]);
+      for (const p of pendings) {
+        const fullLabel = String(p._id || '').trim();
+        if (!fullLabel) continue;
+        const sepIdx = fullLabel.indexOf(' · ');
+        const teamPrefix = sepIdx >= 0 ? fullLabel.slice(0, sepIdx) : fullLabel;
+        pendingByTeam.set(teamPrefix, (pendingByTeam.get(teamPrefix) || 0) + (p.count || 0));
+      }
+    } catch (lookupErr) {
+      logger.warn(`[teams/stats] lookup agg falló: ${lookupErr.message}`);
+    }
+
+    // Convertir Maps a array y sortear.
+    const teamsArr = Array.from(teams.values()).map(t => ({
+      teamName: t.teamName,
+      totalUsers: t.totalUsers,
+      withChannel: t.withChannel,
+      channelPct: t.totalUsers > 0 ? Math.round((t.withChannel / t.totalUsers) * 100) : 0,
+      activeThisWeek: t.activeThisWeek,
+      activePct: t.totalUsers > 0 ? Math.round((t.activeThisWeek / t.totalUsers) * 100) : 0,
+      pendingPreAssigned: pendingByTeam.get(t.teamName) || 0,
+      lines: Array.from(t.lines.values()).sort((a, b) => b.count - a.count)
+    })).sort((a, b) => b.totalUsers - a.totalUsers);
+
+    // Equipos que SOLO tienen pre-asignados (nadie registrado todavía):
+    // mostrarlos también para que el admin vea que la lista está cargada.
+    for (const [teamPrefix, count] of pendingByTeam) {
+      if (!teams.has(teamPrefix)) {
+        teamsArr.push({
+          teamName: teamPrefix,
+          totalUsers: 0,
+          withChannel: 0,
+          channelPct: 0,
+          activeThisWeek: 0,
+          activePct: 0,
+          pendingPreAssigned: count,
+          lines: []
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      totalUsers: users.length,
+      totalWithTeam,
+      totalWithoutTeam,
+      teams: teamsArr
+    });
+  } catch (error) {
+    logger.error(`/api/admin/teams/stats error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.get('/api/admin/user-lines/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const pipeline = [

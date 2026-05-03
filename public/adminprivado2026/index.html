@@ -90,6 +90,10 @@
                     <span>🏆</span>
                     <span>Top estadísticas</span>
                 </a>
+                <a href="#" class="nav-item" data-section="teams">
+                    <span>📊</span>
+                    <span>Equipos</span>
+                </a>
                 <a href="#" class="nav-item" data-section="automations">
                     <span>🤖</span>
                     <span>Automatizaciones <span id="automationsBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
@@ -757,6 +761,29 @@
                     Tocá <strong>🔍 Revalidar tokens</strong> para forzar el chequeo ahora (detecta apps desinstaladas en tiempo real).
                 </div>
                 <div id="welcomeBonusReportContent" class="report-content">
+                    <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: EQUIPOS — stats por equipo
+                 ============================================ -->
+            <section id="teamsSection" class="section">
+                <div class="panel-header">
+                    <h2>📊 Equipos</h2>
+                    <button class="refresh-btn" onclick="loadTeams()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                        Cuántas personas tenés por equipo. <strong style="color:#25d366;">Asignados</strong> son los ya registrados en la plataforma. <strong style="color:#ffaa44;">Pre-asignados</strong> son los que cargaste por listado pero todavía no entraron por primera vez. Tocá un equipo para ver el desglose por línea.
+                    </p>
+                </div>
+
+                <!-- Resumen global -->
+                <div id="teamsSummary" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;"></div>
+
+                <!-- Lista de equipos -->
+                <div id="teamsList">
                     <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
