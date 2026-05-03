@@ -874,8 +874,9 @@ function renderEquipmentTableHtml(users) {
     }
     let html = '<table class="report-table"><thead><tr>';
     html += '<th>Usuario</th>';
-    html += '<th>Equipo</th>';
-    html += '<th>📱 App</th>';
+    html += '<th>📞 Línea asignada</th>';
+    html += '<th>📱 Dispositivo</th>';
+    html += '<th>App</th>';
     html += '<th>Última vez en la app</th>';
     html += '<th>🔔 Notifs</th>';
     html += '<th>Último ingreso</th>';
@@ -897,8 +898,23 @@ function renderEquipmentTableHtml(users) {
         const notifCell = u.hasNotifs
             ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
             : '<span style="color:#888;">—</span>';
+
+        // Celda de línea: nombre del equipo (con la línea si vino con etiqueta)
+        // y debajo el teléfono. Si no tiene asignación, queda con un guion gris.
+        let lineCell;
+        if (u.lineTeamName || u.linePhone) {
+            const team = u.lineTeamName ? escapeHtml(u.lineTeamName) : '<span style="color:#888;">—</span>';
+            const phone = u.linePhone
+                ? '<small style="color:#ffd700;font-family:monospace;display:block;">' + escapeHtml(u.linePhone) + '</small>'
+                : '';
+            lineCell = '<div style="line-height:1.3;"><strong style="color:#c89bff;">' + team + '</strong>' + phone + '</div>';
+        } else {
+            lineCell = '<span style="color:#666;">— sin línea —</span>';
+        }
+
         html += '<tr>';
         html += '<td>' + escapeHtml(u.username) + '</td>';
+        html += '<td>' + lineCell + '</td>';
         html += '<td>' + _formatPlatform(u.platform) + '</td>';
         html += '<td>' + appCell + '</td>';
         html += '<td>' + seenCell + '</td>';

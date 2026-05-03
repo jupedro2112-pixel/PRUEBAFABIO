@@ -7953,7 +7953,7 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
   try {
     const users = await User.find(
       { role: 'user' },
-      { username: 1, lastLogin: 1, createdAt: 1, fcmToken: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, _id: 0 }
+      { username: 1, lastLogin: 1, createdAt: 1, fcmToken: 1, fcmTokenContext: 1, notifPermission: 1, fcmTokens: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
     ).lean();
 
     let withApp = 0;
@@ -8003,7 +8003,9 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
         hasApp,
         hasNotifs,
         appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null,
-        platform: platform
+        platform: platform,
+        lineTeamName: u.lineTeamName || null,
+        linePhone: u.linePhone || null
       });
     }
 
