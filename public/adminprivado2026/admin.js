@@ -3570,6 +3570,7 @@ function _autoRenderActiveTab() {
     else if (_autoActiveTab === 'calendar') c.innerHTML = _autoRenderCalendarTab();
     else if (_autoActiveTab === 'strategy') _strategyRenderTab();
     else if (_autoActiveTab === 'adhoc') _adhocRenderTab();
+    else if (_autoActiveTab === 'reminders') _remindersRenderTab();
     else if (_autoActiveTab === 'roi') _strategyRenderROITab();
 }
 
@@ -6236,4 +6237,223 @@ async function adhocLaunch() {
         showToast('Error de conexión', 'error');
         btn.disabled = false;
     }
+}
+
+// ============================================
+// 📅 RECORDATORIOS DE REEMBOLSO (tab "Recordatorios reembolso")
+// ============================================
+let _remindersConfigCache = null;
+
+async function _remindersRenderTab() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/config');
+        if (!r.ok) { c.innerHTML = '<div class="empty-state">❌ Error</div>'; return; }
+        const j = await r.json();
+        _remindersConfigCache = j.config || null;
+        // También necesitamos lista de equipos para el selector.
+        const teamsR = await authFetch('/api/admin/teams/stats').catch(() => null);
+        let teams = [];
+        if (teamsR && teamsR.ok) {
+            const tj = await teamsR.json();
+            teams = (tj.teams || []).map(t => t.teamName).filter(Boolean);
+        }
+        _remindersDoRender(_remindersConfigCache, teams);
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function _remindersDoRender(cfg, teams) {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    const labels = {
+        daily:   { emoji: '📆', name: 'Reembolso diario',   desc: 'Push diario a quienes tienen el reembolso de AYER sin reclamar' },
+        weekly:  { emoji: '📅', name: 'Reembolso semanal',  desc: 'Push diario a quienes tienen reembolso de la SEMANA PASADA sin reclamar' },
+        monthly: { emoji: '🏆', name: 'Reembolso mensual',  desc: 'Push diario a quienes tienen reembolso del MES PASADO sin reclamar' }
+    };
+
+    let html = '';
+    html += '<div style="background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.30);border-radius:10px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="color:#25d366;font-weight:800;font-size:14px;">📅 Recordatorios de reembolso</div>';
+    html += '<div style="color:#bbb;font-size:12px;margin-top:6px;line-height:1.6;">';
+    html += 'Habilitá los 3 tipos por separado. Cada uno se manda <strong>UNA VEZ POR DÍA</strong> a la hora que elijas, ';
+    html += 'a los users que tienen ese reembolso para reclamar y todavía no lo reclamaron. ';
+    html += 'Filtro de equipo opcional. Respeta cap semanal — los que ya recibieron 2 pushes esta semana NO reciben.';
+    html += '</div></div>';
+
+    for (const type of ['daily', 'weekly', 'monthly']) {
+        const sub = (cfg && cfg[type]) || {};
+        const meta = labels[type];
+        html += _remindersRenderCard(type, meta, sub, teams);
+    }
+
+    c.innerHTML = html;
+}
+
+function _remindersRenderCard(type, meta, sub, teams) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const enabled = !!sub.enabled;
+    const hour = sub.hourART != null ? sub.hourART : 20;
+    const minute = sub.minuteART != null ? sub.minuteART : 0;
+    const teamFilter = sub.teamFilter || '';
+    const lastFired = sub.lastFiredAt ? new Date(sub.lastFiredAt).toLocaleString('es-AR') : '— nunca —';
+    const totalFires = sub.totalFiresAllTime || 0;
+
+    const borderColor = enabled ? 'rgba(37,211,102,0.35)' : 'rgba(255,255,255,0.10)';
+    const bgColor = enabled ? 'rgba(37,211,102,0.04)' : 'rgba(0,0,0,0.30)';
+
+    let html = '<div style="background:' + bgColor + ';border:1px solid ' + borderColor + ';border-radius:12px;padding:14px;margin-bottom:12px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:10px;margin-bottom:12px;">';
+    html += '<div><div style="color:#fff;font-weight:800;font-size:14px;">' + meta.emoji + ' ' + escapeHtml(meta.name) + '</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">' + escapeHtml(meta.desc) + '</div>';
+    html += '<div style="color:#666;font-size:10px;margin-top:6px;">Último envío: ' + escapeHtml(lastFired) + ' · Total: ' + fmt(totalFires) + '</div></div>';
+    // Toggle
+    html += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;">';
+    html += '<span style="color:' + (enabled ? '#25d366' : '#888') + ';font-weight:700;font-size:11px;">' + (enabled ? 'ACTIVA' : 'PAUSADA') + '</span>';
+    html += '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' onchange="reminderToggleEnabled(\'' + type + '\', this.checked)" style="width:18px;height:18px;cursor:pointer;">';
+    html += '</label>';
+    html += '</div>';
+
+    // Form
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:10px;margin-bottom:10px;">';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px;">Hora ART</label>';
+    html += '<input type="number" id="rem_' + type + '_hour" min="0" max="23" value="' + hour + '" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px;">Minuto</label>';
+    html += '<input type="number" id="rem_' + type + '_minute" min="0" max="59" value="' + minute + '" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;"></div>';
+    html += '<div><label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:4px;">Equipo (filtro)</label>';
+    html += '<select id="rem_' + type + '_team" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;">';
+    html += '<option value="">🌐 Todos los equipos</option>';
+    for (const t of teams) {
+        html += '<option value="' + escapeHtml(t) + '"' + (teamFilter === t ? ' selected' : '') + '>' + escapeHtml(t) + '</option>';
+    }
+    html += '</select></div>';
+    html += '</div>';
+
+    // Custom title/body (opcional, collapsible)
+    html += '<details style="margin-bottom:10px;">';
+    html += '<summary style="cursor:pointer;color:#aaa;font-size:11px;">✏ Personalizar mensaje (opcional)</summary>';
+    html += '<div style="margin-top:8px;display:grid;gap:8px;">';
+    html += '<div><label style="display:block;color:#aaa;font-size:10px;text-transform:uppercase;font-weight:700;margin-bottom:3px;">Título</label>';
+    html += '<input type="text" id="rem_' + type + '_title" maxlength="200" placeholder="(default)" value="' + escapeHtml(sub.customTitle || '') + '" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:12px;"></div>';
+    html += '<div><label style="display:block;color:#aaa;font-size:10px;text-transform:uppercase;font-weight:700;margin-bottom:3px;">Cuerpo</label>';
+    html += '<textarea id="rem_' + type + '_body" maxlength="500" rows="2" placeholder="(default)" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:12px;resize:vertical;">' + escapeHtml(sub.customBody || '') + '</textarea></div>';
+    html += '</div>';
+    html += '</details>';
+
+    // Botones
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '<button onclick="reminderSaveConfig(\'' + type + '\')" style="padding:8px 14px;background:linear-gradient(135deg,#25d366,#0a7a3a);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">💾 Guardar</button>';
+    html += '<button onclick="reminderPreview(\'' + type + '\')" style="padding:8px 14px;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">👁 Preview audiencia</button>';
+    html += '<button onclick="reminderRunNow(\'' + type + '\')" style="padding:8px 14px;background:rgba(255,200,80,0.15);color:#ffc850;border:1px solid rgba(255,200,80,0.40);border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">⚡ Disparar ahora (test)</button>';
+    html += '</div>';
+
+    // Preview/result placeholder
+    html += '<div id="rem_' + type + '_result" style="margin-top:10px;"></div>';
+
+    html += '</div>';
+    return html;
+}
+
+async function reminderToggleEnabled(type, enabled) {
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [type]: { enabled: !!enabled } })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        _remindersConfigCache = j.config;
+        showToast('✅ ' + type + ' ' + (enabled ? 'activado' : 'pausado'), 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function reminderSaveConfig(type) {
+    const hour = parseInt(document.getElementById('rem_' + type + '_hour').value);
+    const minute = parseInt(document.getElementById('rem_' + type + '_minute').value);
+    const teamFilter = document.getElementById('rem_' + type + '_team').value || null;
+    const customTitle = (document.getElementById('rem_' + type + '_title').value || '').trim() || null;
+    const customBody = (document.getElementById('rem_' + type + '_body').value || '').trim() || null;
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [type]: { hourART: hour, minuteART: minute, teamFilter, customTitle, customBody } })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        _remindersConfigCache = j.config;
+        showToast('✅ Config ' + type + ' guardada · ' + String(hour).padStart(2,'0') + ':' + String(minute).padStart(2,'0') + ' ART', 'success');
+        _remindersRenderTab();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function reminderPreview(type) {
+    const teamFilter = document.getElementById('rem_' + type + '_team').value || null;
+    const resultEl = document.getElementById('rem_' + type + '_result');
+    resultEl.innerHTML = '<div style="color:#888;font-size:11px;">⏳ Calculando…</div>';
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, teamFilter })
+        });
+        const j = await r.json();
+        if (!r.ok) { resultEl.innerHTML = '<div style="color:#ff5050;font-size:11px;">❌ ' + escapeHtml(j.error || 'Error') + '</div>'; return; }
+        const fmt = n => Number(n || 0).toLocaleString('es-AR');
+        const t = j.totals || {};
+        const win = j.window;
+        let html = '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.20);border-radius:8px;padding:10px;font-size:11px;color:#bbb;">';
+        html += '<div style="color:#00d4ff;font-weight:700;font-size:12px;margin-bottom:6px;">👁 Preview · período ' + escapeHtml(j.periodKey || '') + '</div>';
+        if (win) html += '<div style="color:#888;font-size:10px;margin-bottom:6px;">Ventana: ' + new Date(win.start).toLocaleDateString('es-AR') + ' a ' + new Date(win.end).toLocaleDateString('es-AR') + '</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px;">';
+        html += '<div>Elegibles: <strong style="color:#fff;">' + fmt(t.eligible) + '</strong></div>';
+        html += '<div>Sin canal: <strong style="color:#ff8888;">' + fmt(t.withoutChannel) + '</strong></div>';
+        html += '<div>Ya reclamaron: <strong style="color:#888;">' + fmt(t.alreadyClaimed) + '</strong></div>';
+        html += '<div>👥 <strong style="color:#25d366;font-size:14px;">' + fmt(t.finalAudience) + '</strong> reciben push</div>';
+        html += '</div>';
+        if (j.sample && j.sample.length > 0) {
+            html += '<details><summary style="cursor:pointer;color:#aaa;font-size:11px;">Ver detalle (' + j.sampleSize + ' primeros)</summary>';
+            html += '<table style="width:100%;font-size:10px;margin-top:6px;border-collapse:collapse;">';
+            html += '<tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:4px;">User</th><th style="text-align:left;padding:4px;">Equipo</th><th style="text-align:right;padding:4px;">Pérdida</th><th style="text-align:right;padding:4px;">Reembolso</th></tr>';
+            for (const u of j.sample) {
+                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+                html += '<td style="padding:3px;color:#fff;">' + escapeHtml(u.username) + '</td>';
+                html += '<td style="padding:3px;color:#aaa;">' + escapeHtml(u.lineTeamName || '—') + '</td>';
+                html += '<td style="padding:3px;text-align:right;color:#ff8888;">$' + fmt(u.netLoss) + '</td>';
+                html += '<td style="padding:3px;text-align:right;color:#ffd700;">$' + fmt(u.potentialAmount) + '</td>';
+                html += '</tr>';
+            }
+            html += '</table></details>';
+        }
+        html += '<div style="color:#666;font-size:10px;margin-top:6px;">Calculado en ' + (j.computedInMs || 0) + 'ms</div>';
+        html += '</div>';
+        resultEl.innerHTML = html;
+    } catch (e) {
+        resultEl.innerHTML = '<div style="color:#ff5050;font-size:11px;">Error de conexión</div>';
+    }
+}
+
+async function reminderRunNow(type) {
+    const teamFilter = document.getElementById('rem_' + type + '_team').value || null;
+    const customTitle = (document.getElementById('rem_' + type + '_title').value || '').trim() || null;
+    const customBody = (document.getElementById('rem_' + type + '_body').value || '').trim() || null;
+    if (!confirm('⚡ DISPARAR RECORDATORIO ' + type.toUpperCase() + ' AHORA\n\nEsto manda push REAL a los users que tienen ese reembolso sin reclamar' + (teamFilter ? ' (filtrado a equipo "' + teamFilter + '")' : ' (todos los equipos)') + '.\n\n¿Confirmás?')) return;
+    showToast('⏳ Disparando…', 'info');
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/run-now', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, teamFilter, customTitle, customBody })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'Error', 'error'); return; }
+        const result = j.result || {};
+        if (result.skipped) { showToast('⚠ Skip: ' + result.skipped, 'warning'); return; }
+        if (result.error) { showToast('❌ ' + result.error, 'error'); return; }
+        showToast('✅ Disparado · ' + (result.sentCount || 0) + ' pushes enviados', 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
 }

@@ -72,6 +72,7 @@ const {
   WeeklyNotifBudget,
   WeeklyStrategyReport,
   ActivePlayersSnapshot,
+  RefundReminderConfig,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -9820,10 +9821,12 @@ setInterval(() => { _runNotifRulesEvaluator(); }, 5 * 60 * 1000);
 //   con sentAt > 48h y mide carga pre/post para llenar el reporte.
 const weeklyStrategyService = require('./src/services/weeklyStrategyService');
 const adhocStrategyService = require('./src/services/adhocStrategyService');
+const refundReminderService = require('./src/services/refundReminderService');
 const _strategyModels = {
   User, RefundClaim, MoneyGiveaway, MoneyGiveawayClaim,
   NotificationHistory, DailyPlayerStats,
-  WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport
+  WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport,
+  RefundReminderConfig
 };
 
 async function _runWeeklyStrategyChecker() {
@@ -10148,6 +10151,158 @@ app.post('/api/admin/strategy/adhoc/launch', authMiddleware, adminMiddleware, as
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============================================================
+// RECORDATORIOS DE REEMBOLSO (daily/weekly/monthly)
+// ============================================================
+// El admin habilita un push diario a la hora que elija que pinchea a los
+// users con un reembolso para reclamar (y todavía no reclamado). Hay 3
+// tipos independientes: daily, weekly, monthly. Cada uno con su propio
+// horario y filtro de equipo opcional.
+
+// GET /api/admin/refund-reminders/config
+app.get('/api/admin/refund-reminders/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    let cfg = await RefundReminderConfig.findOne({ id: 'main' });
+    if (!cfg) cfg = await RefundReminderConfig.create({ id: 'main' });
+    res.json({ success: true, config: cfg.toObject() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/refund-reminders/config
+// Body: { daily?: {...}, weekly?: {...}, monthly?: {...} }
+// Sólo se actualizan los campos provistos, lastFiredKey/At/totalFires
+// no se tocan desde acá.
+app.put('/api/admin/refund-reminders/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede modificar la config de recordatorios.' });
+    }
+    const allowed = ['enabled', 'hourART', 'minuteART', 'teamFilter', 'customTitle', 'customBody'];
+    const update = {};
+    for (const type of ['daily', 'weekly', 'monthly']) {
+      if (req.body && req.body[type] && typeof req.body[type] === 'object') {
+        for (const k of allowed) {
+          if (req.body[type][k] !== undefined) {
+            let v = req.body[type][k];
+            if (k === 'hourART') {
+              v = Math.max(0, Math.min(23, parseInt(v) || 0));
+            } else if (k === 'minuteART') {
+              v = Math.max(0, Math.min(59, parseInt(v) || 0));
+            } else if (k === 'enabled') {
+              v = !!v;
+            } else if (k === 'teamFilter') {
+              v = (typeof v === 'string' && v.trim()) ? v.trim() : null;
+            } else if (k === 'customTitle' || k === 'customBody') {
+              v = (typeof v === 'string' && v.trim()) ? v.trim().slice(0, k === 'customTitle' ? 200 : 500) : null;
+            }
+            update[`${type}.${k}`] = v;
+          }
+        }
+      }
+    }
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'Nada para actualizar' });
+    }
+    update.updatedAt = new Date();
+    await RefundReminderConfig.updateOne({ id: 'main' }, { $set: update }, { upsert: true });
+    const cfg = await RefundReminderConfig.findOne({ id: 'main' });
+    res.json({ success: true, config: cfg.toObject() });
+  } catch (err) {
+    logger.error(`PUT refund-reminders/config: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/refund-reminders/preview — devuelve audiencia computada
+// SIN mandar push. Body: { type: 'daily'|'weekly'|'monthly', teamFilter? }
+app.post('/api/admin/refund-reminders/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const type = req.body && req.body.type;
+    if (!['daily', 'weekly', 'monthly'].includes(type)) {
+      return res.status(400).json({ error: 'type debe ser daily, weekly o monthly' });
+    }
+    const teamFilter = req.body.teamFilter && typeof req.body.teamFilter === 'string'
+      ? req.body.teamFilter.trim() : null;
+    const t0 = Date.now();
+    const r = await refundReminderService.computeRefundReminderAudience({
+      type, teamFilter,
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      logger
+    });
+    res.json({
+      success: true,
+      type, teamFilter,
+      periodKey: r.periodKey,
+      window: r.window,
+      totals: r.totals,
+      sample: r.perUser.slice(0, 50),
+      sampleSize: Math.min(50, r.perUser.length),
+      computedInMs: Date.now() - t0
+    });
+  } catch (err) {
+    logger.error(`POST refund-reminders/preview: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/refund-reminders/run-now — disparar manualmente.
+// Body: { type, teamFilter?, customTitle?, customBody? }
+app.post('/api/admin/refund-reminders/run-now', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede disparar recordatorios.' });
+    }
+    const type = req.body && req.body.type;
+    if (!['daily', 'weekly', 'monthly'].includes(type)) {
+      return res.status(400).json({ error: 'type debe ser daily, weekly o monthly' });
+    }
+    const teamFilter = req.body.teamFilter && typeof req.body.teamFilter === 'string'
+      ? req.body.teamFilter.trim() : null;
+    const customTitle = req.body.customTitle && typeof req.body.customTitle === 'string'
+      ? req.body.customTitle.trim().slice(0, 200) : null;
+    const customBody = req.body.customBody && typeof req.body.customBody === 'string'
+      ? req.body.customBody.trim().slice(0, 500) : null;
+    const r = await refundReminderService.runRefundReminder({
+      type, teamFilter,
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      sendPushFn: sendNotificationToAllUsers,
+      logger,
+      force: true,
+      manualTrigger: req.user.username || 'admin',
+      customTitle, customBody
+    });
+    res.json({ success: true, result: r });
+  } catch (err) {
+    logger.error(`POST refund-reminders/run-now: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cron tick: cada 5 min chequea si toca disparar alguno de los 3 tipos.
+async function _runRefundRemindersCheck() {
+  try {
+    const r = await refundReminderService.checkAndFireRefundReminders({
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      sendPushFn: sendNotificationToAllUsers,
+      logger
+    });
+    const fired = Object.entries(r || {})
+      .filter(([k, v]) => v && v.success)
+      .map(([k, v]) => `${k}=${v.sentCount}`)
+      .join(' ');
+    if (fired) logger.info(`[refund-reminder] disparados: ${fired}`);
+  } catch (e) {
+    logger.error(`[refund-reminder] check error: ${e.message}`);
+  }
+}
+setTimeout(() => { _runRefundRemindersCheck(); }, 60 * 1000); // 1 min después del boot
+setInterval(() => { _runRefundRemindersCheck(); }, 5 * 60 * 1000); // cada 5 min
 
 // GET /api/admin/strategy/reports — lista de reportes semanales.
 app.get('/api/admin/strategy/reports', authMiddleware, adminMiddleware, async (req, res) => {

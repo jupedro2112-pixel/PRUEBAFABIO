@@ -37,7 +37,8 @@ const {
   WeeklyStrategyConfig,
   WeeklyNotifBudget,
   WeeklyStrategyReport,
-  ActivePlayersSnapshot
+  ActivePlayersSnapshot,
+  RefundReminderConfig
 } = require('../src/models');
 
 // ============================================
@@ -348,6 +349,7 @@ module.exports = {
   WeeklyNotifBudget,
   WeeklyStrategyReport,
   ActivePlayersSnapshot,
+  RefundReminderConfig,
   // Helpers
   getConfig,
   setConfig,
