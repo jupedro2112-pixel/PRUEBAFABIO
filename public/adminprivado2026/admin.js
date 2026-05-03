@@ -5054,7 +5054,7 @@ const _AP_SEGMENT_META = {
     hot:   { emoji: '🔥', label: 'Calientes',  range: '0-30 d',    color: '#ff5050', tip: 'Cargaron hace poco — son los más fáciles de retener' },
     warm:  { emoji: '😴', label: 'Tibios',     range: '30-90 d',   color: '#ffaa44', tip: 'Empezaron a despegarse — bonus de recuperación' },
     cool:  { emoji: '🥶', label: 'Fríos',      range: '90-180 d',  color: '#00d4ff', tip: 'Semi-perdidos — campaña de re-activación con regalo fuerte' },
-    cold:  { emoji: '❄️', label: 'Congelados', range: '180+ d',    color: '#888',    tip: 'Perdidos hace tiempo — último intento, igual mandales' },
+    cold:  { emoji: '❄️', label: 'Congelados', range: '180+ d',    color: '#888888', tip: 'Perdidos hace tiempo — último intento, igual mandales' },
     never: { emoji: '👻', label: 'Nunca cargaron', range: 'sin depósitos', color: '#a050ff', tip: 'Se registraron pero NUNCA depositaron — welcome bonus + WhatsApp' }
 };
 
