@@ -3324,11 +3324,10 @@ function _renderExactImportResult(j, isPreview) {
     if (!out) return;
     const s = j.summary || {};
     const matched = s.matched || 0;
-    const notFound = s.notFound || 0;
+    const pending = s.notFound || 0; // los renombramos: "pendientes para futuros registros"
     const total = s.uniqueUsernames || 0;
     const reassigned = s.reassignedFromOtherLine || 0;
     const sameLine = s.alreadyOnSameLine || 0;
-    const matchPct = total > 0 ? Math.round((matched / total) * 100) : 0;
 
     let html = '<div style="background:rgba(0,0,0,0.3);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;">';
     html += '<div style="color:#00d4ff;font-weight:700;font-size:13px;margin-bottom:8px;">';
@@ -3338,20 +3337,41 @@ function _renderExactImportResult(j, isPreview) {
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">';
     html += '<div><span style="color:#888;">Equipo:</span> <strong style="color:#fff;">' + escapeHtml(j.teamName || '—') + '</strong></div>';
     html += '<div><span style="color:#888;">Teléfono:</span> <strong style="color:#ffd700;font-family:monospace;">' + escapeHtml(j.linePhone || '—') + '</strong></div>';
-    html += '<div><span style="color:#888;">Total leídos:</span> <strong style="color:#fff;">' + (s.totalRowsRead || 0) + '</strong></div>';
-    html += '<div><span style="color:#888;">Únicos:</span> <strong style="color:#fff;">' + total + '</strong></div>';
-    html += '<div><span style="color:#888;">Matched:</span> <strong style="color:#25d366;">' + matched + ' (' + matchPct + '%)</strong></div>';
-    html += '<div><span style="color:#888;">No encontrados:</span> <strong style="color:#ff8888;">' + notFound + '</strong></div>';
-    if (reassigned > 0) {
-        html += '<div style="grid-column:span 2;"><span style="color:#888;">Cambian de línea:</span> <strong style="color:#ffaa44;">' + reassigned + '</strong> ya tenían otra línea asignada (esta los pisa)</div>';
-    }
-    if (sameLine > 0) {
-        html += '<div style="grid-column:span 2;"><span style="color:#888;">Sin cambios:</span> ' + sameLine + ' ya estaban en esta misma línea</div>';
-    }
+    html += '<div><span style="color:#888;">Total filas leídas:</span> <strong style="color:#fff;">' + (s.totalRowsRead || 0) + '</strong></div>';
+    html += '<div><span style="color:#888;">Únicos a importar:</span> <strong style="color:#fff;">' + total + '</strong></div>';
     html += '</div>';
 
-    if (notFound > 0 && Array.isArray(j.notFoundSample) && j.notFoundSample.length > 0) {
-        html += '<details style="margin-top:10px;"><summary style="cursor:pointer;color:#ff8888;font-size:12px;">Ver muestra de no encontrados (' + j.notFoundSample.length + ')</summary>';
+    // Resaltar el split en dos bloques claros para que se entienda que ambos
+    // grupos quedan "asignados a la línea", solo que uno aplica ya y el otro
+    // cuando se registren.
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">';
+    // Bloque 1: ya registrados, asignación inmediata
+    html += '<div style="background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.30);border-radius:8px;padding:10px;">';
+    html += '<div style="color:#25d366;font-weight:700;font-size:11px;margin-bottom:4px;">✅ Ya registrados</div>';
+    html += '<div style="color:#fff;font-size:18px;font-weight:800;">' + matched + '</div>';
+    html += '<div style="color:#888;font-size:10px;line-height:1.4;margin-top:3px;">Se les asigna la línea ahora mismo.</div>';
+    html += '</div>';
+    // Bloque 2: pendientes para futuros registros (lo que antes decía "no encontrados")
+    html += '<div style="background:rgba(255,170,68,0.06);border:1px solid rgba(255,170,68,0.30);border-radius:8px;padding:10px;">';
+    html += '<div style="color:#ffaa44;font-weight:700;font-size:11px;margin-bottom:4px;">⏳ Pre-asignados</div>';
+    html += '<div style="color:#fff;font-size:18px;font-weight:800;">' + pending + '</div>';
+    html += '<div style="color:#888;font-size:10px;line-height:1.4;margin-top:3px;">Quedan en lista de espera. Cuando uno de ellos entre por primera vez, ve esta línea automáticamente.</div>';
+    html += '</div>';
+    html += '</div>';
+
+    if (reassigned > 0 || sameLine > 0) {
+        html += '<div style="margin-top:8px;font-size:11px;color:#aaa;line-height:1.5;">';
+        if (reassigned > 0) {
+            html += '<div>↻ <strong style="color:#ffaa44;">' + reassigned + '</strong> ya tenían otra línea — los pasamos a esta.</div>';
+        }
+        if (sameLine > 0) {
+            html += '<div>≡ ' + sameLine + ' ya estaban en esta misma línea (sin cambios).</div>';
+        }
+        html += '</div>';
+    }
+
+    if (pending > 0 && Array.isArray(j.notFoundSample) && j.notFoundSample.length > 0) {
+        html += '<details style="margin-top:10px;"><summary style="cursor:pointer;color:#ffaa44;font-size:12px;">Ver muestra de pre-asignados (' + j.notFoundSample.length + ')</summary>';
         html += '<div style="background:rgba(0,0,0,0.4);border-radius:6px;padding:8px;margin-top:6px;font-family:monospace;font-size:11px;color:#ccc;max-height:180px;overflow-y:auto;">';
         for (const item of j.notFoundSample) {
             html += escapeHtml(item.username) + '<br>';
@@ -3360,11 +3380,17 @@ function _renderExactImportResult(j, isPreview) {
     }
 
     if (isPreview) {
-        html += '<div style="margin-top:10px;color:#aaa;font-size:11px;font-style:italic;">Si los números te cierran, tocá "Confirmar importación".</div>';
+        html += '<div style="margin-top:10px;padding:8px 10px;background:rgba(0,212,255,0.05);border-left:3px solid #00d4ff;border-radius:4px;color:#aaa;font-size:11px;line-height:1.5;">';
+        html += '<strong style="color:#00d4ff;">¿Qué pasa al confirmar?</strong><br>';
+        html += '• Los <strong style="color:#25d366;">' + matched + ' ya registrados</strong> tendrán esta línea apenas confirmes.<br>';
+        html += '• Los <strong style="color:#ffaa44;">' + pending + ' pre-asignados</strong> quedan guardados en la lista de espera y reciben esta línea cuando se registren o hagan login por primera vez.';
+        html += '</div>';
     } else {
         const w = j.writeResult || {};
         const lk = j.lookupResult || {};
-        html += '<div style="margin-top:10px;color:#aaa;font-size:11px;">Users actualizados: <strong style="color:#fff;">' + (w.modifiedCount || 0) + '</strong> · Lookups guardados: <strong style="color:#fff;">' + ((lk.upsertedCount || 0) + (lk.modifiedCount || 0)) + '</strong></div>';
+        html += '<div style="margin-top:10px;padding:8px 10px;background:rgba(37,211,102,0.05);border-left:3px solid #25d366;border-radius:4px;color:#aaa;font-size:11px;line-height:1.5;">';
+        html += '<strong style="color:#25d366;">✓ Listo.</strong> Usuarios actualizados: <strong style="color:#fff;">' + (w.modifiedCount || 0) + '</strong> · Pre-asignaciones guardadas: <strong style="color:#fff;">' + ((lk.upsertedCount || 0) + (lk.modifiedCount || 0)) + '</strong>';
+        html += '</div>';
     }
 
     html += '</div>';
