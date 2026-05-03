@@ -4543,7 +4543,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
         nextClaim: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
       });
     } finally {
-      setTimeout(() => releaseRefundLock(userId, 'daily'), 3000);
+      releaseRefundLock(userId, 'daily');
     }
   } catch (error) {
     console.error('Error reclamando reembolso diario:', error);
@@ -4712,7 +4712,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
         nextClaim: status.nextClaim
       });
     } finally {
-      setTimeout(() => releaseRefundLock(userId, 'weekly'), 3000);
+      releaseRefundLock(userId, 'weekly');
     }
   } catch (error) {
     console.error('Error reclamando reembolso semanal:', error);
@@ -4914,7 +4914,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         nextClaim: status.nextClaim
       });
     } finally {
-      setTimeout(() => releaseRefundLock(userId, 'monthly'), 3000);
+      releaseRefundLock(userId, 'monthly');
     }
   } catch (error) {
     console.error('Error reclamando reembolso mensual:', error);
@@ -7617,7 +7617,7 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
         amount: WELCOME_BONUS_AMOUNT
       });
     } finally {
-      setTimeout(() => releaseRefundLock(userId, 'welcome_install'), 3000);
+      releaseRefundLock(userId, 'welcome_install');
     }
   } catch (error) {
     console.error('Error reclamando bono de bienvenida:', error);
@@ -8449,7 +8449,7 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
         amount: g.amount
       });
     } finally {
-      setTimeout(() => releaseRefundLock(userId, 'money_giveaway_' + g.id), 3000);
+      releaseRefundLock(userId, 'money_giveaway_' + g.id);
     }
   } catch (error) {
     console.error('Error reclamando giveaway:', error);
