@@ -2302,6 +2302,7 @@ function showStatsTab(tab) {
     }
     if (tab === 'players') loadPlayersList();
     if (tab === 'roi') loadRoiBucket();
+    if (tab === 'giveaways') loadGiveawaysHistory();
     // 'playbook' fue eliminado: ahora vive integrado en la tab 'segments'.
 }
 
@@ -2798,13 +2799,20 @@ function renderPlayersList(container, players) {
     const tierBadge = {VIP:'🏆', ORO:'🥇', PLATA:'🥈', BRONCE:'🥉', NUEVO:'🆕', SIN_DATOS:'⚪'};
     const stateBadge = {ACTIVO:'✅', EN_RIESGO:'⚠️', PERDIDO:'💔', INACTIVO:'☠️', NUEVO:'🆕'};
     let html = '<table class="report-table"><thead><tr>';
-    html += '<th>Tier</th><th>Estado</th><th>Usuario</th><th>Cargas $</th><th>#</th><th>Retiros $</th><th>Bonos dados</th><th>Neto a la casa</th><th>Última carga</th><th>Última app</th><th></th>';
+    html += '<th>Tier</th><th>Estado</th><th>Usuario</th><th>Cargas $</th><th>#</th><th>Retiros $</th><th>Bonos dados</th><th>Neto a la casa</th><th>🎁 Reclamos</th><th>Última carga</th><th>Última app</th><th></th>';
     html += '</tr></thead><tbody>';
     for (const p of players) {
         const last = p.lastRealDepositDate ? new Date(p.lastRealDepositDate).toLocaleDateString('es-AR') : '—';
         const lastApp = p.lastSeenApp ? new Date(p.lastSeenApp).toLocaleDateString('es-AR') : '—';
         const oppFlag = p.isOpportunist ? ' <span style="color:#ff5050;font-weight:800;" title="Oportunista — toma bonos sin cargar real">🚩</span>' : '';
         const netColor = (p.netToHouse30d || 0) >= 0 ? '#25d366' : '#ff5050';
+        // Celda de reclamos: si tiene, muestra count + $ con click → modal de detalle.
+        // Si no tiene, muestra "—".
+        let claimsCell = '<small style="color:#666;">—</small>';
+        if ((p.giveawayClaimsCount || 0) > 0) {
+            const total = Number(p.giveawayTotalClaimed || 0).toLocaleString('es-AR');
+            claimsCell = '<button onclick="showUserGiveawayDetail(\'' + escapeHtml(p.username) + '\')" style="padding:4px 8px;background:rgba(155,48,255,0.15);border:1px solid rgba(155,48,255,0.40);color:#c89bff;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700;" title="Ver detalle de reclamos">🎁 ' + p.giveawayClaimsCount + ' · $' + total + '</button>';
+        }
         html += '<tr>';
         html += '<td>' + (tierBadge[p.tier] || '') + ' <small>' + escapeHtml(p.tier || '') + '</small></td>';
         html += '<td>' + (stateBadge[p.activityStatus] || '') + '</td>';
@@ -2814,6 +2822,7 @@ function renderPlayersList(container, players) {
         html += '<td>$' + Number(p.withdraws30d || 0).toLocaleString('es-AR') + '</td>';
         html += '<td>$' + Number(p.bonusGiven30d || 0).toLocaleString('es-AR') + '</td>';
         html += '<td><strong style="color:' + netColor + ';">$' + Number(p.netToHouse30d || 0).toLocaleString('es-AR') + '</strong></td>';
+        html += '<td>' + claimsCell + '</td>';
         html += '<td><small>' + last + '</small></td>';
         html += '<td><small>' + lastApp + '</small></td>';
         html += '<td><button onclick="suggestStrategyFor(\'' + escapeHtml(p.username) + '\',\'' + p.tier + '\',\'' + p.activityStatus + '\')" style="padding:4px 8px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:4px;cursor:pointer;font-size:10px;font-weight:700;" title="Ver estrategia recomendada">🎯</button></td>';
@@ -3254,6 +3263,228 @@ async function clearTeamLineAssignments() {
         showToast('✅ Limpiados ' + (d.cleared || 0) + ' usuarios del equipo "' + team + '"', 'success');
         if (inp) inp.value = '';
         loadLineImportStats();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+// ============================================
+// TAB "🎁 REGALOS" — analítica completa de Money Giveaways
+// ============================================
+const _giveawayStatusBadge = {
+    active: '🟢 Activo',
+    closed_expired: '⏱️ Vencido',
+    closed_budget: '💸 $ agotado',
+    closed_max: '👥 Cupo agotado',
+    cancelled: '🚫 Cancelado'
+};
+const _giveawayStatusColor = {
+    active: '#25d366',
+    closed_expired: '#ffaa00',
+    closed_budget: '#ff7f50',
+    closed_max: '#9b30ff',
+    cancelled: '#666'
+};
+
+async function loadGiveawaysHistory() {
+    const c = document.getElementById('giveawayHistoryContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+
+    const params = new URLSearchParams();
+    const from = document.getElementById('giveawayFilterFrom').value;
+    const to = document.getElementById('giveawayFilterTo').value;
+    const status = document.getElementById('giveawayFilterStatus').value;
+    const prefix = document.getElementById('giveawayFilterPrefix').value;
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (status) params.set('status', status);
+    if (prefix) params.set('prefix', prefix.trim());
+    params.set('limit', '200');
+
+    try {
+        const r = await authFetch('/api/admin/giveaways/history?' + params.toString());
+        if (!r.ok) { c.innerHTML = '<div class="empty-state">Error cargando.</div>'; return; }
+        const d = await r.json();
+        renderGiveawayMetrics(d.totals || {});
+        renderGiveawayHistoryTable(c, d.giveaways || []);
+        // Cerramos cualquier drill-down previo (los IDs viejos ya no existen)
+        const dd = document.getElementById('giveawayDrillDown');
+        if (dd) { dd.style.display = 'none'; dd.innerHTML = ''; }
+    } catch (e) {
+        console.error(e);
+        c.innerHTML = '<div class="empty-state">Error de conexión.</div>';
+    }
+}
+
+function renderGiveawayMetrics(totals) {
+    const el = document.getElementById('giveawayTopMetrics');
+    if (!el) return;
+    const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+    let html = '';
+    html += _bigChip('🎁 Regalos en el rango', String(totals.totalGiveaways || 0),
+        'Cantidad de campañas',
+        '#c89bff');
+    html += _bigChip('💰 Total regalado', fmtMoney(totals.totalGiven),
+        'De ' + fmtMoney(totals.totalBudgetSet) + ' presupuestado',
+        '#ff7f50');
+    html += _bigChip('🎯 Reclamos totales', String(totals.totalClaims || 0),
+        'Suma de claims (no únicos)',
+        '#25d366');
+    html += _bigChip('👥 Usuarios únicos que reclamaron', String(totals.uniqueClaimers || 0),
+        'Reclamaron al menos 1 vez en el rango',
+        '#ffd700');
+    el.innerHTML = html;
+}
+
+function renderGiveawayHistoryTable(container, giveaways) {
+    if (giveaways.length === 0) {
+        container.innerHTML = '<div class="empty-state">No hay regalos en el rango filtrado.</div>';
+        return;
+    }
+    const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+    const fmtDate = (d) => d ? new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+    const fmtDuration = (mins) => {
+        if (mins == null) return '—';
+        if (mins < 1) return '< 1 min';
+        if (mins < 60) return mins + ' min';
+        if (mins < 1440) return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'min';
+        return Math.floor(mins / 1440) + ' días';
+    };
+
+    let html = '<table class="report-table"><thead><tr>';
+    html += '<th>Fecha</th><th>Monto/persona</th><th>Cap personas</th><th>Cap $</th><th>Reclamados</th><th>$ dado</th><th>Tiempo hasta agotar</th><th>Estado</th><th>Prefijo</th><th></th>';
+    html += '</tr></thead><tbody>';
+    for (const g of giveaways) {
+        const claimedRatio = (g.maxClaims > 0)
+            ? '<strong>' + (g.claimedCount || 0) + '</strong> / ' + g.maxClaims + ' <small style="color:#888;">(' + (g.claimedPct || 0) + '%)</small>'
+            : '—';
+        const givenRatio = (g.totalBudget > 0)
+            ? '<strong>' + fmtMoney(g.totalGiven) + '</strong> / ' + fmtMoney(g.totalBudget) + ' <small style="color:#888;">(' + (g.budgetPct || 0) + '%)</small>'
+            : '—';
+        const statusBadge = _giveawayStatusBadge[g.status] || g.status;
+        const statusColor = _giveawayStatusColor[g.status] || '#888';
+        const duration = (g.status !== 'active') ? fmtDuration(g.durationToCloseMinutes) : '<small style="color:#25d366;">⏳ activo</small>';
+        const prefix = g.prefix ? '<code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:3px;font-size:11px;">' + escapeHtml(g.prefix) + '</code>' : '<small style="color:#888;">todos</small>';
+
+        html += '<tr>';
+        html += '<td><small>' + fmtDate(g.createdAt) + '</small></td>';
+        html += '<td><strong style="color:#ffd700;">' + fmtMoney(g.amount) + '</strong></td>';
+        html += '<td>' + (g.maxClaims || 0) + '</td>';
+        html += '<td>' + fmtMoney(g.totalBudget) + '</td>';
+        html += '<td>' + claimedRatio + '</td>';
+        html += '<td>' + givenRatio + '</td>';
+        html += '<td>' + duration + '</td>';
+        html += '<td><span style="color:' + statusColor + ';font-weight:700;">' + statusBadge + '</span></td>';
+        html += '<td>' + prefix + '</td>';
+        html += '<td><button onclick="showGiveawayDrillDown(\'' + escapeHtml(g.id) + '\')" style="padding:5px 10px;background:rgba(155,48,255,0.15);border:1px solid rgba(155,48,255,0.40);color:#c89bff;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700;">👁️ Ver claims</button></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
+async function showGiveawayDrillDown(giveawayId) {
+    const dd = document.getElementById('giveawayDrillDown');
+    if (!dd) return;
+    dd.style.display = 'block';
+    dd.innerHTML = '<div style="padding:14px;color:#888;">⏳ Cargando claims…</div>';
+
+    try {
+        const r = await authFetch('/api/admin/giveaways/' + encodeURIComponent(giveawayId) + '/claims');
+        if (!r.ok) { dd.innerHTML = '<div style="padding:14px;color:#ff5050;">Error cargando claims.</div>'; return; }
+        const d = await r.json();
+        const g = d.giveaway || {};
+        const claims = d.claims || [];
+        const velocity = d.claimVelocity;
+
+        const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+        const fmtDate = (s) => s ? new Date(s).toLocaleString('es-AR') : '—';
+
+        let html = '<div style="background:rgba(155,48,255,0.06);border:1px solid rgba(155,48,255,0.30);border-radius:12px;padding:14px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">';
+        html += '<div>';
+        html += '<div style="color:#c89bff;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">🎁 Detalle del regalo · ' + fmtDate(g.createdAt) + '</div>';
+        html += '<div style="color:#fff;font-size:14px;margin-top:4px;">' + fmtMoney(g.amount) + ' por persona · ' + (g.maxClaims || 0) + ' personas máx · ' + fmtMoney(g.totalBudget) + ' presupuesto</div>';
+        if (g.prefix) html += '<div style="color:#888;font-size:11px;margin-top:2px;">Target: <code>' + escapeHtml(g.prefix) + '</code></div>';
+        html += '</div>';
+        html += '<button onclick="closeGiveawayDrillDown()" style="background:transparent;border:1px solid rgba(255,255,255,0.20);color:#aaa;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;">✕ Cerrar</button>';
+        html += '</div>';
+
+        if (velocity) {
+            html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;font-size:11px;">';
+            html += '<span style="background:rgba(0,0,0,0.40);padding:5px 10px;border-radius:5px;color:#ddd;">Primer reclamo: <strong style="color:#25d366;">' + velocity.firstClaimMinutes + ' min</strong> después</span>';
+            html += '<span style="background:rgba(0,0,0,0.40);padding:5px 10px;border-radius:5px;color:#ddd;">Último reclamo: <strong style="color:#ffd700;">' + velocity.lastClaimMinutes + ' min</strong> después</span>';
+            html += '<span style="background:rgba(0,0,0,0.40);padding:5px 10px;border-radius:5px;color:#ddd;">Velocidad: <strong style="color:#c89bff;">' + velocity.avgPerMinute + ' claims/min</strong></span>';
+            html += '</div>';
+        }
+
+        if (claims.length === 0) {
+            html += '<div style="color:#888;padding:20px;text-align:center;">Nadie reclamó este regalo.</div>';
+        } else {
+            html += '<div style="max-height:400px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:8px;border:1px solid rgba(255,255,255,0.06);">';
+            html += '<table class="report-table" style="margin:0;">';
+            html += '<thead style="position:sticky;top:0;background:rgba(0,0,0,0.85);"><tr><th>#</th><th>Usuario</th><th>Reclamado</th><th>Monto</th><th>Estado</th></tr></thead>';
+            html += '<tbody>';
+            claims.forEach((c, i) => {
+                const minSinceStart = g.createdAt
+                    ? Math.round((new Date(c.claimedAt) - new Date(g.createdAt)) / 60000)
+                    : null;
+                const sinceStart = (minSinceStart != null) ? ' <small style="color:#888;">(+' + minSinceStart + ' min)</small>' : '';
+                const statusBadge = c.status === 'completed'
+                    ? '<span style="color:#25d366;">✓ OK</span>'
+                    : '<span style="color:#ff5050;" title="' + escapeHtml(c.creditError || '') + '">⚠ ' + c.status + '</span>';
+                html += '<tr>';
+                html += '<td>' + (i + 1) + '</td>';
+                html += '<td><strong style="color:#fff;">' + escapeHtml(c.username) + '</strong></td>';
+                html += '<td><small>' + fmtDate(c.claimedAt) + sinceStart + '</small></td>';
+                html += '<td>' + fmtMoney(c.amount) + '</td>';
+                html += '<td>' + statusBadge + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            html += '</div>';
+        }
+
+        html += '</div>';
+        dd.innerHTML = html;
+        // Scroll suave hacia el drill-down
+        dd.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+        console.error(e);
+        dd.innerHTML = '<div style="padding:14px;color:#ff5050;">Error de conexión.</div>';
+    }
+}
+
+function closeGiveawayDrillDown() {
+    const dd = document.getElementById('giveawayDrillDown');
+    if (dd) { dd.style.display = 'none'; dd.innerHTML = ''; }
+}
+
+// Modal con detalle de reclamos de un usuario específico (desde la tab Jugadores).
+async function showUserGiveawayDetail(username) {
+    try {
+        const r = await authFetch('/api/admin/giveaways/user/' + encodeURIComponent(username));
+        if (!r.ok) { showToast('Error cargando detalle', 'error'); return; }
+        const d = await r.json();
+
+        const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+        const fmtDate = (s) => s ? new Date(s).toLocaleString('es-AR') : '—';
+
+        let body = '🎁 ' + (d.claimsCount || 0) + ' reclamos · ' + fmtMoney(d.totalClaimed) + ' total\\n\\n';
+        if ((d.claims || []).length === 0) {
+            body += 'Sin reclamos.';
+        } else {
+            for (const c of d.claims.slice(0, 20)) {
+                body += fmtDate(c.claimedAt) + ' — ' + fmtMoney(c.amount);
+                if (c.giveaway && c.giveaway.prefix) body += ' (target: ' + c.giveaway.prefix + ')';
+                body += '\\n';
+            }
+            if (d.claims.length > 20) body += '\\n…y ' + (d.claims.length - 20) + ' más';
+        }
+        // Modal nativo (alert) — el mensaje ya es suficientemente compacto.
+        // Si querés modal HTML rico, lo armo en una segunda iteración.
+        alert('Detalle de reclamos de ' + username + '\\n\\n' + body);
     } catch (e) {
         showToast('Error de conexión', 'error');
     }

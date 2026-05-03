@@ -8128,6 +8128,172 @@ app.get('/api/giveaway-stats/total', authMiddleware, async (req, res) => {
   }
 });
 
+// ============================================
+// ANALÍTICA DE GIVEAWAYS — endpoints para el panel de Top estadísticas → 🎁 Regalos
+// ============================================
+
+// GET /api/admin/giveaways/history
+// Lista TODOS los giveaways (active + closed) con métricas computadas.
+// Query params:
+//   - limit (default 100)
+//   - from / to: rango ISO de createdAt
+//   - status: filtro de estado
+//   - prefix: filtro por prefijo de targeting
+app.get('/api/admin/giveaways/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const filter = {};
+    if (req.query.status) filter.status = String(req.query.status);
+    if (req.query.prefix) filter.prefix = String(req.query.prefix).trim();
+    if (req.query.from || req.query.to) {
+      filter.createdAt = {};
+      if (req.query.from) filter.createdAt.$gte = new Date(String(req.query.from));
+      if (req.query.to) filter.createdAt.$lte = new Date(String(req.query.to));
+    }
+
+    const giveaways = await MoneyGiveaway.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    // Computar métricas adicionales por giveaway:
+    //   - claimedPct: % de maxClaims consumido
+    //   - budgetPct: % de totalBudget consumido
+    //   - durationToCloseMinutes: tiempo desde createdAt hasta el cierre (updatedAt
+    //     si status != 'active', null si sigue activo). Como no tenemos un campo
+    //     `closedAt` dedicado, usamos updatedAt — Mongoose lo refresca cada vez
+    //     que el doc cambia, y el cierre es el último cambio típico.
+    //   - notification: data básica de la notif vinculada (si existe)
+    const enriched = giveaways.map(g => {
+      const claimedPct = g.maxClaims > 0 ? Math.round((g.claimedCount / g.maxClaims) * 100) : 0;
+      const budgetPct = g.totalBudget > 0 ? Math.round((g.totalGiven / g.totalBudget) * 100) : 0;
+      const isClosed = g.status !== 'active';
+      const closedAt = isClosed ? (g.updatedAt || null) : null;
+      const durationToCloseMinutes = (isClosed && closedAt && g.createdAt)
+        ? Math.round((new Date(closedAt) - new Date(g.createdAt)) / 60000)
+        : null;
+      const remainingBudget = Math.max(0, (g.totalBudget || 0) - (g.totalGiven || 0));
+      const remainingClaims = Math.max(0, (g.maxClaims || 0) - (g.claimedCount || 0));
+      return {
+        ...g,
+        claimedPct,
+        budgetPct,
+        closedAt,
+        durationToCloseMinutes,
+        remainingBudget,
+        remainingClaims
+      };
+    });
+
+    // Stats generales del rango filtrado
+    const totalAgg = giveaways.reduce((acc, g) => {
+      acc.totalGiveaways += 1;
+      acc.totalGiven += g.totalGiven || 0;
+      acc.totalClaims += g.claimedCount || 0;
+      acc.totalBudgetSet += g.totalBudget || 0;
+      return acc;
+    }, { totalGiveaways: 0, totalGiven: 0, totalClaims: 0, totalBudgetSet: 0 });
+
+    // Total usuarios únicos que reclamaron en CUALQUIERA de estos giveaways.
+    const giveawayIds = giveaways.map(g => g.id);
+    let uniqueClaimers = 0;
+    if (giveawayIds.length > 0) {
+      const distinctAgg = await MoneyGiveawayClaim.aggregate([
+        { $match: { giveawayId: { $in: giveawayIds }, status: 'completed' } },
+        { $group: { _id: '$username' } },
+        { $count: 'count' }
+      ]);
+      uniqueClaimers = distinctAgg.length > 0 ? distinctAgg[0].count : 0;
+    }
+
+    res.json({
+      giveaways: enriched,
+      totals: { ...totalAgg, uniqueClaimers }
+    });
+  } catch (error) {
+    logger.error(`/api/admin/giveaways/history: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/giveaways/:id/claims — drill-down de un giveaway específico
+app.get('/api/admin/giveaways/:id/claims', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const giveaway = await MoneyGiveaway.findOne({ id: req.params.id }).lean();
+    if (!giveaway) return res.status(404).json({ error: 'Giveaway no encontrado' });
+
+    const claims = await MoneyGiveawayClaim.find({ giveawayId: giveaway.id })
+      .sort({ claimedAt: 1 }) // orden cronológico para ver curva de reclamos
+      .lean();
+
+    // Si el giveaway está cerrado, calculamos cuánto tardó cada decil de claims.
+    // Útil para ver "se agotó en los primeros X minutos" vs "vino lento".
+    let claimVelocity = null;
+    if (claims.length > 0 && giveaway.createdAt) {
+      const startMs = new Date(giveaway.createdAt).getTime();
+      const lastClaim = claims[claims.length - 1];
+      const lastMs = new Date(lastClaim.claimedAt).getTime();
+      claimVelocity = {
+        firstClaimMinutes: Math.round((new Date(claims[0].claimedAt).getTime() - startMs) / 60000),
+        lastClaimMinutes: Math.round((lastMs - startMs) / 60000),
+        avgPerMinute: ((lastMs - startMs) / 60000) > 0
+          ? Number((claims.length / ((lastMs - startMs) / 60000)).toFixed(2))
+          : 0
+      };
+    }
+
+    res.json({
+      giveaway,
+      claims,
+      claimVelocity
+    });
+  } catch (error) {
+    logger.error(`/api/admin/giveaways/:id/claims: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/giveaways/user/:username — todos los reclamos de un usuario
+app.get('/api/admin/giveaways/user/:username', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const username = String(req.params.username || '').trim().toLowerCase();
+    if (!username) return res.status(400).json({ error: 'Falta username' });
+
+    const claims = await MoneyGiveawayClaim.find({
+      username: { $regex: new RegExp('^' + escapeRegex(username) + '$', 'i') },
+      status: 'completed'
+    }).sort({ claimedAt: -1 }).lean();
+
+    if (claims.length === 0) {
+      return res.json({ username, totalClaimed: 0, claimsCount: 0, claims: [] });
+    }
+
+    // Hidratar cada claim con info del giveaway correspondiente
+    const giveawayIds = [...new Set(claims.map(c => c.giveawayId))];
+    const giveaways = await MoneyGiveaway.find({ id: { $in: giveawayIds } })
+      .select('id amount totalBudget maxClaims expiresAt createdAt prefix status')
+      .lean();
+    const giveawayById = new Map(giveaways.map(g => [g.id, g]));
+
+    const enrichedClaims = claims.map(c => ({
+      ...c,
+      giveaway: giveawayById.get(c.giveawayId) || null
+    }));
+
+    const totalClaimed = claims.reduce((sum, c) => sum + (c.amount || 0), 0);
+
+    res.json({
+      username,
+      totalClaimed,
+      claimsCount: claims.length,
+      claims: enrichedClaims
+    });
+  } catch (error) {
+    logger.error(`/api/admin/giveaways/user: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // DELETE admin: cancelar el giveaway activo.
 app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -8753,6 +8919,32 @@ app.get('/api/admin/stats/players', authMiddleware, adminMiddleware, async (req,
       .sort({ [sortBy]: order })
       .limit(limit)
       .lean();
+
+    // Hidratamos cada player con su histórico de claims de giveaways:
+    // count, total $, último claim. Una sola agregación con $in para
+    // todos los usernames del listado actual — fast path.
+    if (players.length > 0) {
+      const usernames = players.map(p => p.username).filter(Boolean);
+      const claimAgg = await MoneyGiveawayClaim.aggregate([
+        { $match: { username: { $in: usernames }, status: 'completed' } },
+        {
+          $group: {
+            _id: '$username',
+            count: { $sum: 1 },
+            total: { $sum: '$amount' },
+            lastClaimAt: { $max: '$claimedAt' }
+          }
+        }
+      ]);
+      const byUser = new Map();
+      for (const c of claimAgg) byUser.set(c._id, c);
+      for (const p of players) {
+        const c = byUser.get(p.username);
+        p.giveawayClaimsCount = c ? c.count : 0;
+        p.giveawayTotalClaimed = c ? c.total : 0;
+        p.giveawayLastClaimAt = c ? c.lastClaimAt : null;
+      }
+    }
 
     res.json({ players, total: players.length });
   } catch (error) {

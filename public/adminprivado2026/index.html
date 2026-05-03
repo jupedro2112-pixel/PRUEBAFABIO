@@ -542,6 +542,7 @@
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:8px;">
                     <button class="stats-tab-btn active" data-tab="segments" onclick="showStatsTab('segments')" style="padding:8px 14px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎯 Segmentación + Recuperación</button>
                     <button class="stats-tab-btn" data-tab="players" onclick="showStatsTab('players')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">👥 Jugadores</button>
+                    <button class="stats-tab-btn" data-tab="giveaways" onclick="showStatsTab('giveaways')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎁 Regalos</button>
                     <button class="stats-tab-btn" data-tab="roi" onclick="showStatsTab('roi')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">💰 ROI por bono</button>
                 </div>
 
@@ -605,6 +606,48 @@
                     <div id="statsPlayersContent" style="overflow-x:auto;">
                         <div class="empty-state">Tocá "Refrescar JUGAYGANA" arriba para poblar el cache.</div>
                     </div>
+                </div>
+
+                <!-- Tab: Regalos (analítica completa de Money Giveaways) -->
+                <div id="statsTabGiveaways" class="stats-tab-pane" style="display:none;">
+                    <!-- Métricas globales del rango filtrado -->
+                    <div id="giveawayTopMetrics" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;"></div>
+
+                    <!-- Filtros de fecha y status -->
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:flex-end;">
+                        <div>
+                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Desde</label>
+                            <input type="date" id="giveawayFilterFrom" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                        </div>
+                        <div>
+                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Hasta</label>
+                            <input type="date" id="giveawayFilterTo" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                        </div>
+                        <div>
+                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Estado</label>
+                            <select id="giveawayFilterStatus" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                                <option value="">Todos</option>
+                                <option value="active">🟢 Activos</option>
+                                <option value="closed_expired">⏱️ Vencidos</option>
+                                <option value="closed_budget">💸 Presupuesto agotado</option>
+                                <option value="closed_max">👥 Cupo agotado</option>
+                                <option value="cancelled">🚫 Cancelados</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Prefijo (target)</label>
+                            <input type="text" id="giveawayFilterPrefix" placeholder="ej: ato, argen…" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;width:120px;">
+                        </div>
+                        <button onclick="loadGiveawaysHistory()" style="padding:8px 14px;background:rgba(212,175,55,0.20);color:#ffd700;border:1px solid rgba(212,175,55,0.45);border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">🔄 Refrescar</button>
+                    </div>
+
+                    <!-- Tabla de regalos -->
+                    <div id="giveawayHistoryContent" style="overflow-x:auto;">
+                        <div class="empty-state">⏳ Cargando…</div>
+                    </div>
+
+                    <!-- Modal/panel inline con drill-down (claims de un giveaway específico) -->
+                    <div id="giveawayDrillDown" style="margin-top:14px;display:none;"></div>
                 </div>
 
                 <!-- Tab: ROI -->
