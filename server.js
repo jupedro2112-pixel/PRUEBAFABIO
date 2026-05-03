@@ -9136,12 +9136,21 @@ app.get('/api/admin/stats/recovery-export.xlsx', authMiddleware, adminMiddleware
     });
     XLSX.utils.book_append_sheet(wb, summarySheet, 'Resumen');
 
-    // Hojas por (team, state). Limitamos cada nombre a 31 chars (Excel).
+    // Hojas por (team, state). Limitamos cada nombre a 31 chars (Excel/Sheets).
+    // Usamos " - " como separador para máxima compatibilidad con Google Sheets
+    // (el caracter "·" puede romper la importación en versiones viejas).
+    // También evitamos los caracteres prohibidos por Excel/Sheets en sheet names:
+    //   \ / ? * [ ] :
+    const _sanitizeSheetName = (name) => String(name || 'sheet')
+      .replace(/[\\/\?\*\[\]:]/g, '-')
+      .trim()
+      .slice(0, 31) || 'sheet';
+
     const sortedKeys = [...groups.keys()].sort();
     for (const key of sortedKeys) {
       const [team, state] = key.split('|');
       const rows = groups.get(key);
-      const sheetName = (team + ' · ' + (stateLabel[state] || state)).slice(0, 31);
+      const sheetName = _sanitizeSheetName(team + ' - ' + (stateLabel[state] || state));
       const sheet = XLSX.utils.json_to_sheet(rows);
       // Ajustar ancho de columnas básico (XLSX no calcula auto-fit por sí solo)
       const colKeys = Object.keys(rows[0] || {});
