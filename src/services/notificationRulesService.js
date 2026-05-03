@@ -254,19 +254,28 @@ function _lastWeekInArt() {
   const lastWeekSunEndMs = lastWeekMonMs + 7 * 24 * 60 * 60 * 1000; // exclusivo
   const startUtc = new Date(lastWeekMonMs);
   const endUtc = new Date(lastWeekSunEndMs);
-  // periodKey igual al backend de refunds: ISO week
-  const periodKey = _isoWeekKey(startUtc);
+  // periodKey: usamos EXACTAMENTE la misma fórmula que computePeriodKey('weekly')
+  // del server.js (líneas 324-332), basándonos en y/m/d ART de un día de la
+  // semana pasada (el lunes mismo). Sin esto, en semanas borde (W52/W53) los
+  // periodKeys no matchean y los users que ya reclamaron NO se filtran → spam
+  // de recordatorios y desconfianza.
+  const lwParts = _getArtParts(new Date(lastWeekMonMs));
+  const periodKey = _computeWeeklyPeriodKey(lwParts.year, lwParts.month, lwParts.day);
   return { startUtc, endUtc, periodKey };
 }
 
-function _isoWeekKey(date) {
-  // Aproximación ISO week. Coincide con el backend si usa Intl.
-  const d = new Date(date);
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+// Réplica exacta de computePeriodKey('weekly') de server.js. Crítico:
+// si esta función diverge, los reembolsos semanales se duplican.
+function _computeWeeklyPeriodKey(year, month, day) {
+  const target = new Date(Date.UTC(year, month - 1, day));
+  const dayNum = (target.getUTCDay() + 6) % 7; // lunes=0
+  target.setUTCDate(target.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(
+    ((target.getTime() - firstThursday.getTime()) / 86400000 - 3 +
+      ((firstThursday.getUTCDay() + 6) % 7)) / 7
+  );
+  return `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
 function _lastMonthInArt() {

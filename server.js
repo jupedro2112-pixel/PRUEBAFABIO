@@ -8306,8 +8306,17 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
     }).sort({ createdAt: -1 }).lean();
     if (!g) return res.json({ active: false });
 
-    // Filtro por prefix.
-    if (g.prefix && !username.toLowerCase().startsWith(g.prefix.toLowerCase())) {
+    // Filtro de audiencia: si el regalo tiene whitelist (regalos sugeridos
+    // por reglas con audiencia exacta tipo "VIP en riesgo"), solo los users
+    // de esa lista lo pueden ver. Si no tiene whitelist pero tiene prefix,
+    // se aplica el filtro de prefijo legacy. Si no tiene ninguno, va a todos.
+    const usernameLower = username.toLowerCase();
+    if (Array.isArray(g.audienceWhitelist) && g.audienceWhitelist.length > 0) {
+      const wlSet = new Set(g.audienceWhitelist.map(u => String(u).toLowerCase()));
+      if (!wlSet.has(usernameLower)) {
+        return res.json({ active: false });
+      }
+    } else if (g.prefix && !usernameLower.startsWith(g.prefix.toLowerCase())) {
       return res.json({ active: false });
     }
 
@@ -8394,8 +8403,16 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
       return res.json({ success: false, message: 'No hay regalo activo en este momento.', closed: true });
     }
 
-    // Filtro por prefix.
-    if (g.prefix && !username.toLowerCase().startsWith(g.prefix.toLowerCase())) {
+    // Filtro de audiencia: si el regalo tiene whitelist exacta (regalos
+    // sugeridos por reglas con audiencia tipo "VIP en riesgo"), solo esos
+    // usernames pueden reclamar. Sino, fallback al filtro de prefix legacy.
+    const usernameLower = username.toLowerCase();
+    if (Array.isArray(g.audienceWhitelist) && g.audienceWhitelist.length > 0) {
+      const wlSet = new Set(g.audienceWhitelist.map(u => String(u).toLowerCase()));
+      if (!wlSet.has(usernameLower)) {
+        return res.status(403).json({ success: false, message: 'Este regalo no es para tu cuenta.' });
+      }
+    } else if (g.prefix && !usernameLower.startsWith(g.prefix.toLowerCase())) {
       return res.status(403).json({ success: false, message: 'Este regalo no es para tu cuenta.' });
     }
 
@@ -9494,6 +9511,10 @@ app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware
     if (sug.status !== 'pending') return res.status(400).json({ error: `Sugerencia en estado ${sug.status}, no se puede aprobar` });
 
     // 1) Si tiene giveaway, crearlo primero (cancela cualquier giveaway activo).
+    // CRÍTICO: el regalo se crea con audienceWhitelist = sug.audienceUsernames
+    // para que SOLO esos usuarios puedan reclamarlo. Sin whitelist, el regalo
+    // sería visible a TODOS los users que pollen /api/money-giveaway/active y
+    // los primeros en llegar cobrarían (incluso si NO eran del segmento target).
     let giveawayId = null;
     if (sug.bonus && sug.bonus.type === 'giveaway' && sug.bonus.amount > 0) {
       await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
@@ -9505,6 +9526,7 @@ app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware
         durationMinutes: sug.bonus.durationMinutes || 60,
         expiresAt: new Date(Date.now() + (sug.bonus.durationMinutes || 60) * 60 * 1000),
         prefix: null,
+        audienceWhitelist: (sug.audienceUsernames || []).map(u => String(u).toLowerCase()),
         requireZeroBalance: !!sug.bonus.requireZeroBalance,
         notificationHistoryId: null,
         status: 'active',
@@ -9529,6 +9551,18 @@ app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware
       sendResult = await _notifRulesSendFn(User, sug.title, sug.body, data, filter);
     } catch (sendErr) {
       sendResult.error = sendErr.message;
+    }
+
+    // 2.5) Si el push falló COMPLETAMENTE y se había creado un giveaway,
+    // cancelarlo: nadie se va a enterar y el budget queda asignado en limbo.
+    // Si el push fue parcialmente exitoso (>= 1 entregado), lo dejamos vivo.
+    if (giveawayId && sendResult.error && (sendResult.successCount || 0) === 0) {
+      await MoneyGiveaway.updateOne(
+        { id: giveawayId },
+        { $set: { status: 'cancelled' } }
+      ).catch(() => {});
+      logger.error(`[suggestion/approve] giveaway ${giveawayId} CANCELADO porque el push falló totalmente: ${sendResult.error}`);
+      giveawayId = null;
     }
 
     // 3) NotificationHistory.

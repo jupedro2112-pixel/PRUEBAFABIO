@@ -31,6 +31,15 @@ const moneyGiveawaySchema = new mongoose.Schema({
 
   prefix: { type: String, default: null, trim: true },
 
+  // Whitelist EXACTA de usernames habilitados para reclamar este regalo.
+  // Si está poblada (length > 0), SOLO esos usernames pueden reclamar —
+  // se ignoran prefix y todo el resto de la base. Pensado para regalos
+  // sugeridos por el motor de NotificationRule donde la audiencia ya está
+  // resuelta server-side (ej: "VIP en riesgo") y el regalo NO debe estar
+  // expuesto al resto de la plataforma vía polling de /active.
+  // Si está vacía o null, fallback al filtro por prefix (compatibilidad).
+  audienceWhitelist: { type: [String], default: null, index: true },
+
   notificationHistoryId: { type: String, default: null, index: true },
 
   // Si está en true, solo pueden reclamar usuarios con saldo en JUGAYGANA
