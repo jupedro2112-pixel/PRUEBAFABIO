@@ -591,7 +591,12 @@ async function creditUserBalance(username, amount) {
     const headers = {};
     if (SESSION_COOKIE) headers.Cookie = SESSION_COOKIE;
 
-    const resp = await client.post('', body, { headers });
+    // validateStatus: () => true → no tirar excepción en 5xx para que podamos
+    // parsear el body. Si la respuesta tiene transfer_id en el body aunque el
+    // status sea 502/504, la operación SÍ se aplicó. Sin esto, axios tiraba
+    // y el catch marcaba el claim como pending_credit_failed con la plata YA
+    // acreditada → riesgo de doble crédito en reconciliación.
+    const resp = await client.post('', body, { headers, validateStatus: () => true });
 
     let data = parsePossiblyWrappedJson(resp.data);
     if (isHtmlBlocked(data)) {
@@ -616,17 +621,25 @@ async function creditUserBalance(username, amount) {
       });
       const retryHeaders = {};
       if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
-      const retryResp = await client.post('', retryBody, { headers: retryHeaders });
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders, validateStatus: () => true });
       data = parsePossiblyWrappedJson(retryResp.data);
       if (isHtmlBlocked(data)) return { success: false, error: 'IP Bloqueada (HTML)' };
     }
 
-    console.log("📩 Resultado DepositMoney:", JSON.stringify(data));
+    console.log("📩 Resultado DepositMoney:", JSON.stringify(data), "status:", resp.status);
 
-    if (data && data.success) {
+    // Aceptar como éxito si: data.success === true, O si la API devolvió
+    // un transfer_id (señal de que la operación se aplicó). Mantiene paridad
+    // con depositToUser y withdrawFromUser que ya hacían este check.
+    if (data && (data.success || data.transfer_id || data.transferId)) {
       return { success: true, data: data };
     } else {
-      return { success: false, error: data.error || 'API Error' };
+      // Fallback: si data es un string (HTML mal parseado / 5xx con error)
+      // o null, no podemos asumir success. Devolvemos error con el status
+      // para que el server lo loguee con contexto.
+      const errMsg = (data && (data.error || data.message))
+        || ('API Error (HTTP ' + resp.status + ')');
+      return { success: false, error: errMsg, httpStatus: resp.status };
     }
   } catch (err) {
     return { success: false, error: err.message };
@@ -712,7 +725,10 @@ async function depositToUser(username, amount, description = '') {
     const headers = {};
     if (SESSION_COOKIE) headers.Cookie = SESSION_COOKIE;
 
-    const resp = await client.post('', body, { headers });
+    // validateStatus: () => true para parsear el body aunque sea 5xx (igual
+    // que creditUserBalance). Sin esto, axios tira en 502/504 y el catch
+    // genérico oculta el transfer_id si la operación SÍ se aplicó.
+    const resp = await client.post('', body, { headers, validateStatus: () => true });
 
     let data = parsePossiblyWrappedJson(resp.data);
     if (isHtmlBlocked(data)) {
@@ -738,7 +754,7 @@ async function depositToUser(username, amount, description = '') {
       });
       const retryHeaders = {};
       if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
-      const retryResp = await client.post('', retryBody, { headers: retryHeaders });
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders, validateStatus: () => true });
       data = parsePossiblyWrappedJson(retryResp.data);
       if (isHtmlBlocked(data)) return { success: false, error: 'IP Bloqueada (HTML)' };
     }
@@ -833,7 +849,10 @@ async function withdrawFromUser(username, amount, description = '') {
     const headers = {};
     if (SESSION_COOKIE) headers.Cookie = SESSION_COOKIE;
 
-    const resp = await client.post('', body, { headers });
+    // validateStatus: () => true para parsear el body aunque sea 5xx (igual
+    // que creditUserBalance/depositToUser). Sin esto, axios tira en 502/504
+    // y el catch genérico oculta el transfer_id si la operación se aplicó.
+    const resp = await client.post('', body, { headers, validateStatus: () => true });
 
     let data = parsePossiblyWrappedJson(resp.data);
     if (isHtmlBlocked(data)) {
@@ -858,7 +877,7 @@ async function withdrawFromUser(username, amount, description = '') {
       });
       const retryHeaders = {};
       if (SESSION_COOKIE) retryHeaders.Cookie = SESSION_COOKIE;
-      const retryResp = await client.post('', retryBody, { headers: retryHeaders });
+      const retryResp = await client.post('', retryBody, { headers: retryHeaders, validateStatus: () => true });
       data = parsePossiblyWrappedJson(retryResp.data);
       if (isHtmlBlocked(data)) return { success: false, error: 'IP Bloqueada (HTML)' };
     }
