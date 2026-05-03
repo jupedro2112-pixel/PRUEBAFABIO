@@ -4724,7 +4724,40 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
-    
+
+    // Server-side gate: el reembolso mensual exige que el usuario tenga PWA
+    // instalada + notificaciones activas (mismo gate del frontend). Lo
+    // chequeamos acá para que no se pueda bypassear con DevTools curl. La
+    // señal real es User.fcmTokens con context='standalone' (la PWA real
+    // refresca el token en cada apertura, así que tokens vivos == app activa)
+    // y notifPermission='granted' en algún token.
+    try {
+      const userDoc = await User.findOne({ id: userId })
+        .select('fcmTokens notifPermission fcmTokenContext')
+        .lean();
+      const tokens = (userDoc && Array.isArray(userDoc.fcmTokens)) ? userDoc.fcmTokens : [];
+      const hasApp = (userDoc && userDoc.fcmTokenContext === 'standalone')
+        || tokens.some(t => t && t.context === 'standalone');
+      const hasNotifs = (userDoc && userDoc.notifPermission === 'granted')
+        || tokens.some(t => t && t.notifPermission === 'granted');
+      if (!hasApp || !hasNotifs) {
+        return res.status(403).json({
+          success: false,
+          message: 'El reembolso mensual requiere tener la app instalada y notificaciones activas.',
+          canClaim: false,
+          requiresPwa: !hasApp,
+          requiresNotifs: !hasNotifs
+        });
+      }
+    } catch (gateErr) {
+      logger.warn(`[refund/monthly] gate check error: ${gateErr.message}`);
+      // Si el chequeo falla, NO dejamos pasar — fail-safe.
+      return res.status(503).json({
+        success: false,
+        message: 'No pudimos verificar los requisitos. Intentá de nuevo.'
+      });
+    }
+
     if (!await acquireRefundLock(userId, 'monthly')) {
       return res.json({
         success: false,
@@ -4733,7 +4766,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
         processing: true
       });
     }
-    
+
     try {
       const status = await refunds.canClaimMonthlyRefund(userId);
       
@@ -10104,19 +10137,59 @@ app.post('/api/admin/stats/recovery-push', authMiddleware, adminMiddleware, asyn
       { $set: { lastRecoveryPushAt: new Date() }, $inc: { recoveryAttemptsLifetime: 1 } }
     );
 
-    // Disparar la notif: por simplicidad, mandamos a TODOS los usernames a
-    // los que tenemos que pegar. Reutilizamos el endpoint
-    // /api/admin/notifications/send via fetch interno NO — hacemos la
-    // logica inline para tener control sobre la audiencia (lista exacta).
-    // Por simplicidad de este MVP, retornamos los ids — el admin va a
-    // disparar el envio masivo desde el composer normal usando la lista.
+    // DISPARAR EL ENVÍO REAL del push a la lista exacta de usuarios. Antes
+    // este endpoint solo registraba la campaña y dejaba el envío al admin
+    // (composer manual) — eso era confuso porque el toast decía "registrado"
+    // y el admin creía que ya había salido. Ahora se envía in-line.
+    let sendResult = { successCount: 0, failureCount: 0, error: null };
+    try {
+      const filter = { username: { $in: toSend.map(c => c.username) } };
+      const data = { source: 'admin-recovery', campaignBatchId, tag: 'recovery' };
+      sendResult = await sendNotificationToAllUsers(User, title, body, data, filter);
+    } catch (sendErr) {
+      logger.error(`/api/admin/stats/recovery-push send failed: ${sendErr.message}`);
+      sendResult.error = sendErr.message;
+    }
+
+    // Crear NotificationHistory para que aparezca en el historial admin.
+    let historyId = null;
+    try {
+      historyId = uuidv4();
+      await NotificationHistory.create({
+        id: historyId,
+        sentAt: new Date(),
+        audienceType: 'list',
+        audiencePrefix: null,
+        audienceCount: toSend.length,
+        title,
+        body,
+        type: bonusType === 'giveaway' ? 'money_giveaway' : 'plain',
+        successCount: sendResult.successCount || 0,
+        failureCount: sendResult.failureCount || 0,
+        sentBy: req.user.username || null,
+        meta: {
+          campaignBatchId,
+          source: 'recovery-push',
+          tier: b.tier || null,
+          activityStatus: b.activityStatus || null
+        }
+      });
+    } catch (histErr) {
+      logger.warn(`/api/admin/stats/recovery-push history creation failed: ${histErr.message}`);
+    }
+
     res.json({
       success: true,
       campaignBatchId,
+      historyId,
       sentCount: toSend.length,
       skipped: skipSet.size,
-      usernames: toSend.map(c => c.username),
-      message: 'Push de recuperacion registrado. Ahora dispara el envio en el composer con esta lista de usuarios.'
+      pushDelivered: sendResult.successCount || 0,
+      pushFailed: sendResult.failureCount || 0,
+      sendError: sendResult.error || null,
+      message: sendResult.error
+        ? `Campaña registrada para ${toSend.length} jugadores pero el envío falló: ${sendResult.error}`
+        : `✅ Push enviado a ${toSend.length} jugadores (${sendResult.successCount || 0} entregados, ${sendResult.failureCount || 0} con token inválido)`
     });
   } catch (error) {
     logger.error(`/api/admin/stats/recovery-push: ${error.message}`);

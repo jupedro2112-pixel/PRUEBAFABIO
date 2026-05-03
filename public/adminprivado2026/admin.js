@@ -2930,7 +2930,16 @@ function openRecoveryModal(tier, status) {
         body: JSON.stringify(body2)
     }).then(r => r.json()).then(d => {
         if (d.success) {
-            showToast('✅ Push registrado a ' + d.sentCount + ' jugadores' + (d.skipped ? ' (' + d.skipped + ' en cooldown)' : '') + '. Para disparar el envío real, usá el composer de Notificaciones con la lista.', 'success');
+            const delivered = d.pushDelivered != null ? d.pushDelivered : d.sentCount;
+            const failed = d.pushFailed || 0;
+            const skipped = d.skipped || 0;
+            let msg = '✅ Push enviado a ' + d.sentCount + ' jugadores';
+            if (delivered != null) msg += ' (' + delivered + ' entregados';
+            if (failed > 0) msg += ', ' + failed + ' con token inválido';
+            if (delivered != null) msg += ')';
+            if (skipped > 0) msg += '. ' + skipped + ' en cooldown 7d.';
+            if (d.sendError) msg = '⚠️ Push registrado pero envío falló: ' + d.sendError;
+            showToast(msg, d.sendError ? 'error' : 'success');
         } else {
             showToast(d.message || 'No se pudo enviar', 'error');
         }
