@@ -66,6 +66,8 @@ const {
   DailyPlayerStats,
   UserLineLookup,
   AppNotifSnapshot,
+  NotificationRule,
+  NotificationRuleSuggestion,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -9201,6 +9203,264 @@ setTimeout(() => { _bootstrapAppNotifSnapshots(); }, 90 * 1000);
 // Snapshot adicional al boot (best-effort, si todavía no existe el del día)
 setTimeout(() => { _writeAppNotifSnapshot(_appNotifTodayKey(), 'cron'); }, 120 * 1000);
 setInterval(() => { _maybeRunAppNotifSnapshotHourly(); }, 60 * 60 * 1000);
+
+// ============================================================
+// MOTOR DE REGLAS DE NOTIFICACIÓN AUTOMÁTICAS
+// ============================================================
+// Carga las reglas pre-definidas (B1-B6, A3-A4) en el primer arranque
+// del feature, y corre el evaluador cada 5 min. Cada regla decide si
+// le toca disparar AHORA (matching su trigger cron) y resuelve su
+// audiencia desde User/PlayerStats/DailyPlayerStats/RefundClaim.
+const notificationRulesService = require('./src/services/notificationRulesService');
+const _notifRulesModels = {
+  User,
+  RefundClaim,
+  PlayerStats,
+  NotificationRule,
+  NotificationRuleSuggestion,
+  NotificationHistory,
+  MoneyGiveaway
+};
+// DailyPlayerStats es required acá lazy porque no está en la lista de top.
+try {
+  _notifRulesModels.DailyPlayerStats = require('./src/models').DailyPlayerStats;
+} catch (_) {}
+
+const _notifRulesSendFn = require('./src/services/notificationService').sendNotificationToAllUsers;
+
+// Seed al boot (idempotente — solo crea las que no existen).
+setTimeout(async () => {
+  try {
+    await notificationRulesService.seedDefaultRulesIfMissing(NotificationRule);
+    logger.info('[notif-rules] seed inicial completado');
+  } catch (err) {
+    logger.error(`[notif-rules] seed error: ${err.message}`);
+  }
+}, 60 * 1000);
+
+// Evaluar cada 5 min.
+async function _runNotifRulesEvaluator() {
+  try {
+    const result = await notificationRulesService.evaluateAllRules({
+      models: _notifRulesModels,
+      sendPushFn: _notifRulesSendFn,
+      logger
+    });
+    if (result.firedCount > 0 || result.suggestedCount > 0) {
+      logger.info(`[notif-rules] eval done: fired=${result.firedCount} suggested=${result.suggestedCount}`);
+    }
+  } catch (err) {
+    logger.error(`[notif-rules] evaluator error: ${err.message}`);
+  }
+}
+setTimeout(() => { _runNotifRulesEvaluator(); }, 3 * 60 * 1000);
+setInterval(() => { _runNotifRulesEvaluator(); }, 5 * 60 * 1000);
+
+// ============================================================
+// ENDPOINTS ADMIN para Automatizaciones
+// ============================================================
+
+// Listar reglas con filtros.
+app.get('/api/admin/notification-rules', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { category, enabled } = req.query;
+    const filter = {};
+    if (category) filter.category = category;
+    if (enabled === 'true') filter.enabled = true;
+    if (enabled === 'false') filter.enabled = false;
+    const rules = await NotificationRule.find(filter)
+      .sort({ category: 1, code: 1 })
+      .lean();
+    res.json({ success: true, rules });
+  } catch (err) {
+    logger.error(`/api/admin/notification-rules: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Toggle enabled / editar copy.
+app.patch('/api/admin/notification-rules/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const allowed = ['enabled', 'title', 'body', 'cooldownMinutes', 'requiresAdminApproval', 'cronSchedule', 'bonus'];
+    const update = {};
+    for (const k of allowed) {
+      if (req.body[k] !== undefined) update[k] = req.body[k];
+    }
+    update.updatedBy = req.user.username || null;
+    const rule = await NotificationRule.findOneAndUpdate(
+      { id },
+      { $set: update },
+      { new: true }
+    );
+    if (!rule) return res.status(404).json({ error: 'Regla no encontrada' });
+    res.json({ success: true, rule });
+  } catch (err) {
+    logger.error(`PATCH notification-rules: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Test manual: dispara una regla AHORA (resuelve audiencia + manda push o
+// crea suggestion según corresponda).
+app.post('/api/admin/notification-rules/:id/test-fire', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const rule = await NotificationRule.findOne({ id }).lean();
+    if (!rule) return res.status(404).json({ error: 'Regla no encontrada' });
+    const audience = await notificationRulesService._resolveAudience(rule, _notifRulesModels);
+    res.json({
+      success: true,
+      ruleCode: rule.code,
+      audienceCount: audience.length,
+      audienceSample: audience.slice(0, 20),
+      note: 'Dry run: solo se resolvió la audiencia. No se envió nada.'
+    });
+  } catch (err) {
+    logger.error(`test-fire: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Listar suggestions pendientes de aprobación (para el badge + tab).
+app.get('/api/admin/notification-rules/suggestions', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { status = 'pending' } = req.query;
+    const filter = status === 'all' ? {} : { status };
+    const suggestions = await NotificationRuleSuggestion.find(filter)
+      .sort({ suggestedAt: -1 })
+      .limit(200)
+      .lean();
+    const pendingCount = await NotificationRuleSuggestion.countDocuments({ status: 'pending' });
+    res.json({ success: true, suggestions, pendingCount });
+  } catch (err) {
+    logger.error(`GET suggestions: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Aprobar una suggestion: dispara el push real + crea giveaway si tiene bonus.
+app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sug = await NotificationRuleSuggestion.findOne({ id }).lean();
+    if (!sug) return res.status(404).json({ error: 'Sugerencia no encontrada' });
+    if (sug.status !== 'pending') return res.status(400).json({ error: `Sugerencia en estado ${sug.status}, no se puede aprobar` });
+
+    // 1) Si tiene giveaway, crearlo primero (cancela cualquier giveaway activo).
+    let giveawayId = null;
+    if (sug.bonus && sug.bonus.type === 'giveaway' && sug.bonus.amount > 0) {
+      await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+      const ga = await MoneyGiveaway.create({
+        id: uuidv4(),
+        amount: sug.bonus.amount,
+        totalBudget: sug.bonus.amount * sug.audienceCount,
+        maxClaims: sug.audienceCount,
+        durationMinutes: sug.bonus.durationMinutes || 60,
+        expiresAt: new Date(Date.now() + (sug.bonus.durationMinutes || 60) * 60 * 1000),
+        prefix: null,
+        requireZeroBalance: !!sug.bonus.requireZeroBalance,
+        notificationHistoryId: null,
+        status: 'active',
+        createdBy: req.user.username || null
+      });
+      giveawayId = ga.id;
+    }
+
+    // 2) Mandar push.
+    const filter = { username: { $in: sug.audienceUsernames } };
+    const data = {
+      source: 'rule-suggestion',
+      ruleCode: sug.ruleCode,
+      tag: 'auto-rule-' + sug.ruleCode
+    };
+    if (giveawayId) {
+      data.giveawayAmount = String(sug.bonus.amount);
+      data.giveawayDurationMinutes = String(sug.bonus.durationMinutes);
+    }
+    let sendResult = { successCount: 0, failureCount: 0, error: null };
+    try {
+      sendResult = await _notifRulesSendFn(User, sug.title, sug.body, data, filter);
+    } catch (sendErr) {
+      sendResult.error = sendErr.message;
+    }
+
+    // 3) NotificationHistory.
+    const historyId = uuidv4();
+    try {
+      await NotificationHistory.create({
+        id: historyId,
+        sentAt: new Date(),
+        audienceType: 'list',
+        audienceCount: sug.audienceCount,
+        title: sug.title,
+        body: sug.body,
+        type: giveawayId ? 'money_giveaway' : 'plain',
+        successCount: sendResult.successCount || 0,
+        failureCount: sendResult.failureCount || 0,
+        sentBy: req.user.username || null,
+        meta: {
+          ruleId: sug.ruleId,
+          ruleCode: sug.ruleCode,
+          source: 'rule-suggestion',
+          suggestionId: sug.id
+        }
+      });
+    } catch (_) {}
+
+    // 4) Marcar suggestion como aprobada.
+    await NotificationRuleSuggestion.updateOne(
+      { id: sug.id },
+      {
+        $set: {
+          status: 'approved',
+          resolvedAt: new Date(),
+          resolvedBy: req.user.username || null,
+          notificationHistoryId: historyId,
+          giveawayId,
+          pushDelivered: sendResult.successCount || 0,
+          pushFailed: sendResult.failureCount || 0
+        }
+      }
+    );
+
+    res.json({
+      success: true,
+      pushDelivered: sendResult.successCount || 0,
+      pushFailed: sendResult.failureCount || 0,
+      giveawayId,
+      sendError: sendResult.error || null
+    });
+  } catch (err) {
+    logger.error(`approve suggestion: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Descartar una suggestion.
+app.post('/api/admin/notification-rules/suggestions/:id/reject', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 200) : null;
+    const r = await NotificationRuleSuggestion.findOneAndUpdate(
+      { id, status: 'pending' },
+      {
+        $set: {
+          status: 'rejected',
+          resolvedAt: new Date(),
+          resolvedBy: req.user.username || null,
+          rejectionReason: reason
+        }
+      },
+      { new: true }
+    );
+    if (!r) return res.status(404).json({ error: 'Sugerencia no encontrada o ya resuelta' });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`reject suggestion: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
 
 // ============================================
 // ESTADISTICAS ESTRATEGICAS — segmentacion + recuperacion + ROI

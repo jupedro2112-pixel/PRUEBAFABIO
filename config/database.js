@@ -31,7 +31,9 @@ const {
   JugayganaImport,
   DailyPlayerStats,
   UserLineLookup,
-  AppNotifSnapshot
+  AppNotifSnapshot,
+  NotificationRule,
+  NotificationRuleSuggestion
 } = require('../src/models');
 
 // ============================================
@@ -336,6 +338,8 @@ module.exports = {
   DailyPlayerStats,
   UserLineLookup,
   AppNotifSnapshot,
+  NotificationRule,
+  NotificationRuleSuggestion,
   // Helpers
   getConfig,
   setConfig,

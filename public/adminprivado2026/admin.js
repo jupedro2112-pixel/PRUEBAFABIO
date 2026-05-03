@@ -163,7 +163,8 @@ function showSection(sectionKey) {
         welcomebonus: 'welcomebonusSection',
         topEngagement: 'topEngagementSection',
         notifs: 'notifsSection',
-        notifsHistory: 'notifsHistorySection'
+        notifsHistory: 'notifsHistorySection',
+        automations: 'automationsSection'
     };
     const sectionId = map[sectionKey];
     if (sectionId) {
@@ -195,6 +196,8 @@ function showSection(sectionKey) {
         loadWelcomeBonusReport();
     } else if (sectionKey === 'topEngagement') {
         loadStatsAll();
+    } else if (sectionKey === 'automations') {
+        loadAutomations();
     } else if (sectionKey === 'notifs') {
         // Setear vista previa con valores actuales
         updateNotifPreview();
@@ -3384,3 +3387,415 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 });
+
+// =====================================================================
+// AUTOMATIZACIONES — sección completa (tabs: rules / pending / history / calendar)
+// =====================================================================
+let _autoActiveTab = 'rules';
+let _autoRulesCache = [];
+let _autoSuggestionsCache = [];
+let _autoEditingRuleId = null;
+
+const _autoCategoryLabels = {
+    refund: '💰 Reembolsos',
+    welcome: '🎁 Welcome',
+    engagement: '🔥 Engagement',
+    recovery: '🎯 Recovery',
+    giveaway: '💸 Giveaways',
+    whatsapp: '📞 WhatsApp'
+};
+
+const _autoDayOfWeekLabels = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+function loadAutomations() {
+    Promise.all([_autoFetchRules(), _autoFetchSuggestions()]).then(() => {
+        _autoRenderActiveTab();
+        _autoUpdatePendingBadge();
+    });
+}
+
+async function _autoFetchRules() {
+    try {
+        const r = await authFetch('/api/admin/notification-rules');
+        const j = await r.json();
+        _autoRulesCache = j.rules || [];
+    } catch (e) { console.warn('autoFetchRules', e); }
+}
+
+async function _autoFetchSuggestions() {
+    try {
+        const r = await authFetch('/api/admin/notification-rules/suggestions?status=pending');
+        const j = await r.json();
+        _autoSuggestionsCache = j.suggestions || [];
+        const badge = document.getElementById('autoPendingCountBadge');
+        const navBadge = document.getElementById('automationsBadge');
+        const count = j.pendingCount || 0;
+        if (count > 0) {
+            if (badge) { badge.textContent = String(count); badge.style.display = ''; }
+            if (navBadge) { navBadge.textContent = String(count); navBadge.style.display = ''; }
+        } else {
+            if (badge) badge.style.display = 'none';
+            if (navBadge) navBadge.style.display = 'none';
+        }
+    } catch (e) { console.warn('autoFetchSuggestions', e); }
+}
+
+function _autoUpdatePendingBadge() {
+    const count = _autoSuggestionsCache.length;
+    const badge = document.getElementById('autoPendingCountBadge');
+    if (badge) {
+        if (count > 0) { badge.textContent = String(count); badge.style.display = ''; }
+        else badge.style.display = 'none';
+    }
+}
+
+function switchAutomationsTab(tab) {
+    _autoActiveTab = tab;
+    document.querySelectorAll('.auto-tab-btn').forEach(b => {
+        const isActive = b.getAttribute('data-tab') === tab;
+        if (isActive) {
+            b.style.background = 'rgba(0,212,255,0.10)';
+            b.style.borderColor = 'rgba(0,212,255,0.30)';
+            b.style.color = '#00d4ff';
+            b.classList.add('active');
+        } else {
+            b.style.background = 'rgba(0,0,0,0.30)';
+            b.style.borderColor = 'rgba(255,255,255,0.10)';
+            b.style.color = '#aaa';
+            b.classList.remove('active');
+        }
+    });
+    _autoRenderActiveTab();
+}
+
+function _autoRenderActiveTab() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    if (_autoActiveTab === 'rules') c.innerHTML = _autoRenderRulesTab();
+    else if (_autoActiveTab === 'pending') c.innerHTML = _autoRenderPendingTab();
+    else if (_autoActiveTab === 'history') _autoRenderHistoryTab();
+    else if (_autoActiveTab === 'calendar') c.innerHTML = _autoRenderCalendarTab();
+}
+
+// ============= TAB: REGLAS =============
+function _autoRenderRulesTab() {
+    if (_autoRulesCache.length === 0) return '<div class="empty-state">No hay reglas configuradas. Refrescar la página o esperar al primer arranque.</div>';
+    const byCat = {};
+    for (const r of _autoRulesCache) {
+        if (!byCat[r.category]) byCat[r.category] = [];
+        byCat[r.category].push(r);
+    }
+    let html = '';
+    for (const cat of Object.keys(byCat)) {
+        html += '<div style="margin-bottom:18px;">';
+        html += '<h3 style="color:#fff;font-size:14px;margin:0 0 10px;">' + (_autoCategoryLabels[cat] || cat) + ' <span style="color:#666;font-size:11px;font-weight:400;">' + byCat[cat].length + ' reglas</span></h3>';
+        html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+        for (const r of byCat[cat]) {
+            html += _autoRenderRuleCard(r);
+        }
+        html += '</div></div>';
+    }
+    return html;
+}
+
+function _autoRenderRuleCard(r) {
+    const enabledColor = r.enabled ? '#25d366' : '#666';
+    const enabledLabel = r.enabled ? 'ACTIVA' : 'PAUSADA';
+    const cs = r.cronSchedule || {};
+    let when = '—';
+    if (r.triggerType === 'cron' && cs.hour != null) {
+        const h = String(cs.hour).padStart(2, '0');
+        const m = String(cs.minute || 0).padStart(2, '0');
+        when = h + ':' + m;
+        if (cs.dayOfWeek != null) when = _autoDayOfWeekLabels[cs.dayOfWeek] + ' ' + when;
+        else if (cs.dayOfMonth != null) when = 'Día ' + cs.dayOfMonth + ' del mes ' + when;
+        else when = 'Cada día ' + when;
+    }
+    const lastFired = r.lastFiredAt ? new Date(r.lastFiredAt).toLocaleString('es-AR') : 'Nunca';
+    const bonusBadge = (r.bonus && r.bonus.type !== 'none')
+        ? '<span style="background:rgba(255,170,68,0.15);color:#ffaa44;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:700;margin-left:5px;">💸 ' + r.bonus.type + ' $' + (r.bonus.amount || 0) + '</span>'
+        : '';
+    const apprBadge = r.requiresAdminApproval
+        ? '<span style="background:rgba(255,80,80,0.15);color:#ff5050;font-size:10px;padding:2px 7px;border-radius:8px;font-weight:700;margin-left:5px;">✋ Requiere aprobar</span>'
+        : '';
+
+    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">' +
+            '<div style="flex:1;min-width:240px;">' +
+                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;">' +
+                    '<span style="background:rgba(0,212,255,0.20);color:#00d4ff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;">' + escapeHtml(r.code) + '</span>' +
+                    '<span style="color:' + enabledColor + ';font-size:10px;font-weight:700;">' + enabledLabel + '</span>' +
+                    bonusBadge + apprBadge +
+                '</div>' +
+                '<div style="color:#fff;font-size:13px;font-weight:600;margin-bottom:3px;">' + escapeHtml(r.name) + '</div>' +
+                '<div style="color:#888;font-size:11px;line-height:1.5;">⏰ ' + when + ' · 🎯 ' + escapeHtml(r.audienceType) + '</div>' +
+                '<div style="color:#aaa;font-size:11px;margin-top:5px;font-style:italic;">"' + escapeHtml(r.title) + ' — ' + escapeHtml(r.body.slice(0, 80)) + (r.body.length > 80 ? '…' : '') + '"</div>' +
+                '<div style="color:#666;font-size:10px;margin-top:5px;">Último disparo: ' + lastFired + ' · Total: ' + (r.totalFiresLifetime || 0) + ' envíos · ' + (r.totalSuggestionsLifetime || 0) + ' sugerencias</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                '<button onclick="autoToggleRule(\'' + r.id + '\')" style="padding:6px 11px;font-size:11px;font-weight:700;background:' + (r.enabled ? 'rgba(255,80,80,0.15)' : 'rgba(37,211,102,0.15)') + ';color:' + (r.enabled ? '#ff5050' : '#25d366') + ';border:1px solid currentColor;border-radius:6px;cursor:pointer;">' + (r.enabled ? '⏸ Pausar' : '▶ Activar') + '</button>' +
+                '<button onclick="autoEditRule(\'' + r.id + '\')" style="padding:6px 11px;font-size:11px;font-weight:700;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;cursor:pointer;">✏ Editar</button>' +
+                '<button onclick="autoTestFireRule(\'' + r.id + '\')" style="padding:6px 11px;font-size:11px;font-weight:700;background:rgba(155,48,255,0.15);color:#c89bff;border:1px solid rgba(155,48,255,0.40);border-radius:6px;cursor:pointer;">🧪 Probar</button>' +
+            '</div>' +
+        '</div>' +
+    '</div>';
+}
+
+async function autoToggleRule(id) {
+    const r = _autoRulesCache.find(x => x.id === id);
+    if (!r) return;
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/' + id, {
+            method: 'PATCH',
+            body: JSON.stringify({ enabled: !r.enabled })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            showToast(j.rule.enabled ? '▶ Regla activada' : '⏸ Regla pausada', 'success');
+            await _autoFetchRules();
+            _autoRenderActiveTab();
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+function autoEditRule(id) {
+    const r = _autoRulesCache.find(x => x.id === id);
+    if (!r) return;
+    _autoEditingRuleId = id;
+    const modal = document.getElementById('autoRuleEditModal');
+    const body = document.getElementById('autoRuleEditBody');
+    if (!modal || !body) return;
+    body.innerHTML =
+        '<div style="margin-bottom:10px;color:#888;font-size:11px;"><strong>' + escapeHtml(r.code) + '</strong> · ' + escapeHtml(r.name) + '</div>' +
+        '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Título</label>' +
+        '<input type="text" id="autoEditTitle" value="' + escapeHtml(r.title) + '" maxlength="60" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;margin-bottom:10px;">' +
+        '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Cuerpo del mensaje</label>' +
+        '<textarea id="autoEditBody" maxlength="180" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;margin-bottom:10px;min-height:80px;">' + escapeHtml(r.body) + '</textarea>' +
+        '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+            '<div style="flex:1;"><label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Hora ART (0-23)</label><input type="number" id="autoEditHour" value="' + ((r.cronSchedule && r.cronSchedule.hour) || 0) + '" min="0" max="23" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;"></div>' +
+            '<div style="flex:1;"><label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Minuto</label><input type="number" id="autoEditMinute" value="' + ((r.cronSchedule && r.cronSchedule.minute) || 0) + '" min="0" max="59" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;"></div>' +
+        '</div>' +
+        '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">Cooldown (minutos por usuario, default 1440 = 24h)</label>' +
+        '<input type="number" id="autoEditCooldown" value="' + (r.cooldownMinutes || 1440) + '" min="0" style="width:100%;padding:9px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;">';
+    modal.style.display = 'flex';
+}
+
+function closeAutoRuleEdit() {
+    const modal = document.getElementById('autoRuleEditModal');
+    if (modal) modal.style.display = 'none';
+    _autoEditingRuleId = null;
+}
+
+async function saveAutoRuleEdit() {
+    if (!_autoEditingRuleId) return;
+    const title = document.getElementById('autoEditTitle')?.value?.trim();
+    const body = document.getElementById('autoEditBody')?.value?.trim();
+    const hour = Number(document.getElementById('autoEditHour')?.value);
+    const minute = Number(document.getElementById('autoEditMinute')?.value);
+    const cooldown = Number(document.getElementById('autoEditCooldown')?.value);
+    if (!title || !body) { showToast('Falta título o cuerpo', 'error'); return; }
+    if (!isFinite(hour) || hour < 0 || hour > 23) { showToast('Hora inválida', 'error'); return; }
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/' + _autoEditingRuleId, {
+            method: 'PATCH',
+            body: JSON.stringify({
+                title, body,
+                cronSchedule: {
+                    hour, minute,
+                    dayOfWeek: _autoRulesCache.find(r => r.id === _autoEditingRuleId)?.cronSchedule?.dayOfWeek,
+                    dayOfMonth: _autoRulesCache.find(r => r.id === _autoEditingRuleId)?.cronSchedule?.dayOfMonth
+                },
+                cooldownMinutes: cooldown
+            })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            showToast('✅ Cambios guardados', 'success');
+            closeAutoRuleEdit();
+            await _autoFetchRules();
+            _autoRenderActiveTab();
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function autoTestFireRule(id) {
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/' + id + '/test-fire', { method: 'POST' });
+        const j = await resp.json();
+        if (j.success) {
+            const sample = (j.audienceSample || []).slice(0, 5).join(', ');
+            alert('🧪 Dry run\\nRegla: ' + j.ruleCode + '\\nAudiencia resuelta: ' + j.audienceCount + ' usuarios\\n\\nMuestra: ' + (sample || '(vacío)') + '\\n\\nNo se envió nada.');
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// ============= TAB: PENDIENTES =============
+function _autoRenderPendingTab() {
+    if (_autoSuggestionsCache.length === 0) {
+        return '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">✅ Sin sugerencias pendientes. Cuando una regla con bonus dispare, aparecerá acá.</div>';
+    }
+    let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+    for (const s of _autoSuggestionsCache) {
+        const ageMin = Math.floor((Date.now() - new Date(s.suggestedAt).getTime()) / 60000);
+        const expHours = Math.max(0, Math.floor((new Date(s.expiresAt).getTime() - Date.now()) / 3600000));
+        const bonusText = (s.bonus && s.bonus.type !== 'none')
+            ? '💸 ' + s.bonus.type + ' $' + s.bonus.amount + ' x ' + s.audienceCount + ' usuarios = $' + (s.bonus.amount * s.audienceCount).toLocaleString('es-AR') + ' total'
+            : '📢 Sin bonus, solo push';
+        html += '<div style="background:rgba(255,170,68,0.05);border:1px solid rgba(255,170,68,0.30);border-radius:10px;padding:14px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">' +
+                '<div style="flex:1;min-width:240px;">' +
+                    '<div style="margin-bottom:5px;"><span style="background:rgba(0,212,255,0.20);color:#00d4ff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;">' + escapeHtml(s.ruleCode) + '</span> <span style="color:#888;font-size:11px;margin-left:4px;">hace ' + ageMin + ' min</span></div>' +
+                    '<div style="color:#fff;font-size:13px;font-weight:600;margin-bottom:3px;">' + escapeHtml(s.ruleName) + '</div>' +
+                    '<div style="color:#aaa;font-size:11px;margin-bottom:6px;font-style:italic;">"' + escapeHtml(s.title) + ' — ' + escapeHtml(s.body) + '"</div>' +
+                    '<div style="color:#ffaa44;font-size:11px;font-weight:700;margin-bottom:3px;">' + bonusText + '</div>' +
+                    '<div style="color:#888;font-size:10px;">Audiencia: ' + s.audienceCount + ' usuarios · Expira en ' + expHours + 'h</div>' +
+                '</div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                    '<button onclick="autoApproveSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:7px;cursor:pointer;">✅ Aprobar y enviar</button>' +
+                    '<button onclick="autoRejectSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:7px;cursor:pointer;">❌ Descartar</button>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
+async function autoApproveSuggestion(id) {
+    const s = _autoSuggestionsCache.find(x => x.id === id);
+    if (!s) return;
+    const bonusInfo = (s.bonus && s.bonus.type !== 'none')
+        ? '\\n\\nESTA APROBACIÓN VA A CREAR UN ' + s.bonus.type.toUpperCase() + ' DE $' + s.bonus.amount + ' POR USUARIO.\\nTotal posible: $' + (s.bonus.amount * s.audienceCount).toLocaleString('es-AR')
+        : '';
+    if (!confirm('¿Aprobar y enviar?\\n\\n' + s.audienceCount + ' usuarios recibirán: "' + s.title + '"' + bonusInfo)) return;
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/suggestions/' + id + '/approve', { method: 'POST' });
+        const j = await resp.json();
+        if (j.success) {
+            let msg = '✅ Push enviado · ' + (j.pushDelivered || 0) + ' entregados, ' + (j.pushFailed || 0) + ' con token inválido';
+            if (j.giveawayId) msg += ' · Giveaway creado';
+            if (j.sendError) msg = '⚠️ Aprobada pero envío falló: ' + j.sendError;
+            showToast(msg, j.sendError ? 'error' : 'success');
+            await _autoFetchSuggestions();
+            _autoRenderActiveTab();
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function autoRejectSuggestion(id) {
+    const reason = prompt('Razón del descarte (opcional):', '');
+    if (reason === null) return;
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/suggestions/' + id + '/reject', {
+            method: 'POST',
+            body: JSON.stringify({ reason })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            showToast('Descartada', 'info');
+            await _autoFetchSuggestions();
+            _autoRenderActiveTab();
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// ============= TAB: HISTORIAL =============
+async function _autoRenderHistoryTab() {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando historial…</div>';
+    try {
+        const r = await authFetch('/api/admin/notification-rules/suggestions?status=all');
+        const j = await r.json();
+        const all = (j.suggestions || []).filter(s => s.status !== 'pending');
+        if (all.length === 0) {
+            c.innerHTML = '<div class="empty-state">Sin historial todavía.</div>';
+            return;
+        }
+        let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead><tr style="background:rgba(0,212,255,0.05);"><th style="padding:8px;text-align:left;color:#00d4ff;">Fecha</th><th style="padding:8px;text-align:left;color:#00d4ff;">Regla</th><th style="padding:8px;text-align:left;color:#00d4ff;">Estado</th><th style="padding:8px;text-align:right;color:#00d4ff;">Audiencia</th><th style="padding:8px;text-align:right;color:#00d4ff;">Entregados</th><th style="padding:8px;text-align:left;color:#00d4ff;">Por</th></tr></thead><tbody>';
+        for (const s of all.slice(0, 100)) {
+            const dt = new Date(s.suggestedAt).toLocaleString('es-AR');
+            const statusColor = s.status === 'approved' ? '#25d366' : s.status === 'rejected' ? '#ff5050' : '#888';
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+                '<td style="padding:7px;color:#aaa;">' + dt + '</td>' +
+                '<td style="padding:7px;color:#fff;">' + escapeHtml(s.ruleCode) + ' — ' + escapeHtml(s.ruleName) + '</td>' +
+                '<td style="padding:7px;color:' + statusColor + ';font-weight:700;">' + s.status + '</td>' +
+                '<td style="padding:7px;color:#fff;text-align:right;">' + s.audienceCount + '</td>' +
+                '<td style="padding:7px;color:#25d366;text-align:right;">' + (s.pushDelivered != null ? s.pushDelivered : '—') + '</td>' +
+                '<td style="padding:7px;color:#888;">' + escapeHtml(s.resolvedBy || 'auto') + '</td>' +
+            '</tr>';
+        }
+        html += '</tbody></table>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error cargando historial</div>';
+    }
+}
+
+// ============= TAB: CALENDARIO =============
+function _autoRenderCalendarTab() {
+    // Vista de la semana: para cada día, listar las reglas que disparan ese día.
+    const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    const dayIdx = [1, 2, 3, 4, 5, 6, 0];
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;">';
+    for (let i = 0; i < days.length; i++) {
+        const dow = dayIdx[i];
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;">';
+        html += '<h4 style="color:#00d4ff;font-size:12px;margin:0 0 8px;text-transform:uppercase;">' + days[i] + '</h4>';
+        const dayRules = _autoRulesCache.filter(r => {
+            if (!r.enabled || r.triggerType !== 'cron') return false;
+            const cs = r.cronSchedule || {};
+            if (cs.dayOfWeek != null) return cs.dayOfWeek === dow;
+            if (cs.dayOfMonth != null) return false; // no aparecen en el grid semanal
+            return true; // todos los días
+        }).sort((a, b) => ((a.cronSchedule.hour || 0) - (b.cronSchedule.hour || 0)));
+        if (dayRules.length === 0) {
+            html += '<div style="color:#666;font-size:11px;font-style:italic;">Sin reglas</div>';
+        } else {
+            for (const r of dayRules) {
+                const cs = r.cronSchedule || {};
+                const time = String(cs.hour).padStart(2, '0') + ':' + String(cs.minute || 0).padStart(2, '0');
+                html += '<div style="margin-bottom:6px;font-size:11px;line-height:1.4;">' +
+                    '<span style="color:#ffd700;font-weight:700;font-family:monospace;">' + time + '</span> ' +
+                    '<span style="color:#fff;">' + escapeHtml(r.code) + '</span> ' +
+                    '<span style="color:#888;">' + escapeHtml(r.title.slice(0, 22)) + '</span>' +
+                '</div>';
+            }
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // Reglas mensuales (por dayOfMonth) listadas aparte.
+    const monthly = _autoRulesCache.filter(r => r.enabled && r.triggerType === 'cron' && r.cronSchedule && r.cronSchedule.dayOfMonth != null);
+    if (monthly.length > 0) {
+        html += '<div style="margin-top:18px;background:rgba(155,48,255,0.05);border:1px solid rgba(155,48,255,0.20);border-radius:10px;padding:12px;">';
+        html += '<h4 style="color:#c89bff;font-size:13px;margin:0 0 10px;">📅 Reglas mensuales (por día del mes)</h4>';
+        for (const r of monthly) {
+            const cs = r.cronSchedule || {};
+            html += '<div style="margin-bottom:5px;font-size:12px;color:#fff;">' +
+                '<strong>Día ' + cs.dayOfMonth + ' a las ' + String(cs.hour).padStart(2, '0') + ':' + String(cs.minute || 0).padStart(2, '0') + '</strong> · ' +
+                escapeHtml(r.code) + ' — ' + escapeHtml(r.name) +
+            '</div>';
+        }
+        html += '</div>';
+    }
+
+    return html;
+}
+
+// Refresh global del badge cada 60s mientras la sesión está abierta.
+setInterval(() => {
+    if (typeof currentToken !== 'undefined' && currentToken) {
+        _autoFetchSuggestions().then(() => _autoUpdatePendingBadge()).catch(() => {});
+    }
+}, 60 * 1000);

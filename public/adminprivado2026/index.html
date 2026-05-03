@@ -90,6 +90,10 @@
                     <span>🏆</span>
                     <span>Top estadísticas</span>
                 </a>
+                <a href="#" class="nav-item" data-section="automations">
+                    <span>🤖</span>
+                    <span>Automatizaciones <span id="automationsBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
@@ -750,6 +754,49 @@
                 </div>
                 <div id="welcomeBonusReportContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: AUTOMATIZACIONES
+                 ============================================ -->
+            <section id="automationsSection" class="section">
+                <div class="panel-header">
+                    <h2>🤖 Automatizaciones de notificaciones</h2>
+                    <button class="refresh-btn" onclick="loadAutomations()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">El playbook automático del sistema</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                        Reglas que el motor evalúa cada 5 min. Disparan push automáticamente
+                        en horarios fijos (recordatorios de reembolso) o sugieren campañas que vos aprobás
+                        con un botón (giveaways de recovery). Editá el copy o pausá una regla cuando quieras.
+                    </p>
+                </div>
+
+                <!-- Tabs -->
+                <div id="automationsTabs" style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,0.10);">
+                    <button class="auto-tab-btn active" data-tab="rules" onclick="switchAutomationsTab('rules')" style="padding:9px 14px;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);border-bottom:none;color:#00d4ff;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">📋 Reglas activas</button>
+                    <button class="auto-tab-btn" data-tab="pending" onclick="switchAutomationsTab('pending')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">✋ Pendientes <span id="autoPendingCountBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;padding:1px 5px;border-radius:6px;margin-left:3px;"></span></button>
+                    <button class="auto-tab-btn" data-tab="history" onclick="switchAutomationsTab('history')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">📊 Historial</button>
+                    <button class="auto-tab-btn" data-tab="calendar" onclick="switchAutomationsTab('calendar')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">⏰ Calendario semanal</button>
+                </div>
+
+                <!-- Contenido de cada tab (un solo container, contenido cambia) -->
+                <div id="automationsContent">
+                    <div class="empty-state">⏳ Cargando reglas…</div>
+                </div>
+
+                <!-- Modal de edición de regla -->
+                <div id="autoRuleEditModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+                    <div style="background:#1a1a1f;border:1px solid rgba(0,212,255,0.40);border-radius:14px;padding:22px;max-width:560px;width:92%;max-height:85vh;overflow-y:auto;">
+                        <h3 style="margin:0 0 14px;color:#00d4ff;font-size:16px;">Editar regla</h3>
+                        <div id="autoRuleEditBody"></div>
+                        <div style="display:flex;gap:8px;margin-top:14px;">
+                            <button onclick="closeAutoRuleEdit()" style="flex:1;padding:10px;background:rgba(255,255,255,0.08);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;cursor:pointer;">Cancelar</button>
+                            <button onclick="saveAutoRuleEdit()" style="flex:1;padding:10px;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;">💾 Guardar</button>
+                        </div>
+                    </div>
                 </div>
             </section>
 

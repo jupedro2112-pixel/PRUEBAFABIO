@@ -29,6 +29,8 @@ const JugayganaImport = require('./JugayganaImport');
 const DailyPlayerStats = require('./DailyPlayerStats');
 const UserLineLookup = require('./UserLineLookup');
 const AppNotifSnapshot = require('./AppNotifSnapshot');
+const NotificationRule = require('./NotificationRule');
+const NotificationRuleSuggestion = require('./NotificationRuleSuggestion');
 
 
 /**
@@ -430,6 +432,8 @@ module.exports = {
   DailyPlayerStats,
   UserLineLookup,
   AppNotifSnapshot,
+  NotificationRule,
+  NotificationRuleSuggestion,
 
   // Funciones de conexión
   connectDB,
