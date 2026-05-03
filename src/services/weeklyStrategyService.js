@@ -105,8 +105,14 @@ async function getOrCreateConfig(WeeklyStrategyConfig) {
 const APP_NOTIFS_FILTER = {
   role: 'user',
   $or: [
+    // Caso 1: campos legacy top-level (un solo token "principal").
     { fcmTokenContext: 'standalone', notifPermission: 'granted' },
-    { 'fcmTokens.context': 'standalone', 'fcmTokens.notifPermission': 'granted' }
+    // Caso 2: array fcmTokens — usamos $elemMatch para que AMBAS
+    // condiciones caigan en el MISMO elemento del array. Sin
+    // $elemMatch, MongoDB matchea si CUALQUIER token tiene
+    // context='standalone' Y CUALQUIER (otro) token tiene
+    // notifPermission='granted', dejando entrar users sin PWA real.
+    { fcmTokens: { $elemMatch: { context: 'standalone', notifPermission: 'granted' } } }
   ]
 };
 
@@ -309,8 +315,36 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
   if (!config.netwinGift.enabled) return { skipped: 'netwinGift.enabled = false' };
 
   const wk = _weekKey();
-  if (!force && config.lastNetwinFireWeek === wk) {
-    return { skipped: `already fired this week (${wk})` };
+
+  // LOCK ATÓMICO antes de cualquier side-effect. findOneAndUpdate con
+  // condición lastNetwinFireWeek != wk reserva la semana en una sola
+  // operación. Si dos instancias del cron corren en paralelo (cluster /
+  // replicas), solo UNA gana — la otra recibe null y skipea.
+  // force=true (manual run-now) salta la lock pero sigue actualizando
+  // el timestamp para que el cron natural no re-dispare.
+  if (!force) {
+    const claim = await WeeklyStrategyConfig.findOneAndUpdate(
+      {
+        id: 'main',
+        $or: [
+          { lastNetwinFireWeek: { $ne: wk } },
+          { lastNetwinFireWeek: null },
+          { lastNetwinFireWeek: { $exists: false } }
+        ]
+      },
+      { $set: { lastNetwinFireWeek: wk, lastNetwinFireAt: new Date() } },
+      { new: false }
+    );
+    if (!claim) {
+      return { skipped: `already fired this week (${wk})` };
+    }
+  } else if (!dryRun) {
+    // Manual: actualizar timestamps igual para evitar que el cron
+    // natural re-dispare en la misma semana.
+    await WeeklyStrategyConfig.updateOne(
+      { id: 'main' },
+      { $set: { lastNetwinFireWeek: wk, lastNetwinFireAt: new Date() } }
+    );
   }
 
   // 1) Resolver audiencia.
@@ -367,10 +401,7 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
   }
 
   if (targets.length === 0) {
-    await WeeklyStrategyConfig.updateOne(
-      { id: 'main' },
-      { $set: { lastNetwinFireWeek: wk, lastNetwinFireAt: new Date() } }
-    );
+    // Lock ya seteado arriba — no hace falta re-update.
     return { skipped: 'audience-empty', escalatedCount: escalated.length };
   }
 
@@ -385,8 +416,13 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
     tierGroups.get(k).push(t);
   }
 
-  // Cancelar giveaways activos antes de crear los nuevos (regla del sistema).
-  await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+  // Cancelar giveaways VIEJOS de estrategia automática antes de crear
+  // los nuevos. NO toca giveaways manuales del admin (strategySource='manual')
+  // ni de aprobación de reglas ('auto-rule') — esos son intocables.
+  await MoneyGiveaway.updateMany(
+    { status: 'active', strategySource: 'auto-strategy' },
+    { $set: { status: 'cancelled' } }
+  );
 
   const historyId = uuidv4();
   const giveawayIds = [];
@@ -399,6 +435,7 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
       maxClaims: list.length,
       expiresAt: new Date(Date.now() + (config.netwinGift.durationMinutes || 60 * 48) * 60 * 1000),
       createdBy: manualTrigger ? 'manual-trigger' : 'auto-strategy',
+      strategySource: 'auto-strategy',
       prefix: null,
       audienceWhitelist: list.map(x => String(x.username).toLowerCase()),
       notificationHistoryId: historyId,
@@ -511,12 +548,10 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
       WeeklyNotifBudget
     });
   }
+  // Solo $inc — el lock ya se seteó arriba al inicio.
   await WeeklyStrategyConfig.updateOne(
     { id: 'main' },
-    {
-      $set: { lastNetwinFireWeek: wk, lastNetwinFireAt: new Date() },
-      $inc: { totalNotifsSent: targets.length }
-    }
+    { $inc: { totalNotifsSent: targets.length } }
   );
 
   logger.info(`[strategy] netwin OK: ${targets.length} push enviados, ${giveawayIds.length} giveaways activos, costo potencial ${totalCost} ARS`);
@@ -535,7 +570,7 @@ async function runMondayNetwinGift({ models, jugaygana, sendPushFn, logger, dryR
 // ============================================
 // LANZAR CAMPAÑA TIER BONUS (JUEVES)
 // ============================================
-async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT_KEY, logger, dryRun = false, force = false, manualTrigger = false }) {
+async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY, logger, dryRun = false, force = false, manualTrigger = false }) {
   const {
     User, RefundClaim, NotificationHistory,
     WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport
@@ -548,8 +583,29 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
   if (!config.tierBonus.enabled) return { skipped: 'tierBonus.enabled = false' };
 
   const wk = _weekKey();
-  if (!force && config.lastTierBonusFireWeek === wk) {
-    return { skipped: `already fired this week (${wk})` };
+
+  // LOCK ATÓMICO — ver comentario en runMondayNetwinGift.
+  if (!force) {
+    const claim = await WeeklyStrategyConfig.findOneAndUpdate(
+      {
+        id: 'main',
+        $or: [
+          { lastTierBonusFireWeek: { $ne: wk } },
+          { lastTierBonusFireWeek: null },
+          { lastTierBonusFireWeek: { $exists: false } }
+        ]
+      },
+      { $set: { lastTierBonusFireWeek: wk, lastTierBonusFireAt: new Date() } },
+      { new: false }
+    );
+    if (!claim) {
+      return { skipped: `already fired this week (${wk})` };
+    }
+  } else if (!dryRun) {
+    await WeeklyStrategyConfig.updateOne(
+      { id: 'main' },
+      { $set: { lastTierBonusFireWeek: wk, lastTierBonusFireAt: new Date() } }
+    );
   }
 
   const { audience, distribution } = await computeTierBonusAudience({ User, RefundClaim, config, logger });
@@ -585,10 +641,7 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
   }
 
   if (targets.length === 0) {
-    await WeeklyStrategyConfig.updateOne(
-      { id: 'main' },
-      { $set: { lastTierBonusFireWeek: wk, lastTierBonusFireAt: new Date() } }
-    );
+    // Lock ya seteado arriba — no re-update.
     return { skipped: 'audience-empty' };
   }
 
@@ -621,9 +674,11 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
     byTierCode.get(t.tier.code).users.push(t);
   }
 
-  // Cancelar promo activa antes de crear las nuevas (solo puede haber 1
-  // a la vez, así que al final solo queda la última).
-  await setConfig(PROMO_ALERT_KEY, null);
+  // No tocamos PROMO_ALERT_KEY (singleton manual / line-down) — sino que
+  // acumulamos las N tier promos en el array TIER_PROMOS_KEY. Cada user ve
+  // SU promo (la que tiene su username en audienceWhitelist) sin que oro
+  // pise plata pise bronce.
+  const tierPromosArray = [];
 
   for (const [code, group] of byTierCode) {
     const tier = group.tier;
@@ -641,7 +696,7 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
       continue;
     }
 
-    // Crear promo dirigida solo a este tier.
+    // Promo del tier — se añade al array, no pisa nada.
     const promo = {
       id: uuidv4(),
       message: `🎁 ${tier.label}: cargá ahora y te damos +${tier.bonusPct}% extra`,
@@ -655,7 +710,7 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
       strategyTier: code,
       strategyBonusPct: tier.bonusPct
     };
-    await setConfig(PROMO_ALERT_KEY, promo);
+    tierPromosArray.push(promo);
 
     // Push.
     const data = {
@@ -689,6 +744,17 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
       delivered: sendResult.successCount || 0,
       failed: sendResult.failureCount || 0
     });
+  }
+
+  // Persistir TODOS los tier promos en el array (los users los ven via
+  // /api/promo-alert/active que matchea por whitelist). Reemplaza tier
+  // promos previas (las semana anterior ya no aplican).
+  if (TIER_PROMOS_KEY) {
+    if (tierPromosArray.length > 0) {
+      await setConfig(TIER_PROMOS_KEY, tierPromosArray);
+    } else {
+      await setConfig(TIER_PROMOS_KEY, null);
+    }
   }
 
   // NotificationHistory.
@@ -736,12 +802,10 @@ async function runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT
     });
   }
 
+  // Solo $inc — el lock ya se seteó arriba al inicio.
   await WeeklyStrategyConfig.updateOne(
     { id: 'main' },
-    {
-      $set: { lastTierBonusFireWeek: wk, lastTierBonusFireAt: new Date() },
-      $inc: { totalNotifsSent: targets.length }
-    }
+    { $inc: { totalNotifsSent: targets.length } }
   );
 
   logger.info(`[strategy] tier-bonus OK: ${targets.length} push, ${totalDelivered} entregados, breakdown ${JSON.stringify(distribution)}`);
@@ -767,8 +831,23 @@ async function runWednesdayReport({ models, jugaygana, logger, weekKey: weekKeyA
   const config = await getOrCreateConfig(WeeklyStrategyConfig);
   const wk = weekKeyArg || _previousWeekKey();
 
-  if (!force && config.lastReportWeek === wk) {
-    return { skipped: `already generated for ${wk}` };
+  // LOCK ATÓMICO — ver comentario en runMondayNetwinGift.
+  if (!force) {
+    const claim = await WeeklyStrategyConfig.findOneAndUpdate(
+      {
+        id: 'main',
+        $or: [
+          { lastReportWeek: { $ne: wk } },
+          { lastReportWeek: null },
+          { lastReportWeek: { $exists: false } }
+        ]
+      },
+      { $set: { lastReportWeek: wk, lastReportAt: new Date() } },
+      { new: false }
+    );
+    if (!claim) {
+      return { skipped: `already generated for ${wk}` };
+    }
   }
 
   // Buscar pushes de estrategia de la semana objetivo.
@@ -1173,7 +1252,7 @@ function _ymd(date) {
 // ============================================
 // CRON CHECKER (corre cada 5 min, decide qué disparar)
 // ============================================
-async function checkAndFireScheduledRuns({ models, jugaygana, jugayganaMovements, sendPushFn, setConfig, PROMO_ALERT_KEY, logger }) {
+async function checkAndFireScheduledRuns({ models, jugaygana, jugayganaMovements, sendPushFn, setConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY, logger }) {
   const config = await getOrCreateConfig(models.WeeklyStrategyConfig);
   if (!config.enabled || config.emergencyStop) return;
   if (config.pausedUntil && new Date(config.pausedUntil) > new Date()) return;
@@ -1196,7 +1275,7 @@ async function checkAndFireScheduledRuns({ models, jugaygana, jugayganaMovements
     const wk = _weekKey();
     if (config.lastTierBonusFireWeek !== wk) {
       logger.info(`[strategy] disparando tier-bonus (${wk})`);
-      await runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT_KEY, logger });
+      await runThursdayTierBonus({ models, sendPushFn, setConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY, logger });
     }
   }
 

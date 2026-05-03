@@ -42,6 +42,20 @@ const moneyGiveawaySchema = new mongoose.Schema({
 
   notificationHistoryId: { type: String, default: null, index: true },
 
+  // Marca el origen del giveaway. Permite que la estrategia automática
+  // semanal cancele SOLO sus propios giveaways viejos sin tocar los que
+  // creó el admin manualmente.
+  //   'auto-strategy' = creado por motor de estrategia (lunes netwin)
+  //   'auto-rule'     = creado por aprobación de notification rule
+  //   'manual'        = creado por admin desde panel o scheduled notif
+  //   null            = legacy (pre-feature, asume manual)
+  strategySource: {
+    type: String,
+    enum: ['auto-strategy', 'auto-rule', 'manual', null],
+    default: 'manual',
+    index: true
+  },
+
   // Si está en true, solo pueden reclamar usuarios con saldo en JUGAYGANA
   // <= 0. El check se hace en el endpoint POST /api/money-giveaway/claim
   // consultando jugaygana.getUserInfoByName(username) antes de acreditar.

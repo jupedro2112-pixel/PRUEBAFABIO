@@ -7451,6 +7451,10 @@ app.post(
 app.post('/api/admin/user-lines/reassign-orphans', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const dryRun = req.body && req.body.dryRun !== false; // default true
+    // Modo destructivo (dryRun=false) → solo admin principal.
+    if (!dryRun && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede aplicar reasignación masiva. Para preview, sí podés.' });
+    }
     const linesConfig = await getConfig('userLinesByPrefix');
     if (!linesConfig) {
       return res.status(400).json({ error: 'No hay config de líneas (userLinesByPrefix). Configurá primero "Números vigentes".' });
@@ -8400,36 +8404,58 @@ app.post('/api/admin/reports/revalidate-tokens', authMiddleware, adminMiddleware
 // Si expiresAt < ahora, el endpoint GET responde null (no esta activo).
 // ============================================
 const PROMO_ALERT_KEY = 'activePromoAlert';
+// Array paralelo de promos por tier (estrategia jueves). Cada elemento
+// tiene el mismo shape que la singleton + audienceWhitelist obligatorio.
+// Soporta hasta N tiers activos en paralelo (oro/plata/bronce). Cada user
+// ve UNA promo: la primera del array donde su username está en el whitelist.
+// Si no matchea ningún tier, fallback al singleton PROMO_ALERT_KEY.
+const TIER_PROMOS_KEY = 'activeTierPromos';
 
 function _normalizePromoCode(raw) {
   return String(raw || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 20);
 }
 
+// Helper: dado un username, encuentra la promo activa que le corresponde
+// chequeando primero TIER_PROMOS (whitelist exacto) y luego el singleton
+// PROMO_ALERT (singleton manual / line-down). Devuelve null si nada matchea.
+async function _resolveActivePromoForUser(username) {
+  const usernameLower = String(username || '').toLowerCase();
+  const now = Date.now();
+
+  // 1) Buscar en tier promos (whitelist exacto).
+  const tierPromos = await getConfig(TIER_PROMOS_KEY, null);
+  if (Array.isArray(tierPromos) && tierPromos.length > 0) {
+    for (const p of tierPromos) {
+      if (!p || !p.expiresAt) continue;
+      const exp = new Date(p.expiresAt).getTime();
+      if (!isFinite(exp) || exp <= now) continue;
+      if (Array.isArray(p.audienceWhitelist) && p.audienceWhitelist.some(u => String(u).toLowerCase() === usernameLower)) {
+        return p;
+      }
+    }
+  }
+
+  // 2) Singleton (manual / line-down).
+  const promo = await getConfig(PROMO_ALERT_KEY, null);
+  if (!promo || !promo.expiresAt) return null;
+  const exp = new Date(promo.expiresAt).getTime();
+  if (!isFinite(exp) || exp <= now) return null;
+
+  if (Array.isArray(promo.audienceWhitelist) && promo.audienceWhitelist.length > 0) {
+    const wl = new Set(promo.audienceWhitelist.map(u => String(u).toLowerCase()));
+    if (!wl.has(usernameLower)) return null;
+  } else if (promo.prefix && typeof promo.prefix === 'string') {
+    if (!usernameLower.startsWith(promo.prefix.toLowerCase())) return null;
+  }
+  return promo;
+}
+
 // GET publico (autenticado): devuelve la promo activa para este user.
-// Si la promo tiene prefix, solo se muestra a usernames que matchean.
 app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
   try {
-    const promo = await getConfig(PROMO_ALERT_KEY, null);
-    if (!promo || !promo.expiresAt) return res.json({ active: false });
-    const expiresAtMs = new Date(promo.expiresAt).getTime();
-    if (!isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-      return res.json({ active: false });
-    }
     const username = (req.user && req.user.username) || '';
-    const usernameLower = username.toLowerCase();
-
-    // Filtro de audiencia: si tiene audienceWhitelist (promo dirigida a la
-    // audiencia de una línea caída, por ejemplo), gana sobre prefix.
-    if (Array.isArray(promo.audienceWhitelist) && promo.audienceWhitelist.length > 0) {
-      const wl = new Set(promo.audienceWhitelist.map(u => String(u).toLowerCase()));
-      if (!wl.has(usernameLower)) {
-        return res.json({ active: false });
-      }
-    } else if (promo.prefix && typeof promo.prefix === 'string') {
-      if (!usernameLower.startsWith(promo.prefix.toLowerCase())) {
-        return res.json({ active: false });
-      }
-    }
+    const promo = await _resolveActivePromoForUser(username);
+    if (!promo) return res.json({ active: false });
     res.json({
       active: true,
       id: promo.id,
@@ -8438,7 +8464,9 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
       expiresAt: promo.expiresAt,
       createdAt: promo.createdAt,
       notificationHistoryId: promo.notificationHistoryId || null,
-      lineDown: !!promo.lineDown // bandera para que el frontend pueda darle estilo distinto
+      lineDown: !!promo.lineDown,
+      strategyTier: promo.strategyTier || null,
+      strategyBonusPct: promo.strategyBonusPct || null
     });
   } catch (error) {
     logger.error(`/api/promo-alert/active error: ${error.message}`);
@@ -8447,12 +8475,10 @@ app.get('/api/promo-alert/active', authMiddleware, async (req, res) => {
 });
 
 // POST /api/promo-alert/track-click — incrementa contador waClicks del
-// row de historial asociado a la promo activa Y registra un WaClickLog
-// por-usuario para los reportes de top engagement. Best-effort: errores
-// no bloquean la apertura de WhatsApp en el cliente.
+// row de historial asociado a LA promo del user (singleton o tier).
 app.post('/api/promo-alert/track-click', authMiddleware, async (req, res) => {
   try {
-    const promo = await getConfig(PROMO_ALERT_KEY, null);
+    const promo = await _resolveActivePromoForUser(req.user.username);
     if (!promo) return res.json({ ok: true, tracked: false });
 
     // 1) Log por-usuario.
@@ -8526,30 +8552,50 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
     const username = req.user.username || '';
     const userId = req.user.userId;
 
-    // Buscar el regalo más reciente que aún esté dentro del tiempo programado:
-    // - status='active': normal
-    // - status='closed_max'/'closed_budget': agotado pero sigue visible hasta expirar
-    // El status='cancelled'/'closed_expired' los excluye.
+    // Buscar EL regalo más reciente que aún esté vigente y para el cual
+    // ESTE user es elegible. Importante: la estrategia automática puede
+    // tener varios giveaways activos en paralelo (uno por tier de pérdida),
+    // cada uno con su propio audienceWhitelist. Si solo agarráramos el
+    // último creado, los users de tiers anteriores verían "no hay regalo"
+    // aunque haya uno destinado a ellos.
+    //
+    // Estrategia de matching (en orden de prioridad):
+    //   1) Giveaway donde el user está EXPLÍCITAMENTE en audienceWhitelist
+    //   2) Giveaway sin whitelist (público) cuyo prefix matchee el username
+    //   3) Giveaway sin whitelist y sin prefix (open a todos)
     const now = new Date();
-    const g = await MoneyGiveaway.findOne({
+    const usernameLower = username.toLowerCase();
+    const baseFilter = {
       status: { $in: ['active', 'closed_max', 'closed_budget'] },
       expiresAt: { $gt: now }
-    }).sort({ createdAt: -1 }).lean();
-    if (!g) return res.json({ active: false });
+    };
 
-    // Filtro de audiencia: si el regalo tiene whitelist (regalos sugeridos
-    // por reglas con audiencia exacta tipo "VIP en riesgo"), solo los users
-    // de esa lista lo pueden ver. Si no tiene whitelist pero tiene prefix,
-    // se aplica el filtro de prefijo legacy. Si no tiene ninguno, va a todos.
-    const usernameLower = username.toLowerCase();
-    if (Array.isArray(g.audienceWhitelist) && g.audienceWhitelist.length > 0) {
-      const wlSet = new Set(g.audienceWhitelist.map(u => String(u).toLowerCase()));
-      if (!wlSet.has(usernameLower)) {
-        return res.json({ active: false });
+    // Prioridad 1: whitelist explícito (estrategia / rule suggestions)
+    let g = await MoneyGiveaway.findOne({
+      ...baseFilter,
+      audienceWhitelist: usernameLower
+    }).sort({ createdAt: -1 }).lean();
+
+    // Prioridad 2-3: giveaway público (sin whitelist) — buscamos varios
+    // candidatos y elegimos el más nuevo cuyo prefix matchee (o sin prefix).
+    if (!g) {
+      const candidates = await MoneyGiveaway.find({
+        ...baseFilter,
+        $or: [
+          { audienceWhitelist: null },
+          { audienceWhitelist: { $size: 0 } },
+          { audienceWhitelist: { $exists: false } }
+        ]
+      }).sort({ createdAt: -1 }).limit(10).lean();
+      for (const c of candidates) {
+        if (!c.prefix || usernameLower.startsWith(String(c.prefix).toLowerCase())) {
+          g = c;
+          break;
+        }
       }
-    } else if (g.prefix && !usernameLower.startsWith(g.prefix.toLowerCase())) {
-      return res.json({ active: false });
     }
+
+    if (!g) return res.json({ active: false });
 
     // Auto-cierre lazy SOLO por expiración o por reservas (cupo/budget).
     // Si está en closed_max/closed_budget pero todavía no venció, no lo cerramos a closed_expired.
@@ -8628,24 +8674,39 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
 
-    const g = await MoneyGiveaway.findOne({ status: 'active' })
-      .sort({ createdAt: -1 });
+    // Buscar EL giveaway destinado a ESTE user (mismo criterio que /active):
+    // 1) whitelist explícito → 2) público con prefix match → 3) público sin prefix.
+    // Sin esto, si la estrategia automática creó varios giveaways en
+    // paralelo (uno por tier), users de tiers anteriores quedaban
+    // afuera por el .sort createdAt:-1 y no podían reclamar.
+    const usernameLower = username.toLowerCase();
+    const baseFilter = { status: 'active' };
+    let g = await MoneyGiveaway.findOne({
+      ...baseFilter,
+      audienceWhitelist: usernameLower
+    }).sort({ createdAt: -1 });
+
+    if (!g) {
+      const candidates = await MoneyGiveaway.find({
+        ...baseFilter,
+        $or: [
+          { audienceWhitelist: null },
+          { audienceWhitelist: { $size: 0 } },
+          { audienceWhitelist: { $exists: false } }
+        ]
+      }).sort({ createdAt: -1 }).limit(10);
+      for (const c of candidates) {
+        if (!c.prefix || usernameLower.startsWith(String(c.prefix).toLowerCase())) {
+          g = c;
+          break;
+        }
+      }
+    }
+
     if (!g) {
       return res.json({ success: false, message: 'No hay regalo activo en este momento.', closed: true });
     }
-
-    // Filtro de audiencia: si el regalo tiene whitelist exacta (regalos
-    // sugeridos por reglas con audiencia tipo "VIP en riesgo"), solo esos
-    // usernames pueden reclamar. Sino, fallback al filtro de prefix legacy.
-    const usernameLower = username.toLowerCase();
-    if (Array.isArray(g.audienceWhitelist) && g.audienceWhitelist.length > 0) {
-      const wlSet = new Set(g.audienceWhitelist.map(u => String(u).toLowerCase()));
-      if (!wlSet.has(usernameLower)) {
-        return res.status(403).json({ success: false, message: 'Este regalo no es para tu cuenta.' });
-      }
-    } else if (g.prefix && !usernameLower.startsWith(g.prefix.toLowerCase())) {
-      return res.status(403).json({ success: false, message: 'Este regalo no es para tu cuenta.' });
-    }
+    // Como ya filtramos por whitelist en la query, no hace falta re-checkear acá.
 
     // Filtro por saldo cero (regalo exclusivo para clientes sin plata).
     // Hard-fail si JUGAYGANA no responde — preferimos no dar el regalo a
@@ -9723,6 +9784,7 @@ async function _runWeeklyStrategyChecker() {
       sendPushFn: sendNotificationToAllUsers,
       setConfig,
       PROMO_ALERT_KEY,
+      TIER_PROMOS_KEY,
       logger
     });
   } catch (err) {
@@ -9787,6 +9849,9 @@ app.get('/api/admin/strategy/config', authMiddleware, adminMiddleware, async (re
 // Body: cualquier subset de campos. No permite tocar lastFire* (read-only).
 app.put('/api/admin/strategy/config', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede modificar la estrategia.' });
+    }
     const body = req.body || {};
     // Whitelist de campos editables. No incluye lastFire* ni totals.
     const allowedTop = ['enabled', 'pausedUntil', 'emergencyStop', 'weeklyBudgetCapARS', 'capPerUserPerWeek', 'cooldownHours'];
@@ -9837,9 +9902,13 @@ app.put('/api/admin/strategy/config', authMiddleware, adminMiddleware, async (re
 // Body: { hours: 24 } pausa por X horas. Sin body → emergencyStop=true.
 app.post('/api/admin/strategy/pause', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede pausar la estrategia.' });
+    }
     const hours = Number(req.body && req.body.hours);
     const update = {};
-    if (isFinite(hours) && hours > 0) {
+    if (isFinite(hours) && hours > 0 && hours <= 24 * 30) {
+      // Cap superior 30 días para evitar overflow Date / pausa eterna por accidente.
       update.pausedUntil = new Date(Date.now() + hours * 3600 * 1000);
     } else {
       update.emergencyStop = true;
@@ -9854,6 +9923,9 @@ app.post('/api/admin/strategy/pause', authMiddleware, adminMiddleware, async (re
 // POST /api/admin/strategy/resume — limpiar pause + emergencyStop.
 app.post('/api/admin/strategy/resume', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede reanudar la estrategia.' });
+    }
     await WeeklyStrategyConfig.updateOne({ id: 'main' }, { $set: { pausedUntil: null, emergencyStop: false } }, { upsert: true });
     res.json({ success: true });
   } catch (err) {
@@ -9874,7 +9946,7 @@ app.get('/api/admin/strategy/preview', authMiddleware, adminMiddleware, async (r
       res.json({ success: true, preview: r });
     } else if (camp === 'tier') {
       const r = await weeklyStrategyService.runThursdayTierBonus({
-        models: _strategyModels, sendPushFn: sendNotificationToAllUsers, setConfig, PROMO_ALERT_KEY, logger,
+        models: _strategyModels, sendPushFn: sendNotificationToAllUsers, setConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY, logger,
         dryRun: true, force: true
       });
       res.json({ success: true, preview: r });
@@ -9892,6 +9964,9 @@ app.get('/api/admin/strategy/preview', authMiddleware, adminMiddleware, async (r
 // Body: { campaign: 'netwin' | 'tier' | 'report' }
 app.post('/api/admin/strategy/run-now', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede ejecutar campañas reales.' });
+    }
     const camp = req.body && req.body.campaign;
     const trigger = req.user.username || 'admin';
     if (camp === 'netwin') {
@@ -9902,7 +9977,7 @@ app.post('/api/admin/strategy/run-now', authMiddleware, adminMiddleware, async (
       res.json({ success: true, result: r });
     } else if (camp === 'tier') {
       const r = await weeklyStrategyService.runThursdayTierBonus({
-        models: _strategyModels, sendPushFn: sendNotificationToAllUsers, setConfig, PROMO_ALERT_KEY, logger,
+        models: _strategyModels, sendPushFn: sendNotificationToAllUsers, setConfig, PROMO_ALERT_KEY, TIER_PROMOS_KEY, logger,
         force: true, manualTrigger: trigger
       });
       res.json({ success: true, result: r });
@@ -10756,7 +10831,12 @@ app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware
     // los primeros en llegar cobrarían (incluso si NO eran del segmento target).
     let giveawayId = null;
     if (sug.bonus && sug.bonus.type === 'giveaway' && sug.bonus.amount > 0) {
-      await MoneyGiveaway.updateMany({ status: 'active' }, { $set: { status: 'cancelled' } });
+      // Cancelar solo giveaways auto-rule previos (no tocar manuales del
+      // admin ni los de auto-strategy del lunes — pueden coexistir).
+      await MoneyGiveaway.updateMany(
+        { status: 'active', strategySource: 'auto-rule' },
+        { $set: { status: 'cancelled' } }
+      );
       const ga = await MoneyGiveaway.create({
         id: uuidv4(),
         amount: sug.bonus.amount,
@@ -10769,6 +10849,7 @@ app.post('/api/admin/notification-rules/suggestions/:id/approve', authMiddleware
         requireZeroBalance: !!sug.bonus.requireZeroBalance,
         notificationHistoryId: null,
         status: 'active',
+        strategySource: 'auto-rule',
         createdBy: req.user.username || null
       });
       giveawayId = ga.id;
@@ -12713,6 +12794,9 @@ app.get('/api/admin/line-down/preview', authMiddleware, adminMiddleware, async (
 // POST broadcast: ejecuta el cambio de número + push + (opcional) promo.
 app.post('/api/admin/line-down', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede difundir caída de línea.' });
+    }
     const {
       teamName,
       teamMode,
