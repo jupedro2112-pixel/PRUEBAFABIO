@@ -257,6 +257,23 @@ function slotHtml(i, prefix, phone, teamName) {
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
                 <input type="text" class="user-line-phone" placeholder="+54 9 11 5555 1111" value="${escapeHtml(phone)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(212,175,55,0.25);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;width:100%;box-sizing:border-box;">
             </div>
+            <!-- Adjuntar listado .xlsx para esta línea (import-exact inline) -->
+            <div style="margin-top:6px;border-top:1px dashed rgba(0,212,255,0.20);padding-top:10px;">
+                <button type="button" onclick="toggleSlotImport(${i})" id="slotImportToggle-${i}" style="width:100%;background:rgba(0,212,255,0.05);border:1px dashed rgba(0,212,255,0.30);padding:9px;border-radius:7px;color:#00d4ff;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+                    📋 Adjuntar listado de usuarios para esta línea
+                </button>
+                <div id="slotImport-${i}" style="display:none;margin-top:10px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:8px;padding:10px;">
+                    <p style="margin:0 0 8px;color:#aaa;font-size:11px;line-height:1.5;">
+                        Subí un .xlsx con una columna de usernames. El sistema asigna el número de arriba a esos usuarios. Si un usuario todavía no se registró, queda pre-asignado y recibe la línea cuando entre por primera vez.
+                    </p>
+                    <input type="file" id="slotImportFile-${i}" accept=".xlsx,.xls" style="width:100%;padding:7px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
+                    <div style="display:flex;gap:6px;">
+                        <button type="button" onclick="slotImportPreview(${i})" style="flex:1;padding:9px;font-size:12px;font-weight:700;background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:6px;cursor:pointer;">👁 Vista previa</button>
+                        <button type="button" id="slotImportConfirm-${i}" onclick="slotImportConfirm(${i})" disabled style="flex:1;padding:9px;font-size:12px;font-weight:700;background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:6px;cursor:not-allowed;opacity:0.5;">✅ Confirmar</button>
+                    </div>
+                    <div id="slotImportResult-${i}" style="margin-top:10px;"></div>
+                </div>
+            </div>
         </div>
     `;
 }
@@ -3957,4 +3974,130 @@ function toggleTeamExpand(teamName) {
     if (_teamsExpanded.has(teamName)) _teamsExpanded.delete(teamName);
     else _teamsExpanded.add(teamName);
     if (_teamsCache) _renderTeamsList(_teamsCache);
+}
+
+// =====================================================================
+// SLOT IMPORT — uploader inline por equipo en "Número principal vigente"
+// =====================================================================
+const _slotImportLastFile = {}; // i → File para confirm tras preview
+
+function toggleSlotImport(i) {
+    const panel = document.getElementById('slotImport-' + i);
+    const btn = document.getElementById('slotImportToggle-' + i);
+    if (!panel) return;
+    const isHidden = panel.style.display === 'none';
+    panel.style.display = isHidden ? '' : 'none';
+    if (btn) btn.textContent = isHidden ? '✕ Cerrar listado' : '📋 Adjuntar listado de usuarios para esta línea';
+}
+
+function _readSlotInputs(i) {
+    const slot = document.querySelector(`.user-line-slot[data-slot-index="${i}"]`);
+    if (!slot) return null;
+    const team = (slot.querySelector('.user-line-team')?.value || '').trim();
+    const phone = (slot.querySelector('.user-line-phone')?.value || '').trim();
+    const fileInput = document.getElementById('slotImportFile-' + i);
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (!team) { showToast('Completá "Nombre del equipo" arriba antes de subir el archivo', 'error'); return null; }
+    if (!phone) { showToast('Completá "Número vigente" arriba antes de subir el archivo', 'error'); return null; }
+    const digits = phone.replace(/[^\d]/g, '');
+    if (digits.length < 7) { showToast('Teléfono inválido', 'error'); return null; }
+    if (!file) { showToast('Subí un archivo .xlsx', 'error'); return null; }
+    if (file.size > 10 * 1024 * 1024) { showToast('Archivo muy grande (>10MB)', 'error'); return null; }
+    return { team, phone: digits, file };
+}
+
+async function _sendSlotImport(i, dryRun) {
+    const data = _readSlotInputs(i);
+    if (!data) return null;
+    _slotImportLastFile[i] = data.file;
+
+    const params = new URLSearchParams();
+    params.set('teamName', data.team);
+    params.set('linePhone', '+' + data.phone);
+    params.set('dryRun', dryRun ? 'true' : 'false');
+
+    try {
+        const r = await authFetch('/api/admin/user-lines/import-exact?' + params.toString(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: data.file
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            const msg = (j && j.error) || ('HTTP ' + r.status);
+            showToast('Error: ' + msg, 'error');
+            return null;
+        }
+        return j;
+    } catch (e) {
+        console.error('slot import error', e);
+        showToast('Error de conexión', 'error');
+        return null;
+    }
+}
+
+async function slotImportPreview(i) {
+    const out = document.getElementById('slotImportResult-' + i);
+    if (out) out.innerHTML = '<div style="color:#aaa;font-size:11px;">⏳ Procesando archivo…</div>';
+    const j = await _sendSlotImport(i, true);
+    if (!j) {
+        if (out) out.innerHTML = '';
+        const btn = document.getElementById('slotImportConfirm-' + i);
+        if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+        return;
+    }
+    if (out) out.innerHTML = _renderSlotImportResultHtml(j, true);
+    const btn = document.getElementById('slotImportConfirm-' + i);
+    if (btn) { btn.disabled = false; btn.style.cursor = 'pointer'; btn.style.opacity = '1'; }
+}
+
+async function slotImportConfirm(i) {
+    if (!_slotImportLastFile[i]) {
+        showToast('Hacé primero la vista previa', 'error');
+        return;
+    }
+    if (!confirm('¿Confirmás la importación de esta lista?')) return;
+
+    const out = document.getElementById('slotImportResult-' + i);
+    if (out) out.innerHTML = '<div style="color:#aaa;font-size:11px;">⏳ Escribiendo en la DB…</div>';
+
+    const j = await _sendSlotImport(i, false);
+    if (!j) {
+        if (out) out.innerHTML = '';
+        return;
+    }
+    if (out) out.innerHTML = _renderSlotImportResultHtml(j, false);
+    showToast('✅ Lista importada', 'success');
+    const btn = document.getElementById('slotImportConfirm-' + i);
+    if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+}
+
+// Versión compacta del render (vive dentro del slot, espacio limitado).
+function _renderSlotImportResultHtml(j, isPreview) {
+    const s = j.summary || {};
+    const matched = s.matched || 0;
+    const pending = s.notFound || 0;
+    const total = s.uniqueUsernames || 0;
+    const reassigned = s.reassignedFromOtherLine || 0;
+
+    let html = '<div style="background:rgba(0,0,0,0.40);border-radius:7px;padding:10px;font-size:11px;line-height:1.5;">';
+    html += '<div style="color:#00d4ff;font-weight:700;margin-bottom:8px;">' + (isPreview ? '👁 Vista previa' : '✅ Importación lista') + ' · ' + escapeHtml(j.teamName) + ' (' + escapeHtml(j.linePhone) + ')</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">';
+    html += '<div style="background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.30);border-radius:6px;padding:7px;">';
+    html += '<div style="color:#25d366;font-size:10px;font-weight:700;">✅ Ya registrados</div>';
+    html += '<div style="color:#fff;font-size:16px;font-weight:800;">' + matched + '</div>';
+    html += '<div style="color:#888;font-size:9px;">Asignados ahora</div>';
+    html += '</div>';
+    html += '<div style="background:rgba(255,170,68,0.08);border:1px solid rgba(255,170,68,0.30);border-radius:6px;padding:7px;">';
+    html += '<div style="color:#ffaa44;font-size:10px;font-weight:700;">⏳ Pre-asignados</div>';
+    html += '<div style="color:#fff;font-size:16px;font-weight:800;">' + pending + '</div>';
+    html += '<div style="color:#888;font-size:9px;">Cuando entren por 1ra vez</div>';
+    html += '</div>';
+    html += '</div>';
+    html += '<div style="color:#888;font-size:10px;margin-top:6px;">Total únicos: ' + total + (reassigned > 0 ? (' · ' + reassigned + ' cambian de línea') : '') + '</div>';
+    if (isPreview) {
+        html += '<div style="color:#aaa;font-size:10px;margin-top:5px;font-style:italic;">Si está OK, tocá "Confirmar".</div>';
+    }
+    html += '</div>';
+    return html;
 }
