@@ -8306,9 +8306,22 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
     ).lean();
     const byUsername = new Map(users.map(u => [(u.username || '').toLowerCase(), u]));
 
+    // 2.b) PlayerStats con lastRealDepositDate para responder
+    // "¿cargaron despues de reclamar el bono?". lastRealDepositDate es la
+    // fecha de la ULTIMA carga real (no bono). Si lastRealDepositDate >=
+    // claimedAt, entonces cargaron al menos una vez post-bono.
+    const lowerUsernames = usernames.map(u => (u || '').toLowerCase());
+    const playerStats = await PlayerStats.find(
+      { username: { $in: lowerUsernames } },
+      { username: 1, lastRealDepositDate: 1, realDeposits30d: 1, realChargesCount30d: 1, _id: 0 }
+    ).lean();
+    const psByUsername = new Map(playerStats.map(p => [(p.username || '').toLowerCase(), p]));
+
     let stillHasApp = 0, stillHasNotifs = 0, stillBoth = 0, lostApp = 0, lostNotifs = 0;
+    let chargedAfterClaim = 0;
     const enriched = claims.map(c => {
       const u = byUsername.get((c.username || '').toLowerCase()) || {};
+      const ps = psByUsername.get((c.username || '').toLowerCase()) || {};
       const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
       const standaloneTokens = tokens.filter(t => t && t.context === 'standalone');
       const appLastSeen = standaloneTokens
@@ -8336,6 +8349,17 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
       if (hasApp) stillHasApp++; else lostApp++;
       if (hasNotifs) stillHasNotifs++; else lostNotifs++;
       if (hasApp && hasNotifs) stillBoth++;
+
+      // ¿Cargó después del reclamo del bono?
+      // lastRealDepositDate es la última carga real registrada. Si esa fecha
+      // es posterior a claimedAt, sabemos que volvieron a cargar al menos
+      // una vez después de reclamar los $10.000. No tenemos el historial
+      // completo en PlayerStats, pero esto responde "¿alguna carga post-bono?".
+      const claimedMs = c.claimedAt ? new Date(c.claimedAt).getTime() : 0;
+      const lastDepMs = ps.lastRealDepositDate ? new Date(ps.lastRealDepositDate).getTime() : 0;
+      const didChargeAfter = claimedMs > 0 && lastDepMs > 0 && lastDepMs >= claimedMs;
+      if (didChargeAfter) chargedAfterClaim++;
+
       return {
         username: c.username || '',
         claimedAt: c.claimedAt || null,
@@ -8345,7 +8369,12 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         hasNotifs,
         lastLogin: u.lastLogin || null,
         appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null,
-        platform: platform
+        platform: platform,
+        // Datos de carga post-bono
+        chargedAfterClaim: didChargeAfter,
+        lastDepositAt: ps.lastRealDepositDate || null,
+        realDeposits30d: ps.realDeposits30d || 0,
+        realChargesCount30d: ps.realChargesCount30d || 0
       };
     });
 
@@ -8356,7 +8385,8 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         stillHasNotifs,
         stillBoth,
         lostApp,
-        lostNotifs
+        lostNotifs,
+        chargedAfterClaim
       },
       claims: enriched
     });

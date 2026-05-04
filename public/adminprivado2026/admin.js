@@ -1378,6 +1378,24 @@ function _sortWelcomeBonusClaims(claims, key) {
         arr.sort((a, b) => tsClaimed(b) - tsClaimed(a) || (a.username || '').localeCompare(b.username || ''));
     } else if (key === 'usernameAsc') {
         arr.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    } else if (key === 'chargedAfterDesc') {
+        // Primero los que cargaron, ordenados por fecha de carga más reciente.
+        arr.sort((a, b) => {
+            const ac = a.chargedAfterClaim ? 1 : 0;
+            const bc = b.chargedAfterClaim ? 1 : 0;
+            if (ac !== bc) return bc - ac;
+            const ta = a.lastDepositAt ? new Date(a.lastDepositAt).getTime() : 0;
+            const tb = b.lastDepositAt ? new Date(b.lastDepositAt).getTime() : 0;
+            return tb - ta;
+        });
+    } else if (key === 'chargedAfterAsc') {
+        // Primero los que NO cargaron (los que necesitan re-engagement).
+        arr.sort((a, b) => {
+            const ac = a.chargedAfterClaim ? 1 : 0;
+            const bc = b.chargedAfterClaim ? 1 : 0;
+            if (ac !== bc) return ac - bc;
+            return tsClaimed(b) - tsClaimed(a);
+        });
     }
     return arr;
 }
@@ -1400,6 +1418,7 @@ function renderWelcomeBonusReport(container, data) {
     html += '  <div class="stat-card"><span class="label">✅ Aún con ambos</span><span class="value">' + (t.stillBoth || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.stillBoth || 0) + '%)</small></span></div>';
     html += '  <div class="stat-card"><span class="label">⚠️ Desinstalaron app</span><span class="value" style="color:#ef4444;">' + (t.lostApp || 0) + '</span></div>';
     html += '  <div class="stat-card"><span class="label">⚠️ Desactivaron notifs</span><span class="value" style="color:#ef4444;">' + (t.lostNotifs || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">💰 Cargaron después</span><span class="value" style="color:#25d366;">' + (t.chargedAfterClaim || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.chargedAfterClaim || 0) + '%)</small></span></div>';
     html += '</div>';
 
     if (claims.length === 0) {
@@ -1416,6 +1435,8 @@ function renderWelcomeBonusReport(container, data) {
     html += '      <option value="appLastSeenDesc"' + (_welcomeBonusSortKey === 'appLastSeenDesc' ? ' selected' : '') + '>↓ Actividad (más reciente)</option>';
     html += '      <option value="appLastSeenAsc"' + (_welcomeBonusSortKey === 'appLastSeenAsc' ? ' selected' : '') + '>↑ Actividad (más antigua)</option>';
     html += '      <option value="claimedDesc"' + (_welcomeBonusSortKey === 'claimedDesc' ? ' selected' : '') + '>↓ Fecha de reclamo</option>';
+    html += '      <option value="chargedAfterDesc"' + (_welcomeBonusSortKey === 'chargedAfterDesc' ? ' selected' : '') + '>💰 Cargaron después (sí primero)</option>';
+    html += '      <option value="chargedAfterAsc"' + (_welcomeBonusSortKey === 'chargedAfterAsc' ? ' selected' : '') + '>💸 No cargaron (recuperar)</option>';
     html += '      <option value="usernameAsc"' + (_welcomeBonusSortKey === 'usernameAsc' ? ' selected' : '') + '>A-Z usuario</option>';
     html += '    </select>';
     html += '    <input type="text" id="welcomeBonusUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterWelcomeBonusTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
@@ -1443,6 +1464,7 @@ function renderWelcomeBonusTableHtml(claims) {
     html += '<th>📱 App ahora</th>';
     html += '<th>Última vez en la app</th>';
     html += '<th>🔔 Notifs ahora</th>';
+    html += '<th>💰 Cargó después</th>';
     html += '<th>Estado</th>';
     html += '</tr></thead><tbody>';
     for (const c of claims) {
@@ -1462,6 +1484,30 @@ function renderWelcomeBonusTableHtml(claims) {
         const notifCell = c.hasNotifs
             ? '<span style="color:#25d366;font-weight:700;">✅ Sí</span>'
             : '<span style="color:#ef4444;font-weight:700;">⚠️ Desactivó</span>';
+
+        // Columna "Cargó después de reclamar el bono".
+        // Compara claimedAt vs lastRealDepositDate (PlayerStats).
+        // Si vino al menos una carga real post-claim, mostramos ✅ + fecha + días.
+        // Si no, ❌ y los datos de cargas de los últimos 30d como contexto.
+        let chargedCell;
+        if (c.chargedAfterClaim && c.lastDepositAt) {
+            const depDate = new Date(c.lastDepositAt);
+            const claimedMs = c.claimedAt ? new Date(c.claimedAt).getTime() : 0;
+            const daysFromClaim = claimedMs ? Math.max(0, Math.floor((depDate.getTime() - claimedMs) / 86400000)) : null;
+            const ago = daysFromClaim != null
+                ? (daysFromClaim === 0 ? 'mismo día' : (daysFromClaim + ' días después'))
+                : '';
+            chargedCell =
+                '<div style="color:#25d366;font-weight:700;">✅ Sí</div>' +
+                '<small style="color:#888;">' + escapeHtml(depDate.toLocaleDateString('es-AR')) + (ago ? ' · ' + ago : '') + '</small>';
+        } else {
+            chargedCell =
+                '<div style="color:#ef4444;font-weight:700;">❌ No</div>' +
+                ((c.realChargesCount30d || 0) > 0
+                    ? '<small style="color:#888;">' + (c.realChargesCount30d || 0) + ' cargas en 30d</small>'
+                    : '<small style="color:#666;">sin cargas registradas</small>');
+        }
+
         const statusBadge = c.status === 'pending_credit_failed'
             ? '<span style="background:#7f1d1d;color:#fee;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">PENDIENTE</span>'
             : '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">OK</span>';
@@ -1472,6 +1518,7 @@ function renderWelcomeBonusTableHtml(claims) {
         html += '<td>' + appCell + '</td>';
         html += '<td>' + seenCell + '</td>';
         html += '<td>' + notifCell + '</td>';
+        html += '<td>' + chargedCell + '</td>';
         html += '<td>' + statusBadge + '</td>';
         html += '</tr>';
     }
