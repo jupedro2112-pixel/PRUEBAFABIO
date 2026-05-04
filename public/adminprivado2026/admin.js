@@ -1357,6 +1357,76 @@ async function loadWelcomeBonusReport() {
     }
 }
 
+// ============================================================
+// Refresh "real" del reporte de bono $10.000
+// -------------------------------------------------------------
+// Dispara POST /api/admin/stats/refresh (recorre todos los users,
+// pega JUGAYGANA y actualiza PlayerStats.lastRealDepositDate). Polea
+// GET cada 3s para mostrar el progreso. Cuando termina, vuelve a llamar
+// a loadWelcomeBonusReport() para que la columna "Cargó después" refleje
+// el estado actualizado.
+//
+// Importante: el refresh es global (lo comparten otras secciones que
+// también consumen PlayerStats). Si alguien más lo disparó, nos
+// enganchamos al poll igual y reusamos su progreso.
+// ============================================================
+let _welcomeBonusRefreshPoll = null;
+
+function _renderWelcomeBonusRefreshState(s) {
+    const el = document.getElementById('welcomeBonusRefreshState');
+    const btn = document.getElementById('welcomeBonusRefreshBtn');
+    if (!el) return;
+    if (s && s.running) {
+        const pct = s.total > 0 ? Math.round((s.done / s.total) * 100) : 0;
+        el.innerHTML = '⏳ Leyendo JUGAYGANA: <strong style="color:#ffd700;">' + (s.done || 0) + ' / ' + (s.total || 0) + '</strong> (' + pct + '%)' +
+            (s.errors ? ' — <span style="color:#ff8080;">' + s.errors + ' errores</span>' : '');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Refrescando…'; btn.style.opacity = '0.6'; btn.style.cursor = 'wait'; }
+    } else if (s && s.finishedAt) {
+        const when = new Date(s.finishedAt).toLocaleString('es-AR');
+        el.innerHTML = '✅ Último refresh: <strong style="color:#fff;">' + escapeHtml(when) + '</strong> · ' + (s.done || 0) + ' usuarios procesados' +
+            (s.errors ? ' (' + s.errors + ' errores)' : '');
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Refrescar cargas'; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+    } else {
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Refrescar cargas'; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
+    }
+}
+
+async function triggerWelcomeBonusRefresh() {
+    const btn = document.getElementById('welcomeBonusRefreshBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Iniciando…'; btn.style.opacity = '0.6'; }
+    try {
+        const r = await authFetch('/api/admin/stats/refresh', { method: 'POST' });
+        const d = await r.json();
+        if (d.success === false) {
+            // Ya hay otro refresh corriendo — nos enganchamos al poll igual.
+            showToast(d.message || 'Ya hay un refresh corriendo, sigo el progreso…', 'info');
+        } else {
+            showToast('Refrescando JUGAYGANA en background', 'success');
+        }
+        _renderWelcomeBonusRefreshState(d.state || { running: true, done: 0, total: 0 });
+
+        if (_welcomeBonusRefreshPoll) clearInterval(_welcomeBonusRefreshPoll);
+        _welcomeBonusRefreshPoll = setInterval(async () => {
+            try {
+                const pr = await authFetch('/api/admin/stats/refresh', { method: 'GET' });
+                const pd = await pr.json();
+                const state = pd.state || {};
+                _renderWelcomeBonusRefreshState(state);
+                if (!state.running && state.finishedAt) {
+                    clearInterval(_welcomeBonusRefreshPoll);
+                    _welcomeBonusRefreshPoll = null;
+                    // Recargar la tabla para reflejar las cargas frescas.
+                    await loadWelcomeBonusReport();
+                    showToast('✅ Reporte actualizado con cargas reales', 'success');
+                }
+            } catch (e) { /* ignorar errores transientes del poll */ }
+        }, 3000);
+    } catch (e) {
+        showToast('Error iniciando refresh', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Refrescar cargas'; btn.style.opacity = '1'; }
+    }
+}
+
 let welcomeBonusDataCache = null;
 let _welcomeBonusSortKey = 'appLastSeenDesc';
 
@@ -1426,6 +1496,17 @@ function renderWelcomeBonusReport(container, data) {
         container.innerHTML = html;
         return;
     }
+
+    // Toolbar superior: botón de refresh "real". Lee JUGAYGANA, actualiza
+    // PlayerStats y vuelve a renderizar la tabla con quiénes cargaron de
+    // verdad post-bono. El refresh corre en background; mostramos progreso.
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:10px 14px;margin:14px 0 0;">';
+    html +=   '<div style="flex:1;min-width:200px;">';
+    html +=     '<div style="color:#00d4ff;font-size:12px;font-weight:700;margin-bottom:2px;">💰 Carga real post-bono</div>';
+    html +=     '<div id="welcomeBonusRefreshState" style="color:#aaa;font-size:11px;">Tocá "Refrescar cargas" para leer JUGAYGANA y actualizar quién cargó de verdad después de reclamar el bono.</div>';
+    html +=   '</div>';
+    html +=   '<button id="welcomeBonusRefreshBtn" onclick="triggerWelcomeBonusRefresh()" style="padding:9px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;cursor:pointer;white-space:nowrap;">🔄 Refrescar cargas</button>';
+    html += '</div>';
 
     // Encabezado de detalle + buscador + selector de orden
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 10px;">';
