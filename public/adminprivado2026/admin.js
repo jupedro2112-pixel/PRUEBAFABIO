@@ -165,6 +165,7 @@ function showSection(sectionKey) {
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
+        recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
         activePlayers: 'activePlayersSection',
@@ -202,6 +203,8 @@ function showSection(sectionKey) {
         loadStatsAll();
     } else if (sectionKey === 'automations') {
         loadAutomations();
+    } else if (sectionKey === 'recovery') {
+        loadRecovery();
     } else if (sectionKey === 'teams') {
         loadTeams();
     } else if (sectionKey === 'lineDown') {
@@ -3733,35 +3736,124 @@ async function autoTestFireRule(id) {
 }
 
 // ============= TAB: PENDIENTES =============
+// Cada sugerencia se renderiza como una "card" con:
+//   - Header: código + nombre de la regla + edad/expiración + bonus
+//   - Inputs EDITABLES de título y cuerpo (textareas)
+//   - Botón "💾 Guardar cambios" → PUT /api/admin/notification-rules/suggestions/:id
+//   - Toggle "👥 Ver afectados" → muestra/oculta la lista completa de usernames
+//   - Botones "✅ Aprobar y enviar" / "❌ Descartar"
+//
+// La audiencia (audienceUsernames) NO se puede editar: ya quedó fijada al
+// momento de crear la suggestion para evitar disparos contra una población
+// recalculada. El admin puede ajustar el copy y luego confirmar.
 function _autoRenderPendingTab() {
     if (_autoSuggestionsCache.length === 0) {
-        return '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">✅ Sin sugerencias pendientes. Cuando una regla con bonus dispare, aparecerá acá.</div>';
+        return '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">✅ Sin sugerencias pendientes. Cuando una regla dispare, aparecerá acá.</div>';
     }
-    let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+    let html = '<div style="display:flex;flex-direction:column;gap:14px;">';
     for (const s of _autoSuggestionsCache) {
         const ageMin = Math.floor((Date.now() - new Date(s.suggestedAt).getTime()) / 60000);
         const expHours = Math.max(0, Math.floor((new Date(s.expiresAt).getTime() - Date.now()) / 3600000));
         const bonusText = (s.bonus && s.bonus.type !== 'none')
             ? '💸 ' + s.bonus.type + ' $' + s.bonus.amount + ' x ' + s.audienceCount + ' usuarios = $' + (s.bonus.amount * s.audienceCount).toLocaleString('es-AR') + ' total'
             : '📢 Sin bonus, solo push';
+        const titleInputId = 'sug-title-' + s.id;
+        const bodyInputId = 'sug-body-' + s.id;
+        const audWrapId = 'sug-aud-' + s.id;
+        const audList = (s.audienceUsernames || []).slice(0, 500);
+        const audHtml = audList.length > 0
+            ? audList.map(u => '<span style="display:inline-block;background:rgba(0,212,255,0.10);color:#9be8ff;font-size:11px;padding:3px 8px;border-radius:5px;margin:2px;">' + escapeHtml(u) + '</span>').join('')
+            : '<span style="color:#888;font-size:11px;">(sin usuarios en la lista)</span>';
+        const audMore = (s.audienceUsernames && s.audienceUsernames.length > 500)
+            ? '<div style="margin-top:6px;color:#888;font-size:10px;">+ ' + (s.audienceUsernames.length - 500) + ' usuarios más (no mostrados)</div>'
+            : '';
+
         html += '<div style="background:rgba(255,170,68,0.05);border:1px solid rgba(255,170,68,0.30);border-radius:10px;padding:14px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">' +
+            // Header
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;">' +
                 '<div style="flex:1;min-width:240px;">' +
-                    '<div style="margin-bottom:5px;"><span style="background:rgba(0,212,255,0.20);color:#00d4ff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;">' + escapeHtml(s.ruleCode) + '</span> <span style="color:#888;font-size:11px;margin-left:4px;">hace ' + ageMin + ' min</span></div>' +
+                    '<div style="margin-bottom:5px;">' +
+                        '<span style="background:rgba(0,212,255,0.20);color:#00d4ff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;">' + escapeHtml(s.ruleCode) + '</span> ' +
+                        '<span style="color:#888;font-size:11px;margin-left:4px;">hace ' + ageMin + ' min · expira en ' + expHours + 'h</span>' +
+                    '</div>' +
                     '<div style="color:#fff;font-size:13px;font-weight:600;margin-bottom:3px;">' + escapeHtml(s.ruleName) + '</div>' +
-                    '<div style="color:#aaa;font-size:11px;margin-bottom:6px;font-style:italic;">"' + escapeHtml(s.title) + ' — ' + escapeHtml(s.body) + '"</div>' +
-                    '<div style="color:#ffaa44;font-size:11px;font-weight:700;margin-bottom:3px;">' + bonusText + '</div>' +
-                    '<div style="color:#888;font-size:10px;">Audiencia: ' + s.audienceCount + ' usuarios · Expira en ' + expHours + 'h</div>' +
+                    '<div style="color:#ffaa44;font-size:11px;font-weight:700;">' + bonusText + '</div>' +
                 '</div>' +
-                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                    '<button onclick="autoApproveSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:7px;cursor:pointer;">✅ Aprobar y enviar</button>' +
-                    '<button onclick="autoRejectSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:7px;cursor:pointer;">❌ Descartar</button>' +
+            '</div>' +
+
+            // Inputs editables
+            '<div style="margin-bottom:10px;">' +
+                '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Título</label>' +
+                '<input id="' + titleInputId + '" type="text" maxlength="200" value="' + escapeHtml(s.title) + '" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />' +
+            '</div>' +
+            '<div style="margin-bottom:10px;">' +
+                '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Cuerpo</label>' +
+                '<textarea id="' + bodyInputId + '" maxlength="1000" rows="3" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;resize:vertical;">' + escapeHtml(s.body) + '</textarea>' +
+            '</div>' +
+
+            // Audiencia toggle + lista colapsada
+            '<div style="margin-bottom:10px;">' +
+                '<button onclick="autoToggleAudience(\'' + s.id + '\')" style="padding:6px 12px;font-size:11px;font-weight:700;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:6px;cursor:pointer;">👥 Ver afectados (' + s.audienceCount + ')</button>' +
+                '<div id="' + audWrapId + '" style="display:none;margin-top:8px;padding:8px;background:rgba(0,0,0,0.20);border-radius:6px;max-height:200px;overflow-y:auto;">' +
+                    audHtml +
+                    audMore +
                 '</div>' +
+            '</div>' +
+
+            // Botonera
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                '<button onclick="autoSaveSuggestionEdits(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:7px;cursor:pointer;">💾 Guardar cambios</button>' +
+                '<button onclick="autoApproveSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:7px;cursor:pointer;">✅ Aprobar y enviar</button>' +
+                '<button onclick="autoRejectSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:7px;cursor:pointer;">❌ Descartar</button>' +
             '</div>' +
         '</div>';
     }
     html += '</div>';
     return html;
+}
+
+// Toggle de visibilidad de la lista de afectados.
+function autoToggleAudience(id) {
+    const el = document.getElementById('sug-aud-' + id);
+    if (!el) return;
+    el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+}
+
+// Guarda título/cuerpo editados. Si los inputs no cambiaron respecto a la
+// cache, no llamamos al server.
+async function autoSaveSuggestionEdits(id) {
+    const s = _autoSuggestionsCache.find(x => x.id === id);
+    if (!s) return;
+    const tEl = document.getElementById('sug-title-' + id);
+    const bEl = document.getElementById('sug-body-' + id);
+    if (!tEl || !bEl) return;
+    const title = (tEl.value || '').trim();
+    const body = (bEl.value || '').trim();
+    if (!title || !body) {
+        showToast('Título y cuerpo no pueden estar vacíos', 'error');
+        return;
+    }
+    if (title === s.title && body === s.body) {
+        showToast('No hay cambios para guardar', 'info');
+        return;
+    }
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/suggestions/' + id, {
+            method: 'PUT',
+            body: JSON.stringify({ title, body })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            // Actualizamos la cache local para que el approve mande el texto editado.
+            s.title = j.title;
+            s.body = j.body;
+            showToast('✅ Cambios guardados', 'success');
+        } else {
+            showToast(j.error || 'Error guardando', 'error');
+        }
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 async function autoApproveSuggestion(id) {
@@ -6584,5 +6676,425 @@ async function reminderRunNow(type) {
         if (result.skipped) { showToast('⚠ Skip: ' + result.skipped, 'warning'); return; }
         if (result.error) { showToast('❌ ' + result.error, 'error'); return; }
         showToast('✅ Disparado · ' + (result.sentCount || 0) + ' pushes enviados', 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// ============================================================
+// SECCIÓN: RECUPERACIÓN DE INACTIVOS
+// ----------------------------------------------------------------
+// Tres sub-tabs:
+//   - panorama:  stats de actividad de la base con app instalada
+//   - strategies: reglas con category='recovery' + creación de nuevas
+//   - pending:    suggestions pendientes filtradas por category='recovery'
+// La UI reusa el endpoint PUT /api/admin/notification-rules/suggestions/:id
+// para edición de copy y los endpoints /approve y /reject existentes.
+// ============================================================
+
+let _recoveryActiveTab = 'panorama';
+let _recoveryPanoramaCache = null;
+let _recoveryStrategiesCache = [];
+let _recoveryPendingCache = [];
+
+async function loadRecovery() {
+    _recoveryActiveTab = 'panorama';
+    _recoveryUpdateTabButtons();
+    await _recoveryRenderActiveTab();
+}
+
+function switchRecoveryTab(tab) {
+    _recoveryActiveTab = tab;
+    _recoveryUpdateTabButtons();
+    _recoveryRenderActiveTab();
+}
+
+function _recoveryUpdateTabButtons() {
+    document.querySelectorAll('.recovery-tab-btn').forEach((btn) => {
+        const isActive = btn.getAttribute('data-tab') === _recoveryActiveTab;
+        btn.classList.toggle('active', isActive);
+        btn.style.background = isActive ? 'rgba(0,212,255,0.10)' : 'transparent';
+        btn.style.border = isActive ? '1px solid rgba(0,212,255,0.30)' : '1px solid transparent';
+        btn.style.color = isActive ? '#00d4ff' : '#aaa';
+    });
+}
+
+async function _recoveryRenderActiveTab() {
+    const c = document.getElementById('recoveryContent');
+    if (!c) return;
+    if (_recoveryActiveTab === 'panorama') {
+        await _recoveryRenderPanorama(c);
+    } else if (_recoveryActiveTab === 'strategies') {
+        await _recoveryRenderStrategies(c);
+    } else if (_recoveryActiveTab === 'pending') {
+        await _recoveryRenderPending(c);
+    }
+}
+
+// ----------- TAB: PANORAMA -----------
+async function _recoveryRenderPanorama(c) {
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Calculando panorama…</div>';
+    try {
+        const r = await authFetch('/api/admin/recovery/panorama');
+        const j = await r.json();
+        if (!j.success) { c.innerHTML = '<div class="empty-state">❌ ' + escapeHtml(j.error || 'Error') + '</div>'; return; }
+        _recoveryPanoramaCache = j;
+
+        const total = j.totalInstalled || 0;
+        const buckets = j.buckets || [];
+
+        // Bloque header con total.
+        let html = '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(0,102,204,0.10));border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:18px;margin-bottom:14px;">' +
+            '<div style="color:#00d4ff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">📱 Total con app instalada</div>' +
+            '<div style="color:#fff;font-size:32px;font-weight:800;">' + total.toLocaleString('es-AR') + '</div>' +
+            '<div style="color:#aaa;font-size:11px;margin-top:4px;">Calculado el ' + new Date(j.generatedAt).toLocaleString('es-AR') + '</div>' +
+        '</div>';
+
+        // Buckets de actividad como cards.
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px;">';
+        for (const b of buckets) {
+            const pct = total > 0 ? Math.round((b.count / total) * 1000) / 10 : 0;
+            html += '<div style="background:rgba(255,255,255,0.03);border:1px solid ' + b.color + '40;border-left:4px solid ' + b.color + ';border-radius:10px;padding:14px;">' +
+                '<div style="color:' + b.color + ';font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">' + escapeHtml(b.label) + '</div>' +
+                '<div style="color:#fff;font-size:24px;font-weight:800;">' + b.count.toLocaleString('es-AR') + '</div>' +
+                '<div style="color:#aaa;font-size:11px;margin-top:2px;">' + pct + '% del total</div>' +
+            '</div>';
+        }
+        html += '</div>';
+
+        // Gente que se acaba de "perder" — los 10 más recientes que dejaron de entrar.
+        const dropped = j.recentlyDropped || [];
+        if (dropped.length > 0) {
+            html += '<div style="background:rgba(255,80,80,0.05);border:1px solid rgba(255,80,80,0.20);border-radius:10px;padding:14px;margin-bottom:14px;">' +
+                '<div style="color:#ff5050;font-size:12px;font-weight:700;margin-bottom:8px;">⚠️ Top 10 que dejaron de entrar (24h - 7 días)</div>' +
+                '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+                '<thead><tr style="background:rgba(0,0,0,0.20);"><th style="padding:6px 8px;text-align:left;color:#ff5050;">Usuario</th><th style="padding:6px 8px;text-align:left;color:#ff5050;">Última vez</th><th style="padding:6px 8px;text-align:right;color:#ff5050;">Hace</th></tr></thead><tbody>';
+            for (const u of dropped) {
+                const last = u.lastLogin ? new Date(u.lastLogin) : null;
+                const hoursAgo = last ? Math.floor((Date.now() - last.getTime()) / 3600000) : 0;
+                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">' +
+                    '<td style="padding:6px 8px;color:#fff;">' + escapeHtml(u.username || '') + '</td>' +
+                    '<td style="padding:6px 8px;color:#aaa;">' + (last ? last.toLocaleString('es-AR') : '—') + '</td>' +
+                    '<td style="padding:6px 8px;color:#ffaa44;text-align:right;font-weight:700;">' + hoursAgo + 'h</td>' +
+                '</tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+
+        if (j.neverLoggedIn > 0) {
+            html += '<div style="background:rgba(255,170,68,0.05);border:1px solid rgba(255,170,68,0.20);border-radius:10px;padding:12px;color:#ffaa44;font-size:12px;">' +
+                '🟠 <b>' + j.neverLoggedIn + '</b> usuarios instalaron la app pero nunca abrieron sesión (sin <code>lastLogin</code>).' +
+            '</div>';
+        }
+
+        // Pista a la siguiente pestaña.
+        html += '<div style="margin-top:16px;text-align:center;color:#888;font-size:11px;">' +
+            'Pasá a la pestaña <b style="color:#00d4ff;">🚀 Estrategias</b> para revisar las reglas activas y editar el copy.' +
+        '</div>';
+
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+// ----------- TAB: ESTRATEGIAS -----------
+async function _recoveryRenderStrategies(c) {
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando estrategias…</div>';
+    try {
+        const r = await authFetch('/api/admin/recovery/strategies');
+        const j = await r.json();
+        if (!j.success) { c.innerHTML = '<div class="empty-state">❌ ' + escapeHtml(j.error || 'Error') + '</div>'; return; }
+        _recoveryStrategiesCache = j.strategies || [];
+
+        // Header con botón "+ Nueva".
+        let html = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+            '<div style="color:#aaa;font-size:12px;">Cada estrategia se dispara automáticamente en su horario y crea una sugerencia pendiente.</div>' +
+            '<button onclick="openRecoveryNewModal()" style="padding:8px 14px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:7px;cursor:pointer;">➕ Nueva estrategia</button>' +
+        '</div>';
+
+        if (_recoveryStrategiesCache.length === 0) {
+            html += '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">Sin estrategias todavía. Tocá "Nueva estrategia" para crear la primera.</div>';
+            c.innerHTML = html;
+            return;
+        }
+
+        html += '<div style="display:flex;flex-direction:column;gap:12px;">';
+        for (const s of _recoveryStrategiesCache) {
+            const cron = s.cronSchedule || {};
+            const cronLabel = (cron.hour != null) ? (String(cron.hour).padStart(2, '0') + ':' + String(cron.minute || 0).padStart(2, '0') + ' ART') : '—';
+            const window = (s.audienceConfig && s.audienceConfig.minHoursAgo != null)
+                ? (s.audienceConfig.minHoursAgo + 'h - ' + (s.audienceConfig.maxHoursAgo || '∞') + 'h')
+                : '—';
+            const lastFired = s.lastFiredAt ? new Date(s.lastFiredAt).toLocaleString('es-AR') : 'Nunca';
+            const enabledBadge = s.enabled
+                ? '<span style="background:rgba(37,211,102,0.20);color:#25d366;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;">ACTIVA</span>'
+                : '<span style="background:rgba(136,136,136,0.20);color:#888;font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;">PAUSADA</span>';
+
+            const titleId = 'strat-title-' + s.id;
+            const bodyId = 'strat-body-' + s.id;
+
+            html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.25);border-radius:10px;padding:14px;">' +
+                // Header
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px;">' +
+                    '<div>' +
+                        '<div style="margin-bottom:4px;">' +
+                            '<span style="background:rgba(0,212,255,0.20);color:#00d4ff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;margin-right:6px;">' + escapeHtml(s.code) + '</span>' +
+                            enabledBadge +
+                        '</div>' +
+                        '<div style="color:#fff;font-size:14px;font-weight:700;margin-bottom:2px;">' + escapeHtml(s.name) + '</div>' +
+                        (s.description ? '<div style="color:#888;font-size:11px;">' + escapeHtml(s.description) + '</div>' : '') +
+                    '</div>' +
+                    '<div style="text-align:right;">' +
+                        '<div style="color:#00d4ff;font-size:18px;font-weight:800;">' + s.audienceCount + '</div>' +
+                        '<div style="color:#aaa;font-size:10px;font-weight:700;text-transform:uppercase;">matchearían ahora</div>' +
+                    '</div>' +
+                '</div>' +
+
+                // Meta info
+                '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;font-size:11px;color:#aaa;">' +
+                    '<div>⏰ Dispara: <b style="color:#fff;">' + cronLabel + '</b></div>' +
+                    '<div>🎯 Ventana: <b style="color:#fff;">' + window + ' sin entrar</b></div>' +
+                    '<div>📜 Último disparo: <b style="color:#fff;">' + lastFired + '</b></div>' +
+                    '<div>🔁 Disparos totales: <b style="color:#fff;">' + (s.totalFiresLifetime || 0) + '</b></div>' +
+                '</div>' +
+
+                // Inputs editables
+                '<div style="margin-bottom:8px;">' +
+                    '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:3px;">Título</label>' +
+                    '<input id="' + titleId + '" type="text" maxlength="200" value="' + escapeHtml(s.title) + '" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />' +
+                '</div>' +
+                '<div style="margin-bottom:10px;">' +
+                    '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:3px;">Cuerpo</label>' +
+                    '<textarea id="' + bodyId + '" maxlength="1000" rows="2" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;resize:vertical;">' + escapeHtml(s.body) + '</textarea>' +
+                '</div>' +
+
+                // Sample audiencia
+                ((s.audienceSample && s.audienceSample.length > 0)
+                    ? '<div style="margin-bottom:10px;color:#aaa;font-size:11px;">Muestra: <span style="color:#9be8ff;">' + s.audienceSample.map(escapeHtml).join(', ') + (s.audienceCount > s.audienceSample.length ? ' …' : '') + '</span></div>'
+                    : '<div style="margin-bottom:10px;color:#888;font-size:11px;font-style:italic;">Audiencia vacía ahora mismo (nadie matchea la ventana).</div>'
+                ) +
+
+                // Botonera
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                    '<button onclick="recoverySaveStrategy(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:7px;cursor:pointer;">💾 Guardar copy</button>' +
+                    '<button onclick="recoveryToggleStrategy(\'' + s.id + '\', ' + (!s.enabled) + ')" style="padding:8px 14px;font-size:12px;font-weight:700;background:' + (s.enabled ? 'rgba(255,170,68,0.15)' : 'rgba(37,211,102,0.15)') + ';color:' + (s.enabled ? '#ffaa44' : '#25d366') + ';border:1px solid ' + (s.enabled ? 'rgba(255,170,68,0.40)' : 'rgba(37,211,102,0.40)') + ';border-radius:7px;cursor:pointer;">' + (s.enabled ? '⏸️ Pausar' : '▶️ Activar') + '</button>' +
+                    '<button onclick="recoveryTestFire(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(255,255,255,0.05);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:7px;cursor:pointer;">🧪 Test (sin enviar)</button>' +
+                '</div>' +
+            '</div>';
+        }
+        html += '</div>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+async function recoverySaveStrategy(id) {
+    const s = _recoveryStrategiesCache.find(x => x.id === id);
+    if (!s) return;
+    const tEl = document.getElementById('strat-title-' + id);
+    const bEl = document.getElementById('strat-body-' + id);
+    if (!tEl || !bEl) return;
+    const title = (tEl.value || '').trim();
+    const body = (bEl.value || '').trim();
+    if (!title || !body) { showToast('Título y cuerpo no pueden estar vacíos', 'error'); return; }
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/' + id, {
+            method: 'PATCH',
+            body: JSON.stringify({ title, body })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            s.title = title;
+            s.body = body;
+            showToast('✅ Copy guardado', 'success');
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function recoveryToggleStrategy(id, newEnabled) {
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/' + id, {
+            method: 'PATCH',
+            body: JSON.stringify({ enabled: newEnabled })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            showToast(newEnabled ? '▶️ Estrategia activada' : '⏸️ Estrategia pausada', 'success');
+            await _recoveryRenderStrategies(document.getElementById('recoveryContent'));
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function recoveryTestFire(id) {
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/' + id + '/test-fire', { method: 'POST' });
+        const j = await resp.json();
+        if (j.success) {
+            const sample = (j.audienceSample || []).slice(0, 5).join(', ');
+            alert('🧪 Dry run\nRegla: ' + j.ruleCode + '\nAudiencia resuelta: ' + j.audienceCount + ' usuarios\n\nMuestra: ' + (sample || '(vacío)') + '\n\nNo se envió nada.');
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Modal de creación.
+function openRecoveryNewModal() {
+    document.getElementById('recoveryNewName').value = '';
+    document.getElementById('recoveryNewMin').value = '120';
+    document.getElementById('recoveryNewMax').value = '168';
+    document.getElementById('recoveryNewHour').value = '18';
+    document.getElementById('recoveryNewTitle').value = '';
+    document.getElementById('recoveryNewBody').value = '';
+    document.getElementById('recoveryNewModal').style.display = 'flex';
+}
+
+function closeRecoveryNewModal() {
+    document.getElementById('recoveryNewModal').style.display = 'none';
+}
+
+async function submitRecoveryNew() {
+    const payload = {
+        name: document.getElementById('recoveryNewName').value.trim(),
+        minHoursAgo: Number(document.getElementById('recoveryNewMin').value),
+        maxHoursAgo: Number(document.getElementById('recoveryNewMax').value),
+        hour: Number(document.getElementById('recoveryNewHour').value),
+        title: document.getElementById('recoveryNewTitle').value.trim(),
+        body: document.getElementById('recoveryNewBody').value.trim()
+    };
+    if (!payload.title || !payload.body) { showToast('Título y cuerpo requeridos', 'error'); return; }
+    try {
+        const resp = await authFetch('/api/admin/recovery/strategies', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        const j = await resp.json();
+        if (j.success) {
+            showToast('✅ Estrategia creada', 'success');
+            closeRecoveryNewModal();
+            await _recoveryRenderStrategies(document.getElementById('recoveryContent'));
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// ----------- TAB: PENDIENTES (filtra suggestions de category='recovery') -----------
+async function _recoveryRenderPending(c) {
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando pendientes…</div>';
+    try {
+        const r = await authFetch('/api/admin/notification-rules/suggestions?status=pending');
+        const j = await r.json();
+        const all = j.suggestions || [];
+        _recoveryPendingCache = all.filter(s => s.ruleCategory === 'recovery');
+
+        // Badge de cantidad en el sub-tab.
+        const badge = document.getElementById('recoveryPendingBadge');
+        if (badge) {
+            if (_recoveryPendingCache.length > 0) {
+                badge.textContent = String(_recoveryPendingCache.length);
+                badge.style.display = '';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        if (_recoveryPendingCache.length === 0) {
+            c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">✅ Sin sugerencias de recuperación pendientes. Cuando una estrategia dispare, va a aparecer acá.</div>';
+            return;
+        }
+
+        // Reusamos la cache global de suggestions (que el approve/reject existentes
+        // consultan con find()), para que los handlers compartidos funcionen.
+        _autoSuggestionsCache = _recoveryPendingCache;
+
+        let html = '<div style="display:flex;flex-direction:column;gap:14px;">';
+        for (const s of _recoveryPendingCache) {
+            const ageMin = Math.floor((Date.now() - new Date(s.suggestedAt).getTime()) / 60000);
+            const expHours = Math.max(0, Math.floor((new Date(s.expiresAt).getTime() - Date.now()) / 3600000));
+            const titleId = 'rsug-title-' + s.id;
+            const bodyId = 'rsug-body-' + s.id;
+            const audWrapId = 'rsug-aud-' + s.id;
+            const audList = (s.audienceUsernames || []).slice(0, 500);
+            const audHtml = audList.length > 0
+                ? audList.map(u => '<span style="display:inline-block;background:rgba(0,212,255,0.10);color:#9be8ff;font-size:11px;padding:3px 8px;border-radius:5px;margin:2px;">' + escapeHtml(u) + '</span>').join('')
+                : '<span style="color:#888;font-size:11px;">(lista vacía)</span>';
+            const audMore = (s.audienceUsernames && s.audienceUsernames.length > 500)
+                ? '<div style="margin-top:6px;color:#888;font-size:10px;">+ ' + (s.audienceUsernames.length - 500) + ' usuarios más (no mostrados)</div>'
+                : '';
+
+            html += '<div style="background:rgba(255,170,68,0.05);border:1px solid rgba(255,170,68,0.30);border-radius:10px;padding:14px;">' +
+                '<div style="margin-bottom:10px;">' +
+                    '<span style="background:rgba(0,212,255,0.20);color:#00d4ff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;">' + escapeHtml(s.ruleCode) + '</span> ' +
+                    '<span style="color:#888;font-size:11px;margin-left:4px;">hace ' + ageMin + ' min · expira en ' + expHours + 'h</span>' +
+                    '<div style="color:#fff;font-size:13px;font-weight:600;margin-top:4px;">' + escapeHtml(s.ruleName) + '</div>' +
+                '</div>' +
+
+                '<div style="margin-bottom:10px;">' +
+                    '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Título</label>' +
+                    '<input id="' + titleId + '" type="text" maxlength="200" value="' + escapeHtml(s.title) + '" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />' +
+                '</div>' +
+                '<div style="margin-bottom:10px;">' +
+                    '<label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Cuerpo</label>' +
+                    '<textarea id="' + bodyId + '" maxlength="1000" rows="3" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;resize:vertical;">' + escapeHtml(s.body) + '</textarea>' +
+                '</div>' +
+
+                '<div style="margin-bottom:10px;">' +
+                    '<button onclick="recoveryToggleAudience(\'' + s.id + '\')" style="padding:6px 12px;font-size:11px;font-weight:700;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.30);border-radius:6px;cursor:pointer;">👥 Ver afectados (' + s.audienceCount + ')</button>' +
+                    '<div id="' + audWrapId + '" style="display:none;margin-top:8px;padding:8px;background:rgba(0,0,0,0.20);border-radius:6px;max-height:200px;overflow-y:auto;">' +
+                        audHtml + audMore +
+                    '</div>' +
+                '</div>' +
+
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                    '<button onclick="recoverySavePending(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:7px;cursor:pointer;">💾 Guardar cambios</button>' +
+                    '<button onclick="autoApproveSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:7px;cursor:pointer;">✅ Aprobar y enviar</button>' +
+                    '<button onclick="autoRejectSuggestion(\'' + s.id + '\')" style="padding:8px 14px;font-size:12px;font-weight:700;background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:7px;cursor:pointer;">❌ Descartar</button>' +
+                '</div>' +
+            '</div>';
+        }
+        html += '</div>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function recoveryToggleAudience(id) {
+    const el = document.getElementById('rsug-aud-' + id);
+    if (!el) return;
+    el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+}
+
+async function recoverySavePending(id) {
+    const s = _recoveryPendingCache.find(x => x.id === id);
+    if (!s) return;
+    const tEl = document.getElementById('rsug-title-' + id);
+    const bEl = document.getElementById('rsug-body-' + id);
+    if (!tEl || !bEl) return;
+    const title = (tEl.value || '').trim();
+    const body = (bEl.value || '').trim();
+    if (!title || !body) { showToast('Título y cuerpo no pueden estar vacíos', 'error'); return; }
+    if (title === s.title && body === s.body) { showToast('No hay cambios para guardar', 'info'); return; }
+    try {
+        const resp = await authFetch('/api/admin/notification-rules/suggestions/' + id, {
+            method: 'PUT',
+            body: JSON.stringify({ title, body })
+        });
+        const j = await resp.json();
+        if (j.success) {
+            s.title = j.title;
+            s.body = j.body;
+            // Mantener sincronizada la cache compartida que usa autoApproveSuggestion.
+            const shared = _autoSuggestionsCache.find(x => x.id === id);
+            if (shared) { shared.title = j.title; shared.body = j.body; }
+            showToast('✅ Cambios guardados', 'success');
+        } else {
+            showToast(j.error || 'Error', 'error');
+        }
     } catch (e) { showToast('Error de conexión', 'error'); }
 }

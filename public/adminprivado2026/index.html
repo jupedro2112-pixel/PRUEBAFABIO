@@ -98,6 +98,10 @@
                     <span>🤖</span>
                     <span>Automatizaciones <span id="automationsBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
                 </a>
+                <a href="#" class="nav-item" data-section="recovery">
+                    <span>🔁</span>
+                    <span>Recuperación <span id="recoveryBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
+                </a>
                 <a href="#" class="nav-item" data-section="lineDown">
                     <span>🚨</span>
                     <span>Caída de línea</span>
@@ -853,6 +857,86 @@
                         <div style="display:flex;gap:8px;margin-top:14px;">
                             <button onclick="closeAutoRuleEdit()" style="flex:1;padding:10px;background:rgba(255,255,255,0.08);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;cursor:pointer;">Cancelar</button>
                             <button onclick="saveAutoRuleEdit()" style="flex:1;padding:10px;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;">💾 Guardar</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: RECUPERACIÓN DE INACTIVOS
+                 -----------------------------------------
+                 Sección separada de Automatizaciones para diseñar
+                 estrategias escalonadas de re-engagement (48h, 72h,
+                 7 días, etc) y ver el panorama de la población antes
+                 de lanzar. El motor de fondo es NotificationRule
+                 con category='recovery' y requiresAdminApproval=true.
+                 ============================================ -->
+            <section id="recoverySection" class="section">
+                <div class="panel-header">
+                    <h2>🔁 Recuperación de inactivos</h2>
+                    <button class="refresh-btn" onclick="loadRecovery()" title="Refrescar">🔄</button>
+                </div>
+
+                <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">¿Cómo funciona?</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                        Acá vas a ver el <b>panorama</b> de quiénes tienen la app instalada y
+                        cuándo entraron por última vez. Las <b>estrategias</b> son notifs automáticas
+                        escalonadas según horas de inactividad. Cada una se dispara en su horario y crea
+                        una <b>sugerencia pendiente</b> con la lista de afectados — vos la abrís, podés
+                        editar el texto, y recién ahí confirmás el envío.
+                    </p>
+                </div>
+
+                <!-- Sub-tabs: panorama / estrategias / pendientes -->
+                <div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.10);">
+                    <button class="recovery-tab-btn active" data-tab="panorama" onclick="switchRecoveryTab('panorama')" style="padding:9px 14px;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);border-bottom:none;color:#00d4ff;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">📊 Panorama</button>
+                    <button class="recovery-tab-btn" data-tab="strategies" onclick="switchRecoveryTab('strategies')" style="padding:9px 14px;background:transparent;border:1px solid transparent;border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">🚀 Estrategias</button>
+                    <button class="recovery-tab-btn" data-tab="pending" onclick="switchRecoveryTab('pending')" style="padding:9px 14px;background:transparent;border:1px solid transparent;border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">⏳ Pendientes <span id="recoveryPendingBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:800;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></button>
+                </div>
+
+                <div id="recoveryContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+
+                <!-- Modal de "+ Nueva estrategia" -->
+                <div id="recoveryNewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;padding:20px;">
+                    <div style="background:#0a1929;border:1px solid rgba(0,212,255,0.40);border-radius:14px;padding:22px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;">
+                        <h3 style="margin:0 0 14px;color:#00d4ff;font-size:16px;">➕ Nueva estrategia de recuperación</h3>
+
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Nombre interno</label>
+                            <input id="recoveryNewName" type="text" maxlength="80" placeholder="Inactivos 5 días" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />
+                        </div>
+
+                        <div style="display:flex;gap:8px;margin-bottom:10px;">
+                            <div style="flex:1;">
+                                <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Desde (horas sin entrar)</label>
+                                <input id="recoveryNewMin" type="number" min="1" value="120" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />
+                            </div>
+                            <div style="flex:1;">
+                                <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Hasta (horas)</label>
+                                <input id="recoveryNewMax" type="number" min="2" value="168" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />
+                            </div>
+                            <div style="width:120px;">
+                                <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Hora ART</label>
+                                <input id="recoveryNewHour" type="number" min="0" max="23" value="18" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />
+                            </div>
+                        </div>
+
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Título del push</label>
+                            <input id="recoveryNewTitle" type="text" maxlength="200" placeholder="🎁 Volvé y reclamá tu regalo" style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;" />
+                        </div>
+
+                        <div style="margin-bottom:14px;">
+                            <label style="display:block;color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">Cuerpo del push</label>
+                            <textarea id="recoveryNewBody" maxlength="1000" rows="3" placeholder="Hace varios días que no entrás. Tenemos un regalito esperándote." style="width:100%;padding:8px 10px;background:rgba(0,0,0,0.30);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:13px;resize:vertical;"></textarea>
+                        </div>
+
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="closeRecoveryNewModal()" style="flex:1;padding:10px;background:rgba(255,255,255,0.08);color:#aaa;border:1px solid rgba(255,255,255,0.15);border-radius:8px;cursor:pointer;">Cancelar</button>
+                            <button onclick="submitRecoveryNew()" style="flex:1;padding:10px;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;">Crear estrategia</button>
                         </div>
                     </div>
                 </div>

@@ -11171,6 +11171,189 @@ app.get('/api/admin/active-players/evolution', authMiddleware, adminMiddleware, 
 });
 
 // ============================================================
+// ENDPOINTS ADMIN — Recuperación de inactivos
+// ----------------------------------------------------------------
+// Sección dedicada en el panel para estudiar la población que tiene
+// la app instalada y armar estrategias escalonadas de re-engagement
+// (48h, 72h, 7d, etc) sin tocar la sección de Automatizaciones.
+// El motor de fondo es el mismo (NotificationRule + Suggestions),
+// pero acá lo presentamos con panorama de actividad, audiencia en vivo
+// y edición inline antes de aprobar.
+// ============================================================
+
+// Panorama: distribución de usuarios con app instalada por última vez
+// que entraron. Se usa para entender la audiencia ANTES de lanzar.
+app.get('/api/admin/recovery/panorama', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Filtro base: users reales (no admin), activos, no bloqueados, con app
+    // instalada (al menos un fcmToken con context='standalone' O el flag
+    // legacy fcmTokenContext='standalone').
+    const baseFilter = {
+      role: 'user',
+      isActive: { $ne: false },
+      isBlocked: { $ne: true },
+      $or: [
+        { fcmTokenContext: 'standalone' },
+        { 'fcmTokens.context': 'standalone' }
+      ]
+    };
+
+    const now = Date.now();
+    const H = 3600 * 1000;
+    const buckets = [
+      { key: 'active24h',     label: 'Activos hoy (< 24h)',         minH: 0,    maxH: 24,    color: '#25d366' },
+      { key: 'inactive24_48', label: '24-48h sin entrar',           minH: 24,   maxH: 48,    color: '#ffd700' },
+      { key: 'inactive48_72', label: '48-72h sin entrar',           minH: 48,   maxH: 72,    color: '#ff9f3f' },
+      { key: 'inactive72_168', label: '72h-7 días sin entrar',      minH: 72,   maxH: 168,   color: '#ff5050' },
+      { key: 'inactive7d_30d', label: '7-30 días sin entrar',       minH: 168,  maxH: 720,   color: '#a855f7' },
+      { key: 'inactive30dPlus', label: '+30 días (perdidos)',       minH: 720,  maxH: null,  color: '#555' }
+    ];
+
+    // Total con app instalada (denominador).
+    const totalInstalled = await User.countDocuments(baseFilter);
+
+    // Para cada bucket, contar.
+    const out = [];
+    for (const b of buckets) {
+      const range = {};
+      if (b.maxH != null) range.$gte = new Date(now - b.maxH * H);
+      range.$lte = new Date(now - b.minH * H);
+      const filter = Object.assign({}, baseFilter, { lastLogin: range });
+      const count = await User.countDocuments(filter);
+      out.push({ key: b.key, label: b.label, color: b.color, minH: b.minH, maxH: b.maxH, count });
+    }
+
+    // Sin lastLogin (instalaron y nunca abrieron). Edge case.
+    const neverLoggedIn = await User.countDocuments(Object.assign({}, baseFilter, { $or: [
+      ...baseFilter.$or
+    ], lastLogin: { $in: [null] } }));
+
+    // Top 10 más recientes que dejaron de entrar (entre 24-168h sin login).
+    const recentlyDropped = await User.find(
+      Object.assign({}, baseFilter, { lastLogin: { $gte: new Date(now - 168 * H), $lte: new Date(now - 24 * H) } }),
+      { username: 1, lastLogin: 1, _id: 0 }
+    ).sort({ lastLogin: -1 }).limit(10).lean();
+
+    res.json({
+      success: true,
+      generatedAt: new Date().toISOString(),
+      totalInstalled,
+      buckets: out,
+      neverLoggedIn,
+      recentlyDropped
+    });
+  } catch (err) {
+    logger.error(`recovery/panorama: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Listar estrategias de recuperación (NotificationRule con category='recovery')
+// + audiencia en vivo que matchearía AHORA si dispararan.
+app.get('/api/admin/recovery/strategies', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const rules = await NotificationRule.find({ category: 'recovery' }).sort({ code: 1 }).lean();
+
+    // Para cada regla, resolver audiencia ahora (sin enviar nada).
+    const enriched = [];
+    for (const rule of rules) {
+      let audienceCount = 0;
+      let audienceSample = [];
+      try {
+        const aud = await notificationRulesService._resolveAudience(rule, _notifRulesModels);
+        audienceCount = aud.length;
+        audienceSample = aud.slice(0, 10);
+      } catch (e) {
+        // Si la regla tiene audienceType no resoluble, devolvemos 0 sin romper.
+        audienceCount = 0;
+        audienceSample = [];
+      }
+      enriched.push({
+        id: rule.id,
+        code: rule.code,
+        name: rule.name,
+        description: rule.description || null,
+        enabled: rule.enabled,
+        triggerType: rule.triggerType,
+        cronSchedule: rule.cronSchedule || null,
+        audienceType: rule.audienceType,
+        audienceConfig: rule.audienceConfig || {},
+        title: rule.title,
+        body: rule.body,
+        requiresAdminApproval: !!rule.requiresAdminApproval,
+        cooldownMinutes: rule.cooldownMinutes,
+        lastFiredAt: rule.lastFiredAt || null,
+        totalFiresLifetime: rule.totalFiresLifetime || 0,
+        audienceCount,
+        audienceSample
+      });
+    }
+
+    res.json({ success: true, strategies: enriched });
+  } catch (err) {
+    logger.error(`recovery/strategies: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Crear una nueva estrategia de recuperación. Front pasa minHoursAgo,
+// maxHoursAgo, hour ART, title, body. Backend completa el resto con
+// defaults seguros (requiresAdminApproval=true, audienceType=installed-but-inactive).
+app.post('/api/admin/recovery/strategies', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede crear estrategias.' });
+    }
+    const { name, minHoursAgo, maxHoursAgo, hour, title, body, cooldownMinutes } = req.body || {};
+
+    const minH = Number(minHoursAgo);
+    const maxH = Number(maxHoursAgo);
+    const cronH = Number(hour);
+    if (!Number.isFinite(minH) || !Number.isFinite(maxH) || minH < 0 || maxH <= minH) {
+      return res.status(400).json({ error: 'minHoursAgo y maxHoursAgo inválidos (maxHoursAgo > minHoursAgo > 0)' });
+    }
+    if (!Number.isFinite(cronH) || cronH < 0 || cronH > 23) {
+      return res.status(400).json({ error: 'hour inválido (0-23)' });
+    }
+    if (typeof title !== 'string' || !title.trim() || title.length > 200) {
+      return res.status(400).json({ error: 'title requerido (max 200)' });
+    }
+    if (typeof body !== 'string' || !body.trim() || body.length > 1000) {
+      return res.status(400).json({ error: 'body requerido (max 1000)' });
+    }
+
+    // Code único: D-INST-<minH>H. Si ya existe, anteponer timestamp.
+    let code = 'D-INST-' + minH + 'H';
+    const existing = await NotificationRule.findOne({ code }).lean();
+    if (existing) code = code + '-' + Date.now();
+
+    const rule = await NotificationRule.create({
+      id: require('uuid').v4(),
+      code,
+      name: (name && String(name).trim()) || ('Inactivos ' + minH + 'h'),
+      description: 'Estrategia de re-engagement para usuarios con app instalada y sin login en ' + minH + '-' + maxH + 'h.',
+      category: 'recovery',
+      enabled: true,
+      triggerType: 'cron',
+      cronSchedule: { hour: cronH, minute: 0 },
+      audienceType: 'installed-but-inactive',
+      audienceConfig: { minHoursAgo: minH, maxHoursAgo: maxH },
+      title: title.trim(),
+      body: body.trim(),
+      bonus: { type: 'none' },
+      requiresAdminApproval: true,
+      cooldownMinutes: Number.isFinite(Number(cooldownMinutes)) ? Math.max(60, Number(cooldownMinutes)) : Math.max(minH * 60, 24 * 60),
+      createdBy: req.user.username || null
+    });
+
+    res.json({ success: true, rule: rule.toObject() });
+  } catch (err) {
+    logger.error(`recovery/strategies POST: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // ENDPOINTS ADMIN para Automatizaciones
 // ============================================================
 
@@ -11252,6 +11435,47 @@ app.get('/api/admin/notification-rules/suggestions', authMiddleware, adminMiddle
     res.json({ success: true, suggestions, pendingCount });
   } catch (err) {
     logger.error(`GET suggestions: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Editar título/cuerpo de una suggestion PENDING antes de aprobarla.
+// Solo se puede editar si status='pending'. La audiencia (audienceUsernames)
+// no se toca: ya quedó fijada al momento de crear la suggestion.
+app.put('/api/admin/notification-rules/suggestions/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede editar sugerencias.' });
+    }
+    const { id } = req.params;
+    const { title, body } = req.body || {};
+
+    if (typeof title !== 'string' || typeof body !== 'string') {
+      return res.status(400).json({ error: 'title y body son requeridos (string)' });
+    }
+    const trimmedTitle = title.trim();
+    const trimmedBody = body.trim();
+    if (!trimmedTitle || !trimmedBody) {
+      return res.status(400).json({ error: 'title y body no pueden estar vacíos' });
+    }
+    if (trimmedTitle.length > 200 || trimmedBody.length > 1000) {
+      return res.status(400).json({ error: 'title (max 200) o body (max 1000) muy largos' });
+    }
+
+    const sug = await NotificationRuleSuggestion.findOne({ id }).lean();
+    if (!sug) return res.status(404).json({ error: 'Sugerencia no encontrada' });
+    if (sug.status !== 'pending') {
+      return res.status(400).json({ error: `Sugerencia en estado ${sug.status}, no se puede editar` });
+    }
+
+    await NotificationRuleSuggestion.updateOne(
+      { id },
+      { $set: { title: trimmedTitle, body: trimmedBody } }
+    );
+
+    res.json({ success: true, title: trimmedTitle, body: trimmedBody });
+  } catch (err) {
+    logger.error(`PUT suggestion: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

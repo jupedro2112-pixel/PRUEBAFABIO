@@ -202,6 +202,33 @@ async function _resolveAudience(rule, models) {
       return _filterUsersByChannel(usernames, User);
     }
 
+    case 'installed-but-inactive': {
+      // Instalaron la PWA (tienen al menos un fcmToken con context='standalone')
+      // y no abren la app (lastLogin) hace [minHoursAgo, maxHoursAgo].
+      // Diferente a 'welcome-no-play-since' que mide depósitos: acá medimos
+      // login efectivo a la app. Pensado para campañas de re-engagement
+      // escalonadas (48h "te extrañamos", 72h "regalito", etc).
+      const cfg = rule.audienceConfig || {};
+      const minHours = Number(cfg.minHoursAgo || 48);
+      const maxHours = Number(cfg.maxHoursAgo || 72);
+      const now = Date.now();
+      const minMs = now - maxHours * 3600 * 1000; // borde más viejo
+      const maxMs = now - minHours * 3600 * 1000; // borde más reciente
+      const docs = await User.find({
+        role: 'user',
+        isActive: { $ne: false },
+        isBlocked: { $ne: true },
+        lastLogin: { $gte: new Date(minMs), $lte: new Date(maxMs) },
+        $or: [
+          { fcmTokenContext: 'standalone' },
+          { 'fcmTokens.context': 'standalone' }
+        ]
+      }).select('username').lean();
+      const usernames = docs.map(u => (u.username || '').toLowerCase()).filter(Boolean);
+      // _filterUsersByChannel re-chequea que sigan teniendo app+notifs.
+      return _filterUsersByChannel(usernames, User);
+    }
+
     default:
       return [];
   }
@@ -537,6 +564,48 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
       body: 'Pasaron 2 días. Probá unas jugadas y triplicá. RETIRO10 te espera.',
       bonus: { type: 'none' },
       cooldownMinutes: 6 * 60
+    },
+
+    // ============= RECUPERACIÓN DE INACTIVOS (instalaron PWA, no entran) =============
+    // Estas reglas detectan usuarios que tienen la app instalada (fcmToken
+    // standalone) pero hace varias horas que no abren la app. Cada una tiene
+    // requiresAdminApproval=true: el cron resuelve audiencia y crea una
+    // NotificationRuleSuggestion; el admin la abre desde el panel, ve la
+    // lista de afectados, edita el copy si quiere, y recién ahí confirma
+    // el envío. Pensadas para re-engagement escalonado.
+    {
+      id: uuidv4(),
+      code: 'D-INST-48H',
+      name: 'Inactivos 48h — Te extrañamos',
+      description: 'Instalaron la app pero no entran hace 48-72h. Push suave de re-engagement.',
+      category: 'recovery',
+      enabled: true,
+      triggerType: 'cron',
+      cronSchedule: { hour: 18, minute: 0 }, // 18:00 ART todos los días
+      audienceType: 'installed-but-inactive',
+      audienceConfig: { minHoursAgo: 48, maxHoursAgo: 72 },
+      title: '👀 Te extrañamos!',
+      body: 'Hace 2 días que no te vemos. Volvé y probá tu suerte!',
+      bonus: { type: 'none' },
+      requiresAdminApproval: true,
+      cooldownMinutes: 48 * 60
+    },
+    {
+      id: uuidv4(),
+      code: 'D-INST-72H',
+      name: 'Inactivos 72h — Regalito de vuelta',
+      description: 'Instalaron la app pero no entran hace 72-168h (3 a 7 días). Push con regalito.',
+      category: 'recovery',
+      enabled: true,
+      triggerType: 'cron',
+      cronSchedule: { hour: 19, minute: 0 }, // 19:00 ART todos los días
+      audienceType: 'installed-but-inactive',
+      audienceConfig: { minHoursAgo: 72, maxHoursAgo: 168 },
+      title: '🎁 Tenemos un regalito esperándote',
+      body: 'Hace varios días que no entrás. Volvé y reclamá tu regalo.',
+      bonus: { type: 'none' },
+      requiresAdminApproval: true,
+      cooldownMinutes: 72 * 60
     }
   ];
 

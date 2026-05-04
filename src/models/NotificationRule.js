@@ -99,6 +99,7 @@ const notificationRuleSchema = new mongoose.Schema({
   // 'state-changed' = los que cambiaron de estado en el último ciclo
   // 'streak' = jugaron N días seguidos
   // 'returned-after' = volvieron tras N días sin jugar
+  // 'installed-but-inactive' = instalaron la PWA y no entran (lastLogin) en X horas
   audienceType: {
     type: String,
     enum: [
@@ -110,7 +111,8 @@ const notificationRuleSchema = new mongoose.Schema({
       'tier-state',
       'state-changed',
       'streak',
-      'returned-after'
+      'returned-after',
+      'installed-but-inactive'
     ],
     required: true
   },
