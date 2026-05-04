@@ -91,7 +91,17 @@ const refundClaimSchema = new mongoose.Schema({
   creditError: {
     type: String,
     default: null
-  }
+  },
+  // Snapshot post-claim: cantidad de cargas reales (depósitos en JUGAYGANA,
+  // excluyendo bonos nuestros) que el usuario hizo DESPUÉS de claimedAt.
+  // Se popula cuando el admin toca "Refrescar cargas" (endpoint
+  // /api/admin/reports/welcome-bonus/refresh-charges) consultando los
+  // movimientos de JUGAYGANA. Persiste por claim para que el reporte sea
+  // estable y rápido (no requiere consulta a JUGAYGANA por render).
+  chargesAfterClaim: { type: Number, default: 0, min: 0 },
+  chargesAfterClaimAmount: { type: Number, default: 0, min: 0 },
+  lastChargeAfterClaimAt: { type: Date, default: null },
+  chargesAfterClaimCheckedAt: { type: Date, default: null }
 }, {
   timestamps: true
 });

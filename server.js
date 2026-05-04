@@ -8288,7 +8288,12 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
     // 1) Todos los claims del bono.
     const claims = await RefundClaim.find(
       { type: 'welcome_install' },
-      { username: 1, userId: 1, claimedAt: 1, status: 1, transactionId: 1, _id: 0 }
+      {
+        username: 1, userId: 1, claimedAt: 1, status: 1, transactionId: 1,
+        chargesAfterClaim: 1, chargesAfterClaimAmount: 1,
+        lastChargeAfterClaimAt: 1, chargesAfterClaimCheckedAt: 1,
+        _id: 0
+      }
     ).sort({ claimedAt: -1 }).lean();
 
     if (claims.length === 0) {
@@ -8306,19 +8311,23 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
     ).lean();
     const byUsername = new Map(users.map(u => [(u.username || '').toLowerCase(), u]));
 
-    // 2.b) PlayerStats con lastRealDepositDate para responder
-    // "¿cargaron despues de reclamar el bono?". lastRealDepositDate es la
-    // fecha de la ULTIMA carga real (no bono). Si lastRealDepositDate >=
-    // claimedAt, entonces cargaron al menos una vez post-bono.
+    // 2.b) PlayerStats con realDeposits30d/realChargesCount30d como contexto
+    // adicional ("¿qué actividad tuvo en los últimos 30d?"). El flag de
+    // "cargó después del bono" YA NO se calcula desde lastRealDepositDate
+    // (que solo guarda una aproximación mid-period y no responde la pregunta).
+    // Ahora vive en RefundClaim.chargesAfterClaim (snapshot poblado por
+    // /api/admin/reports/welcome-bonus/refresh-charges contra los movimientos
+    // reales de JUGAYGANA, excluyendo las acreditaciones de bonos).
     const lowerUsernames = usernames.map(u => (u || '').toLowerCase());
     const playerStats = await PlayerStats.find(
       { username: { $in: lowerUsernames } },
-      { username: 1, lastRealDepositDate: 1, realDeposits30d: 1, realChargesCount30d: 1, _id: 0 }
+      { username: 1, realDeposits30d: 1, realChargesCount30d: 1, _id: 0 }
     ).lean();
     const psByUsername = new Map(playerStats.map(p => [(p.username || '').toLowerCase(), p]));
 
     let stillHasApp = 0, stillHasNotifs = 0, stillBoth = 0, lostApp = 0, lostNotifs = 0;
     let chargedAfterClaim = 0;
+    let chargesNeverChecked = 0;
     const enriched = claims.map(c => {
       const u = byUsername.get((c.username || '').toLowerCase()) || {};
       const ps = psByUsername.get((c.username || '').toLowerCase()) || {};
@@ -8351,14 +8360,18 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
       if (hasApp && hasNotifs) stillBoth++;
 
       // ¿Cargó después del reclamo del bono?
-      // lastRealDepositDate es la última carga real registrada. Si esa fecha
-      // es posterior a claimedAt, sabemos que volvieron a cargar al menos
-      // una vez después de reclamar los $10.000. No tenemos el historial
-      // completo en PlayerStats, pero esto responde "¿alguna carga post-bono?".
-      const claimedMs = c.claimedAt ? new Date(c.claimedAt).getTime() : 0;
-      const lastDepMs = ps.lastRealDepositDate ? new Date(ps.lastRealDepositDate).getTime() : 0;
-      const didChargeAfter = claimedMs > 0 && lastDepMs > 0 && lastDepMs >= claimedMs;
+      // Fuente de verdad: snapshot por-claim poblado desde los movimientos
+      // de JUGAYGANA (excluyendo las acreditaciones de bonos por transactionId).
+      // Cuenta DEPÓSITOS, no monto: alguien puede haber cargado y retirado
+      // todo, lo que daría saldo $0 pero igual responde "sí, cargaron".
+      // Si chargesAfterClaimCheckedAt es null, el claim todavía no fue
+      // refrescado contra JUGAYGANA — el admin debe tocar "Refrescar cargas".
+      const chargesCount = Number(c.chargesAfterClaim || 0);
+      const chargesAmount = Number(c.chargesAfterClaimAmount || 0);
+      const didChargeAfter = chargesCount > 0;
+      const checkedAt = c.chargesAfterClaimCheckedAt || null;
       if (didChargeAfter) chargedAfterClaim++;
+      if (!checkedAt) chargesNeverChecked++;
 
       return {
         username: c.username || '',
@@ -8370,9 +8383,13 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         lastLogin: u.lastLogin || null,
         appLastSeen: appLastSeen > 0 ? new Date(appLastSeen).toISOString() : null,
         platform: platform,
-        // Datos de carga post-bono
+        // Datos de carga post-bono (desde snapshot por-claim)
         chargedAfterClaim: didChargeAfter,
-        lastDepositAt: ps.lastRealDepositDate || null,
+        chargesAfterClaim: chargesCount,
+        chargesAfterClaimAmount: chargesAmount,
+        lastDepositAt: c.lastChargeAfterClaimAt || null,
+        chargesCheckedAt: checkedAt,
+        // Contexto agregado de PlayerStats (últimos 30d, no atado al claim)
         realDeposits30d: ps.realDeposits30d || 0,
         realChargesCount30d: ps.realChargesCount30d || 0
       };
@@ -8386,7 +8403,8 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         stillBoth,
         lostApp,
         lostNotifs,
-        chargedAfterClaim
+        chargedAfterClaim,
+        chargesNeverChecked
       },
       claims: enriched
     });
@@ -8394,6 +8412,177 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
     logger.error(`/api/admin/reports/welcome-bonus error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
+});
+
+// ============================================
+// POST /api/admin/reports/welcome-bonus/refresh-charges
+// Para cada claim de welcome_install, consulta los movimientos reales en
+// JUGAYGANA (ShowUserMovements) desde claimedAt, cuenta los DEPÓSITOS
+// (excluyendo las acreditaciones de bonos por transactionId match) y
+// guarda el snapshot en RefundClaim.chargesAfterClaim/Amount/lastAt.
+//
+// Por qué no usamos lastRealDepositDate de PlayerStats: ese campo guarda
+// solo una aproximación mid-period (15d atrás), entonces para claims
+// recientes el flag salía siempre falso. Y por qué contamos cargas y no
+// monto: alguien puede haber cargado y retirado todo, dejando $0 de
+// saldo o $0 de delta — pero la pregunta de negocio es "¿volvieron a
+// jugar después del regalo?", no "¿les quedó plata?".
+//
+// El admin polea GET /api/admin/reports/welcome-bonus/refresh-charges
+// para ver progreso. Anti-overlap: si ya está corriendo, devolvemos
+// el state actual sin disparar otro pase.
+// ============================================
+let _welcomeBonusChargesRefreshState = {
+  running: false, total: 0, done: 0, errors: 0,
+  startedAt: null, finishedAt: null
+};
+
+async function _refreshChargesAfterClaimFor(claim) {
+  const username = claim.username;
+  const claimedAt = claim.claimedAt ? new Date(claim.claimedAt) : null;
+  if (!username || !claimedAt) return { ok: false, reason: 'missing_data' };
+
+  // TransactionIds de TODOS los bonos que le acreditamos a este user
+  // (welcome + daily/weekly/monthly + giveaways). Estos van a aparecer
+  // como "deposits" en JUGAYGANA porque creditUserBalance pasa por su
+  // endpoint de depósito — los excluimos para no contarlos como cargas
+  // del usuario.
+  const [refundDocs, giveawayDocs] = await Promise.all([
+    RefundClaim.find(
+      { username, transactionId: { $ne: null } },
+      { transactionId: 1, _id: 0 }
+    ).lean(),
+    MoneyGiveawayClaim.find(
+      { username, transactionId: { $ne: null } },
+      { transactionId: 1, _id: 0 }
+    ).lean().catch(() => [])
+  ]);
+  const bonusTxIds = new Set();
+  for (const d of refundDocs) if (d.transactionId) bonusTxIds.add(String(d.transactionId));
+  for (const d of giveawayDocs) if (d.transactionId) bonusTxIds.add(String(d.transactionId));
+
+  // JUGAYGANA filtra por YYYY-MM-DD. Pedimos desde un día antes del claim
+  // (tolerancia de timezone) y filtramos al timestamp después.
+  const startDate = new Date(claimedAt.getTime() - 24*3600*1000).toISOString().split('T')[0];
+  const endDate = new Date(Date.now() + 24*3600*1000).toISOString().split('T')[0];
+
+  const result = await jugayganaMovements.getUserMovements(username, {
+    startDate,
+    endDate,
+    operationType: 'deposit',
+    pageSize: 500
+  });
+
+  if (!result || !result.success) {
+    return { ok: false, reason: result?.error || 'movements_failed' };
+  }
+
+  const claimedMs = claimedAt.getTime();
+  let count = 0;
+  let amount = 0;
+  let lastAt = 0;
+
+  for (const m of (result.movements || [])) {
+    // Posibles nombres de campo para el id del movimiento.
+    const mid = String(
+      m.id || m.Id || m._id ||
+      m.transfer_id || m.transferId ||
+      m.transactionId || m.TransactionId || ''
+    );
+    if (mid && bonusTxIds.has(mid)) continue;
+
+    // Defensa en profundidad: confirmamos que es depósito aunque ya
+    // pedimos operationType='deposit' arriba.
+    const type = (m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toString().toLowerCase();
+    let amt = 0;
+    if (m.amount !== undefined) amt = parseFloat(m.amount);
+    else if (m.Amount !== undefined) amt = parseFloat(m.Amount);
+    else if (m.value !== undefined) amt = parseFloat(m.value);
+    else if (m.Value !== undefined) amt = parseFloat(m.Value);
+    else if (m.monto !== undefined) amt = parseFloat(m.monto);
+    else if (m.Monto !== undefined) amt = parseFloat(m.Monto);
+
+    const isDep = type.includes('deposit') || type.includes('credit') ||
+                  type.includes('carga') || type.includes('recarga') || amt > 0;
+    if (!isDep) continue;
+
+    // Timestamp del movimiento. Si lo tenemos, exigimos > claimedAt para
+    // descartar depósitos del mismo día previos al reclamo. Si no lo
+    // tenemos, contamos best-effort (el bono ya quedó excluido por id).
+    const tsRaw = m.created_at || m.createdAt || m.date || m.Date ||
+                  m.datetime || m.timestamp || m.time || m.created || null;
+    let mTs = 0;
+    if (tsRaw) {
+      const d = new Date(tsRaw);
+      if (!isNaN(d.getTime())) mTs = d.getTime();
+    }
+    if (mTs > 0 && mTs <= claimedMs) continue;
+
+    count++;
+    amount += Math.abs(Number.isFinite(amt) ? amt : 0);
+    if (mTs > lastAt) lastAt = mTs;
+  }
+
+  await RefundClaim.updateOne(
+    { id: claim.id },
+    {
+      $set: {
+        chargesAfterClaim: count,
+        chargesAfterClaimAmount: amount,
+        lastChargeAfterClaimAt: lastAt > 0 ? new Date(lastAt) : null,
+        chargesAfterClaimCheckedAt: new Date()
+      }
+    }
+  );
+
+  return { ok: true, count, amount };
+}
+
+app.post('/api/admin/reports/welcome-bonus/refresh-charges', authMiddleware, adminMiddleware, async (req, res) => {
+  if (_welcomeBonusChargesRefreshState.running) {
+    return res.json({
+      success: false,
+      message: 'Ya hay un refresh corriendo',
+      state: _welcomeBonusChargesRefreshState
+    });
+  }
+
+  _welcomeBonusChargesRefreshState = {
+    running: true, total: 0, done: 0, errors: 0,
+    startedAt: new Date().toISOString(), finishedAt: null
+  };
+  res.json({ success: true, state: _welcomeBonusChargesRefreshState });
+
+  (async () => {
+    try {
+      const claims = await RefundClaim.find(
+        { type: 'welcome_install' },
+        { id: 1, username: 1, claimedAt: 1, _id: 0 }
+      ).sort({ claimedAt: -1 }).lean();
+      _welcomeBonusChargesRefreshState.total = claims.length;
+
+      for (const c of claims) {
+        try {
+          const r = await _refreshChargesAfterClaimFor(c);
+          if (!r.ok) _welcomeBonusChargesRefreshState.errors++;
+        } catch (e) {
+          _welcomeBonusChargesRefreshState.errors++;
+          logger.warn(`[welcome-charges] ${c.username}: ${e.message}`);
+        }
+        _welcomeBonusChargesRefreshState.done++;
+        await new Promise(r => setTimeout(r, 250));
+      }
+    } catch (e) {
+      logger.error(`[welcome-charges] fatal: ${e.message}`);
+    } finally {
+      _welcomeBonusChargesRefreshState.running = false;
+      _welcomeBonusChargesRefreshState.finishedAt = new Date().toISOString();
+    }
+  })();
+});
+
+app.get('/api/admin/reports/welcome-bonus/refresh-charges', authMiddleware, adminMiddleware, async (req, res) => {
+  res.json({ state: _welcomeBonusChargesRefreshState });
 });
 
 // ============================================

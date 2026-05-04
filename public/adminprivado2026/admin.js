@@ -1360,15 +1360,11 @@ async function loadWelcomeBonusReport() {
 // ============================================================
 // Refresh "real" del reporte de bono $10.000
 // -------------------------------------------------------------
-// Dispara POST /api/admin/stats/refresh (recorre todos los users,
-// pega JUGAYGANA y actualiza PlayerStats.lastRealDepositDate). Polea
-// GET cada 3s para mostrar el progreso. Cuando termina, vuelve a llamar
-// a loadWelcomeBonusReport() para que la columna "Cargó después" refleje
-// el estado actualizado.
-//
-// Importante: el refresh es global (lo comparten otras secciones que
-// también consumen PlayerStats). Si alguien más lo disparó, nos
-// enganchamos al poll igual y reusamos su progreso.
+// Dispara POST /api/admin/reports/welcome-bonus/refresh-charges (itera
+// todos los claims, lee los movimientos reales de JUGAYGANA desde
+// claimedAt, cuenta cargas excluyendo las acreditaciones de bonos por
+// transactionId, y guarda el snapshot por claim). Polea cada 3s para
+// mostrar progreso y al terminar recarga la tabla.
 // ============================================================
 let _welcomeBonusRefreshPoll = null;
 
@@ -1395,27 +1391,25 @@ async function triggerWelcomeBonusRefresh() {
     const btn = document.getElementById('welcomeBonusRefreshBtn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Iniciando…'; btn.style.opacity = '0.6'; }
     try {
-        const r = await authFetch('/api/admin/stats/refresh', { method: 'POST' });
+        const r = await authFetch('/api/admin/reports/welcome-bonus/refresh-charges', { method: 'POST' });
         const d = await r.json();
         if (d.success === false) {
-            // Ya hay otro refresh corriendo — nos enganchamos al poll igual.
             showToast(d.message || 'Ya hay un refresh corriendo, sigo el progreso…', 'info');
         } else {
-            showToast('Refrescando JUGAYGANA en background', 'success');
+            showToast('Leyendo cargas reales de JUGAYGANA en background', 'success');
         }
         _renderWelcomeBonusRefreshState(d.state || { running: true, done: 0, total: 0 });
 
         if (_welcomeBonusRefreshPoll) clearInterval(_welcomeBonusRefreshPoll);
         _welcomeBonusRefreshPoll = setInterval(async () => {
             try {
-                const pr = await authFetch('/api/admin/stats/refresh', { method: 'GET' });
+                const pr = await authFetch('/api/admin/reports/welcome-bonus/refresh-charges', { method: 'GET' });
                 const pd = await pr.json();
                 const state = pd.state || {};
                 _renderWelcomeBonusRefreshState(state);
                 if (!state.running && state.finishedAt) {
                     clearInterval(_welcomeBonusRefreshPoll);
                     _welcomeBonusRefreshPoll = null;
-                    // Recargar la tabla para reflejar las cargas frescas.
                     await loadWelcomeBonusReport();
                     showToast('✅ Reporte actualizado con cargas reales', 'success');
                 }
@@ -1489,6 +1483,9 @@ function renderWelcomeBonusReport(container, data) {
     html += '  <div class="stat-card"><span class="label">⚠️ Desinstalaron app</span><span class="value" style="color:#ef4444;">' + (t.lostApp || 0) + '</span></div>';
     html += '  <div class="stat-card"><span class="label">⚠️ Desactivaron notifs</span><span class="value" style="color:#ef4444;">' + (t.lostNotifs || 0) + '</span></div>';
     html += '  <div class="stat-card"><span class="label">💰 Cargaron después</span><span class="value" style="color:#25d366;">' + (t.chargedAfterClaim || 0) + ' <small style="font-size:11px;color:#888;">(' + pct(t.chargedAfterClaim || 0) + '%)</small></span></div>';
+    if ((t.chargesNeverChecked || 0) > 0) {
+        html += '  <div class="stat-card"><span class="label">⏳ Sin chequear cargas</span><span class="value" style="color:#f59e0b;">' + t.chargesNeverChecked + ' <small style="font-size:11px;color:#888;">(toca "Refrescar")</small></span></div>';
+    }
     html += '</div>';
 
     if (claims.length === 0) {
@@ -1503,7 +1500,7 @@ function renderWelcomeBonusReport(container, data) {
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:10px 14px;margin:14px 0 0;">';
     html +=   '<div style="flex:1;min-width:200px;">';
     html +=     '<div style="color:#00d4ff;font-size:12px;font-weight:700;margin-bottom:2px;">💰 Carga real post-bono</div>';
-    html +=     '<div id="welcomeBonusRefreshState" style="color:#aaa;font-size:11px;">Tocá "Refrescar cargas" para leer JUGAYGANA y actualizar quién cargó de verdad después de reclamar el bono.</div>';
+    html +=     '<div id="welcomeBonusRefreshState" style="color:#aaa;font-size:11px;">Tocá "Refrescar cargas" para leer los movimientos reales de JUGAYGANA por claim (cuenta cargas post-bono, ignora nuestras acreditaciones).</div>';
     html +=   '</div>';
     html +=   '<button id="welcomeBonusRefreshBtn" onclick="triggerWelcomeBonusRefresh()" style="padding:9px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#00d4ff,#0066cc);color:#fff;border:none;border-radius:8px;cursor:pointer;white-space:nowrap;">🔄 Refrescar cargas</button>';
     html += '</div>';
@@ -1567,26 +1564,42 @@ function renderWelcomeBonusTableHtml(claims) {
             : '<span style="color:#ef4444;font-weight:700;">⚠️ Desactivó</span>';
 
         // Columna "Cargó después de reclamar el bono".
-        // Compara claimedAt vs lastRealDepositDate (PlayerStats).
-        // Si vino al menos una carga real post-claim, mostramos ✅ + fecha + días.
-        // Si no, ❌ y los datos de cargas de los últimos 30d como contexto.
+        // Snapshot por-claim desde JUGAYGANA: cuenta cargas reales (no monto)
+        // ocurridas con timestamp > claimedAt, excluyendo las acreditaciones
+        // de nuestros bonos. Por qué cargas y no monto: alguien puede haber
+        // cargado y retirado todo, dejando $0 — igual queremos saber que
+        // jugó después del regalo.
+        const chargesCount = Number(c.chargesAfterClaim || 0);
+        const chargesAmount = Number(c.chargesAfterClaimAmount || 0);
         let chargedCell;
-        if (c.chargedAfterClaim && c.lastDepositAt) {
-            const depDate = new Date(c.lastDepositAt);
-            const claimedMs = c.claimedAt ? new Date(c.claimedAt).getTime() : 0;
-            const daysFromClaim = claimedMs ? Math.max(0, Math.floor((depDate.getTime() - claimedMs) / 86400000)) : null;
-            const ago = daysFromClaim != null
-                ? (daysFromClaim === 0 ? 'mismo día' : (daysFromClaim + ' días después'))
-                : '';
+        if (!c.chargesCheckedAt) {
+            // Todavía no se corrió el refresh contra JUGAYGANA para este claim.
             chargedCell =
-                '<div style="color:#25d366;font-weight:700;">✅ Sí</div>' +
-                '<small style="color:#888;">' + escapeHtml(depDate.toLocaleDateString('es-AR')) + (ago ? ' · ' + ago : '') + '</small>';
+                '<div style="color:#888;font-weight:700;">— Sin datos</div>' +
+                '<small style="color:#666;">Tocá "Refrescar cargas"</small>';
+        } else if (chargesCount > 0) {
+            const fmtAmount = chargesAmount > 0
+                ? '$' + Math.round(chargesAmount).toLocaleString('es-AR')
+                : '';
+            let extra = '';
+            if (c.lastDepositAt) {
+                const depDate = new Date(c.lastDepositAt);
+                const claimedMs = c.claimedAt ? new Date(c.claimedAt).getTime() : 0;
+                const daysFromClaim = claimedMs ? Math.max(0, Math.floor((depDate.getTime() - claimedMs) / 86400000)) : null;
+                const ago = daysFromClaim != null
+                    ? (daysFromClaim === 0 ? 'mismo día' : (daysFromClaim + 'd después'))
+                    : '';
+                extra = '<small style="color:#888;">última: ' + escapeHtml(depDate.toLocaleDateString('es-AR')) + (ago ? ' · ' + ago : '') + '</small>';
+            }
+            chargedCell =
+                '<div style="color:#25d366;font-weight:700;">✅ ' + chargesCount + ' carga' + (chargesCount === 1 ? '' : 's') + (fmtAmount ? ' · ' + fmtAmount : '') + '</div>' +
+                extra;
         } else {
             chargedCell =
-                '<div style="color:#ef4444;font-weight:700;">❌ No</div>' +
+                '<div style="color:#ef4444;font-weight:700;">❌ No cargó</div>' +
                 ((c.realChargesCount30d || 0) > 0
-                    ? '<small style="color:#888;">' + (c.realChargesCount30d || 0) + ' cargas en 30d</small>'
-                    : '<small style="color:#666;">sin cargas registradas</small>');
+                    ? '<small style="color:#888;">' + (c.realChargesCount30d || 0) + ' cargas en 30d (otra ventana)</small>'
+                    : '<small style="color:#666;">sin cargas post-bono</small>');
         }
 
         const statusBadge = c.status === 'pending_credit_failed'
