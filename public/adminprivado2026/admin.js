@@ -179,6 +179,7 @@ function showSection(sectionKey) {
         raffles: 'rafflesSection',
         rafflesFree: 'rafflesFreeSection',
         rafflesLightning: 'rafflesLightningSection',
+        campaigns: 'campaignsSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
@@ -229,6 +230,8 @@ function showSection(sectionKey) {
         loadRafflesFreeAdmin();
     } else if (sectionKey === 'rafflesLightning') {
         loadRafflesLightningAdmin();
+    } else if (sectionKey === 'campaigns') {
+        loadCampaignsAdmin();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -8672,6 +8675,147 @@ async function loadRafflesFreeAdmin() {
 
 async function loadRafflesLightningAdmin() {
     return _loadRafflesGeneric('relampago', 'rafflesLightningAdminContent');
+}
+
+// ============================================
+// CAMPAÑAS / LANDINGS (counter de /promo2k y similares)
+// ============================================
+//
+// Lista todas las landings vistas (cada code es una entrada). Por cada
+// landing podes tocar "Ver detalle" para ver KPIs y by-day.
+async function loadCampaignsAdmin() {
+    const c = document.getElementById('campaignsAdminContent');
+    if (!c) return;
+    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/landings');
+        const d = await r.json();
+        if (!r.ok) {
+            c.innerHTML = '<div style="color:#ff8080;padding:18px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        const landings = d.landings || [];
+
+        // Siempre mostramos al menos /promo2k aunque no tenga visitas todavia.
+        const knownCodes = new Set(landings.map(l => l.code));
+        if (!knownCodes.has('promo2k')) {
+            landings.unshift({ code: 'promo2k', totalVisits: 0, uniqueIps: 0, last24h: 0, last7d: 0, first: null, last: null });
+        }
+
+        let html = '<div style="display:flex;flex-direction:column;gap:12px;">';
+        for (const l of landings) {
+            const url = '/' + l.code;
+            const isPromo = l.code === 'promo2k';
+            html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:14px;">';
+            html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">';
+            html += '    <div>';
+            html += '      <div style="color:#00d4ff;font-size:15px;font-weight:800;">' + (isPromo ? '⚡ ' : '📄 ') + escapeHtml(l.code) + '</div>';
+            html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">URL: <code style="color:#fff;background:rgba(0,0,0,0.30);padding:2px 6px;border-radius:4px;">' + escapeHtml(window.location.origin) + escapeHtml(url) + '</code></div>';
+            html += '    </div>';
+            html += '    <div style="display:flex;gap:6px;">';
+            html += '      <button type="button" onclick="copyCampaignLink(' + escapeJsArg(url) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 11px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">📋 Copiar link</button>';
+            html += '      <button type="button" onclick="loadCampaignDetail(' + escapeJsArg(l.code) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:7px 11px;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;">📈 Ver detalle</button>';
+            html += '    </div>';
+            html += '  </div>';
+            html += '  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;">';
+            html += _campaignKpi('Visitas totales', (l.totalVisits || 0).toLocaleString('es-AR'), '#00d4ff');
+            html += _campaignKpi('Únicos (IP)', (l.uniqueIps || 0).toLocaleString('es-AR'), '#66ff66');
+            html += _campaignKpi('Últimas 24h', (l.last24h || 0).toLocaleString('es-AR'), '#ffeb3b');
+            html += _campaignKpi('Últimos 7 días', (l.last7d || 0).toLocaleString('es-AR'), '#ff9800');
+            html += '  </div>';
+            html += '  <div id="campaignDetail_' + escapeHtml(l.code) + '" style="margin-top:10px;display:none;"></div>';
+            html += '</div>';
+        }
+        html += '</div>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:18px;">Error de conexión</div>';
+    }
+}
+
+function _campaignKpi(label, value, color) {
+    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;text-align:center;">' +
+        '<div style="color:' + color + ';font-size:18px;font-weight:900;line-height:1;">' + value + '</div>' +
+        '<div style="color:#888;font-size:10px;margin-top:4px;text-transform:uppercase;letter-spacing:1px;">' + label + '</div>' +
+    '</div>';
+}
+
+async function copyCampaignLink(path) {
+    const fullUrl = window.location.origin + path;
+    try {
+        await navigator.clipboard.writeText(fullUrl);
+        showToast('📋 Link copiado: ' + fullUrl, 'success');
+    } catch (e) {
+        // Fallback: prompt para que copien manualmente.
+        prompt('Copiá el link:', fullUrl);
+    }
+}
+
+async function loadCampaignDetail(code) {
+    const box = document.getElementById('campaignDetail_' + code);
+    if (!box) return;
+    if (box.style.display === 'block') {
+        box.style.display = 'none';
+        return;
+    }
+    box.style.display = 'block';
+    box.innerHTML = '<div style="color:#888;padding:14px;text-align:center;">⏳ Cargando detalle…</div>';
+    try {
+        const r = await authFetch('/api/admin/landings/' + encodeURIComponent(code) + '/stats');
+        const d = await r.json();
+        if (!r.ok) {
+            box.innerHTML = '<div style="color:#ff8080;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        let h = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;">';
+
+        // By-day chart simple (barras horizontales)
+        h += '<div style="color:#fff;font-weight:800;font-size:12px;margin-bottom:8px;">📅 Visitas por día (últimos 30 días, ARG)</div>';
+        if (!d.byDay || d.byDay.length === 0) {
+            h += '<div style="color:#888;font-size:11px;padding:8px;">Sin datos todavía.</div>';
+        } else {
+            const maxVisits = Math.max.apply(null, d.byDay.map(x => x.visits || 0)) || 1;
+            for (const day of d.byDay) {
+                const pct = Math.max(2, Math.round((day.visits / maxVisits) * 100));
+                h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px;">';
+                h += '  <div style="width:78px;color:#aaa;flex-shrink:0;">' + escapeHtml(day.day) + '</div>';
+                h += '  <div style="flex:1;background:rgba(255,255,255,0.05);border-radius:4px;height:18px;position:relative;">';
+                h += '    <div style="width:' + pct + '%;height:100%;background:linear-gradient(90deg,#00d4ff,#0080ff);border-radius:4px;"></div>';
+                h += '  </div>';
+                h += '  <div style="width:90px;text-align:right;color:#fff;font-weight:700;flex-shrink:0;">' + day.visits + ' <span style="color:#888;font-size:10px;">(' + day.uniqueIps + ' únicos)</span></div>';
+                h += '</div>';
+            }
+        }
+        h += '</div>';
+
+        // Ultimas visitas
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;margin-top:8px;">';
+        h += '<div style="color:#fff;font-weight:800;font-size:12px;margin-bottom:8px;">🕒 Últimas 50 visitas</div>';
+        if (!d.recent || d.recent.length === 0) {
+            h += '<div style="color:#888;font-size:11px;padding:8px;">Sin visitas todavía.</div>';
+        } else {
+            h += '<div style="max-height:280px;overflow-y:auto;">';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+            h += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.10);"><th style="padding:5px 6px;">Cuándo</th><th style="padding:5px 6px;">User</th><th style="padding:5px 6px;">IP-hash</th><th style="padding:5px 6px;">Referer</th></tr></thead>';
+            h += '<tbody>';
+            for (const v of d.recent) {
+                const when = v.at ? new Date(v.at).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+                h += '  <td style="padding:5px 6px;color:#ddd;white-space:nowrap;">' + escapeHtml(when) + '</td>';
+                h += '  <td style="padding:5px 6px;color:' + (v.username ? '#66ff66' : '#888') + ';">' + escapeHtml(v.username || '(anónimo)') + '</td>';
+                h += '  <td style="padding:5px 6px;color:#666;font-family:monospace;font-size:10px;">' + escapeHtml(v.ipHashShort || '—') + '</td>';
+                h += '  <td style="padding:5px 6px;color:#aaa;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(v.referer || '—') + '</td>';
+                h += '</tr>';
+            }
+            h += '</tbody></table>';
+            h += '</div>';
+        }
+        h += '</div>';
+
+        box.innerHTML = h;
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:14px;">Error de conexión</div>';
+    }
 }
 
 async function _loadRafflesGeneric(kind, containerId) {

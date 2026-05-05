@@ -137,6 +137,10 @@
                     <span>⚡</span>
                     <span>Sorteo relámpago</span>
                 </a>
+                <a href="#" class="nav-item" data-section="campaigns">
+                    <span>📊</span>
+                    <span>Campañas (links)</span>
+                </a>
 
                 <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
 
@@ -1082,6 +1086,31 @@
                     </p>
                 </div>
                 <div id="rafflesLightningAdminContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: CAMPAÑAS (LINKS DE MARKETING)
+                 -----------------------------------------
+                 Cada landing tiene un slug (ej: 'promo2k') y un contador
+                 de visitas. Sirve para medir cuánta gente entra desde
+                 cada campaña y compararlo contra registros generados.
+                 ============================================ -->
+            <section id="campaignsSection" class="section">
+                <div class="panel-header">
+                    <h2>📊 Campañas (links de marketing)</h2>
+                    <button class="refresh-btn" onclick="loadCampaignsAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(102,255,102,0.08));border:1px solid rgba(0,212,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">📊 Cómo funciona</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Cuando alguien entra a <strong>autoreembolsos.com/promo2k</strong> (o al dominio definitivo cuando quede), se cuenta acá automáticamente.
+                        Mostramos visitas totales, visitantes únicos (por IP-hash), últimas 24h y últimos 7 días.
+                        Sirve para medir qué tanto convierte cada campaña antes de meter más plata en publicidad.
+                    </p>
+                </div>
+                <div id="campaignsAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

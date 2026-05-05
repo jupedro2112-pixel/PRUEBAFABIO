@@ -88,6 +88,7 @@ const {
 
 // Importar modelos de referidos (usados por el handler de registro inline)
 const ReferralEvent = require('./src/models/ReferralEvent');
+const LandingVisit = require('./src/models/LandingVisit');
 const { generateReferralCode } = require('./src/utils/referralCode');
 const { setRedisClient, getRedisClient } = require('./src/utils/redisClient');
 const { generateAndSendOTP, verifyOTP } = require('./src/services/otpService');
@@ -136,6 +137,17 @@ const bulkLaunchLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Demasiadas acciones masivas en poco tiempo. Esperá un minuto.' }
+});
+
+// Limita visit-pings de landings desde el browser. Es endpoint publico (sin
+// auth), asi que necesita tope para evitar inflado de metricas o flood.
+// 30/min por IP cubre uso real (1 ping por carga) y bloquea bots agresivos.
+const landingVisitLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas visitas registradas. Probá de nuevo en 1 minuto.' }
 });
 
 // ============================================
@@ -6101,6 +6113,22 @@ app.get('/', (req, res) => {
   }
 });
 
+// Landing publica del bono $2.000 (campaña promo2k). El admin manda gente
+// aca desde redes sociales y el contador en /api/admin/landings/promo2k/stats
+// muestra cuanta gente entro. La landing en si registra el visit-ping desde
+// el browser via fetch al endpoint publico.
+app.get('/promo2k', (req, res) => {
+  const filePath = path.join(__dirname, 'public', 'promo2k.html');
+  const content = readFileSafe(filePath);
+  if (content) {
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.send(content);
+  } else {
+    res.status(404).send('Not found');
+  }
+});
+
 // NOTE: /adminprivado2026 routes are now registered early, BEFORE the
 // express.static middleware, so they can enforce ADMIN_HOST and cookie
 // checks before the file system is touched.  The old (unguarded) copies
@@ -8454,6 +8482,169 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
     });
   } catch (error) {
     logger.error(`/api/admin/reports/equipment error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// LANDING TRACKING — contador de visitas a paginas /landing/<code>
+// ============================================
+//
+// Para que el admin pueda medir el impacto de campañas de marketing sin
+// depender de Google Analytics o herramientas externas. Cada landing tiene
+// un slug (ej: 'promo2k') y cada visita queda registrada en LandingVisit.
+//
+// Endpoints:
+//   POST /api/landings/:code/visit   - Public, rate-limited. La landing lo llama al cargarse.
+//   GET  /api/admin/landings/:code/stats - Admin. KPIs y breakdown por dia.
+//   GET  /api/admin/landings         - Admin. Lista todas las landings con totales.
+//
+// Privacidad: la IP se hashea con LANDING_IP_SALT (env var, fallback a un
+// constante). NUNCA se persiste la IP en plano.
+
+const LANDING_IP_SALT = process.env.LANDING_IP_SALT || 'jugaygana-landing-salt-2026-prod';
+function _hashIpForLanding(ip) {
+  if (!ip) return null;
+  return crypto.createHash('sha256').update(String(ip) + '|' + LANDING_IP_SALT).digest('hex');
+}
+
+// POST /api/landings/:code/visit — registra una visita. Public, rate-limited.
+// El body puede traer { referer } pero confiamos mas en el header. El user
+// puede o no estar logueado: si lo esta, leemos su username del JWT
+// opcionalmente (no obligatorio).
+app.post('/api/landings/:code/visit', landingVisitLimiter, async (req, res) => {
+  try {
+    const code = String(req.params.code || '').toLowerCase().trim();
+    if (!code || !/^[a-z0-9_-]{2,60}$/.test(code)) {
+      return res.status(400).json({ error: 'Codigo invalido' });
+    }
+    const ip = req.ip || req.socket?.remoteAddress || null;
+    const ipHash = _hashIpForLanding(ip);
+    const userAgent = String(req.headers['user-agent'] || '').slice(0, 200) || null;
+    const referer = String(req.headers.referer || req.headers.referrer || req.body?.referer || '').slice(0, 200) || null;
+
+    // Opcional: si el visitante esta logueado y manda el token, lo guardamos.
+    // No fallamos si no lo manda. El front es libre de no enviar token.
+    let username = null;
+    try {
+      const auth = req.headers.authorization;
+      if (auth && auth.startsWith('Bearer ')) {
+        const token = auth.slice(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.username) username = String(decoded.username).toLowerCase();
+      }
+    } catch (_) { /* ignore */ }
+
+    await LandingVisit.create({ code, ipHash, userAgent, referer, username });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/landings/visit error: ${err.message}`);
+    // Devolvemos 200 igual: si falla el log, NO queremos romper la landing
+    // que esta sirviendo el browser. El conteo de la app es secundario.
+    res.json({ success: false });
+  }
+});
+
+// GET /api/admin/landings — lista todos los codes vistos con conteos basicos.
+app.get('/api/admin/landings', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const since30d = new Date(Date.now() - 30 * 86400000);
+    const agg = await LandingVisit.aggregate([
+      { $group: {
+        _id: '$code',
+        totalVisits: { $sum: 1 },
+        uniqueIps: { $addToSet: '$ipHash' },
+        last24h: { $sum: { $cond: [{ $gte: ['$at', new Date(Date.now() - 86400000)] }, 1, 0] } },
+        last7d: { $sum: { $cond: [{ $gte: ['$at', new Date(Date.now() - 7 * 86400000)] }, 1, 0] } },
+        first: { $min: '$at' },
+        last: { $max: '$at' }
+      } },
+      { $project: {
+        _id: 0,
+        code: '$_id',
+        totalVisits: 1,
+        uniqueIps: { $size: '$uniqueIps' },
+        last24h: 1,
+        last7d: 1,
+        first: 1,
+        last: 1
+      } },
+      { $sort: { totalVisits: -1 } }
+    ]);
+    res.json({ since30d, landings: agg });
+  } catch (err) {
+    logger.error(`/api/admin/landings error: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/landings/:code/stats — KPIs detallados de una landing.
+// Devuelve totales, unicos, por-dia (ultimos 30 dias) y ultimas N visitas.
+app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const code = String(req.params.code || '').toLowerCase().trim();
+    if (!code) return res.status(400).json({ error: 'Codigo invalido' });
+
+    const now = new Date();
+    const _24h = new Date(now.getTime() - 86400000);
+    const _7d  = new Date(now.getTime() - 7 * 86400000);
+    const _30d = new Date(now.getTime() - 30 * 86400000);
+
+    const [totalVisits, uniqueIpsAgg, visits24h, visits7d, byDay, recent] = await Promise.all([
+      LandingVisit.countDocuments({ code }),
+      LandingVisit.aggregate([
+        { $match: { code } },
+        { $group: { _id: '$ipHash' } },
+        { $count: 'count' }
+      ]),
+      LandingVisit.countDocuments({ code, at: { $gte: _24h } }),
+      LandingVisit.countDocuments({ code, at: { $gte: _7d } }),
+      // Breakdown por dia (Argentina UTC-3) en los ultimos 30 dias.
+      LandingVisit.aggregate([
+        { $match: { code, at: { $gte: _30d } } },
+        { $project: {
+          dayKey: {
+            $dateToString: {
+              format: '%Y-%m-%d',
+              date: '$at',
+              timezone: '-03:00'
+            }
+          },
+          ipHash: 1
+        } },
+        { $group: {
+          _id: '$dayKey',
+          visits: { $sum: 1 },
+          uniqueIps: { $addToSet: '$ipHash' }
+        } },
+        { $project: { _id: 0, day: '$_id', visits: 1, uniqueIps: { $size: '$uniqueIps' } } },
+        { $sort: { day: 1 } }
+      ]),
+      LandingVisit.find({ code }, { ipHash: 1, userAgent: 1, referer: 1, username: 1, at: 1 })
+        .sort({ at: -1 }).limit(50).lean()
+    ]);
+
+    const uniqueIps = (uniqueIpsAgg[0] && uniqueIpsAgg[0].count) || 0;
+
+    res.json({
+      code,
+      totalVisits,
+      uniqueIps,
+      last24h: visits24h,
+      last7d: visits7d,
+      byDay,
+      recent: recent.map(r => ({
+        // No devolvemos el ipHash completo, solo los primeros 8 chars para
+        // que el admin pueda agrupar visualmente sin exponer el hash entero.
+        ipHashShort: r.ipHash ? String(r.ipHash).slice(0, 8) : null,
+        userAgent: r.userAgent,
+        referer: r.referer,
+        username: r.username,
+        at: r.at
+      }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/landings/${req.params.code}/stats error: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
