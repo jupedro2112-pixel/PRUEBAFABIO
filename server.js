@@ -6112,15 +6112,25 @@ app.post('/api/admin/send-notification', authMiddleware, adminMiddleware, async 
 // ============================================
 // NOTE: readFileSafe() is defined above, in the ADMIN PAGE SECURITY section.
 
+// Reemplazo del Meta Pixel ID al servir el HTML. Validamos que sean solo
+// digitos (10-20) antes de inyectar — defense-in-depth contra una env var
+// mal seteada que pudiera meter codigo. Si la env var no esta o es invalida,
+// dejamos el placeholder vacio y el script del head no inicializa el pixel
+// (chequea el formato antes de cargar).
+const META_PIXEL_ID = (process.env.META_PIXEL_ID || '').trim();
+const META_PIXEL_ID_SAFE = /^\d{10,20}$/.test(META_PIXEL_ID) ? META_PIXEL_ID : '';
+
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   const content = readFileSafe(indexPath);
   if (content) {
+    // Reemplaza TODOS los {{META_PIXEL_ID}} (snippet + noscript fallback).
+    const rendered = content.split('{{META_PIXEL_ID}}').join(META_PIXEL_ID_SAFE);
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    res.send(content);
+    res.send(rendered);
   } else {
     res.status(500).send('Error loading page');
   }

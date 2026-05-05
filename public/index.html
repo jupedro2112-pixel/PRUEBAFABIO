@@ -4,6 +4,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+    <!-- ============================================
+         META PIXEL (Facebook / Instagram Ads)
+         -----------------------------------------
+         El server reemplaza {{META_PIXEL_ID}} por process.env.META_PIXEL_ID
+         antes de servir el HTML. Si la env var no esta seteada, el server
+         deja el placeholder vacio y el if() de abajo no inicializa nada
+         (zero overhead, sin errores en consola).
+         Eventos custom (Lead, CompleteRegistration, Purchase) se disparan
+         desde auth.js / refunds.js usando window.metaPixelTrack(...).
+         ============================================ -->
+    <script>
+    (function () {
+        var pid = '{{META_PIXEL_ID}}';
+        // Si el server no lo reemplazo (ej: env var sin setear), nos vamos.
+        if (!pid || pid.indexOf('{{') === 0 || !/^\d{10,20}$/.test(pid)) {
+            // Helper noop para que las llamadas a metaPixelTrack desde otros
+            // scripts no rompan cuando el pixel no esta configurado.
+            window.metaPixelTrack = function () {};
+            return;
+        }
+        // Snippet oficial de Meta (https://developers.facebook.com/docs/meta-pixel/get-started)
+        !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+        n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+        n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+        t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+        document,'script','https://connect.facebook.net/en_US/fbevents.js');
+        // PageView con campaignCode si esta en localStorage (attribution).
+        var camp = null;
+        try { camp = localStorage.getItem('campaignCode') || null; } catch (_) {}
+        fbq('init', pid);
+        fbq('track', 'PageView', camp ? { campaignCode: camp } : {});
+
+        // Helper para que cualquier parte del front pueda disparar eventos
+        // sin preocuparse por errores. Si fbq no esta listo, lo cola.
+        // Auto-inyecta campaignCode en cada evento.
+        window.metaPixelTrack = function (eventName, params) {
+            try {
+                var data = params || {};
+                if (!data.campaignCode) {
+                    try {
+                        var c = localStorage.getItem('campaignCode');
+                        if (c) data.campaignCode = c;
+                    } catch (_) {}
+                }
+                if (typeof fbq === 'function') fbq('track', eventName, data);
+            } catch (_) {}
+        };
+    })();
+    </script>
+    <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id={{META_PIXEL_ID}}&ev=PageView&noscript=1"/></noscript>
+    <!-- /META PIXEL -->
+
     <title>Reembolsos</title>
     <!-- Ícono de ruleta como favicon SVG (issue #7) -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🥈</text></svg>">

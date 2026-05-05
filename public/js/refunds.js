@@ -806,6 +806,16 @@ VIP.refunds = (function () {
                 renderWelcomeBonusCard();
                 // Refrescar saldo en pantalla.
                 if (typeof loadRefundStatus === 'function') loadRefundStatus();
+                // Meta Pixel: Purchase con valor real. Esta es la metrica
+                // de ROI directa para Meta Ads — Meta calcula CPA contra
+                // este evento. amount viene del server (default $2.000 ARS).
+                if (typeof window.metaPixelTrack === 'function') {
+                    window.metaPixelTrack('Purchase', {
+                        content_name: 'welcome_bonus_claimed',
+                        currency: 'ARS',
+                        value: Number(data.amount) || 2000
+                    });
+                }
             } else {
                 VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
                 // Si el server dice "te faltan cargas", refrescamos el card

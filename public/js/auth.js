@@ -93,6 +93,12 @@ VIP.auth = (function () {
                 document.getElementById('registerOtpMsg').textContent = `✅ ${data.message} (${data.phone})`;
                 document.getElementById('registerOtpCode').value = '';
                 document.getElementById('registerOtpError').classList.remove('show');
+                // Meta Pixel: el user mostro intencion de registrarse (envio
+                // OTP). Se cuenta como Lead — usado en Meta Ads para
+                // optimizar la pauta hacia "interesados que entregan datos".
+                if (typeof window.metaPixelTrack === 'function') {
+                    window.metaPixelTrack('Lead', { content_name: 'register_otp_sent' });
+                }
             } else {
                 errorDiv.textContent = data.error || 'Error al enviar el código SMS';
                 errorDiv.classList.add('show');
@@ -175,6 +181,17 @@ VIP.auth = (function () {
                 console.log('[FCM] Registro exitoso, enviando token FCM...');
                 await VIP.notifications.sendFcmTokenAfterLogin();
                 VIP.ui.showToast('✅ ¡Cuenta creada exitosamente!', 'success');
+                // Meta Pixel: conversion principal — creo cuenta. Es el
+                // evento que Meta Ads usa para optimizar la pauta a
+                // "registros completados". Manda value=0 currency=ARS
+                // (la "compra" real es el bono $2k que disparamos despues).
+                if (typeof window.metaPixelTrack === 'function') {
+                    window.metaPixelTrack('CompleteRegistration', {
+                        content_name: 'account_created',
+                        currency: 'ARS',
+                        value: 0
+                    });
+                }
             } else {
                 errorDiv.textContent = data.error || 'Error al crear cuenta';
                 errorDiv.classList.add('show');
