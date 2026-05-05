@@ -46,12 +46,63 @@ VIP.raffles = (function () {
         return sorted.map(n => '#' + n).join(', ');
     }
 
-    function _renderClaimableBanner(claimable) {
+    // Banner unificado de "FELICITACIONES" para sorteos ganados en las
+    // ultimas 24h. Si el premio ya fue acreditado automaticamente, mostramos
+    // un mensaje celebratorio sin boton. Si todavia hay que reclamar, el
+    // boton dispara claimPrize().
+    function _renderRecentWinsBanner(recentWins) {
+        if (!recentWins || !recentWins.length) return '';
+        let html = '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:0 0 20px rgba(255,215,0,0.40);position:relative;overflow:hidden;">';
+        html += '<div style="position:absolute;top:-10px;right:-10px;font-size:80px;opacity:0.10;">🏆</div>';
+        html += '<div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎉 ¡FELICITACIONES, GANASTE!</div>';
+        html += '<div style="color:#fff;font-size:11.5px;margin-bottom:10px;line-height:1.5;font-weight:600;">Esto se queda visible por <strong style="color:#ffd700;">24 horas</strong> para que lo veas con tranquilidad 💫</div>';
+        for (const c of recentWins) {
+            const credited = !!c.prizeClaimedAt;
+            const needsClaim = !credited && c.prizeClaimable;
+            html += '<div style="background:rgba(0,0,0,0.50);border-radius:10px;padding:12px;margin-top:10px;border:1px solid rgba(255,215,0,0.40);">';
+            html += '<div style="color:#fff;font-weight:900;font-size:15px;margin-bottom:6px;">' + (c.emoji || '🏆') + ' ' + _esc(c.name) + '</div>';
+            html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;">';
+            html += '<div style="background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.40);border-radius:8px;padding:8px 12px;flex:1;min-width:120px;text-align:center;">';
+            html += '<div style="color:#ffd700;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">Número ganador</div>';
+            html += '<div style="color:#fff;font-size:24px;font-weight:900;line-height:1.2;">#' + c.winningTicketNumber + '</div>';
+            html += '</div>';
+            html += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:8px 12px;flex:1;min-width:120px;text-align:center;">';
+            html += '<div style="color:#66ff66;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">Premio</div>';
+            html += '<div style="color:#fff;font-size:20px;font-weight:900;line-height:1.2;">$' + _fmt(c.prizeValueARS) + '</div>';
+            html += '</div></div>';
+            if (credited) {
+                html += '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:10px;text-align:center;">';
+                html += '<div style="color:#66ff66;font-size:13px;font-weight:900;">✅ Premio acreditado a tu saldo</div>';
+                html += '<div style="color:#bbe6bb;font-size:11px;margin-top:2px;">Ya está disponible para jugar — ¡buena suerte! 🎰</div>';
+                html += '</div>';
+            } else if (needsClaim) {
+                html += '<button type="button" onclick="VIP.raffles.claimPrize(' + JSON.stringify(c.id) + ')" style="width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:13px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1px;box-shadow:0 4px 10px rgba(255,215,0,0.30);">🎁 RECLAMAR $' + _fmt(c.prizeValueARS) + '</button>';
+                html += '<div style="color:#ffe699;font-size:10px;text-align:center;margin-top:6px;">⚠️ La acreditación automática falló — tocá el botón para acreditar manualmente.</div>';
+            } else {
+                html += '<div style="background:rgba(255,170,102,0.15);border:1px solid rgba(255,170,102,0.40);border-radius:8px;padding:10px;text-align:center;">';
+                html += '<div style="color:#ffaa66;font-size:12px;font-weight:700;">⏳ Estamos acreditando tu premio…</div>';
+                html += '</div>';
+            }
+            if (c.hoursRemaining > 0) {
+                html += '<div style="color:#aaa;font-size:10px;text-align:center;margin-top:6px;font-style:italic;">Esta felicitación se oculta en ~' + c.hoursRemaining + ' h</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    // Banner legacy "Reclamable" — para casos donde recentWins no aplica
+    // (sorteo viejo > 24h con auto-credit fallido). Mantenemos compat.
+    function _renderClaimableBanner(claimable, recentWinIds) {
         if (!claimable || !claimable.length) return '';
+        const skip = new Set(recentWinIds || []);
+        const rest = claimable.filter(c => !skip.has(c.id));
+        if (rest.length === 0) return '';
         let html = '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200);border:2px solid #66ff66;border-radius:12px;padding:14px;margin-bottom:14px;">';
-        html += '<div style="color:#66ff66;font-weight:900;font-size:13px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">🏆 ¡GANASTE!</div>';
-        html += '<div style="color:#bbe6bb;font-size:11px;margin-bottom:8px;line-height:1.4;">Si nuestro sistema acreditó automáticamente, ya está en tu saldo. Si no, tocá el botón.</div>';
-        for (const c of claimable) {
+        html += '<div style="color:#66ff66;font-weight:900;font-size:13px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">🏆 Premio sin reclamar</div>';
+        html += '<div style="color:#bbe6bb;font-size:11px;margin-bottom:8px;line-height:1.4;">Tenés un premio anterior que aún no se acreditó. Tocá el botón para acreditarlo a tu saldo.</div>';
+        for (const c of rest) {
             html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;margin-top:8px;">';
             html += '<div style="color:#fff;font-weight:800;font-size:14px;margin-bottom:4px;">' + (c.emoji || '🏆') + ' ' + _esc(c.name) + '</div>';
             html += '<div style="color:#ddd;font-size:12px;margin-bottom:8px;">Número ganador: <strong>#' + c.winningTicketNumber + '</strong> · Premio: <strong>$' + _fmt(c.prizeValueARS) + '</strong></div>';
@@ -180,7 +231,9 @@ VIP.raffles = (function () {
         const free = allRaffles.filter(r => r.isFree);
 
         let html = '';
-        html += _renderClaimableBanner(_data.claimable || []);
+        const recentWins = _data.recentWins || [];
+        html += _renderRecentWinsBanner(recentWins);
+        html += _renderClaimableBanner(_data.claimable || [], recentWins.map(w => w.id));
         html += _renderAutoEnrolledBanner(_data.autoEnrolled || []);
 
         // Header con saldo

@@ -11716,9 +11716,20 @@ async function _runWeeklyRaffleRotation(triggeredBy = 'cron') {
 
     logger.info(`[raffles] weekly rotation start (trigger=${triggeredBy}, day=${todayKey})`);
 
-    // 1) Archivar drawn.
+    // 1) Archivar drawn — pero solo los que ya pasaron 24h del draw para
+    // que el banner de "Felicitaciones" del ganador siga visible un dia
+    // entero antes de desaparecer. Si drawnAt es null por algun motivo,
+    // archivamos igual (compat con sorteos viejos).
+    const FELICITACIONES_TTL_MS = 24 * 3600 * 1000;
     const drawnUpd = await Raffle.updateMany(
-      { status: 'drawn' },
+      {
+        status: 'drawn',
+        $or: [
+          { drawnAt: { $lt: new Date(Date.now() - FELICITACIONES_TTL_MS) } },
+          { drawnAt: null },
+          { drawnAt: { $exists: false } }
+        ]
+      },
       { $set: { status: 'archived' } }
     );
 
@@ -11831,6 +11842,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     const myByRaffle = {};
     for (const p of myParts) myByRaffle[p.raffleId] = p;
 
+    // Pendientes de reclamar (auto-credit fallo o todavia no se acredito).
     const claimable = raffles
       .filter(r => r.prizeClaimable && r.winnerUsername &&
         r.winnerUsername.toLowerCase() === username.toLowerCase() && !r.prizeClaimedAt)
@@ -11838,6 +11850,37 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         id: r.id, name: r.name, prizeName: r.prizeName, emoji: r.emoji,
         prizeValueARS: r.prizeValueARS || 0,
         winningTicketNumber: r.winningTicketNumber
+      }));
+
+    // Ventana de "Felicitaciones": sorteos donde este user gano y se sortearon
+    // hace menos de 24h. Mostramos el banner celebratorio (con boton de
+    // reclamar si aun no esta acreditado, o un mensaje de "ya esta en tu
+    // saldo" si el auto-credit funciono). Despues de 24h el sorteo
+    // archived/cleanup lo saca de la lista igual.
+    const FELICITACIONES_TTL_MS = 24 * 3600 * 1000;
+    const recentWins = raffles
+      .filter(r =>
+        r.status === 'drawn' &&
+        r.winnerUsername &&
+        r.winnerUsername.toLowerCase() === username.toLowerCase() &&
+        r.drawnAt &&
+        (Date.now() - new Date(r.drawnAt).getTime()) < FELICITACIONES_TTL_MS
+      )
+      .map(r => ({
+        id: r.id,
+        name: r.name,
+        prizeName: r.prizeName,
+        emoji: r.emoji,
+        prizeValueARS: r.prizeValueARS || 0,
+        winningTicketNumber: r.winningTicketNumber,
+        drawnAt: r.drawnAt,
+        prizeClaimedAt: r.prizeClaimedAt || null,
+        prizeClaimable: !!r.prizeClaimable,
+        // Cuantas horas restan hasta que se cumple las 24h del banner.
+        hoursRemaining: Math.max(
+          0,
+          Math.ceil((FELICITACIONES_TTL_MS - (Date.now() - new Date(r.drawnAt).getTime())) / 3600000)
+        )
       }));
 
     res.json({
@@ -11861,15 +11904,19 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         cuposRemaining: Math.max(0, (r.totalTickets || 0) - (r._ticketCounter || 0)),
         claimedNumbers: r.claimedNumbers || [],
         drawDate: r.drawDate,
+        drawnAt: r.drawnAt || null,
         lotteryRule: r.lotteryRule,
         status: r.status,
         winnerUsername: r.winnerUsername,
         winningTicketNumber: r.winningTicketNumber,
+        prizeClaimable: !!r.prizeClaimable,
+        prizeClaimedAt: r.prizeClaimedAt || null,
         myTicketNumbers: (myByRaffle[r.id] && myByRaffle[r.id].ticketNumbers) || [],
         myCuposCount: (myByRaffle[r.id] && myByRaffle[r.id].cuposCount) || 0,
         iAmWinner: (myByRaffle[r.id] && myByRaffle[r.id].isWinner) || false
       })),
-      claimable
+      claimable,
+      recentWins
     });
   } catch (err) {
     logger.error(`/api/raffles/active: ${err.message}`);
@@ -12355,26 +12402,39 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     try {
       const winTitle = '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
       const winBody = prizeAutoCredited
-        ? `¡Ganaste $${prize.toLocaleString('es-AR')} con el número ${mappedNumber}! Ya te lo acreditamos a tu saldo. Entrá a JUGAYGANA a verlo.`
-        : `Ganaste el sorteo de ${raffle.prizeName} con el número ${mappedNumber}. Hubo un problema al acreditar — entrá a la app y tocá "Reclamar premio".`;
+        ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
+        : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`;
       const winRes = await sendNotificationToAllUsers(
         User,
         winTitle,
         winBody,
-        { source: 'raffle-win', raffleId: raffle.id, isWinner: 'true', autoCredited: prizeAutoCredited ? 'true' : 'false' },
+        { source: 'raffle-win', raffleId: raffle.id, isWinner: 'true', autoCredited: prizeAutoCredited ? 'true' : 'false', winningTicketNumber: String(mappedNumber) },
         { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
       );
       winnerPushed = (winRes && winRes.successCount) || 0;
     } catch (e) { logger.warn(`[raffles] notif ganador: ${e.message}`); }
 
     try {
-      const loserUsernames = parts.filter(p => p.username !== winner.username).map(p => p.username);
+      // Todos los participantes que no son el ganador. Dedup por username
+      // (por si una participation tiene el username con casing distinto).
+      const seen = new Set();
+      const loserUsernames = [];
+      for (const p of parts) {
+        const uname = String(p.username || '').trim();
+        if (!uname) continue;
+        const key = uname.toLowerCase();
+        if (key === String(winner.username).toLowerCase()) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        loserUsernames.push(uname);
+      }
       if (loserUsernames.length > 0) {
+        const mapNote = wasMapped ? ` (mapeado a #${mappedNumber} dentro del cupo vendido)` : '';
         const loseRes = await sendNotificationToAllUsers(
           User,
-          (raffle.emoji || '🎁') + ' Sorteo finalizado',
-          `Lotería Nocturna sacó el ${lotteryNumber}${wasMapped ? ` (mapeado al ${mappedNumber})` : ''}. Ganó @${winner.username}. ¡Ya hay cupos nuevos para el siguiente sorteo!`,
-          { source: 'raffle-lose', raffleId: raffle.id, isWinner: 'false' },
+          (raffle.emoji || '🎁') + ' Salió el ' + raffle.prizeName,
+          `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`,
+          { source: 'raffle-lose', raffleId: raffle.id, isWinner: 'false', winningTicketNumber: String(mappedNumber), lotteryDrawNumber: String(lotteryNumber) },
           { username: { $in: loserUsernames } }
         );
         losersPushed = (loseRes && loseRes.successCount) || 0;
@@ -12460,18 +12520,31 @@ app.post('/api/admin/raffles/:id/cancel', authMiddleware, adminMiddleware, async
   }
 });
 
-// POST /api/admin/raffles/cleanup — archiva todos los 'drawn' y 'cancelled'
-// y reseed. Idempotente. Para el martes a la mañana después del sorteo.
+// POST /api/admin/raffles/cleanup — archiva 'drawn' y 'cancelled' y reseed.
+// Idempotente. Por defecto respeta la ventana de 24h del banner de
+// "Felicitaciones" del ganador. Si admin pasa ?force=1, archiva todo.
 app.post('/api/admin/raffles/cleanup', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const drawnUpd = await Raffle.updateMany({ status: 'drawn' }, { $set: { status: 'archived' } });
+    const force = String(req.query.force || req.body?.force || '').toLowerCase() === '1' ||
+                  String(req.query.force || req.body?.force || '').toLowerCase() === 'true';
+    const FELICITACIONES_TTL_MS = 24 * 3600 * 1000;
+    const drawnQuery = force ? { status: 'drawn' } : {
+      status: 'drawn',
+      $or: [
+        { drawnAt: { $lt: new Date(Date.now() - FELICITACIONES_TTL_MS) } },
+        { drawnAt: null },
+        { drawnAt: { $exists: false } }
+      ]
+    };
+    const drawnUpd = await Raffle.updateMany(drawnQuery, { $set: { status: 'archived' } });
     const cancelledUpd = await Raffle.updateMany({ status: 'cancelled' }, { $set: { status: 'archived' } });
     await _ensureActiveRafflesSeeded();
     res.json({
       success: true,
       archived: (drawnUpd.modifiedCount || 0) + (cancelledUpd.modifiedCount || 0),
       drawnArchived: drawnUpd.modifiedCount || 0,
-      cancelledArchived: cancelledUpd.modifiedCount || 0
+      cancelledArchived: cancelledUpd.modifiedCount || 0,
+      respected24hWindow: !force
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
