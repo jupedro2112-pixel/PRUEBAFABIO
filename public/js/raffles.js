@@ -856,45 +856,48 @@ VIP.raffles = (function () {
     async function loadHomeWinnerBanner() {
         const container = document.getElementById('raffleWinnerHomeBanner');
         if (!container) return;
+        let winners = [], lightning = null;
         try {
             const r = await fetch(VIP.config.API_URL + '/api/raffles/recent-winners?hours=6', {
                 headers: { 'Authorization': 'Bearer ' + VIP.state.currentToken }
             });
-            if (!r.ok) {
-                container.style.display = 'none';
-                container.innerHTML = '';
-                return;
+            if (r.ok) {
+                const j = await r.json();
+                winners = (j && j.winners) || [];
+                lightning = j && j.lightning;
             }
-            const j = await r.json();
-            const winners = (j && j.winners) || [];
-            const lightning = j && j.lightning;
-            const myWin = winners.find(w => w.isMe);
+        } catch (e) { /* fallback al CTA default */ }
 
-            // Decidimos que mostrar (ordenado por prioridad):
-            //   1. Si gane algo en las ultimas 6h -> banner FELICITACIONES (max attention)
-            //   2. Si hay sorteo RELAMPAGO activo -> hero electrico (CTA principal)
-            //   3. Si gano otra persona en 6h -> banner social proof
-            //   4. Nada -> oculto
-            let html = '';
-            if (myWin) {
-                html = _renderHomeWinnerMine(myWin);
-            } else if (lightning) {
-                html = _renderHomeLightningHero(lightning);
-            } else if (winners.length > 0) {
-                html = _renderHomeWinnerOthers(winners[0]);
-            }
-
-            if (html) {
-                container.innerHTML = html;
-                container.style.display = 'block';
-            } else {
-                container.innerHTML = '';
-                container.style.display = 'none';
-            }
-        } catch (e) {
-            container.style.display = 'none';
-            container.innerHTML = '';
+        // Decidimos que mostrar (ordenado por prioridad):
+        //   1. Si gane algo en las ultimas 6h -> banner FELICITACIONES
+        //   2. Si hay sorteo RELAMPAGO activo -> hero electrico
+        //   3. Si gano otra persona en 6h -> banner social proof
+        //   4. Default -> CTA verde "SORTEOS SEMANALES PARA CLIENTES Y PAGOS"
+        const myWin = winners.find(w => w.isMe);
+        let html;
+        if (myWin) {
+            html = _renderHomeWinnerMine(myWin);
+        } else if (lightning) {
+            html = _renderHomeLightningHero(lightning);
+        } else if (winners.length > 0) {
+            html = _renderHomeWinnerOthers(winners[0]);
+        } else {
+            html = _renderHomeDefaultCta();
         }
+        container.innerHTML = html;
+        container.style.display = 'block';
+    }
+
+    // CTA por defecto cuando no hay ganador reciente ni relampago activo.
+    // Mismo gradient verde dorado que el felicitaciones para que sea el
+    // foco visual del home. Todo el card es clickeable -> abre el modal.
+    function _renderHomeDefaultCta() {
+        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.40);position:relative;overflow:hidden;">' +
+            '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🎁</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 SORTEOS SEMANALES PARA CLIENTES Y PAGOS</div>' +
+            '<div style="color:#fff;font-size:14px;font-weight:700;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);">$2M · $1M · $500k · $100k · ⚡ relámpago gratis</div>' +
+            '<div style="background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);">👉 ENTRÁ ACÁ</div>' +
+            '</div>';
     }
 
     // Hero del RELAMPAGO en el HOME (no en el modal). Mas pequenio y
