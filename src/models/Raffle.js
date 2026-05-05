@@ -1,21 +1,23 @@
 /**
- * Sorteo mensual con prize pool fijo.
+ * Sorteo paid: cada sorteo tiene un cupo fijo de numeros, cada numero tiene
+ * un costo, los users compran con su saldo de JUGAYGANA. Cuando el cupo se
+ * llena, se cierra y se respawnea automaticamente otra instancia del mismo
+ * tipo. Todos los lunes en la nocturna se sortea contra el 1er premio de la
+ * Loteria Nacional.
  *
- * Modelo:
- *   - Cada sorteo tiene una FECHA de mes (monthKey "2026-05" = mayo 2026).
- *   - Para participar el user paga `entryCost` de su SALDO REAL en JUGAYGANA
- *     (se descuenta del balance via jugaygana.withdrawFromUser).
- *   - Cada sorteo tiene un POOL FIJO de cupos (totalTickets). Cada cupo
- *     comprado recibe un NÚMERO ÚNICO secuencial (1..totalTickets).
- *   - El ganador se determina por la QUINIELA NACIONAL del primer lunes del
- *     mes próximo. Cada sorteo tiene un `lotteryRule` que describe la posicion
- *     exacta (ej. "1° puesto Quiniela Matutina"). Admin entra el numero
- *     ganador y el sistema busca a quien le pertenece. Si el cupo está
- *     incompleto, el numero se mapea al rango vendido vía modulo.
- *   - Si la cantidad de cupos vendidos no llega a totalTickets, el ganador
- *     recibe el proporcional al fill rate.
- *   - Pueden coexistir varias instancias del mismo tipo en un mes (ej. 10
- *     sorteos de iPhone con instanceNumber 1..10).
+ * Tipos: 4 niveles de premio paralelos:
+ *   $1.000.000 (100 numeros x $15.000)
+ *   $2.000.000 (100 numeros x $30.000)
+ *   $500.000   (100 numeros x $7.500)
+ *   $100.000   (100 numeros x $2.000)
+ *
+ * Lifecycle:
+ *   active → closed (cupo lleno) → drawn (admin carga ganador) → archived (cleanup)
+ *   o: active → cancelled (admin cancela)
+ *
+ * Campos legacy: monthKey, entryMode, wageredThreshold, maxCuposPerUser,
+ * raffleType (con enum 'iphone'/'caribe'/'auto') quedan para compat con
+ * documentos viejos pero no se usan en el modelo nuevo.
  */
 const mongoose = require('mongoose');
 
@@ -27,80 +29,88 @@ const raffleSchema = new mongoose.Schema({
   imageUrl: { type: String, default: null, maxlength: 800 },
   emoji: { type: String, default: '🎁', maxlength: 8 },
 
-  // Mes al que aplica este sorteo. Formato: "YYYY-MM" en TZ Argentina.
-  monthKey: { type: String, required: true, index: true },
-
-  // Tipo de sorteo (para agrupar en UI cuando hay multiples instancias).
+  // Tipo de sorteo: identifica la "linea" de premio. Se usa para respawnear
+  // una instancia nueva con los mismos parametros cuando el cupo se llena.
+  // Tipos del modelo nuevo (paid): 'p1m', 'p2m', 'p500', 'p100'. El enum
+  // tambien acepta los tipos legacy ('iphone'/'caribe'/'auto'/'other') para
+  // que las migraciones no rompan validacion.
   raffleType: {
     type: String,
-    enum: ['iphone', 'caribe', 'auto', 'other'],
+    enum: ['p1m', 'p2m', 'p500', 'p100', 'iphone', 'caribe', 'auto', 'other'],
     default: 'other',
     index: true
   },
-  // Numero de instancia dentro del tipo (1..10 para iPhones, 1..5 para Caribes,
-  // 1 para Auto). Permite tener varios sorteos del mismo tipo en el mismo mes.
+  // Numero de instancia dentro del tipo. Cada vez que se llena un sorteo,
+  // se crea otro con instanceNumber = previo + 1.
   instanceNumber: { type: Number, default: 1, min: 1 },
-  // Texto que describe contra qué sorteo de Quiniela se determina el ganador.
-  // Ej. "1° puesto Quiniela Matutina del primer lunes del mes próximo".
-  // Aporta transparencia: cualquier user puede verificar el numero ganador en
-  // los resultados oficiales de la Quiniela.
-  lotteryRule: { type: String, default: '', maxlength: 300 },
+  // Semana ISO en la que se va a sortear este cupo. Formato "YYYY-Www".
+  // Si el cupo no se llena antes del lunes de esa semana, se sortea igual.
+  weekKey: { type: String, default: '', index: true },
 
-  // Modo de entrada:
-  //  - 'paid': el user PAGA con su saldo de JUGAYGANA (entryCost > 0).
-  //            Numero de cupo asignado secuencialmente y sin limite por user.
-  //  - 'wagered': sorteo EXCLUSIVO para clientes activos. Entry gratis pero
-  //               el user debe haber apostado/cargado al menos `wageredThreshold`
-  //               este mes. Max `maxCuposPerUser` (default 1). El user ELIGE
-  //               su numero entre los libres del cupo total.
-  entryMode: { type: String, enum: ['paid', 'wagered'], default: 'paid', index: true },
-  // Costo de entrada en pesos (=0 si entryMode='wagered').
+  // Costo de entrada en pesos (lo que descuenta del saldo del user por cada
+  // numero comprado).
   entryCost: { type: Number, required: true, min: 0 },
-  // Umbral de monto apostado/cargado del mes que habilita reclamar un numero
-  // gratis. Solo aplica cuando entryMode='wagered'. Ej: 200000 → necesitas
-  // haber apostado $200.000 este mes para entrar al sorteo exclusivo de iPhone.
-  wageredThreshold: { type: Number, default: 0, min: 0 },
-  // Cantidad maxima de cupos que un mismo user puede tener en este sorteo.
-  // 0 = ilimitado (default para 'paid'). 1 = un solo cupo por persona (default
-  // para 'wagered' exclusivos).
-  maxCuposPerUser: { type: Number, default: 0, min: 0 },
-  // Total de cupos disponibles. Cada cupo tiene un número único 1..totalTickets.
+  // Total de cupos disponibles. Cada cupo tiene un numero unico 1..totalTickets.
   totalTickets: { type: Number, required: true, min: 1 },
-  // Valor del premio en pesos. Si la cantidad de cupos vendidos no llega a
-  // totalTickets, el ganador recibe el proporcional:
-  //   actualPayout = prizeValueARS * min(1, totalCuposSold / totalTickets)
+  // Valor del premio en pesos (lo que se acredita al ganador cuando reclama).
   prizeValueARS: { type: Number, default: 0, min: 0 },
 
-  // Contador atomico de cupos asignados. Se incrementa por $inc en cada
-  // participacion para asegurar numeros secuenciales sin duplicados ni
-  // race conditions.
+  // Contador atomico de cupos vendidos. $inc en cada compra para evitar races.
   _ticketCounter: { type: Number, default: 0, min: 0 },
 
-  // Fecha en la que se sortea (informativa). Primer lunes del mes proximo.
+  // Fecha de sorteo: lunes de weekKey, 21:00 ARG (Loteria Nocturna).
   drawDate: { type: Date, required: true, index: true },
+  // Texto descriptivo de contra qué sorteo se sortea.
+  lotteryRule: { type: String, default: '', maxlength: 300 },
 
   status: {
     type: String,
-    enum: ['active', 'closed', 'drawn', 'cancelled'],
+    enum: ['active', 'closed', 'drawn', 'archived', 'cancelled'],
     default: 'active',
     index: true
   },
 
   // Resultado del draw.
-  winnerUsername: { type: String, default: null },
+  winnerUsername: { type: String, default: null, index: true },
   winningTicketNumber: { type: Number, default: null },
   drawnAt: { type: Date, default: null },
   drawnBy: { type: String, default: null },
 
-  // Trazabilidad de la Lotería Nacional que determinó al ganador.
-  // lotteryDrawNumber es el número que salió y que determinó el cupo
-  // ganador. lotteryDrawSource describe qué sorteo de lotería fue
-  // (ej. "Lotería Nacional Nocturna - Primer premio - 06/05/2026").
+  // Trazabilidad de la Loteria Nacional.
   lotteryDrawDate: { type: Date, default: null },
   lotteryDrawNumber: { type: Number, default: null },
-  lotteryDrawSource: { type: String, default: null, maxlength: 200 }
+  lotteryDrawSource: { type: String, default: null, maxlength: 200 },
+
+  // Premio reclamable por el ganador. Cuando admin carga el draw, el
+  // ganador queda con prizeClaimable=true y puede pedir el credito a su
+  // saldo desde la app. Cuando reclama, prizeClaimedAt y la transaccion
+  // quedan registradas.
+  prizeClaimable: { type: Boolean, default: false, index: true },
+  prizeClaimedAt: { type: Date, default: null },
+  prizeClaimTxId: { type: String, default: null },
+
+  // ===== Campos legacy (no se usan en el modelo nuevo, mantenidos para
+  // compat con documentos antiguos). =====
+  monthKey: { type: String, default: '', index: true },
+  entryMode: { type: String, default: 'paid' },
+  wageredThreshold: { type: Number, default: 0 },
+  maxCuposPerUser: { type: Number, default: 0 }
 }, { timestamps: true });
 
-raffleSchema.index({ monthKey: 1, status: 1 });
+raffleSchema.index({ raffleType: 1, status: 1, instanceNumber: -1 });
+raffleSchema.index({ status: 1, drawDate: 1 });
+
+// Indice parcial unique: como mucho 1 sorteo 'active' por raffleType. Si dos
+// workers arrancan al mismo tiempo y ambos disparan el seed, este indice
+// rechaza la segunda insercion con duplicate key error y _ensureActive
+// captura el error en su catch — quedando 1 sola instancia activa por tipo.
+raffleSchema.index(
+  { raffleType: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: 'active' },
+    name: 'unique_active_per_type'
+  }
+);
 
 module.exports = mongoose.models['Raffle'] || mongoose.model('Raffle', raffleSchema);

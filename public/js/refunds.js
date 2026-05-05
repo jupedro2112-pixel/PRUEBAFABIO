@@ -65,7 +65,7 @@ VIP.refunds = (function () {
         const titleEl = document.querySelector('#refundRequirementsModal .modal-header h2');
         if (titleEl) {
             titleEl.textContent = isWelcome
-                ? '🎁 Pasos para tu bono de $2.000'
+                ? '🎁 Pasos para tu bono de $5.000'
                 : '🔒 Para reclamar tu reembolso';
         }
 
@@ -108,7 +108,7 @@ VIP.refunds = (function () {
         }
 
         // Mensaje introductorio: cambia segun en que paso esta el user.
-        const subjectClaim = isWelcome ? 'tu bono de $2.000' : 'tu reembolso';
+        const subjectClaim = isWelcome ? 'tu bono de $5.000' : 'tu reembolso';
         if (introMsg) {
             if (!installed) {
                 introMsg.innerHTML = 'Para desbloquear ' + subjectClaim + ' tenés que completar 3 pasos. <strong>Empezá instalando la app.</strong>';
@@ -648,7 +648,8 @@ VIP.refunds = (function () {
     });
 
     // =====================================================
-    // BONO DE BIENVENIDA $2.000 (one-time, requiere PWA + notifs)
+    // BONO DE BIENVENIDA $5.000 (one-time, requiere PWA + notifs +
+    // minimo 5 cargas en los ultimos 30 dias)
     // =====================================================
     let _welcomeStatus = null; // { amount, claimed, claimedAt, status }
 
@@ -672,7 +673,7 @@ VIP.refunds = (function () {
         // El backend sigue siendo la fuente de verdad real, pero esto
         // garantiza que el cliente que ya reclamo nunca lo ve devuelta.
         if (_isLocallyMarkedClaimed()) {
-            _welcomeStatus = { amount: 2000, claimed: true };
+            _welcomeStatus = { amount: 5000, claimed: true };
             renderWelcomeBonusCard();
         }
         try {
@@ -711,8 +712,8 @@ VIP.refunds = (function () {
             return;
         }
 
-        const s = _welcomeStatus || { amount: 2000, claimed: false };
-        const amountNum = Number(s.amount || 2000);
+        const s = _welcomeStatus || { amount: 5000, claimed: false };
+        const amountNum = Number(s.amount || 5000);
 
         // Si ya reclamo (en este device o cualquier otro: el backend lo
         // chequea por userId Y username, asi que aunque borre la app y
@@ -721,6 +722,23 @@ VIP.refunds = (function () {
         if (s.claimed) {
             _markLocallyClaimed();
             hideCard();
+            return;
+        }
+
+        // Cargas insuficientes en la ventana: el backend exige minimo N
+        // cargas en los ultimos M dias. Mostramos progreso y boton
+        // deshabilitado hasta que cumpla.
+        if (s.notEnoughDeposits) {
+            const need = Number(s.requiredDeposits || 5);
+            const have = Number(s.depositCount || 0);
+            const days = Number(s.windowDays || 30);
+            showCard();
+            if (amountEl) amountEl.textContent = '$' + amountNum.toLocaleString('es-AR');
+            card.classList.remove('claimed');
+            if (subtitleEl) subtitleEl.textContent = `Necesitás ${need} cargas en los últimos ${days} días. Llevás ${have}/${need}.`;
+            btn.textContent = `🔒 ${have}/${need} CARGAS`;
+            btn.disabled = true;
+            btn.onclick = null;
             return;
         }
 
@@ -783,9 +801,20 @@ VIP.refunds = (function () {
                 if (typeof loadRefundStatus === 'function') loadRefundStatus();
             } else {
                 VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
-                // canClaim:false → server dice "ya reclamado" o "pending review".
-                // En ambos casos el bono no se puede reintentar, ocultamos.
-                if (data.canClaim === false) {
+                // Si el server dice "te faltan cargas", refrescamos el card
+                // con el progreso actual sin marcar como reclamado.
+                if (data.notEnoughDeposits) {
+                    _welcomeStatus = {
+                        ...(_welcomeStatus || {}),
+                        notEnoughDeposits: true,
+                        depositCount: data.depositCount,
+                        requiredDeposits: data.requiredDeposits,
+                        windowDays: data.windowDays
+                    };
+                    renderWelcomeBonusCard();
+                } else if (data.canClaim === false) {
+                    // canClaim:false → server dice "ya reclamado" o "pending review".
+                    // En ambos casos el bono no se puede reintentar, ocultamos.
                     _markLocallyClaimed();
                     _welcomeStatus = { ...(_welcomeStatus || {}), claimed: true };
                     renderWelcomeBonusCard();

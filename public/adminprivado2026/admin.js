@@ -24,6 +24,14 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
+// Devuelve el valor escapado para inyectar como argumento string en un
+// onclick="...(arg)..." con `"`-quotes. Combina JSON.stringify (para JS)
+// + escapeHtml (para HTML attr). Si el ID o weekKey trae chars raros,
+// queda como dato (no escape al contexto JS).
+function escapeJsArg(v) {
+    return escapeHtml(JSON.stringify(String(v == null ? '' : v)));
+}
+
 function formatMoney(n) {
     const v = Number(n) || 0;
     return '$' + v.toLocaleString('es-AR');
@@ -212,8 +220,6 @@ function showSection(sectionKey) {
         loadRefundRemindersSection();
     } else if (sectionKey === 'raffles') {
         loadRafflesAdmin();
-        loadSuspiciousRaffleParticipations();
-        loadRaffleAnalytics();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -1345,7 +1351,7 @@ async function revalidateThenReload(which) {
 }
 
 // ============================================
-// REPORTE — BONO DE BIENVENIDA $10.000
+// REPORTE — BONO DE BIENVENIDA $5.000 (legacy: $10.000 / $2.000 en historico)
 // Usuarios que reclamaron el bono + estado actual de app/notifs.
 // Permite ver quien desinstalo o desactivo notifs despues de cobrar.
 // ============================================
@@ -1369,7 +1375,7 @@ async function loadWelcomeBonusReport() {
 }
 
 // ============================================================
-// Refresh "real" del reporte de bono $10.000
+// Refresh "real" del reporte de bono $5.000
 // -------------------------------------------------------------
 // Dispara POST /api/admin/reports/welcome-bonus/refresh-charges (itera
 // todos los claims, lee los movimientos reales de JUGAYGANA desde
@@ -1503,7 +1509,7 @@ function renderWelcomeBonusReport(container, data) {
     }
     html += '</div>';
 
-    // Desglose por monto reclamado (los $10.000 historicos vs $2.000 nuevos).
+    // Desglose por monto reclamado (legacy $10.000 / $2.000 vs $5.000 actual).
     if (Array.isArray(t.byAmount) && t.byAmount.length > 0) {
         html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">';
         html += '  <strong style="color:#d4af37;font-size:12px;">💵 Reclamos por monto:</strong>';
@@ -1547,8 +1553,8 @@ function renderWelcomeBonusReport(container, data) {
     html += '      <option value="claimedDesc"' + (_welcomeBonusSortKey === 'claimedDesc' ? ' selected' : '') + '>↓ Fecha de reclamo</option>';
     html += '      <option value="chargedAfterDesc"' + (_welcomeBonusSortKey === 'chargedAfterDesc' ? ' selected' : '') + '>💰 Cargaron después (sí primero)</option>';
     html += '      <option value="chargedAfterAsc"' + (_welcomeBonusSortKey === 'chargedAfterAsc' ? ' selected' : '') + '>💸 No cargaron (recuperar)</option>';
-    html += '      <option value="amountDesc"' + (_welcomeBonusSortKey === 'amountDesc' ? ' selected' : '') + '>💵 Monto reclamado (desc — $10.000 primero)</option>';
-    html += '      <option value="amountAsc"' + (_welcomeBonusSortKey === 'amountAsc' ? ' selected' : '') + '>💵 Monto reclamado (asc — $2.000 primero)</option>';
+    html += '      <option value="amountDesc"' + (_welcomeBonusSortKey === 'amountDesc' ? ' selected' : '') + '>💵 Monto reclamado (desc — mayor primero)</option>';
+    html += '      <option value="amountAsc"' + (_welcomeBonusSortKey === 'amountAsc' ? ' selected' : '') + '>💵 Monto reclamado (asc — menor primero)</option>';
     html += '      <option value="usernameAsc"' + (_welcomeBonusSortKey === 'usernameAsc' ? ' selected' : '') + '>A-Z usuario</option>';
     html += '    </select>';
     html += '    <input type="text" id="welcomeBonusUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterWelcomeBonusTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
@@ -5849,7 +5855,7 @@ function _apRenderUsersTable(users) {
                        : '<span style="background:rgba(255,80,80,0.15);color:#ff5050;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;">✗ SIN APP</span>');
         const welcomeBadge = u.welcomeBonusClaimed
             ? '<span style="color:#888;font-size:11px;">✓ Reclamó</span>'
-            : '<span style="color:#ffd700;font-weight:700;font-size:11px;">$10.000 disponibles</span>';
+            : '<span style="color:#ffd700;font-weight:700;font-size:11px;">$5.000 disponibles</span>';
         html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
         html += '<td style="padding:7px;color:#fff;font-weight:600;">' + escapeHtml(u.username) + '</td>';
         html += '<td style="padding:7px;">' + phoneLink + '</td>';
@@ -6110,7 +6116,7 @@ function _helpBlocks() {
                 '<li>😴 <strong>Tibios</strong> (30-90 días): empezaron a despegarse. Bonus de recuperación + WhatsApp personalizado.</li>',
                 '<li>🥶 <strong>Fríos</strong> (90-180 días): semi-perdidos. Necesitan un regalo más fuerte para volver.</li>',
                 '<li>❄️ <strong>Congelados</strong> (180+ días): perdidos hace tiempo. Último intento — campaña masiva con bonus alto.</li>',
-                '<li>👻 <strong>Nunca cargaron</strong>: se registraron pero no depositaron. Welcome bonus de $2.000 + WhatsApp es la clave.</li>',
+                '<li>👻 <strong>Nunca cargaron</strong>: se registraron pero no depositaron. Welcome bonus de $5.000 + WhatsApp es la clave (lo cobran cuando alcancen 5 cargas en 30 días).</li>',
                 '</ul>',
                 '<h4 style="color:#fff;margin-top:14px;">Cómo usar:</h4>',
                 '<ol>',
@@ -6159,11 +6165,12 @@ function _helpBlocks() {
             icon: '🎁',
             title: 'Welcome bonus — cómo se reclama y cómo seguir el reporte',
             body: [
-                '<p>Todo usuario nuevo tiene <strong>$2.000 de welcome bonus</strong> esperándolo. Para reclamarlo necesita:</p>',
+                '<p>Todo usuario tiene <strong>$5.000 de welcome bonus</strong> esperándolo (one-time). Para reclamarlo necesita:</p>',
                 '<ol>',
                 '<li>Bajar la app.</li>',
                 '<li>Loguearse (con su user de JUGAYGANA).</li>',
                 '<li>Aceptar notificaciones push.</li>',
+                '<li>Tener al menos <strong>5 cargas en los últimos 30 días</strong> (anti-fraude para usuarios nuevos sin actividad real).</li>',
                 '<li>Apretar el botón "Reclamar" — la plata se le acredita directo en JUGAYGANA.</li>',
                 '</ol>',
                 '<p><strong>El reporte de Welcome Bonus</strong> te muestra:</p>',
@@ -7974,637 +7981,523 @@ async function sendRefundReminderPush(type) {
 }
 
 // =====================================================================
-// SECCIÓN 🎁 SORTEOS MENSUALES (admin)
+// SECCIÓN 🎁 SORTEOS PAGADOS (admin)
+// =====================================================================
+// 4 niveles de premio paralelos (👑$2M, 💎$1M, 💰$500k, 🎯$100k). Compra
+// con saldo JUGAYGANA, autospawn al llenarse, sorteo todos los lunes en
+// la Loteria Nocturna. El admin tiene:
+//
+//   • KPIs de la semana actual (recaudación, cupos, personas, neto)
+//   • Cards de los 4 sorteos activos con botón Sortear/Cancelar
+//   • Top compradores de la semana
+//   • Historial semana a semana con detalle expansible
+//   • Botones de mantenimiento: Limpiar drawn, Force seed
 // =====================================================================
 
-let _rafflesAdminCache = null;
+let _rafflesAdminCache = null;       // dashboard data
+let _rafflesHistoryCache = null;     // history weeks
+let _rafflesHistoryDetailCache = {}; // por weekKey -> detalle
 
 async function loadRafflesAdmin() {
     const c = document.getElementById('rafflesAdminContent');
     if (!c) return;
-    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando sorteos…</div>';
+    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando dashboard…</div>';
     try {
-        const r = await authFetch('/api/admin/raffles');
-        const d = await r.json();
-        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>'; return; }
-        _rafflesAdminCache = d.raffles || [];
-        c.innerHTML = _renderRafflesAdmin(_rafflesAdminCache);
-    } catch (e) { c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>'; }
+        // Manejo granular: si history falla pero dashboard anda, igual
+        // mostramos el dashboard (degradacion graceful).
+        const [dashRes, histRes] = await Promise.allSettled([
+            authFetch('/api/admin/raffles/dashboard'),
+            authFetch('/api/admin/raffles/history?limit=12')
+        ]);
+        // Dashboard es obligatorio.
+        if (dashRes.status !== 'fulfilled' || !dashRes.value.ok) {
+            const err = dashRes.status === 'fulfilled'
+                ? await dashRes.value.json().catch(() => ({error: 'parse error'}))
+                : { error: dashRes.reason?.message || 'Error de conexión' };
+            c.innerHTML = '<div style="color:#ff8080;padding:20px;">' + (err.error || 'Error cargando dashboard') + '</div>';
+            return;
+        }
+        const dash = await dashRes.value.json();
+        // History es opcional — si falla, mostramos vacio.
+        let hist = { weeks: [] };
+        if (histRes.status === 'fulfilled' && histRes.value.ok) {
+            try { hist = await histRes.value.json(); } catch (_) { hist = { weeks: [] }; }
+        } else {
+            console.warn('history fetch failed, mostrando dashboard sin historial');
+        }
+        _rafflesAdminCache = dash;
+        _rafflesHistoryCache = hist.weeks || [];
+        c.innerHTML = _renderRafflesAdmin();
+    } catch (e) {
+        console.error('loadRafflesAdmin error:', e);
+        c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>';
+    }
 }
 
-function _renderRafflesAdmin(raffles) {
-    if (!raffles || raffles.length === 0) {
-        return '<div style="text-align:center;padding:40px;color:#888;">Sin sorteos. Se siembran automáticamente cuando un user abre la sección 🎁 SORTEOS en la app.</div>';
-    }
-    // Agrupar por monthKey (más reciente primero), y dentro de cada mes por raffleType.
-    const byMonth = {};
-    for (const r of raffles) {
-        if (!byMonth[r.monthKey]) byMonth[r.monthKey] = [];
-        byMonth[r.monthKey].push(r);
-    }
-    const months = Object.keys(byMonth).sort((a, b) => b.localeCompare(a));
-    const typeOrder = ['iphone', 'caribe', 'auto', 'other'];
-    const typeLabels = {
-        iphone: '📱 iPhones',
-        caribe: '🏖️ Viajes al Caribe',
-        auto: '🚗 Auto Gol Trend',
-        other: '🎁 Otros / Legacy'
-    };
+function _fmtMoney(n) { return '$' + (Number(n) || 0).toLocaleString('es-AR'); }
+function _fmtPct(n, d) {
+    if (!d) return '0%';
+    return Math.round((n / d) * 100) + '%';
+}
 
+function _renderRafflesAdmin() {
+    const dash = _rafflesAdminCache || { kpis: {}, byType: [], topBuyers: [], raffles: [] };
+    const k = dash.kpis || {};
+    const drawDateStr = dash.drawDate ? new Date(dash.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
     let html = '';
-    for (const mk of months) {
-        const monthRaffles = byMonth[mk];
-        // Totales del mes para el header.
-        const totalRevenue = monthRaffles.reduce((s, r) => s + ((r.totalCuposSold||0) * (r.entryCost||0)), 0);
-        const totalSold = monthRaffles.reduce((s, r) => s + (r.totalCuposSold||0), 0);
-        const totalCap = monthRaffles.reduce((s, r) => s + (r.totalTickets||0), 0);
-        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin:20px 0 10px;flex-wrap:wrap;gap:10px;">';
-        html += '  <h3 style="color:#d4af37;font-size:14px;margin:0;text-transform:uppercase;letter-spacing:1px;">📅 ' + escapeHtml(mk) + ' · ' + monthRaffles.length + ' sorteos</h3>';
-        html += '  <small style="color:#888;">Recaudación: <strong style="color:#25d366;">$' + totalRevenue.toLocaleString('es-AR') + '</strong> · ' + totalSold + '/' + totalCap + ' cupos</small>';
-        html += '</div>';
-        // Group by type within month.
-        const byType = {};
-        for (const r of monthRaffles) {
-            const t = r.raffleType || 'other';
-            if (!byType[t]) byType[t] = [];
-            byType[t].push(r);
-        }
-        for (const t of typeOrder) {
-            const list = byType[t];
-            if (!list || list.length === 0) continue;
-            list.sort((a, b) => (a.instanceNumber||0) - (b.instanceNumber||0));
-            html += '<div style="margin:10px 0 6px;">';
-            html += '  <h4 style="color:#aaa;font-size:12px;margin:0 0 6px;font-weight:600;">' + typeLabels[t] + ' <span style="color:#666;font-size:11px;font-weight:400;">· ' + list.length + ' sorteo' + (list.length===1?'':'s') + '</span></h4>';
-            html += '</div>';
-            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:10px;">';
-            for (const r of list) html += _renderRaffleAdminCard(r);
-            html += '</div>';
-        }
+
+    // ===== Banner / KPIs =====
+    html += '<div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
+    html += '    <div>';
+    html += '      <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;">📊 Esta semana · ' + escapeHtml(dash.weekKey || '—') + '</div>';
+    html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">Sorteo programado: <strong style="color:#fff;">' + drawDateStr + '</strong> · Lotería Nocturna 1° premio</div>';
+    html += '    </div>';
+    html += '    <div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    html += '      <button onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
+    html += '      <button onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo (iPhone/Caribe/Auto)">🗑️ Sorteos viejos</button>';
+    if ((k.rafflesFilled || 0) + (dash.raffles||[]).filter(r=>r.status==='drawn').length > 0) {
+        html += '      <button onclick="cleanupRaffles()" style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">🧹 Archivar drawn</button>';
     }
+    html += '    </div>';
+    html += '  </div>';
+
+    // KPI grid
+    const kpis = [
+        { label: 'Recaudación',     val: _fmtMoney(k.totalRevenue),    color: '#d4af37' },
+        { label: 'Cupos vendidos',  val: (k.totalCuposSold || 0) + ' / ' + (k.totalCupos || 0), sub: _fmtPct(k.totalCuposSold, k.totalCupos), color: '#fff' },
+        { label: 'Personas',        val: String(k.uniqueBuyers || 0),  color: '#00d4ff' },
+        { label: 'Sorteos llenos',  val: (k.rafflesFilled || 0) + ' / ' + (k.rafflesCount || 0), color: '#ffaa66' },
+        { label: 'Premios pagados', val: _fmtMoney(k.prizesPaid),      color: '#66ff66' },
+        { label: 'Premios pendientes', val: _fmtMoney(k.prizesPending), color: '#ff8080' },
+        { label: 'Ganancia neta',   val: _fmtMoney(k.netProfit),       color: (k.netProfit >= 0 ? '#66ff66' : '#ff8080') }
+    ];
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
+    for (const x of kpis) {
+        html += '    <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 10px;">';
+        html += '      <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">' + x.label + '</div>';
+        html += '      <div style="color:' + x.color + ';font-size:15px;font-weight:900;margin-top:3px;">' + x.val + '</div>';
+        if (x.sub) html += '      <div style="color:#666;font-size:10px;margin-top:1px;">' + x.sub + '</div>';
+        html += '    </div>';
+    }
+    html += '  </div>';
+    html += '</div>';
+
+    // ===== Stats por tipo =====
+    if (dash.byType && dash.byType.length > 0) {
+        html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">📈 Por tipo · esta semana</h3>';
+        html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">';
+        for (const t of dash.byType) {
+            const fillPct = t.instances ? Math.round((t.cuposSold / (t.instances * t.totalTickets)) * 100) : 0;
+            html += '    <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;">';
+            html += '      <div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:6px;">' + t.emoji + ' ' + escapeHtml(t.label) + '</div>';
+            html += '      <div style="font-size:11px;color:#aaa;line-height:1.6;">';
+            html += '        <div>Instancias: <strong style="color:#fff;">' + t.instances + '</strong> (' + t.active + ' act · ' + t.filled + ' llenas · ' + t.drawn + ' sort.)</div>';
+            html += '        <div>Cupos: <strong style="color:#fff;">' + t.cuposSold + '</strong> · <strong style="color:#d4af37;">' + _fmtMoney(t.revenue) + '</strong></div>';
+            html += '        <div style="height:5px;background:rgba(255,255,255,0.08);border-radius:3px;margin-top:6px;overflow:hidden;"><div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#d4af37,#ffd700);"></div></div>';
+            html += '      </div>';
+            html += '    </div>';
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+
+    // ===== Sorteos activos esta semana =====
+    html += '<div style="margin-bottom:14px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">🎫 Sorteos de la semana</h3>';
+    if (!dash.raffles || dash.raffles.length === 0) {
+        html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteos activos. Tocá <strong>🌱 Force seed</strong>.</div>';
+    } else {
+        html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:10px;">';
+        for (const r of dash.raffles) html += _renderRaffleAdminCard(r);
+        html += '  </div>';
+    }
+    html += '</div>';
+
+    // ===== Top compradores =====
+    if (dash.topBuyers && dash.topBuyers.length > 0) {
+        html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">🏅 Top compradores · esta semana</h3>';
+        html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">';
+        let idx = 1;
+        for (const b of dash.topBuyers) {
+            html += '    <div style="display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,0.30);border-radius:6px;padding:8px 10px;font-size:11px;gap:6px;">';
+            html += '      <div style="display:flex;gap:8px;align-items:center;min-width:0;flex:1;">';
+            html += '        <span style="color:' + (idx === 1 ? '#ffd700' : (idx === 2 ? '#c0c0c0' : (idx === 3 ? '#cd7f32' : '#666'))) + ';font-weight:900;font-size:13px;">#' + idx + '</span>';
+            html += '        <span style="color:#fff;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(b.username) + '</span>';
+            html += '      </div>';
+            html += '      <div style="text-align:right;flex-shrink:0;"><div style="color:#d4af37;font-weight:800;">' + _fmtMoney(b.totalPaid) + '</div><div style="color:#888;font-size:10px;">' + b.cuposCount + ' cupos</div></div>';
+            html += '    </div>';
+            idx++;
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+
+    // ===== Historial semanal =====
+    html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.25);border-radius:10px;padding:12px;">';
+    html += '  <h3 style="color:#00d4ff;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">📅 Historial semana a semana</h3>';
+    html += _renderHistoryWeeks(_rafflesHistoryCache || []);
+    html += '</div>';
+
     return html;
 }
 
 function _renderRaffleAdminCard(r) {
-    const drawDateStr = r.drawDate
-        ? new Date(r.drawDate).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
-        : '—';
-    const isWagered = r.entryMode === 'wagered';
-    const statusBadge = r.status === 'active'    ? '<span style="background:rgba(37,211,102,0.20);color:#25d366;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">ACTIVO</span>' :
-                        r.status === 'closed'    ? '<span style="background:rgba(255,200,80,0.20);color:#ffc850;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">CERRADO</span>' :
-                        r.status === 'drawn'     ? '<span style="background:rgba(120,80,255,0.20);color:#b39dff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">SORTEADO</span>' :
-                                                   '<span style="background:rgba(255,80,80,0.20);color:#ff5050;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">CANCELADO</span>';
+    const sold = r.cuposSold || 0;
+    const total = r.totalTickets || 0;
+    const fillPct = total ? Math.round((sold / total) * 100) : 0;
+    const statusLabel = {
+        active:   { txt: 'Activo · vendiendo',    color: '#66ff66' },
+        closed:   { txt: 'Cupo lleno · esperando sorteo', color: '#ffaa66' },
+        drawn:    { txt: 'Sorteado',              color: '#00d4ff' },
+        archived: { txt: 'Archivado',             color: '#777' },
+        cancelled:{ txt: 'Cancelado',             color: '#ff6666' }
+    }[r.status] || { txt: r.status, color: '#aaa' };
+    const drawDate = r.drawDate ? new Date(r.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
 
-    let imagePreview;
-    if (r.imageUrl) {
-        imagePreview = '<div style="width:100%;height:120px;background-image:url(\'' + escapeHtml(r.imageUrl) + '\');background-size:cover;background-position:center;border-radius:8px;"></div>';
-    } else {
-        imagePreview = '<div style="width:100%;height:120px;background:linear-gradient(135deg,#3d1f6e,#1a0033);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:50px;">' + (r.emoji || '🎁') + '</div>';
-    }
+    let html = '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">';
+    html += '    <div style="font-weight:800;color:#fff;font-size:13px;">' + (r.emoji||'🎁') + ' ' + escapeHtml(r.name || '') + '</div>';
+    html += '    <div style="font-size:10px;font-weight:700;color:' + statusLabel.color + ';white-space:nowrap;">' + statusLabel.txt + '</div>';
+    html += '  </div>';
+    html += '  <div style="height:6px;background:rgba(0,0,0,0.30);border-radius:3px;overflow:hidden;">';
+    html += '    <div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#d4af37,#ffd700);"></div>';
+    html += '  </div>';
+    html += '  <div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;">';
+    html += '    <span>' + sold + '/' + total + ' (' + fillPct + '%)</span>';
+    html += '    <span>' + _fmtMoney(r.revenue) + '</span>';
+    html += '  </div>';
+    html += '  <div style="font-size:10px;color:#888;line-height:1.4;">📅 ' + drawDate + ' · ' + (r.participants||0) + ' personas · Premio ' + _fmtMoney(r.prizeValueARS) + '</div>';
 
-    let html = '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">';
-    html += imagePreview;
-    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
-    html += '  <div><h4 style="margin:0;color:#ffd700;font-size:14px;">' + escapeHtml(r.prizeName) + (r.instanceNumber > 1 ? ' #' + r.instanceNumber : '') + '</h4><small style="color:#888;">' + escapeHtml(r.name) + '</small></div>';
-    html += '  ' + statusBadge;
-    html += '</div>';
-    if (r.lotteryRule) {
-        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.25);border-radius:6px;padding:6px 8px;font-size:10px;color:#aaa;">🎯 ' + escapeHtml(r.lotteryRule) + '</div>';
-    }
-    html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;flex-wrap:wrap;gap:6px;">';
-    html += '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants || 0) + '</strong> personas</span>';
-    html += '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos</span>';
-    if (isWagered) {
-        html += '  <span>🎁 <strong style="color:#25d366;">GRATIS</strong> · threshold $' + (r.wageredThreshold||0).toLocaleString('es-AR') + '</span>';
-    } else {
-        html += '  <span>💰 <strong style="color:#fff;">$' + (r.entryCost||0).toLocaleString('es-AR') + '</strong>/cupo</span>';
-    }
-    html += '</div>';
-    // Fecha del sorteo destacada.
-    html += '<div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:6px 10px;text-align:center;">';
-    html += '  <small style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">📅 Sorteo programado</small>';
-    html += '  <div style="color:#fff;font-size:12px;font-weight:700;text-transform:capitalize;">' + escapeHtml(drawDateStr) + '</div>';
-    html += '</div>';
-    // Premio + payout proyectado.
-    if (r.prizeValueARS && r.prizeValueARS > 0) {
-        const fill = r.fillRatePct || 0;
-        const projected = r.projectedPayoutARS || 0;
-        const projColor = fill >= 100 ? '#25d366' : '#ffc850';
-        html += '<div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:8px;padding:8px 10px;text-align:center;">';
-        html += '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">💎 Valor del premio</div>';
-        html += '  <div style="color:#ffd700;font-weight:900;font-size:15px;margin:1px 0;">$' + r.prizeValueARS.toLocaleString('es-AR') + '</div>';
-        html += '  <div style="color:' + projColor + ';font-size:10px;">Cupo ' + fill + '% → payout proyectado: <strong>$' + projected.toLocaleString('es-AR') + '</strong></div>';
-        html += '</div>';
-    }
-    if (r.status === 'active' && (r.cuposRemaining || 0) > 0) {
-        html += '<small style="color:#888;text-align:center;">Quedan ' + r.cuposRemaining + ' cupos disponibles</small>';
-    } else if (r.status === 'active' && r.totalCuposSold >= r.totalTickets) {
-        html += '<small style="color:#25d366;text-align:center;">✅ Cupo completo</small>';
-    }
-    if (r.status === 'drawn' && r.winnerUsername) {
-        html += '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:8px;padding:10px;text-align:center;">';
-        html += '  <div style="color:#b39dff;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🏆 Ganador</div>';
-        html += '  <div style="color:#ffd700;font-weight:900;font-size:16px;margin-top:4px;">' + escapeHtml(r.winnerUsername) + '</div>';
-        html += '  <small style="color:#888;">Número ganador #' + r.winningTicketNumber + ' · sorteado ' + (r.drawnAt ? new Date(r.drawnAt).toLocaleString('es-AR') : '') + '</small>';
-        if (r.lotteryDrawSource) {
-            html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;">📰 ' + escapeHtml(r.lotteryDrawSource) + '</div>';
+    if (r.status === 'drawn') {
+        const claimStatus = r.prizeClaimedAt
+            ? '<span style="color:#66ff66;">✅ Reclamado ' + new Date(r.prizeClaimedAt).toLocaleString('es-AR') + '</span>'
+            : '<span style="color:#ffaa66;">⏳ Esperando que el ganador reclame</span>';
+        html += '  <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;color:#ddd;">';
+        html += '    🏆 <strong>' + escapeHtml(r.winnerUsername || '—') + '</strong> con número <strong>#' + r.winningTicketNumber + '</strong>';
+        if (r.lotteryDrawNumber && r.lotteryDrawNumber !== r.winningTicketNumber) {
+            html += ' (Lotería sacó ' + r.lotteryDrawNumber + ', mapeado)';
         }
-        html += '</div>';
+        html += '<br>' + claimStatus + '</div>';
     }
-    if (r.status === 'closed') {
-        html += '<div style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-radius:8px;padding:8px;text-align:center;">';
-        html += '  <small style="color:#ffc850;">⏳ Cerrado · esperando número de Lotería Nacional para sortear</small>';
-        html += '</div>';
+
+    html += '  <div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    html += '    <button type="button" onclick="viewRaffleParticipants(' + escapeJsArg(r.id) + ')" style="flex:1;min-width:90px;padding:7px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">📋 Detalle</button>';
+    if (r.status === 'closed' || r.status === 'active') {
+        html += '    <button type="button" onclick="drawRaffle(' + escapeJsArg(r.id) + ')" style="flex:1;min-width:90px;padding:7px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;">🎰 Sortear</button>';
+        html += '    <button type="button" onclick="cancelRaffle(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.40);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="Cancelar y reembolsar">✖</button>';
     }
-    // Acciones.
-    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-    html += '  <button onclick="editRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">✏️ Editar</button>';
-    html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">📋 Detalle</button>';
-    if ((r.status === 'active' || r.status === 'closed') && (r.totalCuposSold || 0) > 0) {
-        html += '  <button onclick="drawRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">🎰 Sortear (Lotería)</button>';
-    }
-    html += '</div>';
+    html += '  </div>';
     html += '</div>';
     return html;
 }
 
-async function editRaffle(id) {
-    const r = (_rafflesAdminCache || []).find(x => x.id === id);
-    if (!r) return;
-    const newImage = prompt('URL de imagen del premio (vacío = usar emoji):', r.imageUrl || '');
-    if (newImage === null) return;
-    const newDescription = prompt('Descripción:', r.description || '');
-    if (newDescription === null) return;
-    const newEmoji = prompt('Emoji fallback (si no hay imagen):', r.emoji || '🎁');
-    if (newEmoji === null) return;
-    const newPrizeValueStr = prompt('Valor del premio en pesos (si no se llena el cupo, se paga proporcional):', String(r.prizeValueARS || 0));
-    if (newPrizeValueStr === null) return;
-    const newPrizeValue = Number(newPrizeValueStr.replace(/[^\d]/g, ''));
-    if (!Number.isFinite(newPrizeValue) || newPrizeValue < 0) {
-        showToast('Valor del premio inválido', 'error');
+function _renderHistoryWeeks(weeks) {
+    if (!weeks || weeks.length === 0) {
+        return '<div style="color:#888;text-align:center;padding:14px;font-size:12px;">Aún no hay historial. Aparecerá acá apenas se sortee la primera semana.</div>';
+    }
+    let html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+    for (const w of weeks) {
+        const drawDate = w.drawDate ? new Date(w.drawDate).toLocaleDateString('es-AR') : '—';
+        const fillPct = w.totalCupos ? Math.round((w.totalCuposSold / w.totalCupos) * 100) : 0;
+        const detailOpen = !!_rafflesHistoryDetailCache[w.weekKey];
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(0,212,255,0.20);border-radius:8px;padding:10px;">';
+        html += '  <div onclick="toggleHistoryDetail(' + escapeJsArg(w.weekKey) + ')" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;flex-wrap:wrap;gap:6px;">';
+        html += '    <div style="flex:1;min-width:200px;">';
+        html += '      <div style="color:#00d4ff;font-size:13px;font-weight:800;">' + escapeHtml(w.weekKey) + ' · ' + drawDate + '</div>';
+        html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">' + w.totalRaffles + ' sorteos · ' + w.uniqueBuyers + ' personas · ' + w.totalCuposSold + ' cupos (' + fillPct + '%)</div>';
+        html += '    </div>';
+        html += '    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">';
+        html += '      <div style="text-align:right;">';
+        html += '        <div style="color:#d4af37;font-size:13px;font-weight:800;">' + _fmtMoney(w.totalRevenue) + '</div>';
+        html += '        <div style="color:#888;font-size:10px;">recaudado</div>';
+        html += '      </div>';
+        html += '      <div style="text-align:right;">';
+        const netColor = w.netProfit >= 0 ? '#66ff66' : '#ff8080';
+        html += '        <div style="color:' + netColor + ';font-size:13px;font-weight:800;">' + _fmtMoney(w.netProfit) + '</div>';
+        html += '        <div style="color:#888;font-size:10px;">neto</div>';
+        html += '      </div>';
+        html += '      <span style="color:#666;font-size:14px;">' + (detailOpen ? '▼' : '▶') + '</span>';
+        html += '    </div>';
+        html += '  </div>';
+        if (detailOpen) {
+            html += '  <div id="historyDetail_' + w.weekKey.replace(/[^a-zA-Z0-9]/g, '_') + '" style="margin-top:10px;border-top:1px solid rgba(0,212,255,0.15);padding-top:10px;">';
+            html += _renderHistoryDetail(w.weekKey);
+            html += '  </div>';
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
+function _renderHistoryDetail(weekKey) {
+    const data = _rafflesHistoryDetailCache[weekKey];
+    if (!data) return '<div style="color:#888;font-size:11px;">⏳ Cargando…</div>';
+    const raffles = data.raffles || [];
+    if (raffles.length === 0) return '<div style="color:#888;font-size:11px;">Sin sorteos en esta semana.</div>';
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+    html += '<thead><tr style="color:#aaa;text-align:left;border-bottom:1px solid rgba(255,255,255,0.10);">';
+    html += '<th style="padding:5px 6px;">Sorteo</th>';
+    html += '<th style="padding:5px 6px;">Cupos</th>';
+    html += '<th style="padding:5px 6px;">Recaudado</th>';
+    html += '<th style="padding:5px 6px;">Premio</th>';
+    html += '<th style="padding:5px 6px;">Estado</th>';
+    html += '<th style="padding:5px 6px;">Ganador</th>';
+    html += '</tr></thead><tbody>';
+    for (const r of raffles) {
+        const claim = r.prizeClaimedAt ? '✅ Reclamado' : (r.status === 'drawn' ? '⏳ Pendiente' : '—');
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:5px 6px;color:#fff;">' + (r.emoji||'') + ' ' + escapeHtml(r.name||'') + '</td>';
+        html += '<td style="padding:5px 6px;color:#ddd;">' + (r.cuposSold||0) + '/' + (r.totalTickets||0) + '</td>';
+        html += '<td style="padding:5px 6px;color:#d4af37;">' + _fmtMoney(r.revenue) + '</td>';
+        html += '<td style="padding:5px 6px;color:#aaa;">' + _fmtMoney(r.prizeValueARS) + '</td>';
+        html += '<td style="padding:5px 6px;color:#888;font-size:10px;">' + escapeHtml(r.status||'') + (r.status==='drawn' ? '<br>' + claim : '') + '</td>';
+        const winnerCell = r.winnerUsername
+            ? '<strong style="color:#fff;">' + escapeHtml(r.winnerUsername) + '</strong> · #' + r.winningTicketNumber
+            : '—';
+        html += '<td style="padding:5px 6px;color:#aaa;">' + winnerCell + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+async function toggleHistoryDetail(weekKey) {
+    const isOpen = !!_rafflesHistoryDetailCache[weekKey];
+    if (isOpen) {
+        delete _rafflesHistoryDetailCache[weekKey];
+        const c = document.getElementById('rafflesAdminContent');
+        if (c) c.innerHTML = _renderRafflesAdmin();
         return;
     }
+    // Token unico por apertura: si el user cierra y reabre antes que la
+    // request anterior responda, el callback antiguo no debe pisar la cache.
+    const token = Date.now() + ':' + Math.random();
+    _rafflesHistoryDetailCache[weekKey] = { loading: true, raffles: [], _token: token };
+    const c = document.getElementById('rafflesAdminContent');
+    if (c) c.innerHTML = _renderRafflesAdmin();
     try {
-        const resp = await authFetch('/api/admin/raffles/' + id, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                imageUrl: newImage.trim(),
-                description: newDescription,
-                emoji: newEmoji.trim() || '🎁',
-                prizeValueARS: newPrizeValue
-            })
-        });
-        const d = await resp.json();
-        if (!resp.ok) { showToast(d.error || 'Error', 'error'); return; }
-        showToast('✅ Sorteo actualizado', 'success');
-        loadRafflesAdmin();
-    } catch (e) { showToast('Error de conexión', 'error'); }
-}
-
-function _formatTicketNumbers(nums) {
-    if (!nums || !nums.length) return '(sin números)';
-    const sorted = nums.slice().sort((a, b) => a - b);
-    const groups = [];
-    let start = sorted[0], prev = sorted[0];
-    for (let i = 1; i < sorted.length; i++) {
-        if (sorted[i] === prev + 1) { prev = sorted[i]; continue; }
-        groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
-        start = prev = sorted[i];
+        const r = await authFetch('/api/admin/raffles/history/' + encodeURIComponent(weekKey));
+        const d = await r.json();
+        // Si en este momento la entrada ya no existe (user cerro) o tiene
+        // otro token (user cerro+reabrio), descartamos esta respuesta.
+        const cur = _rafflesHistoryDetailCache[weekKey];
+        if (!cur || cur._token !== token) return;
+        if (!r.ok) { _rafflesHistoryDetailCache[weekKey] = { raffles: [], error: d.error, _token: token }; }
+        else { _rafflesHistoryDetailCache[weekKey] = Object.assign({}, d, { _token: token }); }
+    } catch (e) {
+        const cur = _rafflesHistoryDetailCache[weekKey];
+        if (!cur || cur._token !== token) return;
+        _rafflesHistoryDetailCache[weekKey] = { raffles: [], error: 'Error de conexión', _token: token };
     }
-    groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
-    return groups.join(', ');
-}
-
-// Color determinístico por username (hash → HSL).
-function _userColor(username) {
-    const s = String(username || '');
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = ((h * 31) + s.charCodeAt(i)) | 0;
-    return 'hsl(' + (Math.abs(h) % 360) + ', 65%, 55%)';
+    if (c) c.innerHTML = _renderRafflesAdmin();
 }
 
 async function viewRaffleParticipants(id) {
-    // Reemplaza el alert() viejo por un modal completo de "Sorteo": header
-    // con info y fill bar, lista de jugadores ordenada y grilla cupo×cupo.
     let modal = document.getElementById('raffleDetailModal');
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'raffleDetailModal';
-        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
-        modal.onclick = function(e) { if (e.target === modal) closeRaffleDetailModal(); };
-        modal.innerHTML = '<div id="raffleDetailContent" style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;max-width:1100px;width:100%;max-height:92vh;overflow-y:auto;padding:24px 22px;position:relative;"></div>';
+        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;';
+        modal.onclick = function (e) { if (e.target === modal) closeRaffleDetailModal(); };
+        modal.innerHTML = '<div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:2px solid #d4af37;border-radius:12px;max-width:760px;width:100%;margin:8px auto;padding:18px 16px;position:relative;"><button onclick="closeRaffleDetailModal()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button><div id="raffleDetailBody"><div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div></div></div>';
         document.body.appendChild(modal);
     }
-    const content = document.getElementById('raffleDetailContent');
-    content.innerHTML = '<div style="text-align:center;padding:60px;color:#888;">⏳ Cargando…</div>';
     modal.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-    modal.dataset.raffleId = id;
-
+    document.getElementById('raffleDetailBody').innerHTML = '<div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div>';
     try {
         const r = await authFetch('/api/admin/raffles/' + id + '/participants');
         const d = await r.json();
-        if (!r.ok) { content.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
-        content.innerHTML = _renderRaffleDetail(d);
-    } catch (e) {
-        content.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>';
-    }
+        if (!r.ok) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>'; return; }
+        document.getElementById('raffleDetailBody').innerHTML = _renderRaffleDetail(d);
+    } catch (e) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>'; }
 }
 
 function closeRaffleDetailModal() {
-    const m = document.getElementById('raffleDetailModal');
-    if (m) m.style.display = 'none';
-    document.body.style.overflow = '';
-}
-
-async function refreshRaffleDetail() {
-    const m = document.getElementById('raffleDetailModal');
-    if (!m || !m.dataset.raffleId) return;
-    return viewRaffleParticipants(m.dataset.raffleId);
+    const modal = document.getElementById('raffleDetailModal');
+    if (modal) modal.style.display = 'none';
 }
 
 function _renderRaffleDetail(d) {
-    const raffle = d.raffle || {};
-    const parts = (d.participants || []).slice().sort((a,b) => (b.cuposCount||1) - (a.cuposCount||1));
-    const totalCuposSold = d.totalCuposSold || 0;
-    const totalTickets = raffle.totalTickets || 0;
-    const cuposRemaining = d.cuposRemaining || 0;
-    const fillPct = totalTickets > 0 ? Math.round((totalCuposSold / totalTickets) * 100) : 0;
-    const projectedPayout = totalTickets > 0
-        ? Math.round((raffle.prizeValueARS || 0) * Math.min(1, totalCuposSold / totalTickets))
-        : 0;
-
-    // Map cupo number -> owner username (sparse).
-    const cupoOwner = {};
-    for (const p of parts) {
-        const nums = p.ticketNumbers || [];
-        for (const n of nums) cupoOwner[n] = p.username;
+    const r = d.raffle;
+    const parts = d.participants || [];
+    let html = '<h2 style="color:#d4af37;margin:0 0 4px;font-size:18px;">' + (r.emoji||'🎁') + ' ' + escapeHtml(r.name) + '</h2>';
+    html += '<div style="color:#aaa;font-size:12px;margin-bottom:12px;">Premio ' + _fmtMoney(r.prizeValueARS) + ' · ' + r.cuposSold + '/' + r.totalTickets + ' cupos · ' + _fmtMoney(r.entryCost) + ' por número · ' + parts.length + ' personas</div>';
+    if (r.status === 'drawn' && r.winnerUsername) {
+        html += '<div style="background:rgba(0,212,255,0.10);border:1px solid #00d4ff;border-radius:8px;padding:10px;margin-bottom:12px;color:#fff;font-size:13px;">🏆 Ganador: <strong>' + escapeHtml(r.winnerUsername) + '</strong> · número <strong>#' + r.winningTicketNumber + '</strong></div>';
     }
-
-    let html = '';
-    // Cierre.
-    html += '<button onclick="closeRaffleDetailModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>';
-
-    // Header.
-    const titleSuffix = raffle.instanceNumber > 1 ? ' #' + raffle.instanceNumber : '';
-    html += '<h2 style="color:#d4af37;margin:0 0 4px;font-size:22px;font-weight:900;">' + (raffle.emoji || '🎁') + ' ' + escapeHtml(raffle.prizeName || raffle.name || 'Sorteo') + titleSuffix + '</h2>';
-    html += '<p style="margin:0 0 8px;color:#aaa;font-size:12px;">' + escapeHtml(raffle.monthKey || '') + ' · cupo de $' + (raffle.entryCost||0).toLocaleString('es-AR') + ' por número (pago con saldo JUGAYGANA)</p>';
-    if (raffle.lotteryRule) {
-        html += '<div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px 14px;margin-bottom:14px;">';
-        html += '  <div style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">🎯 Cómo se sortea</div>';
-        html += '  <div style="color:#ddd;font-size:13px;margin-top:4px;">' + escapeHtml(raffle.lotteryRule) + '</div>';
-        html += '</div>';
-    }
-
-    // KPIs.
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;">';
-    html += _kpiBlock('Cupos vendidos', totalCuposSold + ' / ' + totalTickets, '#ffd700');
-    html += _kpiBlock('Fill rate', fillPct + '%', fillPct >= 100 ? '#25d366' : '#ffc850');
-    html += _kpiBlock('Personas', String(d.uniqueParticipants || 0), '#00d4ff');
-    html += _kpiBlock('Premio', '$' + (raffle.prizeValueARS||0).toLocaleString('es-AR'), '#ffd700');
-    html += _kpiBlock('Payout proyectado', '$' + projectedPayout.toLocaleString('es-AR'), fillPct >= 100 ? '#25d366' : '#ffc850');
-    html += _kpiBlock('Recaudación', '$' + (totalCuposSold * (raffle.entryCost||0)).toLocaleString('es-AR'), '#fff');
-    html += '</div>';
-
-    // Fill bar.
-    html += '<div style="background:rgba(0,0,0,0.50);border-radius:10px;overflow:hidden;height:14px;margin-bottom:14px;">';
-    html += '  <div style="height:100%;width:' + Math.min(100,fillPct) + '%;background:linear-gradient(90deg,#d4af37,#f7931e);transition:width 0.3s;"></div>';
-    html += '</div>';
-
-    // Lottery info if drawn.
-    if (raffle.status === 'drawn') {
-        html += '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
-        html += '  <div style="color:#b39dff;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🏆 Resultado</div>';
-        html += '  <div style="margin-top:6px;color:#ffd700;font-size:15px;font-weight:800;">' + escapeHtml(raffle.winnerUsername || '—') + ' ganó con el número #' + (raffle.winningTicketNumber || '?') + '</div>';
-        if (raffle.lotteryDrawNumber && raffle.lotteryDrawNumber !== raffle.winningTicketNumber) {
-            html += '  <div style="color:#ffc850;font-size:12px;margin-top:4px;">Lotería sacó el ' + raffle.lotteryDrawNumber + ' → mapeado al ' + raffle.winningTicketNumber + ' (cupo incompleto, ciclado al rango vendido)</div>';
-        }
-        if (raffle.lotteryDrawSource) {
-            html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;">📰 ' + escapeHtml(raffle.lotteryDrawSource) + '</div>';
-        }
-        if (raffle.drawnAt) {
-            html += '  <div style="color:#888;font-size:10px;margin-top:4px;">Sorteado ' + new Date(raffle.drawnAt).toLocaleString('es-AR') + ' por ' + escapeHtml(raffle.drawnBy || 'admin') + '</div>';
-        }
-        html += '</div>';
-    }
-
-    // Refresh + estado.
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">';
-    html += '  <h3 style="color:#d4af37;margin:0;font-size:14px;text-transform:uppercase;letter-spacing:1px;">📋 Detalle por jugador</h3>';
-    html += '  <button onclick="refreshRaffleDetail()" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;font-weight:700;">🔄 Refrescar</button>';
-    html += '</div>';
-
-    // Tabla por jugador.
     if (parts.length === 0) {
-        html += '<div style="text-align:center;padding:30px;color:#666;background:rgba(0,0,0,0.30);border-radius:10px;">Aún no hay participantes en este sorteo.</div>';
-    } else {
-        html += '<div style="overflow-x:auto;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;margin-bottom:18px;">';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;color:#ddd;">';
-        html += '<thead><tr style="background:rgba(212,175,55,0.10);color:#d4af37;">';
-        html += '<th style="text-align:left;padding:10px 8px;">#</th>';
-        html += '<th style="text-align:left;padding:10px 8px;">Jugador</th>';
-        html += '<th style="text-align:right;padding:10px 8px;">Cupos</th>';
-        html += '<th style="text-align:right;padding:10px 8px;">% chance</th>';
-        html += '<th style="text-align:right;padding:10px 8px;">Pagó</th>';
-        html += '<th style="text-align:left;padding:10px 8px;">Números</th>';
-        html += '<th style="text-align:left;padding:10px 8px;">Entró</th>';
-        html += '<th style="text-align:left;padding:10px 8px;">Última compra</th>';
-        html += '</tr></thead><tbody>';
-        parts.forEach((p, i) => {
-            const color = _userColor(p.username);
-            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (p.isWinner ? 'background:rgba(120,80,255,0.10);' : '') + '">';
-            html += '  <td style="padding:8px;color:#888;">' + (i+1) + '</td>';
-            html += '  <td style="padding:8px;"><span style="display:inline-block;width:8px;height:8px;background:' + color + ';border-radius:50%;margin-right:6px;"></span><strong style="color:#fff;">' + escapeHtml(p.username) + '</strong>' + (p.isWinner ? ' 🏆' : '') + '</td>';
-            html += '  <td style="padding:8px;text-align:right;color:#ffd700;font-weight:700;">' + (p.cuposCount||1) + '</td>';
-            html += '  <td style="padding:8px;text-align:right;color:#ddd;">' + (p.chancePct||0) + '%</td>';
-            html += '  <td style="padding:8px;text-align:right;color:#25d366;">$' + (p.entryCostPaid||0).toLocaleString('es-AR') + '</td>';
-            html += '  <td style="padding:8px;color:#aaa;font-family:monospace;font-size:11px;max-width:280px;word-break:break-word;">' + escapeHtml(_formatTicketNumbers(p.ticketNumbers)) + '</td>';
-            html += '  <td style="padding:8px;color:#888;font-size:11px;">' + (p.joinedAt ? new Date(p.joinedAt).toLocaleString('es-AR') : '—') + '</td>';
-            html += '  <td style="padding:8px;color:#888;font-size:11px;">' + (p.lastBoughtAt ? new Date(p.lastBoughtAt).toLocaleString('es-AR') : '—') + '</td>';
-            html += '</tr>';
-        });
-        html += '</tbody></table></div>';
+        html += '<div style="text-align:center;padding:30px;color:#888;">Aún no hay participantes.</div>';
+        return html;
     }
-
-    // Grilla de cupos: muestra todos los numeros 1..totalTickets coloreados
-    // por dueño (vacantes en gris). Ayuda a ver visualmente como se va llenando.
-    if (totalTickets > 0 && totalTickets <= 2000) {
-        html += '<details style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px 14px;">';
-        html += '<summary style="cursor:pointer;color:#d4af37;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:1px;">🎫 Grilla cupo × cupo (' + totalCuposSold + ' vendidos · ' + cuposRemaining + ' libres)</summary>';
-        html += '<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:2px;font-size:9px;font-family:monospace;">';
-        for (let n = 1; n <= totalTickets; n++) {
-            const owner = cupoOwner[n];
-            if (owner) {
-                html += '<span title="#' + n + ' · ' + escapeHtml(owner) + '" style="background:' + _userColor(owner) + ';color:#000;padding:2px 4px;border-radius:3px;font-weight:700;min-width:30px;text-align:center;">' + n + '</span>';
-            } else {
-                html += '<span title="#' + n + ' · libre" style="background:rgba(255,255,255,0.04);color:#555;padding:2px 4px;border-radius:3px;min-width:30px;text-align:center;">' + n + '</span>';
-            }
-        }
-        html += '</div>';
-        html += '</details>';
-    }
-
-    return html;
-}
-
-function _kpiBlock(label, value, color) {
-    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">' +
-           '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">' + label + '</div>' +
-           '  <div style="color:' + (color || '#fff') + ';font-size:16px;font-weight:900;margin-top:3px;">' + value + '</div>' +
-           '</div>';
-}
-
-// ============================================================
-// ANTI-FRAUDE: lista de participaciones sospechosas (wash-trading)
-// ============================================================
-async function loadSuspiciousRaffleParticipations() {
-    const c = document.getElementById('suspiciousRafflesContent');
-    if (!c) return;
-    c.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">⏳ Escaneando movimientos del mes…</div>';
-    try {
-        const r = await authFetch('/api/admin/raffles/suspicious-participations');
-        const d = await r.json();
-        if (!r.ok || !d.success) {
-            c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
-            return;
-        }
-        if (!d.participations || d.participations.length === 0) {
-            c.innerHTML = '<div style="background:rgba(37,211,102,0.05);border:1px solid rgba(37,211,102,0.30);border-radius:10px;padding:20px;text-align:center;color:#25d366;font-weight:700;">✅ Sin movimientos sospechosos · ' + (d.totalParticipations || 0) + ' participaciones del mes revisadas</div>';
-            return;
-        }
-        let html = '<div style="display:flex;justify-content:space-between;font-size:11px;color:#888;margin-bottom:8px;flex-wrap:wrap;gap:6px;">';
-        html += '  <span>📊 <strong style="color:#fff;">' + d.flaggedCount + '</strong> flagged de ' + d.totalParticipations + ' participaciones</span>';
-        html += '  <span>🚫 <strong style="color:#ff5050;">' + d.blockedCount + '</strong> ya bloqueados</span>';
-        html += '  <span>⚙️ Threshold: retiro > <strong style="color:#fff;">' + Math.round((d.thresholds && d.thresholds.withdrawalRatio || 0.85) * 100) + '%</strong>, cargas ≥ $' + (d.thresholds && d.thresholds.minDeposit || 50000).toLocaleString('es-AR') + '</span>';
-        html += '</div>';
-        html += '<div style="overflow-x:auto;background:rgba(0,0,0,0.30);border:1px solid rgba(255,80,80,0.20);border-radius:10px;">';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;">';
-        html += '<thead><tr style="background:rgba(255,80,80,0.10);color:#ff8080;">';
-        html += '<th style="text-align:left;padding:8px;">Jugador</th>';
-        html += '<th style="text-align:left;padding:8px;">Sorteo</th>';
-        html += '<th style="text-align:left;padding:8px;">Número</th>';
-        html += '<th style="text-align:right;padding:8px;">Cargó</th>';
-        html += '<th style="text-align:right;padding:8px;">Retiró</th>';
-        html += '<th style="text-align:right;padding:8px;">Quedó</th>';
-        html += '<th style="text-align:right;padding:8px;">% Retiro</th>';
-        html += '<th style="text-align:left;padding:8px;">Acción</th>';
-        html += '</tr></thead><tbody>';
-        for (const p of d.participations) {
-            const ratioPct = Math.round((p.withdrawalRatio||0) * 1000) / 10;
-            const ratioColor = ratioPct >= 95 ? '#ff5050' : (ratioPct >= 85 ? '#ff8080' : '#ffc850');
-            const numbers = (p.ticketNumbers||[]).join(', ');
-            const blockedBadge = p.blocked
-                ? '<div style="background:rgba(255,80,80,0.20);color:#ff5050;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:inline-block;">🚫 BLOQUEADO</div>'
-                : '';
-            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (p.blocked ? 'opacity:0.6;background:rgba(255,80,80,0.05);' : '') + '">';
-            html += '  <td style="padding:8px;"><strong style="color:#fff;">' + escapeHtml(p.username) + '</strong>' + (p.blocked ? '<br>' + blockedBadge : '') + '</td>';
-            html += '  <td style="padding:8px;color:#ddd;">' + escapeHtml(p.prizeName || p.raffleName || '') + (p.instanceNumber > 1 ? ' #' + p.instanceNumber : '') + '</td>';
-            html += '  <td style="padding:8px;color:#ffd700;font-family:monospace;">' + escapeHtml('#' + numbers) + '</td>';
-            html += '  <td style="padding:8px;text-align:right;color:#25d366;">$' + (p.depositSum||0).toLocaleString('es-AR') + ' <small style="color:#666;">(' + (p.depositCount||0) + ')</small></td>';
-            html += '  <td style="padding:8px;text-align:right;color:#ff8080;">$' + (p.withdrawSum||0).toLocaleString('es-AR') + ' <small style="color:#666;">(' + (p.withdrawCount||0) + ')</small></td>';
-            html += '  <td style="padding:8px;text-align:right;color:#ddd;">$' + (p.netLoss||0).toLocaleString('es-AR') + '</td>';
-            html += '  <td style="padding:8px;text-align:right;color:' + ratioColor + ';font-weight:800;">' + ratioPct + '%</td>';
-            html += '  <td style="padding:8px;">';
-            if (p.blocked) {
-                html += '<button onclick="unblockRaffleParticipation(\'' + p.participationId + '\')" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;font-weight:700;" title="' + escapeHtml(p.blockedReason || '') + '">↩️ Desbloquear</button>';
-            } else {
-                html += '<button onclick="blockRaffleParticipation(\'' + p.participationId + '\', \'' + escapeHtml(p.username) + '\')" style="background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;font-weight:700;">🚫 Bloquear</button>';
-            }
-            html += '  </td>';
-            html += '</tr>';
-        }
-        html += '</tbody></table></div>';
-        c.innerHTML = html;
-    } catch (e) {
-        c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">Error de conexión</div>';
-    }
-}
-
-async function blockRaffleParticipation(participationId, username) {
-    const reason = prompt('¿Por qué bloqueás a @' + username + '?\n(Default: "Wash-trading detectado")', 'Wash-trading: cargó y retiró casi todo para entrar al sorteo sin jugar');
-    if (reason === null) return;
-    if (!confirm('⚠️ Bloquear el cupo de @' + username + '?\n\nEl número vuelve al pool (otro user puede reclamarlo). Esto NO se puede deshacer si alguien lo reclama después.')) return;
-    try {
-        const r = await authFetch('/api/admin/raffles/participations/' + participationId + '/block', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason: reason || 'Wash-trading detectado' })
-        });
-        const d = await r.json();
-        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
-        showToast('✅ ' + (d.message || 'Cupo bloqueado'), 'success');
-        loadSuspiciousRaffleParticipations();
-        loadRafflesAdmin();
-    } catch (e) {
-        showToast('Error de conexión', 'error');
-    }
-}
-
-async function unblockRaffleParticipation(participationId) {
-    if (!confirm('¿Desbloquear esta participación? Se devuelven los números al user.')) return;
-    try {
-        const r = await authFetch('/api/admin/raffles/participations/' + participationId + '/unblock', {
-            method: 'POST'
-        });
-        const d = await r.json();
-        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
-        showToast('✅ Desbloqueado', 'success');
-        loadSuspiciousRaffleParticipations();
-        loadRafflesAdmin();
-    } catch (e) {
-        showToast('Error de conexión', 'error');
-    }
-}
-
-// ============================================================
-// ANALITICA DE RENTABILIDAD: gente con perdida + conversion por sorteo
-// ============================================================
-async function loadRaffleAnalytics() {
-    const c = document.getElementById('raffleAnalyticsContent');
-    if (!c) return;
-    const monthInput = document.getElementById('raffleAnalyticsMonthKey');
-    let monthKey = monthInput && monthInput.value;
-    if (!monthKey) {
-        // Default al mes actual.
-        const d = new Date();
-        const tz = new Date(d.getTime() - 3 * 3600 * 1000); // ART
-        monthKey = tz.toISOString().slice(0, 7);
-        if (monthInput) monthInput.value = monthKey;
-    }
-    c.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">⏳ Calculando análisis…</div>';
-    try {
-        const r = await authFetch('/api/admin/raffles/analytics?monthKey=' + encodeURIComponent(monthKey));
-        const d = await r.json();
-        if (!r.ok || !d.success) {
-            c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
-            return;
-        }
-        c.innerHTML = _renderRaffleAnalytics(d);
-    } catch (e) {
-        c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">Error de conexión</div>';
-    }
-}
-
-function _renderRaffleAnalytics(d) {
-    const fmt = n => '$' + Number(n || 0).toLocaleString('es-AR');
-    let html = '';
-    // KPIs globales.
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:10px;margin-bottom:14px;">';
-    html += _apChip('Jugadores con pérdida', Number(d.totalUsersWithLoss || 0).toLocaleString('es-AR'), '#ff8080', 'Universo del mes');
-    html += _apChip('Pérdida total', fmt(d.totalLossAmount), '#ff8080', 'Suma de netwin loss');
-    html += _apChip('Participaron en sorteos', Number(d.usersWithLossWhoParticipated || 0).toLocaleString('es-AR'), '#25d366', 'De los con pérdida');
-    html += _apChip('Conversión global', (d.globalConversionPct || 0) + '%', d.globalConversionPct >= 30 ? '#25d366' : '#ffc850', 'Participantes / con pérdida');
-    html += _apChip('Pérdida consumida', fmt(d.totalLossConsumedInRaffles), '#ffd700', 'En cupos de sorteos');
-    html += _apChip('Premio proyectado', fmt(d.totalProjectedPayout), '#ffc850', 'Si llenara así');
-    html += _apChip('Net proyectado', fmt(d.projectedNet), d.projectedNet >= 0 ? '#25d366' : '#ff5050', 'Consumido − payout');
-    html += _apChip('Premio máx (full)', fmt(d.totalMaxPayout), '#888', 'Si todos llenaran');
-    html += '</div>';
-
-    // Distribución por tier de pérdida.
-    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;margin-bottom:14px;">';
-    html += '<div style="color:#fff;font-weight:700;font-size:13px;margin-bottom:8px;">📊 Distribución por tier de pérdida</div>';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;">';
-    html += '<thead><tr style="color:#888;border-bottom:1px solid rgba(255,255,255,0.08);">';
-    html += '<th style="text-align:left;padding:6px;">Tier</th>';
-    html += '<th style="text-align:right;padding:6px;">Jugadores</th>';
-    html += '<th style="text-align:right;padding:6px;">Suma pérdida</th>';
-    html += '<th style="text-align:right;padding:6px;">% del total</th>';
-    html += '</tr></thead><tbody>';
-    const totalUsers = Number(d.totalUsersWithLoss || 0) + (d.lossDistribution.t0 ? d.lossDistribution.t0.count : 0);
-    for (const t of (d.tiers || [])) {
-        const row = d.lossDistribution[t.key] || { count: 0, sumLoss: 0 };
-        const pct = totalUsers > 0 ? Math.round((row.count / totalUsers) * 1000) / 10 : 0;
-        html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
-        html += '<td style="padding:6px;color:#fff;">' + escapeHtml(t.label) + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:#ffd700;">' + (row.count || 0).toLocaleString('es-AR') + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:#ff8080;">' + fmt(row.sumLoss) + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:#aaa;">' + pct + '%</td>';
-        html += '</tr>';
-    }
-    html += '</tbody></table>';
-    html += '</div>';
-
-    // Por sorteo: conversion + rentabilidad.
-    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;">';
-    html += '<div style="color:#fff;font-weight:700;font-size:13px;margin-bottom:8px;">🎁 Conversión y rentabilidad por sorteo</div>';
-    html += '<div style="overflow-x:auto;">';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;min-width:680px;">';
-    html += '<thead><tr style="color:#888;border-bottom:1px solid rgba(255,255,255,0.08);">';
-    html += '<th style="text-align:left;padding:6px;">Sorteo</th>';
-    html += '<th style="text-align:right;padding:6px;">Cupos</th>';
-    html += '<th style="text-align:right;padding:6px;">Personas</th>';
-    html += '<th style="text-align:right;padding:6px;">Conv %</th>';
-    html += '<th style="text-align:right;padding:6px;">Pérdida consumida</th>';
-    html += '<th style="text-align:right;padding:6px;">Premio si gana</th>';
-    html += '<th style="text-align:right;padding:6px;">Net</th>';
-    html += '</tr></thead><tbody>';
-    for (const r of (d.raffles || [])) {
-        const netColor = r.projectedNet >= 0 ? '#25d366' : '#ff5050';
-        html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
-        html += '<td style="padding:6px;color:#fff;font-weight:700;">' + escapeHtml(r.prizeName || r.name || '') + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:#ffd700;">' + (r.totalCupos || 0) + '/' + (r.totalTickets || 0) + ' <small style="color:#666;">(' + (r.fillPct || 0) + '%)</small></td>';
-        html += '<td style="padding:6px;text-align:right;color:#fff;">' + (r.uniqueUsers || 0) + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:' + (r.conversionPct >= 20 ? '#25d366' : '#ffc850') + ';">' + (r.conversionPct || 0) + '%</td>';
-        html += '<td style="padding:6px;text-align:right;color:#ff8080;">' + fmt(r.lossConsumed) + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:#aaa;">' + fmt(r.projectedPayout) + '</td>';
-        html += '<td style="padding:6px;text-align:right;color:' + netColor + ';font-weight:800;">' + fmt(r.projectedNet) + '</td>';
+    html += '<div style="max-height:60vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.10);color:#aaa;text-align:left;"><th style="padding:6px 8px;">Usuario</th><th style="padding:6px 8px;">Cupos</th><th style="padding:6px 8px;">Números</th><th style="padding:6px 8px;text-align:right;">Pagó</th></tr></thead><tbody>';
+    for (const p of parts) {
+        const win = p.isWinner ? ' style="background:rgba(0,212,255,0.10);"' : '';
+        const winBadge = p.isWinner ? ' 🏆' : '';
+        const numStr = (p.ticketNumbers || []).join(', ');
+        html += '<tr' + win + '>';
+        html += '<td style="padding:6px 8px;color:#fff;font-weight:600;">' + escapeHtml(p.username) + winBadge + '</td>';
+        html += '<td style="padding:6px 8px;color:#ddd;">' + (p.cuposCount||0) + '</td>';
+        html += '<td style="padding:6px 8px;color:#aaa;font-family:monospace;font-size:11px;">' + escapeHtml(numStr) + '</td>';
+        html += '<td style="padding:6px 8px;color:#d4af37;text-align:right;">' + _fmtMoney(p.entryCostPaid) + '</td>';
         html += '</tr>';
     }
     html += '</tbody></table></div>';
-    html += '</div>';
-
     return html;
 }
 
 async function drawRaffle(id) {
-    const r = (_rafflesAdminCache || []).find(x => x.id === id);
+    const r = (_rafflesAdminCache && _rafflesAdminCache.raffles || []).find(x => x.id === id);
     if (!r) return;
     const lotteryNumberStr = prompt(
-        '🎟️ Sorteo de ' + r.prizeName + '\n\n' +
-        'Entrá el NÚMERO que salió en el primer premio de la Lotería Nacional ' +
-        '(primer lunes del mes — números válidos: 1 a ' + r.totalTickets + '):'
+        '🎟️ Sorteo de ' + r.name + '\n\n' +
+        'Entrá el NÚMERO que salió en el 1° premio de la Lotería Nacional Nocturna del lunes:'
     );
     if (lotteryNumberStr === null) return;
-    const lotteryNumber = parseInt(lotteryNumberStr.replace(/[^\d]/g, ''), 10);
+    const lotteryNumber = parseInt(String(lotteryNumberStr).replace(/[^\d]/g, ''), 10);
     if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
         showToast('Número de lotería inválido', 'error');
         return;
     }
-    const lotteryDrawSource = prompt(
-        'Descripción del sorteo (opcional): ej. "Lotería Nacional Nocturna - 1er premio - 06/05/2026"',
-        'Lotería Nacional - 1er premio'
-    );
-    if (lotteryDrawSource === null) return;
-    if (!confirm('¿Sortear con el número ' + lotteryNumber + '? El estado pasa a "sorteado" y no se puede deshacer.')) return;
+    const winnerUsername = (prompt('Usuario ganador (opcional — si lo dejás vacío, lo busca el sistema por el número):') || '').trim();
+    const lotteryDrawSource = (prompt('Descripción del sorteo (opcional):', 'Lotería Nacional Nocturna - 1° premio') || '').trim();
+    if (!confirm('¿Cargar ganador con número ' + lotteryNumber + (winnerUsername ? ' (forzado: ' + winnerUsername + ')' : '') + '?')) return;
     try {
         const resp = await authFetch('/api/admin/raffles/' + id + '/draw', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 lotteryNumber,
-                lotteryDrawSource: lotteryDrawSource.trim(),
+                winnerUsername: winnerUsername || undefined,
+                lotteryDrawSource,
                 lotteryDrawDate: new Date().toISOString()
             })
         });
         const d = await resp.json();
         if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
-        let msg = '🎰 ¡SORTEADO!\n\n';
-        msg += '🏆 Ganador: ' + d.winnerUsername + ' (con ' + (d.winnerCupos || 1) + ' cupo' + ((d.winnerCupos||1)===1?'':'s') + ')\n';
-        msg += '🎫 Número ganador: #' + d.winningTicketNumber + ' (Lotería Nacional)\n';
-        msg += '📊 ' + d.totalCuposSold + ' cupos vendidos · ' + d.uniqueParticipants + ' personas distintas\n';
-        if (d.prizeValueARS && d.prizeValueARS > 0) {
-            msg += '\n💎 Valor del premio: $' + d.prizeValueARS.toLocaleString('es-AR') + '\n';
-            msg += '📊 Cupo: ' + d.fillRatePct + '%\n';
-            msg += '💵 Payout: $' + d.projectedPayoutARS.toLocaleString('es-AR') + '\n';
-            msg += '\n' + (d.payoutNote || '');
-        }
-        if (d.pushNotifications) {
-            msg += '\n\n📲 Push: ganador ' + (d.pushNotifications.winnerPushed||0) + ' · perdedores ' + (d.pushNotifications.losersPushed||0);
-        }
+        let msg = '🎰 SORTEADO\n\n';
+        msg += '🏆 Ganador: ' + d.winnerUsername + '\n';
+        msg += '🎫 Número: #' + d.winningTicketNumber + (d.lotteryWasMapped ? ' (mapeado del ' + d.lotteryDrawNumber + ')' : '') + '\n';
+        msg += '📊 ' + d.totalCuposSold + ' cupos vendidos\n';
+        msg += '💎 Premio: ' + _fmtMoney(d.prizeValueARS) + '\n';
+        if (d.pushNotifications) msg += '\n📲 Push enviadas: ganador ' + (d.pushNotifications.winnerPushed||0) + ' · perdedores ' + (d.pushNotifications.losersPushed||0);
+        msg += '\n\nEl ganador verá un botón en la app para acreditar el premio a su saldo.';
         alert(msg);
         loadRafflesAdmin();
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
+
+async function cancelRaffle(id) {
+    const r = (_rafflesAdminCache && _rafflesAdminCache.raffles || []).find(x => x.id === id);
+    if (!r) return;
+    if (!confirm('¿Cancelar "' + r.name + '" y reembolsar a los ' + (r.participants||0) + ' participantes? No se puede deshacer.')) return;
+    try {
+        const resp = await authFetch('/api/admin/raffles/' + id + '/cancel', { method: 'POST' });
+        const d = await resp.json();
+        if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Cancelado · ' + (d.refundedCount||0) + ' reembolsos · ' + _fmtMoney(d.refundedAmount), 'success');
+        loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function cleanupRaffles() {
+    if (!confirm('¿Archivar todos los sorteos sorteados y reabrir los próximos? Idempotente.')) return;
+    try {
+        const resp = await authFetch('/api/admin/raffles/cleanup', { method: 'POST' });
+        const d = await resp.json();
+        if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('🧹 Archivados ' + (d.archived||0) + ' sorteos. Panel limpio.', 'success');
+        loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function forceSeedRaffles() {
+    try {
+        const resp = await authFetch('/api/admin/raffles/seed', { method: 'POST' });
+        const d = await resp.json();
+        if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        if ((d.created || 0) > 0) {
+            showToast('🌱 Seed OK · ' + d.created + ' sorteo' + (d.created===1?'':'s') + ' nuevo' + (d.created===1?'':'s') + ' creado' + (d.created===1?'':'s'), 'success');
+        } else {
+            showToast('🌱 Ya estaban los 4 sorteos activos. Nada que crear.', 'info');
+        }
+        loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Lista los sorteos del modelo viejo (iphone/caribe/auto/other) que sigan
+// activos en la DB. Muestra qué hay y permite purgarlos (cancelar +
+// reembolsar a los participantes que pagaron).
+async function viewLegacyRaffles() {
+    let modal = document.getElementById('legacyRafflesModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'legacyRafflesModal';
+        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;';
+        modal.onclick = function (e) { if (e.target === modal) modal.style.display = 'none'; };
+        modal.innerHTML = '<div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:2px solid #ffaa66;border-radius:12px;max-width:760px;width:100%;margin:8px auto;padding:18px 16px;position:relative;"><button onclick="document.getElementById(\'legacyRafflesModal\').style.display=\'none\'" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button><div id="legacyRafflesBody"><div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div></div></div>';
+        document.body.appendChild(modal);
+    }
+    modal.style.display = 'flex';
+    document.getElementById('legacyRafflesBody').innerHTML = '<div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/legacy');
+        const d = await r.json();
+        if (!r.ok) {
+            document.getElementById('legacyRafflesBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>';
+            return;
+        }
+        const list = d.raffles || [];
+        let html = '<h2 style="color:#ffaa66;margin:0 0 6px;font-size:18px;">🗑️ Sorteos viejos en la base</h2>';
+        html += '<div style="color:#aaa;font-size:12px;margin-bottom:14px;line-height:1.5;">Estos son sorteos del modelo anterior (loss-credit con iPhone/Caribe/Auto) que todavía están activos. Si los purgás, se cancelan, se reembolsa a quienes hayan pagado entry, y desaparecen del lado del user.</div>';
+        if (list.length === 0) {
+            html += '<div style="color:#66ff66;background:rgba(102,255,102,0.10);border:1px solid #66ff66;border-radius:8px;padding:14px;text-align:center;">✅ No hay sorteos viejos. Todo limpio.</div>';
+        } else {
+            html += '<div style="background:rgba(255,170,102,0.10);border:1px solid #ffaa66;border-radius:8px;padding:10px;margin-bottom:12px;color:#ffaa66;font-size:12px;font-weight:700;">⚠️ Hay ' + list.length + ' sorteo' + (list.length===1?'':'s') + ' del modelo viejo en la DB.</div>';
+            html += '<div style="max-height:50vh;overflow-y:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.10);color:#aaa;text-align:left;"><th style="padding:6px 8px;">Sorteo</th><th style="padding:6px 8px;">Tipo</th><th style="padding:6px 8px;">Cupos</th><th style="padding:6px 8px;">Recaudado</th><th style="padding:6px 8px;">Status</th></tr></thead><tbody>';
+            for (const r of list) {
+                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+                html += '<td style="padding:6px 8px;color:#fff;">' + (r.emoji||'') + ' ' + escapeHtml(r.name||'') + '</td>';
+                html += '<td style="padding:6px 8px;color:#ddd;">' + escapeHtml(r.raffleType||'') + (r.entryMode==='wagered'?' (wagered)':'') + '</td>';
+                html += '<td style="padding:6px 8px;color:#aaa;">' + (r.cuposSold||0) + '/' + (r.totalTickets||0) + ' (' + (r.participants||0) + 'p)</td>';
+                html += '<td style="padding:6px 8px;color:#d4af37;">' + _fmtMoney(r.revenue) + '</td>';
+                html += '<td style="padding:6px 8px;color:#888;">' + escapeHtml(r.status||'') + '</td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+            html += '<button onclick="purgeLegacyRaffles()" style="margin-top:14px;width:100%;background:linear-gradient(135deg,#ff6b6b,#ff8866);color:#fff;border:none;padding:12px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">🗑️ Cancelar TODOS y reembolsar a participantes</button>';
+        }
+        document.getElementById('legacyRafflesBody').innerHTML = html;
+    } catch (e) {
+        document.getElementById('legacyRafflesBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>';
+    }
+}
+
+async function purgeLegacyRaffles() {
+    if (!confirm('¿Cancelar TODOS los sorteos del modelo viejo y reembolsar a los participantes que hayan pagado? No se puede deshacer.')) return;
+    try {
+        const resp = await authFetch('/api/admin/raffles/purge-legacy', { method: 'POST' });
+        const d = await resp.json();
+        if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        let msg = '🗑️ Purga completa\n\n';
+        msg += '✅ ' + (d.cancelled || 0) + ' sorteo' + ((d.cancelled||0)===1?'':'s') + ' cancelado' + ((d.cancelled||0)===1?'':'s') + '\n';
+        msg += '💰 ' + (d.refundedCount || 0) + ' reembolso' + ((d.refundedCount||0)===1?'':'s') + ' por ' + _fmtMoney(d.refundedAmount) + '\n';
+        if (d.errors > 0) msg += '⚠️ ' + d.errors + ' error' + (d.errors===1?'':'es') + ' (revisá los logs)\n';
+        alert(msg);
+        const modal = document.getElementById('legacyRafflesModal');
+        if (modal) modal.style.display = 'none';
+        loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+
 
 // 🧪 Modo test: dispara todas las notifs (engagement + samples de bonus)
 // a un usuario para verificar UX. Usa ScheduledNotification (cron poller),

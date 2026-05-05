@@ -44,6 +44,7 @@
                 <span>Admin Panel</span>
             </div>
             <nav class="sidebar-nav">
+                <!-- Grupo 1: numeros + comunidad -->
                 <a href="#" class="nav-item active" data-section="numero">
                     <span>📞</span>
                     <span>Números vigentes</span>
@@ -52,6 +53,10 @@
                     <span>💬</span>
                     <span>Comunidad</span>
                 </a>
+
+                <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
+
+                <!-- Grupo 2: reembolsos (diario/semanal/mensual) + ingresos + app + bono -->
                 <a href="#" class="nav-item" data-section="reportDaily">
                     <span>📅</span>
                     <span>Reembolsos diarios</span>
@@ -64,19 +69,22 @@
                     <span>🗓️</span>
                     <span>Reembolsos mensuales</span>
                 </a>
+                <a href="#" class="nav-item" data-section="ingresos">
+                    <span>👥</span>
+                    <span>Ingresos diarios</span>
+                </a>
                 <a href="#" class="nav-item" data-section="equipamiento">
                     <span>📱</span>
                     <span>Detalles app usuarios</span>
                 </a>
                 <a href="#" class="nav-item" data-section="welcomebonus">
                     <span>🎁</span>
-                    <span>Bono $2.000 app</span>
+                    <span>Bono $5.000 app</span>
                 </a>
-                <a href="#" class="nav-item" data-section="ingresos">
-                    <span>👥</span>
-                    <span>Ingresos diarios</span>
-                </a>
-                <div class="nav-spacer nav-spacer-md" aria-hidden="true"></div>
+
+                <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
+
+                <!-- Grupo 3: notifs + historial + automatizacion + automatizaciones -->
                 <a href="#" class="nav-item" data-section="notifs">
                     <span>🔔</span>
                     <span>Notificaciones</span>
@@ -85,7 +93,18 @@
                     <span>📜</span>
                     <span>Historial</span>
                 </a>
+                <a href="#" class="nav-item" data-section="automation">
+                    <span>✨</span>
+                    <span>Automatización</span>
+                </a>
+                <a href="#" class="nav-item" data-section="automations">
+                    <span>🤖</span>
+                    <span>Automatizaciones <span id="automationsBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
+                </a>
+
                 <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
+
+                <!-- Grupo 4: top + estadisticas/equipos -->
                 <a href="#" class="nav-item" data-section="topEngagement">
                     <span>🏆</span>
                     <span>Top estadísticas</span>
@@ -94,22 +113,22 @@
                     <span>📊</span>
                     <span>Equipos</span>
                 </a>
-                <a href="#" class="nav-item" data-section="automations">
-                    <span>🤖</span>
-                    <span>Automatizaciones <span id="automationsBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
-                </a>
-                <a href="#" class="nav-item" data-section="automation">
-                    <span>✨</span>
-                    <span>Automatización</span>
-                </a>
+
+                <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
+
+                <!-- Grupo 5: reembolsos pendientes + sorteos -->
                 <a href="#" class="nav-item" data-section="refundReminders">
                     <span>📅</span>
                     <span>Reembolsos pendientes</span>
                 </a>
                 <a href="#" class="nav-item" data-section="raffles">
                     <span>🎁</span>
-                    <span>Sorteos mensuales</span>
+                    <span>Sorteos semanales</span>
                 </a>
+
+                <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
+
+                <!-- Grupo 6: recuperacion + caida + clientes sin app -->
                 <a href="#" class="nav-item" data-section="recovery">
                     <span>🔁</span>
                     <span>Recuperación <span id="recoveryBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
@@ -122,6 +141,10 @@
                     <span>🎯</span>
                     <span>Clientes activos sin app</span>
                 </a>
+
+                <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
+
+                <!-- Final: ayuda -->
                 <a href="#" class="nav-item" data-section="help">
                     <span>❓</span>
                     <span>Ayuda y guía</span>
@@ -773,19 +796,20 @@
             </section>
 
             <!-- ============================================
-                 SECCIÓN: BONO DE BIENVENIDA $2.000
+                 SECCIÓN: BONO DE BIENVENIDA $5.000
                  Lista de quien lo reclamo + estado actual app/notifs.
                  ============================================ -->
             <section id="welcomebonusSection" class="section">
                 <div class="panel-header">
-                    <h2>🎁 Bono de bienvenida $2.000</h2>
+                    <h2>🎁 Bono de bienvenida $5.000</h2>
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                         <button class="refresh-btn" onclick="revalidateThenReload('welcomebonus')" title="Pregunta a Google si los tokens siguen vivos. Detecta apps desinstaladas. Tarda según la cantidad de usuarios.">🔍 Revalidar tokens</button>
                         <button class="refresh-btn" onclick="loadWelcomeBonusReport()" title="Actualizar">🔄</button>
                     </div>
                 </div>
                 <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
-                    Usuarios que reclamaron el bono de $2.000 (one-time).
+                    Usuarios que reclamaron el bono de $5.000 (one-time).
+                    Requisito: <strong>al menos 5 cargas en los últimos 30 días</strong> (configurable por env).
                     Mostramos el estado <strong>actual</strong> de su app instalada y notificaciones,
                     asi podes detectar quien desinstalo o desactivo notifs despues de cobrar.
                     Tocá <strong>🔍 Revalidar tokens</strong> para forzar el chequeo ahora (detecta apps desinstaladas en tiempo real).
@@ -954,69 +978,25 @@
                  ============================================ -->
             <section id="rafflesSection" class="section">
                 <div class="panel-header">
-                    <h2>🎁 Sorteos mensuales</h2>
+                    <h2>🎁 Sorteos pagados</h2>
                     <button class="refresh-btn" onclick="loadRafflesAdmin()" title="Refrescar">🔄</button>
                 </div>
                 <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0 0 6px;color:#d4af37;font-weight:700;font-size:13px;">Sorteos del mes (3 sorteos exclusivos · GRATIS para activos)</p>
+                    <p style="margin:0 0 6px;color:#d4af37;font-weight:700;font-size:13px;">4 sorteos paralelos pagados con saldo</p>
                     <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
-                        <strong>1 iPhone 17</strong> ($1.5M · threshold $100.000 apostado),
-                        <strong>1 Viaje al Caribe x2</strong> ($4M · threshold $250.000) y
-                        <strong>1 Auto $10M</strong> (threshold $500.000). Cada uno: 100 cupos, 1
-                        cupo por persona. Todos se sortean por las
-                        <strong style="color:#d4af37;">últimas 2 cifras del 1° PREMIO de la
-                        Lotería Nacional Nocturna del primer lunes del mes próximo</strong>
-                        (resultado oficial — verificable). Click "📋 Detalle" para ver qué número
-                        tiene cada jugador.
+                        <strong>👑 $2.000.000</strong> (100 × $30k),
+                        <strong>💎 $1.000.000</strong> (100 × $15k),
+                        <strong>💰 $500.000</strong> (100 × $7,5k),
+                        <strong>🎯 $100.000</strong> (100 × $2k).
+                        Cuando se llena un cupo se abre otra instancia automáticamente.
+                        Sorteo todos los lunes en la
+                        <strong style="color:#d4af37;">Lotería Nacional Nocturna (1° premio)</strong>.
+                        El martes a la mañana entrá acá, cargá el número que salió y opcionalmente el ganador.
+                        Cuando termines, tocá <strong>🧹 Limpiar</strong> para archivar los sorteados.
                     </p>
                 </div>
                 <div id="rafflesAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
-                </div>
-
-                <!-- =====================================================
-                     ANALITICA DE RENTABILIDAD: gente con perdida + conversion
-                     ===================================================== -->
-                <div style="margin-top:24px;border-top:1px solid rgba(0,212,255,0.20);padding-top:18px;">
-                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
-                        <h3 style="color:#00d4ff;margin:0;font-size:15px;text-transform:uppercase;letter-spacing:1px;">📊 Análisis de rentabilidad</h3>
-                        <div style="display:flex;gap:6px;align-items:center;">
-                            <input id="raffleAnalyticsMonthKey" type="month" style="padding:5px 8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                            <button class="refresh-btn" onclick="loadRaffleAnalytics()" title="Refrescar">🔄</button>
-                        </div>
-                    </div>
-                    <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:10px;margin-bottom:12px;">
-                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
-                            Cuántos jugadores perdieron este mes y cuántos de ellos participaron en cada sorteo.
-                            Por tier de pérdida, por sorteo, conversion %, pérdida consumida vs. premio proyectado
-                            (rentabilidad neta esperada). Cambiá el mes para comparar histórico.
-                        </p>
-                    </div>
-                    <div id="raffleAnalyticsContent" style="min-height:80px;">
-                        <div class="empty-state" style="padding:20px;text-align:center;color:#666;font-size:12px;">Hacé click en 🔄 para escanear</div>
-                    </div>
-                </div>
-
-                <!-- =====================================================
-                     ANTI-FRAUDE: movimientos sospechosos en sorteos
-                     ===================================================== -->
-                <div style="margin-top:24px;border-top:1px solid rgba(255,80,80,0.20);padding-top:18px;">
-                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
-                        <h3 style="color:#ff8080;margin:0;font-size:15px;text-transform:uppercase;letter-spacing:1px;">🚨 Movimientos sospechosos</h3>
-                        <button class="refresh-btn" onclick="loadSuspiciousRaffleParticipations()" title="Refrescar">🔄</button>
-                    </div>
-                    <div style="background:rgba(255,80,80,0.05);border:1px solid rgba(255,80,80,0.30);border-radius:10px;padding:10px;margin-bottom:12px;">
-                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
-                            Detecta usuarios que cargan plata y la retiran casi entera (wash-trading) sólo
-                            para entrar al sorteo gratis sin jugar. Default: marca como sospechoso si
-                            <strong>retiró más del 85% de lo cargado</strong> con cargas
-                            <strong>≥ $50.000</strong>. Podés bloquear el cupo: el número vuelve al pool y
-                            el usuario queda fuera del sorteo (queda registrado quién bloqueó y por qué).
-                        </p>
-                    </div>
-                    <div id="suspiciousRafflesContent" style="min-height:80px;">
-                        <div class="empty-state" style="padding:20px;text-align:center;color:#666;font-size:12px;">Hacé click en 🔄 para escanear</div>
-                    </div>
                 </div>
             </section>
 

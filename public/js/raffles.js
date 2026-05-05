@@ -1,21 +1,17 @@
 // =====================================================================
-// RAFFLES — Sorteos mensuales (cliente)
+// RAFFLES — Sorteos pagados (cliente)
 // =====================================================================
-// Modelo LOSS-CREDIT compartido:
-//   - El user "gasta" su PERDIDA del mes (netwin loss = cargas - retiros).
-//   - Cada cupo cuesta entryCost de loss credit:
-//       📱 iPhone — $100.000  (100 cupos, hasta 50 por persona)
-//       🏖️ Caribe — $50.000   (1000 cupos, hasta 50 por persona)
-//       🚗 Auto   — $100.000  (1000 cupos, hasta 50 por persona)
-//   - Budget compartido: si perdiste $1M podés gastarlo como quieras.
-//   - El user elige sus números de la grilla. Tomados se ven tachados.
-//   - Sorteo: últimas 2 cifras del 1° premio Lotería Nacional Nocturna
-//     del primer lunes del mes próximo (mismo numero, distintos ganadores).
+// 4 niveles de premio paralelos. Comprás números con tu saldo de la
+// plataforma; cuando se llena un cupo se abre otro automaticamente.
+// Sorteo todos los lunes en la Lotería Nacional Nocturna (1° premio).
+// Si tu número gana, aparece un botón para acreditar el premio a tu
+// saldo desde la app.
 // =====================================================================
 window.VIP = window.VIP || {};
 
 VIP.raffles = (function () {
     let _data = null;
+    let _refreshTimer = null;
 
     async function _fetchActive() {
         try {
@@ -36,12 +32,8 @@ VIP.raffles = (function () {
         return div.innerHTML;
     }
 
-    function _renderImage(r, height) {
-        const h = height || 110;
-        if (r.imageUrl) {
-            return '<div style="width:100%;height:' + h + 'px;background-image:url(\'' + _esc(r.imageUrl) + '\');background-size:cover;background-position:center;border-radius:10px;"></div>';
-        }
-        return '<div style="width:100%;height:' + h + 'px;background:linear-gradient(135deg,#3d1f6e,#1a0033);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:' + Math.round(h/2.3) + 'px;">' + (r.emoji || '🎁') + '</div>';
+    function _fmt(n) {
+        return Number(n || 0).toLocaleString('es-AR');
     }
 
     function _formatNumbers(nums) {
@@ -58,220 +50,221 @@ VIP.raffles = (function () {
         return groups.join(', ');
     }
 
-    // -----------------------------------------------------------------
-    // Card de un sorteo (con grilla picker, multi-cupo loss-credit).
-    // -----------------------------------------------------------------
-    function _renderCategoryCard(r, budget) {
-        const userCupos = r.userCupos || 0;
-        const userTicketNumbers = r.userTicketNumbers || [];
-        const maxPerUser = r.maxCuposPerUser || 1;
-        const entryCost = r.entryCost || 0;
-        const netwinLoss = budget.netwinLoss || 0;
-        const available = budget.available || 0; // loss credit que queda
-        const userMaxBuyable = r.userMaxBuyable || 0;
-        const userRemainingCap = r.userRemainingCap != null ? r.userRemainingCap : Math.max(0, maxPerUser - userCupos);
-        const drawDateStr = r.drawDate
-            ? new Date(r.drawDate).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
-            : '—';
-        const claimedMap = r.claimedNumbers || {};
-        const headerName = _esc(r.prizeName);
-
-        // Estado del user.
-        const meets = available >= entryCost;
-        let statusBlock;
-        if (userCupos >= maxPerUser) {
-            statusBlock = '<div style="background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);border-radius:8px;padding:10px;text-align:center;">' +
-                '<div style="color:#25d366;font-size:13px;font-weight:900;">✅ Tenés ' + userCupos + ' número' + (userCupos===1?'':'s') + ' (máximo ' + maxPerUser + ')</div>' +
-                '<div style="color:#ffd700;font-weight:900;font-size:13px;margin-top:4px;word-break:break-word;">' + _esc(_formatNumbers(userTicketNumbers)) + '</div>' +
-                '<small style="color:#888;display:block;margin-top:3px;">Ya tenés el cupo lleno en este sorteo.</small>' +
-                '</div>';
-        } else if (userCupos > 0 && meets) {
-            statusBlock = '<div style="background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);border-radius:8px;padding:10px;text-align:center;">' +
-                '<div style="color:#25d366;font-size:13px;font-weight:900;">✅ Tenés ' + userCupos + ' número' + (userCupos===1?'':'s') + '</div>' +
-                '<div style="color:#ffd700;font-weight:900;font-size:13px;margin-top:4px;word-break:break-word;">' + _esc(_formatNumbers(userTicketNumbers)) + '</div>' +
-                '<small style="color:#aaa;display:block;margin-top:3px;">Podés agregar hasta ' + userMaxBuyable + ' más (alcanza tu pérdida + cap del sorteo).</small>' +
-                '</div>';
-        } else if (userCupos > 0 && !meets) {
-            statusBlock = '<div style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-radius:8px;padding:10px;text-align:center;">' +
-                '<div style="color:#ffc850;font-size:13px;font-weight:800;">Tenés ' + userCupos + ' número' + (userCupos===1?'':'s') + ' — sin pérdida disponible para más</div>' +
-                '<div style="color:#ffd700;font-weight:900;font-size:13px;margin-top:4px;word-break:break-word;">' + _esc(_formatNumbers(userTicketNumbers)) + '</div>' +
-                '</div>';
-        } else if (meets) {
-            statusBlock = '<div style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-radius:8px;padding:10px;text-align:center;">' +
-                '<div style="color:#ffc850;font-size:13px;font-weight:800;">🎉 Podés reclamar hasta ' + userMaxBuyable + ' número' + (userMaxBuyable===1?'':'s') + '</div>' +
-                '<small style="color:#aaa;display:block;margin-top:3px;">Cada uno consume $' + entryCost.toLocaleString('es-AR') + ' de tu pérdida del mes.</small>' +
-                '</div>';
-        } else {
-            const need = Math.max(0, entryCost - available);
-            const progress = Math.min(100, Math.round((available / Math.max(1, entryCost)) * 100));
-            statusBlock = '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:8px;padding:10px;">' +
-                '<div style="color:#ff8080;font-size:12px;font-weight:800;text-align:center;">🔒 Te faltan $' + need.toLocaleString('es-AR') + ' de pérdida para 1 número</div>' +
-                '<div style="background:rgba(0,0,0,0.40);border-radius:8px;height:8px;overflow:hidden;margin-top:8px;">' +
-                '  <div style="height:100%;width:' + progress + '%;background:linear-gradient(90deg,#d4af37,#f7931e);"></div>' +
-                '</div>' +
-                '<small style="color:#888;display:block;margin-top:4px;text-align:center;">Pérdida disponible $' + available.toLocaleString('es-AR') + ' / costo $' + entryCost.toLocaleString('es-AR') + '</small>' +
-                '</div>';
+    function _renderClaimableBanner(claimable) {
+        if (!claimable || !claimable.length) return '';
+        let html = '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200);border:2px solid #66ff66;border-radius:12px;padding:14px;margin-bottom:14px;">';
+        html += '<div style="color:#66ff66;font-weight:900;font-size:13px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">🏆 ¡GANASTE!</div>';
+        for (const c of claimable) {
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;margin-top:8px;">';
+            html += '<div style="color:#fff;font-weight:800;font-size:14px;margin-bottom:4px;">' + (c.emoji || '🏆') + ' ' + _esc(c.name) + '</div>';
+            html += '<div style="color:#ddd;font-size:12px;margin-bottom:8px;">Número ganador: <strong>#' + c.winningTicketNumber + '</strong> · Premio: <strong>$' + _fmt(c.prizeValueARS) + '</strong></div>';
+            html += '<button onclick="VIP.raffles.claimPrize(\'' + c.id + '\')" style="width:100%;background:#ffd700;color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">🎁 RECLAMAR $' + _fmt(c.prizeValueARS) + '</button>';
+            html += '</div>';
         }
-
-        // Grilla de numeros — adaptable a totalTickets (100 o 1000).
-        // Para 1000+: scroll vertical interno. Cells siempre se ven en mobile.
-        const cols = r.totalTickets <= 100 ? 10 : 20;
-        const cellPad = r.totalTickets <= 100 ? '6px 0' : '4px 0';
-        const cellFont = r.totalTickets <= 100 ? '11px' : '9px';
-        const gridMaxHeight = r.totalTickets <= 100 ? 'auto' : '320px';
-        const userClaimedSet = new Set(userTicketNumbers);
-        const canClaim = meets && userCupos < maxPerUser && r.status === 'active';
-
-        let grid = '<div style="max-height:' + gridMaxHeight + ';overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;">';
-        grid += '<div style="display:grid;grid-template-columns:repeat(' + cols + ',1fr);gap:3px;font-family:monospace;font-size:' + cellFont + ';">';
-        for (let n = 1; n <= r.totalTickets; n++) {
-            const owner = claimedMap[n];
-            if (userClaimedSet.has(n)) {
-                grid += '<button disabled style="background:#25d366;color:#000;font-weight:900;border:none;border-radius:3px;padding:' + cellPad + ';cursor:default;" title="TU NÚMERO">' + n + '✓</button>';
-            } else if (owner) {
-                grid += '<button disabled title="@' + _esc(owner) + '" style="background:rgba(255,255,255,0.04);color:#555;border:none;border-radius:3px;padding:' + cellPad + ';text-decoration:line-through;cursor:not-allowed;">' + n + '</button>';
-            } else if (canClaim) {
-                grid += '<button onclick="VIP.raffles.claimNumber(\'' + r.id + '\', ' + n + ')" style="background:rgba(212,175,55,0.20);color:#ffd700;border:1px solid rgba(212,175,55,0.40);border-radius:3px;padding:' + cellPad + ';cursor:pointer;font-weight:700;">' + n + '</button>';
-            } else {
-                grid += '<button disabled style="background:rgba(255,255,255,0.03);color:#666;border:none;border-radius:3px;padding:' + cellPad + ';cursor:not-allowed;">' + n + '</button>';
-            }
-        }
-        grid += '</div></div>';
-
-        const lotteryRuleBlock = r.lotteryRule
-            ? '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px 10px;">' +
-              '  <div style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:center;">🎯 Cómo se sortea</div>' +
-              '  <div style="color:#ddd;font-size:11px;margin-top:3px;line-height:1.4;text-align:center;">' + _esc(r.lotteryRule) + '</div>' +
-              '</div>'
-            : '';
-
-        return '<div style="background:rgba(212,175,55,0.05);border:2px solid rgba(212,175,55,0.40);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;margin-bottom:18px;box-sizing:border-box;">' +
-               _renderImage(r, 110) +
-               '<div>' +
-               '  <h3 style="color:#ffd700;margin:0 0 4px;font-size:17px;font-weight:800;line-height:1.2;">' + (r.emoji || '🎁') + ' ' + headerName + '</h3>' +
-               '  <p style="color:#aaa;margin:0;font-size:12px;line-height:1.5;">' + _esc(r.description || '') + '</p>' +
-               '</div>' +
-               '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
-               '  <div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px;text-align:center;">' +
-               '    <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">💎 Premio</div>' +
-               '    <div style="color:#ffd700;font-weight:900;font-size:15px;">$' + (r.prizeValueARS||0).toLocaleString('es-AR') + '</div>' +
-               '  </div>' +
-               '  <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:8px;text-align:center;">' +
-               '    <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">💸 Costo/cupo</div>' +
-               '    <div style="color:#fff;font-weight:900;font-size:15px;">$' + entryCost.toLocaleString('es-AR') + '</div>' +
-               '    <small style="color:#666;font-size:9px;">de pérdida</small>' +
-               '  </div>' +
-               '</div>' +
-               '<div style="text-align:center;color:#888;font-size:11px;">' + (r.totalCuposSold||0) + ' / ' + r.totalTickets + ' números reclamados · sorteo el ' + drawDateStr + '</div>' +
-               lotteryRuleBlock +
-               statusBlock +
-               '<div>' +
-               '  <div style="color:#aaa;font-size:11px;text-align:center;margin-bottom:6px;">📋 Elegí tu número (max ' + maxPerUser + ' por persona)</div>' +
-                grid +
-               '</div>' +
-               '</div>';
+        html += '</div>';
+        return html;
     }
 
-    // -----------------------------------------------------------------
+    function _renderRaffleCard(r, balance) {
+        const sold = r.cuposSold || 0;
+        const total = r.totalTickets || 0;
+        const remaining = r.cuposRemaining;
+        const fillPct = total ? Math.round((sold / total) * 100) : 0;
+        const myNums = r.myTicketNumbers || [];
+        const closed = r.status !== 'active';
+        const drawn = r.status === 'drawn';
+        const canAfford = balance >= (r.entryCost || 0);
+
+        let html = '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:12px;">';
+        // header
+        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
+        html += '<div style="font-size:34px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
+        html += '<div style="flex:1;min-width:0;">';
+        html += '<div style="color:#ffd700;font-size:15px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
+        html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · Cupo: ' + total + ' núm. × $' + _fmt(r.entryCost) + '</div>';
+        html += '</div>';
+        html += '</div>';
+
+        // progress
+        html += '<div style="height:8px;background:rgba(0,0,0,0.30);border-radius:4px;overflow:hidden;margin:8px 0;">';
+        html += '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#d4af37,#ffd700);"></div>';
+        html += '</div>';
+        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#999;margin-bottom:10px;">';
+        html += '<span>' + sold + '/' + total + ' vendidos (' + fillPct + '%)</span>';
+        html += '<span>' + remaining + ' disponibles</span>';
+        html += '</div>';
+
+        // my numbers
+        if (myNums.length > 0) {
+            html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px;margin-bottom:10px;">';
+            html += '<div style="color:#ffd700;font-size:11px;font-weight:800;margin-bottom:4px;">TUS NÚMEROS (' + myNums.length + ')</div>';
+            html += '<div style="color:#fff;font-size:13px;font-weight:700;word-break:break-word;">' + _esc(_formatNumbers(myNums)) + '</div>';
+            html += '</div>';
+        }
+
+        // status / draw result
+        if (drawn) {
+            const youWon = r.iAmWinner;
+            html += '<div style="background:' + (youWon ? 'rgba(102,255,102,0.10)' : 'rgba(255,107,53,0.10)') + ';border-radius:8px;padding:10px;font-size:12px;line-height:1.4;color:#ddd;">';
+            html += youWon
+                ? '🏆 <strong style="color:#66ff66;">¡Ganaste!</strong> Número ' + r.winningTicketNumber + '. Mirá arriba para reclamar.'
+                : '🎲 Sorteado · número ganador <strong>#' + r.winningTicketNumber + '</strong> — ganó @' + _esc(r.winnerUsername || '');
+            html += '</div>';
+        } else if (closed) {
+            html += '<div style="background:rgba(255,107,53,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;">⏳ Cupo lleno. Esperando sorteo del lunes en la Lotería Nacional Nocturna.</div>';
+        } else {
+            // CTA. Cap visible alineado con el backend (50). Si remaining
+            // es menor, mostramos solo lo que queda. Si es mucha plata,
+            // mostramos pasos saltados para que el select no tenga 50 opciones.
+            const max = Math.min(remaining, 50);
+            const steps = max <= 10 ? Array.from({length: max}, (_, i) => i + 1)
+                : max <= 25 ? [1,2,3,4,5,10,15,20,25].filter(n => n <= max)
+                : [1,2,3,5,10,15,20,25,30,40,50].filter(n => n <= max);
+            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px;">';
+            html += '<select id="raffle_qty_' + _esc(r.id) + '" type="button" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);border-radius:6px;padding:7px 10px;font-size:13px;font-weight:700;">';
+            for (const q of steps) {
+                html += '<option value="' + q + '">' + q + ' núm. = $' + _fmt(q * r.entryCost) + '</option>';
+            }
+            html += '</select>';
+            // ID del raffle interpolado de forma segura: JSON.stringify garantiza
+            // escape correcto aun si por alguna razon viene con caracteres raros.
+            const safeId = JSON.stringify(String(r.id));
+            html += '<button id="raffle_buy_' + _esc(r.id) + '" type="button" onclick="VIP.raffles.buyNumber(' + safeId + ')" ' + (canAfford ? '' : 'disabled') + ' style="flex:1;min-width:140px;background:' + (canAfford ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + (canAfford ? '🎫 COMPRAR' : '🔒 SIN SALDO') + '</button>';
+            html += '</div>';
+            html += '<div style="color:#888;font-size:10px;margin-top:6px;line-height:1.4;">Se debita de tu saldo. Sorteo: ' + _esc(r.lotteryRule || 'Lotería Nacional Nocturna del lunes próximo') + '</div>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
     function _render() {
-        const list = document.getElementById('rafflesList');
-        if (!list) return;
-        if (!_data || !_data.success) {
-            list.innerHTML = '<div style="text-align:center;padding:30px;color:#ff8080;">No se pudieron cargar los sorteos. Probá más tarde.</div>';
+        const modal = document.getElementById('rafflesModal');
+        const body = document.getElementById('rafflesModalBody');
+        if (!modal || !body) return;
+        if (!_data) {
+            body.innerHTML = '<div style="text-align:center;color:#aaa;padding:40px 0;">Cargando...</div>';
             return;
         }
-        // Budget bar — pérdida del mes + ya gastado + disponible.
-        const bar = document.getElementById('rafflesBudgetBar');
-        const av = document.getElementById('rafflesBudgetAvailable');
-        const detail = document.getElementById('rafflesBudgetDetail');
-        if (_data.budget && av && detail) {
-            const loss = _data.budget.netwinLoss || 0;
-            const spent = _data.budget.spent || 0;
-            const available = _data.budget.available || 0;
-            av.textContent = '$' + available.toLocaleString('es-AR');
-            detail.innerHTML = '💸 Pérdida del mes: <strong style="color:#ffd700;">$' + loss.toLocaleString('es-AR') + '</strong> · Ya gastado: <strong style="color:#fff;">$' + spent.toLocaleString('es-AR') + '</strong>';
-            if (bar) bar.style.display = 'block';
-        }
-        const raffles = _data.raffles || [];
-        const wagered = raffles.filter(r => r.entryMode === 'wagered');
-        if (wagered.length === 0) {
-            list.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">No hay sorteos activos este mes.</div>';
-            return;
-        }
-
-        // Orden: Auto, Caribe, iPhone (mayor premio primero).
-        const order = { auto: 0, caribe: 1, iphone: 2 };
-        wagered.sort((a, b) => (order[a.raffleType] ?? 9) - (order[b.raffleType] ?? 9));
-
-        const budget = _data.budget || {};
-
+        const balance = Number(_data.balance || 0);
         let html = '';
-        // Banner principal del modelo.
-        html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:11px;margin-bottom:10px;text-align:center;">';
-        html += '  <div style="color:#d4af37;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;">🎁 SORTEOS POR PÉRDIDA</div>';
-        html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;line-height:1.5;">Cada cupo se paga con tu PÉRDIDA del mes. Acumulable hasta 50 números por sorteo. Elegís dónde participar. Sorteo por la <strong style="color:#fff;">Lotería Nacional Nocturna</strong> del primer lunes — verificable.</div>';
-        html += '</div>';
-        // Reglas + anti-fraude.
-        html += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:10px;padding:11px;margin-bottom:12px;">';
-        html += '  <div style="color:#ff8080;font-weight:900;font-size:11px;text-transform:uppercase;letter-spacing:1px;text-align:center;margin-bottom:6px;">⚠️ REGLAS</div>';
-        html += '  <ul style="margin:0;padding-left:16px;color:#ddd;font-size:11px;line-height:1.6;">';
-        html += '    <li><strong style="color:#fff;">Acumulable hasta 50 números por sorteo</strong> (compartís el budget de pérdida entre los 3).</li>';
-        html += '    <li><strong style="color:#ff8080;">Vamos a analizar el juego de cada uno.</strong> Si cargás y retirás todo sin jugar, te bloqueamos los cupos.</li>';
-        html += '    <li><strong style="color:#25d366;">Para retirar el premio: ser parte de la COMUNIDAD.</strong> Es requisito.</li>';
-        html += '  </ul>';
+        // banner ganadores no reclamados
+        html += _renderClaimableBanner(_data.claimable || []);
+
+        // header con saldo
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;">';
+        html += '<div><div style="color:#aaa;font-size:11px;font-weight:700;letter-spacing:1px;">SALDO DISPONIBLE</div><div style="color:#ffd700;font-size:20px;font-weight:900;">$' + _fmt(balance) + '</div></div>';
+        html += '<div style="text-align:right;color:#aaa;font-size:11px;line-height:1.4;">Sorteos<br><strong style="color:#fff;font-size:13px;">todos los lunes</strong></div>';
         html += '</div>';
 
-        for (const r of wagered) {
-            html += _renderCategoryCard(r, budget);
+        // intro
+        html += '<div style="background:rgba(255,255,255,0.03);border-left:3px solid #d4af37;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:14px;font-size:11.5px;color:#ccc;line-height:1.5;">';
+        html += '<strong style="color:#ffd700;">Cómo funciona:</strong> elegí un sorteo, cuántos números querés y comprá con tu saldo. Cuando se llena el cupo, abrimos otro idéntico. Cada lunes a la noche se sortea contra el 1° premio de la Lotería Nacional Nocturna. Si ganás, te aparece un botón acá mismo para acreditar el premio a tu saldo.';
+        html += '</div>';
+
+        const list = (_data.raffles || []).filter(r => r.status !== 'archived' && r.status !== 'cancelled');
+        if (list.length === 0) {
+            html += '<div style="text-align:center;color:#aaa;padding:30px 0;">No hay sorteos disponibles en este momento.</div>';
+        } else {
+            for (const r of list) html += _renderRaffleCard(r, balance);
         }
-        list.innerHTML = html;
+
+        body.innerHTML = html;
     }
 
     async function open() {
         const modal = document.getElementById('rafflesModal');
         if (!modal) return;
         modal.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
-        const list = document.getElementById('rafflesList');
-        if (list) list.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando sorteos…</div>';
-        _data = await _fetchActive();
+        _data = null;
         _render();
+        const data = await _fetchActive();
+        if (data) { _data = data; _render(); }
+        // refresh suave cada 30s
+        if (_refreshTimer) clearInterval(_refreshTimer);
+        _refreshTimer = setInterval(async () => {
+            if (modal.style.display === 'none') return;
+            const d = await _fetchActive();
+            if (d) { _data = d; _render(); }
+        }, 30000);
     }
+
     function close() {
         const modal = document.getElementById('rafflesModal');
         if (modal) modal.style.display = 'none';
-        document.body.style.overflow = '';
+        if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
     }
 
-    async function claimNumber(raffleId, number) {
-        const raffle = (_data && _data.raffles || []).find(x => x.id === raffleId);
-        const cost = raffle ? (raffle.entryCost || 0) : 0;
-        if (!confirm(
-            '¿Reclamar el número ' + number + '?\n\n' +
-            '💸 Cuesta $' + cost.toLocaleString('es-AR') + ' de tu PÉRDIDA del mes.\n' +
-            '🎫 Acumulable hasta 50 números en este sorteo.\n' +
-            '🏆 Si la Lotería Nacional Nocturna saca tu número, ganás.\n' +
-            '🤝 Para retirar el premio tenés que estar EN LA COMUNIDAD.\n' +
-            '⚠️ Movimientos sospechosos (cargas+retiros sin jugar) = cupo bloqueado.'
-        )) return;
+    let _buying = false;
+    async function buyNumber(raffleId) {
+        // Guard contra doble click (mobile lo dispara seguido).
+        if (_buying) return;
+        const sel = document.getElementById('raffle_qty_' + raffleId);
+        const qty = sel ? Math.max(1, parseInt(sel.value, 10) || 1) : 1;
+        const r = (_data && _data.raffles || []).find(x => x.id === raffleId);
+        if (!r) return;
+        const cost = qty * (r.entryCost || 0);
+        if (!confirm('¿Comprar ' + qty + ' número' + (qty > 1 ? 's' : '') + ' del ' + r.name + ' por $' + _fmt(cost) + '?')) return;
+        _buying = true;
+        const btn = document.getElementById('raffle_buy_' + raffleId);
+        const origText = btn ? btn.textContent : null;
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando…'; }
         try {
-            const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/claim-number`, {
+            const resp = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/buy`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${VIP.state.currentToken}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ number })
+                body: JSON.stringify({ quantity: qty })
             });
-            const d = await r.json();
-            if (!r.ok || !d.success) { VIP.ui.showToast(d.error || 'Error al reclamar', 'error'); return; }
-            VIP.ui.showToast(d.message || '¡Listo!', 'success');
-            _data = await _fetchActive();
-            _render();
+            const data = await resp.json();
+            if (data && data.success) {
+                const nums = (data.ticketNumbers || []).join(', #');
+                VIP.ui.showToast('🎫 ¡Compraste #' + nums + '! Suerte.', 'success');
+                if (data.cupoFilled) {
+                    VIP.ui.showToast('🔥 Se llenó el cupo. Ya hay un sorteo nuevo abierto.', 'success');
+                }
+                const d = await _fetchActive();
+                if (d) { _data = d; _render(); }
+            } else {
+                VIP.ui.showToast('⚠️ ' + ((data && data.error) || 'No se pudo comprar'), 'error');
+                if (btn && origText !== null) { btn.disabled = false; btn.textContent = origText; }
+            }
         } catch (e) {
+            console.error('buyNumber error:', e);
             VIP.ui.showToast('Error de conexión', 'error');
+            if (btn && origText !== null) { btn.disabled = false; btn.textContent = origText; }
+        } finally {
+            _buying = false;
         }
     }
 
-    return { open, close, claimNumber };
+    let _claiming = false;
+    async function claimPrize(raffleId) {
+        if (_claiming) return;
+        if (!confirm('¿Acreditar el premio a tu saldo?')) return;
+        _claiming = true;
+        try {
+            const resp = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/claim-prize`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            const data = await resp.json();
+            if (data && data.success) {
+                VIP.ui.showToast('🏆 ' + (data.message || 'Premio acreditado'), 'success');
+                const d = await _fetchActive();
+                if (d) { _data = d; _render(); }
+            } else {
+                VIP.ui.showToast('⚠️ ' + ((data && data.error) || 'No se pudo acreditar'), 'error');
+            }
+        } catch (e) {
+            console.error('claimPrize error:', e);
+            VIP.ui.showToast('Error de conexión', 'error');
+        } finally {
+            _claiming = false;
+        }
+    }
+
+    return { open, close, buyNumber, claimPrize };
 })();

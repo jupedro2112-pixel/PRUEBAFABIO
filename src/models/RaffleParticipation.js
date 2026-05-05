@@ -1,17 +1,16 @@
 /**
- * Participacion de un usuario en un sorteo.
+ * Participacion de un usuario en un sorteo PAGADO.
  *
- * Modelo MULTI-CUPO con números asignados: un user puede ocupar múltiples
- * cupos en el MISMO sorteo (un cupo por cada entryCost de su carga del
- * mes). Cada cupo recibe un NÚMERO ÚNICO secuencial dentro del sorteo
- * (1..totalTickets), guardado en `ticketNumbers`. Una sola row per
- * (raffleId, username) que acumula cuposCount + ticketNumbers + total
- * pagado con $inc cuando compra mas cupos.
+ * Modelo MULTI-CUPO con numeros asignados: un user puede ocupar multiples
+ * cupos en el MISMO sorteo. Cada cupo recibe un NUMERO UNICO secuencial
+ * dentro del sorteo (1..totalTickets), guardado en `ticketNumbers`. Una
+ * sola row per (raffleId, username) que acumula cuposCount + ticketNumbers
+ * + total pagado cuando compra mas cupos.
  *
- * Ej.: auto con entryCost=100.000 y user con cargas 400.000 puede comprar
- * 4 cupos en ese sorteo. Recibe 4 números: ej [142, 143, 144, 145]. El
- * ganador se determina por la Lotería Nacional del primer lunes del mes
- * próximo: si sale el número 144, este user gana.
+ * Ej.: sorteo de $1M con entryCost=15.000 y user que compra 4 numeros.
+ * Recibe 4 numeros consecutivos: ej [42, 43, 44, 45]. El ganador se
+ * determina por el 1er premio de la Loteria Nacional Nocturna del lunes
+ * proximo: si sale el numero 44, este user gana.
  */
 const mongoose = require('mongoose');
 
@@ -41,15 +40,15 @@ const raffleParticipationSchema = new mongoose.Schema({
   // Resultado: si este user gano (con cualquiera de sus cupos).
   isWinner: { type: Boolean, default: false },
 
-  // Anti-fraude: el admin puede BLOQUEAR un cupo si detecta wash-trading
-  // (carga grande seguida de retiro casi total para entrar al sorteo sin
-  // jugar). Cuando blocked=true, la participacion se ignora en:
-  //  - claimedNumbers / totalCuposSold del active endpoint
-  //  - el draw (no puede ganar)
-  //  - chequeo de cap por categoria (el user no se "auto-bloquea" para
-  //    reclamar otro distinto)
-  // El numero se libera al pool y otro user puede reclamarlo.
-  blocked: { type: Boolean, default: false, index: true },
+  // Reembolso: si este user ya recibio reembolso en un cancel/purge.
+  // Se setea atomicamente antes de llamar a creditUserBalance para que
+  // un re-execute del cancel no reembolse dos veces.
+  refundedAt: { type: Date, default: null, index: true },
+  refundedAmount: { type: Number, default: 0 },
+  refundedTxId: { type: String, default: null },
+
+  // Legacy (modelo loss-credit anterior, no se usa en el flow paid actual).
+  blocked: { type: Boolean, default: false },
   blockedReason: { type: String, default: null, maxlength: 300 },
   blockedBy: { type: String, default: null },
   blockedAt: { type: Date, default: null }
