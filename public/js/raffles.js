@@ -413,6 +413,29 @@ VIP.raffles = (function () {
         _renderPicker();
     }
 
+    // Modal de confirmacion in-page (en lugar de confirm() nativo, que en
+    // algunos WebViews / PWAs no se muestra). Devuelve una promesa con true
+    // si el user confirma, false si cancela.
+    function _showCustomConfirm(html) {
+        return new Promise((resolve) => {
+            let modal = document.getElementById('rafflesConfirmModal');
+            if (modal) modal.remove();
+            modal = document.createElement('div');
+            modal.id = 'rafflesConfirmModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:40000;display:flex;align-items:center;justify-content:center;padding:14px;';
+            modal.innerHTML = '<div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:2px solid #d4af37;border-radius:14px;max-width:420px;width:100%;padding:18px 16px;text-align:center;">' + html +
+                '<div style="display:flex;gap:8px;margin-top:14px;">' +
+                '<button type="button" id="raffleConfirmNo" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:11px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">Cancelar</button>' +
+                '<button type="button" id="raffleConfirmYes" style="flex:2;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">CONFIRMAR</button>' +
+                '</div></div>';
+            document.body.appendChild(modal);
+            const cleanup = (val) => { try { modal.remove(); } catch (_) {} resolve(val); };
+            modal.querySelector('#raffleConfirmYes').onclick = () => cleanup(true);
+            modal.querySelector('#raffleConfirmNo').onclick = () => cleanup(false);
+            modal.onclick = (e) => { if (e.target === modal) cleanup(false); };
+        });
+    }
+
     async function confirmPickerBuy() {
         if (!_picker || _buying) return;
         const arr = Array.from(_picker.picked).sort((a, b) => a - b);
@@ -420,7 +443,21 @@ VIP.raffles = (function () {
         const r = (_data && _data.raffles || []).find(x => x.id === _picker.raffleId);
         if (!r) return;
         const cost = arr.length * (r.entryCost || 0);
-        if (!confirm('¿Comprar ' + arr.length + ' número' + (arr.length > 1 ? 's' : '') + ' (' + arr.map(n => '#' + n).join(', ') + ') del ' + r.name + ' por $' + _fmt(cost) + '?')) return;
+
+        const confirmHtml =
+            '<div style="font-size:38px;margin-bottom:6px;">🎫</div>' +
+            '<div style="color:#ffd700;font-size:14px;font-weight:900;letter-spacing:1px;margin-bottom:8px;">CONFIRMAR COMPRA</div>' +
+            '<div style="color:#fff;font-size:12.5px;line-height:1.6;margin-bottom:8px;">' +
+                '<div>' + _esc(r.name) + '</div>' +
+                '<div style="color:#d4af37;font-size:13px;font-weight:700;margin-top:4px;">' + arr.length + ' número' + (arr.length > 1 ? 's' : '') + '</div>' +
+                '<div style="color:#fff;font-size:11px;margin-top:4px;word-break:break-word;">' + arr.map(n => '#' + n).join(', ') + '</div>' +
+            '</div>' +
+            '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:10px;font-size:12px;color:#fff;">' +
+                'Se descontarán <strong style="color:#ffd700;font-size:14px;">$' + _fmt(cost) + '</strong> de tu saldo en JUGAYGANA' +
+            '</div>';
+        const ok = await _showCustomConfirm(confirmHtml);
+        if (!ok) return;
+
         _buying = true;
         const btn = document.getElementById('raffle_pick_buy');
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando…'; }
@@ -430,19 +467,20 @@ VIP.raffles = (function () {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ pickedNumbers: arr, quantity: arr.length })
             });
-            const data = await resp.json();
-            if (data && data.success) {
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok && data && data.success) {
                 _showBoughtModal(data.ticketNumbers || arr, r);
                 closePicker();
                 const d = await _fetchActive();
                 if (d) { _data = d; _render(); }
             } else {
-                const msg = (data && data.error) || 'No se pudo comprar';
+                const msg = (data && data.error) || ('No se pudo comprar (HTTP ' + resp.status + ')');
                 if (data && data.takenNumber) {
                     VIP.ui.showToast('⚠️ El número #' + data.takenNumber + ' lo tomó otro. Probá con otro.', 'error');
-                    // Refresh para ver el grid actualizado
                     const d = await _fetchActive();
                     if (d) { _data = d; _render(); _renderPicker(); }
+                } else if (resp.status === 503 && data.retry) {
+                    VIP.ui.showToast('⏳ ' + msg, 'warning');
                 } else {
                     VIP.ui.showToast('⚠️ ' + msg, 'error');
                 }
@@ -453,7 +491,7 @@ VIP.raffles = (function () {
             }
         } catch (e) {
             console.error('confirmPickerBuy error:', e);
-            VIP.ui.showToast('Error de conexión', 'error');
+            VIP.ui.showToast('Error de conexión: ' + (e && e.message ? e.message : 'reintentá'), 'error');
             if (btn) {
                 btn.disabled = false;
                 btn.textContent = '🎫 COMPRAR ' + arr.length + ' POR $' + _fmt(cost);
@@ -491,7 +529,12 @@ VIP.raffles = (function () {
 
     async function claimPrize(raffleId) {
         if (_claiming) return;
-        if (!confirm('¿Acreditar el premio a tu saldo?')) return;
+        const ok = await _showCustomConfirm(
+            '<div style="font-size:38px;margin-bottom:6px;">🏆</div>' +
+            '<div style="color:#ffd700;font-size:14px;font-weight:900;letter-spacing:1px;margin-bottom:8px;">RECLAMAR PREMIO</div>' +
+            '<div style="color:#fff;font-size:12.5px;line-height:1.6;">¿Acreditar el premio a tu saldo de JUGAYGANA?</div>'
+        );
+        if (!ok) return;
         _claiming = true;
         try {
             const resp = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/claim-prize`, {

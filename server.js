@@ -11941,11 +11941,19 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
   const quantity = Math.max(1, Math.min(50, parseInt(body.quantity, 10) || (rawPicked ? rawPicked.length : 1)));
   let reservedNumbers = [];
   let withdrew = false;
+  logger.info(`[raffles] BUY ATTEMPT ${username} raffle=${raffleId} qty=${quantity} picked=[${(rawPicked || []).join(',')}]`);
   try {
     const raffle = await Raffle.findOne({ id: raffleId }).lean();
-    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
-    if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no acepta compras.' });
+    if (!raffle) {
+      logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffleId} not found`);
+      return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    }
+    if (raffle.status !== 'active') {
+      logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} status=${raffle.status}`);
+      return res.status(400).json({ error: `Este sorteo ya no acepta compras (estado: ${raffle.status}).` });
+    }
     if (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType)) {
+      logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} is FREE`);
       return res.status(400).json({ error: 'Este es un sorteo GRATIS. La participación es automática para clientes que cumplan el mínimo de cargas.' });
     }
 
@@ -11953,8 +11961,14 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
     // alguien compre mientras el admin ya está cargando el ganador.
     if (raffle.drawDate) {
       const drawTs = new Date(raffle.drawDate).getTime();
+      const minutesToDraw = Math.round((drawTs - Date.now()) / 60000);
       if (Date.now() > drawTs - 3 * 3600 * 1000) {
-        return res.status(400).json({ error: 'Este sorteo cerró las ventas (faltan menos de 3 horas para el draw).' });
+        logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} drawDate=${raffle.drawDate} cutoff=3hs minutesToDraw=${minutesToDraw}`);
+        return res.status(400).json({
+          error: `Este sorteo cerró las ventas (faltan menos de 3 horas para el draw — quedan ${minutesToDraw} min).`,
+          minutesToDraw,
+          drawDate: raffle.drawDate
+        });
       }
     }
 
@@ -11995,16 +12009,49 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
 
     const buyQty = pickedNumbers.length;
     const totalCost = buyQty * (raffle.entryCost || 0);
+    if (totalCost <= 0) {
+      logger.error(`[raffles] BUY REJ ${username}: totalCost=${totalCost} (entryCost=${raffle.entryCost} buyQty=${buyQty}) — config rota`);
+      return res.status(500).json({ error: 'Configuración del sorteo inválida (entryCost = 0). Avisá al admin.' });
+    }
 
+    // Balance check con retry. Si JUGAYGANA esta intermitente o la sesion
+    // se renovo, el primer call puede devolver null aunque el user exista.
+    // Reintentamos una vez para distinguir "fetch failed" de "balance 0".
     let balance = 0;
-    try {
-      const u = await jugaygana.getUserInfoByName(username);
-      balance = u && u.balance ? Number(u.balance) : 0;
-    } catch (_) {}
+    let userFetchOk = false;
+    let userInfo = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        userInfo = await jugaygana.getUserInfoByName(username);
+        if (userInfo) {
+          userFetchOk = true;
+          balance = Number(userInfo.balance) || 0;
+          break;
+        }
+      } catch (e) {
+        logger.warn(`[raffles] BUY balance fetch exc ${username} attempt=${attempt}: ${e.message}`);
+      }
+      if (attempt === 1) await new Promise(r => setTimeout(r, 500));
+    }
+
+    if (!userFetchOk) {
+      // No pudimos verificar saldo. NO marcamos saldo insuficiente porque
+      // el user podria tener fondos. Le pedimos que reintente.
+      logger.error(`[raffles] BUY REJ ${username}: no se pudo obtener user info de JUGAYGANA tras 2 intentos`);
+      return res.status(503).json({
+        error: 'No pudimos verificar tu saldo en JUGAYGANA en este momento. Probá de nuevo en unos segundos.',
+        retry: true
+      });
+    }
+
     if (balance < totalCost) {
+      logger.warn(`[raffles] BUY REJ ${username}: saldo insuficiente balance=$${balance} needed=$${totalCost} (qty=${buyQty} x $${raffle.entryCost})`);
       return res.status(400).json({
-        error: `Saldo insuficiente. Necesitás $${totalCost.toLocaleString('es-AR')} y tenés $${balance.toLocaleString('es-AR')}.`,
-        needed: totalCost, balance
+        error: `Saldo insuficiente. Necesitás $${totalCost.toLocaleString('es-AR')} y tenés $${balance.toLocaleString('es-AR')} en JUGAYGANA.`,
+        needed: totalCost,
+        balance,
+        entryCost: raffle.entryCost,
+        cuposIntended: buyQty
       });
     }
 
