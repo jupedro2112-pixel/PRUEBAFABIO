@@ -8918,6 +8918,7 @@ function _renderRafflesAdmin() {
     html += '    <div style="display:flex;gap:6px;flex-wrap:wrap;">';
     html += '      <button type="button" onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
     if (!isFree) {
+        html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO gratis (premio $200k, 100 cupos, una sola vez)">⚡ Sorteo relámpago</button>';
         html += '      <button type="button" onclick="seedTestRaffle()" style="background:rgba(255,170,255,0.10);color:#ff80ff;border:1px solid rgba(255,170,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear un sorteo de prueba (entry $100, premio $500, 5 cupos por default) para validar el flujo completo">🧪 Sorteo prueba</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
     }
@@ -9451,6 +9452,40 @@ async function forceSeedRaffles() {
         }
         loadRafflesAdmin();
     } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Crea el sorteo RELAMPAGO on-demand. Una sola vez: si ya hay uno
+// activo o cerrado-en-espera, el endpoint avisa. Free + 100 cupos por
+// default, premio $200k. Cuando se sortea, NO respawnea — el admin
+// vuelve a tocar el boton si quiere otro.
+async function seedLightningRaffle() {
+    const prize = prompt('Premio del sorteo RELÁMPAGO (en pesos)', '200000');
+    if (prize === null) return;
+    const cupos = prompt('Cantidad de cupos (2 a 1000)', '100');
+    if (cupos === null) return;
+    if (!confirm('¿Crear sorteo RELÁMPAGO?\n\nPremio: $' + (parseInt(prize, 10) || 200000).toLocaleString('es-AR') + '\nCupos: ' + (parseInt(cupos, 10) || 100) + '\nInscripción: GRATIS para todos\n\nVa a aparecer arriba de todo en la app y se inscribe automático cuando entran. Es por única vez (no respawnea solo).')) return;
+    if (seedLightningRaffle._busy) return;
+    seedLightningRaffle._busy = true;
+    try {
+        const resp = await authFetch('/api/admin/raffles/seed-lightning', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prizeValueARS: parseInt(prize, 10) || 200000,
+                totalTickets: parseInt(cupos, 10) || 100
+            })
+        });
+        const d = await resp.json();
+        if (!resp.ok) {
+            alert('❌ ' + (d.error || 'Error') + (d.raffle ? '\n\nActivo: ' + d.raffle.name + ' (' + d.raffle.cuposSold + '/' + d.raffle.totalTickets + ')' : ''));
+            return;
+        }
+        showToast('⚡ Sorteo RELÁMPAGO creado: ' + d.raffle.name, 'success');
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+    finally { seedLightningRaffle._busy = false; }
 }
 
 // Crea un sorteo de prueba on-demand. Pensado para validar el flujo

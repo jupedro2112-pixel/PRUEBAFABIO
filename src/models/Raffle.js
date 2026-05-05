@@ -37,6 +37,9 @@ const raffleSchema = new mongoose.Schema({
   raffleType: {
     type: String,
     enum: [
+      // Sorteo RELAMPAGO: hero del sistema, va arriba de todo en la app.
+      // Premio chico-medio ($200k), entry baja, 100 cupos. Mismo draw.
+      'relampago',
       // Modelo paid actual:
       'p1m', 'p2m', 'p500', 'p100',
       // Modelo free (clientes activos, auto-enrollment por carga):

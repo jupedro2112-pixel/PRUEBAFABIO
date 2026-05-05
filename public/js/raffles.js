@@ -302,6 +302,56 @@ VIP.raffles = (function () {
             '</div>';
     }
 
+    // Hero card del RELAMPAGO. Va arriba de todo con gradiente electrico
+    // y mensaje "ENTRA Y MIRÁ". Si el user ya esta inscripto, muestra su
+    // numero asignado en lugar del CTA.
+    function _renderLightningHero(r) {
+        const sold = r.cuposSold || 0;
+        const total = r.totalTickets || 0;
+        const fillPct = total ? Math.round((sold / total) * 100) : 0;
+        const myNums = r.myTicketNumbers || [];
+        const enrolled = myNums.length > 0;
+        const closed = r.status !== 'active';
+        const drawn = r.status === 'drawn';
+
+        let html = '<div style="background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:18px;padding:18px 16px;margin-bottom:18px;box-shadow:0 0 30px rgba(255,235,59,0.40),0 4px 24px rgba(0,150,255,0.30);position:relative;overflow:hidden;">';
+        html += '<div style="position:absolute;top:-15px;right:-15px;font-size:120px;opacity:0.10;line-height:1;">⚡</div>';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+        html += '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>';
+        html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · ÚNICA VEZ</span>';
+        html += '</div>';
+        html += '<div style="color:#fff;font-size:24px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + '</div>';
+        html += '<div style="color:#fff;font-size:12.5px;line-height:1.4;margin-bottom:10px;font-weight:600;">¡Entrá y mirá! Inscripción gratuita por única vez · ' + total + ' cupos</div>';
+
+        // Barra de progreso
+        html += '<div style="height:10px;background:rgba(0,0,0,0.40);border-radius:5px;overflow:hidden;margin:8px 0 4px;">';
+        html += '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>';
+        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#fff;margin-bottom:10px;font-weight:700;">';
+        html += '<span>' + sold + '/' + total + ' anotados (' + fillPct + '%)</span>';
+        html += '<span>Sorteo el lunes</span></div>';
+
+        if (drawn) {
+            const youWon = !!r.iAmWinner;
+            html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;">' +
+                (youWon ? '🏆 ¡GANASTE EL RELÁMPAGO! Número #' + r.winningTicketNumber : '🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber) +
+                '</div>';
+        } else if (enrolled) {
+            html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;">';
+            html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO</div>';
+            html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
+            html += '</div>';
+        } else if (closed) {
+            html += '<div style="background:rgba(0,0,0,0.40);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;">⏳ Cupo lleno · esperando sorteo</div>';
+        } else {
+            // Cupo disponible: mensaje de auto-inscripcion
+            html += '<div style="background:rgba(255,235,59,0.20);border:1px dashed #ffeb3b;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#fff;font-weight:700;">';
+            html += 'Te anotamos automáticamente al abrir esta pantalla. Si aún no aparece tu número, refrescá.';
+            html += '</div>';
+        }
+        html += '</div>';
+        return html;
+    }
+
     function _render() {
         const modal = document.getElementById('rafflesModal');
         const body = document.getElementById('rafflesModalBody');
@@ -313,17 +363,28 @@ VIP.raffles = (function () {
         const balance = Number(_data.balance || 0);
         const allRaffles = (_data.raffles || []).filter(r => r.status !== 'archived' && r.status !== 'cancelled');
         // Separamos sorteados vs activos/cerrados-en-espera. Los drawn van al
-        // final como linea compacta para no opacar los vivos.
+        // final como linea compacta para no opacar los vivos. El relampago va
+        // separado en hero arriba de todo.
         const drawn = allRaffles.filter(r => r.status === 'drawn');
         const liveRaffles = allRaffles.filter(r => r.status !== 'drawn');
-        const paid = liveRaffles.filter(r => !r.isFree);
-        const free = liveRaffles.filter(r => r.isFree);
+        const lightning = liveRaffles.find(r => r.raffleType === 'relampago');
+        // Tambien mostrar el relampago drawn en el hero (no en la lista de drawn)
+        const lightningDrawn = drawn.find(r => r.raffleType === 'relampago');
+        const heroLightning = lightning || lightningDrawn || null;
+        const otherDrawn = drawn.filter(r => r.raffleType !== 'relampago');
+        const paid = liveRaffles.filter(r => !r.isFree && r.raffleType !== 'relampago');
+        const free = liveRaffles.filter(r => r.isFree && r.raffleType !== 'relampago');
 
         let html = '';
         const recentWins = _data.recentWins || [];
         html += _renderRecentWinsBanner(recentWins);
         html += _renderClaimableBanner(_data.claimable || [], recentWins.map(w => w.id));
         html += _renderAutoEnrolledBanner(_data.autoEnrolled || []);
+
+        // === HERO RELAMPAGO === (arriba de todo)
+        if (heroLightning) {
+            html += _renderLightningHero(heroLightning);
+        }
 
         // Header con saldo
         html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;">';
@@ -354,20 +415,19 @@ VIP.raffles = (function () {
             for (const r of free) html += _renderFreeCard(r);
         }
 
-        // === SORTEADOS (compacto) ===
-        if (drawn.length > 0) {
-            // Ordenar mas recientes primero
-            drawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
+        // === SORTEADOS (compacto) === (excluye relampago, que va en el hero)
+        if (otherDrawn.length > 0) {
+            otherDrawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
             html += '<div style="margin:22px 0 8px;display:flex;align-items:center;gap:8px;">';
             html += '<div style="flex:1;height:1px;background:rgba(255,255,255,0.10);"></div>';
             html += '<h3 style="margin:0;color:#888;font-size:11px;font-weight:800;letter-spacing:2px;">🎲 SORTEADOS RECIENTES</h3>';
             html += '<div style="flex:1;height:1px;background:rgba(255,255,255,0.10);"></div></div>';
-            for (const r of drawn) html += _renderDrawnLine(r);
+            for (const r of otherDrawn) html += _renderDrawnLine(r);
         }
 
-        if (paid.length === 0 && free.length === 0 && drawn.length === 0) {
+        if (paid.length === 0 && free.length === 0 && otherDrawn.length === 0 && !heroLightning) {
             html += '<div style="text-align:center;color:#aaa;padding:30px 0;">No hay sorteos disponibles en este momento.</div>';
-        } else if (paid.length === 0 && free.length === 0) {
+        } else if (paid.length === 0 && free.length === 0 && !lightning) {
             // Hay drawn pero no hay activos: mensaje claro de "vuelve pronto"
             html += '<div style="text-align:center;color:#aaa;padding:18px 0;font-size:12px;">Los próximos sorteos arrancan en breve. Volvé en unos minutos 🎲</div>';
         }

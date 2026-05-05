@@ -11470,6 +11470,23 @@ const RAFFLE_TYPES = [
     name: 'Sorteo $100.000',   prizeName: '$100.000 en saldo' }
 ];
 
+// Sorteo RELAMPAGO: hero del sistema, gratis, una sola vez. Cuando se sortea
+// NO auto-respawna — el admin decide si crear otro despues. Por eso vive
+// fuera de RAFFLE_TYPES (auto-rotation) y FREE_RAFFLE_TYPES (auto-enroll
+// recurrente). Se seedea manualmente desde el panel admin.
+const LIGHTNING_RAFFLE_CONFIG = {
+  type: 'relampago',
+  prize: 200000,
+  totalTickets: 100,
+  entryCost: 0, // gratis
+  // Sin minCargasARS: cualquiera puede inscribirse (no necesita tener cargas).
+  // Si la owner quiere subir la barra despues, lo cambia aca.
+  minCargasARS: 0,
+  emoji: '⚡',
+  name: '⚡ RELÁMPAGO · $200.000',
+  prizeName: '$200.000 en saldo'
+};
+
 // Sorteos GRATIS para clientes activos. La auto-participacion ocurre cuando
 // el user abre el modal: si tuvo >= minCargasARS de cargas en los ultimos
 // 30 dias y todavia hay cupo (1 numero por persona, 100 personas tope),
@@ -11613,8 +11630,11 @@ setTimeout(() => { _ensureActiveRafflesSeeded().catch(() => {}); }, 5000);
 async function _autoEnrollFreeRaffles(username) {
   const enrolled = []; // { raffleId, ticketNumber, raffleName, prizeValueARS, raffleType }
   try {
+    // Incluimos 'relampago' aca porque tambien es free auto-enroll. La diferencia
+    // clave es que NO respawnea cuando se llena/sortea (lo manejamos abajo).
+    const enrollableTypes = [...Array.from(FREE_RAFFLE_TYPE_SET), 'relampago'];
     const freeRaffles = await Raffle.find(
-      { raffleType: { $in: Array.from(FREE_RAFFLE_TYPE_SET) }, status: 'active' }
+      { raffleType: { $in: enrollableTypes }, status: 'active' }
     ).lean();
     if (freeRaffles.length === 0) return enrolled;
 
@@ -11687,12 +11707,14 @@ async function _autoEnrollFreeRaffles(username) {
         logger.info(`[free-raffles] auto-enroll ${username} #${nextNum} in ${r.name} (cargas=$${monthlyDeposits}, threshold=$${r.minCargasARS})`);
 
         // Si llenamos el cupo con este enroll, cerrar y respawnear.
+        // 'relampago' es one-shot: cierra al llenarse, pero NO respawnea
+        // (la owner decide cuando crear otro desde el panel admin).
         if ((reserved._ticketCounter || 0) >= (r.totalTickets || 0)) {
           const closeRes = await Raffle.updateOne(
             { id: r.id, status: 'active' },
             { $set: { status: 'closed' } }
           );
-          if (closeRes.modifiedCount === 1) {
+          if (closeRes.modifiedCount === 1 && r.raffleType !== 'relampago') {
             const cfg = FREE_RAFFLE_TYPES.find(t => t.type === r.raffleType);
             if (cfg) {
               try { await _spawnRaffleInstance(cfg, (r.instanceNumber || 1) + 1); }
@@ -12946,6 +12968,69 @@ app.post('/api/admin/raffles/seed', authMiddleware, superAdminMiddleware, async 
     res.json({ success: true, before, after, created: Math.max(0, after - before) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/seed-lightning — crea el sorteo RELAMPAGO si no hay
+// otro activo. Es free, hero del modal (arriba de todo), inscripcion automatica
+// cuando el user abre la app, 100 cupos. Una sola vez: si se llena o se sortea,
+// NO respawnea. Para correr otro, el admin vuelve a llamar este endpoint.
+//
+// Body opcional: { prizeValueARS, totalTickets } para customizar el premio o cupo.
+// Defaults: $200.000 premio, 100 cupos, gratis.
+app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const existing = await Raffle.findOne({ raffleType: 'relampago', status: { $in: ['active', 'closed'] } }).lean();
+    if (existing) {
+      return res.status(400).json({
+        error: 'Ya hay un sorteo RELÁMPAGO activo o cerrado esperando sorteo. Sorteálo o cancelálo antes de crear otro.',
+        raffle: { id: existing.id, name: existing.name, status: existing.status, cuposSold: existing._ticketCounter || 0, totalTickets: existing.totalTickets }
+      });
+    }
+    const b = req.body || {};
+    const prizeValueARS = Math.max(1, parseInt(b.prizeValueARS, 10) || LIGHTNING_RAFFLE_CONFIG.prize);
+    const totalTickets = Math.max(2, Math.min(1000, parseInt(b.totalTickets, 10) || LIGHTNING_RAFFLE_CONFIG.totalTickets));
+
+    const prevCount = await Raffle.countDocuments({ raffleType: 'relampago' });
+    const drawArg = _nextMondayDraw();
+    const weekKey = _isoWeekKey(drawArg);
+    const id = uuidv4();
+    const created = await Raffle.create({
+      id,
+      raffleType: 'relampago',
+      instanceNumber: prevCount + 1,
+      name: prizeValueARS === LIGHTNING_RAFFLE_CONFIG.prize
+        ? LIGHTNING_RAFFLE_CONFIG.name
+        : `⚡ RELÁMPAGO · $${prizeValueARS.toLocaleString('es-AR')}`,
+      prizeName: `$${prizeValueARS.toLocaleString('es-AR')} en saldo`,
+      description: 'Sorteo RELÁMPAGO. Inscripción gratuita por única vez. ¡Entrá y mirá si hay cupo!',
+      emoji: '⚡',
+      entryCost: 0,
+      totalTickets,
+      prizeValueARS,
+      _ticketCounter: 0,
+      claimedNumbers: [],
+      drawDate: drawArg,
+      weekKey,
+      status: 'active',
+      isFree: true,
+      minCargasARS: 0,
+      lotteryRule: 'Sorteo RELÁMPAGO. Mismo mecanismo que los demás: 1° premio de la Lotería Nacional Nocturna del lunes próximo.',
+      createdAt: new Date()
+    });
+    logger.info(`[raffles] LIGHTNING raffle creado #${prevCount + 1} prize=$${prizeValueARS} cupos=${totalTickets} id=${id}`);
+    res.json({
+      success: true,
+      raffle: {
+        id: created.id,
+        name: created.name,
+        totalTickets: created.totalTickets,
+        prizeValueARS: created.prizeValueARS
+      }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/seed-lightning: ${err.message}`);
+    res.status(500).json({ error: 'Error creando sorteo relámpago' });
   }
 });
 
