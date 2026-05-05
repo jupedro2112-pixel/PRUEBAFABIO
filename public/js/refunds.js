@@ -589,14 +589,20 @@ VIP.refunds = (function () {
         VIP.ui.showModal('unifiedRefundModal');
     }
 
-    // Botón "🎰 Abrir plataforma" del card de saldo: mismo tab/ventana
-    // (window.location.href en vez de window.open con _blank). En PWA
-    // standalone esto mantiene la app activa en lugar de abrir el browser.
+    // Botón "🎰 Abrir plataforma" del card de saldo. Abre el casino en el
+    // iframe fullscreen interno (VIP.ui.openPlatformEmbed) para no sacar
+    // al user de la PWA. La X arriba a la derecha cierra y vuelve al estado
+    // anterior de la app.
     function wireGoToPlatform() {
         const btn = document.getElementById('goToPlatformBtn');
         if (!btn) return;
         btn.addEventListener('click', function () {
-            window.location.href = 'https://www.jugaygana44.bet';
+            if (VIP.ui && typeof VIP.ui.openPlatformEmbed === 'function') {
+                VIP.ui.openPlatformEmbed('https://www.jugaygana44.bet');
+            } else {
+                // Fallback defensivo si por alguna razon ui.js no cargo.
+                window.location.href = 'https://www.jugaygana44.bet';
+            }
         });
     }
     if (document.readyState === 'loading') {
