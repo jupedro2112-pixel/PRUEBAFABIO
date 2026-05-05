@@ -932,33 +932,8 @@ VIP.ui.copyPlatformUsername = function() {
 };
 
 VIP.ui.goToPlatform = function() {
-  // No abrimos pestaña nueva (en PWA standalone eso saca al user de la
-  // app). Cargamos el casino en el iframe fullscreen de la propia app.
+  window.open('https://www.jugaygana44.bet', '_blank');
   VIP.ui.closePlatformModal();
-  VIP.ui.openPlatformEmbed('https://www.jugaygana44.bet');
-};
-
-// Embed fullscreen del casino dentro de la propia PWA. Mantiene la app
-// activa (el user no sale de la sesion) y se cierra con la X de la
-// esquina. Al cerrar vaciamos el src para liberar la sesion del iframe.
-VIP.ui._platformEmbedPrevOverflow = '';
-VIP.ui.openPlatformEmbed = function(url) {
-  const overlay = document.getElementById('platformEmbedOverlay');
-  const iframe  = document.getElementById('platformEmbedIframe');
-  if (!overlay || !iframe) return;
-  iframe.src = url || 'https://www.jugaygana44.bet';
-  overlay.style.display = 'block';
-  // Bloquear scroll del body mientras esta abierto.
-  VIP.ui._platformEmbedPrevOverflow = document.body.style.overflow;
-  document.body.style.overflow = 'hidden';
-};
-VIP.ui.closePlatformEmbed = function() {
-  const overlay = document.getElementById('platformEmbedOverlay');
-  const iframe  = document.getElementById('platformEmbedIframe');
-  if (!overlay) return;
-  overlay.style.display = 'none';
-  if (iframe) iframe.src = 'about:blank';
-  document.body.style.overflow = VIP.ui._platformEmbedPrevOverflow || '';
 };
 
 VIP.ui.showPlatformPasswordInfo = function() {
