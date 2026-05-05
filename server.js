@@ -7933,7 +7933,13 @@ const GIVEAWAY_MAX_CLAIMS          = 1000;      // 1000 personas por giveaway
 // Requisito de actividad: para reclamar el welcome bonus el usuario debe
 // tener al menos N cargas en los ultimos M dias. Esto reemplaza al chequeo
 // por antiguedad de cuenta. Configurable por env.
-const WELCOME_BONUS_MIN_DEPOSITS = Math.max(0, parseInt(process.env.WELCOME_BONUS_MIN_DEPOSITS, 10) || 5);
+// Default 0 = sin requisito de cargas (basta con tener cuenta + app
+// instalada para reclamar). El owner pidio sacar la friction al regalo
+// de instalacion. Si en el futuro se quiere reactivar el anti-fraude
+// (ej: pedir 5 cargas en 30 dias antes de poder reclamar), se setea la
+// env var WELCOME_BONUS_MIN_DEPOSITS al numero deseado y el codigo de
+// _welcomeDepositCheck lo respeta automaticamente.
+const WELCOME_BONUS_MIN_DEPOSITS = Math.max(0, parseInt(process.env.WELCOME_BONUS_MIN_DEPOSITS, 10) || 0);
 const WELCOME_BONUS_DEPOSIT_WINDOW_DAYS = Math.max(1, parseInt(process.env.WELCOME_BONUS_DEPOSIT_WINDOW_DAYS, 10) || 30);
 
 async function _welcomeDepositCheck(username) {

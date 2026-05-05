@@ -1726,6 +1726,21 @@
             </button>
         </div>
 
+        <!-- Refunds-only: Bono por bajar la app — va ARRIBA del banner de
+             sorteos para que sea lo primero que se ve despues de "Abrir
+             plataforma". Es el principal CTA monetario en el home. Sin
+             requisito de cargas (WELCOME_BONUS_MIN_DEPOSITS=0 default) —
+             alcanza con tener cuenta + app instalada.
+             onclick inline como fallback: el render tambien lo enlaza,
+             pero asi funciona aunque el render aun no haya corrido. -->
+        <div class="welcome-bonus-card" id="welcomeBonusCard" style="display:none;">
+            <div class="welcome-bonus-icon">🎁</div>
+            <div class="welcome-bonus-title">BONO POR BAJAR LA APP</div>
+            <div class="welcome-bonus-amount" id="welcomeBonusAmount">$5.000 GRATIS</div>
+            <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Por única vez por tener la app instalada.</div>
+            <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn" onclick="VIP.refunds.handleWelcomeBonusClick()">🎁 RECLAMAR $5.000</button>
+        </div>
+
         <!-- Refunds-only: Banner de sorteos en home. Render dinamico desde
              /api/raffles/recent-winners. Prioridades:
                1. Si vos ganaste algo en 6h -> FELICITACIONES personal
@@ -1735,18 +1750,6 @@
              Reemplaza el card violeta legacy (rafflesHomeCard) que duplicaba
              el CTA. Ahora hay un solo punto de entrada. -->
         <div id="raffleWinnerHomeBanner"></div>
-
-        <!-- Refunds-only: Bono de bienvenida $5.000 — debajo del bloque
-             "Abrir plataforma". Por unica vez por instalar la app.
-             onclick inline como fallback: el render tambien lo enlaza,
-             pero asi funciona aunque el render aun no haya corrido. -->
-        <div class="welcome-bonus-card" id="welcomeBonusCard" style="display:none;">
-            <div class="welcome-bonus-icon">🎁</div>
-            <div class="welcome-bonus-title">BONO POR BAJAR LA APP</div>
-            <div class="welcome-bonus-amount" id="welcomeBonusAmount">$5.000 GRATIS</div>
-            <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Por única vez. Necesitás al menos 5 cargas en los últimos 30 días.</div>
-            <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn" onclick="VIP.refunds.handleWelcomeBonusClick()">🎁 RECLAMAR $5.000</button>
-        </div>
 
         <!-- Refunds-only: Difusion con regalo de plata (temporal, on-demand
              desde admin). Oculto por default; render dinamico solo cuando
