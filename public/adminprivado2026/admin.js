@@ -8666,11 +8666,165 @@ let _rafflesSpendCache = null;       // cierre diario (paid only)
 let _rafflesSpendDays = 30;          // rango por defecto
 
 async function loadRafflesAdmin() {
+    _renderAudienceBox('paid', 'rafflesPaidAudienceBox');
     return _loadRafflesGeneric('paid', 'rafflesAdminContent');
 }
 
 async function loadRafflesFreeAdmin() {
+    _renderAudienceBox('free', 'rafflesFreeAudienceBox');
     return _loadRafflesGeneric('free', 'rafflesFreeAdminContent');
+}
+
+// Lee la audiencia configurada para el kind (paid|free) y la pinta arriba
+// de la seccion. Boton "Editar" abre un modal con 3 modos + lista de equipos.
+async function _renderAudienceBox(kind, containerId) {
+    const c = document.getElementById(containerId);
+    if (!c) return;
+    c.innerHTML = '<div style="padding:10px;color:#888;font-size:11px;">⏳ Leyendo audiencia configurada…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/audience-config?kind=' + encodeURIComponent(kind));
+        const d = await r.json();
+        if (!r.ok) {
+            c.innerHTML = '<div style="color:#ff8080;padding:10px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        const mode = d.mode || 'all';
+        const teams = d.teams || [];
+        let label, color;
+        if (mode === 'all') {
+            label = '👥 Audiencia: <strong>todos los equipos</strong>';
+            color = '#888';
+        } else if (mode === 'except') {
+            label = '🚫 <strong>Excluyendo:</strong> ' + teams.map(escapeHtml).join(', ');
+            color = '#ff8080';
+        } else {
+            label = '🎯 <strong>Solo:</strong> ' + teams.map(escapeHtml).join(', ');
+            color = '#66ff66';
+        }
+        c.innerHTML =
+            '<div style="background:rgba(255,255,255,0.04);border:1px dashed ' + color + '60;border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+                '<div style="color:' + color + ';font-size:12px;line-height:1.4;">' + label + '<div style="color:#888;font-size:10.5px;margin-top:3px;">Aplica a TODOS los sorteos ' + (kind === 'free' ? 'gratis' : 'pagos') + ' (actuales y futuros).</div></div>' +
+                '<button type="button" onclick="openAudienceConfigModal(\'' + kind + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid #00d4ff;padding:7px 12px;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;">⚙️ Editar audiencia</button>' +
+            '</div>';
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:10px;">Error de conexión leyendo audiencia.</div>';
+    }
+}
+
+// Modal para editar audiencia. 3 modos: todos / excepto / solo. Lista los
+// equipos disponibles desde /api/admin/calendar/teams-available.
+async function openAudienceConfigModal(kind) {
+    let modal = document.getElementById('audienceConfigModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'audienceConfigModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML =
+        '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #00d4ff;border-radius:14px;max-width:520px;width:100%;margin:8px auto;padding:18px 16px;box-shadow:0 0 30px rgba(0,212,255,0.30);">' +
+            '<h3 style="color:#00d4ff;margin:0 0 4px;font-size:18px;">⚙️ Audiencia · sorteos ' + (kind === 'free' ? 'gratis' : 'pagos') + '</h3>' +
+            '<div style="color:#cce4ff;font-size:11.5px;margin-bottom:14px;line-height:1.5;">Define a quiénes les llega esta familia de sorteos. El cambio aplica <strong>de inmediato</strong> a todas las instancias activas y a las próximas que se creen.</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;font-size:12px;color:#ddd;margin-bottom:10px;">' +
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:rgba(255,255,255,0.04);padding:8px 10px;border-radius:6px;"><input type="radio" name="audCfgMode" value="all" checked onchange="_audCfgUpdateBox()"> A todos los equipos</label>' +
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:rgba(255,255,255,0.04);padding:8px 10px;border-radius:6px;"><input type="radio" name="audCfgMode" value="except" onchange="_audCfgUpdateBox()"> A todos <strong style="color:#ff8080;">excepto</strong> los elegidos</label>' +
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:rgba(255,255,255,0.04);padding:8px 10px;border-radius:6px;"><input type="radio" name="audCfgMode" value="only" onchange="_audCfgUpdateBox()"> <strong style="color:#66ff66;">Solo</strong> a los equipos elegidos</label>' +
+            '</div>' +
+            '<div id="audCfgTeamsBox" style="display:none;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin-bottom:14px;max-height:220px;overflow-y:auto;">' +
+                '<div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Equipos</div>' +
+                '<div id="audCfgTeamsList" style="display:flex;flex-wrap:wrap;gap:6px;color:#aaa;font-size:11px;">⏳ Cargando…</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;">' +
+                '<button onclick="document.getElementById(\'audienceConfigModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+                '<button onclick="audienceConfigSave(\'' + kind + '\')" style="flex:2;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:1px;">💾 GUARDAR</button>' +
+            '</div>' +
+        '</div>';
+    document.body.appendChild(modal);
+
+    // Cargar configuracion actual y prefilear
+    try {
+        const r = await authFetch('/api/admin/raffles/audience-config?kind=' + encodeURIComponent(kind));
+        const d = await r.json();
+        if (r.ok) {
+            const radio = document.querySelector('input[name="audCfgMode"][value="' + d.mode + '"]');
+            if (radio) radio.checked = true;
+            await _audCfgUpdateBox();
+            // Prefill checkboxes
+            if (d.teams && d.teams.length) {
+                const set = new Set(d.teams.map(t => String(t).toLowerCase()));
+                document.querySelectorAll('.audCfgTeamChk').forEach(c => {
+                    if (set.has(String(c.value).toLowerCase())) c.checked = true;
+                });
+            }
+        }
+    } catch (_) { /* ignore */ }
+}
+
+async function _audCfgUpdateBox() {
+    const radios = document.querySelectorAll('input[name="audCfgMode"]');
+    let mode = 'all';
+    for (const r of radios) { if (r.checked) { mode = r.value; break; } }
+    const box = document.getElementById('audCfgTeamsBox');
+    if (box) box.style.display = (mode === 'except' || mode === 'only') ? 'block' : 'none';
+    if (mode === 'all') return;
+    const list = document.getElementById('audCfgTeamsList');
+    if (!list || list.dataset.loaded === '1') return;
+    try {
+        const r = await authFetch('/api/admin/calendar/teams-available');
+        const d = await r.json();
+        const teams = (d && d.teams) || [];
+        if (teams.length === 0) {
+            list.innerHTML = '<span style="color:#888;">No hay equipos configurados.</span>';
+            list.dataset.loaded = '1';
+            return;
+        }
+        let h = '';
+        for (const t of teams) {
+            h += '<label style="display:inline-flex;align-items:center;gap:4px;color:#ddd;cursor:pointer;background:rgba(255,255,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:6px;padding:5px 10px;">' +
+                '<input type="checkbox" class="audCfgTeamChk" value="' + escapeHtml(t) + '"> ' + escapeHtml(t) +
+            '</label>';
+        }
+        list.innerHTML = h;
+        list.dataset.loaded = '1';
+    } catch (_) {
+        list.innerHTML = '<span style="color:#888;">No se pudieron cargar equipos.</span>';
+    }
+}
+
+async function audienceConfigSave(kind) {
+    if (audienceConfigSave._busy) return;
+    let mode = 'all';
+    const radios = document.querySelectorAll('input[name="audCfgMode"]');
+    for (const r of radios) { if (r.checked) { mode = r.value; break; } }
+    const teams = (mode === 'all')
+        ? []
+        : Array.from(document.querySelectorAll('.audCfgTeamChk:checked')).map(c => c.value);
+    if (mode !== 'all' && teams.length === 0) {
+        alert('Elegí al menos 1 equipo o pasá el modo a "A todos".');
+        return;
+    }
+    audienceConfigSave._busy = true;
+    try {
+        const r = await authFetch('/api/admin/raffles/audience-config?kind=' + encodeURIComponent(kind), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode, teams })
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('💾 Audiencia guardada (' + (d.activeUpdated || 0) + ' instancias activas actualizadas)', 'success');
+        document.getElementById('audienceConfigModal')?.remove();
+        // Repintamos el banner correspondiente
+        if (kind === 'free') {
+            _renderAudienceBox('free', 'rafflesFreeAudienceBox');
+            loadRafflesFreeAdmin();
+        } else {
+            _renderAudienceBox('paid', 'rafflesPaidAudienceBox');
+            loadRafflesAdmin();
+        }
+    } catch (e) {
+        alert('Error de conexión');
+    }
+    finally { audienceConfigSave._busy = false; }
 }
 
 async function loadRafflesLightningAdmin() {

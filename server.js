@@ -11766,6 +11766,26 @@ function _nextMondayDraw() {
   return new Date(target.getTime() + 3 * 3600 * 1000);
 }
 
+// Devuelve { mode, teams } leyendo Config 'raffle_audience_paid' o
+// 'raffle_audience_free'. Si no esta seteado, devuelve { mode:'all', teams:[] }.
+async function _readRaffleAudienceConfig(kind) {
+  const key = kind === 'free' ? 'raffle_audience_free' : 'raffle_audience_paid';
+  try {
+    const raw = await getConfig(key);
+    if (!raw || typeof raw !== 'object') return { mode: 'all', teams: [] };
+    const mode = ['all', 'except', 'only'].includes(raw.mode) ? raw.mode : 'all';
+    const teams = Array.isArray(raw.teams)
+      ? Array.from(new Set(raw.teams.map(t => String(t || '').trim()).filter(Boolean))).slice(0, 50)
+      : [];
+    // Sanity: si el modo no es 'all' pero la lista esta vacia, degrada a 'all'
+    // (no tiene sentido except [] = nadie excluido = lo mismo que all).
+    if (mode !== 'all' && teams.length === 0) return { mode: 'all', teams: [] };
+    return { mode, teams };
+  } catch (_) {
+    return { mode: 'all', teams: [] };
+  }
+}
+
 async function _spawnRaffleInstance(typeCfg, instanceNumber) {
   // Spawn altera el set de active raffles -> invalidar cache para que el
   // proximo /api/raffles/active vea el sorteo nuevo en seguida.
@@ -11779,6 +11799,10 @@ async function _spawnRaffleInstance(typeCfg, instanceNumber) {
   const description = isFree
     ? `Sorteo GRATIS. Necesitás $${(typeCfg.minCargasARS||0).toLocaleString('es-AR')} de cargas en los últimos 30 días para entrar. ${typeCfg.totalTickets} cupos, 1 número por persona.`
     : `Premio ${typeCfg.prizeName}. ${typeCfg.totalTickets} números a $${(typeCfg.entryCost||0).toLocaleString('es-AR')}.`;
+  // Audiencia heredada del config global por kind (paid o free). Asi el
+  // admin define una sola vez "los pagos no van a crazy" y se aplica a
+  // todas las instancias futuras al respawnear.
+  const aud = await _readRaffleAudienceConfig(isFree ? 'free' : 'paid');
   await Raffle.create({
     id,
     name: typeCfg.name + ' #' + instanceNumber,
@@ -11795,7 +11819,9 @@ async function _spawnRaffleInstance(typeCfg, instanceNumber) {
     lotteryRule: RAFFLE_LOTTERY_RULE,
     status: 'active',
     isFree,
-    minCargasARS: isFree ? (typeCfg.minCargasARS || 0) : 0
+    minCargasARS: isFree ? (typeCfg.minCargasARS || 0) : 0,
+    audienceMode: aud.mode,
+    audienceTeams: aud.teams
   });
   return id;
 }
@@ -13721,6 +13747,56 @@ app.get('/api/admin/raffles/spend-daily/:dayKey', authMiddleware, adminMiddlewar
 // El "weekKey del dashboard" no es el de la semana calendario actual, sino
 // el de la semana del PROXIMO Lunes (= weekKey con el que se crearon los
 // sorteos activos). Esto es lo que el admin espera ver: "que pasa con los
+// GET /api/admin/raffles/audience-config?kind=paid|free
+// Lee la audiencia configurada que se va a aplicar a las proximas
+// instancias de sorteos pagos o gratis. Default { mode:'all', teams:[] }.
+app.get('/api/admin/raffles/audience-config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const kind = (req.query.kind === 'free') ? 'free' : 'paid';
+    const cfg = await _readRaffleAudienceConfig(kind);
+    res.json({ kind, ...cfg });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/audience-config GET: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PUT /api/admin/raffles/audience-config?kind=paid|free
+// Body: { mode, teams }
+// Guarda la audiencia y la aplica a TODAS las instancias 'active' del
+// kind correspondiente — asi el cambio impacta inmediatamente, no solo
+// en el proximo respawn. Las instancias 'closed' o 'drawn' no se tocan.
+app.put('/api/admin/raffles/audience-config', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const kind = (req.query.kind === 'free') ? 'free' : 'paid';
+    const b = req.body || {};
+    const mode = ['all', 'except', 'only'].includes(b.mode) ? b.mode : 'all';
+    const teams = Array.isArray(b.teams)
+      ? Array.from(new Set(b.teams.map(t => String(t || '').trim()).filter(Boolean))).slice(0, 50)
+      : [];
+    if (mode !== 'all' && teams.length === 0) {
+      return res.status(400).json({ error: 'Si el modo no es "todos", elegí al menos 1 equipo.' });
+    }
+    const finalCfg = { mode, teams: mode === 'all' ? [] : teams };
+    const key = kind === 'free' ? 'raffle_audience_free' : 'raffle_audience_paid';
+    await setConfig(key, finalCfg, req.user?.username || null);
+
+    // Aplicar a las instancias active del kind. Si es paid afectamos los
+    // raffleType de RAFFLE_TYPES; si es free afectamos los de FREE_RAFFLE_TYPES.
+    const types = kind === 'free' ? FREE_RAFFLE_TYPES.map(t => t.type) : RAFFLE_TYPES.map(t => t.type);
+    const upd = await Raffle.updateMany(
+      { raffleType: { $in: types }, status: 'active' },
+      { $set: { audienceMode: finalCfg.mode, audienceTeams: finalCfg.teams } }
+    );
+
+    logger.info(`[raffles] audience-config ${kind} mode=${finalCfg.mode} teams=${JSON.stringify(finalCfg.teams)} affected=${upd.modifiedCount}`);
+    res.json({ success: true, kind, mode: finalCfg.mode, teams: finalCfg.teams, activeUpdated: upd.modifiedCount });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/audience-config PUT: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // sorteos que se van a sortear el lunes que viene". Antes mostraba la
 // semana calendario actual (ej: martes 5/5 -> W19) pero los sorteos
 // activos tenian weekKey = W20 (semana del lunes 11/5 que es el draw),
