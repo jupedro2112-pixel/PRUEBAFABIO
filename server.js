@@ -76,6 +76,7 @@ const {
   Raffle,
   RaffleParticipation,
   RaffleSpend,
+  WeeklyCalendarPlan,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -15099,6 +15100,555 @@ app.post('/api/admin/players/segments/notify', authMiddleware, adminMiddleware, 
     });
   } catch (err) {
     logger.error(`/api/admin/players/segments/notify: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// CALENDARIO SEMANAL — planificacion + lanzamiento + ROI
+// ============================================
+//
+// Endpoints:
+//   GET  /api/admin/calendar/week?weekKey=YYYY-Www  -> plan completo (auto-crea con refund pinned)
+//   POST /api/admin/calendar/week/:weekKey/strategy -> agregar strategy al plan
+//   PUT  /api/admin/calendar/strategy/:weekKey/:id  -> editar strategy
+//   DELETE /api/admin/calendar/strategy/:weekKey/:id-> borrar (no permitido si lanzada)
+//   POST /api/admin/calendar/strategy/:weekKey/:id/launch -> disparar el push
+//   POST /api/admin/calendar/strategy/:weekKey/:id/refresh-performance -> recalcular ROI
+//   GET  /api/admin/calendar/history -> lista de semanas pasadas
+//   POST /api/admin/calendar/strategy-suggestions -> sugiere nombres unicos basado en historial
+// ============================================
+
+const _DAY_LABELS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+function _weekKeyFromDate(d) {
+  // Pasar a ARG para alinear con resto del codigo.
+  const drawArg = new Date(d.getTime() - 3 * 3600 * 1000);
+  return _isoWeekKey(drawArg);
+}
+
+function _weekStartFromKey(weekKey) {
+  // weekKey "YYYY-Www" -> Lunes 00:00 ARG (= 03:00 UTC).
+  const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const week = parseInt(m[2], 10);
+  // ISO week: lunes de la primera semana del año (la que contiene el 4 de enero).
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Dow = jan4.getUTCDay() || 7;
+  const week1Mon = new Date(Date.UTC(year, 0, 4 + 1 - jan4Dow));
+  const monday = new Date(week1Mon.getTime() + (week - 1) * 7 * 24 * 3600 * 1000);
+  // Pasar a UTC real (sumar 3h porque queremos 00:00 ARG = 03:00 UTC)
+  return new Date(monday.getTime() + 3 * 3600 * 1000);
+}
+
+// Auto-fija una strategy "refund" en CADA dia de la semana si todavia no
+// existe una. Esto satisface el pedido del owner: "fijo siempre el msj
+// del reembolso" — diario, semanal o mensual segun lo que el user tenga
+// para reclamar (la audiencia se evalua al lanzar).
+async function _ensureRefundPinnedDaily(plan) {
+  let added = 0;
+  for (let i = 0; i < 7; i++) {
+    let day = plan.days.find(d => d.dayIndex === i);
+    if (!day) {
+      day = { dayIndex: i, label: _DAY_LABELS[i], strategies: [] };
+      plan.days.push(day);
+    }
+    const hasRefund = (day.strategies || []).some(s => s.type === 'refund' && s.isPinned);
+    if (!hasRefund) {
+      day.strategies.push({
+        id: uuidv4(),
+        dayIndex: i,
+        order: 0,
+        type: 'refund',
+        title: '💰 Tenés reembolso para reclamar',
+        body: 'Cargaste y no ganaste hoy. Te devolvemos parte de lo que jugaste — entrá a la app y tocá Reclamar.',
+        bonusPercent: 0,
+        targetSegment: 'all',
+        targetTier: null,
+        targetTeams: [],
+        hasAppOnly: true,
+        status: 'pendiente',
+        isPinned: true,
+        notes: 'Auto-fijo todos los días: notifica solo a usuarios que tengan reembolso disponible (diario / semanal / mensual segun corresponda). Editable, no se elimina.'
+      });
+      added++;
+    }
+  }
+  // Sort days
+  plan.days.sort((a, b) => a.dayIndex - b.dayIndex);
+  return added;
+}
+
+// Recalcula el summary agregado del plan.
+function _recalcPlanSummary(plan) {
+  let total = 0, launched = 0, pending = 0;
+  let totalSent = 0, totalResp = 0, newDeposits = 0, bonusGiven = 0;
+  let positives = 0, negatives = 0, neutrals = 0;
+  for (const day of plan.days) {
+    for (const s of (day.strategies || [])) {
+      total++;
+      if (s.status === 'lanzado' || s.status === 'completado') {
+        launched++;
+        totalSent += s.sentCount || 0;
+        if (s.performance) {
+          totalResp += s.performance.respondersCount || 0;
+          newDeposits += s.performance.newDepositsAmountARS || 0;
+          bonusGiven += s.performance.bonusGivenARS || 0;
+          if (s.performance.sentiment === 'positivo') positives++;
+          else if (s.performance.sentiment === 'negativo') negatives++;
+          else if (s.performance.sentiment === 'neutro') neutrals++;
+        }
+      } else if (s.status === 'pendiente') {
+        pending++;
+      }
+    }
+  }
+  plan.summary = {
+    totalStrategies: total,
+    launchedCount: launched,
+    pendingCount: pending,
+    totalSent,
+    totalResponders: totalResp,
+    totalNewDeposits: newDeposits,
+    totalBonusGiven: bonusGiven,
+    aggregateRoi: bonusGiven > 0 ? (newDeposits / bonusGiven) : 0,
+    sentiment: positives > negatives + neutrals ? 'positivo' : (negatives > positives ? 'negativo' : (positives + neutrals + negatives > 0 ? 'neutro' : 'sin_datos'))
+  };
+}
+
+// Resuelve la audiencia (lista de usernames) para una strategy en el
+// momento del lanzamiento. Combina segmento custom + tier + equipos +
+// hasApp filter. Reusa la logica de _computeCustomSegment.
+async function _resolveStrategyAudience(strategy) {
+  const psQuery = {};
+  if (strategy.targetTier) psQuery.tier = strategy.targetTier;
+  const allStats = await PlayerStats.find(psQuery).limit(5000).lean();
+  if (allStats.length === 0) return [];
+
+  const usernames = allStats.map(p => p.username);
+
+  // Para detectar CALIENTE.
+  const last7dStart = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+  const last7Agg = await DailyPlayerStats.aggregate([
+    { $match: { username: { $in: usernames }, dateUtc: { $gte: last7dStart } } },
+    { $group: { _id: '$username', chargesLast7d: { $sum: '$depositCount' } } }
+  ]);
+  const last7Map = {};
+  for (const a of last7Agg) last7Map[a._id] = a.chargesLast7d;
+
+  // Equipos (UserLineLookup).
+  const norms = usernames.map(u => String(u).toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const lineupRows = await UserLineLookup.find({ usernameNorm: { $in: norms } })
+    .select('usernameNorm lineTeamName').lean();
+  const teamByNorm = {};
+  for (const r of lineupRows) teamByNorm[r.usernameNorm] = r.lineTeamName;
+
+  // App tokens.
+  let usersWithApp = new Set();
+  if (strategy.hasAppOnly) {
+    const userRows = await User.find(
+      { username: { $in: usernames }, $or: [{ fcmToken: { $ne: null } }, { 'fcmTokens.0': { $exists: true } }] },
+      { username: 1, _id: 0 }
+    ).lean();
+    usersWithApp = new Set(userRows.map(u => String(u.username).toLowerCase()));
+  }
+
+  // Para refund-type: filtramos a los que tienen reembolso pendiente.
+  let usersWithRefund = null;
+  if (strategy.type === 'refund') {
+    const claimable = await RefundClaim.find(
+      { status: 'pending' },
+      { username: 1, _id: 0 }
+    ).lean();
+    usersWithRefund = new Set(claimable.map(c => String(c.username).toLowerCase()));
+  }
+
+  const segReq = String(strategy.targetSegment || 'all').toUpperCase();
+  const teamSet = new Set(strategy.targetTeams || []);
+  const useTeamFilter = teamSet.size > 0;
+
+  const targets = [];
+  for (const ps of allStats) {
+    const ulow = String(ps.username).toLowerCase();
+    const norm = ulow.replace(/[^a-z0-9]/g, '');
+    if (strategy.hasAppOnly && !usersWithApp.has(ulow)) continue;
+    if (usersWithRefund && !usersWithRefund.has(ulow)) continue;
+
+    const daysSince = ps.lastRealDepositDate
+      ? Math.floor((Date.now() - new Date(ps.lastRealDepositDate).getTime()) / (24 * 3600 * 1000))
+      : null;
+    const seg = _computeCustomSegment(daysSince, last7Map[ps.username] || 0);
+    if (segReq !== 'ALL' && seg !== segReq) continue;
+
+    if (useTeamFilter) {
+      const team = teamByNorm[norm];
+      if (!team || !teamSet.has(team)) continue;
+    }
+
+    targets.push(ps.username);
+  }
+  return targets;
+}
+
+app.get('/api/admin/calendar/week', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const weekKey = req.query.weekKey || _isoWeekKey(_argZonedNow());
+    const weekStart = _weekStartFromKey(weekKey);
+    if (!weekStart) return res.status(400).json({ error: 'weekKey invalido (formato YYYY-Www)' });
+
+    let plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) {
+      plan = new WeeklyCalendarPlan({
+        weekKey,
+        weekStartDate: weekStart,
+        status: 'draft',
+        days: _DAY_LABELS.map((l, i) => ({ dayIndex: i, label: l, strategies: [] })),
+        summary: {},
+        createdBy: req.user.username || 'admin'
+      });
+    }
+    await _ensureRefundPinnedDaily(plan);
+    _recalcPlanSummary(plan);
+    await plan.save();
+
+    res.json({ plan: plan.toObject() });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/week: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const weekKey = req.params.weekKey;
+    const weekStart = _weekStartFromKey(weekKey);
+    if (!weekStart) return res.status(400).json({ error: 'weekKey invalido' });
+
+    const body = req.body || {};
+    const dayIndex = parseInt(body.dayIndex, 10);
+    if (!Number.isFinite(dayIndex) || dayIndex < 0 || dayIndex > 6) {
+      return res.status(400).json({ error: 'dayIndex invalido (0..6)' });
+    }
+    const bonusPercent = Math.max(0, Math.min(100, parseInt(body.bonusPercent, 10) || 0));
+    if (body.bonusPercent != null && body.bonusPercent !== '' && (bonusPercent < 50 && bonusPercent > 0)) {
+      return res.status(400).json({ error: 'El bono mínimo es 50%' });
+    }
+
+    let plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) {
+      plan = new WeeklyCalendarPlan({
+        weekKey,
+        weekStartDate: weekStart,
+        days: _DAY_LABELS.map((l, i) => ({ dayIndex: i, label: l, strategies: [] })),
+        createdBy: req.user.username || 'admin'
+      });
+      await _ensureRefundPinnedDaily(plan);
+    }
+
+    let day = plan.days.find(d => d.dayIndex === dayIndex);
+    if (!day) {
+      day = { dayIndex, label: _DAY_LABELS[dayIndex], strategies: [] };
+      plan.days.push(day);
+    }
+
+    const newStrat = {
+      id: uuidv4(),
+      dayIndex,
+      order: (day.strategies || []).length,
+      type: ['push', 'refund', 'bonus'].includes(body.type) ? body.type : 'push',
+      title: String(body.title || '').slice(0, 100),
+      body: String(body.body || '').slice(0, 500),
+      bonusPercent,
+      bonusFlatARS: Math.max(0, parseInt(body.bonusFlatARS, 10) || 0),
+      targetSegment: String(body.targetSegment || 'all').toLowerCase(),
+      targetTier: ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].includes(body.targetTier) ? body.targetTier : null,
+      targetTeams: Array.isArray(body.targetTeams) ? body.targetTeams.map(String).slice(0, 50) : [],
+      hasAppOnly: body.hasAppOnly !== false,
+      status: 'pendiente',
+      isPinned: false,
+      notes: String(body.notes || '').slice(0, 500)
+    };
+    if (!newStrat.title || !newStrat.body) {
+      return res.status(400).json({ error: 'Faltan title y body' });
+    }
+    day.strategies.push(newStrat);
+    plan.markModified('days');
+    _recalcPlanSummary(plan);
+    await plan.save();
+
+    res.json({ success: true, strategy: newStrat, plan: plan.toObject() });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/strategy add: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { weekKey, id } = req.params;
+    const plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    let found = null;
+    for (const d of plan.days) {
+      for (const s of d.strategies) if (s.id === id) found = s;
+    }
+    if (!found) return res.status(404).json({ error: 'Strategy no encontrada' });
+    if (found.status === 'lanzando' || found.status === 'lanzado' || found.status === 'completado') {
+      return res.status(400).json({ error: 'No se puede editar una strategy ya lanzada' });
+    }
+    const b = req.body || {};
+    if (b.title != null) found.title = String(b.title).slice(0, 100);
+    if (b.body != null) found.body = String(b.body).slice(0, 500);
+    if (b.bonusPercent != null) {
+      const bp = Math.max(0, Math.min(100, parseInt(b.bonusPercent, 10) || 0));
+      if (bp > 0 && bp < 50) return res.status(400).json({ error: 'Bono mínimo 50%' });
+      found.bonusPercent = bp;
+    }
+    if (b.bonusFlatARS != null) found.bonusFlatARS = Math.max(0, parseInt(b.bonusFlatARS, 10) || 0);
+    if (b.targetSegment != null) found.targetSegment = String(b.targetSegment).toLowerCase();
+    if (b.targetTier !== undefined) found.targetTier = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].includes(b.targetTier) ? b.targetTier : null;
+    if (Array.isArray(b.targetTeams)) found.targetTeams = b.targetTeams.map(String).slice(0, 50);
+    if (b.hasAppOnly != null) found.hasAppOnly = !!b.hasAppOnly;
+    if (b.notes != null) found.notes = String(b.notes).slice(0, 500);
+    plan.markModified('days');
+    _recalcPlanSummary(plan);
+    await plan.save();
+    res.json({ success: true, strategy: found });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/strategy edit: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { weekKey, id } = req.params;
+    const plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    let found = null, parentDay = null;
+    for (const d of plan.days) {
+      for (const s of d.strategies) if (s.id === id) { found = s; parentDay = d; }
+    }
+    if (!found) return res.status(404).json({ error: 'Strategy no encontrada' });
+    if (found.isPinned) return res.status(400).json({ error: 'No se puede borrar una strategy fija (refund). Editala o cancelala.' });
+    if (found.status === 'lanzando' || found.status === 'lanzado' || found.status === 'completado') {
+      return res.status(400).json({ error: 'No se puede borrar una strategy ya lanzada (queda en historial).' });
+    }
+    parentDay.strategies = parentDay.strategies.filter(s => s.id !== id);
+    plan.markModified('days');
+    _recalcPlanSummary(plan);
+    await plan.save();
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/strategy delete: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { weekKey, id } = req.params;
+    const plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    let found = null;
+    for (const d of plan.days) for (const s of d.strategies) if (s.id === id) found = s;
+    if (!found) return res.status(404).json({ error: 'Strategy no encontrada' });
+    if (found.status !== 'pendiente') {
+      return res.status(400).json({ error: `Strategy ya en estado "${found.status}", no se puede relanzar.` });
+    }
+    if (!found.title || !found.body) {
+      return res.status(400).json({ error: 'Falta title o body en la strategy' });
+    }
+
+    found.status = 'lanzando';
+    plan.markModified('days');
+    await plan.save();
+
+    let targets = [];
+    let sendResult = null;
+    try {
+      targets = await _resolveStrategyAudience(found);
+      if (targets.length === 0) {
+        found.status = 'pendiente';
+        plan.markModified('days');
+        await plan.save();
+        return res.status(400).json({ error: 'No hay destinatarios que cumplan los filtros (segmento + tier + equipo + app).' });
+      }
+
+      const bonusBadge = found.bonusPercent > 0
+        ? ` 🎁 BONO ${found.bonusPercent}%`
+        : (found.bonusFlatARS > 0 ? ` 🎁 BONO $${found.bonusFlatARS.toLocaleString('es-AR')}` : '');
+      sendResult = await sendNotificationToAllUsers(
+        User,
+        (found.title || '') + bonusBadge,
+        found.body || '',
+        {
+          source: 'weekly-calendar',
+          weekKey,
+          strategyId: found.id,
+          strategyType: found.type,
+          bonusPercent: String(found.bonusPercent || 0),
+          targetSegment: found.targetSegment || 'all'
+        },
+        { username: { $in: targets } }
+      );
+    } catch (sendErr) {
+      logger.error(`[calendar] launch ${id} error: ${sendErr.message}`);
+      found.status = 'pendiente';
+      plan.markModified('days');
+      await plan.save();
+      return res.status(500).json({ error: 'Error al enviar: ' + sendErr.message });
+    }
+
+    found.status = 'lanzado';
+    found.launchedAt = new Date();
+    found.launchedBy = req.user.username || 'admin';
+    found.targetUsernames = targets.slice(0, 5000);
+    found.sentCount = (sendResult && sendResult.successCount) || 0;
+    found.deliveredCount = found.sentCount;
+    found.failedCount = (sendResult && sendResult.failureCount) || 0;
+    found.performance = {
+      measuredAt: null,
+      daysObserved: 0,
+      respondersCount: 0,
+      responseRate: 0,
+      newDepositsCount: 0,
+      newDepositsAmountARS: 0,
+      bonusGivenARS: 0,
+      bonusClaimedCount: 0,
+      roi: 0,
+      sentiment: 'sin_datos'
+    };
+
+    plan.markModified('days');
+    if (plan.status === 'draft') plan.status = 'active';
+    _recalcPlanSummary(plan);
+    await plan.save();
+
+    res.json({
+      success: true,
+      strategy: found,
+      sent: found.sentCount,
+      failed: found.failedCount,
+      eligible: targets.length
+    });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/strategy launch: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/calendar/strategy/:weekKey/:id/refresh-performance', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { weekKey, id } = req.params;
+    const plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    let found = null;
+    for (const d of plan.days) for (const s of d.strategies) if (s.id === id) found = s;
+    if (!found) return res.status(404).json({ error: 'Strategy no encontrada' });
+    if (!found.launchedAt) return res.status(400).json({ error: 'Strategy no lanzada todavia' });
+
+    const since = new Date(found.launchedAt);
+    const daysObs = Math.max(0, Math.floor((Date.now() - since.getTime()) / (24 * 3600 * 1000)));
+    const targets = found.targetUsernames || [];
+    if (targets.length === 0) {
+      found.performance = { ...found.performance, measuredAt: new Date(), daysObserved: daysObs, sentiment: 'sin_datos' };
+      plan.markModified('days');
+      _recalcPlanSummary(plan);
+      await plan.save();
+      return res.json({ success: true, performance: found.performance });
+    }
+
+    // Cargas reales de los targets desde el lanzamiento.
+    const sinceUtc = new Date(since.getTime());
+    const depAgg = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: targets }, dateUtc: { $gte: sinceUtc } } },
+      { $group: {
+          _id: '$username',
+          deps: { $sum: '$depositCount' },
+          depAmt: { $sum: '$depositSum' }
+      } }
+    ]);
+    let respondersCount = 0;
+    let newDepositsCount = 0;
+    let newDepositsAmount = 0;
+    for (const a of depAgg) {
+      if ((a.deps || 0) > 0) {
+        respondersCount++;
+        newDepositsCount += a.deps;
+        newDepositsAmount += a.depAmt;
+      }
+    }
+
+    // Bonos efectivamente entregados a los targets desde el lanzamiento.
+    const bonusAgg = await MoneyGiveawayClaim.aggregate([
+      { $match: { username: { $in: targets }, status: 'completed', claimedAt: { $gte: sinceUtc } } },
+      { $group: { _id: null, count: { $sum: 1 }, total: { $sum: '$amount' } } }
+    ]);
+    const bonusGiven = (bonusAgg[0] && bonusAgg[0].total) || 0;
+    const bonusCount = (bonusAgg[0] && bonusAgg[0].count) || 0;
+
+    const responseRate = targets.length > 0 ? (respondersCount / targets.length) : 0;
+    const roi = bonusGiven > 0 ? (newDepositsAmount / bonusGiven) : (newDepositsAmount > 0 ? Infinity : 0);
+
+    // Sentiment: ROI > 1.5 = positivo, < 0.5 = negativo, ente medio = neutro.
+    // Si daysObs < 2, mantener "sin_datos" (todavia muy temprano).
+    let sentiment = 'sin_datos';
+    if (daysObs >= 2) {
+      if (roi >= 1.5 || responseRate >= 0.20) sentiment = 'positivo';
+      else if (roi < 0.5 && responseRate < 0.05) sentiment = 'negativo';
+      else sentiment = 'neutro';
+    }
+
+    found.performance = {
+      measuredAt: new Date(),
+      daysObserved: daysObs,
+      respondersCount,
+      responseRate,
+      newDepositsCount,
+      newDepositsAmountARS: newDepositsAmount,
+      bonusGivenARS: bonusGiven,
+      bonusClaimedCount: bonusCount,
+      roi: Number.isFinite(roi) ? roi : 999,
+      sentiment
+    };
+
+    // Si pasaron mas de 7 dias, marcar completado.
+    if (daysObs >= 7) found.status = 'completado';
+
+    plan.markModified('days');
+    _recalcPlanSummary(plan);
+    await plan.save();
+
+    res.json({ success: true, performance: found.performance, status: found.status });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/strategy perf: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/calendar/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 24, 100);
+    const plans = await WeeklyCalendarPlan.find({})
+      .sort({ weekStartDate: -1 })
+      .limit(limit)
+      .select('weekKey weekStartDate status summary createdBy createdAt updatedAt')
+      .lean();
+    res.json({ plans });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/history: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Devuelve los teams disponibles para el dropdown del UI.
+app.get('/api/admin/calendar/teams-available', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teams = await UserLineLookup.distinct('lineTeamName', { lineTeamName: { $ne: null } });
+    res.json({ teams: teams.filter(Boolean).sort() });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

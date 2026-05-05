@@ -41,7 +41,8 @@ const {
   RefundReminderConfig,
   Raffle,
   RaffleParticipation,
-  RaffleSpend
+  RaffleSpend,
+  WeeklyCalendarPlan
 } = require('../src/models');
 
 // ============================================
@@ -356,6 +357,7 @@ module.exports = {
   Raffle,
   RaffleParticipation,
   RaffleSpend,
+  WeeklyCalendarPlan,
   // Helpers
   getConfig,
   setConfig,

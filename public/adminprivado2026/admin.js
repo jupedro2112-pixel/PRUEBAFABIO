@@ -3771,23 +3771,39 @@ function _autoRenderActiveTab() {
 }
 
 // ============= TAB: REGLAS =============
+// Reglas activas: limpio. Las reglas individuales quedan accesibles solo
+// si el admin pide "ver todas" — el flow nuevo usa el Calendario semanal
+// como fuente de verdad para difusiones.
 function _autoRenderRulesTab() {
-    if (_autoRulesCache.length === 0) return '<div class="empty-state">No hay reglas configuradas. Refrescar la página o esperar al primer arranque.</div>';
-    const byCat = {};
-    for (const r of _autoRulesCache) {
-        if (!byCat[r.category]) byCat[r.category] = [];
-        byCat[r.category].push(r);
-    }
     let html = '';
-    for (const cat of Object.keys(byCat)) {
-        html += '<div style="margin-bottom:18px;">';
-        html += '<h3 style="color:#fff;font-size:14px;margin:0 0 10px;">' + (_autoCategoryLabels[cat] || cat) + ' <span style="color:#666;font-size:11px;font-weight:400;">' + byCat[cat].length + ' reglas</span></h3>';
-        html += '<div style="display:flex;flex-direction:column;gap:8px;">';
-        for (const r of byCat[cat]) {
-            html += _autoRenderRuleCard(r);
+    html += '<div style="background:linear-gradient(135deg,rgba(120,80,255,0.08),rgba(0,212,255,0.06));border:1px solid rgba(120,80,255,0.30);border-radius:12px;padding:18px;margin-bottom:14px;">';
+    html += '  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
+    html += '    <span style="font-size:30px;">📅</span>';
+    html += '    <div><div style="color:#b39dff;font-size:14px;font-weight:900;letter-spacing:1px;text-transform:uppercase;">Migramos al Calendario semanal</div>';
+    html += '    <div style="color:#aaa;font-size:11.5px;margin-top:2px;line-height:1.5;">Las difusiones, bonos y recordatorios ahora se planifican desde la pestaña <strong style="color:#00d4ff;">⏰ Calendario semanal</strong>. Cada strategy queda en pendiente, podés lanzarla cuando quieras y medís el ROI después.</div></div>';
+    html += '  </div>';
+    html += '  <button onclick="switchAutomationsTab(\'calendar\')" style="margin-top:8px;background:linear-gradient(135deg,#b39dff,#00d4ff);color:#000;border:none;padding:9px 14px;border-radius:8px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">⏰ Ir al Calendario semanal →</button>';
+    html += '</div>';
+
+    if (_autoRulesCache.length > 0) {
+        html += '<details style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 14px;">';
+        html += '<summary style="cursor:pointer;color:#aaa;font-size:11.5px;font-weight:700;">⚙️ Reglas técnicas legacy (' + _autoRulesCache.length + ') · solo administración avanzada</summary>';
+        html += '<div style="margin-top:10px;color:#888;font-size:11px;line-height:1.5;margin-bottom:8px;">Estas reglas siguen corriendo en el cron pero no las uses para planificar — usá el Calendario semanal. Solo abrí esto si necesitás pausar algo concreto.</div>';
+        const byCat = {};
+        for (const r of _autoRulesCache) {
+            if (!byCat[r.category]) byCat[r.category] = [];
+            byCat[r.category].push(r);
         }
-        html += '</div></div>';
+        for (const cat of Object.keys(byCat)) {
+            html += '<div style="margin-bottom:14px;">';
+            html += '<h4 style="color:#999;font-size:11px;margin:6px 0;text-transform:uppercase;letter-spacing:1px;">' + (_autoCategoryLabels[cat] || cat) + ' <span style="color:#555;font-weight:400;">' + byCat[cat].length + '</span></h4>';
+            html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+            for (const r of byCat[cat]) html += _autoRenderRuleCard(r);
+            html += '</div></div>';
+        }
+        html += '</details>';
     }
+
     return html;
 }
 
@@ -4124,55 +4140,394 @@ async function _autoRenderHistoryTab() {
 }
 
 // ============= TAB: CALENDARIO =============
+// ============================================================
+// CALENDARIO SEMANAL — planificacion + lanzamiento + ROI
+// ============================================================
+const _CAL_STATE = {
+    plan: null,
+    weekKey: null,
+    teams: [],
+    historyOpen: false,
+    history: []
+};
+
 function _autoRenderCalendarTab() {
-    // Vista de la semana: para cada día, listar las reglas que disparan ese día.
-    const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-    const dayIdx = [1, 2, 3, 4, 5, 6, 0];
-    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;">';
-    for (let i = 0; i < days.length; i++) {
-        const dow = dayIdx[i];
-        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;">';
-        html += '<h4 style="color:#00d4ff;font-size:12px;margin:0 0 8px;text-transform:uppercase;">' + days[i] + '</h4>';
-        const dayRules = _autoRulesCache.filter(r => {
-            if (!r.enabled || r.triggerType !== 'cron') return false;
-            const cs = r.cronSchedule || {};
-            if (cs.dayOfWeek != null) return cs.dayOfWeek === dow;
-            if (cs.dayOfMonth != null) return false; // no aparecen en el grid semanal
-            return true; // todos los días
-        }).sort((a, b) => ((a.cronSchedule.hour || 0) - (b.cronSchedule.hour || 0)));
-        if (dayRules.length === 0) {
-            html += '<div style="color:#666;font-size:11px;font-style:italic;">Sin reglas</div>';
+    // Render placeholder y disparar fetch async (la idea es que el tab
+    // sincronico devuelva un loader mientras corre la carga real).
+    setTimeout(() => loadCalendarPlan(), 50);
+    return '<div class="empty-state">⏳ Cargando calendario semanal…</div>';
+}
+
+async function loadCalendarPlan(weekKey) {
+    const c = document.getElementById('automationsContent');
+    if (!c) return;
+    if (!weekKey) weekKey = _CAL_STATE.weekKey || _isoWeekKeyClient(new Date());
+    _CAL_STATE.weekKey = weekKey;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando calendario semanal…</div>';
+    try {
+        const [planRes, teamsRes] = await Promise.all([
+            authFetch('/api/admin/calendar/week?weekKey=' + encodeURIComponent(weekKey)),
+            authFetch('/api/admin/calendar/teams-available')
+        ]);
+        if (!planRes.ok) {
+            const err = await planRes.json().catch(() => ({}));
+            c.innerHTML = '<div style="color:#ff8080;padding:20px;">' + (err.error || 'Error') + '</div>';
+            return;
+        }
+        const planJson = await planRes.json();
+        const teamsJson = teamsRes.ok ? await teamsRes.json() : { teams: [] };
+        _CAL_STATE.plan = planJson.plan;
+        _CAL_STATE.teams = teamsJson.teams || [];
+        c.innerHTML = _renderCalendarPlan();
+    } catch (e) {
+        console.error('loadCalendarPlan:', e);
+        c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión</div>';
+    }
+}
+
+function _isoWeekKeyClient(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return d.getUTCFullYear() + '-W' + String(weekNum).padStart(2, '0');
+}
+
+function _renderCalendarPlan() {
+    const plan = _CAL_STATE.plan;
+    if (!plan) return '<div class="empty-state">Sin datos</div>';
+    const sum = plan.summary || {};
+    const sentBadge = (s) => ({
+        positivo: '<span style="color:#66ff66;">✅ Positivo</span>',
+        neutro: '<span style="color:#ffaa66;">⚖️ Neutro</span>',
+        negativo: '<span style="color:#ff8080;">⚠️ Negativo</span>',
+        sin_datos: '<span style="color:#666;">— sin datos —</span>'
+    })[s] || '';
+
+    let html = '';
+
+    // Header con weekKey + summary
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(120,80,255,0.04));border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;">';
+    html += '<div><div style="color:#00d4ff;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;font-weight:800;">📅 Calendario Semanal</div>';
+    html += '<div style="color:#fff;font-size:16px;font-weight:900;">' + escapeHtml(plan.weekKey) + ' · ' + new Date(plan.weekStartDate).toLocaleDateString('es-AR', { day:'2-digit', month:'short' }) + ' →</div></div>';
+    html += '<div style="display:flex;gap:6px;">';
+    html += '<button onclick="_calChangeWeek(-1)" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">← Anterior</button>';
+    html += '<button onclick="loadCalendarPlan()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Actual</button>';
+    html += '<button onclick="_calChangeWeek(1)" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Siguiente →</button>';
+    html += '<button onclick="_calToggleHistory()" style="background:rgba(155,48,255,0.10);color:#c89bff;border:1px solid rgba(155,48,255,0.40);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">📊 Historial</button>';
+    html += '</div></div>';
+
+    // KPIs
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;">';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Strategies</div><div style="color:#fff;font-size:18px;font-weight:900;">' + (sum.totalStrategies || 0) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Pendientes</div><div style="color:#ffaa66;font-size:18px;font-weight:900;">' + (sum.pendingCount || 0) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Lanzadas</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + (sum.launchedCount || 0) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Push enviados</div><div style="color:#00d4ff;font-size:18px;font-weight:900;">' + (sum.totalSent || 0).toLocaleString('es-AR') + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Respondieron</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + (sum.totalResponders || 0).toLocaleString('es-AR') + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">$ depositos</div><div style="color:#d4af37;font-size:16px;font-weight:900;">' + _fmtMoney(sum.totalNewDeposits) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">$ bonos dados</div><div style="color:#ffaa66;font-size:16px;font-weight:900;">' + _fmtMoney(sum.totalBonusGiven) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">ROI</div><div style="color:' + ((sum.aggregateRoi || 0) >= 1 ? '#66ff66' : '#ff8080') + ';font-size:18px;font-weight:900;">' + (sum.aggregateRoi || 0).toFixed(2) + 'x</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);padding:8px 10px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Veredicto</div><div style="font-size:13px;font-weight:900;margin-top:3px;">' + sentBadge(sum.sentiment) + '</div></div>';
+    html += '</div>';
+    html += '</div>';
+
+    // Historial expandible
+    if (_CAL_STATE.historyOpen) {
+        html += '<div style="background:rgba(155,48,255,0.04);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '<h3 style="color:#c89bff;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">📊 Historial — semanas anteriores</h3>';
+        if (!_CAL_STATE.history || _CAL_STATE.history.length === 0) {
+            html += '<div style="color:#888;text-align:center;padding:14px;font-size:11px;">Cargando historial…</div>';
         } else {
-            for (const r of dayRules) {
-                const cs = r.cronSchedule || {};
-                const time = String(cs.hour).padStart(2, '0') + ':' + String(cs.minute || 0).padStart(2, '0');
-                html += '<div style="margin-bottom:6px;font-size:11px;line-height:1.4;">' +
-                    '<span style="color:#ffd700;font-weight:700;font-family:monospace;">' + time + '</span> ' +
-                    '<span style="color:#fff;">' + escapeHtml(r.code) + '</span> ' +
-                    '<span style="color:#888;">' + escapeHtml(r.title.slice(0, 22)) + '</span>' +
-                '</div>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+            for (const h of _CAL_STATE.history) {
+                const s = h.summary || {};
+                const sentClass = { positivo: '#66ff66', neutro: '#ffaa66', negativo: '#ff8080' }[s.sentiment] || '#888';
+                html += '<button onclick="loadCalendarPlan(' + escapeJsArg(h.weekKey) + ')" style="background:rgba(0,0,0,0.40);border:1px solid ' + sentClass + ';border-radius:8px;padding:10px;text-align:left;cursor:pointer;color:#fff;">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><strong>' + escapeHtml(h.weekKey) + '</strong><span style="color:' + sentClass + ';font-size:10px;font-weight:800;text-transform:uppercase;">' + (s.sentiment || 'sin datos') + '</span></div>';
+                html += '<div style="color:#aaa;font-size:11px;line-height:1.5;">' + (s.launchedCount || 0) + ' lanzadas · ' + (s.totalSent || 0) + ' envíos · ROI ' + (s.aggregateRoi || 0).toFixed(2) + 'x</div>';
+                html += '<div style="color:#888;font-size:10px;margin-top:3px;">' + _fmtMoney(s.totalNewDeposits) + ' generados · ' + _fmtMoney(s.totalBonusGiven) + ' bonos</div>';
+                html += '</button>';
             }
+            html += '</div>';
         }
         html += '</div>';
+    }
+
+    // Tip de uso
+    html += '<div style="background:rgba(255,170,68,0.05);border:1px dashed rgba(255,170,68,0.30);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11.5px;color:#ddd;line-height:1.5;">';
+    html += '💡 <strong style="color:#ffaa44;">Cómo usar:</strong> tocá <strong>"+ Agregar"</strong> en cualquier día para crear una difusión. Definí público objetivo, equipos, bono (50-100%) y mensaje. Queda en <strong>pendiente</strong>. Cuando estés listo, tocá <strong>🚀 Lanzar</strong> y se manda el push. Después, "Refrescar rendimiento" mide ROI.';
+    html += '</div>';
+
+    // Days grid
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">';
+    for (const day of (plan.days || [])) {
+        html += _renderCalendarDay(day);
     }
     html += '</div>';
 
-    // Reglas mensuales (por dayOfMonth) listadas aparte.
-    const monthly = _autoRulesCache.filter(r => r.enabled && r.triggerType === 'cron' && r.cronSchedule && r.cronSchedule.dayOfMonth != null);
-    if (monthly.length > 0) {
-        html += '<div style="margin-top:18px;background:rgba(155,48,255,0.05);border:1px solid rgba(155,48,255,0.20);border-radius:10px;padding:12px;">';
-        html += '<h4 style="color:#c89bff;font-size:13px;margin:0 0 10px;">📅 Reglas mensuales (por día del mes)</h4>';
-        for (const r of monthly) {
-            const cs = r.cronSchedule || {};
-            html += '<div style="margin-bottom:5px;font-size:12px;color:#fff;">' +
-                '<strong>Día ' + cs.dayOfMonth + ' a las ' + String(cs.hour).padStart(2, '0') + ':' + String(cs.minute || 0).padStart(2, '0') + '</strong> · ' +
-                escapeHtml(r.code) + ' — ' + escapeHtml(r.name) +
-            '</div>';
-        }
+    return html;
+}
+
+function _renderCalendarDay(day) {
+    const strategies = (day.strategies || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+    let html = '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+    html += '<h4 style="color:#00d4ff;font-size:13px;margin:0;text-transform:uppercase;letter-spacing:1px;font-weight:800;">' + escapeHtml(day.label || '') + '</h4>';
+    html += '<button onclick="_calOpenStratModal(' + day.dayIndex + ', null)" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:4px 9px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">+ Agregar</button>';
+    html += '</div>';
+    if (strategies.length === 0) {
+        html += '<div style="color:#666;text-align:center;padding:12px;font-size:11px;font-style:italic;">Sin difusiones planificadas</div>';
+    } else {
+        for (const s of strategies) html += _renderStrategyCard(s);
+    }
+    html += '</div>';
+    return html;
+}
+
+function _renderStrategyCard(s) {
+    const statusInfo = {
+        pendiente: { color: '#ffaa66', bg: 'rgba(255,170,102,0.10)', label: '⏳ Pendiente' },
+        lanzando: { color: '#00d4ff', bg: 'rgba(0,212,255,0.10)', label: '⚡ Lanzando…' },
+        lanzado: { color: '#66ff66', bg: 'rgba(102,255,102,0.10)', label: '✅ Lanzada' },
+        completado: { color: '#c89bff', bg: 'rgba(155,48,255,0.10)', label: '📊 Completada' },
+        cancelado: { color: '#888', bg: 'rgba(255,255,255,0.05)', label: '✖ Cancelada' }
+    }[s.status] || { color: '#aaa', bg: 'rgba(255,255,255,0.05)', label: s.status };
+
+    const typeIcon = { push: '📲', refund: '💰', bonus: '🎁' }[s.type] || '📲';
+    const pinBadge = s.isPinned ? '<span style="background:rgba(212,175,55,0.20);color:#ffd700;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:0.5px;margin-left:4px;">FIJO</span>' : '';
+
+    let html = '<div style="background:' + statusInfo.bg + ';border:1px solid ' + statusInfo.color + ';border-radius:8px;padding:8px;font-size:11px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:4px;">';
+    html += '<div style="flex:1;min-width:0;">';
+    html += '<div style="color:#fff;font-weight:800;font-size:12px;line-height:1.3;">' + typeIcon + ' ' + escapeHtml(s.title || '(sin título)') + pinBadge + '</div>';
+    html += '<div style="color:' + statusInfo.color + ';font-size:10px;font-weight:800;margin-top:2px;">' + statusInfo.label + '</div>';
+    html += '</div></div>';
+
+    html += '<div style="color:#aaa;font-size:10.5px;line-height:1.5;margin-bottom:6px;">';
+    html += '🎯 ' + (s.targetSegment === 'all' ? 'Todos' : s.targetSegment.toUpperCase());
+    if (s.targetTier) html += ' · ' + s.targetTier;
+    if (s.targetTeams && s.targetTeams.length > 0) html += ' · ' + s.targetTeams.length + ' equipo' + (s.targetTeams.length === 1 ? '' : 's');
+    if (s.bonusPercent > 0) html += ' · 🎁 ' + s.bonusPercent + '%';
+    if (s.bonusFlatARS > 0) html += ' · 🎁 ' + _fmtMoney(s.bonusFlatARS);
+    if (s.hasAppOnly) html += ' · solo con app';
+    html += '</div>';
+
+    if (s.status === 'lanzado' || s.status === 'completado') {
+        const p = s.performance || {};
+        const roi = p.roi || 0;
+        const roiColor = roi >= 1.5 ? '#66ff66' : (roi >= 0.8 ? '#ffaa66' : '#ff8080');
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:10px;line-height:1.6;">';
+        html += '<div style="color:#aaa;">📤 Enviadas: <strong style="color:#fff;">' + (s.sentCount || 0).toLocaleString('es-AR') + '</strong> · Respuesta: <strong style="color:' + roiColor + ';">' + ((p.responseRate || 0) * 100).toFixed(1) + '%</strong></div>';
+        html += '<div style="color:#aaa;">💵 ' + _fmtMoney(p.newDepositsAmountARS) + ' generados · 🎁 ' + _fmtMoney(p.bonusGivenARS) + ' bono</div>';
+        html += '<div style="color:' + roiColor + ';font-weight:800;">ROI ' + roi.toFixed(2) + 'x · ' + (p.daysObserved || 0) + 'd observados</div>';
         html += '</div>';
     }
 
+    html += '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
+    if (s.status === 'pendiente') {
+        html += '<button onclick="_calLaunchStrategy(' + escapeJsArg(s.id) + ')" style="flex:1;background:linear-gradient(135deg,#ff5050,#ff8080);color:#fff;border:none;padding:6px;border-radius:5px;font-weight:900;font-size:10.5px;cursor:pointer;letter-spacing:0.5px;">🚀 Lanzar</button>';
+        html += '<button onclick="_calOpenStratModal(' + s.dayIndex + ', ' + escapeJsArg(s.id) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">✏</button>';
+        if (!s.isPinned) {
+            html += '<button onclick="_calDeleteStrategy(' + escapeJsArg(s.id) + ')" style="background:rgba(255,80,80,0.10);color:#ff5050;border:1px solid rgba(255,80,80,0.30);padding:6px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">✖</button>';
+        }
+    } else if (s.status === 'lanzado' || s.status === 'completado') {
+        html += '<button onclick="_calRefreshPerf(' + escapeJsArg(s.id) + ')" style="flex:1;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">🔄 Refrescar rendimiento</button>';
+        html += '<button onclick="_calViewDetail(' + escapeJsArg(s.id) + ')" style="background:rgba(155,48,255,0.10);color:#c89bff;border:1px solid rgba(155,48,255,0.40);padding:6px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">Ver</button>';
+    }
+    html += '</div>';
+
+    html += '</div>';
     return html;
+}
+
+function _calChangeWeek(delta) {
+    const wk = _CAL_STATE.weekKey;
+    if (!wk) return;
+    const m = /^(\d{4})-W(\d{2})$/.exec(wk);
+    if (!m) return;
+    let year = parseInt(m[1], 10);
+    let week = parseInt(m[2], 10) + delta;
+    if (week < 1) { week = 52; year--; }
+    if (week > 53) { week = 1; year++; }
+    loadCalendarPlan(year + '-W' + String(week).padStart(2, '0'));
+}
+
+async function _calToggleHistory() {
+    _CAL_STATE.historyOpen = !_CAL_STATE.historyOpen;
+    if (_CAL_STATE.historyOpen && _CAL_STATE.history.length === 0) {
+        try {
+            const r = await authFetch('/api/admin/calendar/history?limit=24');
+            const j = await r.json();
+            _CAL_STATE.history = j.plans || [];
+        } catch (e) { _CAL_STATE.history = []; }
+    }
+    document.getElementById('automationsContent').innerHTML = _renderCalendarPlan();
+}
+
+function _calOpenStratModal(dayIndex, editingId) {
+    const editing = editingId ? _calFindStrategy(editingId) : null;
+    let modal = document.getElementById('calStratModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'calStratModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:center;justify-content:center;padding:14px;overflow-y:auto;';
+    const teamsOpts = _CAL_STATE.teams.map(t => '<option value="' + escapeHtml(t) + '"' + (editing && (editing.targetTeams || []).includes(t) ? ' selected' : '') + '>' + escapeHtml(t) + '</option>').join('');
+    const segOpts = ['all','caliente','en_riesgo','perdido','inactivo','activo'].map(s => '<option value="' + s + '"' + (editing && editing.targetSegment === s ? ' selected' : (s === 'all' && !editing ? ' selected' : '')) + '>' + s.toUpperCase() + '</option>').join('');
+    const tierOpts = ['','VIP','ORO','PLATA','BRONCE','NUEVO'].map(t => '<option value="' + t + '"' + (editing && editing.targetTier === t ? ' selected' : '') + '>' + (t || '— todos —') + '</option>').join('');
+    const typeOpts = ['push','bonus','refund'].map(t => '<option value="' + t + '"' + (editing && editing.type === t ? ' selected' : '') + '>' + t + '</option>').join('');
+
+    modal.innerHTML =
+        '<div style="background:#1a0033;border:2px solid #00d4ff;border-radius:14px;max-width:560px;width:100%;padding:18px 16px;">' +
+        '<h3 style="color:#00d4ff;margin:0 0 6px;">' + (editing ? '✏ Editar' : '+ Nueva') + ' difusión · ' + _DAYS_FULL_CLIENT[dayIndex] + '</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Queda en <strong>pendiente</strong> hasta que toques 🚀 Lanzar.</div>' +
+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
+        '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Tipo</label><select id="cal_type" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin-top:3px;">' + typeOpts + '</select></div>' +
+        '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Bono %</label><input id="cal_bonusPct" type="number" min="0" max="100" step="5" value="' + (editing ? (editing.bonusPercent || 0) : 50) + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin-top:3px;"><div style="color:#666;font-size:10px;margin-top:2px;">Mínimo 50% — máximo 100%</div></div>' +
+        '</div>' +
+
+        '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Título</label>' +
+        '<input id="cal_title" type="text" maxlength="80" placeholder="Ej: 🎁 Bono del 50% para vos" value="' + (editing ? escapeHtml(editing.title || '') : '') + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:6px;margin:3px 0 8px;box-sizing:border-box;">' +
+
+        '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Mensaje</label>' +
+        '<textarea id="cal_body" maxlength="240" placeholder="Cargá hoy y te duplicamos lo que pongas. Hasta las 23:59." style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:6px;margin:3px 0 10px;box-sizing:border-box;min-height:60px;resize:vertical;">' + (editing ? escapeHtml(editing.body || '') : '') + '</textarea>' +
+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
+        '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Segmento</label><select id="cal_segment" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin-top:3px;">' + segOpts + '</select></div>' +
+        '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Tier</label><select id="cal_tier" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin-top:3px;">' + tierOpts + '</select></div>' +
+        '</div>' +
+
+        '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Equipos (vacío = todos)</label>' +
+        '<select id="cal_teams" multiple size="4" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin:3px 0 8px;">' + teamsOpts + '</select>' +
+
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;"><input id="cal_hasApp" type="checkbox" ' + (!editing || editing.hasAppOnly ? 'checked' : '') + '><label for="cal_hasApp" style="color:#aaa;font-size:11px;">Solo enviar a usuarios con app instalada (recomendado)</label></div>' +
+
+        '<div style="display:flex;gap:8px;">' +
+        '<button onclick="document.getElementById(\'calStratModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+        '<button onclick="_calSaveStrategy(' + dayIndex + ', ' + (editingId ? escapeJsArg(editingId) : 'null') + ')" style="flex:2;background:linear-gradient(135deg,#00d4ff,#0088ff);color:#000;border:none;padding:10px;border-radius:6px;font-weight:900;font-size:12px;cursor:pointer;">' + (editing ? 'Guardar cambios' : 'Crear y guardar') + '</button>' +
+        '</div>' +
+        '</div>';
+    document.body.appendChild(modal);
+}
+
+const _DAYS_FULL_CLIENT = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+
+function _calFindStrategy(id) {
+    const plan = _CAL_STATE.plan;
+    if (!plan) return null;
+    for (const d of plan.days) for (const s of (d.strategies || [])) if (s.id === id) return s;
+    return null;
+}
+
+async function _calSaveStrategy(dayIndex, editingId) {
+    const get = (id) => document.getElementById(id);
+    const body = {
+        type: get('cal_type').value,
+        title: get('cal_title').value.trim(),
+        body: get('cal_body').value.trim(),
+        bonusPercent: parseInt(get('cal_bonusPct').value, 10) || 0,
+        targetSegment: get('cal_segment').value,
+        targetTier: get('cal_tier').value || null,
+        targetTeams: Array.from(get('cal_teams').selectedOptions).map(o => o.value),
+        hasAppOnly: get('cal_hasApp').checked,
+        dayIndex
+    };
+    if (!body.title || !body.body) { alert('Falta título o mensaje'); return; }
+    if (body.bonusPercent > 0 && body.bonusPercent < 50) { alert('El bono mínimo es 50%'); return; }
+    const wk = _CAL_STATE.weekKey;
+    try {
+        const url = editingId
+            ? '/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(editingId)
+            : '/api/admin/calendar/week/' + encodeURIComponent(wk) + '/strategy';
+        const method = editingId ? 'PUT' : 'POST';
+        const r = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo guardar')); return; }
+        document.getElementById('calStratModal')?.remove();
+        await loadCalendarPlan(wk);
+    } catch (e) { alert('Error de conexión'); }
+}
+
+async function _calDeleteStrategy(id) {
+    if (!confirm('¿Eliminar esta difusión pendiente?')) return;
+    const wk = _CAL_STATE.weekKey;
+    try {
+        const r = await authFetch('/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo borrar')); return; }
+        await loadCalendarPlan(wk);
+    } catch (e) { alert('Error de conexión'); }
+}
+
+async function _calLaunchStrategy(id) {
+    const s = _calFindStrategy(id);
+    if (!s) return;
+    const msg = '¿LANZAR ahora?\n\n' +
+        'Título: ' + s.title + '\n' +
+        'Mensaje: ' + s.body.slice(0, 100) + (s.body.length > 100 ? '…' : '') + '\n\n' +
+        'Segmento: ' + (s.targetSegment || 'all').toUpperCase() +
+        (s.targetTier ? ' · ' + s.targetTier : '') +
+        (s.targetTeams && s.targetTeams.length ? ' · ' + s.targetTeams.length + ' equipos' : '') +
+        (s.bonusPercent > 0 ? '\nBono: ' + s.bonusPercent + '%' : '') +
+        '\nSolo con app: ' + (s.hasAppOnly ? 'Sí' : 'No');
+    if (!confirm(msg)) return;
+    const wk = _CAL_STATE.weekKey;
+    try {
+        const r = await authFetch('/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(id) + '/launch', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo lanzar')); return; }
+        alert('🚀 Lanzada\n\nElegibles: ' + d.eligible + '\nEnviadas: ' + d.sent + '\nFallidas: ' + (d.failed || 0) + '\n\n📊 En unas horas tocá "Refrescar rendimiento" para ver el ROI.');
+        await loadCalendarPlan(wk);
+    } catch (e) { alert('Error de conexión'); }
+}
+
+async function _calRefreshPerf(id) {
+    const wk = _CAL_STATE.weekKey;
+    try {
+        const r = await authFetch('/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(id) + '/refresh-performance', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo')); return; }
+        await loadCalendarPlan(wk);
+    } catch (e) { alert('Error de conexión'); }
+}
+
+function _calViewDetail(id) {
+    const s = _calFindStrategy(id);
+    if (!s) return;
+    const p = s.performance || {};
+    const lines = [
+        '📊 ' + s.title,
+        '',
+        'Estado: ' + s.status,
+        'Lanzada: ' + (s.launchedAt ? new Date(s.launchedAt).toLocaleString('es-AR') : '—'),
+        'Lanzada por: ' + (s.launchedBy || '—'),
+        '',
+        '— SEGMENTACION —',
+        'Segmento: ' + (s.targetSegment || 'all'),
+        'Tier: ' + (s.targetTier || '—'),
+        'Equipos: ' + ((s.targetTeams && s.targetTeams.length) ? s.targetTeams.join(', ') : '— todos —'),
+        'Solo con app: ' + (s.hasAppOnly ? 'sí' : 'no'),
+        'Bono: ' + (s.bonusPercent ? s.bonusPercent + '%' : (s.bonusFlatARS ? '$' + s.bonusFlatARS.toLocaleString('es-AR') : '—')),
+        '',
+        '— ENVIO —',
+        'Targets: ' + (s.targetUsernames || []).length,
+        'Enviadas: ' + (s.sentCount || 0),
+        'Entregadas: ' + (s.deliveredCount || 0),
+        'Fallidas: ' + (s.failedCount || 0),
+        '',
+        '— RENDIMIENTO POSTERIOR —',
+        'Días observados: ' + (p.daysObserved || 0),
+        'Respondieron: ' + (p.respondersCount || 0) + ' (' + (((p.responseRate || 0) * 100).toFixed(1)) + '%)',
+        'Cargas generadas: ' + (p.newDepositsCount || 0) + ' · $' + (p.newDepositsAmountARS || 0).toLocaleString('es-AR'),
+        'Bonos entregados: $' + (p.bonusGivenARS || 0).toLocaleString('es-AR') + ' (' + (p.bonusClaimedCount || 0) + ')',
+        'ROI: ' + (p.roi || 0).toFixed(2) + 'x',
+        'Veredicto: ' + (p.sentiment || 'sin datos').toUpperCase(),
+        '',
+        s.notes ? '📝 ' + s.notes : ''
+    ].filter(Boolean).join('\n');
+    alert(lines);
 }
 
 // Refresh global del badge cada 60s mientras la sesión está abierta.

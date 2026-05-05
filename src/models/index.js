@@ -41,6 +41,7 @@ const EngagementCopyPool = require('./EngagementCopyPool');
 const Raffle = require('./Raffle');
 const RaffleParticipation = require('./RaffleParticipation');
 const RaffleSpend = require('./RaffleSpend');
+const WeeklyCalendarPlan = require('./WeeklyCalendarPlan');
 
 
 /**
@@ -454,6 +455,7 @@ module.exports = {
   Raffle,
   RaffleParticipation,
   RaffleSpend,
+  WeeklyCalendarPlan,
 
   // Funciones de conexión
   connectDB,
