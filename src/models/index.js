@@ -38,6 +38,8 @@ const ActivePlayersSnapshot = require('./ActivePlayersSnapshot');
 const RefundReminderConfig = require('./RefundReminderConfig');
 const AutomationLaunch = require('./AutomationLaunch');
 const EngagementCopyPool = require('./EngagementCopyPool');
+const Raffle = require('./Raffle');
+const RaffleParticipation = require('./RaffleParticipation');
 
 
 /**
@@ -448,6 +450,8 @@ module.exports = {
   RefundReminderConfig,
   AutomationLaunch,
   EngagementCopyPool,
+  Raffle,
+  RaffleParticipation,
 
   // Funciones de conexión
   connectDB,

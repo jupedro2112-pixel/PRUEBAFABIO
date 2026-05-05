@@ -167,6 +167,7 @@ function showSection(sectionKey) {
         automations: 'automationsSection',
         automation: 'automationSection',
         refundReminders: 'refundRemindersSection',
+        raffles: 'rafflesSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
@@ -209,6 +210,8 @@ function showSection(sectionKey) {
         loadAutomationSection();
     } else if (sectionKey === 'refundReminders') {
         loadRefundRemindersSection();
+    } else if (sectionKey === 'raffles') {
+        loadRafflesAdmin();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -7905,6 +7908,145 @@ async function sendRefundReminderPush(type) {
         setTimeout(() => refreshRefundReminders(), 1500);
     } catch (e) { showToast('Error de conexión', 'error'); }
     finally { if (btn) { btn.disabled = false; } }
+}
+
+// =====================================================================
+// SECCIÓN 🎁 SORTEOS MENSUALES (admin)
+// =====================================================================
+
+let _rafflesAdminCache = null;
+
+async function loadRafflesAdmin() {
+    const c = document.getElementById('rafflesAdminContent');
+    if (!c) return;
+    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando sorteos…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles');
+        const d = await r.json();
+        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>'; return; }
+        _rafflesAdminCache = d.raffles || [];
+        c.innerHTML = _renderRafflesAdmin(_rafflesAdminCache);
+    } catch (e) { c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>'; }
+}
+
+function _renderRafflesAdmin(raffles) {
+    if (!raffles || raffles.length === 0) {
+        return '<div style="text-align:center;padding:40px;color:#888;">Sin sorteos. Se siembran automáticamente cuando un user abre la sección 🎁 SORTEOS en la app.</div>';
+    }
+    // Agrupar por monthKey (más reciente primero).
+    const byMonth = {};
+    for (const r of raffles) {
+        if (!byMonth[r.monthKey]) byMonth[r.monthKey] = [];
+        byMonth[r.monthKey].push(r);
+    }
+    const months = Object.keys(byMonth).sort((a, b) => b.localeCompare(a));
+
+    let html = '';
+    for (const mk of months) {
+        html += '<h3 style="color:#d4af37;font-size:14px;margin:20px 0 10px;text-transform:uppercase;letter-spacing:1px;">📅 ' + escapeHtml(mk) + '</h3>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">';
+        for (const r of byMonth[mk]) html += _renderRaffleAdminCard(r);
+        html += '</div>';
+    }
+    return html;
+}
+
+function _renderRaffleAdminCard(r) {
+    const drawDateStr = r.drawDate ? new Date(r.drawDate).toLocaleDateString('es-AR') : '—';
+    const statusBadge = r.status === 'active'    ? '<span style="background:rgba(37,211,102,0.20);color:#25d366;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">ACTIVO</span>' :
+                        r.status === 'closed'    ? '<span style="background:rgba(255,200,80,0.20);color:#ffc850;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">CERRADO</span>' :
+                        r.status === 'drawn'     ? '<span style="background:rgba(120,80,255,0.20);color:#b39dff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">SORTEADO</span>' :
+                                                   '<span style="background:rgba(255,80,80,0.20);color:#ff5050;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">CANCELADO</span>';
+
+    let imagePreview;
+    if (r.imageUrl) {
+        imagePreview = '<div style="width:100%;height:120px;background-image:url(\'' + escapeHtml(r.imageUrl) + '\');background-size:cover;background-position:center;border-radius:8px;"></div>';
+    } else {
+        imagePreview = '<div style="width:100%;height:120px;background:linear-gradient(135deg,#3d1f6e,#1a0033);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:50px;">' + (r.emoji || '🎁') + '</div>';
+    }
+
+    let html = '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">';
+    html += imagePreview;
+    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
+    html += '  <div><h4 style="margin:0;color:#ffd700;font-size:14px;">' + escapeHtml(r.prizeName) + '</h4><small style="color:#888;">' + escapeHtml(r.name) + '</small></div>';
+    html += '  ' + statusBadge;
+    html += '</div>';
+    html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;flex-wrap:wrap;gap:6px;">';
+    html += '  <span>👥 <strong style="color:#fff;">' + (r.participantCount || 0) + '</strong> participantes</span>';
+    html += '  <span>🎫 <strong style="color:#fff;">' + r.totalTickets + '</strong> tickets</span>';
+    html += '  <span>💰 <strong style="color:#fff;">$' + (r.entryCost||0).toLocaleString('es-AR') + '</strong> entrada</span>';
+    html += '  <span>📅 ' + escapeHtml(drawDateStr) + '</span>';
+    html += '</div>';
+    if (r.ticketsPerParticipantIfDrawnNow != null && r.status === 'active') {
+        html += '<small style="color:#ffd700;text-align:center;">' + r.ticketsPerParticipantIfDrawnNow + ' tickets/persona si se sortea ahora</small>';
+    }
+    if (r.status === 'drawn' && r.winnerUsername) {
+        html += '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:8px;padding:10px;text-align:center;">';
+        html += '  <div style="color:#b39dff;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🏆 Ganador</div>';
+        html += '  <div style="color:#ffd700;font-weight:900;font-size:16px;margin-top:4px;">' + escapeHtml(r.winnerUsername) + '</div>';
+        html += '  <small style="color:#888;">Ticket #' + r.winningTicketNumber + ' · sorteado ' + (r.drawnAt ? new Date(r.drawnAt).toLocaleString('es-AR') : '') + '</small>';
+        html += '</div>';
+    }
+    // Acciones.
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    html += '  <button onclick="editRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">✏️ Editar</button>';
+    html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">👥 Ver participantes</button>';
+    if (r.status === 'active' && (r.participantCount || 0) > 0) {
+        html += '  <button onclick="drawRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">🎰 Sortear</button>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+}
+
+async function editRaffle(id) {
+    const r = (_rafflesAdminCache || []).find(x => x.id === id);
+    if (!r) return;
+    const newImage = prompt('URL de imagen del premio (vacío = usar emoji):', r.imageUrl || '');
+    if (newImage === null) return;
+    const newDescription = prompt('Descripción:', r.description || '');
+    if (newDescription === null) return;
+    const newEmoji = prompt('Emoji fallback (si no hay imagen):', r.emoji || '🎁');
+    if (newEmoji === null) return;
+    try {
+        const resp = await authFetch('/api/admin/raffles/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                imageUrl: newImage.trim(),
+                description: newDescription,
+                emoji: newEmoji.trim() || '🎁'
+            })
+        });
+        const d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('✅ Sorteo actualizado', 'success');
+        loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function viewRaffleParticipants(id) {
+    try {
+        const r = await authFetch('/api/admin/raffles/' + id + '/participants');
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        const list = (d.participants || []).map((p, i) => (i+1) + '. ' + p.username + ' · entry $' + (p.entryCostPaid||0).toLocaleString('es-AR') + ' · netwin $' + (p.netwinAtEntry||0).toLocaleString('es-AR') + (p.isWinner ? ' 🏆' : '')).join('\n');
+        const tpp = d.ticketsPerParticipant || 0;
+        alert('🎁 ' + (d.raffle && d.raffle.prizeName) + '\n' +
+              '👥 ' + d.participantCount + ' participantes · 🎫 ' + tpp + ' tickets c/u\n\n' +
+              (list || '(sin participantes)'));
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function drawRaffle(id) {
+    if (!confirm('¿Sortear este sorteo ahora? El estado pasa a "sorteado" y no se puede deshacer.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + id + '/draw', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        alert('🎰 ¡SORTEADO!\n\n🏆 Ganador: ' + d.winnerUsername + '\n🎫 Ticket: #' + d.winningTicketNumber + ' de ' + (d.totalParticipants * d.ticketsPerParticipant) + '\n👥 ' + d.totalParticipants + ' participantes · ' + d.ticketsPerParticipant + ' tickets c/u');
+        loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
 }
 
 // 🧪 Modo test: dispara todas las notifs (engagement + samples de bonus)

@@ -73,6 +73,8 @@ const {
   WeeklyStrategyReport,
   ActivePlayersSnapshot,
   RefundReminderConfig,
+  Raffle,
+  RaffleParticipation,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -11243,6 +11245,344 @@ app.get('/api/admin/strategy/budget-status', authMiddleware, adminMiddleware, as
       totalRealUsers,
       excludedNoChannel: totalRealUsers - eligibleUsersCount,
       eligiblePct: totalRealUsers > 0 ? Math.round(100 * eligibleUsersCount / totalRealUsers) : 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// SORTEOS MENSUALES 🎁
+// ============================================================
+// Sorteos mensuales con prize pool fijo. Para participar el user paga
+// `entryCost` de su NETWIN LOSS del mes en curso (no plata real, son
+// "credits" del sorteo). El pool de tickets totales se reparte entre
+// participantes al hacer el draw.
+//
+// Defaults sembrados para el mes actual al primer GET /api/raffles/active:
+//   1. iPhone:        cost 20.000 / 500 tickets
+//   2. Caribe x2:     cost 50.000 / 1000 tickets
+//   3. Auto Gol Trend 2015: cost 100.000 / 500 tickets
+//
+// Endpoints:
+//   GET  /api/raffles/active                   — lista para el user (con budget)
+//   POST /api/raffles/:id/participate           — entrar al sorteo
+//   GET  /api/admin/raffles                     — admin: todos + counts
+//   GET  /api/admin/raffles/:id/participants    — admin: lista detallada
+//   PUT  /api/admin/raffles/:id                 — admin: editar (image, status, etc.)
+//   POST /api/admin/raffles/:id/draw            — admin: sortear ganador
+// ============================================================
+
+function _argMonthKey(date) {
+  // Devuelve "YYYY-MM" en TZ Argentina (UTC-3) sin DST.
+  const d = date ? new Date(date) : new Date();
+  const art = new Date(d.getTime() - 3 * 3600 * 1000);
+  return art.toISOString().slice(0, 7);
+}
+function _firstMondayOfNextMonth(monthKey) {
+  // monthKey "2026-05" → primer lunes de 2026-06 al mediodia ART.
+  const [y, m] = monthKey.split('-').map(Number);
+  // m es 1-indexed; el mes siguiente puede pasar a m=13 (diciembre + 1 = enero del año que viene).
+  const nextY = m === 12 ? y + 1 : y;
+  const nextM = m === 12 ? 1 : m + 1;
+  // Primer dia del mes proximo en UTC.
+  const firstOfNext = new Date(Date.UTC(nextY, nextM - 1, 1, 15, 0, 0)); // 12hs ART = 15hs UTC
+  // getUTCDay: 0=Dom, 1=Lun.
+  const dow = firstOfNext.getUTCDay();
+  const offset = (dow === 1) ? 0 : ((8 - dow) % 7);
+  firstOfNext.setUTCDate(firstOfNext.getUTCDate() + offset);
+  return firstOfNext;
+}
+
+const RAFFLE_DEFAULTS = [
+  {
+    name: 'Sorteo iPhone',
+    prizeName: 'iPhone (modelo del mes)',
+    description: 'Sorteamos un iPhone entre los que perdieron al menos $20.000 este mes. Cada $20.000 perdidos = 1 entrada. Pool: 500 tickets.',
+    emoji: '📱',
+    entryCost: 20000,
+    totalTickets: 500
+  },
+  {
+    name: 'Sorteo Viaje al Caribe (x2)',
+    prizeName: 'Viaje al Caribe para 2 personas',
+    description: 'Vacaciones para 2 al Caribe. Para entrar: perder al menos $50.000 este mes. Pool: 1000 tickets.',
+    emoji: '🏖️',
+    entryCost: 50000,
+    totalTickets: 1000
+  },
+  {
+    name: 'Sorteo Auto Gol Trend 2015',
+    prizeName: 'Auto Gol Trend 2015',
+    description: 'Te llevás un auto. Para entrar: perder al menos $100.000 este mes. Pool: 500 tickets.',
+    emoji: '🚗',
+    entryCost: 100000,
+    totalTickets: 500
+  }
+];
+
+async function _ensureRafflesSeededForMonth(monthKey) {
+  const existing = await Raffle.find({ monthKey }, { name: 1, _id: 0 }).lean();
+  const existingNames = new Set(existing.map(r => r.name));
+  const drawDate = _firstMondayOfNextMonth(monthKey);
+  for (const def of RAFFLE_DEFAULTS) {
+    if (existingNames.has(def.name)) continue;
+    await Raffle.create({
+      id: uuidv4(),
+      ...def,
+      monthKey,
+      drawDate,
+      status: 'active',
+      imageUrl: null
+    }).catch(err => logger.warn(`[raffles] seed ${def.name}: ${err.message}`));
+  }
+}
+
+async function _getUserRaffleBudget(username, monthKey) {
+  // Calcula netwin loss del mes desde DailyPlayerStats (Argentina TZ aprox).
+  const [yStr, mStr] = monthKey.split('-');
+  const y = parseInt(yStr), m = parseInt(mStr);
+  // Mes en TZ Argentina: 1 del mes 00:00 ART = -3h UTC del 30/31 anterior 21:00.
+  // Para simplicidad usamos UTC: 1 del mes 00:00 UTC al 1 del mes siguiente 00:00 UTC.
+  const monthStart = new Date(Date.UTC(y, m - 1, 1));
+  const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
+  const stats = await DailyPlayerStats.aggregate([
+    { $match: { username: String(username).toLowerCase(), dateUtc: { $gte: monthStart, $lt: monthEnd } } },
+    { $group: { _id: null, deposits: { $sum: '$depositSum' }, withdraws: { $sum: '$withdrawSum' } } }
+  ]);
+  const dep = (stats[0] && stats[0].deposits) || 0;
+  const wit = (stats[0] && stats[0].withdraws) || 0;
+  const netwinLoss = Math.max(0, dep - wit);
+
+  // Suma lo ya gastado en sorteos de este mes.
+  const ourRaffles = await Raffle.find({ monthKey }, { id: 1, _id: 0 }).lean();
+  const raffleIds = ourRaffles.map(r => r.id);
+  const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = await RaffleParticipation.find(
+    { raffleId: { $in: raffleIds }, username: { $regex: '^' + safe + '$', $options: 'i' } },
+    { raffleId: 1, entryCostPaid: 1, _id: 0 }
+  ).lean();
+  const spent = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
+  return {
+    netwinLoss,
+    spent,
+    available: Math.max(0, netwinLoss - spent),
+    participatingIn: parts.map(p => p.raffleId)
+  };
+}
+
+app.get('/api/raffles/active', authMiddleware, async (req, res) => {
+  try {
+    const monthKey = _argMonthKey();
+    await _ensureRafflesSeededForMonth(monthKey);
+    const raffles = await Raffle.find({ monthKey, status: { $in: ['active', 'closed'] } })
+      .sort({ entryCost: 1 }).lean();
+    const username = req.user.username;
+    const budget = await _getUserRaffleBudget(username, monthKey);
+    const participatingSet = new Set(budget.participatingIn);
+
+    // Counts por raffle.
+    const raffleIds = raffles.map(r => r.id);
+    const partsAgg = await RaffleParticipation.aggregate([
+      { $match: { raffleId: { $in: raffleIds } } },
+      { $group: { _id: '$raffleId', count: { $sum: 1 } } }
+    ]);
+    const countByRaffle = new Map(partsAgg.map(x => [x._id, x.count]));
+
+    const enriched = raffles.map(r => {
+      const participantCount = countByRaffle.get(r.id) || 0;
+      const ticketsPerParticipant = participantCount > 0 ? Math.floor(r.totalTickets / participantCount) : null;
+      return {
+        id: r.id,
+        name: r.name,
+        prizeName: r.prizeName,
+        description: r.description,
+        imageUrl: r.imageUrl,
+        emoji: r.emoji,
+        entryCost: r.entryCost,
+        totalTickets: r.totalTickets,
+        drawDate: r.drawDate,
+        status: r.status,
+        participantCount,
+        ticketsPerParticipantIfDrawnNow: ticketsPerParticipant,
+        userIsParticipating: participatingSet.has(r.id),
+        userCanAfford: budget.available >= r.entryCost
+      };
+    });
+
+    res.json({
+      success: true,
+      monthKey,
+      budget: {
+        netwinLoss: budget.netwinLoss,
+        spent: budget.spent,
+        available: budget.available
+      },
+      raffles: enriched
+    });
+  } catch (err) {
+    logger.error(`/api/raffles/active: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
+  try {
+    const username = req.user.username;
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
+
+    // Re-check budget en el momento (no en el momento del fetch del UI).
+    const budget = await _getUserRaffleBudget(username, raffle.monthKey);
+    if (budget.participatingIn.includes(raffle.id)) {
+      return res.status(400).json({ error: 'Ya estás participando en este sorteo.' });
+    }
+    if (budget.available < raffle.entryCost) {
+      return res.status(400).json({
+        error: `Te faltan créditos: necesitás $${raffle.entryCost.toLocaleString('es-AR')} y tenés $${budget.available.toLocaleString('es-AR')} disponibles este mes.`,
+        budget
+      });
+    }
+
+    try {
+      await RaffleParticipation.create({
+        id: uuidv4(),
+        raffleId: raffle.id,
+        username,
+        joinedAt: new Date(),
+        entryCostPaid: raffle.entryCost,
+        netwinAtEntry: budget.netwinLoss
+      });
+    } catch (e) {
+      if (e && e.code === 11000) {
+        return res.status(400).json({ error: 'Ya estás participando en este sorteo.' });
+      }
+      throw e;
+    }
+
+    const newBudget = await _getUserRaffleBudget(username, raffle.monthKey);
+    res.json({
+      success: true,
+      message: '¡Listo! Estás participando del sorteo de ' + raffle.prizeName + '.',
+      budget: { netwinLoss: newBudget.netwinLoss, spent: newBudget.spent, available: newBudget.available }
+    });
+  } catch (err) {
+    logger.error(`/api/raffles/participate: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffles = await Raffle.find({}).sort({ monthKey: -1, entryCost: 1 }).lean();
+    const ids = raffles.map(r => r.id);
+    const partsAgg = await RaffleParticipation.aggregate([
+      { $match: { raffleId: { $in: ids } } },
+      { $group: { _id: '$raffleId', count: { $sum: 1 }, sumPaid: { $sum: '$entryCostPaid' } } }
+    ]);
+    const byId = new Map(partsAgg.map(x => [x._id, x]));
+    const enriched = raffles.map(r => {
+      const p = byId.get(r.id) || { count: 0, sumPaid: 0 };
+      return {
+        ...r,
+        participantCount: p.count,
+        totalCreditsCommitted: p.sumPaid,
+        ticketsPerParticipantIfDrawnNow: p.count > 0 ? Math.floor(r.totalTickets / p.count) : null
+      };
+    });
+    res.json({ success: true, raffles: enriched });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    const parts = await RaffleParticipation.find({ raffleId: raffle.id })
+      .sort({ joinedAt: 1 }).lean();
+    const ticketsPerParticipant = parts.length > 0 ? Math.floor(raffle.totalTickets / parts.length) : 0;
+    res.json({
+      success: true,
+      raffle,
+      participantCount: parts.length,
+      ticketsPerParticipant,
+      participants: parts
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/raffles/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const update = {};
+    const b = req.body || {};
+    if (typeof b.name === 'string') update.name = b.name.slice(0, 100);
+    if (typeof b.prizeName === 'string') update.prizeName = b.prizeName.slice(0, 200);
+    if (typeof b.description === 'string') update.description = b.description.slice(0, 500);
+    if (typeof b.imageUrl === 'string') update.imageUrl = b.imageUrl.slice(0, 800);
+    if (typeof b.emoji === 'string') update.emoji = b.emoji.slice(0, 8);
+    if (Number.isFinite(Number(b.entryCost))) update.entryCost = Math.max(0, Math.round(Number(b.entryCost)));
+    if (Number.isFinite(Number(b.totalTickets))) update.totalTickets = Math.max(1, Math.round(Number(b.totalTickets)));
+    if (b.drawDate) {
+      const dd = new Date(b.drawDate);
+      if (!isNaN(dd.getTime())) update.drawDate = dd;
+    }
+    if (['active', 'closed', 'cancelled'].includes(b.status)) update.status = b.status;
+    const r = await Raffle.findOneAndUpdate({ id: req.params.id }, { $set: update }, { new: true });
+    if (!r) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    res.json({ success: true, raffle: r });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const raffle = await Raffle.findOne({ id: req.params.id });
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status === 'drawn') return res.status(400).json({ error: 'Este sorteo ya fue sorteado.' });
+
+    const parts = await RaffleParticipation.find({ raffleId: raffle.id }).lean();
+    if (parts.length === 0) {
+      return res.status(400).json({ error: 'No hay participantes.' });
+    }
+    const ticketsPerParticipant = Math.floor(raffle.totalTickets / parts.length);
+    if (ticketsPerParticipant <= 0) {
+      return res.status(400).json({ error: 'Hay más participantes que tickets totales.' });
+    }
+
+    // Asignacion: i-esimo participante recibe tickets [i*tpp+1, (i+1)*tpp].
+    // Numero ganador: random 1..(parts.length * tpp).
+    const usedTickets = parts.length * ticketsPerParticipant;
+    const winningTicket = 1 + Math.floor(Math.random() * usedTickets);
+    const winnerIdx = Math.floor((winningTicket - 1) / ticketsPerParticipant);
+    const winner = parts[winnerIdx];
+
+    raffle.status = 'drawn';
+    raffle.winnerUsername = winner.username;
+    raffle.winningTicketNumber = winningTicket;
+    raffle.drawnAt = new Date();
+    raffle.drawnBy = req.user.username || 'admin';
+    await raffle.save();
+
+    await RaffleParticipation.updateOne(
+      { id: winner.id },
+      { $set: { isWinner: true } }
+    );
+
+    res.json({
+      success: true,
+      winnerUsername: winner.username,
+      winningTicketNumber: winningTicket,
+      ticketsPerParticipant,
+      totalParticipants: parts.length,
+      raffle
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

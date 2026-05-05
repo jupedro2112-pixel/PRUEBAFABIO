@@ -106,6 +106,10 @@
                     <span>📅</span>
                     <span>Reembolsos pendientes</span>
                 </a>
+                <a href="#" class="nav-item" data-section="raffles">
+                    <span>🎁</span>
+                    <span>Sorteos mensuales</span>
+                </a>
                 <a href="#" class="nav-item" data-section="recovery">
                     <span>🔁</span>
                     <span>Recuperación <span id="recoveryBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
@@ -939,6 +943,30 @@
                 </div>
 
                 <div id="refundRemindersContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: SORTEOS MENSUALES 🎁
+                 Listado de sorteos por mes con counts, edición de
+                 imagen/copy, y botón de "sortear" que elige ganador.
+                 ============================================ -->
+            <section id="rafflesSection" class="section">
+                <div class="panel-header">
+                    <h2>🎁 Sorteos mensuales</h2>
+                    <button class="refresh-btn" onclick="loadRafflesAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#d4af37;font-weight:700;font-size:13px;">Sorteos del mes</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Cada mes se siembran automáticamente 3 sorteos (iPhone, Caribe, Auto).
+                        Editá la imagen, monto de entrada o cantidad de tickets si querés. El draw
+                        manual reparte los tickets entre los participantes y elige número ganador
+                        random.
+                    </p>
+                </div>
+                <div id="rafflesAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

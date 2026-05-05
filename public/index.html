@@ -1554,6 +1554,10 @@
                 <button id="plataformaBtn" class="plataforma-btn" title="Ir al Casino" onclick="VIP.ui.openPlatformModal()">
                     🎰 CASINO
                 </button>
+                <!-- BOTÓN SORTEOS - Sorteos mensuales -->
+                <button id="rafflesBtn" class="plataforma-btn" title="Sorteos mensuales" onclick="VIP.raffles && VIP.raffles.open()" style="background:linear-gradient(135deg,#d4af37 0%,#f7931e 100%);color:#000;">
+                    🎁 SORTEOS
+                </button>
                 <!-- BOTÓN CANAL INFORMATIVO - URL configurable desde admin -->
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
                     📢 CANAL INFORMATIVO
@@ -1706,6 +1710,24 @@
           <!-- Los botones se clonan aquí dinámicamente desde el header -->
         </div>
       </div>
+    </div>
+
+    <!-- Modal de sorteos mensuales 🎁 -->
+    <div id="rafflesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:25000;align-items:center;justify-content:center;padding:20px;overflow-y:auto;" onclick="if(event.target===event.currentTarget)VIP.raffles.close()">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;padding:24px 22px;position:relative;">
+            <button onclick="VIP.raffles.close()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>
+            <h2 style="color:#d4af37;text-align:center;margin:0 0 6px;font-size:22px;font-weight:900;letter-spacing:1px;">🎁 SORTEOS MENSUALES</h2>
+            <p style="color:#aaa;text-align:center;margin:0 0 18px;font-size:13px;">Tus pérdidas del mes te dan créditos para participar — el sorteo se hace el primer lunes del próximo mes.</p>
+            <div id="rafflesBudgetBar" style="display:none;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:14px;margin-bottom:18px;text-align:center;">
+                <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">💰 Tus créditos disponibles este mes</div>
+                <div style="color:#ffd700;font-size:26px;font-weight:900;" id="rafflesBudgetAvailable">$0</div>
+                <div style="color:#888;font-size:11px;margin-top:4px;" id="rafflesBudgetDetail">—</div>
+            </div>
+            <div id="rafflesList" style="display:flex;flex-direction:column;gap:14px;">
+                <div style="text-align:center;padding:30px;color:#888;">⏳ Cargando sorteos…</div>
+            </div>
+            <p style="color:#666;text-align:center;margin:18px 0 0;font-size:11px;line-height:1.5;">Cuanto más perdés, más créditos para participar. Si entrás con poca gente, vas a tener más números — los tickets totales se reparten entre todos.</p>
+        </div>
     </div>
 
     <!-- Modal Plataforma -->
@@ -2346,6 +2368,7 @@
     <script src="/js/socket.js" defer></script>
     <script src="/js/chat.js" defer></script>
     <script src="/js/refunds.js" defer></script>
+    <script src="/js/raffles.js" defer></script>
     <script src="/js/fire.js" defer></script>
     <script src="/js/notifications.js" defer></script>
     <script src="/js/ui.js" defer></script>
