@@ -213,6 +213,7 @@ function showSection(sectionKey) {
     } else if (sectionKey === 'raffles') {
         loadRafflesAdmin();
         loadSuspiciousRaffleParticipations();
+        loadRaffleAnalytics();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -8453,6 +8454,106 @@ async function unblockRaffleParticipation(participationId) {
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
+}
+
+// ============================================================
+// ANALITICA DE RENTABILIDAD: gente con perdida + conversion por sorteo
+// ============================================================
+async function loadRaffleAnalytics() {
+    const c = document.getElementById('raffleAnalyticsContent');
+    if (!c) return;
+    const monthInput = document.getElementById('raffleAnalyticsMonthKey');
+    let monthKey = monthInput && monthInput.value;
+    if (!monthKey) {
+        // Default al mes actual.
+        const d = new Date();
+        const tz = new Date(d.getTime() - 3 * 3600 * 1000); // ART
+        monthKey = tz.toISOString().slice(0, 7);
+        if (monthInput) monthInput.value = monthKey;
+    }
+    c.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">⏳ Calculando análisis…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/analytics?monthKey=' + encodeURIComponent(monthKey));
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        c.innerHTML = _renderRaffleAnalytics(d);
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">Error de conexión</div>';
+    }
+}
+
+function _renderRaffleAnalytics(d) {
+    const fmt = n => '$' + Number(n || 0).toLocaleString('es-AR');
+    let html = '';
+    // KPIs globales.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:10px;margin-bottom:14px;">';
+    html += _apChip('Jugadores con pérdida', Number(d.totalUsersWithLoss || 0).toLocaleString('es-AR'), '#ff8080', 'Universo del mes');
+    html += _apChip('Pérdida total', fmt(d.totalLossAmount), '#ff8080', 'Suma de netwin loss');
+    html += _apChip('Participaron en sorteos', Number(d.usersWithLossWhoParticipated || 0).toLocaleString('es-AR'), '#25d366', 'De los con pérdida');
+    html += _apChip('Conversión global', (d.globalConversionPct || 0) + '%', d.globalConversionPct >= 30 ? '#25d366' : '#ffc850', 'Participantes / con pérdida');
+    html += _apChip('Pérdida consumida', fmt(d.totalLossConsumedInRaffles), '#ffd700', 'En cupos de sorteos');
+    html += _apChip('Premio proyectado', fmt(d.totalProjectedPayout), '#ffc850', 'Si llenara así');
+    html += _apChip('Net proyectado', fmt(d.projectedNet), d.projectedNet >= 0 ? '#25d366' : '#ff5050', 'Consumido − payout');
+    html += _apChip('Premio máx (full)', fmt(d.totalMaxPayout), '#888', 'Si todos llenaran');
+    html += '</div>';
+
+    // Distribución por tier de pérdida.
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    html += '<div style="color:#fff;font-weight:700;font-size:13px;margin-bottom:8px;">📊 Distribución por tier de pérdida</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;">';
+    html += '<thead><tr style="color:#888;border-bottom:1px solid rgba(255,255,255,0.08);">';
+    html += '<th style="text-align:left;padding:6px;">Tier</th>';
+    html += '<th style="text-align:right;padding:6px;">Jugadores</th>';
+    html += '<th style="text-align:right;padding:6px;">Suma pérdida</th>';
+    html += '<th style="text-align:right;padding:6px;">% del total</th>';
+    html += '</tr></thead><tbody>';
+    const totalUsers = Number(d.totalUsersWithLoss || 0) + (d.lossDistribution.t0 ? d.lossDistribution.t0.count : 0);
+    for (const t of (d.tiers || [])) {
+        const row = d.lossDistribution[t.key] || { count: 0, sumLoss: 0 };
+        const pct = totalUsers > 0 ? Math.round((row.count / totalUsers) * 1000) / 10 : 0;
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+        html += '<td style="padding:6px;color:#fff;">' + escapeHtml(t.label) + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:#ffd700;">' + (row.count || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:#ff8080;">' + fmt(row.sumLoss) + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:#aaa;">' + pct + '%</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '</div>';
+
+    // Por sorteo: conversion + rentabilidad.
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;">';
+    html += '<div style="color:#fff;font-weight:700;font-size:13px;margin-bottom:8px;">🎁 Conversión y rentabilidad por sorteo</div>';
+    html += '<div style="overflow-x:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;min-width:680px;">';
+    html += '<thead><tr style="color:#888;border-bottom:1px solid rgba(255,255,255,0.08);">';
+    html += '<th style="text-align:left;padding:6px;">Sorteo</th>';
+    html += '<th style="text-align:right;padding:6px;">Cupos</th>';
+    html += '<th style="text-align:right;padding:6px;">Personas</th>';
+    html += '<th style="text-align:right;padding:6px;">Conv %</th>';
+    html += '<th style="text-align:right;padding:6px;">Pérdida consumida</th>';
+    html += '<th style="text-align:right;padding:6px;">Premio si gana</th>';
+    html += '<th style="text-align:right;padding:6px;">Net</th>';
+    html += '</tr></thead><tbody>';
+    for (const r of (d.raffles || [])) {
+        const netColor = r.projectedNet >= 0 ? '#25d366' : '#ff5050';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+        html += '<td style="padding:6px;color:#fff;font-weight:700;">' + escapeHtml(r.prizeName || r.name || '') + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:#ffd700;">' + (r.totalCupos || 0) + '/' + (r.totalTickets || 0) + ' <small style="color:#666;">(' + (r.fillPct || 0) + '%)</small></td>';
+        html += '<td style="padding:6px;text-align:right;color:#fff;">' + (r.uniqueUsers || 0) + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:' + (r.conversionPct >= 20 ? '#25d366' : '#ffc850') + ';">' + (r.conversionPct || 0) + '%</td>';
+        html += '<td style="padding:6px;text-align:right;color:#ff8080;">' + fmt(r.lossConsumed) + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:#aaa;">' + fmt(r.projectedPayout) + '</td>';
+        html += '<td style="padding:6px;text-align:right;color:' + netColor + ';font-weight:800;">' + fmt(r.projectedNet) + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    html += '</div>';
+
+    return html;
 }
 
 async function drawRaffle(id) {

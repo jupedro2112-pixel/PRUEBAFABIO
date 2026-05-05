@@ -1609,7 +1609,7 @@
                 <div style="flex:1;min-width:200px;">
                     <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:2px;font-weight:800;margin-bottom:4px;">🎁 SORTEOS MENSUALES</div>
                     <div style="color:#ffd700;font-size:18px;font-weight:900;line-height:1.3;margin-bottom:6px;">iPhone · Viaje al Caribe · Auto</div>
-                    <div style="color:#aaa;font-size:11px;line-height:1.5;">1 iPhone 17 + 1 Caribe + 1 Auto $10M. GRATIS para activos — alcanzá el apostado del mes y reclamá tu número.</div>
+                    <div style="color:#aaa;font-size:11px;line-height:1.5;">📱 iPhone · 🏖️ Caribe · 🚗 Auto $10M. Cada cupo se paga con tu pérdida del mes — hasta 50 por sorteo.</div>
                 </div>
                 <div style="font-size:46px;line-height:1;">📱🏖️🚗</div>
             </div>
@@ -1727,20 +1727,20 @@
     </div>
 
     <!-- Modal de sorteos mensuales 🎁 -->
-    <div id="rafflesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:25000;align-items:center;justify-content:center;padding:20px;overflow-y:auto;" onclick="if(event.target===event.currentTarget)VIP.raffles.close()">
-        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;padding:24px 22px;position:relative;">
+    <div id="rafflesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:25000;align-items:flex-start;justify-content:center;padding:8px;overflow-y:auto;-webkit-overflow-scrolling:touch;" onclick="if(event.target===event.currentTarget)VIP.raffles.close()">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:14px;max-width:760px;width:100%;margin:8px auto;max-height:none;padding:18px 14px;position:relative;box-sizing:border-box;">
             <button onclick="VIP.raffles.close()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>
             <h2 style="color:#d4af37;text-align:center;margin:0 0 6px;font-size:22px;font-weight:900;letter-spacing:1px;">🎁 SORTEOS MENSUALES</h2>
-            <p style="color:#aaa;text-align:center;margin:0 0 18px;font-size:13px;">1 iPhone 17 + 1 viaje al Caribe + 1 Auto $10M. <strong style="color:#d4af37;">GRATIS</strong> para clientes activos: alcanzaste el monto apostado del mes y reclamás tu número. Se sortea por las últimas 2 cifras del <strong style="color:#d4af37;">1° premio de la Lotería Nacional Nocturna</strong> del primer lunes del mes próximo (resultado oficial — el mismo número determina al ganador en cada sorteo).</p>
+            <p style="color:#aaa;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.5;">📱 iPhone $1.5M · 🏖️ Caribe x2 $4M · 🚗 Auto $10M. Cada cupo se paga con tu <strong style="color:#d4af37;">PÉRDIDA del mes</strong>. Hasta 50 cupos por sorteo. Sorteo por las últimas 2 cifras del <strong style="color:#d4af37;">1° premio Lotería Nacional Nocturna</strong> del primer lunes del mes próximo.</p>
             <div id="rafflesBudgetBar" style="display:none;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:14px;margin-bottom:18px;text-align:center;">
-                <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📊 Tu apostado este mes</div>
+                <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">💸 Tu pérdida disponible</div>
                 <div style="color:#ffd700;font-size:26px;font-weight:900;" id="rafflesBudgetAvailable">$0</div>
                 <div style="color:#888;font-size:11px;margin-top:4px;" id="rafflesBudgetDetail">—</div>
             </div>
             <div id="rafflesList" style="display:flex;flex-direction:column;gap:14px;">
                 <div style="text-align:center;padding:30px;color:#888;">⏳ Cargando sorteos…</div>
             </div>
-            <p style="color:#666;text-align:center;margin:18px 0 0;font-size:11px;line-height:1.5;">📱 iPhone: $100.000 apostado · 🏖️ Caribe: $250.000 · 🚗 Auto: $500.000. Cada categoría: 1 número por persona por mes. Si el cupo no se llena, el premio paga proporcional. Si la lotería saca un número fuera del rango vendido, se cicla al rango vendido (siempre hay ganador).</p>
+            <p style="color:#666;text-align:center;margin:14px 0 0;font-size:11px;line-height:1.5;">📱 iPhone $100k/cupo (100 cupos) · 🏖️ Caribe $50k/cupo (1000 cupos) · 🚗 Auto $100k/cupo (1000 cupos). Hasta 50 cupos por sorteo. Si el cupo no se llena, paga proporcional. Si la lotería saca fuera del rango vendido, se cicla.</p>
         </div>
     </div>
 

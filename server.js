@@ -11379,25 +11379,28 @@ function _firstMondayOfNextMonth(monthKey) {
 // los 3 sorteos, distintos ganadores ya que cada uno tiene su propio
 // pool de 100 numeros con users distintos).
 function _buildRaffleDefaults() {
-  // Todos los sorteos se determinan por el MISMO numero: las ultimas 2 cifras
-  // del 1° PREMIO de la Loteria Nacional NOCTURNA del primer lunes del mes
-  // proximo. Como cada sorteo tiene su propio cupo de 100 numeros con
-  // usuarios distintos, el mismo numero ganador determina UN ganador distinto
-  // por cada sorteo (ej. quien tenga el #62 en iPhone #1 gana el iPhone #1;
-  // quien tenga el #62 en Caribe gana el Caribe; etc.).
-  const COMMON_LOTTERY_RULE = 'Últimas 2 cifras del 1° PREMIO de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable por cualquiera. Si el número sale fuera del rango vendido, se cicla al rango vendido.';
+  // Modelo LOSS-CREDIT compartido: cada cupo "consume" un monto de PERDIDA del
+  // mes (netwin loss = depositSum - withdrawSum). El budget es compartido entre
+  // los 3 sorteos: si el user perdió $500k puede gastarlos como quiera (5 iPhone,
+  // 10 Caribes, 5 Autos, o cualquier combinación). Tope 50 cupos por sorteo
+  // por persona (acumulable).
+  //
+  // Todos se sortean por las ULTIMAS 2 CIFRAS del 1° PREMIO de la Loteria
+  // Nacional NOCTURNA del primer lunes del mes próximo. Mismo numero ganador
+  // para los 3 sorteos pero distintos ganadores (cada raffle tiene su pool).
+  const COMMON_LOTTERY_RULE = 'Últimas 2 cifras del 1° PREMIO de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si el número sale fuera del rango vendido, se cicla al rango vendido.';
+  const MAX_CUPOS_PER_USER = 50;
 
   const out = [];
-  // 1 iPhone, 1 Caribe, 1 Auto. Total 3 sorteos del mes.
   out.push({
     name: 'Sorteo iPhone 17',
     prizeName: 'iPhone 17',
-    description: 'Sorteamos un iPhone 17 — 100 números, GRATIS para clientes que apostaron $100.000+ este mes. 1 número por persona.',
+    description: 'iPhone 17 — 100 números a $100.000 de pérdida cada uno. Acumulable hasta 50 números por persona. Se descuenta de tu pérdida del mes.',
     emoji: '📱',
     entryMode: 'wagered',
-    entryCost: 0,
+    entryCost: 100000,
     wageredThreshold: 100000,
-    maxCuposPerUser: 1,
+    maxCuposPerUser: MAX_CUPOS_PER_USER,
     totalTickets: 100,
     prizeValueARS: 1500000,
     raffleType: 'iphone',
@@ -11407,13 +11410,13 @@ function _buildRaffleDefaults() {
   out.push({
     name: 'Sorteo Viaje al Caribe',
     prizeName: 'Viaje al Caribe para 2 personas',
-    description: 'Vacaciones para 2 al Caribe — 100 números, GRATIS para clientes que apostaron $250.000+ este mes. 1 número por persona.',
+    description: 'Viaje al Caribe x2 — 1000 números a $50.000 de pérdida cada uno. Acumulable hasta 50 números por persona. Se descuenta de tu pérdida del mes.',
     emoji: '🏖️',
     entryMode: 'wagered',
-    entryCost: 0,
-    wageredThreshold: 250000,
-    maxCuposPerUser: 1,
-    totalTickets: 100,
+    entryCost: 50000,
+    wageredThreshold: 50000,
+    maxCuposPerUser: MAX_CUPOS_PER_USER,
+    totalTickets: 1000,
     prizeValueARS: 4000000,
     raffleType: 'caribe',
     instanceNumber: 1,
@@ -11422,13 +11425,13 @@ function _buildRaffleDefaults() {
   out.push({
     name: 'Sorteo Auto $10.000.000',
     prizeName: 'Auto $10.000.000',
-    description: 'Te llevás un auto valorado en $10.000.000 — 100 números, GRATIS para clientes que apostaron $500.000+ este mes. 1 número por persona.',
+    description: 'Auto valuado en $10.000.000 — 1000 números a $100.000 de pérdida cada uno. Acumulable hasta 50 números por persona. Se descuenta de tu pérdida del mes.',
     emoji: '🚗',
     entryMode: 'wagered',
-    entryCost: 0,
-    wageredThreshold: 500000,
-    maxCuposPerUser: 1,
-    totalTickets: 100,
+    entryCost: 100000,
+    wageredThreshold: 100000,
+    maxCuposPerUser: MAX_CUPOS_PER_USER,
+    totalTickets: 1000,
     prizeValueARS: 10000000,
     raffleType: 'auto',
     instanceNumber: 1,
@@ -11561,10 +11564,13 @@ async function _ensureRafflesSeededForMonth(monthKey) {
 }
 
 async function _getUserRaffleBudget(username, monthKey) {
-  // Devuelve dos cosas para construir el estado de los sorteos:
-  //  - balance: saldo real en JUGAYGANA (para sorteos PAGOS — paga con saldo).
-  //  - monthlyDeposit: total cargado del mes (para sorteos EXCLUSIVOS —
-  //    threshold de elegibilidad sin costo).
+  // Modelo loss-credit COMPARTIDO entre los 3 sorteos:
+  //  - netwinLoss = depositSum - withdrawSum del mes (lo que el user efectivamente
+  //    perdió en JUGAYGANA). Es el budget que se "consume" al reclamar cupos.
+  //  - Cada cupo cuesta entryCost de loss credit (iPhone/Auto $100k, Caribe $50k).
+  //  - available = max(0, netwinLoss - spent).
+  //  - balance: se mantiene por si en el futuro hay sorteos pagos. Hoy no se usa
+  //    para gating de elegibilidad.
   let balance = 0;
   try {
     const balRes = await jugayganaMovements.getUserBalance(username);
@@ -11575,8 +11581,9 @@ async function _getUserRaffleBudget(username, monthKey) {
     logger.warn(`[raffles] getUserBalance(${username}): ${e.message}`);
   }
 
-  // Monto cargado del mes (para sorteos exclusivos: threshold de elegibilidad).
+  // Cargas y retiros del mes para calcular netwin loss.
   let monthlyDeposit = 0;
+  let monthlyWithdraw = 0;
   try {
     const [yStr, mStr] = monthKey.split('-');
     const y = parseInt(yStr), m = parseInt(mStr);
@@ -11584,12 +11591,14 @@ async function _getUserRaffleBudget(username, monthKey) {
     const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
     const stats = await DailyPlayerStats.aggregate([
       { $match: { username: String(username).toLowerCase(), dateUtc: { $gte: monthStart, $lt: monthEnd } } },
-      { $group: { _id: null, deposits: { $sum: '$depositSum' } } }
+      { $group: { _id: null, deposits: { $sum: '$depositSum' }, withdraws: { $sum: '$withdrawSum' } } }
     ]);
     monthlyDeposit = (stats[0] && stats[0].deposits) || 0;
+    monthlyWithdraw = (stats[0] && stats[0].withdraws) || 0;
   } catch (e) {
-    logger.warn(`[raffles] monthlyDeposit(${username}): ${e.message}`);
+    logger.warn(`[raffles] netwinLoss(${username}): ${e.message}`);
   }
+  const netwinLoss = Math.max(0, monthlyDeposit - monthlyWithdraw);
 
   const ourRaffles = await Raffle.find({ monthKey }, { id: 1, _id: 0 }).lean();
   const raffleIds = ourRaffles.map(r => r.id);
@@ -11612,11 +11621,12 @@ async function _getUserRaffleBudget(username, monthKey) {
     ticketNumbersByRaffle[p.raffleId] = p.ticketNumbers || [];
   }
   return {
-    balance,                   // saldo real en JUGAYGANA (para sorteos pagos)
-    monthlyDeposit,            // cargas del mes (para threshold de exclusivos)
-    spent,                     // total gastado en sorteos del mes
-    available: balance,        // disponible para nuevos cupos pagos = saldo
-    netwinLoss: monthlyDeposit, // alias backward-compat
+    balance,                   // saldo real en JUGAYGANA (info, no se usa para gating)
+    monthlyDeposit,            // cargas del mes
+    monthlyWithdraw,           // retiros del mes
+    netwinLoss,                // PERDIDA neta del mes = max(0, dep - wit) — el budget para cupos
+    spent,                     // total ya gastado en cupos de sorteos del mes
+    available: Math.max(0, netwinLoss - spent), // loss credit disponible
     participatingIn: parts.map(p => p.raffleId),
     cuposByRaffle,
     ticketNumbersByRaffle
@@ -11669,12 +11679,13 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       const userCupos = budget.cuposByRaffle[r.id] || 0;
       const userTicketNumbers = budget.ticketNumbersByRaffle[r.id] || [];
       const isWagered = r.entryMode === 'wagered';
-      const userMeetsThreshold = isWagered ? (budget.monthlyDeposit >= (r.wageredThreshold || 0)) : true;
-      const maxAffordableNow = isWagered
-        ? (userMeetsThreshold && userCupos === 0 ? 1 : 0)
-        : Math.floor(budget.available / Math.max(1, r.entryCost));
+      // Loss-credit model: alcanza pérdida del mes para 1 cupo más?
+      const userMeetsThreshold = budget.netwinLoss >= (r.wageredThreshold || r.entryCost || 0);
+      const cost = Number(r.entryCost) || 0;
+      const maxAffordableByLoss = cost > 0 ? Math.floor(budget.available / cost) : 0;
       const userCapReached = (r.maxCuposPerUser || 0) > 0 && userCupos >= r.maxCuposPerUser;
-      const maxBuyableNow = userCapReached ? 0 : Math.min(maxAffordableNow, cuposRemaining);
+      const remainingCapForUser = Math.max(0, (r.maxCuposPerUser || 0) - userCupos);
+      const maxBuyableNow = userCapReached ? 0 : Math.min(maxAffordableByLoss, cuposRemaining, remainingCapForUser);
       return {
         id: r.id,
         name: r.name,
@@ -11710,10 +11721,12 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         userCupos,
         userTicketNumbers,
         userIsParticipating: userCupos > 0,
-        userCanAfford: isWagered ? userMeetsThreshold : (budget.available >= r.entryCost),
+        userCanAfford: budget.available >= cost,
         userMaxBuyable: maxBuyableNow,
         userMeetsThreshold,
         userCapReached,
+        userMaxAffordableByLoss: maxAffordableByLoss,
+        userRemainingCap: remainingCapForUser,
         // Para sorteos exclusivos: mapa numero->username de los reclamados.
         claimedNumbers: isWagered ? (claimedByRaffle[r.id] || {}) : undefined
       };
@@ -11723,12 +11736,12 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       success: true,
       monthKey,
       budget: {
-        balance: budget.balance,
+        netwinLoss: budget.netwinLoss,
         spent: budget.spent,
         available: budget.available,
-        // backward-compat (clientes viejos):
         monthlyDeposit: budget.monthlyDeposit,
-        netwinLoss: budget.netwinLoss
+        monthlyWithdraw: budget.monthlyWithdraw,
+        balance: budget.balance
       },
       raffles: enriched
     });
@@ -11913,15 +11926,13 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
   }
 });
 
-// Reclamar un número en un sorteo EXCLUSIVO (entryMode='wagered').
+// Reclamar un número en un sorteo (modelo loss-credit).
 // Body: { number: 1..totalTickets } — el user elige su numero de los libres.
 // Reglas:
 //  - sorteo debe tener entryMode='wagered' y status='active'
-//  - user debe tener monthlyDeposit >= raffle.wageredThreshold
-//  - user debe tener menos cupos que raffle.maxCuposPerUser (default 1)
+//  - user debe tener netwinLoss disponible >= raffle.entryCost (loss credit)
+//  - user no puede pasar de raffle.maxCuposPerUser (50) en este sorteo
 //  - el numero pedido NO debe estar tomado por nadie
-//  - todo atómico: usamos updateOne con $addToSet en una participation
-//    pseudo-única por raffleId+username, y cap check via $expr.
 app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
   try {
     const username = req.user.username;
@@ -11929,47 +11940,31 @@ app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
     const raffle = await Raffle.findOne({ id: req.params.id }).lean();
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
-    if (raffle.entryMode !== 'wagered') return res.status(400).json({ error: 'Este sorteo no es de reclamo gratuito. Usá /participate.' });
+    if (raffle.entryMode !== 'wagered') return res.status(400).json({ error: 'Este sorteo no es de reclamo. Usá /participate.' });
     if (!Number.isFinite(number) || number < 1 || number > raffle.totalTickets) {
       return res.status(400).json({ error: `Elegí un número entre 1 y ${raffle.totalTickets}.` });
     }
 
-    // Verificar threshold de cargas del mes.
+    // Verificar BUDGET de loss credit (perdida del mes - ya gastado).
     const budget = await _getUserRaffleBudget(username, raffle.monthKey);
-    if (budget.monthlyDeposit < (raffle.wageredThreshold || 0)) {
+    const cost = Number(raffle.entryCost) || 0;
+    if (budget.available < cost) {
+      const need = Math.max(0, cost - budget.available);
       return res.status(403).json({
-        error: `Necesitás haber cargado al menos $${(raffle.wageredThreshold||0).toLocaleString('es-AR')} este mes. Llevás $${(budget.monthlyDeposit||0).toLocaleString('es-AR')}.`,
-        wageredThreshold: raffle.wageredThreshold,
-        monthlyDeposit: budget.monthlyDeposit
+        error: `Te faltan $${need.toLocaleString('es-AR')} de pérdida para este número. Cada cupo cuesta $${cost.toLocaleString('es-AR')}, tu pérdida del mes es $${(budget.netwinLoss||0).toLocaleString('es-AR')} y ya gastaste $${(budget.spent||0).toLocaleString('es-AR')} en sorteos.`,
+        entryCost: cost,
+        netwinLoss: budget.netwinLoss,
+        spent: budget.spent,
+        available: budget.available
       });
     }
 
-    // Cap por user — POR CATEGORÍA, no por instance. Un mismo user no puede
-    // tener cupos en varias instancias del mismo raffleType (ej. iPhone #1
-    // y iPhone #2 a la vez). 1 cupo por persona por categoría por mes.
+    // Cap por user POR SORTEO (acumulable hasta 50 por defecto).
     const maxPerUser = raffle.maxCuposPerUser || 1;
-    const sameTypeRaffles = await Raffle.find(
-      { monthKey: raffle.monthKey, raffleType: raffle.raffleType },
-      { id: 1, name: 1, _id: 0 }
-    ).lean();
-    const sameTypeIds = sameTypeRaffles.map(r => r.id);
-    const safeUser = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const userInCategory = await RaffleParticipation.findOne(
-      {
-        raffleId: { $in: sameTypeIds },
-        username: { $regex: '^' + safeUser + '$', $options: 'i' },
-        blocked: { $ne: true }
-      },
-      { raffleId: 1, ticketNumbers: 1, _id: 0 }
-    ).lean();
-    if (userInCategory) {
-      const otherR = sameTypeRaffles.find(r => r.id === userInCategory.raffleId);
-      const otherName = otherR ? otherR.name : 'otro sorteo';
-      const nums = (userInCategory.ticketNumbers || []).join(', ');
+    const userCupos = (budget.cuposByRaffle && budget.cuposByRaffle[raffle.id]) || 0;
+    if (userCupos >= maxPerUser) {
       return res.status(400).json({
-        error: `Ya tenés número en ${otherName}${nums ? ' (#' + nums + ')' : ''}. Solo se permite 1 cupo por persona en esta categoría por mes.`,
-        existingRaffleId: userInCategory.raffleId,
-        existingNumbers: userInCategory.ticketNumbers
+        error: `Ya tenés ${userCupos} números en este sorteo (máximo ${maxPerUser} por persona).`
       });
     }
 
@@ -11999,15 +11994,14 @@ app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
     let updated;
     try {
       if (existing) {
-        // Doble check del cap por user en el mismo doc.
         if ((existing.cuposCount || 0) >= maxPerUser) {
           await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -1 } });
-          return res.status(400).json({ error: `Ya tenés ${existing.cuposCount} número en este sorteo (máximo ${maxPerUser}).` });
+          return res.status(400).json({ error: `Ya tenés ${existing.cuposCount} números en este sorteo (máximo ${maxPerUser}).` });
         }
         existing.cuposCount = (existing.cuposCount || 0) + 1;
+        existing.entryCostPaid = (existing.entryCostPaid || 0) + cost;
         existing.lastBoughtAt = new Date();
         existing.ticketNumbers = (existing.ticketNumbers || []).concat([number]);
-        // entryCostPaid stays at 0 (gratis) o conserva valor si pagó algo antes.
         updated = await existing.save();
       } else {
         updated = await RaffleParticipation.create({
@@ -12018,12 +12012,11 @@ app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
           lastBoughtAt: new Date(),
           cuposCount: 1,
           ticketNumbers: [number],
-          entryCostPaid: 0,
-          netwinAtEntry: budget.monthlyDeposit
+          entryCostPaid: cost,
+          netwinAtEntry: budget.netwinLoss
         });
       }
     } catch (e) {
-      // Rollback del counter si falla la creacion.
       await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -1 } }).catch(() => {});
       throw e;
     }
@@ -12277,6 +12270,175 @@ app.post('/api/admin/raffles/participations/:participationId/unblock', authMiddl
     ).catch(() => {});
     res.json({ success: true, message: `Cupo de @${part.username} desbloqueado.` });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// ANALITICA DE RENTABILIDAD: cuanta gente perdio en el mes y
+// cuantos de esos participaron en cada sorteo. Permite estudiar
+// la conversion mes a mes.
+// ============================================================
+app.get('/api/admin/raffles/analytics', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const monthKey = (req.query && req.query.monthKey) || _argMonthKey();
+    const [yStr, mStr] = monthKey.split('-');
+    const y = parseInt(yStr), m = parseInt(mStr);
+    if (!Number.isFinite(y) || !Number.isFinite(m)) {
+      return res.status(400).json({ error: 'monthKey inválido (formato YYYY-MM).' });
+    }
+    const monthStart = new Date(Date.UTC(y, m - 1, 1));
+    const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
+
+    // 1) Computar perdida (netwin) por user en el mes.
+    const lossesAgg = await DailyPlayerStats.aggregate([
+      { $match: { dateUtc: { $gte: monthStart, $lt: monthEnd } } },
+      { $group: { _id: '$username', deposits: { $sum: '$depositSum' }, withdraws: { $sum: '$withdrawSum' } } },
+      { $project: {
+          netLoss: { $max: [0, { $subtract: ['$deposits', '$withdraws'] }] },
+          deposits: 1, withdraws: 1
+      }}
+    ]);
+    const lossByUser = new Map();
+    for (const x of lossesAgg) lossByUser.set(String(x._id).toLowerCase(), x);
+
+    // Tiers de pérdida para distribución.
+    const TIERS = [
+      { key: 't0',  label: 'Sin pérdida',     min: 0,         max: 1 },
+      { key: 't1',  label: '$1 — $50k',      min: 1,         max: 50000 },
+      { key: 't2',  label: '$50k — $100k',   min: 50000,     max: 100000 },
+      { key: 't3',  label: '$100k — $250k',  min: 100000,    max: 250000 },
+      { key: 't4',  label: '$250k — $500k',  min: 250000,    max: 500000 },
+      { key: 't5',  label: '$500k — $1M',    min: 500000,    max: 1000000 },
+      { key: 't6',  label: '$1M+',           min: 1000000,   max: Infinity }
+    ];
+    const tierFor = (loss) => {
+      for (const t of TIERS) {
+        if (loss >= t.min && loss < t.max) return t.key;
+      }
+      return 't0';
+    };
+    const distribution = {};
+    for (const t of TIERS) distribution[t.key] = { tier: t, count: 0, sumLoss: 0 };
+    let totalUsersWithLoss = 0;
+    let totalLossAmount = 0;
+    for (const x of lossesAgg) {
+      const tk = tierFor(x.netLoss);
+      distribution[tk].count++;
+      distribution[tk].sumLoss += x.netLoss;
+      if (x.netLoss > 0) {
+        totalUsersWithLoss++;
+        totalLossAmount += x.netLoss;
+      }
+    }
+
+    // 2) Para cada raffle del mes: contar participantes únicos, cupos,
+    //    sumLoss de los participantes, rentabilidad estimada.
+    const raffles = await Raffle.find(
+      { monthKey },
+      { id: 1, name: 1, prizeName: 1, raffleType: 1, instanceNumber: 1, entryCost: 1, totalTickets: 1, prizeValueARS: 1, status: 1, _id: 0 }
+    ).lean();
+    const raffleIds = raffles.map(r => r.id);
+    const parts = await RaffleParticipation.find(
+      { raffleId: { $in: raffleIds }, blocked: { $ne: true } },
+      { raffleId: 1, username: 1, cuposCount: 1, entryCostPaid: 1, _id: 0 }
+    ).lean();
+    const partsByRaffle = new Map();
+    for (const p of parts) {
+      if (!partsByRaffle.has(p.raffleId)) partsByRaffle.set(p.raffleId, []);
+      partsByRaffle.get(p.raffleId).push(p);
+    }
+    // Set de username → distinct raffles where they participated.
+    const participantsAnyRaffle = new Set();
+    for (const p of parts) participantsAnyRaffle.add(String(p.username).toLowerCase());
+
+    const raffleStats = raffles.map(r => {
+      const list = partsByRaffle.get(r.id) || [];
+      const uniqueUsers = new Set(list.map(p => String(p.username).toLowerCase())).size;
+      const totalCupos = list.reduce((s, p) => s + (p.cuposCount || 1), 0);
+      const lossConsumed = list.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
+      // Distribucion de los participantes por tier de perdida.
+      const tierBreakdown = {};
+      for (const t of TIERS) tierBreakdown[t.key] = { tier: t, count: 0 };
+      for (const p of list) {
+        const u = lossByUser.get(String(p.username).toLowerCase());
+        const loss = u ? u.netLoss : 0;
+        tierBreakdown[tierFor(loss)].count++;
+      }
+      // Rentabilidad: pérdida consumida vs valor proyectado del premio.
+      const fillPct = r.totalTickets > 0 ? totalCupos / r.totalTickets : 0;
+      const projectedPayout = Math.round((r.prizeValueARS || 0) * Math.min(1, fillPct));
+      const projectedNet = lossConsumed - projectedPayout;
+      // Conversion: % de la base con pérdida que participó.
+      const convRate = totalUsersWithLoss > 0 ? Math.round((uniqueUsers / totalUsersWithLoss) * 1000) / 10 : 0;
+      return {
+        id: r.id,
+        name: r.name,
+        prizeName: r.prizeName,
+        raffleType: r.raffleType,
+        instanceNumber: r.instanceNumber,
+        entryCost: r.entryCost || 0,
+        totalTickets: r.totalTickets,
+        prizeValueARS: r.prizeValueARS || 0,
+        status: r.status,
+        uniqueUsers,
+        totalCupos,
+        cuposRemaining: Math.max(0, (r.totalTickets || 0) - totalCupos),
+        fillPct: Math.round(fillPct * 1000) / 10,
+        lossConsumed,
+        projectedPayout,
+        projectedNet,
+        conversionPct: convRate,
+        tierBreakdown
+      };
+    });
+    // Ordenar por raffleType para mostrar consistente.
+    raffleStats.sort((a, b) => {
+      const order = { auto: 0, caribe: 1, iphone: 2 };
+      return (order[a.raffleType] ?? 9) - (order[b.raffleType] ?? 9);
+    });
+
+    // 3) Conversion global: cuantos users con perdida participaron en algún sorteo.
+    let usersWithLossWhoParticipated = 0;
+    for (const u of lossByUser.values()) {
+      if (u.netLoss > 0) {
+        // Find username key from id stored
+        // Note: lossesAgg used _id for username, lossByUser keyed by lowercase.
+      }
+    }
+    // Easier loop:
+    for (const x of lossesAgg) {
+      if (x.netLoss > 0 && participantsAnyRaffle.has(String(x._id).toLowerCase())) usersWithLossWhoParticipated++;
+    }
+    const globalConversion = totalUsersWithLoss > 0 ? Math.round((usersWithLossWhoParticipated / totalUsersWithLoss) * 1000) / 10 : 0;
+
+    // 4) Total prize commitment vs. consumed loss.
+    const totalLossConsumedInRaffles = raffleStats.reduce((s, r) => s + r.lossConsumed, 0);
+    const totalProjectedPayout = raffleStats.reduce((s, r) => s + r.projectedPayout, 0);
+    const totalMaxPayout = raffleStats.reduce((s, r) => s + r.prizeValueARS, 0);
+
+    res.json({
+      success: true,
+      monthKey,
+      // Universo de pérdida.
+      totalUsersWithLoss,
+      totalLossAmount,
+      lossDistribution: distribution,
+      tiers: TIERS,
+      // Conversión.
+      usersWithLossWhoParticipated,
+      globalConversionPct: globalConversion,
+      // Por sorteo.
+      raffles: raffleStats,
+      // Rentabilidad agregada.
+      totalLossConsumedInRaffles,
+      totalProjectedPayout,
+      totalMaxPayout,
+      projectedNet: totalLossConsumedInRaffles - totalProjectedPayout
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/analytics: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

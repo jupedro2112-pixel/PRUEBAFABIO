@@ -975,6 +975,29 @@
                 </div>
 
                 <!-- =====================================================
+                     ANALITICA DE RENTABILIDAD: gente con perdida + conversion
+                     ===================================================== -->
+                <div style="margin-top:24px;border-top:1px solid rgba(0,212,255,0.20);padding-top:18px;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
+                        <h3 style="color:#00d4ff;margin:0;font-size:15px;text-transform:uppercase;letter-spacing:1px;">📊 Análisis de rentabilidad</h3>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <input id="raffleAnalyticsMonthKey" type="month" style="padding:5px 8px;background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
+                            <button class="refresh-btn" onclick="loadRaffleAnalytics()" title="Refrescar">🔄</button>
+                        </div>
+                    </div>
+                    <div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:10px;margin-bottom:12px;">
+                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                            Cuántos jugadores perdieron este mes y cuántos de ellos participaron en cada sorteo.
+                            Por tier de pérdida, por sorteo, conversion %, pérdida consumida vs. premio proyectado
+                            (rentabilidad neta esperada). Cambiá el mes para comparar histórico.
+                        </p>
+                    </div>
+                    <div id="raffleAnalyticsContent" style="min-height:80px;">
+                        <div class="empty-state" style="padding:20px;text-align:center;color:#666;font-size:12px;">Hacé click en 🔄 para escanear</div>
+                    </div>
+                </div>
+
+                <!-- =====================================================
                      ANTI-FRAUDE: movimientos sospechosos en sorteos
                      ===================================================== -->
                 <div style="margin-top:24px;border-top:1px solid rgba(255,80,80,0.20);padding-top:18px;">
