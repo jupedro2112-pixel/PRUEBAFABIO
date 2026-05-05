@@ -130,7 +130,7 @@ const weeklyCalendarPlanSchema = new mongoose.Schema({
   },
 
   createdBy: { type: String, default: null }
-}, { timestamps: true });
+}, { timestamps: true, optimisticConcurrency: true });
 
 weeklyCalendarPlanSchema.index({ weekStartDate: -1 });
 

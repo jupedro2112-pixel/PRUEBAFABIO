@@ -125,6 +125,19 @@ const sensitiveLimiter = rateLimit({
   message: { error: 'Demasiados intentos. Intenta más tarde.' }
 });
 
+// Rate limiter para acciones admin que disparan pushes masivos (calendar
+// quick-launch, segment notify, draw, refresh-performance). Aunque ya
+// estan tras superAdminMiddleware, este limite evita que un bug de UI
+// dispare 50 lanzamientos en segundos. Tambien actua como safety net si
+// alguna sesion admin queda comprometida.
+const bulkLaunchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas acciones masivas en poco tiempo. Esperá un minuto.' }
+});
+
 // ============================================
 // IP-BASED SMS RATE LIMITING (in-memory Map)
 // ============================================
@@ -1209,6 +1222,17 @@ const authMiddleware = async (req, res, next) => {
 const adminMiddleware = (req, res, next) => {
   if (req.user.role !== 'admin' && req.user.role !== 'depositor' && req.user.role !== 'withdrawer') {
     return res.status(403).json({ error: 'Acceso denegado. Solo administradores.' });
+  }
+  next();
+};
+
+// superAdminMiddleware: solo `role === 'admin'` (excluye depositor/withdrawer).
+// Lo aplicamos a endpoints sensibles de marketing/calendar/segments/raffles
+// admin para evitar que un depositor o withdrawer pueda disparar pushes
+// masivos, sortear, cancelar sorteos, etc.
+const superAdminMiddleware = (req, res, next) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Acceso denegado. Solo el admin principal.' });
   }
   next();
 };
@@ -12155,25 +12179,56 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       logger.error(`[raffles-spend] insert fail ${username} ${raffle.name} $${totalCost} txid=${txId || 'n/a'}: ${logErr.message}`);
     }
 
+    // Persistencia de la participation. Si esto falla DESPUES del withdraw,
+    // tenemos un riesgo: el user pago pero no quedo registrado. Para
+    // mitigarlo: 3 reintentos con backoff. Si todos fallan, hacemos
+    // refund automatico via creditUserBalance + log de incidente.
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const existing = await RaffleParticipation.findOne({ raffleId, username: { $regex: '^' + safe + '$', $options: 'i' } });
-    if (existing) {
-      existing.cuposCount = (existing.cuposCount || 1) + buyQty;
-      existing.entryCostPaid = (existing.entryCostPaid || 0) + totalCost;
-      existing.lastBoughtAt = new Date();
-      existing.ticketNumbers = (existing.ticketNumbers || []).concat(assignedNumbers);
-      await existing.save();
-    } else {
-      await RaffleParticipation.create({
-        id: uuidv4(),
-        raffleId,
-        username,
-        joinedAt: new Date(),
-        lastBoughtAt: new Date(),
-        cuposCount: buyQty,
-        ticketNumbers: assignedNumbers,
-        entryCostPaid: totalCost
-      });
+    let participationOk = false;
+    let participationLastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const existing = await RaffleParticipation.findOne({ raffleId, username: { $regex: '^' + safe + '$', $options: 'i' } });
+        if (existing) {
+          existing.cuposCount = (existing.cuposCount || 1) + buyQty;
+          existing.entryCostPaid = (existing.entryCostPaid || 0) + totalCost;
+          existing.lastBoughtAt = new Date();
+          existing.ticketNumbers = (existing.ticketNumbers || []).concat(assignedNumbers);
+          await existing.save();
+        } else {
+          await RaffleParticipation.create({
+            id: uuidv4(),
+            raffleId,
+            username,
+            joinedAt: new Date(),
+            lastBoughtAt: new Date(),
+            cuposCount: buyQty,
+            ticketNumbers: assignedNumbers,
+            entryCostPaid: totalCost
+          });
+        }
+        participationOk = true;
+        break;
+      } catch (partErr) {
+        participationLastErr = partErr;
+        logger.warn(`[raffles] participation save fail ${username} ${raffle.name} attempt=${attempt}: ${partErr.message}`);
+        if (attempt < 3) await new Promise(r => setTimeout(r, 200 * attempt));
+      }
+    }
+    if (!participationOk) {
+      // Plata cobrada pero no podemos registrar. Refund + log incident.
+      logger.error(`[raffles] CRITICAL participation save FAIL after retries ${username} ${raffle.name} $${totalCost} txid=${txId || 'n/a'} err=${participationLastErr && participationLastErr.message} — emitiendo refund automatico`);
+      try {
+        await jugaygana.creditUserBalance(username, totalCost, `REFUND ${raffle.name} (error registro participation)`);
+        // Liberar los numeros reservados.
+        await Raffle.updateOne(
+          { id: raffleId },
+          { $pull: { claimedNumbers: { $in: reservedNumbers } }, $inc: { _ticketCounter: -buyQty } }
+        ).catch(() => {});
+      } catch (refundErr) {
+        logger.error(`[raffles] CRITICAL refund failed ${username} ${raffle.name} $${totalCost}: ${refundErr.message} — INCIDENT: revisar a mano`);
+      }
+      return res.status(500).json({ error: 'Hubo un error guardando tu compra. Te devolvimos el dinero. Probá de nuevo.' });
     }
 
     let cupoFilled = false;
@@ -12411,7 +12466,7 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
 // Nocturna (1er premio); el sistema mapea por modulo si el cupo esta
 // incompleto y busca al ganador por su ticketNumbers. Opcional:
 // (b) winnerUsername para forzar/confirmar el ganador.
-app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const raffle = await Raffle.findOne({ id: req.params.id });
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
@@ -12450,18 +12505,29 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       if (!isNaN(d.getTime())) lotteryDrawDate = d;
     }
 
-    raffle.status = 'drawn';
-    raffle.winnerUsername = winner.username;
-    raffle.winningTicketNumber = mappedNumber;
-    raffle.lotteryDrawNumber = lotteryNumber;
-    if (lotteryDrawSource) raffle.lotteryDrawSource = lotteryDrawSource;
-    if (lotteryDrawDate) raffle.lotteryDrawDate = lotteryDrawDate;
-    raffle.drawnAt = new Date();
-    raffle.drawnBy = req.user.username || 'admin';
-    // Default: el premio se acredita automaticamente. Solo si el credit
-    // falla queda prizeClaimable=true para que el user reintente.
-    raffle.prizeClaimable = false;
-    await raffle.save();
+    // Lock atomico: solo el primer caller que vea status active/closed Y
+    // winnerUsername=null pasa a 'drawn'. Si otro admin ya inicio el draw,
+    // este recibe null y aborta antes de creditar premio (evita doble
+    // acreditacion del premio si dos admins clickean simultaneamente).
+    const setFields = {
+      status: 'drawn',
+      winnerUsername: winner.username,
+      winningTicketNumber: mappedNumber,
+      lotteryDrawNumber: lotteryNumber,
+      drawnAt: new Date(),
+      drawnBy: req.user.username || 'admin',
+      prizeClaimable: false
+    };
+    if (lotteryDrawSource) setFields.lotteryDrawSource = lotteryDrawSource;
+    if (lotteryDrawDate) setFields.lotteryDrawDate = lotteryDrawDate;
+    const drawLock = await Raffle.findOneAndUpdate(
+      { id: raffle.id, status: { $in: ['active', 'closed'] }, winnerUsername: null },
+      { $set: setFields },
+      { new: true }
+    );
+    if (!drawLock) {
+      return res.status(409).json({ error: 'Este sorteo ya fue sorteado por otra sesión. Recargá el panel.' });
+    }
     await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
 
     // === AUTO-CREDIT del premio al ganador ===
@@ -12568,7 +12634,7 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
 // POST /api/admin/raffles/:id/cancel — cancela un sorteo y reembolsa a
 // participantes. Idempotente: si ya se cancelo antes, no reembolsa de nuevo
 // (cada participation tiene refundedAt como guard).
-app.post('/api/admin/raffles/:id/cancel', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/raffles/:id/cancel', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const raffle = await Raffle.findOne({ id: req.params.id });
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
@@ -12626,7 +12692,7 @@ app.post('/api/admin/raffles/:id/cancel', authMiddleware, adminMiddleware, async
 // POST /api/admin/raffles/cleanup — archiva 'drawn' y 'cancelled' y reseed.
 // Idempotente. Por defecto respeta la ventana de 24h del banner de
 // "Felicitaciones" del ganador. Si admin pasa ?force=1, archiva todo.
-app.post('/api/admin/raffles/cleanup', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/raffles/cleanup', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const force = String(req.query.force || req.body?.force || '').toLowerCase() === '1' ||
                   String(req.query.force || req.body?.force || '').toLowerCase() === 'true';
@@ -12697,7 +12763,7 @@ app.get('/api/admin/raffles/legacy', authMiddleware, adminMiddleware, async (req
 // activos/closed y reembolsa a sus participantes (los que pagaron). El
 // modelo viejo era de cargas/loss-credit asi que en muchos casos el
 // entryCostPaid es 0 (gratis). Solo se reembolsa si entryCostPaid > 0.
-app.post('/api/admin/raffles/purge-legacy', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/raffles/purge-legacy', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const legacyTypes = ['iphone', 'caribe', 'auto', 'other'];
     const targets = await Raffle.find(
@@ -12760,7 +12826,7 @@ app.post('/api/admin/raffles/purge-legacy', authMiddleware, adminMiddleware, asy
 
 // POST /api/admin/raffles/seed — fuerza el seed de los 4 sorteos. Util si el
 // boot todavia no corrio o algo se rompio. Idempotente.
-app.post('/api/admin/raffles/seed', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/raffles/seed', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     _invalidateSeedCache();
     const before = await Raffle.countDocuments({ status: 'active' });
@@ -15024,14 +15090,14 @@ app.get('/api/admin/players/segments', authMiddleware, adminMiddleware, async (r
     });
   } catch (err) {
     logger.error(`/api/admin/players/segments: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error obteniendo segmentos' });
   }
 });
 
 // POST /api/admin/players/segments/notify — manda push masivo a todos los
 // players de un segmento (filtrado por team/hasApp). Solo afecta a los con
 // app instalada (fcmToken). Si hasApp=no, se ignora (sin destino para push).
-app.post('/api/admin/players/segments/notify', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/players/segments/notify', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     const body = req.body || {};
     const segment = String(body.segment || '').toUpperCase();
@@ -15046,8 +15112,10 @@ app.post('/api/admin/players/segments/notify', authMiddleware, adminMiddleware, 
 
     // Reutilizamos /segments para filtrar (con hasApp=yes obligatorio).
     const psQuery = {};
-    if (tier) psQuery.tier = tier;
-    const allStats = await PlayerStats.find(psQuery).limit(2000).lean();
+    if (tier && ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO', 'SIN_DATOS'].includes(tier)) psQuery.tier = tier;
+    // Sort por realDeposits30d desc para que si el limit corta, queden los
+    // VIPs (no sea aleatorio por orden de insercion).
+    const allStats = await PlayerStats.find(psQuery).sort({ realDeposits30d: -1 }).limit(2000).lean();
     const usernames = allStats.map(p => p.username);
 
     const last7dStart = new Date(Date.now() - 7 * 24 * 3600 * 1000);
@@ -15100,7 +15168,7 @@ app.post('/api/admin/players/segments/notify', authMiddleware, adminMiddleware, 
     });
   } catch (err) {
     logger.error(`/api/admin/players/segments/notify: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error enviando notificación segmentada' });
   }
 });
 
@@ -15149,12 +15217,12 @@ function _weekStartFromKey(weekKey) {
 // quienes son. Copy pre-configurado pero editable.
 async function _ensureRefundPinnedDaily(plan) {
   let added = 0;
+  const weekKey = plan.weekKey;
   // El "lunes" es el primer dia de la semana (dayIndex=0). El sabado=5,
-  // domingo=6. Pre-llenamos copy especifico segun el dia de la semana
-  // — los lunes resaltamos el reembolso semanal (que se calcula los
-  // lunes), el dia 1 del mes el monthly. Pero el resto el daily.
-  // Como esto se ejecuta una vez al crear el plan, dejamos copy generico
-  // que cubre los 3 tipos.
+  // domingo=6. Pre-llenamos copy especifico segun el dia de la semana.
+  // Si dos GETs concurrentes invocan esto, el `findOneAndUpdate` con
+  // `$ne: true` en el array embebido garantiza que solo UNO logre el push
+  // del pinned por dia (el otro recibe null y lo skipea).
   for (let i = 0; i < 7; i++) {
     let day = plan.days.find(d => d.dayIndex === i);
     if (!day) {
@@ -15322,7 +15390,7 @@ async function _resolveStrategyAudience(strategy) {
   // ====== push/bonus: segmento custom + tier + equipo ======
   const psQuery = {};
   if (strategy.targetTier) psQuery.tier = strategy.targetTier;
-  const allStats = await PlayerStats.find(psQuery).limit(5000).lean();
+  const allStats = await PlayerStats.find(psQuery).sort({ realDeposits30d: -1 }).limit(5000).lean();
   if (allStats.length === 0) return { usernames: [], breakdown: { totalUnique: 0 }, details: [] };
 
   const usernames = allStats.map(p => p.username);
@@ -15390,17 +15458,24 @@ app.get('/api/admin/calendar/week', authMiddleware, adminMiddleware, async (req,
     const weekStart = _weekStartFromKey(weekKey);
     if (!weekStart) return res.status(400).json({ error: 'weekKey invalido (formato YYYY-Www)' });
 
+    // Upsert atomico para evitar race entre dos GETs concurrentes que
+    // ambos creaban el plan + 7 pinned. setOnInsert solo se aplica si
+    // el doc no existia.
+    await WeeklyCalendarPlan.findOneAndUpdate(
+      { weekKey },
+      {
+        $setOnInsert: {
+          weekKey,
+          weekStartDate: weekStart,
+          status: 'draft',
+          days: _DAY_LABELS.map((l, i) => ({ dayIndex: i, label: l, strategies: [] })),
+          summary: {},
+          createdBy: req.user.username || 'admin'
+        }
+      },
+      { upsert: true, new: true }
+    );
     let plan = await WeeklyCalendarPlan.findOne({ weekKey });
-    if (!plan) {
-      plan = new WeeklyCalendarPlan({
-        weekKey,
-        weekStartDate: weekStart,
-        status: 'draft',
-        days: _DAY_LABELS.map((l, i) => ({ dayIndex: i, label: l, strategies: [] })),
-        summary: {},
-        createdBy: req.user.username || 'admin'
-      });
-    }
     await _ensureRefundPinnedDaily(plan);
     _recalcPlanSummary(plan);
     await plan.save();
@@ -15408,11 +15483,11 @@ app.get('/api/admin/calendar/week', authMiddleware, adminMiddleware, async (req,
     res.json({ plan: plan.toObject() });
   } catch (err) {
     logger.error(`/api/admin/calendar/week: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error cargando plan semanal' });
   }
 });
 
-app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const weekKey = req.params.weekKey;
     const weekStart = _weekStartFromKey(weekKey);
@@ -15470,6 +15545,22 @@ app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, adminMidd
     if (!newStrat.title || !newStrat.body) {
       return res.status(400).json({ error: 'Faltan title y body' });
     }
+
+    // Cap defensivo: como la lista de strategies vive embebida en el doc
+    // del plan (ver schema), dejarla crecer sin limite haria que el doc
+    // se acerque al limite de 16MB de Mongo (sobre todo con
+    // targetUsernames de 5000 cada uno tras el lanzamiento). Limites
+    // generosos pero firmes — el flujo real espera pocas strategies/dia.
+    const STRATS_PER_DAY_MAX = 12;
+    const STRATS_PER_PLAN_MAX = 60;
+    if ((day.strategies || []).length >= STRATS_PER_DAY_MAX) {
+      return res.status(400).json({ error: `Máximo ${STRATS_PER_DAY_MAX} difusiones por día. Eliminá alguna pendiente para agregar otra.` });
+    }
+    const totalStrats = plan.days.reduce((acc, d) => acc + (d.strategies || []).length, 0);
+    if (totalStrats >= STRATS_PER_PLAN_MAX) {
+      return res.status(400).json({ error: `Máximo ${STRATS_PER_PLAN_MAX} difusiones por semana.` });
+    }
+
     day.strategies.push(newStrat);
     plan.markModified('days');
     _recalcPlanSummary(plan);
@@ -15478,11 +15569,11 @@ app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, adminMidd
     res.json({ success: true, strategy: newStrat, plan: plan.toObject() });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy add: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error guardando difusión' });
   }
 });
 
-app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const { weekKey, id } = req.params;
     const plan = await WeeklyCalendarPlan.findOne({ weekKey });
@@ -15523,7 +15614,7 @@ app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddle
     res.json({ success: true, strategy: found });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy edit: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error editando difusión' });
   }
 });
 
@@ -15538,7 +15629,7 @@ app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddle
 // Si tiers tiene mas de 1 entrada, hacemos 1 llamada por tier y unimos
 // los resultados (PlayerStats query es por tier exacto). Asi
 // "perdedores chicos" puede pegarle a BRONCE+PLATA en una sola accion.
-app.post('/api/admin/calendar/quick-launch', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/calendar/quick-launch', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     const b = req.body || {};
     const title = String(b.title || '').slice(0, 100).trim();
@@ -15579,7 +15670,16 @@ app.post('/api/admin/calendar/quick-launch', authMiddleware, adminMiddleware, as
         unionDetails = unionDetails.concat(aud.details || []);
       }
     }
-    const targets = [...allTargets];
+    // Cap a 5000 destinatarios por difusion. Truncamos ANTES de enviar
+    // para que sentCount/respondersCount/targetUsernames coincidan exactamente
+    // y los reportes de ROI sean correctos.
+    const MAX_TARGETS = 5000;
+    let targets = [...allTargets];
+    const totalEligible = targets.length;
+    if (totalEligible > MAX_TARGETS) {
+      logger.warn(`[quick-launch] capping audience from ${totalEligible} to ${MAX_TARGETS}`);
+      targets = targets.slice(0, MAX_TARGETS);
+    }
     if (targets.length === 0) {
       return res.status(400).json({ error: 'No hay destinatarios con esos filtros.', sample: [] });
     }
@@ -15636,7 +15736,7 @@ app.post('/api/admin/calendar/quick-launch', authMiddleware, adminMiddleware, as
       isPinned: false,
       launchedAt: new Date(),
       launchedBy: req.user.username || 'admin',
-      targetUsernames: targets.slice(0, 5000),
+      targetUsernames: targets,
       sentCount: (sendResult && sendResult.successCount) || 0,
       deliveredCount: (sendResult && sendResult.successCount) || 0,
       failedCount: (sendResult && sendResult.failureCount) || 0,
@@ -15658,7 +15758,7 @@ app.post('/api/admin/calendar/quick-launch', authMiddleware, adminMiddleware, as
     });
   } catch (err) {
     logger.error(`/api/admin/calendar/quick-launch: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error en quick-launch' });
   }
 });
 
@@ -15689,11 +15789,11 @@ app.get('/api/admin/calendar/strategy/:weekKey/:id/preview', authMiddleware, adm
     });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy preview: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error calculando audiencia' });
   }
 });
 
-app.delete('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const { weekKey, id } = req.params;
     const plan = await WeeklyCalendarPlan.findOne({ weekKey });
@@ -15714,38 +15814,66 @@ app.delete('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMid
     res.json({ success: true });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy delete: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error eliminando difusión' });
   }
 });
 
-app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     const { weekKey, id } = req.params;
-    const plan = await WeeklyCalendarPlan.findOne({ weekKey });
-    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
-    let found = null;
-    for (const d of plan.days) for (const s of d.strategies) if (s.id === id) found = s;
-    if (!found) return res.status(404).json({ error: 'Strategy no encontrada' });
-    if (found.status !== 'pendiente') {
-      return res.status(400).json({ error: `Strategy ya en estado "${found.status}", no se puede relanzar.` });
+
+    // Lock atomico: pasar de 'pendiente' a 'lanzando' en una sola operacion
+    // condicional. Si dos requests llegan simultaneas, solo una matchea
+    // (la otra recibe null) — la perdedora devuelve 409 sin disparar push.
+    const lockedPlan = await WeeklyCalendarPlan.findOneAndUpdate(
+      { weekKey, days: { $elemMatch: { strategies: { $elemMatch: { id, status: 'pendiente' } } } } },
+      { $set: { 'days.$[d].strategies.$[s].status': 'lanzando' } },
+      {
+        arrayFilters: [{ 'd.strategies.id': id }, { 's.id': id, 's.status': 'pendiente' }],
+        new: true
+      }
+    );
+    if (!lockedPlan) {
+      // Diagnostico: ya esta en otro estado, o no existe
+      const probe = await WeeklyCalendarPlan.findOne({ weekKey, 'days.strategies.id': id }, { 'days.strategies.$': 1 }).lean();
+      if (!probe) return res.status(404).json({ error: 'Plan o strategy no encontrada' });
+      return res.status(409).json({ error: 'La strategy ya está siendo lanzada o ya se lanzó. Recargá la página para ver el estado actual.' });
     }
+    const plan = lockedPlan;
+    let found = null;
+    for (const d of plan.days) for (const s of d.strategies) if (s.id === id) { found = s; break; }
+    if (!found) return res.status(500).json({ error: 'Strategy no encontrada tras lock' });
     if (!found.title || !found.body) {
+      // Restaurar estado y devolver error
+      await WeeklyCalendarPlan.updateOne(
+        { weekKey, 'days.strategies.id': id },
+        { $set: { 'days.$[d].strategies.$[s].status': 'pendiente' } },
+        { arrayFilters: [{ 'd.strategies.id': id }, { 's.id': id }] }
+      ).catch(() => {});
       return res.status(400).json({ error: 'Falta title o body en la strategy' });
     }
 
-    found.status = 'lanzando';
-    plan.markModified('days');
-    await plan.save();
-
     let targets = [];
     let sendResult = null;
+    let totalEligibleAud = 0;
     try {
       const aud = await _resolveStrategyAudience(found);
       targets = aud.usernames || [];
+      totalEligibleAud = targets.length;
+      // Cap a 5000 antes de enviar para que sentCount/responseRate sean
+      // calculables sobre la misma lista (storage = send target).
+      const MAX_TARGETS = 5000;
+      if (targets.length > MAX_TARGETS) {
+        logger.warn(`[calendar launch] capping audience from ${targets.length} to ${MAX_TARGETS} (strategy ${found.id})`);
+        targets = targets.slice(0, MAX_TARGETS);
+      }
       if (targets.length === 0) {
-        found.status = 'pendiente';
-        plan.markModified('days');
-        await plan.save();
+        // Restaurar a 'pendiente' atomicamente
+        await WeeklyCalendarPlan.updateOne(
+          { weekKey, 'days.strategies.id': id },
+          { $set: { 'days.$[d].strategies.$[s].status': 'pendiente' } },
+          { arrayFilters: [{ 'd.strategies.id': id }, { 's.id': id }] }
+        ).catch(() => {});
         return res.status(400).json({
           error: found.type === 'refund'
             ? 'No hay usuarios con reembolso pendiente para reclamar HOY (cruzando los tipos seleccionados, equipo y app).'
@@ -15773,16 +15901,20 @@ app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, adm
       );
     } catch (sendErr) {
       logger.error(`[calendar] launch ${id} error: ${sendErr.message}`);
-      found.status = 'pendiente';
-      plan.markModified('days');
-      await plan.save();
-      return res.status(500).json({ error: 'Error al enviar: ' + sendErr.message });
+      // Restaurar a pendiente atomicamente (no usar plan.save() porque
+      // el doc en memoria puede estar stale despues del lock).
+      await WeeklyCalendarPlan.updateOne(
+        { weekKey, 'days.strategies.id': id },
+        { $set: { 'days.$[d].strategies.$[s].status': 'pendiente' } },
+        { arrayFilters: [{ 'd.strategies.id': id }, { 's.id': id }] }
+      ).catch(() => {});
+      return res.status(500).json({ error: 'Error al enviar la notificacion. Intentalo de nuevo en unos segundos.' });
     }
 
     found.status = 'lanzado';
     found.launchedAt = new Date();
     found.launchedBy = req.user.username || 'admin';
-    found.targetUsernames = targets.slice(0, 5000);
+    found.targetUsernames = targets; // ya capeada arriba a MAX_TARGETS
     found.sentCount = (sendResult && sendResult.successCount) || 0;
     found.deliveredCount = found.sentCount;
     found.failedCount = (sendResult && sendResult.failureCount) || 0;
@@ -15813,11 +15945,11 @@ app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, adm
     });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy launch: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error lanzando difusión' });
   }
 });
 
-app.post('/api/admin/calendar/strategy/:weekKey/:id/refresh-performance', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/calendar/strategy/:weekKey/:id/refresh-performance', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const { weekKey, id } = req.params;
     const plan = await WeeklyCalendarPlan.findOne({ weekKey });
@@ -15838,8 +15970,16 @@ app.post('/api/admin/calendar/strategy/:weekKey/:id/refresh-performance', authMi
       return res.json({ success: true, performance: found.performance });
     }
 
-    // Cargas reales de los targets desde el lanzamiento.
-    const sinceUtc = new Date(since.getTime());
+    // DailyPlayerStats indexa por dateUtc = inicio de dia UTC. Si comparamos
+    // contra launchedAt directo, perdemos el dia del lanzamiento (porque el
+    // documento de ese dia tiene dateUtc < launchedAt). Solucion: bajar
+    // sinceUtc al inicio del dia ARG que contiene el lanzamiento — asi
+    // contamos todas las cargas de ese dia y los siguientes. Convertimos
+    // launchedAt a hora ARG, tomamos su 00:00 ARG, y volvemos a UTC.
+    const argShift = 3 * 3600 * 1000;
+    const argLaunch = new Date(since.getTime() - argShift);
+    const argDayStart = new Date(Date.UTC(argLaunch.getUTCFullYear(), argLaunch.getUTCMonth(), argLaunch.getUTCDate()));
+    const sinceUtc = new Date(argDayStart.getTime() + argShift); // 00:00 ARG = 03:00 UTC
     const depAgg = await DailyPlayerStats.aggregate([
       { $match: { username: { $in: targets }, dateUtc: { $gte: sinceUtc } } },
       { $group: {
@@ -15902,7 +16042,7 @@ app.post('/api/admin/calendar/strategy/:weekKey/:id/refresh-performance', authMi
     res.json({ success: true, performance: found.performance, status: found.status });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy perf: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Error refrescando rendimiento' });
   }
 });
 

@@ -4185,14 +4185,23 @@ async function loadCalendarPlan(weekKey) {
     }
 }
 
+// IMPORTANTE: este calculo debe coincidir con el server (_isoWeekKey en
+// server.js), que se basa en la hora ARG (UTC-3, sin DST). Si usaramos la
+// fecha local del cliente, en navegadores con TZ != ARG la semana podria
+// caer en un Y-Wnn distinto al que el server espera, generando upserts
+// duplicados o desincronizacion entre dashboard y calendario.
 function _isoWeekKeyClient(date) {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const argMs = (date ? date.getTime() : Date.now()) - 3 * 3600 * 1000;
+    const argDate = new Date(argMs);
+    const d = new Date(Date.UTC(argDate.getUTCFullYear(), argDate.getUTCMonth(), argDate.getUTCDate()));
     const dayNum = d.getUTCDay() || 7;
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
     return d.getUTCFullYear() + '-W' + String(weekNum).padStart(2, '0');
 }
+
+const _DAYS_FULL_CLIENT = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
 
 function _renderCalendarPlan() {
     const plan = _CAL_STATE.plan;
@@ -4306,7 +4315,7 @@ function _renderStrategyCard(s) {
     html += '</div></div>';
 
     html += '<div style="color:#aaa;font-size:10.5px;line-height:1.5;margin-bottom:6px;">';
-    html += '🎯 ' + (s.targetSegment === 'all' ? 'Todos' : s.targetSegment.toUpperCase());
+    html += '🎯 ' + (!s.targetSegment || s.targetSegment === 'all' ? 'Todos' : String(s.targetSegment).toUpperCase());
     if (s.targetTier) html += ' · ' + s.targetTier;
     if (s.targetTeams && s.targetTeams.length > 0) html += ' · ' + s.targetTeams.length + ' equipo' + (s.targetTeams.length === 1 ? '' : 's');
     if (s.bonusPercent > 0) html += ' · 🎁 ' + s.bonusPercent + '%';
@@ -4442,8 +4451,6 @@ function _calOpenStratModal(dayIndex, editingId) {
     }
 }
 
-const _DAYS_FULL_CLIENT = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
-
 function _calFindStrategy(id) {
     const plan = _CAL_STATE.plan;
     if (!plan) return null;
@@ -4475,6 +4482,9 @@ async function _calSaveStrategy(dayIndex, editingId) {
     }
     if (!body.title || !body.body) { alert('Falta título o mensaje'); return; }
     if (body.bonusPercent > 0 && body.bonusPercent < 50) { alert('El bono mínimo es 50%'); return; }
+    if (body.bonusPercent > 100) { alert('El bono máximo es 100%'); return; }
+    if (_calSaveStrategy._busy) return;
+    _calSaveStrategy._busy = true;
     const wk = _CAL_STATE.weekKey;
     try {
         const url = editingId
@@ -4487,6 +4497,7 @@ async function _calSaveStrategy(dayIndex, editingId) {
         document.getElementById('calStratModal')?.remove();
         await loadCalendarPlan(wk);
     } catch (e) { alert('Error de conexión'); }
+    finally { _calSaveStrategy._busy = false; }
 }
 
 async function _calDeleteStrategy(id) {
@@ -4503,15 +4514,19 @@ async function _calDeleteStrategy(id) {
 async function _calLaunchStrategy(id) {
     const s = _calFindStrategy(id);
     if (!s) return;
+    if (_calLaunchStrategy._busy) return; // Anti-double-click: la operacion lanza un push masivo y NO debe duplicarse
+    const body = s.body || '';
+    const title = s.title || '(sin título)';
     const msg = '¿LANZAR ahora?\n\n' +
-        'Título: ' + s.title + '\n' +
-        'Mensaje: ' + s.body.slice(0, 100) + (s.body.length > 100 ? '…' : '') + '\n\n' +
-        'Segmento: ' + (s.targetSegment || 'all').toUpperCase() +
+        'Título: ' + title + '\n' +
+        'Mensaje: ' + body.slice(0, 100) + (body.length > 100 ? '…' : '') + '\n\n' +
+        'Segmento: ' + String(s.targetSegment || 'all').toUpperCase() +
         (s.targetTier ? ' · ' + s.targetTier : '') +
         (s.targetTeams && s.targetTeams.length ? ' · ' + s.targetTeams.length + ' equipos' : '') +
         (s.bonusPercent > 0 ? '\nBono: ' + s.bonusPercent + '%' : '') +
         '\nSolo con app: ' + (s.hasAppOnly ? 'Sí' : 'No');
     if (!confirm(msg)) return;
+    _calLaunchStrategy._busy = true;
     const wk = _CAL_STATE.weekKey;
     try {
         const r = await authFetch('/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(id) + '/launch', { method: 'POST' });
@@ -4520,6 +4535,7 @@ async function _calLaunchStrategy(id) {
         alert('🚀 Lanzada\n\nElegibles: ' + d.eligible + '\nEnviadas: ' + d.sent + '\nFallidas: ' + (d.failed || 0) + '\n\n📊 En unas horas tocá "Refrescar rendimiento" para ver el ROI.');
         await loadCalendarPlan(wk);
     } catch (e) { alert('Error de conexión'); }
+    finally { _calLaunchStrategy._busy = false; }
 }
 
 async function _calRefreshPerf(id) {
@@ -4594,7 +4610,10 @@ async function _quickLaunchExecute() {
     };
     if (!body.title || !body.body) { alert('Falta título o mensaje'); return; }
     if (body.bonusPercent > 0 && body.bonusPercent < 50) { alert('El bono mínimo es 50%'); return; }
-    if (!confirm('¿Lanzar AHORA?\n\nSegmento: ' + body.targetSegment.toUpperCase() + (tiers.length ? ' · Tiers: ' + tiers.join('+') : ' · todos los tiers') + '\nBono: ' + (body.bonusPercent || 'sin bono') + (body.bonusPercent ? '%' : ''))) return;
+    if (body.bonusPercent > 100) { alert('El bono máximo es 100%'); return; }
+    if (!confirm('¿Lanzar AHORA?\n\nSegmento: ' + String(body.targetSegment || 'all').toUpperCase() + (tiers.length ? ' · Tiers: ' + tiers.join('+') : ' · todos los tiers') + '\nBono: ' + (body.bonusPercent || 'sin bono') + (body.bonusPercent ? '%' : ''))) return;
+    if (_quickLaunchExecute._busy) return;
+    _quickLaunchExecute._busy = true;
 
     try {
         const r = await authFetch('/api/admin/calendar/quick-launch', {
@@ -4609,6 +4628,7 @@ async function _quickLaunchExecute() {
     } catch (e) {
         alert('Error de conexión');
     }
+    finally { _quickLaunchExecute._busy = false; }
 }
 
 async function _calPreviewAudience(id) {
@@ -9579,7 +9599,10 @@ function _renderTopPlayers() {
 
     html += '<span style="margin-left:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Tier:</span>';
     html += '<select onchange="_setTopPlayersFilter(\'tier\', this.value)" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:11px;">';
-    for (const t of [{ k: '', l: '— todos —' }, { k: 'VIP', l: 'VIP' }, { k: 'ORO', l: 'ORO' }, { k: 'PLATA', l: 'PLATA' }, { k: 'BRONCE', l: 'BRONCE' }, { k: 'NUEVO', l: 'NUEVO' }, { k: 'SIN_DATOS', l: 'Sin datos' }]) {
+    // SIN_DATOS no aparece como filtro de notify: son usuarios sin estadisticas
+    // confiables, asi que mandarles push masivo segmentado por tier no tiene
+    // sentido (siempre quedan incluidos cuando tier='' = todos).
+    for (const t of [{ k: '', l: '— todos —' }, { k: 'VIP', l: 'VIP' }, { k: 'ORO', l: 'ORO' }, { k: 'PLATA', l: 'PLATA' }, { k: 'BRONCE', l: 'BRONCE' }, { k: 'NUEVO', l: 'NUEVO' }]) {
         const sel = _TOP_PLAYERS_STATE.tier === t.k ? ' selected' : '';
         html += '<option value="' + t.k + '"' + sel + '>' + t.l + '</option>';
     }
@@ -9723,10 +9746,13 @@ function _openTopPlayersNotifyModal(segment) {
     modal.id = 'topPlayersNotifyModal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:center;justify-content:center;padding:14px;';
     const segMeta = _TOP_PLAYERS_SEGMENTS.find(s => s.key === segment) || { label: segment, color: '#fff' };
-    const teamLabel = _TOP_PLAYERS_STATE.team ? ' del equipo ' + _TOP_PLAYERS_STATE.team : '';
+    // Escapamos team y segment porque vienen del nombre real del equipo
+    // (puede contener caracteres) y del query string. Si dejamos pasar
+    // raw a innerHTML, un nombre de equipo con `<script>` rompe la pagina.
+    const teamLabel = _TOP_PLAYERS_STATE.team ? ' del equipo ' + escapeHtml(_TOP_PLAYERS_STATE.team) : '';
     modal.innerHTML =
         '<div style="background:#1a0033;border:2px solid ' + segMeta.color + ';border-radius:12px;max-width:480px;width:100%;padding:18px;">' +
-        '  <h3 style="color:' + segMeta.color + ';margin:0 0 6px;font-size:16px;">📲 Notificar a ' + segMeta.label + teamLabel + '</h3>' +
+        '  <h3 style="color:' + segMeta.color + ';margin:0 0 6px;font-size:16px;">📲 Notificar a ' + escapeHtml(segMeta.label || '') + teamLabel + '</h3>' +
         '  <div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">Push masivo solo a los que tienen la app instalada con notificaciones activas. Los sin app NO reciben (para esos usá WhatsApp por la línea del equipo).</div>' +
         '  <label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Título</label>' +
         '  <input id="topNotifyTitle" type="text" maxlength="80" placeholder="Ej: Te extrañamos 🎁" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 10px;box-sizing:border-box;">' +
@@ -9746,6 +9772,8 @@ async function _sendTopPlayersNotify(segment) {
     const body = (document.getElementById('topNotifyBody')?.value || '').trim();
     if (!title || !body) { alert('Falta título o mensaje'); return; }
     if (!confirm('Enviar push a TODOS los jugadores ' + segment + (_TOP_PLAYERS_STATE.team ? ' del equipo ' + _TOP_PLAYERS_STATE.team : '') + ' con app?')) return;
+    if (_sendTopPlayersNotify._busy) return;
+    _sendTopPlayersNotify._busy = true;
     try {
         const r = await authFetch('/api/admin/players/segments/notify', {
             method: 'POST',
@@ -9765,4 +9793,5 @@ async function _sendTopPlayersNotify(segment) {
     } catch (e) {
         alert('Error de conexión');
     }
+    finally { _sendTopPlayersNotify._busy = false; }
 }
