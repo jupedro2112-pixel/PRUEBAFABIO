@@ -973,6 +973,28 @@
                 <div id="rafflesAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
+
+                <!-- =====================================================
+                     ANTI-FRAUDE: movimientos sospechosos en sorteos
+                     ===================================================== -->
+                <div style="margin-top:24px;border-top:1px solid rgba(255,80,80,0.20);padding-top:18px;">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;flex-wrap:wrap;gap:10px;">
+                        <h3 style="color:#ff8080;margin:0;font-size:15px;text-transform:uppercase;letter-spacing:1px;">🚨 Movimientos sospechosos</h3>
+                        <button class="refresh-btn" onclick="loadSuspiciousRaffleParticipations()" title="Refrescar">🔄</button>
+                    </div>
+                    <div style="background:rgba(255,80,80,0.05);border:1px solid rgba(255,80,80,0.30);border-radius:10px;padding:10px;margin-bottom:12px;">
+                        <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                            Detecta usuarios que cargan plata y la retiran casi entera (wash-trading) sólo
+                            para entrar al sorteo gratis sin jugar. Default: marca como sospechoso si
+                            <strong>retiró más del 85% de lo cargado</strong> con cargas
+                            <strong>≥ $50.000</strong>. Podés bloquear el cupo: el número vuelve al pool y
+                            el usuario queda fuera del sorteo (queda registrado quién bloqueó y por qué).
+                        </p>
+                    </div>
+                    <div id="suspiciousRafflesContent" style="min-height:80px;">
+                        <div class="empty-state" style="padding:20px;text-align:center;color:#666;font-size:12px;">Hacé click en 🔄 para escanear</div>
+                    </div>
+                </div>
             </section>
 
             <!-- ============================================

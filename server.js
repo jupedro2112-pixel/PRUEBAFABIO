@@ -11596,8 +11596,14 @@ async function _getUserRaffleBudget(username, monthKey) {
   const ourRaffles = await Raffle.find({ monthKey }, { id: 1, _id: 0 }).lean();
   const raffleIds = ourRaffles.map(r => r.id);
   const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Excluimos participations bloqueadas (anti-fraude): en la UI del user
+  // no aparecen como reclamadas y el cap por categoria las ignora.
   const parts = await RaffleParticipation.find(
-    { raffleId: { $in: raffleIds }, username: { $regex: '^' + safe + '$', $options: 'i' } },
+    {
+      raffleId: { $in: raffleIds },
+      username: { $regex: '^' + safe + '$', $options: 'i' },
+      blocked: { $ne: true }
+    },
     { raffleId: 1, entryCostPaid: 1, cuposCount: 1, ticketNumbers: 1, _id: 0 }
   ).lean();
   const spent = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
@@ -11630,10 +11636,11 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     const participatingSet = new Set(budget.participatingIn);
 
     // Counts por raffle: cantidad de cupos vendidos (suma de cuposCount)
-    // y cantidad de personas distintas que participaron.
+    // y cantidad de personas distintas que participaron. Excluimos
+    // participations bloqueadas (anti-fraude).
     const raffleIds = raffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([
-      { $match: { raffleId: { $in: raffleIds } } },
+      { $match: { raffleId: { $in: raffleIds }, blocked: { $ne: true } } },
       { $group: {
           _id: '$raffleId',
           totalCupos: { $sum: '$cuposCount' },
@@ -11645,9 +11652,10 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     // Para sorteos EXCLUSIVOS (entryMode='wagered') traemos el mapa
     // numero -> username de quien lo reclamó, para que el cliente pueda
     // mostrar la grilla con los tomados tachados y los libres clickeables.
+    // Tambien excluye bloqueados (esos numeros vuelven al pool).
     const wageredRaffleIds = raffles.filter(r => r.entryMode === 'wagered').map(r => r.id);
     const wageredClaims = wageredRaffleIds.length > 0 ? await RaffleParticipation.find(
-      { raffleId: { $in: wageredRaffleIds } },
+      { raffleId: { $in: wageredRaffleIds }, blocked: { $ne: true } },
       { raffleId: 1, username: 1, ticketNumbers: 1, _id: 0 }
     ).lean() : [];
     const claimedByRaffle = {};
@@ -11951,7 +11959,8 @@ app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
     const userInCategory = await RaffleParticipation.findOne(
       {
         raffleId: { $in: sameTypeIds },
-        username: { $regex: '^' + safeUser + '$', $options: 'i' }
+        username: { $regex: '^' + safeUser + '$', $options: 'i' },
+        blocked: { $ne: true }
       },
       { raffleId: 1, ticketNumbers: 1, _id: 0 }
     ).lean();
@@ -11966,10 +11975,10 @@ app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
       });
     }
 
-    // Verificar que el numero NO esté tomado. Atomic: si otra participation
-    // ya tiene este numero, no podemos asignarlo.
+    // Verificar que el numero NO esté tomado por una participation activa.
+    // Las bloqueadas (anti-fraude) liberan su numero al pool.
     const taken = await RaffleParticipation.findOne(
-      { raffleId: raffle.id, ticketNumbers: number },
+      { raffleId: raffle.id, ticketNumbers: number, blocked: { $ne: true } },
       { username: 1, _id: 0 }
     ).lean();
     if (taken) {
@@ -12104,6 +12113,176 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
   }
 });
 
+// ============================================================
+// ANTI-FRAUDE: deteccion de wash-trading en sorteos
+// ============================================================
+// Lista participaciones del mes en curso cuyo dueno tiene un patron
+// sospechoso de cargas seguidas de retiros casi totales. Threshold
+// configurable via query: ?withdrawalRatio=0.85&minDeposit=50000.
+// El admin revisa la lista y decide si bloquea cada cupo.
+app.get('/api/admin/raffles/suspicious-participations', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const monthKey = (req.query && req.query.monthKey) || _argMonthKey();
+    const minRatio = Math.max(0, Math.min(1, parseFloat(req.query && req.query.withdrawalRatio) || 0.85));
+    const minDeposit = Math.max(0, parseInt(req.query && req.query.minDeposit, 10) || 50000);
+
+    // Ventana del mes en UTC (mismo calc que budget).
+    const [yStr, mStr] = monthKey.split('-');
+    const y = parseInt(yStr), m = parseInt(mStr);
+    const monthStart = new Date(Date.UTC(y, m - 1, 1));
+    const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
+
+    // 1) Traer todas las participations del mes (no bloqueadas).
+    const ourRaffles = await Raffle.find({ monthKey }, { id: 1, name: 1, prizeName: 1, raffleType: 1, instanceNumber: 1, wageredThreshold: 1, _id: 0 }).lean();
+    const raffleIds = ourRaffles.map(r => r.id);
+    const raffleById = new Map(ourRaffles.map(r => [r.id, r]));
+    const parts = await RaffleParticipation.find(
+      { raffleId: { $in: raffleIds } },
+      { id: 1, raffleId: 1, username: 1, ticketNumbers: 1, cuposCount: 1, blocked: 1, blockedReason: 1, blockedAt: 1, blockedBy: 1, joinedAt: 1, _id: 0 }
+    ).lean();
+
+    // 2) Para cada user único, calcular cargas y retiros del mes.
+    const usernames = Array.from(new Set(parts.map(p => String(p.username).toLowerCase())));
+    const stats = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernames }, dateUtc: { $gte: monthStart, $lt: monthEnd } } },
+      { $group: {
+          _id: '$username',
+          deposits: { $sum: '$depositSum' },
+          withdraws: { $sum: '$withdrawSum' },
+          depositCount: { $sum: '$depositCount' },
+          withdrawCount: { $sum: '$withdrawCount' }
+      }}
+    ]);
+    const statsByUser = new Map(stats.map(s => [s._id, s]));
+
+    // 3) Construir flags por participation.
+    const flagged = [];
+    for (const p of parts) {
+      const stat = statsByUser.get(String(p.username).toLowerCase()) || { deposits: 0, withdraws: 0, depositCount: 0, withdrawCount: 0 };
+      const dep = stat.deposits || 0;
+      const wit = stat.withdraws || 0;
+      const ratio = dep > 0 ? (wit / dep) : 0;
+      const netLoss = Math.max(0, dep - wit);
+      const isSuspicious = (dep >= minDeposit && ratio >= minRatio);
+      if (!isSuspicious && !p.blocked) continue; // mostrar solo flagged + ya bloqueados
+      const r = raffleById.get(p.raffleId) || {};
+      flagged.push({
+        participationId: p.id,
+        raffleId: p.raffleId,
+        raffleName: r.name,
+        raffleType: r.raffleType,
+        prizeName: r.prizeName,
+        instanceNumber: r.instanceNumber,
+        wageredThreshold: r.wageredThreshold || 0,
+        username: p.username,
+        ticketNumbers: p.ticketNumbers || [],
+        cuposCount: p.cuposCount || 1,
+        joinedAt: p.joinedAt,
+        depositSum: dep,
+        withdrawSum: wit,
+        netLoss,
+        withdrawalRatio: Math.round(ratio * 1000) / 1000,
+        depositCount: stat.depositCount || 0,
+        withdrawCount: stat.withdrawCount || 0,
+        // Severity score: cuanto mayor el ratio + mayor monto, mas sospechoso.
+        suspicionScore: Math.round(ratio * 100 + Math.min(50, dep / 10000)),
+        // Estado del block.
+        blocked: !!p.blocked,
+        blockedReason: p.blockedReason || null,
+        blockedAt: p.blockedAt || null,
+        blockedBy: p.blockedBy || null
+      });
+    }
+    flagged.sort((a, b) => b.suspicionScore - a.suspicionScore);
+
+    res.json({
+      success: true,
+      monthKey,
+      thresholds: { withdrawalRatio: minRatio, minDeposit },
+      totalParticipations: parts.length,
+      flaggedCount: flagged.length,
+      blockedCount: flagged.filter(f => f.blocked).length,
+      participations: flagged
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/suspicious-participations: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bloqueo manual de una participation por anti-fraude. Libera los numeros
+// y la participation queda registrada como blocked con razon + admin.
+app.post('/api/admin/raffles/participations/:participationId/block', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const reason = String((req.body && req.body.reason) || '').slice(0, 300).trim() || 'Wash-trading detectado (cargas/retiros)';
+    const part = await RaffleParticipation.findOne({ id: req.params.participationId });
+    if (!part) return res.status(404).json({ error: 'Participación no encontrada.' });
+    if (part.blocked) return res.status(400).json({ error: 'Ya está bloqueada.' });
+    part.blocked = true;
+    part.blockedReason = reason;
+    part.blockedBy = req.user.username || 'admin';
+    part.blockedAt = new Date();
+    await part.save();
+    // Liberar los numeros: decrementar el counter del raffle.
+    await Raffle.updateOne(
+      { id: part.raffleId },
+      { $inc: { _ticketCounter: -(part.cuposCount || 1) } }
+    ).catch(() => {});
+    // Si el raffle estaba 'closed' por estar lleno, reabrirlo (ahora hay
+    // cupos libres de nuevo).
+    await Raffle.updateOne(
+      { id: part.raffleId, status: 'closed' },
+      { $set: { status: 'active' } }
+    ).catch(() => {});
+    logger.info(`[raffles] BLOCK ${part.username} en ${part.raffleId} (${part.cuposCount} cupo${part.cuposCount===1?'':'s'}) por ${req.user.username}: ${reason}`);
+    res.json({
+      success: true,
+      message: `Cupo de @${part.username} bloqueado. ${(part.ticketNumbers||[]).length} número${(part.ticketNumbers||[]).length===1?'':'s'} liberado${(part.ticketNumbers||[]).length===1?'':'s'} al pool.`,
+      releasedNumbers: part.ticketNumbers || []
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/participations/block: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Desbloqueo (rollback) de una participation bloqueada. Re-asigna numeros
+// si están libres; si alguno fue tomado por otro user mientras estaba
+// bloqueada, devuelve error.
+app.post('/api/admin/raffles/participations/:participationId/unblock', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const part = await RaffleParticipation.findOne({ id: req.params.participationId });
+    if (!part) return res.status(404).json({ error: 'Participación no encontrada.' });
+    if (!part.blocked) return res.status(400).json({ error: 'No está bloqueada.' });
+    // Verificar que los numeros sigan libres.
+    const conflicts = await RaffleParticipation.find(
+      { raffleId: part.raffleId, ticketNumbers: { $in: part.ticketNumbers || [] }, blocked: { $ne: true }, id: { $ne: part.id } },
+      { username: 1, ticketNumbers: 1, _id: 0 }
+    ).lean();
+    if (conflicts.length > 0) {
+      return res.status(409).json({
+        error: 'No se puede desbloquear: alguno de los números fue tomado por otro user mientras estaba bloqueado.',
+        conflicts
+      });
+    }
+    part.blocked = false;
+    part.blockedReason = null;
+    part.blockedBy = null;
+    part.blockedAt = null;
+    await part.save();
+    await Raffle.updateOne(
+      { id: part.raffleId },
+      { $inc: { _ticketCounter: +(part.cuposCount || 1) } }
+    ).catch(() => {});
+    res.json({ success: true, message: `Cupo de @${part.username} desbloqueado.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/admin/raffles/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
@@ -12163,12 +12342,15 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       });
     }
 
-    const parts = await RaffleParticipation.find({ raffleId: raffle.id })
+    // Para el draw EXCLUIMOS bloqueados — sus numeros volvieron al pool y
+    // no pueden ganar. Los participantes válidos son los que tienen
+    // cuposCount con blocked=false.
+    const parts = await RaffleParticipation.find({ raffleId: raffle.id, blocked: { $ne: true } })
       .sort({ joinedAt: 1 }).lean();
     let totalCuposSold = 0;
     for (const p of parts) totalCuposSold += (p.cuposCount || 1);
     if (totalCuposSold === 0) {
-      return res.status(400).json({ error: 'No hay cupos vendidos.' });
+      return res.status(400).json({ error: 'No hay cupos vendidos válidos (todas las participaciones están bloqueadas o el sorteo está vacío).' });
     }
 
     // Mapeo del número de lotería al rango vendido (siempre da en el blanco).

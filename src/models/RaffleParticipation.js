@@ -39,7 +39,20 @@ const raffleParticipationSchema = new mongoose.Schema({
   netwinAtEntry: { type: Number, default: 0 },
 
   // Resultado: si este user gano (con cualquiera de sus cupos).
-  isWinner: { type: Boolean, default: false }
+  isWinner: { type: Boolean, default: false },
+
+  // Anti-fraude: el admin puede BLOQUEAR un cupo si detecta wash-trading
+  // (carga grande seguida de retiro casi total para entrar al sorteo sin
+  // jugar). Cuando blocked=true, la participacion se ignora en:
+  //  - claimedNumbers / totalCuposSold del active endpoint
+  //  - el draw (no puede ganar)
+  //  - chequeo de cap por categoria (el user no se "auto-bloquea" para
+  //    reclamar otro distinto)
+  // El numero se libera al pool y otro user puede reclamarlo.
+  blocked: { type: Boolean, default: false, index: true },
+  blockedReason: { type: String, default: null, maxlength: 300 },
+  blockedBy: { type: String, default: null },
+  blockedAt: { type: Date, default: null }
 }, { timestamps: true });
 
 raffleParticipationSchema.index({ raffleId: 1, username: 1 }, { unique: true });

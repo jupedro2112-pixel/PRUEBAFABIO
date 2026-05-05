@@ -201,9 +201,20 @@ VIP.raffles = (function () {
         const monthlyDeposit = (_data.budget && _data.budget.monthlyDeposit) || 0;
 
         let html = '';
-        html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;text-align:center;">';
+        // Banner principal del modelo.
+        html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:10px;text-align:center;">';
         html += '  <div style="color:#d4af37;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1px;">🎁 SORTEOS GRATIS PARA CLIENTES ACTIVOS</div>';
-        html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;line-height:1.5;">Apostá con nosotros este mes y desbloqueá un número GRATIS en cada categoría. Se sortean por la Lotería Nacional Nocturna del primer lunes del mes próximo (resultado oficial — totalmente verificable).</div>';
+        html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;line-height:1.5;">Apostá con nosotros este mes y desbloqueá UN número GRATIS en cada categoría (📱 1 iPhone · 🏖️ 1 Caribe · 🚗 1 Auto). Se sortean por la <strong style="color:#fff;">Lotería Nacional NOCTURNA del primer lunes del mes próximo</strong> (resultado oficial — verificable por todos).</div>';
+        html += '</div>';
+        // Reglas + anti-fraude.
+        html += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:10px;padding:12px;margin-bottom:10px;">';
+        html += '  <div style="color:#ff8080;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;text-align:center;margin-bottom:6px;">⚠️ REGLAS IMPORTANTES — LEER ANTES DE PARTICIPAR</div>';
+        html += '  <ul style="margin:0;padding-left:18px;color:#ddd;font-size:11px;line-height:1.6;">';
+        html += '    <li><strong style="color:#fff;">Tope 1 número por cliente por categoría.</strong> No podés tener 2 iPhones, ni mezclar instancias.</li>';
+        html += '    <li><strong style="color:#ff8080;">Vamos a analizar el juego de cada uno.</strong> Si cargás y retirás todo sin jugar (wash-trading) para entrar gratis al sorteo, te bloqueamos el cupo y queda registrado. <span style="color:#fff;">No hagan nada raro.</span></li>';
+        html += '    <li><strong style="color:#25d366;">Para reclamar el premio: ser parte de la COMUNIDAD.</strong> Unirse al grupo es REQUISITO obligatorio para retirar el premio si ganás 🤝</li>';
+        html += '    <li>Cuando alcanzás el monto de cada categoría podés elegir tu número de la grilla. Tomados se ven tachados.</li>';
+        html += '  </ul>';
         html += '</div>';
 
         for (const t of groupOrder) {
@@ -263,7 +274,14 @@ VIP.raffles = (function () {
     }
 
     async function claimNumber(raffleId, number) {
-        if (!confirm('¿Reclamar el número ' + number + '?\n\n🎁 Es GRATIS — ya pagaste apostando este mes.\n🎫 Solo podés tener 1 número por categoría (no 2 iPhones).\n🏆 Si la Lotería Nacional Nocturna saca tu número, ganás.')) return;
+        if (!confirm(
+            '¿Reclamar el número ' + number + '?\n\n' +
+            '🎁 Es GRATIS — ya pagaste apostando este mes.\n' +
+            '🎫 Solo 1 número por persona en esta categoría.\n' +
+            '🏆 Si la Lotería Nacional NOCTURNA del primer lunes saca tu número, ganás.\n' +
+            '🤝 Para retirar el premio tenés que estar EN LA COMUNIDAD (es requisito).\n' +
+            '⚠️ Vamos a analizar el juego de cada uno: cargas/retiros sospechosos → cupo bloqueado.'
+        )) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/claim-number`, {
                 method: 'POST',

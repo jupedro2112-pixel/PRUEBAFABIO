@@ -212,6 +212,7 @@ function showSection(sectionKey) {
         loadRefundRemindersSection();
     } else if (sectionKey === 'raffles') {
         loadRafflesAdmin();
+        loadSuspiciousRaffleParticipations();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -8289,6 +8290,108 @@ function _kpiBlock(label, value, color) {
            '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">' + label + '</div>' +
            '  <div style="color:' + (color || '#fff') + ';font-size:16px;font-weight:900;margin-top:3px;">' + value + '</div>' +
            '</div>';
+}
+
+// ============================================================
+// ANTI-FRAUDE: lista de participaciones sospechosas (wash-trading)
+// ============================================================
+async function loadSuspiciousRaffleParticipations() {
+    const c = document.getElementById('suspiciousRafflesContent');
+    if (!c) return;
+    c.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">⏳ Escaneando movimientos del mes…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/suspicious-participations');
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        if (!d.participations || d.participations.length === 0) {
+            c.innerHTML = '<div style="background:rgba(37,211,102,0.05);border:1px solid rgba(37,211,102,0.30);border-radius:10px;padding:20px;text-align:center;color:#25d366;font-weight:700;">✅ Sin movimientos sospechosos · ' + (d.totalParticipations || 0) + ' participaciones del mes revisadas</div>';
+            return;
+        }
+        let html = '<div style="display:flex;justify-content:space-between;font-size:11px;color:#888;margin-bottom:8px;flex-wrap:wrap;gap:6px;">';
+        html += '  <span>📊 <strong style="color:#fff;">' + d.flaggedCount + '</strong> flagged de ' + d.totalParticipations + ' participaciones</span>';
+        html += '  <span>🚫 <strong style="color:#ff5050;">' + d.blockedCount + '</strong> ya bloqueados</span>';
+        html += '  <span>⚙️ Threshold: retiro > <strong style="color:#fff;">' + Math.round((d.thresholds && d.thresholds.withdrawalRatio || 0.85) * 100) + '%</strong>, cargas ≥ $' + (d.thresholds && d.thresholds.minDeposit || 50000).toLocaleString('es-AR') + '</span>';
+        html += '</div>';
+        html += '<div style="overflow-x:auto;background:rgba(0,0,0,0.30);border:1px solid rgba(255,80,80,0.20);border-radius:10px;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11px;color:#ddd;">';
+        html += '<thead><tr style="background:rgba(255,80,80,0.10);color:#ff8080;">';
+        html += '<th style="text-align:left;padding:8px;">Jugador</th>';
+        html += '<th style="text-align:left;padding:8px;">Sorteo</th>';
+        html += '<th style="text-align:left;padding:8px;">Número</th>';
+        html += '<th style="text-align:right;padding:8px;">Cargó</th>';
+        html += '<th style="text-align:right;padding:8px;">Retiró</th>';
+        html += '<th style="text-align:right;padding:8px;">Quedó</th>';
+        html += '<th style="text-align:right;padding:8px;">% Retiro</th>';
+        html += '<th style="text-align:left;padding:8px;">Acción</th>';
+        html += '</tr></thead><tbody>';
+        for (const p of d.participations) {
+            const ratioPct = Math.round((p.withdrawalRatio||0) * 1000) / 10;
+            const ratioColor = ratioPct >= 95 ? '#ff5050' : (ratioPct >= 85 ? '#ff8080' : '#ffc850');
+            const numbers = (p.ticketNumbers||[]).join(', ');
+            const blockedBadge = p.blocked
+                ? '<div style="background:rgba(255,80,80,0.20);color:#ff5050;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:800;display:inline-block;">🚫 BLOQUEADO</div>'
+                : '';
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (p.blocked ? 'opacity:0.6;background:rgba(255,80,80,0.05);' : '') + '">';
+            html += '  <td style="padding:8px;"><strong style="color:#fff;">' + escapeHtml(p.username) + '</strong>' + (p.blocked ? '<br>' + blockedBadge : '') + '</td>';
+            html += '  <td style="padding:8px;color:#ddd;">' + escapeHtml(p.prizeName || p.raffleName || '') + (p.instanceNumber > 1 ? ' #' + p.instanceNumber : '') + '</td>';
+            html += '  <td style="padding:8px;color:#ffd700;font-family:monospace;">' + escapeHtml('#' + numbers) + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#25d366;">$' + (p.depositSum||0).toLocaleString('es-AR') + ' <small style="color:#666;">(' + (p.depositCount||0) + ')</small></td>';
+            html += '  <td style="padding:8px;text-align:right;color:#ff8080;">$' + (p.withdrawSum||0).toLocaleString('es-AR') + ' <small style="color:#666;">(' + (p.withdrawCount||0) + ')</small></td>';
+            html += '  <td style="padding:8px;text-align:right;color:#ddd;">$' + (p.netLoss||0).toLocaleString('es-AR') + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:' + ratioColor + ';font-weight:800;">' + ratioPct + '%</td>';
+            html += '  <td style="padding:8px;">';
+            if (p.blocked) {
+                html += '<button onclick="unblockRaffleParticipation(\'' + p.participationId + '\')" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;font-weight:700;" title="' + escapeHtml(p.blockedReason || '') + '">↩️ Desbloquear</button>';
+            } else {
+                html += '<button onclick="blockRaffleParticipation(\'' + p.participationId + '\', \'' + escapeHtml(p.username) + '\')" style="background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.40);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;font-weight:700;">🚫 Bloquear</button>';
+            }
+            html += '  </td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">Error de conexión</div>';
+    }
+}
+
+async function blockRaffleParticipation(participationId, username) {
+    const reason = prompt('¿Por qué bloqueás a @' + username + '?\n(Default: "Wash-trading detectado")', 'Wash-trading: cargó y retiró casi todo para entrar al sorteo sin jugar');
+    if (reason === null) return;
+    if (!confirm('⚠️ Bloquear el cupo de @' + username + '?\n\nEl número vuelve al pool (otro user puede reclamarlo). Esto NO se puede deshacer si alguien lo reclama después.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/participations/' + participationId + '/block', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: reason || 'Wash-trading detectado' })
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ ' + (d.message || 'Cupo bloqueado'), 'success');
+        loadSuspiciousRaffleParticipations();
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function unblockRaffleParticipation(participationId) {
+    if (!confirm('¿Desbloquear esta participación? Se devuelven los números al user.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/participations/' + participationId + '/unblock', {
+            method: 'POST'
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Desbloqueado', 'success');
+        loadSuspiciousRaffleParticipations();
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 async function drawRaffle(id) {
