@@ -6113,20 +6113,14 @@ app.get('/', (req, res) => {
   }
 });
 
-// Landing publica del bono $2.000 (campaña promo2k). El admin manda gente
-// aca desde redes sociales y el contador en /api/admin/landings/promo2k/stats
-// muestra cuanta gente entro. La landing en si registra el visit-ping desde
-// el browser via fetch al endpoint publico.
+// Legacy: el primer diseño servia una landing aparte en /promo2k. Ahora
+// la promo vive directamente en el home (banner sobre el formulario de
+// login) y el tracking se dispara desde el script en index.html cuando
+// detecta ?c=promo2k. Mantenemos esta ruta como redirect 302 para que
+// los links viejos que ya esten compartidos sigan funcionando — caen en
+// el home con el code aplicado y el ping de visit se dispara igual.
 app.get('/promo2k', (req, res) => {
-  const filePath = path.join(__dirname, 'public', 'promo2k.html');
-  const content = readFileSafe(filePath);
-  if (content) {
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    res.send(content);
-  } else {
-    res.status(404).send('Not found');
-  }
+  res.redirect(302, '/?c=promo2k');
 });
 
 // NOTE: /adminprivado2026 routes are now registered early, BEFORE the

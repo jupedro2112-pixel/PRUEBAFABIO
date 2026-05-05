@@ -8860,10 +8860,12 @@ async function loadCampaignsAdmin() {
         // autoreembolsos.com porque es el dominio definitivo para campañas
         // (aunque el server responda en cualquiera, siempre presentamos este
         // al admin para que copie el link tal cual va a salir publicado).
+        // El link va al home con ?c=<code> — la promo se ve directamente en
+        // la pantalla de login y el tracking se dispara solo.
         const PUBLIC_BASE = 'https://autoreembolsos.com';
         let html = '<div style="display:flex;flex-direction:column;gap:12px;">';
         for (const l of landings) {
-            const url = '/' + l.code;
+            const url = '/?c=' + l.code;
             const isPromo = l.code === 'promo2k';
             html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:14px;">';
             html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">';

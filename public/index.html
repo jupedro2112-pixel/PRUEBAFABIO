@@ -490,6 +490,65 @@
             color: #d4af37;
         }
 
+        /* Banner promocional $2.000 (login screen). Diseño llamativo pero
+           consistente con el resto del login. Verde para diferenciarlo del
+           tagline plata/oro. */
+        .promo-bonus-banner {
+            margin: 6px auto 18px;
+            max-width: 360px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: linear-gradient(135deg, rgba(102,255,102,0.18), rgba(102,255,102,0.05));
+            border: 1.5px solid rgba(102,255,102,0.60);
+            border-radius: 12px;
+            padding: 12px 14px;
+            box-shadow: 0 4px 18px rgba(102,255,102,0.20);
+            position: relative;
+            overflow: hidden;
+        }
+        .promo-bonus-banner::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -60%;
+            width: 60%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.20), transparent);
+            animation: promoShine 2.6s ease-in-out infinite;
+        }
+        @keyframes promoShine {
+            0%, 100% { left: -60%; }
+            50% { left: 110%; }
+        }
+        .promo-bonus-flash {
+            font-size: 28px;
+            line-height: 1;
+            flex-shrink: 0;
+            animation: promoPulse 1.4s ease-in-out infinite;
+        }
+        @keyframes promoPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.12); }
+        }
+        .promo-bonus-text { flex: 1; line-height: 1.3; }
+        .promo-bonus-title {
+            color: #66ff66;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: 0.2px;
+        }
+        .promo-bonus-title strong {
+            color: #aaffaa;
+            font-weight: 900;
+            font-size: 17px;
+        }
+        .promo-bonus-sub {
+            color: #c8f5c8;
+            font-size: 11.5px;
+            margin-top: 2px;
+            opacity: 0.85;
+        }
+
         /* Card de saldo en la plataforma + acceso directo a JUGAYGANA.
            Va debajo del bienvenido, arriba del número principal. */
         .user-balance-card {
@@ -1415,6 +1474,17 @@
                 <div><span class="tagline-icon">✅</span><span><strong>Accedés sin contraseña</strong>, solo con tu usuario.</span></div>
                 <div><span class="tagline-icon">💸</span><span>Reclamás <strong>automáticamente</strong> tus reembolsos <strong>diarios</strong>, <strong>semanales</strong> y <strong>mensuales</strong>.</span></div>
                 <div><span class="tagline-icon">📞</span><span>Podés ver la <strong>línea vigente</strong> nuestra por si nos hablás y no te llegan los mensajes a la línea que tenés agendada.</span></div>
+            </div>
+
+            <!-- Banner promocional $2.000 - visible en login. El tracking
+                 (POST /api/landings/promo2k/visit) lo dispara el script al
+                 final del archivo cuando ?c=promo2k esta en la URL. -->
+            <div class="promo-bonus-banner" role="region" aria-label="Promoción bono $2.000">
+                <div class="promo-bonus-flash">⚡</div>
+                <div class="promo-bonus-text">
+                    <div class="promo-bonus-title">Reclamá <strong>$2.000 GRATIS</strong></div>
+                    <div class="promo-bonus-sub">por instalar la app y crear tu cuenta</div>
+                </div>
             </div>
 
             <form id="loginForm" autocomplete="on">
@@ -4256,5 +4326,43 @@
             </div>
         </div>
     </div>
+
+    <!-- ============================================
+         CAMPAIGN TRACKING — pinguea /api/landings/:code/visit cuando la URL
+         trae ?c=<code>. Sirve para medir cuanta gente entra desde un link de
+         marketing especifico (ej: ?c=promo2k para el bono $2.000). El code
+         queda guardado en localStorage por 30 dias para atribucion futura
+         (ej: en el flujo de signup podemos mandarlo al server y atar al user
+         a la campaña). Idempotente: si falla, no rompe nada.
+         ============================================ -->
+    <script>
+    (function () {
+        try {
+            var params = new URLSearchParams(window.location.search);
+            var code = (params.get('c') || '').toLowerCase().trim();
+            if (!code || !/^[a-z0-9_-]{2,60}$/.test(code)) return;
+
+            // Persistir en localStorage para attribution post-signup.
+            try {
+                localStorage.setItem('campaignCode', code);
+                localStorage.setItem('campaignAt', String(Date.now()));
+            } catch (_) {}
+
+            // Anti-doble-ping: si ya pingueamos esta sesion para este code,
+            // no repetimos (sino el F5 infla las metricas).
+            var pingedKey = 'campaignPinged_' + code;
+            try {
+                if (sessionStorage.getItem(pingedKey)) return;
+                sessionStorage.setItem(pingedKey, '1');
+            } catch (_) {}
+
+            fetch('/api/landings/' + encodeURIComponent(code) + '/visit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ referer: document.referrer || null })
+            }).catch(function () {});
+        } catch (_) {}
+    })();
+    </script>
 </body>
 </html>
