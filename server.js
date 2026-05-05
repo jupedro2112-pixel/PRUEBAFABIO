@@ -12037,7 +12037,38 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
         raffleType: r.raffleType
       };
     });
-    res.json({ winners, windowHours: hours });
+    // Incluimos info del sorteo RELAMPAGO si hay uno activo o cerrado-en-espera.
+    // El home usa esto para renderizar el hero electrico arriba del card
+    // generico de "SORTEOS SEMANALES".
+    let lightning = null;
+    try {
+      const light = await Raffle.findOne(
+        { raffleType: 'relampago', status: { $in: ['active', 'closed'] } },
+        { id: 1, name: 1, prizeValueARS: 1, totalTickets: 1, _ticketCounter: 1, status: 1, drawDate: 1, emoji: 1 }
+      ).lean();
+      if (light) {
+        const myUsername = (req.user && req.user.username) || '';
+        const safeUser = String(myUsername).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const myPart = await RaffleParticipation.findOne(
+          { raffleId: light.id, username: { $regex: '^' + safeUser + '$', $options: 'i' } },
+          { ticketNumbers: 1 }
+        ).lean();
+        lightning = {
+          id: light.id,
+          name: light.name,
+          prizeValueARS: light.prizeValueARS || 0,
+          totalTickets: light.totalTickets || 0,
+          cuposSold: light._ticketCounter || 0,
+          status: light.status,
+          drawDate: light.drawDate,
+          emoji: light.emoji || '⚡',
+          myTicket: (myPart && myPart.ticketNumbers && myPart.ticketNumbers[0]) || null
+        };
+      }
+    } catch (e) {
+      logger.warn(`[raffles] recent-winners lightning fetch fail: ${e.message}`);
+    }
+    res.json({ winners, windowHours: hours, lightning });
   } catch (err) {
     logger.error(`/api/raffles/recent-winners: ${err.message}`);
     res.status(500).json({ error: 'Error obteniendo ganadores recientes' });
@@ -12790,32 +12821,41 @@ app.post('/api/admin/raffles/:id/cancel', authMiddleware, superAdminMiddleware, 
   }
 });
 
-// DELETE /api/admin/raffles/:id — borra DEFINITIVAMENTE un sorteo. Solo permitido
-// si el sorteo esta drawn/cancelled/archived Y no tiene NINGUNA participacion
-// registrada. Sirve para limpiar pruebas o sorteos vacios sin dejar basura
-// en el panel. Para sorteos con gente que jugo, hay que cancelar (que reembolsa)
-// o archivar (cleanup) para preservar historial — nunca borrar a la fuerza.
+// DELETE /api/admin/raffles/:id — borra DEFINITIVAMENTE un sorteo.
+//
+// Modo normal: solo si esta drawn/cancelled/archived Y no tiene participantes.
+// Modo force=1: permite borrar AUNQUE haya participantes (admin asume el
+//   data loss). Util para limpiar sorteos de prueba donde lalodj jugo. Igual
+//   chequeamos status: nunca se borra un active/closed — primero sortear/cancelar.
 app.delete('/api/admin/raffles/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
+    const force = String(req.query.force || '').toLowerCase() === '1' ||
+                  String(req.query.force || '').toLowerCase() === 'true';
     const raffle = await Raffle.findOne({ id: req.params.id }).lean();
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status === 'active' || raffle.status === 'closed') {
       return res.status(400).json({ error: 'No se puede borrar un sorteo activo/cerrado. Sorteálo o cancelálo primero.' });
     }
     const partsCount = await RaffleParticipation.countDocuments({ raffleId: raffle.id });
-    if (partsCount > 0) {
+    if (partsCount > 0 && !force) {
       return res.status(400).json({
-        error: `Este sorteo tiene ${partsCount} ${partsCount === 1 ? 'participante' : 'participantes'} — no se borra para preservar historial. Usá "Archivar" en su lugar.`,
+        error: `Este sorteo tiene ${partsCount} ${partsCount === 1 ? 'participante' : 'participantes'} — usá force=1 para borrar igual (perdés el historial).`,
         participants: partsCount
       });
+    }
+    // En modo force tambien borramos las participaciones del sorteo (sino
+    // quedan huerfanas referenciando un raffleId que no existe).
+    if (partsCount > 0 && force) {
+      await RaffleParticipation.deleteMany({ raffleId: raffle.id }).catch(() => {});
+      logger.warn(`[raffles] FORCE-DELETE ${raffle.name} con ${partsCount} participantes borrados por ${req.user.username || 'admin'}`);
     }
     // Limpiar tambien spends huerfanos (defensa en profundidad — no deberian
     // existir si partsCount=0 pero por si acaso). RaffleSpend NO bloquea la
     // baja del sorteo, son logs.
     await RaffleSpend.deleteMany({ raffleId: raffle.id }).catch(() => {});
     await Raffle.deleteOne({ id: raffle.id });
-    logger.info(`[raffles] DELETE ${raffle.name} (${raffle.id}) status=${raffle.status} por ${req.user.username || 'admin'}`);
-    res.json({ success: true, deletedId: raffle.id, deletedName: raffle.name });
+    logger.info(`[raffles] DELETE ${raffle.name} (${raffle.id}) status=${raffle.status} force=${force} por ${req.user.username || 'admin'}`);
+    res.json({ success: true, deletedId: raffle.id, deletedName: raffle.name, deletedParticipants: force ? partsCount : 0 });
   } catch (err) {
     logger.error(`/api/admin/raffles/:id DELETE: ${err.message}`);
     res.status(500).json({ error: 'Error eliminando sorteo' });

@@ -840,23 +840,60 @@ VIP.raffles = (function () {
             }
             const j = await r.json();
             const winners = (j && j.winners) || [];
-            if (winners.length === 0) {
-                container.style.display = 'none';
-                container.innerHTML = '';
-                return;
-            }
-            // Si soy ganador en alguno, mostramos el personal (mas atencion).
+            const lightning = j && j.lightning;
             const myWin = winners.find(w => w.isMe);
+
+            // Decidimos que mostrar (ordenado por prioridad):
+            //   1. Si gane algo en las ultimas 6h -> banner FELICITACIONES (max attention)
+            //   2. Si hay sorteo RELAMPAGO activo -> hero electrico (CTA principal)
+            //   3. Si gano otra persona en 6h -> banner social proof
+            //   4. Nada -> oculto
+            let html = '';
             if (myWin) {
-                container.innerHTML = _renderHomeWinnerMine(myWin);
-            } else {
-                container.innerHTML = _renderHomeWinnerOthers(winners[0]);
+                html = _renderHomeWinnerMine(myWin);
+            } else if (lightning) {
+                html = _renderHomeLightningHero(lightning);
+            } else if (winners.length > 0) {
+                html = _renderHomeWinnerOthers(winners[0]);
             }
-            container.style.display = 'block';
+
+            if (html) {
+                container.innerHTML = html;
+                container.style.display = 'block';
+            } else {
+                container.innerHTML = '';
+                container.style.display = 'none';
+            }
         } catch (e) {
             container.style.display = 'none';
             container.innerHTML = '';
         }
+    }
+
+    // Hero del RELAMPAGO en el HOME (no en el modal). Mas pequenio y
+    // clickeable -> abre el modal donde la card grande tiene mas detalle.
+    function _renderHomeLightningHero(l) {
+        const sold = l.cuposSold || 0;
+        const total = l.totalTickets || 0;
+        const fillPct = total ? Math.round((sold / total) * 100) : 0;
+        const enrolled = l.myTicket != null;
+        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,235,59,0.50),0 4px 18px rgba(0,150,255,0.30);position:relative;overflow:hidden;">' +
+            '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;line-height:1;">⚡</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">' +
+                '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>' +
+                '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · ÚNICA VEZ</span>' +
+            '</div>' +
+            '<div style="color:#fff;font-size:20px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin:4px 0 6px;">Premio $' + _fmt(l.prizeValueARS) + '</div>' +
+            (enrolled
+                ? '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:8px;padding:8px;text-align:center;color:#fff;font-size:13px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">✅ Estás anotado · Número #' + l.myTicket + '</div>'
+                : '<div style="height:8px;background:rgba(0,0,0,0.40);border-radius:4px;overflow:hidden;margin:4px 0;">' +
+                    '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
+                  '<div style="display:flex;justify-content:space-between;font-size:11px;color:#fff;font-weight:700;margin-bottom:6px;">' +
+                    '<span>' + sold + '/' + total + ' anotados</span>' +
+                    '<span>' + (l.status === 'active' ? '¡ENTRÁ Y ANOTATE!' : 'cupo lleno') + '</span>' +
+                  '</div>'
+            ) +
+        '</div>';
     }
 
     function _renderHomeWinnerMine(w) {

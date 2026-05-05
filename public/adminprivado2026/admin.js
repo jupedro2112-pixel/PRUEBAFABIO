@@ -9076,11 +9076,17 @@ function _renderRaffleAdminCard(r) {
         const cancelTitle = r.isFree ? 'Eliminar sorteo gratis (saca a todos los anotados, no hay plata que devolver)' : 'Cancelar y reembolsar';
         html += '    <button type="button" onclick="cancelRaffle(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.40);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="' + escapeHtml(cancelTitle) + '">' + cancelLabel + '</button>';
     }
-    // Borrar definitivo solo si esta drawn/cancelled/archived Y nadie compro.
-    // Sirve para limpiar pruebas o sorteos vacios sin dejar basura. Si hubo
-    // gente que jugo, NO aparece el boton — preservamos el historial.
-    if ((r.status === 'drawn' || r.status === 'cancelled' || r.status === 'archived') && (r.participants || 0) === 0) {
-        html += '    <button type="button" onclick="deleteRaffleHard(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.15);color:#ff6b6b;border:1px solid #ff6b6b;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;" title="Borrar definitivamente (solo permitido porque no hay participantes)">🗑️ Borrar</button>';
+    // Borrado definitivo: aparece si esta drawn/cancelled/archived. Si hay
+    // participantes, el flujo pasa a "force delete" con doble confirmacion
+    // (perdes el historial). Util para limpiar sorteos de prueba donde
+    // jugaste vos mismo o tu test user.
+    if (r.status === 'drawn' || r.status === 'cancelled' || r.status === 'archived') {
+        const hasParts = (r.participants || 0) > 0;
+        const partsLabel = hasParts ? ' (' + r.participants + ')' : '';
+        const btnTitle = hasParts
+            ? 'Borrar definitivamente — vas a perder el historial de los ' + r.participants + ' participantes'
+            : 'Borrar definitivamente (no hay participantes, no se pierde nada)';
+        html += '    <button type="button" onclick="deleteRaffleHard(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.15);color:#ff6b6b;border:1px solid #ff6b6b;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;" title="' + escapeHtml(btnTitle) + '">🗑️ Borrar' + partsLabel + '</button>';
     }
     html += '  </div>';
     html += '</div>';
@@ -9408,21 +9414,29 @@ async function cancelRaffle(id) {
 async function deleteRaffleHard(id) {
     const r = (_rafflesAdminCache && _rafflesAdminCache.raffles || []).find(x => x.id === id);
     if (!r) return;
-    if ((r.participants || 0) > 0) {
-        alert('Este sorteo tiene participantes — no se puede borrar. Usá Archivar.');
-        return;
+    const partsCount = r.participants || 0;
+    const hasParts = partsCount > 0;
+    let force = false;
+    if (hasParts) {
+        // Doble confirmacion para no borrar historial real por accidente.
+        if (!confirm('⚠️ "' + r.name + '" tiene ' + partsCount + (partsCount === 1 ? ' participante' : ' participantes') + '.\n\nSi lo borrás vas a perder el historial completo de esos jugadores en este sorteo.\n\n¿Seguro?')) return;
+        if (!confirm('Última confirmación: vas a borrar el sorteo Y los ' + partsCount + ' registros de participación.\n\nEsto NO devuelve plata. Si querés devolver dinero, primero usá "Cancelar y reembolsar" y después borrás.\n\n¿Confirmás?')) return;
+        force = true;
+    } else {
+        if (!confirm('¿Borrar definitivamente "' + r.name + '"?\n\nNo tiene participantes, así que no se pierde nada.\nNo se puede deshacer.')) return;
     }
-    if (!confirm('¿Borrar definitivamente "' + r.name + '"?\n\nNo tiene participantes, así que no se pierde nada.\nNo se puede deshacer.')) return;
     if (deleteRaffleHard._busy) return;
     deleteRaffleHard._busy = true;
     try {
-        const resp = await authFetch('/api/admin/raffles/' + encodeURIComponent(id), { method: 'DELETE' });
+        const url = '/api/admin/raffles/' + encodeURIComponent(id) + (force ? '?force=1' : '');
+        const resp = await authFetch(url, { method: 'DELETE' });
         const d = await resp.json();
         if (!resp.ok) {
             alert('❌ ' + (d.error || 'Error') + (d.participants ? ' (participantes: ' + d.participants + ')' : ''));
             return;
         }
-        showToast('🗑️ Borrado · ' + (d.deletedName || ''), 'success');
+        const extra = (d.deletedParticipants > 0) ? ' · ' + d.deletedParticipants + ' participaciones eliminadas' : '';
+        showToast('🗑️ Borrado · ' + (d.deletedName || '') + extra, 'success');
         loadRafflesAdmin();
     } catch (e) {
         showToast('Error de conexión', 'error');
