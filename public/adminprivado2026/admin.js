@@ -9020,23 +9020,39 @@ async function loadCampaignDetail(code) {
         }
         h += '</div>';
 
-        // Ultimas visitas
+        // Listado COMPLETO de visitas (no truncado). Incluye username (si vino
+        // logueado), si tiene la app instalada y por que link entro.
         h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;margin-top:8px;">';
-        h += '<div style="color:#fff;font-weight:800;font-size:12px;margin-bottom:8px;">🕒 Últimas 50 visitas</div>';
-        if (!d.recent || d.recent.length === 0) {
+        const visitCount = (d.recent || []).length;
+        h += '<div style="color:#fff;font-weight:800;font-size:12px;margin-bottom:8px;">🕒 Visitas registradas (' + visitCount + ')</div>';
+        if (visitCount === 0) {
             h += '<div style="color:#888;font-size:11px;padding:8px;">Sin visitas todavía.</div>';
         } else {
-            h += '<div style="max-height:280px;overflow-y:auto;">';
+            h += '<div style="max-height:520px;overflow-y:auto;border:1px solid rgba(255,255,255,0.05);border-radius:6px;">';
             h += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
-            h += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.10);"><th style="padding:5px 6px;">Cuándo</th><th style="padding:5px 6px;">User</th><th style="padding:5px 6px;">IP-hash</th><th style="padding:5px 6px;">Referer</th></tr></thead>';
+            h += '<thead style="position:sticky;top:0;background:#0a0a1a;z-index:1;">';
+            h += '<tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);">';
+            h += '<th style="padding:7px 8px;">Cuándo</th>';
+            h += '<th style="padding:7px 8px;">Usuario</th>';
+            h += '<th style="padding:7px 8px;text-align:center;">App</th>';
+            h += '<th style="padding:7px 8px;">Link</th>';
+            h += '<th style="padding:7px 8px;">IP-hash</th>';
+            h += '<th style="padding:7px 8px;">Referer</th>';
+            h += '</tr></thead>';
             h += '<tbody>';
             for (const v of d.recent) {
                 const when = v.at ? new Date(v.at).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+                let appCell;
+                if (v.installed === true) appCell = '<span style="color:#66ff66;font-weight:800;" title="Tiene la app instalada (PWA standalone)">✅</span>';
+                else if (v.installed === false) appCell = '<span style="color:#ff8080;font-weight:700;" title="No tiene la app instalada">❌</span>';
+                else appCell = '<span style="color:#666;" title="Visita anónima — no podemos saber si despues instalo">—</span>';
                 h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
-                h += '  <td style="padding:5px 6px;color:#ddd;white-space:nowrap;">' + escapeHtml(when) + '</td>';
-                h += '  <td style="padding:5px 6px;color:' + (v.username ? '#66ff66' : '#888') + ';">' + escapeHtml(v.username || '(anónimo)') + '</td>';
-                h += '  <td style="padding:5px 6px;color:#666;font-family:monospace;font-size:10px;">' + escapeHtml(v.ipHashShort || '—') + '</td>';
-                h += '  <td style="padding:5px 6px;color:#aaa;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(v.referer || '—') + '</td>';
+                h += '  <td style="padding:6px 8px;color:#ddd;white-space:nowrap;">' + escapeHtml(when) + '</td>';
+                h += '  <td style="padding:6px 8px;color:' + (v.username ? '#66ff66' : '#888') + ';font-weight:' + (v.username ? '700' : '400') + ';">' + escapeHtml(v.username || '(anónimo)') + '</td>';
+                h += '  <td style="padding:6px 8px;text-align:center;">' + appCell + '</td>';
+                h += '  <td style="padding:6px 8px;"><code style="color:#00d4ff;background:rgba(0,212,255,0.08);padding:2px 6px;border-radius:4px;font-size:10px;">/?c=' + escapeHtml(v.code || code) + '</code></td>';
+                h += '  <td style="padding:6px 8px;color:#666;font-family:monospace;font-size:10px;">' + escapeHtml(v.ipHashShort || '—') + '</td>';
+                h += '  <td style="padding:6px 8px;color:#aaa;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(v.referer || '—') + '</td>';
                 h += '</tr>';
             }
             h += '</tbody></table>';

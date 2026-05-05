@@ -8627,8 +8627,12 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
         { $project: { _id: 0, day: '$_id', visits: 1, uniqueIps: { $size: '$uniqueIps' } } },
         { $sort: { day: 1 } }
       ]),
+      // Todas las visitas (sin limit). El admin pidio listado completo en
+      // vez de "ultimas 50". Si la campaña explota a millones, ahi mirar
+      // de paginar; mientras tanto el sort en memoria + render scroll-only
+      // alcanza para volumenes razonables.
       LandingVisit.find({ code }, { ipHash: 1, userAgent: 1, referer: 1, username: 1, at: 1 })
-        .sort({ at: -1 }).limit(50).lean(),
+        .sort({ at: -1 }).lean(),
       // Funnel: traemos el set de users atribuidos a esta campaña con los
       // campos que necesitamos para distinguir registrados vs instalados.
       // hasApp = el user tiene un fcmToken con context='standalone' (PWA).
@@ -8705,6 +8709,29 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
       };
     }).sort((a, b) => new Date(b.signedUpAt || 0) - new Date(a.signedUpAt || 0));
 
+    // Para enriquecer cada visita con "instalo la app", batch-lookup de los
+    // users que aparecieron logueados al visitar. Hacemos 1 sola query por
+    // todos los usernames distintos en las visitas (en vez de N+1).
+    const visitUsernamesLc = Array.from(new Set(
+      recent.map(r => r.username ? String(r.username).toLowerCase() : null).filter(Boolean)
+    ));
+    const visitUserMap = {};
+    if (visitUsernamesLc.length > 0) {
+      // Usamos los users ya traidos en attributedUsers para evitar otra query
+      // si todos coinciden, pero la mayoria de visitas pueden ser de users
+      // que NO se atribuyeron (ej: un user existente que clickeo el link).
+      const usersFromVisits = await User.find(
+        { username: { $in: visitUsernamesLc } },
+        { username: 1, fcmTokenContext: 1, fcmTokens: 1 }
+      ).lean();
+      for (const u of usersFromVisits) {
+        const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+        const hasApp = u.fcmTokenContext === 'standalone'
+          || tokens.some(t => t && t.context === 'standalone');
+        visitUserMap[String(u.username || '').toLowerCase()] = { hasApp };
+      }
+    }
+
     res.json({
       code,
       totalVisits,
@@ -8712,15 +8739,26 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
       last24h: visits24h,
       last7d: visits7d,
       byDay,
-      recent: recent.map(r => ({
-        // No devolvemos el ipHash completo, solo los primeros 8 chars para
-        // que el admin pueda agrupar visualmente sin exponer el hash entero.
-        ipHashShort: r.ipHash ? String(r.ipHash).slice(0, 8) : null,
-        userAgent: r.userAgent,
-        referer: r.referer,
-        username: r.username,
-        at: r.at
-      })),
+      recent: recent.map(r => {
+        const lc = r.username ? String(r.username).toLowerCase() : null;
+        const u = lc ? visitUserMap[lc] : null;
+        return {
+          // No devolvemos el ipHash completo, solo los primeros 8 chars para
+          // que el admin pueda agrupar visualmente sin exponer el hash entero.
+          ipHashShort: r.ipHash ? String(r.ipHash).slice(0, 8) : null,
+          userAgent: r.userAgent,
+          referer: r.referer,
+          username: r.username,
+          // installed: true/false si el user existe; null si la visita es
+          // anonima (no podemos saber si esa persona despues instalo).
+          installed: u ? !!u.hasApp : null,
+          // El link/code por el que entro. En este endpoint siempre es el
+          // mismo (el filtro), pero lo devolvemos explicito para que el front
+          // pueda mostrar la columna sin ambiguedad.
+          code,
+          at: r.at
+        };
+      }),
       // Funnel: visitas -> registros -> instalaron -> reclamaron bono.
       funnel: {
         signups,
