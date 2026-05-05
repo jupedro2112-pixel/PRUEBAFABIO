@@ -46,8 +46,24 @@ const raffleSchema = new mongoose.Schema({
   // los resultados oficiales de la Quiniela.
   lotteryRule: { type: String, default: '', maxlength: 300 },
 
-  // Costo de entrada (credits = monto cargado, no plata real).
+  // Modo de entrada:
+  //  - 'paid': el user PAGA con su saldo de JUGAYGANA (entryCost > 0).
+  //            Numero de cupo asignado secuencialmente y sin limite por user.
+  //  - 'wagered': sorteo EXCLUSIVO para clientes activos. Entry gratis pero
+  //               el user debe haber apostado/cargado al menos `wageredThreshold`
+  //               este mes. Max `maxCuposPerUser` (default 1). El user ELIGE
+  //               su numero entre los libres del cupo total.
+  entryMode: { type: String, enum: ['paid', 'wagered'], default: 'paid', index: true },
+  // Costo de entrada en pesos (=0 si entryMode='wagered').
   entryCost: { type: Number, required: true, min: 0 },
+  // Umbral de monto apostado/cargado del mes que habilita reclamar un numero
+  // gratis. Solo aplica cuando entryMode='wagered'. Ej: 200000 → necesitas
+  // haber apostado $200.000 este mes para entrar al sorteo exclusivo de iPhone.
+  wageredThreshold: { type: Number, default: 0, min: 0 },
+  // Cantidad maxima de cupos que un mismo user puede tener en este sorteo.
+  // 0 = ilimitado (default para 'paid'). 1 = un solo cupo por persona (default
+  // para 'wagered' exclusivos).
+  maxCuposPerUser: { type: Number, default: 0, min: 0 },
   // Total de cupos disponibles. Cada cupo tiene un número único 1..totalTickets.
   totalTickets: { type: Number, required: true, min: 1 },
   // Valor del premio en pesos. Si la cantidad de cupos vendidos no llega a

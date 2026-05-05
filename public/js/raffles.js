@@ -1,6 +1,17 @@
 // =====================================================================
 // RAFFLES — Sorteos mensuales (cliente)
 // =====================================================================
+// Modelo simplificado: 12 sorteos exclusivos GRATIS para clientes activos.
+//   - 10 iPhones 17 secuenciales: solo se ve 1 activo, cuando se completa
+//                                  aparece el siguiente.
+//   -  1 Viaje al Caribe x2
+//   -  1 Auto $10.000.000
+//
+// Cada sorteo: 100 cupos, 1 cupo por persona POR CATEGORÍA. El user elige
+// su numero de la grilla 1..100. Tomados se muestran tachados. Ganador
+// se determina por la Lotería Nacional Nocturna del primer lunes del mes
+// próximo (resultado oficial).
+// =====================================================================
 window.VIP = window.VIP || {};
 
 VIP.raffles = (function () {
@@ -25,124 +36,135 @@ VIP.raffles = (function () {
         return div.innerHTML;
     }
 
-    function _renderImage(r) {
+    function _renderImage(r, height) {
+        const h = height || 130;
         if (r.imageUrl) {
-            return '<div style="width:100%;height:160px;background-image:url(\'' + _esc(r.imageUrl) + '\');background-size:cover;background-position:center;border-radius:10px;"></div>';
+            return '<div style="width:100%;height:' + h + 'px;background-image:url(\'' + _esc(r.imageUrl) + '\');background-size:cover;background-position:center;border-radius:10px;"></div>';
         }
-        // Fallback: emoji grande sobre gradient.
-        return '<div style="width:100%;height:160px;background:linear-gradient(135deg,#3d1f6e,#1a0033);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:70px;">' + (r.emoji || '🎁') + '</div>';
+        return '<div style="width:100%;height:' + h + 'px;background:linear-gradient(135deg,#3d1f6e,#1a0033);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:' + Math.round(h/2.3) + 'px;">' + (r.emoji || '🎁') + '</div>';
     }
 
-    function _formatNumbers(nums) {
-        if (!nums || !nums.length) return '';
-        const sorted = nums.slice().sort((a, b) => a - b);
-        // Compactar rangos consecutivos: [142,143,144,200] -> "#142-144, #200"
-        const groups = [];
-        let start = sorted[0], prev = sorted[0];
-        for (let i = 1; i < sorted.length; i++) {
-            if (sorted[i] === prev + 1) { prev = sorted[i]; continue; }
-            groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
-            start = prev = sorted[i];
-        }
-        groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
-        return groups.join(', ');
-    }
+    // -----------------------------------------------------------------
+    // Card del sorteo activo de cada categoría (con grilla picker).
+    // -----------------------------------------------------------------
+    function _renderCategoryCard(r, monthlyDeposit, completedCount, totalInCategory, userHasInCategory, userOtherInstanceName) {
+        const userClaimed = (r.userTicketNumbers && r.userTicketNumbers[0]) || null;
+        const meets = !!r.userMeetsThreshold;
+        const drawDateStr = r.drawDate
+            ? new Date(r.drawDate).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+            : '—';
+        const claimedMap = r.claimedNumbers || {};
+        const headerName = _esc(r.prizeName);
+        const isAuto = r.raffleType === 'auto';
+        const isCaribe = r.raffleType === 'caribe';
+        const isIphone = r.raffleType === 'iphone';
+        const showSequential = totalInCategory > 1;
 
-    function _renderRaffle(r) {
-        const userCupos = r.userCupos || 0;
-        const maxBuyable = r.userMaxBuyable || 0;
-        const drawDateStr = r.drawDate ? new Date(r.drawDate).toLocaleDateString('es-AR') : '—';
-
-        let actionBlock;
-        if (r.status !== 'active') {
-            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.10);color:#888;border:none;border-radius:10px;font-weight:800;font-size:14px;">Cerrado</button>';
-        } else if (maxBuyable === 0 && userCupos === 0) {
-            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Cada cupo vale $' + r.entryCost.toLocaleString('es-AR') + ' · saldo insuficiente</button>';
-        } else if (maxBuyable === 0 && userCupos > 0) {
-            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.50);border-radius:10px;font-weight:800;font-size:14px;cursor:default;">✅ Tenés ' + userCupos + ' cupo' + (userCupos===1?'':'s') + ' · sin créditos para más</button>';
-        } else {
-            // Selector de cantidad + boton.
-            const youHave = userCupos > 0
-                ? '<div style="text-align:center;color:#25d366;font-size:11px;margin-bottom:6px;">Ya tenés <strong>' + userCupos + '</strong> cupo' + (userCupos===1?'':'s') + ' en este sorteo</div>'
-                : '';
-            actionBlock = youHave +
-                '<div style="display:flex;gap:6px;align-items:center;background:rgba(0,0,0,0.30);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:6px;">' +
-                '  <button onclick="VIP.raffles.adjustQty(\'' + r.id + '\', -1)" style="background:rgba(255,255,255,0.10);color:#fff;border:none;border-radius:6px;width:36px;height:36px;font-size:18px;cursor:pointer;font-weight:800;">−</button>' +
-                '  <input type="number" id="raffleQty_' + r.id + '" value="1" min="1" max="' + maxBuyable + '" data-cost="' + r.entryCost + '" oninput="VIP.raffles.refreshQtyLabel(\'' + r.id + '\')" style="flex:1;text-align:center;padding:8px;border-radius:6px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);color:#fff;font-weight:800;font-size:15px;min-width:50px;">' +
-                '  <button onclick="VIP.raffles.adjustQty(\'' + r.id + '\', 1)" style="background:rgba(255,255,255,0.10);color:#fff;border:none;border-radius:6px;width:36px;height:36px;font-size:18px;cursor:pointer;font-weight:800;">+</button>' +
-                '  <button onclick="VIP.raffles.setMax(\'' + r.id + '\', ' + maxBuyable + ')" style="background:rgba(255,200,80,0.20);color:#ffc850;border:1px solid rgba(255,200,80,0.40);border-radius:6px;padding:8px 10px;font-size:11px;cursor:pointer;font-weight:700;">MAX (' + maxBuyable + ')</button>' +
-                '</div>' +
-                '<button onclick="VIP.raffles.participate(\'' + r.id + '\')" style="width:100%;padding:12px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:0.5px;margin-top:8px;">🎫 Comprar <span id="raffleQtyLabel_' + r.id + '">1 cupo</span> · <span id="raffleCostLabel_' + r.id + '">$' + r.entryCost.toLocaleString('es-AR') + '</span></button>';
-        }
-
-        // Label de "tus chances".
-        let chancesLabel;
-        if (r.totalCuposSold > 0 && userCupos > 0) {
-            const chancePct = Math.round((userCupos / r.totalCuposSold) * 1000) / 10;
-            chancesLabel = '<small style="color:#ffd700;">Tus chances ahora: <strong>' + userCupos + '/' + r.totalCuposSold + '</strong> cupos (' + chancePct + '%)</small>';
-        } else if (r.totalCuposSold > 0) {
-            chancesLabel = '<small style="color:#888;">Hay ' + r.totalCuposSold + ' cupo' + (r.totalCuposSold===1?'':'s') + ' vendido' + (r.totalCuposSold===1?'':'s') + ' de ' + r.totalTickets + '</small>';
-        } else {
-            chancesLabel = '<small style="color:#666;">Sin cupos vendidos todavía</small>';
-        }
-
-        // Caja con LOS NUMEROS asignados al user (si tiene). Es el dato más
-        // importante: cada cupo tiene un número y el ganador es el que tenga
-        // el número que salga en la Lotería Nacional.
-        let myNumbersBox = '';
-        if (r.userTicketNumbers && r.userTicketNumbers.length > 0) {
-            const fmt = _formatNumbers(r.userTicketNumbers);
-            myNumbersBox = '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:8px;padding:10px;text-align:center;">' +
-                '<div style="color:#b39dff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">🎫 Tus números</div>' +
-                '<div style="color:#ffd700;font-weight:900;font-size:14px;margin-top:4px;word-break:break-word;">' + _esc(fmt) + '</div>' +
-                '<small style="color:#888;display:block;margin-top:4px;">Si la Lotería Nacional saca alguno de estos, ganás 🏆</small>' +
+        // Header con progreso si hay multiples instancias.
+        let progressHeader = '';
+        if (showSequential) {
+            progressHeader = '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 12px;text-align:center;">' +
+                '  <div style="color:#d4af37;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1px;">📱 Sorteo ' + (r.instanceNumber || 1) + ' de ' + totalInCategory + '</div>' +
+                '  <small style="color:#aaa;font-size:11px;">' + completedCount + ' iPhone' + (completedCount===1?'':'s') + ' ya se completaron este mes 🎉</small>' +
                 '</div>';
         }
 
-        // Premio + payout proyectado.
-        let prizeInfo = '';
-        if (r.prizeValueARS && r.prizeValueARS > 0) {
-            const fill = r.fillRatePct || 0;
-            const projected = r.projectedPayoutARS || 0;
-            prizeInfo = '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:9px 12px;text-align:center;">' +
-                '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">💎 Premio si se llena el cupo</div>' +
-                '<div style="color:#ffd700;font-weight:900;font-size:16px;margin:2px 0;">$' + r.prizeValueARS.toLocaleString('es-AR') + '</div>' +
-                '<div style="color:' + (fill >= 100 ? '#25d366' : '#ffc850') + ';font-size:11px;">' +
-                '  Cupo actual: ' + fill + '% → si se sortea ahora pagaría <strong>$' + projected.toLocaleString('es-AR') + '</strong>' +
+        // Banner threshold / estado del user.
+        const progress = Math.min(100, Math.round(((monthlyDeposit||0) / Math.max(1, r.wageredThreshold||1)) * 100));
+        let thresholdBlock;
+        if (userHasInCategory && !userClaimed) {
+            // User tiene cupo en otra instancia de esta categoria.
+            thresholdBlock = '<div style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-radius:8px;padding:10px;text-align:center;">' +
+                '<div style="color:#ffc850;font-size:12px;font-weight:800;">ℹ️ Ya tenés tu número en ' + _esc(userOtherInstanceName || 'otro sorteo de esta categoría') + '</div>' +
+                '<small style="color:#888;display:block;margin-top:4px;">1 número por persona por categoría — esperá al próximo mes para el siguiente.</small>' +
+                '</div>';
+        } else if (userClaimed) {
+            thresholdBlock = '<div style="background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);border-radius:8px;padding:10px;text-align:center;">' +
+                '<div style="color:#25d366;font-size:13px;font-weight:900;">✅ Tu número: <span style="color:#ffd700;font-size:20px;">#' + userClaimed + '</span></div>' +
+                '<small style="color:#888;display:block;margin-top:3px;">Si la Lotería Nacional Nocturna del primer lunes saca este número, ganás 🏆</small>' +
+                '</div>';
+        } else if (meets) {
+            thresholdBlock = '<div style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-radius:8px;padding:10px;text-align:center;">' +
+                '<div style="color:#ffc850;font-size:13px;font-weight:800;">🎉 ¡HABILITADO! Apostaste $' + (monthlyDeposit||0).toLocaleString('es-AR') + ' este mes</div>' +
+                '<small style="color:#aaa;display:block;margin-top:3px;">Elegí UN número de los libres ↓ (es GRATIS)</small>' +
+                '</div>';
+        } else {
+            const need = Math.max(0, (r.wageredThreshold||0) - (monthlyDeposit||0));
+            thresholdBlock = '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:8px;padding:10px;">' +
+                '<div style="color:#ff8080;font-size:12px;font-weight:800;text-align:center;">🔒 Apostá $' + need.toLocaleString('es-AR') + ' más este mes para participar</div>' +
+                '<div style="background:rgba(0,0,0,0.40);border-radius:8px;height:8px;overflow:hidden;margin-top:8px;">' +
+                '  <div style="height:100%;width:' + progress + '%;background:linear-gradient(90deg,#d4af37,#f7931e);"></div>' +
                 '</div>' +
+                '<small style="color:#888;display:block;margin-top:4px;text-align:center;">Llevás $' + (monthlyDeposit||0).toLocaleString('es-AR') + ' / $' + (r.wageredThreshold||0).toLocaleString('es-AR') + ' (' + progress + '%)</small>' +
                 '</div>';
         }
 
-        const headerName = r.instanceNumber > 1
-            ? _esc(r.prizeName) + ' #' + r.instanceNumber
-            : _esc(r.prizeName);
+        // Grilla de numeros 1..totalTickets.
+        let grid = '<div style="display:grid;grid-template-columns:repeat(10,1fr);gap:4px;font-family:monospace;font-size:11px;">';
+        const canClaim = meets && !userClaimed && !userHasInCategory && r.status === 'active';
+        for (let n = 1; n <= r.totalTickets; n++) {
+            const owner = claimedMap[n];
+            if (n === userClaimed) {
+                grid += '<button disabled style="background:#25d366;color:#000;font-weight:900;border:none;border-radius:4px;padding:6px 0;cursor:default;" title="TU NÚMERO">' + n + ' ✓</button>';
+            } else if (owner) {
+                grid += '<button disabled title="Tomado por @' + _esc(owner) + '" style="background:rgba(255,255,255,0.04);color:#555;border:none;border-radius:4px;padding:6px 0;text-decoration:line-through;cursor:not-allowed;">' + n + '</button>';
+            } else if (canClaim) {
+                grid += '<button onclick="VIP.raffles.claimNumber(\'' + r.id + '\', ' + n + ')" style="background:rgba(212,175,55,0.20);color:#ffd700;border:1px solid rgba(212,175,55,0.40);border-radius:4px;padding:6px 0;cursor:pointer;font-weight:700;" onmouseover="this.style.background=\'#d4af37\';this.style.color=\'#000\';" onmouseout="this.style.background=\'rgba(212,175,55,0.20)\';this.style.color=\'#ffd700\';">' + n + '</button>';
+            } else {
+                grid += '<button disabled style="background:rgba(255,255,255,0.03);color:#666;border:none;border-radius:4px;padding:6px 0;cursor:not-allowed;">' + n + '</button>';
+            }
+        }
+        grid += '</div>';
+
         const lotteryRuleBlock = r.lotteryRule
-            ? '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px 10px;text-align:center;">' +
-              '  <div style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">🎯 Cómo se sortea</div>' +
-              '  <div style="color:#ddd;font-size:11px;margin-top:3px;line-height:1.4;">' + _esc(r.lotteryRule) + '</div>' +
+            ? '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px 10px;">' +
+              '  <div style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:center;">🎯 Cómo se sortea (transparente)</div>' +
+              '  <div style="color:#ddd;font-size:11px;margin-top:3px;line-height:1.4;text-align:center;">' + _esc(r.lotteryRule) + '</div>' +
               '</div>'
             : '';
 
-        return '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;">' +
-               _renderImage(r) +
+        return '<div style="background:rgba(212,175,55,0.05);border:2px solid rgba(212,175,55,0.40);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;margin-bottom:18px;">' +
+               progressHeader +
+               _renderImage(r, 130) +
                '<div>' +
-               '  <h3 style="color:#ffd700;margin:0 0 4px;font-size:17px;font-weight:800;">' + (r.emoji || '🎁') + ' ' + headerName + '</h3>' +
+               '  <h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;font-weight:800;">' + (r.emoji || '🎁') + ' ' + headerName + '</h3>' +
                '  <p style="color:#aaa;margin:0;font-size:12px;line-height:1.5;">' + _esc(r.description || '') + '</p>' +
                '</div>' +
-               prizeInfo +
-               lotteryRuleBlock +
-               myNumbersBox +
-               '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;color:#888;">' +
-               '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants||0) + '</strong> personas</span>' +
-               '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos vendidos</span>' +
-               '  <span>💰 <strong style="color:#fff;">$' + r.entryCost.toLocaleString('es-AR') + '</strong> por cupo</span>' +
-               '  <span>📅 <strong style="color:#fff;">' + _esc(drawDateStr) + '</strong></span>' +
+               '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 12px;text-align:center;">' +
+               '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">💎 Premio</div>' +
+               '  <div style="color:#ffd700;font-weight:900;font-size:20px;">$' + (r.prizeValueARS||0).toLocaleString('es-AR') + '</div>' +
+               '  <small style="color:#aaa;font-size:10px;">Sorteo el ' + drawDateStr + '</small>' +
                '</div>' +
-               '<div style="text-align:center;">' + chancesLabel + '</div>' +
-               actionBlock +
+               lotteryRuleBlock +
+               thresholdBlock +
+               '<div style="margin-top:6px;">' +
+               '  <div style="color:#aaa;font-size:11px;text-align:center;margin-bottom:6px;">' + (r.totalCuposSold||0) + ' / ' + r.totalTickets + ' números reclamados</div>' +
+                grid +
+               '</div>' +
                '</div>';
     }
 
+    // Mini card de un iPhone completado/sorteado.
+    function _renderMiniInstance(r) {
+        const drawnInfo = r.status === 'drawn' && r.winnerUsername
+            ? '<div style="color:#b39dff;font-size:11px;font-weight:700;">🏆 Ganador: @' + _esc(r.winnerUsername) + ' (#' + r.winningTicketNumber + ')</div>'
+            : '';
+        let badge;
+        if (r.status === 'drawn') badge = '<span style="background:rgba(120,80,255,0.20);color:#b39dff;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;">SORTEADO</span>';
+        else if (r.status === 'cancelled') badge = '<span style="background:rgba(255,80,80,0.20);color:#ff5050;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;">CANCELADO</span>';
+        else badge = '<span style="background:rgba(37,211,102,0.20);color:#25d366;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:800;">✅ COMPLETADO</span>';
+        return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
+               '  <div style="font-size:18px;flex-shrink:0;">' + (r.emoji || '🎁') + '</div>' +
+               '  <div style="flex:1;min-width:0;">' +
+               '    <div style="color:#ddd;font-size:12px;font-weight:700;">' + _esc(r.prizeName) + (r.instanceNumber > 1 ? ' #' + r.instanceNumber : '') + '</div>' +
+               '    <div style="color:#888;font-size:10px;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + ' cupos</div>' +
+               drawnInfo +
+               '  </div>' +
+               '  <div style="flex-shrink:0;">' + badge + '</div>' +
+               '</div>';
+    }
+
+    // -----------------------------------------------------------------
     function _render() {
         const list = document.getElementById('rafflesList');
         if (!list) return;
@@ -150,48 +172,76 @@ VIP.raffles = (function () {
             list.innerHTML = '<div style="text-align:center;padding:30px;color:#ff8080;">No se pudieron cargar los sorteos. Probá más tarde.</div>';
             return;
         }
-        // Budget bar — ahora muestra SALDO REAL en JUGAYGANA.
+        // Budget bar — saldo + cargado del mes.
         const bar = document.getElementById('rafflesBudgetBar');
         const av = document.getElementById('rafflesBudgetAvailable');
         const detail = document.getElementById('rafflesBudgetDetail');
         if (_data.budget && av && detail) {
-            const balance = _data.budget.balance != null ? _data.budget.balance : (_data.budget.available || 0);
-            av.textContent = '$' + balance.toLocaleString('es-AR');
-            detail.textContent = 'Saldo en JUGAYGANA · Ya gastado en sorteos: $' + (_data.budget.spent || 0).toLocaleString('es-AR');
+            const carga = _data.budget.monthlyDeposit || 0;
+            av.textContent = '$' + carga.toLocaleString('es-AR');
+            detail.innerHTML = '📊 Apostado/cargado este mes — más apostás, más sorteos te habilitás';
             if (bar) bar.style.display = 'block';
         }
         const raffles = _data.raffles || [];
-        if (raffles.length === 0) {
+        const wagered = raffles.filter(r => r.entryMode === 'wagered');
+        if (wagered.length === 0) {
             list.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">No hay sorteos activos este mes.</div>';
             return;
         }
-        // Agrupar por raffleType. Orden: iphone, caribe, auto, other.
-        const groupOrder = ['iphone', 'caribe', 'auto', 'other'];
-        const groupLabels = {
-            iphone: '📱 iPhones',
-            caribe: '🏖️ Viajes al Caribe',
-            auto: '🚗 Auto',
-            other: '🎁 Otros'
-        };
+
+        // Agrupar por raffleType. Auto, Caribe, iPhone (orden visual).
+        const groupOrder = ['auto', 'caribe', 'iphone'];
         const grouped = {};
-        for (const r of raffles) {
+        for (const r of wagered) {
             const t = r.raffleType || 'other';
             if (!grouped[t]) grouped[t] = [];
             grouped[t].push(r);
         }
+
+        const monthlyDeposit = (_data.budget && _data.budget.monthlyDeposit) || 0;
+
         let html = '';
+        html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;text-align:center;">';
+        html += '  <div style="color:#d4af37;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1px;">🎁 SORTEOS GRATIS PARA CLIENTES ACTIVOS</div>';
+        html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;line-height:1.5;">Apostá con nosotros este mes y desbloqueá un número GRATIS en cada categoría. Se sortean por la Lotería Nacional Nocturna del primer lunes del mes próximo (resultado oficial — totalmente verificable).</div>';
+        html += '</div>';
+
         for (const t of groupOrder) {
             const group = grouped[t];
             if (!group || group.length === 0) continue;
-            // Sort by instanceNumber.
             group.sort((a, b) => (a.instanceNumber||0) - (b.instanceNumber||0));
-            const totalCupos = group.reduce((s, r) => s + (r.totalCuposSold||0), 0);
-            const totalCap = group.reduce((s, r) => s + (r.totalTickets||0), 0);
-            html += '<div style="margin:6px 0 4px;display:flex;justify-content:space-between;align-items:baseline;">';
-            html += '  <h4 style="color:#d4af37;margin:0;font-size:14px;letter-spacing:1px;text-transform:uppercase;">' + groupLabels[t] + ' <span style="color:#888;font-size:11px;font-weight:400;">· ' + group.length + ' sorteo' + (group.length===1?'':'s') + '</span></h4>';
-            html += '  <small style="color:#888;">' + totalCupos + '/' + totalCap + ' cupos vendidos</small>';
-            html += '</div>';
-            html += group.map(_renderRaffle).join('');
+
+            // Activo: primera instancia con status='active' y no llena.
+            const activeOne = group.find(r => r.status === 'active' && (r.totalCuposSold||0) < r.totalTickets);
+            const completedOnes = group.filter(r => r !== activeOne && (r.status !== 'active' || (r.totalCuposSold||0) >= r.totalTickets));
+
+            // ¿El user tiene cupo en alguna instancia de esta categoría?
+            const userInstanceWithCupo = group.find(r => (r.userTicketNumbers || []).length > 0);
+            const userHasInCategory = !!userInstanceWithCupo && userInstanceWithCupo !== activeOne;
+            const userOtherInstanceName = userInstanceWithCupo
+                ? (userInstanceWithCupo.prizeName + (userInstanceWithCupo.instanceNumber > 1 ? ' #' + userInstanceWithCupo.instanceNumber : ''))
+                : null;
+
+            if (activeOne) {
+                html += _renderCategoryCard(
+                    activeOne,
+                    monthlyDeposit,
+                    completedOnes.length,
+                    group.length,
+                    userHasInCategory,
+                    userOtherInstanceName
+                );
+            } else {
+                html += '<div style="background:rgba(37,211,102,0.05);border:1px dashed rgba(37,211,102,0.40);border-radius:10px;padding:14px;text-align:center;color:#25d366;font-weight:700;margin-bottom:14px;">✅ Todos los sorteos de esta categoría están completos · esperando draw</div>';
+            }
+            if (completedOnes.length > 0) {
+                html += '<details style="margin-top:-10px;margin-bottom:18px;">';
+                html += '  <summary style="cursor:pointer;color:#888;font-size:11px;padding:6px 0;text-transform:uppercase;letter-spacing:1px;">▾ Sorteos completados/sorteados (' + completedOnes.length + ')</summary>';
+                html += '  <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">';
+                completedOnes.forEach(r => { html += _renderMiniInstance(r); });
+                html += '  </div>';
+                html += '</details>';
+            }
         }
         list.innerHTML = html;
     }
@@ -212,57 +262,19 @@ VIP.raffles = (function () {
         document.body.style.overflow = '';
     }
 
-    function _qtyInput(raffleId) {
-        return document.getElementById('raffleQty_' + raffleId);
-    }
-    function adjustQty(raffleId, delta) {
-        const inp = _qtyInput(raffleId);
-        if (!inp) return;
-        const max = parseInt(inp.max, 10) || 1;
-        const cur = parseInt(inp.value, 10) || 1;
-        const next = Math.max(1, Math.min(max, cur + delta));
-        inp.value = next;
-        refreshQtyLabel(raffleId);
-    }
-    function setMax(raffleId, max) {
-        const inp = _qtyInput(raffleId);
-        if (!inp) return;
-        inp.value = max;
-        refreshQtyLabel(raffleId);
-    }
-    function refreshQtyLabel(raffleId) {
-        const inp = _qtyInput(raffleId);
-        if (!inp) return;
-        const cost = parseInt(inp.dataset.cost, 10) || 0;
-        const max = parseInt(inp.max, 10) || 1;
-        let q = parseInt(inp.value, 10) || 1;
-        if (q < 1) q = 1;
-        if (q > max) { q = max; inp.value = max; }
-        const lblQ = document.getElementById('raffleQtyLabel_' + raffleId);
-        const lblC = document.getElementById('raffleCostLabel_' + raffleId);
-        if (lblQ) lblQ.textContent = q + ' cupo' + (q===1?'':'s');
-        if (lblC) lblC.textContent = '$' + (cost * q).toLocaleString('es-AR');
-    }
-
-    async function participate(raffleId) {
-        const inp = _qtyInput(raffleId);
-        const qty = inp ? Math.max(1, parseInt(inp.value, 10) || 1) : 1;
-        const cost = inp ? (parseInt(inp.dataset.cost, 10) || 0) * qty : 0;
-        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '?\n\n💰 Se descuenta de tu saldo en JUGAYGANA.\n🎫 Te asignan ' + qty + ' número' + (qty===1?'':'s') + ' único' + (qty===1?'':'s') + ' del sorteo.\n🏆 El ganador se determina por la Quiniela Nacional del primer lunes del mes próximo (resultado oficial — totalmente transparente y verificable).')) return;
+    async function claimNumber(raffleId, number) {
+        if (!confirm('¿Reclamar el número ' + number + '?\n\n🎁 Es GRATIS — ya pagaste apostando este mes.\n🎫 Solo podés tener 1 número por categoría (no 2 iPhones).\n🏆 Si la Lotería Nacional Nocturna saca tu número, ganás.')) return;
         try {
-            const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/participate`, {
+            const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/claim-number`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${VIP.state.currentToken}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ quantity: qty })
+                body: JSON.stringify({ number })
             });
             const d = await r.json();
-            if (!r.ok || !d.success) {
-                VIP.ui.showToast(d.error || 'Error al participar', 'error');
-                return;
-            }
+            if (!r.ok || !d.success) { VIP.ui.showToast(d.error || 'Error al reclamar', 'error'); return; }
             VIP.ui.showToast(d.message || '¡Listo!', 'success');
             _data = await _fetchActive();
             _render();
@@ -271,5 +283,5 @@ VIP.raffles = (function () {
         }
     }
 
-    return { open, close, participate, adjustQty, setMax, refreshQtyLabel };
+    return { open, close, claimNumber };
 })();

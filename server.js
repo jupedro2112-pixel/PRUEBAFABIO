@@ -11365,65 +11365,98 @@ function _firstMondayOfNextMonth(monthKey) {
   return firstOfNext;
 }
 
-// Genera los 16 sorteos del mes (10 iPhones, 5 Caribes, 1 Auto). Cada uno
-// con su lotteryRule (posicion exacta de Quiniela que determina al ganador
-// — máxima transparencia, cualquiera puede verificar el resultado oficial).
+// Genera los 12 sorteos del mes (modelo SIMPLIFICADO):
+//   - 10 iPhones 17 (instancias 1..10): se muestra solo el activo. Cuando se
+//     completa (100 cupos), aparece el siguiente. Premio $1.5M c/u.
+//   -  1 Viaje al Caribe x2: premio $4M
+//   -  1 Auto: premio $10M
+//
+// Todos GRATIS — son sorteos exclusivos para clientes activos. Para reclamar
+// un numero el user debe haber cargado/apostado un minimo este mes:
+//   - iPhone: $100.000
+//   - Caribe: $250.000
+//   - Auto:   $500.000
+//
+// Cada raffle: 100 cupos. 1 cupo por persona POR CATEGORIA (raffleType)
+// por mes — un user puede ganar máximo 1 iPhone + 1 Caribe + 1 Auto, no
+// puede acumular cupos en multiples instancias del mismo tipo.
+//
+// El user elige su numero de la grilla 1..100. Tomados se muestran tachados.
 function _buildRaffleDefaults() {
+  // Todos los sorteos se determinan por la QUINIELA NACIONAL NOCTURNA del
+  // primer lunes del mes próximo (siempre la misma extracción). Cada sorteo
+  // toma una posición distinta de los premios oficiales:
+  //   - Auto      → 1° premio Nocturna (el más prestigioso)
+  //   - Caribe    → 2° premio Nocturna
+  //   - iPhone 17 #1..#10 → 3° al 12° premio Nocturna
+  // Se usan las ULTIMAS 2 CIFRAS del premio (modulo 100, mapea a 1..100).
   const out = [];
-  // 10 iPhones — Quiniela Matutina, puestos 1° al 10° del primer lunes.
   for (let i = 1; i <= 10; i++) {
+    const lotteryPos = i + 2; // iPhone #1 → 3° premio, ..., #10 → 12° premio
     out.push({
-      name: `Sorteo iPhone #${i}`,
-      prizeName: 'iPhone (modelo del mes)',
-      description: `Sorteamos un iPhone — 100 números a $35.000 cada uno. El ganador es el ${i}° puesto de la Quiniela Matutina del primer lunes del mes próximo. Si el cupo no se llena, el premio paga proporcional.`,
+      name: `Sorteo iPhone 17 #${i}`,
+      prizeName: 'iPhone 17',
+      description: 'Sorteamos un iPhone 17 — 100 números, GRATIS para clientes que apostaron $100.000+ este mes. 1 número por persona (un mismo cliente no puede tener 2 iPhones). Cuando se completa, aparece el próximo iPhone.',
       emoji: '📱',
-      entryCost: 35000,
+      entryMode: 'wagered',
+      entryCost: 0,
+      wageredThreshold: 100000,
+      maxCuposPerUser: 1,
       totalTickets: 100,
       prizeValueARS: 1500000,
       raffleType: 'iphone',
       instanceNumber: i,
-      lotteryRule: `${i}° puesto de la Quiniela Matutina del primer lunes del mes próximo (resultado oficial publicado por la Lotería Nacional).`
+      lotteryRule: `Últimas 2 cifras del ${lotteryPos}° premio de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si sale fuera del rango vendido, se cicla al rango vendido.`
     });
   }
-  // 5 Caribes — Quiniela Vespertina, puestos 1° al 5°.
-  for (let i = 1; i <= 5; i++) {
-    out.push({
-      name: `Sorteo Viaje al Caribe #${i}`,
-      prizeName: 'Viaje al Caribe para 2 personas',
-      description: `Vacaciones para 2 al Caribe — 1000 números a $8.000 cada uno. El ganador es el ${i}° puesto de la Quiniela Vespertina del primer lunes del mes próximo. Si el cupo no se llena, paga proporcional.`,
-      emoji: '🏖️',
-      entryCost: 8000,
-      totalTickets: 1000,
-      prizeValueARS: 4000000,
-      raffleType: 'caribe',
-      instanceNumber: i,
-      lotteryRule: `${i}° puesto de la Quiniela Vespertina del primer lunes del mes próximo (resultado oficial publicado por la Lotería Nacional).`
-    });
-  }
-  // 1 Auto Gol Trend 2015.
   out.push({
-    name: 'Sorteo Auto Gol Trend 2015',
-    prizeName: 'Auto Gol Trend 2015',
-    description: 'Te llevás un auto — 1000 números a $25.000 cada uno. El ganador es el 1° puesto de la Quiniela Nocturna del primer lunes del mes próximo. Si el cupo no se llena, paga proporcional.',
+    name: 'Sorteo Viaje al Caribe',
+    prizeName: 'Viaje al Caribe para 2 personas',
+    description: 'Vacaciones para 2 al Caribe — 100 números, GRATIS para clientes que apostaron $250.000+ este mes. 1 número por persona.',
+    emoji: '🏖️',
+    entryMode: 'wagered',
+    entryCost: 0,
+    wageredThreshold: 250000,
+    maxCuposPerUser: 1,
+    totalTickets: 100,
+    prizeValueARS: 4000000,
+    raffleType: 'caribe',
+    instanceNumber: 1,
+    lotteryRule: 'Últimas 2 cifras del 2° premio de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si sale fuera del rango vendido, se cicla al rango vendido.'
+  });
+  out.push({
+    name: 'Sorteo Auto $10.000.000',
+    prizeName: 'Auto $10.000.000',
+    description: 'Te llevás un auto valorado en $10.000.000 — 100 números, GRATIS para clientes que apostaron $500.000+ este mes. 1 número por persona.',
     emoji: '🚗',
-    entryCost: 25000,
-    totalTickets: 1000,
+    entryMode: 'wagered',
+    entryCost: 0,
+    wageredThreshold: 500000,
+    maxCuposPerUser: 1,
+    totalTickets: 100,
     prizeValueARS: 10000000,
     raffleType: 'auto',
     instanceNumber: 1,
-    lotteryRule: '1° puesto de la Quiniela Nocturna del primer lunes del mes próximo (resultado oficial publicado por la Lotería Nacional).'
+    lotteryRule: 'Últimas 2 cifras del 1° premio de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si sale fuera del rango vendido, se cicla al rango vendido.'
   });
   return out;
 }
 const RAFFLE_DEFAULTS = _buildRaffleDefaults();
-// Nombres de sorteos del modelo viejo (3 sorteos cargas-based) que se
-// cancelan automaticamente si no tienen participaciones — para que la
-// transicion al modelo nuevo (16 sorteos via saldo) no muestre data stale.
-// "Sorteo Auto Gol Trend 2015" comparte nombre con el Auto del modelo
-// nuevo: el seeding lo migra in-place a entryCost/totalTickets nuevos.
+// Nombres de sorteos del MODELO PAGO viejo (cargas o saldo, distinta estructura)
+// que se cancelan automaticamente si no tienen participaciones — para que la
+// transicion al modelo SIMPLIFICADO (12 sorteos exclusivos gratis) no muestre
+// data stale. Solo se cancelan los que NO tienen participaciones; si alguien
+// pagó por un cupo, el sorteo se queda hasta que se sortee.
 const LEGACY_RAFFLE_NAMES_TO_CLEAN = [
+  // Modelo cargas-based (1ra version)
   'Sorteo iPhone',
-  'Sorteo Viaje al Caribe (x2)'
+  'Sorteo Viaje al Caribe (x2)',
+  'Sorteo Auto Gol Trend 2015',
+  // Modelo Quiniela paid (10 iPhones × 5 Caribes × 1 Auto)
+  'Sorteo iPhone #1', 'Sorteo iPhone #2', 'Sorteo iPhone #3', 'Sorteo iPhone #4', 'Sorteo iPhone #5',
+  'Sorteo iPhone #6', 'Sorteo iPhone #7', 'Sorteo iPhone #8', 'Sorteo iPhone #9', 'Sorteo iPhone #10',
+  'Sorteo Viaje al Caribe #1', 'Sorteo Viaje al Caribe #2', 'Sorteo Viaje al Caribe #3',
+  'Sorteo Viaje al Caribe #4', 'Sorteo Viaje al Caribe #5'
 ];
 
 // Calcula el payout proporcional al fill rate del sorteo. Si se llena (>=)
@@ -11460,7 +11493,7 @@ async function _ensureRafflesSeededForMonth(monthKey) {
 
   const existing = await Raffle.find(
     { monthKey },
-    { id: 1, name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _ticketCounter: 1, raffleType: 1, instanceNumber: 1, lotteryRule: 1, _id: 0 }
+    { id: 1, name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _ticketCounter: 1, raffleType: 1, instanceNumber: 1, lotteryRule: 1, entryMode: 1, wageredThreshold: 1, maxCuposPerUser: 1, _id: 0 }
   ).lean();
   const existingByName = new Map(existing.map(r => [r.name, r]));
   const drawDate = _firstMondayOfNextMonth(monthKey);
@@ -11488,6 +11521,9 @@ async function _ensureRafflesSeededForMonth(monthKey) {
       if (ex.raffleType !== def.raffleType) update.raffleType = def.raffleType;
       if (ex.instanceNumber !== def.instanceNumber) update.instanceNumber = def.instanceNumber;
       if (ex.lotteryRule !== def.lotteryRule) update.lotteryRule = def.lotteryRule;
+      if ((ex.entryMode || 'paid') !== (def.entryMode || 'paid')) update.entryMode = def.entryMode || 'paid';
+      if ((ex.wageredThreshold || 0) !== (def.wageredThreshold || 0)) update.wageredThreshold = def.wageredThreshold || 0;
+      if ((ex.maxCuposPerUser || 0) !== (def.maxCuposPerUser || 0)) update.maxCuposPerUser = def.maxCuposPerUser || 0;
       if (Object.keys(update).length) {
         await Raffle.updateOne({ monthKey, name: def.name }, { $set: update }).catch(() => {});
       }
@@ -11527,10 +11563,10 @@ async function _ensureRafflesSeededForMonth(monthKey) {
 }
 
 async function _getUserRaffleBudget(username, monthKey) {
-  // Modelo Quiniela: el budget para cupos = SALDO REAL en JUGAYGANA.
-  // Cuando el user compra un cupo se descuenta de su balance vía
-  // jugaygana.withdrawFromUser. Esta función solo lee el saldo actual y
-  // las participaciones del mes para mostrar el estado de cada sorteo.
+  // Devuelve dos cosas para construir el estado de los sorteos:
+  //  - balance: saldo real en JUGAYGANA (para sorteos PAGOS — paga con saldo).
+  //  - monthlyDeposit: total cargado del mes (para sorteos EXCLUSIVOS —
+  //    threshold de elegibilidad sin costo).
   let balance = 0;
   try {
     const balRes = await jugayganaMovements.getUserBalance(username);
@@ -11539,6 +11575,22 @@ async function _getUserRaffleBudget(username, monthKey) {
     }
   } catch (e) {
     logger.warn(`[raffles] getUserBalance(${username}): ${e.message}`);
+  }
+
+  // Monto cargado del mes (para sorteos exclusivos: threshold de elegibilidad).
+  let monthlyDeposit = 0;
+  try {
+    const [yStr, mStr] = monthKey.split('-');
+    const y = parseInt(yStr), m = parseInt(mStr);
+    const monthStart = new Date(Date.UTC(y, m - 1, 1));
+    const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
+    const stats = await DailyPlayerStats.aggregate([
+      { $match: { username: String(username).toLowerCase(), dateUtc: { $gte: monthStart, $lt: monthEnd } } },
+      { $group: { _id: null, deposits: { $sum: '$depositSum' } } }
+    ]);
+    monthlyDeposit = (stats[0] && stats[0].deposits) || 0;
+  } catch (e) {
+    logger.warn(`[raffles] monthlyDeposit(${username}): ${e.message}`);
   }
 
   const ourRaffles = await Raffle.find({ monthKey }, { id: 1, _id: 0 }).lean();
@@ -11556,12 +11608,11 @@ async function _getUserRaffleBudget(username, monthKey) {
     ticketNumbersByRaffle[p.raffleId] = p.ticketNumbers || [];
   }
   return {
-    balance,                   // saldo real en JUGAYGANA
+    balance,                   // saldo real en JUGAYGANA (para sorteos pagos)
+    monthlyDeposit,            // cargas del mes (para threshold de exclusivos)
     spent,                     // total gastado en sorteos del mes
-    available: balance,        // disponible para nuevos cupos = saldo
-    // Backward compat con clientes viejos (no rompen, ven $0 en estos campos):
-    monthlyDeposit: 0,
-    netwinLoss: 0,
+    available: balance,        // disponible para nuevos cupos pagos = saldo
+    netwinLoss: monthlyDeposit, // alias backward-compat
     participatingIn: parts.map(p => p.raffleId),
     cuposByRaffle,
     ticketNumbersByRaffle
@@ -11573,7 +11624,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     const monthKey = _argMonthKey();
     await _ensureRafflesSeededForMonth(monthKey);
     const raffles = await Raffle.find({ monthKey, status: { $in: ['active', 'closed'] } })
-      .sort({ entryCost: 1 }).lean();
+      .sort({ entryCost: 1, instanceNumber: 1 }).lean();
     const username = req.user.username;
     const budget = await _getUserRaffleBudget(username, monthKey);
     const participatingSet = new Set(budget.participatingIn);
@@ -11591,14 +11642,33 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     ]);
     const cuposByRaffleId = new Map(partsAgg.map(x => [x._id, x]));
 
+    // Para sorteos EXCLUSIVOS (entryMode='wagered') traemos el mapa
+    // numero -> username de quien lo reclamó, para que el cliente pueda
+    // mostrar la grilla con los tomados tachados y los libres clickeables.
+    const wageredRaffleIds = raffles.filter(r => r.entryMode === 'wagered').map(r => r.id);
+    const wageredClaims = wageredRaffleIds.length > 0 ? await RaffleParticipation.find(
+      { raffleId: { $in: wageredRaffleIds } },
+      { raffleId: 1, username: 1, ticketNumbers: 1, _id: 0 }
+    ).lean() : [];
+    const claimedByRaffle = {};
+    for (const p of wageredClaims) {
+      const m = (claimedByRaffle[p.raffleId] = claimedByRaffle[p.raffleId] || {});
+      for (const n of (p.ticketNumbers || [])) m[n] = p.username;
+    }
+
     const enriched = raffles.map(r => {
       const agg = cuposByRaffleId.get(r.id) || { totalCupos: 0, uniqueUsers: 0 };
       const totalCuposSold = agg.totalCupos || 0;
       const cuposRemaining = Math.max(0, r.totalTickets - totalCuposSold);
       const userCupos = budget.cuposByRaffle[r.id] || 0;
       const userTicketNumbers = budget.ticketNumbersByRaffle[r.id] || [];
-      const maxAffordableNow = Math.floor(budget.available / Math.max(1, r.entryCost));
-      const maxBuyableNow = Math.min(maxAffordableNow, cuposRemaining);
+      const isWagered = r.entryMode === 'wagered';
+      const userMeetsThreshold = isWagered ? (budget.monthlyDeposit >= (r.wageredThreshold || 0)) : true;
+      const maxAffordableNow = isWagered
+        ? (userMeetsThreshold && userCupos === 0 ? 1 : 0)
+        : Math.floor(budget.available / Math.max(1, r.entryCost));
+      const userCapReached = (r.maxCuposPerUser || 0) > 0 && userCupos >= r.maxCuposPerUser;
+      const maxBuyableNow = userCapReached ? 0 : Math.min(maxAffordableNow, cuposRemaining);
       return {
         id: r.id,
         name: r.name,
@@ -11606,8 +11676,17 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         description: r.description,
         imageUrl: r.imageUrl,
         emoji: r.emoji,
+        // Modo / costos.
+        entryMode: r.entryMode || 'paid',
         entryCost: r.entryCost,
+        wageredThreshold: r.wageredThreshold || 0,
+        maxCuposPerUser: r.maxCuposPerUser || 0,
+        // Cupos.
         totalTickets: r.totalTickets,
+        totalCuposSold,
+        cuposRemaining,
+        uniqueParticipants: agg.uniqueUsers || 0,
+        // Premio + payout proyectado.
         prizeValueARS: r.prizeValueARS || 0,
         projectedPayoutARS: _projectedPayoutARS(r, totalCuposSold),
         fillRatePct: r.totalTickets > 0 ? Math.round((totalCuposSold / r.totalTickets) * 100) : 0,
@@ -11617,10 +11696,6 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         raffleType: r.raffleType || 'other',
         instanceNumber: r.instanceNumber || 1,
         lotteryRule: r.lotteryRule || '',
-        // Cupos.
-        totalCuposSold,
-        cuposRemaining,
-        uniqueParticipants: agg.uniqueUsers || 0,
         // Lottery (resultado si ya se sorteo).
         lotteryDrawNumber: r.lotteryDrawNumber || null,
         lotteryDrawSource: r.lotteryDrawSource || null,
@@ -11629,8 +11704,12 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         userCupos,
         userTicketNumbers,
         userIsParticipating: userCupos > 0,
-        userCanAfford: budget.available >= r.entryCost,
-        userMaxBuyable: maxBuyableNow
+        userCanAfford: isWagered ? userMeetsThreshold : (budget.available >= r.entryCost),
+        userMaxBuyable: maxBuyableNow,
+        userMeetsThreshold,
+        userCapReached,
+        // Para sorteos exclusivos: mapa numero->username de los reclamados.
+        claimedNumbers: isWagered ? (claimedByRaffle[r.id] || {}) : undefined
       };
     });
 
@@ -11774,6 +11853,17 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
       }
     }
 
+    // Auto-close si el sorteo se llenó: cuando _ticketCounter llega al total,
+    // pasamos a 'closed' para que en la UI se muestre como completado y no
+    // se intente vender más. La siguiente instancia (ej. iPhone #2) toma
+    // el slot activo automáticamente.
+    if (counterAfter >= raffle.totalTickets) {
+      await Raffle.updateOne(
+        { id: raffle.id, status: 'active' },
+        { $set: { status: 'closed' } }
+      ).catch(() => {});
+    }
+
     const newBudget = await _getUserRaffleBudget(username, raffle.monthKey);
     const assignedRange = assignedNumbers.length === 1
       ? `#${assignedNumbers[0]}`
@@ -11814,6 +11904,145 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
       await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -quantity } }).catch(() => {});
     }
     res.status(500).json({ error: 'Error del servidor — si se descontó saldo, fue revertido. Probá de nuevo.' });
+  }
+});
+
+// Reclamar un número en un sorteo EXCLUSIVO (entryMode='wagered').
+// Body: { number: 1..totalTickets } — el user elige su numero de los libres.
+// Reglas:
+//  - sorteo debe tener entryMode='wagered' y status='active'
+//  - user debe tener monthlyDeposit >= raffle.wageredThreshold
+//  - user debe tener menos cupos que raffle.maxCuposPerUser (default 1)
+//  - el numero pedido NO debe estar tomado por nadie
+//  - todo atómico: usamos updateOne con $addToSet en una participation
+//    pseudo-única por raffleId+username, y cap check via $expr.
+app.post('/api/raffles/:id/claim-number', authMiddleware, async (req, res) => {
+  try {
+    const username = req.user.username;
+    const number = parseInt(req.body && req.body.number, 10);
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
+    if (raffle.entryMode !== 'wagered') return res.status(400).json({ error: 'Este sorteo no es de reclamo gratuito. Usá /participate.' });
+    if (!Number.isFinite(number) || number < 1 || number > raffle.totalTickets) {
+      return res.status(400).json({ error: `Elegí un número entre 1 y ${raffle.totalTickets}.` });
+    }
+
+    // Verificar threshold de cargas del mes.
+    const budget = await _getUserRaffleBudget(username, raffle.monthKey);
+    if (budget.monthlyDeposit < (raffle.wageredThreshold || 0)) {
+      return res.status(403).json({
+        error: `Necesitás haber cargado al menos $${(raffle.wageredThreshold||0).toLocaleString('es-AR')} este mes. Llevás $${(budget.monthlyDeposit||0).toLocaleString('es-AR')}.`,
+        wageredThreshold: raffle.wageredThreshold,
+        monthlyDeposit: budget.monthlyDeposit
+      });
+    }
+
+    // Cap por user — POR CATEGORÍA, no por instance. Un mismo user no puede
+    // tener cupos en varias instancias del mismo raffleType (ej. iPhone #1
+    // y iPhone #2 a la vez). 1 cupo por persona por categoría por mes.
+    const maxPerUser = raffle.maxCuposPerUser || 1;
+    const sameTypeRaffles = await Raffle.find(
+      { monthKey: raffle.monthKey, raffleType: raffle.raffleType },
+      { id: 1, name: 1, _id: 0 }
+    ).lean();
+    const sameTypeIds = sameTypeRaffles.map(r => r.id);
+    const safeUser = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const userInCategory = await RaffleParticipation.findOne(
+      {
+        raffleId: { $in: sameTypeIds },
+        username: { $regex: '^' + safeUser + '$', $options: 'i' }
+      },
+      { raffleId: 1, ticketNumbers: 1, _id: 0 }
+    ).lean();
+    if (userInCategory) {
+      const otherR = sameTypeRaffles.find(r => r.id === userInCategory.raffleId);
+      const otherName = otherR ? otherR.name : 'otro sorteo';
+      const nums = (userInCategory.ticketNumbers || []).join(', ');
+      return res.status(400).json({
+        error: `Ya tenés número en ${otherName}${nums ? ' (#' + nums + ')' : ''}. Solo se permite 1 cupo por persona en esta categoría por mes.`,
+        existingRaffleId: userInCategory.raffleId,
+        existingNumbers: userInCategory.ticketNumbers
+      });
+    }
+
+    // Verificar que el numero NO esté tomado. Atomic: si otra participation
+    // ya tiene este numero, no podemos asignarlo.
+    const taken = await RaffleParticipation.findOne(
+      { raffleId: raffle.id, ticketNumbers: number },
+      { username: 1, _id: 0 }
+    ).lean();
+    if (taken) {
+      return res.status(409).json({
+        error: `El número ${number} ya fue reclamado. Elegí otro de los libres.`,
+        takenBy: taken.username
+      });
+    }
+
+    // Reservar atomicamente: $inc del counter (auditoria de cantidad reclamada,
+    // aunque el numero lo elige el user). El cap se respeta porque el user
+    // pidió un numero <= totalTickets y verificamos que no esté tomado.
+    await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: 1 } });
+
+    const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const existing = await RaffleParticipation.findOne({
+      raffleId: raffle.id,
+      username: { $regex: '^' + safe + '$', $options: 'i' }
+    });
+    let updated;
+    try {
+      if (existing) {
+        // Doble check del cap por user en el mismo doc.
+        if ((existing.cuposCount || 0) >= maxPerUser) {
+          await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -1 } });
+          return res.status(400).json({ error: `Ya tenés ${existing.cuposCount} número en este sorteo (máximo ${maxPerUser}).` });
+        }
+        existing.cuposCount = (existing.cuposCount || 0) + 1;
+        existing.lastBoughtAt = new Date();
+        existing.ticketNumbers = (existing.ticketNumbers || []).concat([number]);
+        // entryCostPaid stays at 0 (gratis) o conserva valor si pagó algo antes.
+        updated = await existing.save();
+      } else {
+        updated = await RaffleParticipation.create({
+          id: uuidv4(),
+          raffleId: raffle.id,
+          username,
+          joinedAt: new Date(),
+          lastBoughtAt: new Date(),
+          cuposCount: 1,
+          ticketNumbers: [number],
+          entryCostPaid: 0,
+          netwinAtEntry: budget.monthlyDeposit
+        });
+      }
+    } catch (e) {
+      // Rollback del counter si falla la creacion.
+      await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -1 } }).catch(() => {});
+      throw e;
+    }
+
+    // Auto-close si se llenó.
+    const totalSoldNow = await RaffleParticipation.aggregate([
+      { $match: { raffleId: raffle.id } },
+      { $group: { _id: null, total: { $sum: '$cuposCount' } } }
+    ]);
+    const total = (totalSoldNow[0] && totalSoldNow[0].total) || 0;
+    if (total >= raffle.totalTickets) {
+      await Raffle.updateOne(
+        { id: raffle.id, status: 'active' },
+        { $set: { status: 'closed' } }
+      ).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      message: `¡Listo! Reclamaste el número ${number} en el sorteo de ${raffle.prizeName}. ¡Suerte! 🍀`,
+      claimedNumber: number,
+      userTicketNumbers: updated.ticketNumbers || [number]
+    });
+  } catch (err) {
+    logger.error(`/api/raffles/claim-number: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 

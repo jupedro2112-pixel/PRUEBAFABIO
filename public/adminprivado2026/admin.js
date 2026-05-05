@@ -7982,7 +7982,10 @@ function _renderRafflesAdmin(raffles) {
 }
 
 function _renderRaffleAdminCard(r) {
-    const drawDateStr = r.drawDate ? new Date(r.drawDate).toLocaleDateString('es-AR') : '—';
+    const drawDateStr = r.drawDate
+        ? new Date(r.drawDate).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+        : '—';
+    const isWagered = r.entryMode === 'wagered';
     const statusBadge = r.status === 'active'    ? '<span style="background:rgba(37,211,102,0.20);color:#25d366;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">ACTIVO</span>' :
                         r.status === 'closed'    ? '<span style="background:rgba(255,200,80,0.20);color:#ffc850;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">CERRADO</span>' :
                         r.status === 'drawn'     ? '<span style="background:rgba(120,80,255,0.20);color:#b39dff;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">SORTEADO</span>' :
@@ -8006,9 +8009,17 @@ function _renderRaffleAdminCard(r) {
     }
     html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;flex-wrap:wrap;gap:6px;">';
     html += '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants || 0) + '</strong> personas</span>';
-    html += '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos vendidos</span>';
-    html += '  <span>💰 <strong style="color:#fff;">$' + (r.entryCost||0).toLocaleString('es-AR') + '</strong> por cupo</span>';
-    html += '  <span>📅 ' + escapeHtml(drawDateStr) + '</span>';
+    html += '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos</span>';
+    if (isWagered) {
+        html += '  <span>🎁 <strong style="color:#25d366;">GRATIS</strong> · threshold $' + (r.wageredThreshold||0).toLocaleString('es-AR') + '</span>';
+    } else {
+        html += '  <span>💰 <strong style="color:#fff;">$' + (r.entryCost||0).toLocaleString('es-AR') + '</strong>/cupo</span>';
+    }
+    html += '</div>';
+    // Fecha del sorteo destacada.
+    html += '<div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:6px 10px;text-align:center;">';
+    html += '  <small style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">📅 Sorteo programado</small>';
+    html += '  <div style="color:#fff;font-size:12px;font-weight:700;text-transform:capitalize;">' + escapeHtml(drawDateStr) + '</div>';
     html += '</div>';
     // Premio + payout proyectado.
     if (r.prizeValueARS && r.prizeValueARS > 0) {
