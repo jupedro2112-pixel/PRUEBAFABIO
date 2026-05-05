@@ -10040,12 +10040,16 @@ setInterval(() => { _runNotifRulesEvaluator(); }, 5 * 60 * 1000);
 //   con sentAt > 48h y mide carga pre/post para llenar el reporte.
 const weeklyStrategyService = require('./src/services/weeklyStrategyService');
 const adhocStrategyService = require('./src/services/adhocStrategyService');
+const automationStrategyService = require('./src/services/automationStrategyService');
 const refundReminderService = require('./src/services/refundReminderService');
+const AutomationLaunch = require('./src/models/AutomationLaunch');
+const EngagementCopyPool = require('./src/models/EngagementCopyPool');
 const _strategyModels = {
   User, RefundClaim, MoneyGiveaway, MoneyGiveawayClaim,
   NotificationHistory, DailyPlayerStats,
   WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport,
-  RefundReminderConfig
+  RefundReminderConfig,
+  AutomationLaunch, EngagementCopyPool
 };
 
 async function _runWeeklyStrategyChecker() {
@@ -10379,6 +10383,238 @@ app.post('/api/admin/strategy/adhoc/launch', authMiddleware, adminMiddleware, as
     res.json({ success: true, result: r });
   } catch (err) {
     logger.error(`POST adhoc/launch: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// AUTOMATIZACIÓN — análisis del panel + lanzamiento mix 70/30
+// ============================================================
+// Esta seccion es la puerta de entrada del nuevo flujo "smart": el admin
+// elige rango (presets daily/weekly/monthly o custom), tocá Analizar,
+// el motor lee la base, segmenta, decide quien recibe engagement-only
+// (no plata) y quien recibe oferta concreta (regalo $ o bono % carga)
+// segun ratios per-segmento que dan ~70/30 global. El admin puede
+// editar montos/% antes de confirmar. Despues del launch, queda el
+// AutomationLaunch en historial para que el ROI tracker lo evalue.
+//
+// Endpoints:
+//   POST /api/admin/automation/analyze    → computa plan, devuelve planId
+//   GET  /api/admin/automation/plan/:id   → recupera plan en memoria
+//   POST /api/admin/automation/launch     → ejecuta plan (con edits opcionales)
+//   GET  /api/admin/automation/history    → listado de lanzamientos
+//   GET  /api/admin/automation/launch/:id → detalle de un lanzamiento
+//   GET  /api/admin/automation/copies     → pool de copies de engagement
+//   POST /api/admin/automation/copies     → crear copy
+//   PUT  /api/admin/automation/copies/:id → editar copy
+//   DELETE /api/admin/automation/copies/:id → eliminar copy
+// ============================================================
+
+function _autoPresetRange(preset) {
+  const now = new Date();
+  if (preset === 'daily') {
+    return { from: new Date(now.getTime() - 24*3600*1000), to: now };
+  }
+  if (preset === 'weekly') {
+    return { from: new Date(now.getTime() - 7*24*3600*1000), to: now };
+  }
+  if (preset === 'monthly') {
+    return { from: new Date(now.getTime() - 30*24*3600*1000), to: now };
+  }
+  return null;
+}
+
+app.post('/api/admin/automation/analyze', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede usar Automatización.' });
+    }
+    const body = req.body || {};
+    let from, to;
+    const preset = ['daily', 'weekly', 'monthly', 'custom'].includes(body.preset) ? body.preset : 'custom';
+    if (preset !== 'custom') {
+      const r = _autoPresetRange(preset);
+      from = r.from; to = r.to;
+    } else {
+      const fMs = Date.parse(body.analysisFrom);
+      const tMs = Date.parse(body.analysisTo);
+      if (!Number.isFinite(fMs) || !Number.isFinite(tMs)) {
+        return res.status(400).json({ error: 'Rango inválido (analysisFrom / analysisTo).' });
+      }
+      if (tMs <= fMs) return res.status(400).json({ error: 'analysisTo debe ser posterior a analysisFrom.' });
+      if (tMs - fMs > 90*86400000) return res.status(400).json({ error: 'Rango máximo 90 días.' });
+      from = new Date(fMs); to = new Date(tMs);
+    }
+
+    const t0 = Date.now();
+    const plan = await automationStrategyService.computeAutomationPlan({
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      analysisFrom: from,
+      analysisTo: to,
+      preset,
+      logger
+    });
+    const planId = automationStrategyService.storeAutomationPlan(plan);
+    res.json({
+      success: true,
+      planId,
+      plan,
+      computedInMs: Date.now() - t0,
+      ttlMinutes: 60
+    });
+  } catch (err) {
+    logger.error(`POST automation/analyze: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/automation/plan/:planId', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const plan = automationStrategyService.getAutomationPlan(req.params.planId);
+    if (!plan) return res.status(404).json({ error: 'Plan expirado o inexistente. Volvé a analizar.' });
+    res.json({ success: true, plan });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/automation/launch', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede lanzar.' });
+    }
+    const body = req.body || {};
+    const planId = String(body.planId || '').trim();
+    if (!planId) return res.status(400).json({ error: 'Falta planId.' });
+
+    const plan = automationStrategyService.consumeAutomationPlan(planId);
+    if (!plan) return res.status(404).json({ error: 'Plan expirado. Volvé a analizar.' });
+
+    const validUntilMs = Date.parse(body.validUntil) ||
+                         (Date.now() + 48*3600*1000); // default 48h
+    if (validUntilMs <= Date.now()) return res.status(400).json({ error: 'validUntil debe ser futuro.' });
+    if (validUntilMs - Date.now() > 7*86400000) return res.status(400).json({ error: 'validUntil máx 7 días.' });
+
+    const edits = (body.edits && typeof body.edits === 'object') ? body.edits : {};
+
+    const r = await automationStrategyService.executeAutomationPlan({
+      plan,
+      edits,
+      models: _strategyModels,
+      weeklyService: weeklyStrategyService,
+      sendPushFn: sendNotificationToAllUsers,
+      setConfig,
+      getConfig,
+      TIER_PROMOS_KEY,
+      validUntil: new Date(validUntilMs),
+      triggeredBy: req.user.username || 'admin',
+      logger
+    });
+    res.json({ success: true, result: r });
+  } catch (err) {
+    logger.error(`POST automation/launch: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/automation/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 30, 1), 100);
+    const launches = await AutomationLaunch.find({})
+      .sort({ launchedAt: -1 })
+      .limit(limit)
+      .select('id launchedAt launchedBy preset analysisFrom analysisTo totalTargets engagementCount bonusCount totalCostARS sentCount failureCount verdict outcomeChargesAfterCount outcomeChargesAfterARS outcomeRoiRatio segments')
+      .lean();
+    res.json({ success: true, launches });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/automation/launch/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const launch = await AutomationLaunch.findOne({ id: req.params.id }).lean();
+    if (!launch) return res.status(404).json({ error: 'Launch no encontrado.' });
+    res.json({ success: true, launch });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/automation/copies', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    // Trigger seeding via a dummy compute? No — simpler: si está vacío, sembramos acá.
+    const count = await EngagementCopyPool.estimatedDocumentCount();
+    if (count === 0) {
+      const { v4: uuidv4 } = require('uuid');
+      for (const c of automationStrategyService.DEFAULT_ENGAGEMENT_COPIES) {
+        await EngagementCopyPool.create({
+          id: uuidv4(),
+          title: c.title,
+          body: c.body,
+          segments: [],
+          enabled: true,
+          weight: 1,
+          createdBy: 'seed'
+        }).catch(() => {});
+      }
+    }
+    const copies = await EngagementCopyPool.find({}).sort({ createdAt: 1 }).lean();
+    res.json({ success: true, copies });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/automation/copies', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const { v4: uuidv4 } = require('uuid');
+    const { title, body, segments, weight } = req.body || {};
+    if (!title || !body) return res.status(400).json({ error: 'title y body son requeridos.' });
+    const doc = await EngagementCopyPool.create({
+      id: uuidv4(),
+      title: String(title).slice(0, 200),
+      body: String(body).slice(0, 500),
+      segments: Array.isArray(segments) ? segments.filter(s => typeof s === 'string') : [],
+      weight: Math.max(0.1, Math.min(10, Number(weight) || 1)),
+      enabled: true,
+      createdBy: req.user.username || 'admin'
+    });
+    res.json({ success: true, copy: doc });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/automation/copies/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const { title, body, segments, enabled, weight } = req.body || {};
+    const update = {};
+    if (typeof title === 'string') update.title = title.slice(0, 200);
+    if (typeof body === 'string') update.body = body.slice(0, 500);
+    if (Array.isArray(segments)) update.segments = segments.filter(s => typeof s === 'string');
+    if (typeof enabled === 'boolean') update.enabled = enabled;
+    if (Number.isFinite(Number(weight))) update.weight = Math.max(0.1, Math.min(10, Number(weight)));
+    const doc = await EngagementCopyPool.findOneAndUpdate(
+      { id: req.params.id }, { $set: update }, { new: true }
+    );
+    if (!doc) return res.status(404).json({ error: 'Copy no encontrado.' });
+    res.json({ success: true, copy: doc });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/automation/copies/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const r = await EngagementCopyPool.deleteOne({ id: req.params.id });
+    if (r.deletedCount === 0) return res.status(404).json({ error: 'Copy no encontrado.' });
+    res.json({ success: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

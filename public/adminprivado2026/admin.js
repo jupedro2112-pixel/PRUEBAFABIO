@@ -165,6 +165,7 @@ function showSection(sectionKey) {
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
+        automation: 'automationSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
@@ -203,6 +204,8 @@ function showSection(sectionKey) {
         loadStatsAll();
     } else if (sectionKey === 'automations') {
         loadAutomations();
+    } else if (sectionKey === 'automation') {
+        loadAutomationSection();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -7237,5 +7240,387 @@ async function recoverySavePending(id) {
         } else {
             showToast(j.error || 'Error', 'error');
         }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// =====================================================================
+// SECCIÓN ✨ AUTOMATIZACIÓN
+// =====================================================================
+// Estrategia smart con mix 70/30 (engagement-only vs bonos), preview
+// editable, lanzamiento con confirmación, historial con veredicto, y
+// admin de copies de engagement.
+
+let _automationActiveTab = 'plan';
+let _automationCurrentPlan = null;
+let _automationCurrentPlanId = null;
+let _automationEdits = {};
+let _automationPreset = 'weekly';
+
+function loadAutomationSection() {
+    _automationActiveTab = 'plan';
+    _automationCurrentPlan = null;
+    _automationCurrentPlanId = null;
+    _automationEdits = {};
+    _renderAutomationTab();
+}
+
+function switchAutomationTab(tab) {
+    _automationActiveTab = tab;
+    document.querySelectorAll('#automationSection .auto2-tab-btn').forEach(b => {
+        const isActive = b.dataset.tab === tab;
+        b.classList.toggle('active', isActive);
+        if (isActive) {
+            b.style.background = 'rgba(120,80,255,0.15)';
+            b.style.borderColor = 'rgba(120,80,255,0.40)';
+            b.style.color = '#b39dff';
+        } else {
+            b.style.background = 'rgba(0,0,0,0.30)';
+            b.style.borderColor = 'rgba(255,255,255,0.10)';
+            b.style.color = '#aaa';
+        }
+    });
+    _renderAutomationTab();
+}
+
+function _renderAutomationTab() {
+    if (_automationActiveTab === 'plan')    return _renderAutomationPlanTab();
+    if (_automationActiveTab === 'history') return _renderAutomationHistoryTab();
+    if (_automationActiveTab === 'copies')  return _renderAutomationCopiesTab();
+}
+
+function _renderAutomationPlanTab() {
+    const c = document.getElementById('automationContent');
+    if (!c) return;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const fromDefault = new Date(Date.now() - 7*86400000).toISOString().slice(0, 10);
+
+    let html = '';
+    html += '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">';
+    html += '  <strong style="color:#b39dff;font-size:13px;">📅 Rango de análisis:</strong>';
+    html += '  <button onclick="setAutomationPreset(\'daily\')" id="autoPresetDaily" class="auto2-preset" style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:12px;cursor:pointer;font-weight:700;">Hoy</button>';
+    html += '  <button onclick="setAutomationPreset(\'weekly\')" id="autoPresetWeekly" class="auto2-preset" style="padding:7px 12px;border-radius:8px;border:1px solid rgba(120,80,255,0.40);background:rgba(120,80,255,0.20);color:#b39dff;font-size:12px;cursor:pointer;font-weight:700;">Últimos 7 días</button>';
+    html += '  <button onclick="setAutomationPreset(\'monthly\')" id="autoPresetMonthly" class="auto2-preset" style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:12px;cursor:pointer;font-weight:700;">Mes actual</button>';
+    html += '  <span style="color:#666;">o</span>';
+    html += '  <input type="date" id="autoDateFrom" value="' + fromDefault + '" onchange="_automationPreset=\'custom\'" style="padding:7px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;">';
+    html += '  <span style="color:#666;">→</span>';
+    html += '  <input type="date" id="autoDateTo" value="' + todayStr + '" onchange="_automationPreset=\'custom\'" style="padding:7px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;">';
+    html += '  <button onclick="analyzeAutomation()" id="autoAnalyzeBtn" style="margin-left:auto;padding:9px 18px;font-size:13px;font-weight:800;background:linear-gradient(135deg,#7850ff,#00d4ff);color:#fff;border:none;border-radius:8px;cursor:pointer;">📊 Analizar panel</button>';
+    html += '</div>';
+
+    html += '<div id="automationPlanContent">';
+    if (_automationCurrentPlan) {
+        html += _renderAutomationPlanPreview(_automationCurrentPlan);
+    } else {
+        html += '<div style="text-align:center;padding:40px;color:#888;">';
+        html += '  <div style="font-size:42px;margin-bottom:10px;opacity:0.4;">📊</div>';
+        html += '  <p style="margin:0;font-size:14px;">Elegí un rango y tocá <strong>Analizar panel</strong> para ver la estrategia propuesta.</p>';
+        html += '</div>';
+    }
+    html += '</div>';
+    c.innerHTML = html;
+}
+
+function setAutomationPreset(preset) {
+    _automationPreset = preset;
+    ['Daily', 'Weekly', 'Monthly'].forEach(p => {
+        const btn = document.getElementById('autoPreset' + p);
+        if (!btn) return;
+        const isActive = preset === p.toLowerCase();
+        btn.style.background = isActive ? 'rgba(120,80,255,0.20)' : 'rgba(0,0,0,0.45)';
+        btn.style.borderColor = isActive ? 'rgba(120,80,255,0.40)' : 'rgba(255,255,255,0.15)';
+        btn.style.color = isActive ? '#b39dff' : '#fff';
+    });
+}
+
+async function analyzeAutomation() {
+    const btn = document.getElementById('autoAnalyzeBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Analizando…'; }
+    const fromStr = (document.getElementById('autoDateFrom') || {}).value;
+    const toStr = (document.getElementById('autoDateTo') || {}).value;
+    let body;
+    if (_automationPreset && _automationPreset !== 'custom') {
+        body = { preset: _automationPreset };
+    } else {
+        body = {
+            preset: 'custom',
+            analysisFrom: new Date(fromStr + 'T00:00:00Z').toISOString(),
+            analysisTo:   new Date(toStr   + 'T23:59:59Z').toISOString()
+        };
+    }
+    try {
+        const r = await authFetch('/api/admin/automation/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error analizando', 'error'); return; }
+        _automationCurrentPlan = d.plan;
+        _automationCurrentPlanId = d.planId;
+        _automationEdits = {};
+        const target = document.getElementById('automationPlanContent');
+        if (target) target.innerHTML = _renderAutomationPlanPreview(d.plan);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '📊 Analizar panel'; } }
+}
+
+function _renderAutomationPlanPreview(plan) {
+    let html = '';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;">';
+    html += _autoStatCard('🎯 Targets', plan.totalTargets || 0, '#b39dff');
+    html += _autoStatCard('💌 Solo engagement', plan.totalEngagement || 0, '#25d366');
+    html += _autoStatCard('🎁 Con bono', plan.totalBonus || 0, '#ffc850');
+    html += _autoStatCard('💰 Costo estimado', '$' + (plan.totalCostARS || 0).toLocaleString('es-AR'), '#ff8800');
+    html += _autoStatCard('⏸ Cooldown ' + (plan.cooldownHours || 72) + 'h', plan.skippedCooldown || 0, '#888');
+    html += '</div>';
+    if (!plan.totalTargets) {
+        html += '<div style="background:rgba(255,150,50,0.10);border:1px solid rgba(255,150,50,0.30);border-radius:10px;padding:14px;color:#ffb060;font-size:13px;">⚠️ No hay targets en este rango. Ampliá la ventana o esperá que pase el cooldown.</div>';
+        return html;
+    }
+    html += '<table class="report-table" style="margin-bottom:14px;"><thead><tr>';
+    html += '<th>Segmento</th><th style="text-align:center;">Total</th><th style="text-align:center;">💌 Engagement</th><th style="text-align:center;">🎁 Con bono</th><th>Oferta sugerida</th><th>Editar</th><th style="text-align:right;">Costo</th>';
+    html += '</tr></thead><tbody>';
+    for (const seg of (plan.breakdown || [])) {
+        const ratio = Math.round((seg.bonusRatio || 0) * 100);
+        html += '<tr>';
+        html += '<td><div style="font-weight:700;">' + escapeHtml(seg.label) + '</div><div style="font-size:10px;color:#888;">' + escapeHtml(seg.description || '') + '</div></td>';
+        html += '<td style="text-align:center;font-weight:700;">' + seg.count + '</td>';
+        html += '<td style="text-align:center;color:#25d366;">' + seg.engagementCount + '</td>';
+        html += '<td style="text-align:center;color:#ffc850;">' + seg.bonusCount + ' <small style="color:#666;">(' + ratio + '%)</small></td>';
+        let offerCell = '', editCell = '';
+        if (seg.bonusKind === 'money' && seg.bonusCount > 0) {
+            offerCell = '<span style="color:#ffc850;">💵 Regalo de plata · prom $' + (seg.avgGiftAmount || 0).toLocaleString('es-AR') + '</span>';
+            editCell = '<input type="number" min="0" step="500" placeholder="Override $" oninput="onAutomationEdit(\'' + seg.segment + '\',\'giftAmount\',this.value)" style="width:90px;padding:5px;border-radius:6px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;font-size:12px;">';
+        } else if (seg.bonusKind === 'whatsapp_promo' && seg.bonusCount > 0) {
+            offerCell = '<span style="color:#00d4ff;">🎰 Bono % carga · prom ' + (seg.avgBonusPct || 0) + '%</span>';
+            editCell = '<input type="number" min="1" max="100" step="5" placeholder="Override %" oninput="onAutomationEdit(\'' + seg.segment + '\',\'bonusPct\',this.value)" style="width:80px;padding:5px;border-radius:6px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;font-size:12px;">';
+        } else {
+            offerCell = '<small style="color:#666;">— solo engagement —</small>';
+            editCell = '<small style="color:#666;">N/A</small>';
+        }
+        html += '<td>' + offerCell + '</td><td>' + editCell + '</td>';
+        html += '<td style="text-align:right;font-weight:700;">$' + (seg.costARS || 0).toLocaleString('es-AR') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '<details style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin-bottom:14px;">';
+    html += '  <summary style="cursor:pointer;color:#b39dff;font-weight:700;font-size:12px;">👀 Ver lista exacta de a quién le va a llegar (' + plan.totalTargets + ' usuarios)</summary>';
+    html += '  <div style="max-height:380px;overflow-y:auto;margin-top:10px;">';
+    html += '  <table class="report-table" style="font-size:11px;"><thead><tr><th>Usuario</th><th>Segmento</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>';
+    for (const t of (plan.targets || [])) {
+        let detail;
+        if (t.kind === 'money')               detail = '$' + (t.giftAmount||0).toLocaleString('es-AR');
+        else if (t.kind === 'whatsapp_promo') detail = (t.bonusPct||0) + '% carga';
+        else                                  detail = '<span style="color:#888;">' + escapeHtml(t.copyTitle || 'engagement') + '</span>';
+        const kindBadge = t.kind === 'engagement'
+            ? '<span style="color:#25d366;font-weight:700;">💌 Engagement</span>'
+            : (t.kind === 'money' ? '<span style="color:#ffc850;font-weight:700;">💵 Regalo $</span>' : '<span style="color:#00d4ff;font-weight:700;">🎰 Bono %</span>');
+        html += '<tr><td>' + escapeHtml(t.username) + '</td><td><small>' + escapeHtml(t.segmentLabel || t.segment) + '</small></td><td>' + kindBadge + '</td><td>' + detail + '</td></tr>';
+    }
+    html += '  </tbody></table></div></details>';
+    html += '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap;">';
+    html += '  <small style="color:#888;">El push se manda al confirmar. Las ofertas vencen en 48h.</small>';
+    html += '  <button onclick="launchAutomation()" id="autoLaunchBtn" style="padding:11px 22px;font-size:14px;font-weight:800;background:linear-gradient(135deg,#25d366,#0a8055);color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 4px 14px rgba(37,211,102,0.40);">✅ Confirmar y lanzar</button>';
+    html += '</div>';
+    return html;
+}
+
+function _autoStatCard(label, value, color) {
+    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;text-align:center;">' +
+           '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">' + label + '</div>' +
+           '<div style="color:' + color + ';font-size:20px;font-weight:800;">' + value + '</div>' +
+           '</div>';
+}
+
+function onAutomationEdit(segmentCode, field, val) {
+    const n = Number(val);
+    if (!Number.isFinite(n) || n <= 0) {
+        if (_automationEdits[segmentCode]) delete _automationEdits[segmentCode][field];
+        return;
+    }
+    if (!_automationEdits[segmentCode]) _automationEdits[segmentCode] = {};
+    _automationEdits[segmentCode][field] = n;
+}
+
+async function launchAutomation() {
+    if (!_automationCurrentPlanId) { showToast('No hay plan cargado, analizá primero.', 'error'); return; }
+    const total = (_automationCurrentPlan && _automationCurrentPlan.totalTargets) || 0;
+    const cost = (_automationCurrentPlan && _automationCurrentPlan.totalCostARS) || 0;
+    const ok = confirm('Vas a lanzar la campaña a ' + total + ' usuarios. Costo estimado: $' + cost.toLocaleString('es-AR') + '. ¿Confirmás?');
+    if (!ok) return;
+    const btn = document.getElementById('autoLaunchBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Lanzando…'; }
+    try {
+        const r = await authFetch('/api/admin/automation/launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                planId: _automationCurrentPlanId,
+                edits: _automationEdits,
+                validUntil: new Date(Date.now() + 48*3600*1000).toISOString()
+            })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error lanzando', 'error'); return; }
+        const res = d.result || {};
+        showToast('✅ Lanzado: ' + (res.sentCount||0) + ' pushes (' + (res.engagementCount||0) + ' engagement, ' + (res.bonusCount||0) + ' con bono)', 'success');
+        _automationCurrentPlan = null;
+        _automationCurrentPlanId = null;
+        _automationEdits = {};
+        switchAutomationTab('history');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '✅ Confirmar y lanzar'; } }
+}
+
+async function _renderAutomationHistoryTab() {
+    const c = document.getElementById('automationContent');
+    if (!c) return;
+    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando historial…</div>';
+    try {
+        const r = await authFetch('/api/admin/automation/history?limit=50');
+        const d = await r.json();
+        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>'; return; }
+        const launches = d.launches || [];
+        if (launches.length === 0) {
+            c.innerHTML = '<div style="text-align:center;padding:40px;color:#888;"><div style="font-size:42px;opacity:0.4;">📊</div><p>Todavía no lanzaste ninguna campaña. Andá a <strong>Analizar y lanzar</strong>.</p></div>';
+            return;
+        }
+        let html = '<table class="report-table"><thead><tr>';
+        html += '<th>Lanzado</th><th>Por</th><th>Rango</th><th style="text-align:center;">Targets</th><th style="text-align:center;">💌</th><th style="text-align:center;">🎁</th><th style="text-align:right;">Costo</th><th style="text-align:right;">Cargas post</th><th>Veredicto</th>';
+        html += '</tr></thead><tbody>';
+        for (const l of launches) {
+            const verdictBadge = _autoVerdictBadge(l.verdict);
+            const range = (l.preset && l.preset !== 'custom') ? l.preset : (
+                new Date(l.analysisFrom).toLocaleDateString('es-AR') + '–' + new Date(l.analysisTo).toLocaleDateString('es-AR')
+            );
+            html += '<tr>';
+            html += '<td><small>' + new Date(l.launchedAt).toLocaleString('es-AR') + '</small></td>';
+            html += '<td><small>' + escapeHtml(l.launchedBy || '—') + '</small></td>';
+            html += '<td><small>' + escapeHtml(range) + '</small></td>';
+            html += '<td style="text-align:center;font-weight:700;">' + (l.totalTargets || 0) + '</td>';
+            html += '<td style="text-align:center;color:#25d366;">' + (l.engagementCount || 0) + '</td>';
+            html += '<td style="text-align:center;color:#ffc850;">' + (l.bonusCount || 0) + '</td>';
+            html += '<td style="text-align:right;font-weight:700;">$' + (l.totalCostARS || 0).toLocaleString('es-AR') + '</td>';
+            html += '<td style="text-align:right;color:#25d366;">';
+            if ((l.outcomeChargesAfterCount || 0) > 0) {
+                html += (l.outcomeChargesAfterCount) + ' · $' + (l.outcomeChargesAfterARS || 0).toLocaleString('es-AR');
+            } else {
+                html += '<small style="color:#666;">—</small>';
+            }
+            html += '</td><td>' + verdictBadge + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        html += '<p style="color:#888;font-size:11px;margin-top:10px;">El veredicto se calcula a las 48h del lanzamiento (rentabilidad = cargas reales post / costo bono).</p>';
+        c.innerHTML = html;
+    } catch (e) { c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>'; }
+}
+
+function _autoVerdictBadge(v) {
+    if (v === 'good')    return '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">🟢 Rentable</span>';
+    if (v === 'regular') return '<span style="background:rgba(255,200,80,0.18);color:#ffc850;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">🟡 Regular</span>';
+    if (v === 'bad')     return '<span style="background:rgba(255,80,80,0.18);color:#ff5050;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:800;">🔴 Mala</span>';
+    return '<span style="background:rgba(255,255,255,0.05);color:#888;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;">⏳ Pendiente</span>';
+}
+
+const _automationCopyEdits = {};
+
+async function _renderAutomationCopiesTab() {
+    const c = document.getElementById('automationContent');
+    if (!c) return;
+    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando copies…</div>';
+    try {
+        const r = await authFetch('/api/admin/automation/copies');
+        const d = await r.json();
+        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>'; return; }
+        const copies = d.copies || [];
+        let html = '';
+        html += '<div style="background:rgba(120,80,255,0.06);border:1px solid rgba(120,80,255,0.20);border-radius:10px;padding:12px;margin-bottom:14px;color:#bbb;font-size:12px;line-height:1.6;">';
+        html += 'Estos textos rotan entre los users del 70% engagement-only de cada lanzamiento. La asignación es determinista por user, ponderada por <strong>peso</strong>.';
+        html += '</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '  <strong style="color:#b39dff;font-size:12px;">➕ Agregar copy</strong>';
+        html += '  <div style="display:grid;grid-template-columns:1fr 2fr 80px;gap:8px;margin-top:8px;">';
+        html += '    <input id="newCopyTitle" placeholder="Título" style="padding:7px;border-radius:6px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;font-size:12px;">';
+        html += '    <input id="newCopyBody" placeholder="Cuerpo del mensaje" style="padding:7px;border-radius:6px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;font-size:12px;">';
+        html += '    <button onclick="addAutomationCopy()" style="padding:7px;background:linear-gradient(135deg,#7850ff,#00d4ff);color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;">Agregar</button>';
+        html += '  </div></div>';
+        html += '<table class="report-table"><thead><tr><th>Título</th><th>Cuerpo</th><th style="text-align:center;">Peso</th><th style="text-align:center;">Usos</th><th style="text-align:center;">Activo</th><th style="text-align:center;">Acción</th></tr></thead><tbody>';
+        for (const cp of copies) {
+            html += '<tr>';
+            html += '<td><input value="' + escapeHtml(cp.title) + '" data-id="' + cp.id + '" data-field="title" oninput="onCopyEdit(this)" style="width:100%;padding:5px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:5px;color:#fff;font-size:12px;"></td>';
+            html += '<td><input value="' + escapeHtml(cp.body) + '" data-id="' + cp.id + '" data-field="body" oninput="onCopyEdit(this)" style="width:100%;padding:5px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:5px;color:#fff;font-size:12px;"></td>';
+            html += '<td style="text-align:center;"><input type="number" step="0.5" min="0.1" max="10" value="' + (cp.weight||1) + '" data-id="' + cp.id + '" data-field="weight" oninput="onCopyEdit(this)" style="width:55px;padding:5px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:5px;color:#fff;font-size:12px;text-align:center;"></td>';
+            html += '<td style="text-align:center;color:#888;">' + (cp.usageCount||0) + '</td>';
+            html += '<td style="text-align:center;"><input type="checkbox" ' + (cp.enabled !== false ? 'checked' : '') + ' data-id="' + cp.id + '" onchange="onCopyToggle(this)" style="width:18px;height:18px;cursor:pointer;"></td>';
+            html += '<td style="text-align:center;"><button onclick="saveAutomationCopy(\'' + cp.id + '\')" style="padding:4px 10px;background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.40);border-radius:5px;font-size:11px;cursor:pointer;font-weight:700;">💾</button> <button onclick="deleteAutomationCopy(\'' + cp.id + '\')" style="padding:4px 8px;background:rgba(255,80,80,0.15);color:#ff5050;border:1px solid rgba(255,80,80,0.30);border-radius:5px;font-size:11px;cursor:pointer;">🗑</button></td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        c.innerHTML = html;
+    } catch (e) { c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>'; }
+}
+
+function onCopyEdit(input) {
+    const id = input.dataset.id, field = input.dataset.field;
+    if (!_automationCopyEdits[id]) _automationCopyEdits[id] = {};
+    _automationCopyEdits[id][field] = field === 'weight' ? Number(input.value) : input.value;
+}
+
+async function onCopyToggle(input) {
+    const id = input.dataset.id;
+    const enabled = input.checked;
+    try {
+        const r = await authFetch('/api/admin/automation/copies/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const d = await r.json();
+        if (!r.ok) showToast(d.error || 'Error', 'error');
+        else showToast(enabled ? 'Activado' : 'Desactivado', 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function saveAutomationCopy(id) {
+    const edits = _automationCopyEdits[id];
+    if (!edits) { showToast('No hay cambios', 'info'); return; }
+    try {
+        const r = await authFetch('/api/admin/automation/copies/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(edits)
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        delete _automationCopyEdits[id];
+        showToast('✅ Guardado', 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function addAutomationCopy() {
+    const title = (document.getElementById('newCopyTitle') || {}).value || '';
+    const body  = (document.getElementById('newCopyBody')  || {}).value || '';
+    if (!title.trim() || !body.trim()) { showToast('Completá título y cuerpo', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/automation/copies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, body })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('✅ Copy agregado', 'success');
+        _renderAutomationCopiesTab();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function deleteAutomationCopy(id) {
+    if (!confirm('¿Eliminar este copy del pool?')) return;
+    try {
+        const r = await authFetch('/api/admin/automation/copies/' + id, { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('Eliminado', 'success');
+        _renderAutomationCopiesTab();
     } catch (e) { showToast('Error de conexión', 'error'); }
 }

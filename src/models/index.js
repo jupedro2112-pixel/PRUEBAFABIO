@@ -36,6 +36,8 @@ const WeeklyNotifBudget = require('./WeeklyNotifBudget');
 const WeeklyStrategyReport = require('./WeeklyStrategyReport');
 const ActivePlayersSnapshot = require('./ActivePlayersSnapshot');
 const RefundReminderConfig = require('./RefundReminderConfig');
+const AutomationLaunch = require('./AutomationLaunch');
+const EngagementCopyPool = require('./EngagementCopyPool');
 
 
 /**
@@ -444,6 +446,8 @@ module.exports = {
   WeeklyStrategyReport,
   ActivePlayersSnapshot,
   RefundReminderConfig,
+  AutomationLaunch,
+  EngagementCopyPool,
 
   // Funciones de conexión
   connectDB,
