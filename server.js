@@ -16802,6 +16802,162 @@ app.delete('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, superAdm
   }
 });
 
+// DELETE /api/admin/calendar/week/:weekKey/strategies/non-pinned
+// Limpia TODAS las strategies no-pinned (las difusiones manuales viejas)
+// y deja el plan con solo las pinned (refund recordatorios fijos). Ignora
+// las que ya estan 'lanzado' o 'completado' (esas son historial). Las
+// 'lanzando' se mantienen para no cortar un push en curso. Solo borra
+// 'pendiente' o 'cancelado'. Util para limpiar la pantalla de planes
+// viejos cuando el owner cambia de estrategia.
+app.delete('/api/admin/calendar/week/:weekKey/strategies/non-pinned', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const { weekKey } = req.params;
+    const plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    let removed = 0;
+    for (const d of plan.days) {
+      const before = d.strategies.length;
+      d.strategies = d.strategies.filter(s => {
+        if (s.isPinned) return true; // pinned siempre se queda
+        if (s.status === 'lanzado' || s.status === 'completado') return true; // historial
+        if (s.status === 'lanzando') return true; // en curso, no tocar
+        return false; // pendiente / cancelado / draft -> borrar
+      });
+      removed += (before - d.strategies.length);
+    }
+    plan.markModified('days');
+    _recalcPlanSummary(plan);
+    await plan.save();
+    logger.info(`[calendar] cleanup non-pinned weekKey=${weekKey} removed=${removed} by=${req.user?.username || 'admin'}`);
+    res.json({ success: true, removed });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/week/strategies/non-pinned: ${err.message}`);
+    res.status(500).json({ error: 'Error limpiando difusiones' });
+  }
+});
+
+// POST /api/admin/calendar/bonus-reminder
+// Quick-action: manda push masivo a TODOS los users que NO reclamaron
+// su bono diario / semanal / mensual del periodo actual. Usa la misma
+// pipeline que /quick-launch (con type='refund' y refundTypes=[<type>])
+// para que el plan de la semana lo registre y aparezca el ROI despues.
+//
+// Body: { type: 'daily'|'weekly'|'monthly' }
+//
+// Title/body se setean automaticos con copy preestablecido — el owner
+// solo decide CUAL bono y nosotros nos ocupamos del resto. Asi las
+// difusiones quedan uniformes y rapidas de lanzar.
+app.post('/api/admin/calendar/bonus-reminder', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const refundType = String(b.type || '').toLowerCase();
+    if (!['daily', 'weekly', 'monthly'].includes(refundType)) {
+      return res.status(400).json({ error: 'Type invalido. Tiene que ser daily, weekly o monthly.' });
+    }
+    const presets = {
+      daily:   { title: '💰 ¡No te olvides de tu bono diario!',   body: 'No reclamaste tu bono de hoy todavía. Entrá a la app y pedilo, es automático.' },
+      weekly:  { title: '📆 ¡No reclamaste tu bono semanal!',     body: 'Esta semana todavía no pediste tu bono. Reclamalo antes que termine la semana.' },
+      monthly: { title: '🗓 ¡Te falta el bono mensual del mes!',  body: 'No reclamaste el bono del mes. Entrá ahora y pedilo, no se acumula al siguiente.' }
+    };
+    const preset = presets[refundType];
+
+    // Reusamos la logica de quick-launch construyendo una pseudo-strategy.
+    const baseStrategy = {
+      type: 'refund',
+      title: preset.title,
+      body: preset.body,
+      bonusPercent: 0,
+      bonusFlatARS: 0,
+      targetSegment: 'all',
+      targetTier: null,
+      targetTeams: [],
+      hasAppOnly: true,
+      refundTypes: [refundType]
+    };
+
+    const aud = await _resolveStrategyAudience(baseStrategy);
+    const targets = (aud.usernames || []);
+    if (targets.length === 0) {
+      return res.json({ success: true, eligible: 0, sent: 0, failed: 0, message: 'No hay usuarios elegibles ahora — todos ya reclamaron o no tienen app instalada.' });
+    }
+
+    const MAX_TARGETS = 5000;
+    const finalTargets = targets.length > MAX_TARGETS ? targets.slice(0, MAX_TARGETS) : targets;
+
+    const sendResult = await sendNotificationToAllUsers(
+      User,
+      preset.title,
+      preset.body,
+      {
+        source: 'bonus-reminder',
+        refundType,
+        targetSegment: 'all'
+      },
+      { username: { $in: finalTargets } }
+    );
+
+    // Registrar en el plan de la semana actual (mismo patron que quick-launch).
+    const weekKey = _isoWeekKey(_argZonedNow());
+    const weekStart = _weekStartFromKey(weekKey);
+    let plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) {
+      plan = new WeeklyCalendarPlan({
+        weekKey, weekStartDate: weekStart,
+        days: _DAY_LABELS.map((l, i) => ({ dayIndex: i, label: l, strategies: [] })),
+        createdBy: req.user.username || 'admin'
+      });
+      await _ensureRefundPinnedDaily(plan);
+    }
+    const argNow = _argZonedNow();
+    const dayIdx = (argNow.getUTCDay() || 7) - 1;
+    let day = plan.days.find(d => d.dayIndex === dayIdx);
+    if (!day) {
+      day = { dayIndex: dayIdx, label: _DAY_LABELS[dayIdx], strategies: [] };
+      plan.days.push(day);
+    }
+    day.strategies.push({
+      id: uuidv4(),
+      dayIndex: dayIdx,
+      order: day.strategies.length,
+      type: 'refund',
+      title: preset.title,
+      body: preset.body,
+      bonusPercent: 0,
+      bonusFlatARS: 0,
+      targetSegment: 'all',
+      targetTier: null,
+      targetTeams: [],
+      hasAppOnly: true,
+      refundTypes: [refundType],
+      status: 'lanzado',
+      isPinned: false,
+      launchedAt: new Date(),
+      launchedBy: req.user.username || 'admin',
+      targetUsernames: finalTargets,
+      sentCount: (sendResult && sendResult.successCount) || 0,
+      deliveredCount: (sendResult && sendResult.successCount) || 0,
+      failedCount: (sendResult && sendResult.failureCount) || 0,
+      performance: { sentiment: 'sin_datos' },
+      notes: `Recordatorio bono ${refundType} (quick-action)`
+    });
+    plan.markModified('days');
+    if (plan.status === 'draft') plan.status = 'active';
+    _recalcPlanSummary(plan);
+    await plan.save();
+
+    res.json({
+      success: true,
+      eligible: targets.length,
+      sent: (sendResult && sendResult.successCount) || 0,
+      failed: (sendResult && sendResult.failureCount) || 0,
+      refundType
+    });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/bonus-reminder: ${err.message}`);
+    res.status(500).json({ error: 'Error mandando recordatorio' });
+  }
+});
+
 app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     const { weekKey, id } = req.params;

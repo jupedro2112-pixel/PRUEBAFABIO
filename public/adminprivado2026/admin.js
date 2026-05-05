@@ -4232,6 +4232,7 @@ function _renderCalendarPlan() {
     html += '<button onclick="loadCalendarPlan()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Actual</button>';
     html += '<button onclick="_calChangeWeek(1)" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">Siguiente →</button>';
     html += '<button onclick="_calToggleHistory()" style="background:rgba(155,48,255,0.10);color:#c89bff;border:1px solid rgba(155,48,255,0.40);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">📊 Historial</button>';
+    html += '<button onclick="_calCleanupNonPinned()" style="background:rgba(255,80,80,0.10);color:#ff8080;border:1px solid rgba(255,80,80,0.40);padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;" title="Borra todas las difusiones pendientes de esta semana (deja solo las recordatorios fijos y el historial de las ya lanzadas)">🗑 Limpiar viejas</button>';
     html += '</div></div>';
 
     // KPIs
@@ -4292,6 +4293,19 @@ function _renderCalendarDay(day) {
     html += '<h4 style="color:#00d4ff;font-size:13px;margin:0;text-transform:uppercase;letter-spacing:1px;font-weight:800;">' + escapeHtml(day.label || '') + '</h4>';
     html += '<button onclick="_calOpenStratModal(' + day.dayIndex + ', null)" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:4px 9px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">+ Agregar</button>';
     html += '</div>';
+
+    // Quick-action: 3 botones para mandar recordatorio de bono no reclamado.
+    // Click -> confirma -> dispara push a todos los que no reclamaron AHORA
+    // (el periodo se calcula server-side: dia/semana/mes corriente). Sirven
+    // para zafar "olvidos" de la gente sin tener que armar una difusion full.
+    html += '<div style="background:rgba(212,175,55,0.05);border:1px dashed rgba(212,175,55,0.30);border-radius:8px;padding:7px 8px;">';
+    html += '<div style="color:#ffd700;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px;">⚡ Recordatorios rápidos · "no reclamaste tu bono"</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;">';
+    html += '<button onclick="_calBonusReminder(\'daily\')"   style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:6px 4px;border-radius:5px;font-size:10.5px;font-weight:800;cursor:pointer;letter-spacing:0.3px;" title="Push a los que no reclamaron el bono diario de HOY">📅 Diario</button>';
+    html += '<button onclick="_calBonusReminder(\'weekly\')"  style="background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 4px;border-radius:5px;font-size:10.5px;font-weight:800;cursor:pointer;letter-spacing:0.3px;" title="Push a los que no reclamaron el bono semanal de esta semana">📆 Semanal</button>';
+    html += '<button onclick="_calBonusReminder(\'monthly\')" style="background:rgba(155,48,255,0.12);color:#c89bff;border:1px solid rgba(155,48,255,0.40);padding:6px 4px;border-radius:5px;font-size:10.5px;font-weight:800;cursor:pointer;letter-spacing:0.3px;" title="Push a los que no reclamaron el bono mensual de este mes">🗓 Mensual</button>';
+    html += '</div></div>';
+
     if (strategies.length === 0) {
         html += '<div style="color:#666;text-align:center;padding:12px;font-size:11px;font-style:italic;">Sin difusiones planificadas</div>';
     } else {
@@ -4299,6 +4313,63 @@ function _renderCalendarDay(day) {
     }
     html += '</div>';
     return html;
+}
+
+// Borra todas las strategies pendientes/canceladas no-pinned de la semana
+// activa. Deja en pie las pinned (refund recordatorios fijos), las ya
+// lanzadas (historial) y las en curso. Util para limpiar planes viejos
+// y arrancar fresco.
+async function _calCleanupNonPinned() {
+    if (!confirm('⚠️ Limpiar TODAS las difusiones viejas de esta semana?\n\nSe borran las pendientes y canceladas. Quedan en pie:\n  • Las recordatorios fijos (pinned)\n  • Las ya lanzadas (historial)\n  • Las en curso\n\n¿Confirmás?')) return;
+    if (_calCleanupNonPinned._busy) return;
+    _calCleanupNonPinned._busy = true;
+    try {
+        const wk = _CAL_STATE.weekKey || _isoWeekKeyClient(new Date());
+        const r = await authFetch('/api/admin/calendar/week/' + encodeURIComponent(wk) + '/strategies/non-pinned', {
+            method: 'DELETE'
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('🗑 ' + (d.removed || 0) + ' difusiones eliminadas', 'success');
+        await loadCalendarPlan(wk);
+    } catch (e) {
+        alert('Error de conexión');
+    } finally {
+        _calCleanupNonPinned._busy = false;
+    }
+}
+
+// Lanza un push de recordatorio de bono no reclamado. Pide confirmacion
+// porque manda push real (no preview). El backend cuenta cuantos eran
+// elegibles y devuelve el resultado.
+async function _calBonusReminder(refundType) {
+    const labels = { daily: 'diario (de HOY)', weekly: 'semanal (de esta semana)', monthly: 'mensual (de este mes)' };
+    const label = labels[refundType] || refundType;
+    if (!confirm('¿Mandar push a TODOS los que no reclamaron el bono ' + label + '?\n\nEl mensaje es preset: "no reclamaste tu bono, reclamalo!".\nQueda registrado en el calendario semanal.')) return;
+    if (_calBonusReminder._busy) return;
+    _calBonusReminder._busy = true;
+    try {
+        const r = await authFetch('/api/admin/calendar/bonus-reminder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: refundType })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            alert('❌ ' + (d.error || 'Error'));
+            return;
+        }
+        if ((d.eligible || 0) === 0) {
+            alert('ℹ️ No hay nadie elegible ahora — todos ya reclamaron o no tienen la app instalada.');
+            return;
+        }
+        alert('🚀 Recordatorio enviado\n\nElegibles: ' + d.eligible + '\nEnviadas: ' + d.sent + '\nFallidas: ' + (d.failed || 0));
+        await loadCalendarPlan();
+    } catch (e) {
+        alert('Error de conexión');
+    } finally {
+        _calBonusReminder._busy = false;
+    }
 }
 
 function _renderStrategyCard(s) {
