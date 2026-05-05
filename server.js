@@ -11365,50 +11365,45 @@ function _firstMondayOfNextMonth(monthKey) {
   return firstOfNext;
 }
 
-// Genera los 12 sorteos del mes (modelo SIMPLIFICADO):
-//   - 10 iPhones 17 (instancias 1..10): se muestra solo el activo. Cuando se
-//     completa (100 cupos), aparece el siguiente. Premio $1.5M c/u.
-//   -  1 Viaje al Caribe x2: premio $4M
-//   -  1 Auto: premio $10M
+// Genera los 3 sorteos del mes (modelo SIMPLIFICADO):
+//   - 1 iPhone 17    : premio $1.5M, threshold $100.000 apostado
+//   - 1 Viaje Caribe : premio $4M,   threshold $250.000 apostado
+//   - 1 Auto         : premio $10M,  threshold $500.000 apostado
 //
-// Todos GRATIS — son sorteos exclusivos para clientes activos. Para reclamar
-// un numero el user debe haber cargado/apostado un minimo este mes:
-//   - iPhone: $100.000
-//   - Caribe: $250.000
-//   - Auto:   $500.000
+// Todos GRATIS — son sorteos exclusivos para clientes activos.
+// Cada raffle: 100 cupos, 1 cupo por persona. El user elige su numero
+// de la grilla 1..100; los tomados se muestran tachados.
 //
-// Cada raffle: 100 cupos. 1 cupo por persona POR CATEGORIA (raffleType)
-// por mes — un user puede ganar máximo 1 iPhone + 1 Caribe + 1 Auto, no
-// puede acumular cupos en multiples instancias del mismo tipo.
-//
-// El user elige su numero de la grilla 1..100. Tomados se muestran tachados.
+// TODOS se sortean por las ultimas 2 cifras del 1° PREMIO de la Loteria
+// Nacional Nocturna del primer lunes del mes proximo (mismo numero para
+// los 3 sorteos, distintos ganadores ya que cada uno tiene su propio
+// pool de 100 numeros con users distintos).
 function _buildRaffleDefaults() {
-  // Todos los sorteos se determinan por la QUINIELA NACIONAL NOCTURNA del
-  // primer lunes del mes próximo (siempre la misma extracción). Cada sorteo
-  // toma una posición distinta de los premios oficiales:
-  //   - Auto      → 1° premio Nocturna (el más prestigioso)
-  //   - Caribe    → 2° premio Nocturna
-  //   - iPhone 17 #1..#10 → 3° al 12° premio Nocturna
-  // Se usan las ULTIMAS 2 CIFRAS del premio (modulo 100, mapea a 1..100).
+  // Todos los sorteos se determinan por el MISMO numero: las ultimas 2 cifras
+  // del 1° PREMIO de la Loteria Nacional NOCTURNA del primer lunes del mes
+  // proximo. Como cada sorteo tiene su propio cupo de 100 numeros con
+  // usuarios distintos, el mismo numero ganador determina UN ganador distinto
+  // por cada sorteo (ej. quien tenga el #62 en iPhone #1 gana el iPhone #1;
+  // quien tenga el #62 en Caribe gana el Caribe; etc.).
+  const COMMON_LOTTERY_RULE = 'Últimas 2 cifras del 1° PREMIO de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable por cualquiera. Si el número sale fuera del rango vendido, se cicla al rango vendido.';
+
   const out = [];
-  for (let i = 1; i <= 10; i++) {
-    const lotteryPos = i + 2; // iPhone #1 → 3° premio, ..., #10 → 12° premio
-    out.push({
-      name: `Sorteo iPhone 17 #${i}`,
-      prizeName: 'iPhone 17',
-      description: 'Sorteamos un iPhone 17 — 100 números, GRATIS para clientes que apostaron $100.000+ este mes. 1 número por persona (un mismo cliente no puede tener 2 iPhones). Cuando se completa, aparece el próximo iPhone.',
-      emoji: '📱',
-      entryMode: 'wagered',
-      entryCost: 0,
-      wageredThreshold: 100000,
-      maxCuposPerUser: 1,
-      totalTickets: 100,
-      prizeValueARS: 1500000,
-      raffleType: 'iphone',
-      instanceNumber: i,
-      lotteryRule: `Últimas 2 cifras del ${lotteryPos}° premio de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si sale fuera del rango vendido, se cicla al rango vendido.`
-    });
-  }
+  // 1 iPhone, 1 Caribe, 1 Auto. Total 3 sorteos del mes.
+  out.push({
+    name: 'Sorteo iPhone 17',
+    prizeName: 'iPhone 17',
+    description: 'Sorteamos un iPhone 17 — 100 números, GRATIS para clientes que apostaron $100.000+ este mes. 1 número por persona.',
+    emoji: '📱',
+    entryMode: 'wagered',
+    entryCost: 0,
+    wageredThreshold: 100000,
+    maxCuposPerUser: 1,
+    totalTickets: 100,
+    prizeValueARS: 1500000,
+    raffleType: 'iphone',
+    instanceNumber: 1,
+    lotteryRule: COMMON_LOTTERY_RULE
+  });
   out.push({
     name: 'Sorteo Viaje al Caribe',
     prizeName: 'Viaje al Caribe para 2 personas',
@@ -11422,7 +11417,7 @@ function _buildRaffleDefaults() {
     prizeValueARS: 4000000,
     raffleType: 'caribe',
     instanceNumber: 1,
-    lotteryRule: 'Últimas 2 cifras del 2° premio de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si sale fuera del rango vendido, se cicla al rango vendido.'
+    lotteryRule: COMMON_LOTTERY_RULE
   });
   out.push({
     name: 'Sorteo Auto $10.000.000',
@@ -11437,7 +11432,7 @@ function _buildRaffleDefaults() {
     prizeValueARS: 10000000,
     raffleType: 'auto',
     instanceNumber: 1,
-    lotteryRule: 'Últimas 2 cifras del 1° premio de la Lotería Nacional Nocturna del primer lunes del mes próximo. Resultado oficial publicado por Lotería Nacional — totalmente verificable. Si sale fuera del rango vendido, se cicla al rango vendido.'
+    lotteryRule: COMMON_LOTTERY_RULE
   });
   return out;
 }
@@ -11456,7 +11451,10 @@ const LEGACY_RAFFLE_NAMES_TO_CLEAN = [
   'Sorteo iPhone #1', 'Sorteo iPhone #2', 'Sorteo iPhone #3', 'Sorteo iPhone #4', 'Sorteo iPhone #5',
   'Sorteo iPhone #6', 'Sorteo iPhone #7', 'Sorteo iPhone #8', 'Sorteo iPhone #9', 'Sorteo iPhone #10',
   'Sorteo Viaje al Caribe #1', 'Sorteo Viaje al Caribe #2', 'Sorteo Viaje al Caribe #3',
-  'Sorteo Viaje al Caribe #4', 'Sorteo Viaje al Caribe #5'
+  'Sorteo Viaje al Caribe #4', 'Sorteo Viaje al Caribe #5',
+  // Modelo simplificado v1 (10 iPhones secuenciales) — ahora colapsa a 1 sola instancia
+  'Sorteo iPhone 17 #1', 'Sorteo iPhone 17 #2', 'Sorteo iPhone 17 #3', 'Sorteo iPhone 17 #4', 'Sorteo iPhone 17 #5',
+  'Sorteo iPhone 17 #6', 'Sorteo iPhone 17 #7', 'Sorteo iPhone 17 #8', 'Sorteo iPhone 17 #9', 'Sorteo iPhone 17 #10'
 ];
 
 // Calcula el payout proporcional al fill rate del sorteo. Si se llena (>=)
