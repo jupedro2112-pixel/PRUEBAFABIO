@@ -11927,36 +11927,52 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         winningTicketNumber: r.winningTicketNumber
       }));
 
-    // Ventana de "Felicitaciones": sorteos donde este user gano y se sortearon
-    // hace menos de 24h. Mostramos el banner celebratorio (con boton de
-    // reclamar si aun no esta acreditado, o un mensaje de "ya esta en tu
-    // saldo" si el auto-credit funciono). Despues de 24h el sorteo
-    // archived/cleanup lo saca de la lista igual.
+    // Ventana de "Felicitaciones":
+    //   - Pre-cobro: hasta 24h desde el draw (para que el ganador alcance
+    //     a verlo aunque entre dias despues si auto-credit fallo).
+    //   - Post-cobro: 30 min con countdown desde prizeClaimedAt. Una vez
+    //     que cobro la queremos sacar pronto para no enturbiar el home,
+    //     pero le damos 30 min para que disfrute la victoria.
     const FELICITACIONES_TTL_MS = 24 * 3600 * 1000;
+    const POSTCLAIM_TTL_MS = 30 * 60 * 1000;
     const recentWins = raffles
-      .filter(r =>
-        r.status === 'drawn' &&
-        r.winnerUsername &&
-        r.winnerUsername.toLowerCase() === username.toLowerCase() &&
-        r.drawnAt &&
-        (Date.now() - new Date(r.drawnAt).getTime()) < FELICITACIONES_TTL_MS
-      )
-      .map(r => ({
-        id: r.id,
-        name: r.name,
-        prizeName: r.prizeName,
-        emoji: r.emoji,
-        prizeValueARS: r.prizeValueARS || 0,
-        winningTicketNumber: r.winningTicketNumber,
-        drawnAt: r.drawnAt,
-        prizeClaimedAt: r.prizeClaimedAt || null,
-        prizeClaimable: !!r.prizeClaimable,
-        // Cuantas horas restan hasta que se cumple las 24h del banner.
-        hoursRemaining: Math.max(
-          0,
-          Math.ceil((FELICITACIONES_TTL_MS - (Date.now() - new Date(r.drawnAt).getTime())) / 3600000)
-        )
-      }));
+      .filter(r => {
+        if (r.status !== 'drawn') return false;
+        if (!r.winnerUsername || r.winnerUsername.toLowerCase() !== username.toLowerCase()) return false;
+        if (!r.drawnAt) return false;
+        if (r.prizeClaimedAt) {
+          return (Date.now() - new Date(r.prizeClaimedAt).getTime()) < POSTCLAIM_TTL_MS;
+        }
+        return (Date.now() - new Date(r.drawnAt).getTime()) < FELICITACIONES_TTL_MS;
+      })
+      .map(r => {
+        const claimed = !!r.prizeClaimedAt;
+        const expiresAt = claimed
+          ? new Date(new Date(r.prizeClaimedAt).getTime() + POSTCLAIM_TTL_MS)
+          : new Date(new Date(r.drawnAt).getTime() + FELICITACIONES_TTL_MS);
+        const secondsRemaining = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+        return {
+          id: r.id,
+          name: r.name,
+          prizeName: r.prizeName,
+          emoji: r.emoji,
+          prizeValueARS: r.prizeValueARS || 0,
+          winningTicketNumber: r.winningTicketNumber,
+          drawnAt: r.drawnAt,
+          prizeClaimedAt: r.prizeClaimedAt || null,
+          prizeClaimable: !!r.prizeClaimable,
+          expiresAt: expiresAt.toISOString(),
+          secondsRemaining,
+          // Para compat con el render viejo: si ya cobro, mostramos minutos.
+          // Si no cobro todavia, horas como antes.
+          hoursRemaining: claimed
+            ? 0
+            : Math.max(0, Math.ceil((FELICITACIONES_TTL_MS - (Date.now() - new Date(r.drawnAt).getTime())) / 3600000)),
+          minutesRemaining: claimed
+            ? Math.max(0, Math.ceil(secondsRemaining / 60))
+            : null
+        };
+      });
 
     res.json({
       balance,
@@ -12018,12 +12034,25 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
       .select('id name prizeName prizeValueARS emoji winnerUsername winningTicketNumber drawnAt prizeClaimedAt prizeClaimable raffleType')
       .lean();
     const me = String((req.user && req.user.username) || '').toLowerCase();
-    const winners = recent.map(r => {
+    const POSTCLAIM_TTL_MS = 30 * 60 * 1000;
+    // Filtramos: si soy el ganador y ya cobre hace mas de 30 min, no muestro.
+    // Si no soy el ganador, sigue la ventana de "hours" del filtro.
+    const winners = [];
+    for (const r of recent) {
       const isMe = String(r.winnerUsername || '').toLowerCase() === me;
+      // Si soy yo y ya cobre, recortamos a 30 min post-cobro
+      if (isMe && r.prizeClaimedAt) {
+        const sinceClaim = Date.now() - new Date(r.prizeClaimedAt).getTime();
+        if (sinceClaim >= POSTCLAIM_TTL_MS) continue;
+      }
       const ageMs = Date.now() - new Date(r.drawnAt).getTime();
       const hoursAgo = Math.max(0, Math.floor(ageMs / 3600000));
       const minutesAgo = Math.max(0, Math.floor(ageMs / 60000));
-      return {
+      let secondsRemaining = null;
+      if (isMe && r.prizeClaimedAt) {
+        secondsRemaining = Math.max(0, Math.floor((POSTCLAIM_TTL_MS - (Date.now() - new Date(r.prizeClaimedAt).getTime())) / 1000));
+      }
+      winners.push({
         id: r.id,
         name: r.name,
         prizeName: r.prizeName,
@@ -12037,9 +12066,10 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
         isMe,
         hoursAgo,
         minutesAgo,
+        secondsRemaining,
         raffleType: r.raffleType
-      };
-    });
+      });
+    }
     // Incluimos info del sorteo RELAMPAGO si hay uno activo o cerrado-en-espera.
     // El home usa esto para renderizar el hero electrico arriba del card
     // generico de "SORTEOS SEMANALES".

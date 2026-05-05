@@ -133,7 +133,12 @@ VIP.raffles = (function () {
                 html += '<div style="color:#ffaa66;font-size:12px;font-weight:700;">⏳ Estamos acreditando tu premio…</div>';
                 html += '</div>';
             }
-            if (c.hoursRemaining > 0) {
+            // Countdown: si ya cobro, ventana de 30 min con timer en mm:ss.
+            // Si no cobro, sigue mostrando ~Xh restantes como antes.
+            if (credited && typeof c.secondsRemaining === 'number' && c.secondsRemaining > 0) {
+                const expiresAt = new Date(Date.now() + c.secondsRemaining * 1000).getTime();
+                html += '<div data-claim-countdown="' + expiresAt + '" style="color:#ffe699;font-size:11px;text-align:center;margin-top:8px;font-weight:700;">⏱ Esta felicitación queda <span class="claim-countdown-text">30:00</span> más</div>';
+            } else if (c.hoursRemaining > 0) {
                 html += '<div style="color:#aaa;font-size:10px;text-align:center;margin-top:6px;font-style:italic;">Esta felicitación se oculta en ~' + c.hoursRemaining + ' h</div>';
             }
             html += '</div>';
@@ -908,11 +913,18 @@ VIP.raffles = (function () {
         } else {
             body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Estamos acreditando tu premio…</div>';
         }
+        // Countdown post-cobro: 30 min con timer mm:ss desde que cobro.
+        let timer = '';
+        if (credited && typeof w.secondsRemaining === 'number' && w.secondsRemaining > 0) {
+            const expiresAt = Date.now() + w.secondsRemaining * 1000;
+            timer = '<div data-claim-countdown="' + expiresAt + '" style="color:#fff;font-size:11px;text-align:center;margin-top:8px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.50);">⏱ Esta felicitación queda <span class="claim-countdown-text">30:00</span> más</div>';
+        }
         return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🏆</div>' +
             '<div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎉 ¡FELICITACIONES, GANASTE!</div>' +
             '<div style="color:#fff;font-size:18px;font-weight:900;margin:4px 0 8px;">' + (w.emoji || '🏆') + ' ' + _esc(w.name) + ' — $' + _fmt(w.prizeValueARS) + '</div>' +
             body +
+            timer +
             '</div>';
     }
 
@@ -927,6 +939,42 @@ VIP.raffles = (function () {
             '</div>' +
             '<div style="color:#d4af37;font-size:18px;flex-shrink:0;">›</div>' +
             '</div>';
+    }
+
+    // Ticker global que actualiza todos los countdown post-cobro cada segundo.
+    // Cada elemento marcado con data-claim-countdown="<expiresAtMs>" muestra
+    // mm:ss restantes y se auto-oculta cuando llega a 0 (recargamos el banner
+    // para que el server confirme que ya paso). Lo arrancamos una sola vez.
+    if (!window.__VIP_CLAIM_TICKER_STARTED) {
+        window.__VIP_CLAIM_TICKER_STARTED = true;
+        setInterval(function () {
+            const els = document.querySelectorAll('[data-claim-countdown]');
+            if (els.length === 0) return;
+            const now = Date.now();
+            let expiredAny = false;
+            els.forEach(function (el) {
+                const expiresAt = parseInt(el.getAttribute('data-claim-countdown'), 10);
+                if (!Number.isFinite(expiresAt)) return;
+                const remMs = expiresAt - now;
+                const span = el.querySelector('.claim-countdown-text');
+                if (!span) return;
+                if (remMs <= 0) {
+                    span.textContent = '0:00';
+                    el.style.opacity = '0.5';
+                    expiredAny = true;
+                    return;
+                }
+                const totalSec = Math.floor(remMs / 1000);
+                const m = Math.floor(totalSec / 60);
+                const s = totalSec % 60;
+                span.textContent = m + ':' + (s < 10 ? '0' + s : s);
+            });
+            // Si algun countdown llego a 0, refrescamos el banner del home
+            // (el server ya no lo va a devolver -> desaparece).
+            if (expiredAny && VIP.raffles && typeof VIP.raffles.loadHomeWinnerBanner === 'function') {
+                VIP.raffles.loadHomeWinnerBanner();
+            }
+        }, 1000);
     }
 
     return { open, close, prefetch, openPicker, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize, loadHomeWinnerBanner };
