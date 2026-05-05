@@ -12487,13 +12487,44 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     for (const p of parts) totalCuposSold += (p.cuposCount || 1);
     if (totalCuposSold === 0) return res.status(400).json({ error: 'No hay cupos vendidos.' });
 
-    const mappedNumber = ((lotteryNumber - 1) % totalCuposSold) + 1;
-    const wasMapped = (mappedNumber !== lotteryNumber);
+    // Mapeo loteria -> ticket vendido. Los users eligen su numero del 1..100,
+    // asi que los vendidos pueden ser dispersos (ej. [3, 7, 12, 33, 41]).
+    // Construimos la lista real de tickets vendidos y mapeamos por modulo
+    // al INDICE en esa lista, no al numero crudo. Asi cumplimos la regla
+    // "si la loteria sale fuera del rango vendido, cicla al rango vendido".
+    const soldNumbers = [];
+    for (const p of parts) {
+      if (Array.isArray(p.ticketNumbers)) {
+        for (const n of p.ticketNumbers) soldNumbers.push(Number(n));
+      }
+    }
+    soldNumbers.sort((a, b) => a - b);
+    if (soldNumbers.length === 0) {
+      return res.status(400).json({ error: 'No hay numeros asignados a participantes (data inconsistente).' });
+    }
+    let mappedNumber;
+    let wasMapped;
+    if (soldNumbers.includes(lotteryNumber)) {
+      // El numero crudo salio y es uno vendido — ganador directo.
+      mappedNumber = lotteryNumber;
+      wasMapped = false;
+    } else {
+      // Cicla a un ticket vendido por modulo sobre la cantidad de vendidos.
+      const idx = ((lotteryNumber - 1) % soldNumbers.length + soldNumbers.length) % soldNumbers.length;
+      mappedNumber = soldNumbers[idx];
+      wasMapped = true;
+    }
     let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(mappedNumber));
     if (explicitWinner) {
       const found = parts.find(p => p.username.toLowerCase() === explicitWinner.toLowerCase());
       if (!found) return res.status(400).json({ error: `El usuario "${explicitWinner}" no participa en este sorteo.` });
       winner = found;
+      // Si forzamos ganador, fijamos mappedNumber a uno de SUS tickets para
+      // que el push y el detalle muestren un numero coherente.
+      if (Array.isArray(found.ticketNumbers) && found.ticketNumbers.length > 0) {
+        mappedNumber = Number(found.ticketNumbers[0]);
+        wasMapped = (mappedNumber !== lotteryNumber);
+      }
     }
     if (!winner) {
       return res.status(500).json({ error: `No se encontró ganador para el número ${mappedNumber}.` });
