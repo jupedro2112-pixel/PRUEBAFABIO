@@ -1463,6 +1463,10 @@ function _sortWelcomeBonusClaims(claims, key) {
             if (ac !== bc) return ac - bc;
             return tsClaimed(b) - tsClaimed(a);
         });
+    } else if (key === 'amountDesc') {
+        arr.sort((a, b) => (Number(b.amount)||0) - (Number(a.amount)||0) || tsClaimed(b) - tsClaimed(a));
+    } else if (key === 'amountAsc') {
+        arr.sort((a, b) => (Number(a.amount)||0) - (Number(b.amount)||0) || tsClaimed(b) - tsClaimed(a));
     }
     return arr;
 }
@@ -1491,6 +1495,23 @@ function renderWelcomeBonusReport(container, data) {
     }
     html += '</div>';
 
+    // Desglose por monto reclamado (los $10.000 historicos vs $2.000 nuevos).
+    if (Array.isArray(t.byAmount) && t.byAmount.length > 0) {
+        html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;">';
+        html += '  <strong style="color:#d4af37;font-size:12px;">💵 Reclamos por monto:</strong>';
+        for (const ba of t.byAmount) {
+            const color = ba.amount >= 10000 ? '#ff8800' : (ba.amount >= 2000 ? '#25d366' : '#888');
+            const amtPct = total > 0 ? Math.round((ba.count / total) * 100) : 0;
+            html += '<span style="display:inline-flex;align-items:center;gap:6px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:6px 12px;">';
+            html += '  <span style="color:' + color + ';font-weight:800;font-size:13px;">$' + ba.amount.toLocaleString('es-AR') + '</span>';
+            html += '  <span style="color:#fff;font-weight:700;">' + ba.count + '</span>';
+            html += '  <small style="color:#888;">(' + amtPct + '%)</small>';
+            html += '</span>';
+        }
+        html += '<span style="margin-left:auto;color:#aaa;font-size:11px;">Total acreditado: <strong style="color:#d4af37;">$' + (t.totalAmountGivenARS || 0).toLocaleString('es-AR') + '</strong></span>';
+        html += '</div>';
+    }
+
     if (claims.length === 0) {
         html += '<div class="empty-state">Nadie reclamó el bono todavía.</div>';
         container.innerHTML = html;
@@ -1518,6 +1539,8 @@ function renderWelcomeBonusReport(container, data) {
     html += '      <option value="claimedDesc"' + (_welcomeBonusSortKey === 'claimedDesc' ? ' selected' : '') + '>↓ Fecha de reclamo</option>';
     html += '      <option value="chargedAfterDesc"' + (_welcomeBonusSortKey === 'chargedAfterDesc' ? ' selected' : '') + '>💰 Cargaron después (sí primero)</option>';
     html += '      <option value="chargedAfterAsc"' + (_welcomeBonusSortKey === 'chargedAfterAsc' ? ' selected' : '') + '>💸 No cargaron (recuperar)</option>';
+    html += '      <option value="amountDesc"' + (_welcomeBonusSortKey === 'amountDesc' ? ' selected' : '') + '>💵 Monto reclamado (desc — $10.000 primero)</option>';
+    html += '      <option value="amountAsc"' + (_welcomeBonusSortKey === 'amountAsc' ? ' selected' : '') + '>💵 Monto reclamado (asc — $2.000 primero)</option>';
     html += '      <option value="usernameAsc"' + (_welcomeBonusSortKey === 'usernameAsc' ? ' selected' : '') + '>A-Z usuario</option>';
     html += '    </select>';
     html += '    <input type="text" id="welcomeBonusUserSearch" placeholder="🔍 Buscar usuario…" oninput="filterWelcomeBonusTable()" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;min-width:200px;flex:0 1 280px;">';
@@ -1542,6 +1565,7 @@ function renderWelcomeBonusTableHtml(claims) {
     html += '<th>Usuario</th>';
     html += '<th>Equipo</th>';
     html += '<th>Reclamado</th>';
+    html += '<th style="text-align:right;">💵 Monto</th>';
     html += '<th>📱 App ahora</th>';
     html += '<th>Última vez en la app</th>';
     html += '<th>🔔 Notifs ahora</th>';
@@ -1608,10 +1632,15 @@ function renderWelcomeBonusTableHtml(claims) {
         const statusBadge = c.status === 'pending_credit_failed'
             ? '<span style="background:#7f1d1d;color:#fee;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">PENDIENTE</span>'
             : '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">OK</span>';
+        const amount = Number(c.amount || 0);
+        const amountColor = amount >= 10000 ? '#ff8800' : (amount >= 2000 ? '#25d366' : '#888');
+        const amountCell = '<span style="color:' + amountColor + ';font-weight:800;">$' + amount.toLocaleString('es-AR') + '</span>';
+
         html += '<tr>';
         html += '<td>' + escapeHtml(c.username) + '</td>';
         html += '<td>' + _formatPlatform(c.platform) + '</td>';
         html += '<td><small>' + escapeHtml(claimed) + '</small></td>';
+        html += '<td style="text-align:right;">' + amountCell + '</td>';
         html += '<td>' + appCell + '</td>';
         html += '<td>' + seenCell + '</td>';
         html += '<td>' + notifCell + '</td>';

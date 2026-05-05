@@ -8290,6 +8290,7 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
       { type: 'welcome_install' },
       {
         username: 1, userId: 1, claimedAt: 1, status: 1, transactionId: 1,
+        amount: 1,
         chargesAfterClaim: 1, chargesAfterClaimAmount: 1,
         lastChargeAfterClaimAt: 1, chargesAfterClaimCheckedAt: 1,
         _id: 0
@@ -8328,6 +8329,9 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
     let stillHasApp = 0, stillHasNotifs = 0, stillBoth = 0, lostApp = 0, lostNotifs = 0;
     let chargedAfterClaim = 0;
     let chargesNeverChecked = 0;
+    // Breakdown por monto reclamado (10000 historicos vs 2000 nuevos vs otros).
+    const claimsByAmount = {}; // amount -> count
+    let totalAmountGivenARS = 0;
     const enriched = claims.map(c => {
       const u = byUsername.get((c.username || '').toLowerCase()) || {};
       const ps = psByUsername.get((c.username || '').toLowerCase()) || {};
@@ -8373,11 +8377,16 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
       if (didChargeAfter) chargedAfterClaim++;
       if (!checkedAt) chargesNeverChecked++;
 
+      const claimedAmount = Number(c.amount || 0);
+      claimsByAmount[claimedAmount] = (claimsByAmount[claimedAmount] || 0) + 1;
+      totalAmountGivenARS += claimedAmount;
+
       return {
         username: c.username || '',
         claimedAt: c.claimedAt || null,
         status: c.status || 'completed',
         transactionId: c.transactionId || null,
+        amount: claimedAmount,
         hasApp,
         hasNotifs,
         lastLogin: u.lastLogin || null,
@@ -8395,6 +8404,12 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
       };
     });
 
+    // Convertir claimsByAmount a array ordenado por monto desc para que
+    // el UI los muestre en orden ($10.000 primero, $2.000 después, etc.).
+    const byAmountArr = Object.keys(claimsByAmount)
+      .map(k => ({ amount: Number(k), count: claimsByAmount[k] }))
+      .sort((a, b) => b.amount - a.amount);
+
     res.json({
       totals: {
         totalClaimed: claims.length,
@@ -8404,7 +8419,9 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         lostApp,
         lostNotifs,
         chargedAfterClaim,
-        chargesNeverChecked
+        chargesNeverChecked,
+        totalAmountGivenARS,
+        byAmount: byAmountArr
       },
       claims: enriched
     });
