@@ -7368,10 +7368,14 @@ function _renderAutomationPlanPreview(plan) {
     let html = '';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;">';
     html += _autoStatCard('🎯 Targets', plan.totalTargets || 0, '#b39dff');
+    html += _autoStatCard('📲 Pushes total', (plan.totalTargets || 0) * 2, '#00d4ff');
     html += _autoStatCard('💌 Solo engagement', plan.totalEngagement || 0, '#25d366');
     html += _autoStatCard('🎁 Con bono', plan.totalBonus || 0, '#ffc850');
     html += _autoStatCard('💰 Costo estimado', '$' + (plan.totalCostARS || 0).toLocaleString('es-AR'), '#ff8800');
-    html += _autoStatCard('⏸ Cooldown ' + (plan.cooldownHours || 72) + 'h', plan.skippedCooldown || 0, '#888');
+    html += _autoStatCard('⏸ Cap 2/semana', plan.skippedCooldown || 0, '#888');
+    html += '</div>';
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.20);border-radius:8px;padding:10px 12px;margin-bottom:14px;color:#bbb;font-size:11px;line-height:1.5;">';
+    html += '✨ <strong>Estrategia semanal:</strong> cada user recibe <strong>2 notifs</strong> en la semana — la 1ra al confirmar, la 2da programada a <strong>' + Math.round((plan.secondPushDelayHours||96)/24) + ' días</strong>. Los copies son distintos (rotación anti-fatiga vs últimas 4 semanas) y promocionan reembolsos + regalos diarios.';
     html += '</div>';
     if (!plan.totalTargets) {
         html += '<div style="background:rgba(255,150,50,0.10);border:1px solid rgba(255,150,50,0.30);border-radius:10px;padding:14px;color:#ffb060;font-size:13px;">⚠️ No hay targets en este rango. Ampliá la ventana o esperá que pase el cooldown.</div>';
@@ -7404,22 +7408,23 @@ function _renderAutomationPlanPreview(plan) {
     }
     html += '</tbody></table>';
     html += '<details style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin-bottom:14px;">';
-    html += '  <summary style="cursor:pointer;color:#b39dff;font-weight:700;font-size:12px;">👀 Ver lista exacta de a quién le va a llegar (' + plan.totalTargets + ' usuarios)</summary>';
-    html += '  <div style="max-height:380px;overflow-y:auto;margin-top:10px;">';
-    html += '  <table class="report-table" style="font-size:11px;"><thead><tr><th>Usuario</th><th>Segmento</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>';
+    html += '  <summary style="cursor:pointer;color:#b39dff;font-weight:700;font-size:12px;">👀 Ver lista exacta de a quién le va a llegar y qué push recibe (' + plan.totalTargets + ' usuarios × 2 = ' + ((plan.totalTargets||0)*2) + ' pushes)</summary>';
+    html += '  <div style="max-height:420px;overflow-y:auto;margin-top:10px;">';
+    html += '  <table class="report-table" style="font-size:11px;"><thead><tr><th>Usuario</th><th>Segmento</th><th>Tipo</th><th>Push 1 (ahora)</th><th>Push 2 (a ' + Math.round((plan.secondPushDelayHours||96)/24) + 'd)</th></tr></thead><tbody>';
     for (const t of (plan.targets || [])) {
-        let detail;
-        if (t.kind === 'money')               detail = '$' + (t.giftAmount||0).toLocaleString('es-AR');
-        else if (t.kind === 'whatsapp_promo') detail = (t.bonusPct||0) + '% carga';
-        else                                  detail = '<span style="color:#888;">' + escapeHtml(t.copyTitle || 'engagement') + '</span>';
+        let push1Detail;
+        if (t.kind === 'money')               push1Detail = '💵 $' + (t.giftAmount||0).toLocaleString('es-AR');
+        else if (t.kind === 'whatsapp_promo') push1Detail = '🎰 ' + (t.bonusPct||0) + '% carga';
+        else                                  push1Detail = '<span style="color:#888;">' + escapeHtml(t.copyTitle || 'engagement') + '</span>';
+        const push2Detail = '<span style="color:#888;">' + escapeHtml(t.copyTitle2 || '—') + '</span>';
         const kindBadge = t.kind === 'engagement'
-            ? '<span style="color:#25d366;font-weight:700;">💌 Engagement</span>'
-            : (t.kind === 'money' ? '<span style="color:#ffc850;font-weight:700;">💵 Regalo $</span>' : '<span style="color:#00d4ff;font-weight:700;">🎰 Bono %</span>');
-        html += '<tr><td>' + escapeHtml(t.username) + '</td><td><small>' + escapeHtml(t.segmentLabel || t.segment) + '</small></td><td>' + kindBadge + '</td><td>' + detail + '</td></tr>';
+            ? '<span style="color:#25d366;font-weight:700;">💌 2× Engagement</span>'
+            : (t.kind === 'money' ? '<span style="color:#ffc850;font-weight:700;">💵+💌</span>' : '<span style="color:#00d4ff;font-weight:700;">🎰+💌</span>');
+        html += '<tr><td>' + escapeHtml(t.username) + '</td><td><small>' + escapeHtml(t.segmentLabel || t.segment) + '</small></td><td>' + kindBadge + '</td><td>' + push1Detail + '</td><td>' + push2Detail + '</td></tr>';
     }
     html += '  </tbody></table></div></details>';
     html += '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap;">';
-    html += '  <small style="color:#888;">El push se manda al confirmar. Las ofertas vencen en 48h.</small>';
+    html += '  <small style="color:#888;">Push 1 sale al confirmar. Push 2 se programa a ' + Math.round((plan.secondPushDelayHours||96)/24) + ' días. Las ofertas vencen en 48h.</small>';
     html += '  <button onclick="launchAutomation()" id="autoLaunchBtn" style="padding:11px 22px;font-size:14px;font-weight:800;background:linear-gradient(135deg,#25d366,#0a8055);color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 4px 14px rgba(37,211,102,0.40);">✅ Confirmar y lanzar</button>';
     html += '</div>';
     return html;
@@ -7446,7 +7451,8 @@ async function launchAutomation() {
     if (!_automationCurrentPlanId) { showToast('No hay plan cargado, analizá primero.', 'error'); return; }
     const total = (_automationCurrentPlan && _automationCurrentPlan.totalTargets) || 0;
     const cost = (_automationCurrentPlan && _automationCurrentPlan.totalCostARS) || 0;
-    const ok = confirm('Vas a lanzar la campaña a ' + total + ' usuarios. Costo estimado: $' + cost.toLocaleString('es-AR') + '. ¿Confirmás?');
+    const days = Math.round(((_automationCurrentPlan && _automationCurrentPlan.secondPushDelayHours) || 96) / 24);
+    const ok = confirm('Vas a lanzar la campaña a ' + total + ' usuarios = ' + (total*2) + ' pushes (1 ahora + 1 a ' + days + ' días). Costo estimado: $' + cost.toLocaleString('es-AR') + '. ¿Confirmás?');
     if (!ok) return;
     const btn = document.getElementById('autoLaunchBtn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Lanzando…'; }
@@ -7463,7 +7469,7 @@ async function launchAutomation() {
         const d = await r.json();
         if (!r.ok || !d.success) { showToast(d.error || 'Error lanzando', 'error'); return; }
         const res = d.result || {};
-        showToast('✅ Lanzado: ' + (res.sentCount||0) + ' pushes (' + (res.engagementCount||0) + ' engagement, ' + (res.bonusCount||0) + ' con bono)', 'success');
+        showToast('✅ Lanzado: ' + (res.sentCount||0) + ' pushes ahora + ' + (res.scheduledCount||0) + ' programados a 4d (' + (res.engagementCount||0) + ' eng, ' + (res.bonusCount||0) + ' bono)', 'success');
         _automationCurrentPlan = null;
         _automationCurrentPlanId = null;
         _automationEdits = {};

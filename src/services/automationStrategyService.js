@@ -177,15 +177,22 @@ function _userBucket01(username) {
 //
 // Defaults que se siembran en la primera consulta si la coleccion esta
 // vacia. El admin los puede editar/desactivar/agregar después.
+//
+// IMPORTANTE: estos copies tienen que PROMOCIONAR el diferencial nuestro
+// (reembolsos diarios + regalos diarios). El mensaje del push no es solo
+// "te extrañamos", es "te extrañamos Y te estás perdiendo el reembolso
+// de hoy". Asi cada notif refuerza la propuesta de valor.
 const DEFAULT_ENGAGEMENT_COPIES = [
-  { title: 'Te extrañamos 🥺', body: '¿Volvés a jugar con nosotros? La mesa te espera.' },
-  { title: 'Tu suerte te está esperando 🎰', body: 'Entrá un ratito, hoy puede ser tu día.' },
-  { title: '¿Una vuelta más antes de dormir?', body: 'Cinco minutos, los mejores premios están en esta hora.' },
-  { title: 'Hace rato que no jugás 🔥', body: 'No pierdas la racha — abrí la app y mantené el ritmo.' },
-  { title: 'La mesa está caliente esta noche 💸', body: 'Pasá rapido, las ganadoras del rato están repartiendo.' },
-  { title: '¿Listo para revancha?', body: 'Hoy el aire viene mejor, abrí y probá una jugada.' },
-  { title: 'Vení, jugamos un rato 🎲', body: 'Una mano, dos y te vas — entrá nomás.' },
-  { title: 'Hoy puede ser tu día 🍀', body: 'Abrí la app y sentí la energía que se viene.' }
+  { title: 'Tu reembolso de hoy te espera 💰', body: 'Cargaste ayer? Tenés un porcentaje de vuelta — entrá y reclamalo antes de medianoche.' },
+  { title: 'Hoy también hay regalo 🎁', body: 'Con nosotros, regalos todos los días. Abrí la app y mirá lo que te toca hoy.' },
+  { title: 'Te extrañamos 🥺', body: 'Hace rato que no pasás. Te recordamos: reembolsos diarios y regalos sorpresa esperándote.' },
+  { title: '¿Sabías que hay reembolso DIARIO?', body: 'Cargá hoy y mañana te devolvemos un %. Así, todos los días. Pasá a jugar.' },
+  { title: 'Pasá a buscar tu reembolso ⏰', body: 'No te lo pierdas: el reembolso del día tiene fecha de vencimiento. Abrí la app.' },
+  { title: 'Tu cuenta está esperándote 🎰', body: 'Reembolsos diarios, regalos diarios, y la mesa caliente. Una vuelta y te vas.' },
+  { title: 'Hoy regalamos plata 💸', body: 'Sorteamos regalos todos los días entre los activos. Si no entrás, no entrás al sorteo.' },
+  { title: 'Tu suerte rota cada día 🍀', body: 'Cada día tenés una nueva oportunidad de reembolso + regalo. Abrí y aprovechá hoy.' },
+  { title: 'No te pierdas el regalo de hoy 🎁', body: 'Los regalos son diarios y se vencen. Pasá rapido a la app y reclamalo.' },
+  { title: 'Volvé, te estamos esperando 💛', body: 'Reembolso diario garantizado + regalos rotativos. Estamos para vos todos los días.' }
 ];
 
 async function _ensureCopiesSeeded(EngagementCopyPool) {
@@ -205,20 +212,25 @@ async function _ensureCopiesSeeded(EngagementCopyPool) {
 }
 
 // Selecciona un copy del pool para un user de un segmento, ponderado por
-// weight y respetando segmentos. Si todo el pool esta filtrado, devuelve
-// el primero disponible (best-effort). Determinista por (username, runSalt).
-function _pickCopy(copies, segment, username, runSalt) {
-  // Filtramos por segmento (los que no especifican segmento sirven para
-  // cualquiera, los que especifican deben matchear).
-  const eligible = copies.filter(c =>
+// weight y respetando segmentos. Excluye copies en `excludeTitles` (set de
+// titulos que el user ya recibio reciente — anti-fatiga). Si todo el pool
+// queda excluido, ignora la exclusion para no quedar sin copy.
+// Determinista por (username, runSalt).
+function _pickCopy(copies, segment, username, runSalt, excludeTitles) {
+  const exclude = excludeTitles || new Set();
+  // Eligibles por segmento.
+  const bySeg = copies.filter(c =>
     c.enabled !== false &&
     (!Array.isArray(c.segments) || c.segments.length === 0 || c.segments.includes(segment))
   );
-  if (eligible.length === 0) return null;
-  // Suma de pesos.
+  if (bySeg.length === 0) return null;
+  // Filtrar excludes; si queda vacio, fallback al pool completo (mejor
+  // repetir un copy que mandar mensaje vacio).
+  let eligible = bySeg.filter(c => !exclude.has(c.title));
+  if (eligible.length === 0) eligible = bySeg;
+
   let totalW = 0;
   for (const c of eligible) totalW += Math.max(0.1, Number(c.weight) || 1);
-  // Punto en [0, totalW) deterministico por hash(username + runSalt).
   const s = String(username || '') + ':' + String(runSalt || '');
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -233,14 +245,37 @@ function _pickCopy(copies, segment, username, runSalt) {
   return eligible[eligible.length - 1];
 }
 
+// Pre-fetch: para cada user, los titulos de copies que ya recibio en los
+// ultimos `weeks` lanzamientos de Automatización. Aggregation única. Los
+// users sin historia no aparecen en el map (devuelve Set vacío via .get).
+async function _getRecentCopiesByUser(AutomationLaunch, weeks) {
+  const since = new Date(Date.now() - (weeks || 4) * 7 * 86400000);
+  const rows = await AutomationLaunch.aggregate([
+    { $match: { launchedAt: { $gte: since } } },
+    { $unwind: '$targets' },
+    { $match: { 'targets.copyTitle': { $ne: null } } },
+    { $group: {
+        _id: { $toLower: '$targets.username' },
+        titles: { $addToSet: '$targets.copyTitle' }
+    }}
+  ]);
+  const map = new Map();
+  for (const r of rows) map.set(r._id, new Set(r.titles));
+  return map;
+}
+
 // ============================================
 // COMPUTE PLAN
 // ============================================
 async function computeAutomationPlan({ models, weeklyService, analysisFrom, analysisTo, preset, logger }) {
-  const { User, DailyPlayerStats, EngagementCopyPool } = models;
+  const { User, DailyPlayerStats, EngagementCopyPool, AutomationLaunch } = models;
 
   await _ensureCopiesSeeded(EngagementCopyPool);
   const copies = await EngagementCopyPool.find({ enabled: true }).lean();
+  const recentCopiesByUser = await _getRecentCopiesByUser(AutomationLaunch, 4);
+  // Salt unico por run para que dos analyses seguidos no asignen los
+  // mismos copies (rotacion natural sin perder determinismo per-run).
+  const runSalt = 'auto-' + Date.now();
 
   // Universo: solo users con app + notifs (canal disponible).
   const allUsers = await User.find(
@@ -312,6 +347,26 @@ async function computeAutomationPlan({ models, weeklyService, analysisFrom, anal
   const cooldownHours = Math.max(48, Math.min(168, config.cooldownHours || 72));
   const wk = weeklyService._weekKey();
 
+  // CAP 2 por semana por user, harcoded para Automatización: el push 1
+  // sale ahora, el push 2 se programa para 4 días después con copy distinto.
+  // El cap 2 reservamos en WeeklyNotifBudget al lanzar para que un launch
+  // posterior en la misma semana no vuelva a pegarle al mismo.
+  const AUTOMATION_CAP_PER_WEEK = 2;
+  const SECOND_PUSH_DELAY_HOURS = 96; // 4 días
+
+  // Helper para elegir DOS copies distintos para un user, rotativos y
+  // sin repetir contra los ultimos 4 weeks.
+  function _pickTwoCopies(segment, username) {
+    const userKey = String(username || '').toLowerCase();
+    const recent = new Set(recentCopiesByUser.get(userKey) || []);
+    const first = _pickCopy(copies, segment, username, runSalt + ':1', recent);
+    // Para el segundo: excluir tambien el primero (no repetir en el mismo lanzamiento).
+    const exclude2 = new Set(recent);
+    if (first) exclude2.add(first.title);
+    const second = _pickCopy(copies, segment, username, runSalt + ':2', exclude2);
+    return [first, second];
+  }
+
   // Asignación a segmento + decisión bonus/engagement.
   const targets = [];
   const skippedNoMatch = [];
@@ -322,12 +377,12 @@ async function computeAutomationPlan({ models, weeklyService, analysisFrom, anal
     const seg = SEGMENTS.find(x => x.matcher(s));
     if (!seg) { skippedNoMatch.push(s.username); continue; }
 
-    // Cooldown gate
+    // Cooldown gate + cap 2/semana automation.
     const gate = await weeklyService.canSendToUser({
       username: s.username,
       weekKey: wk,
       cooldownHours,
-      capPerUser: config.capPerUserPerWeek,
+      capPerUser: AUTOMATION_CAP_PER_WEEK,
       WeeklyNotifBudget: models.WeeklyNotifBudget
     });
     if (!gate.ok) { skippedCooldown.push({ username: s.username, reason: gate.reason }); continue; }
@@ -336,21 +391,30 @@ async function computeAutomationPlan({ models, weeklyService, analysisFrom, anal
     const bucket = _userBucket01(s.username);
     const getsBonus = bucket < seg.bonusRatio;
 
-    let kind, giftAmount = 0, bonusPct = 0, copyTitle = null, copyBody = null;
+    // Asignamos DOS copies distintos por user (uno para push 1, otro para
+    // push 2). Rotacion: excluimos los copies que ese user ya recibio en
+    // los ultimos 4 weeks.
+    const [copy1, copy2] = _pickTwoCopies(seg.code, s.username);
+
+    let kind, giftAmount = 0, bonusPct = 0;
+    let push1Title, push1Body;
+    let push2Title = copy2 ? copy2.title : '🎰 Pasá a jugar un rato';
+    let push2Body  = copy2 ? copy2.body  : 'Te esperamos en la app — reembolsos diarios + regalos rotativos.';
+
     if (getsBonus) {
+      // Push 1 = oferta. Push 2 (a 4d) = engagement con valor agregado.
       kind = seg.bonusKind;
       giftAmount = seg.suggestGiftAmount(s) || 0;
       bonusPct = seg.suggestBonusPct(s) || 0;
+      push1Title = '🎁 Tenés un regalo esperándote';
+      push1Body  = (kind === 'whatsapp_promo')
+        ? `🎁 ${bonusPct}% de bono en tu próxima carga — válido por 48h. Reclamá por WhatsApp.`
+        : 'Abrí la app y reclamá tu regalo de plata antes de que se termine.';
     } else {
+      // Engagement-only en ambos pushes (con copies distintos).
       kind = 'engagement';
-      const copy = _pickCopy(copies, seg.code, s.username, 'auto-' + Date.now());
-      if (copy) {
-        copyTitle = copy.title;
-        copyBody = copy.body;
-      } else {
-        copyTitle = '🎰 Pasá a jugar un rato';
-        copyBody = 'Te esperamos en la app.';
-      }
+      push1Title = copy1 ? copy1.title : '🎰 Pasá a jugar un rato';
+      push1Body  = copy1 ? copy1.body  : 'Te esperamos en la app — reembolsos diarios + regalos rotativos.';
     }
 
     targets.push({
@@ -360,8 +424,12 @@ async function computeAutomationPlan({ models, weeklyService, analysisFrom, anal
       kind,
       giftAmount,
       bonusPct,
-      copyTitle,
-      copyBody,
+      // Push 1 (inmediato al confirmar)
+      copyTitle: push1Title,
+      copyBody:  push1Body,
+      // Push 2 (programado a 4 dias)
+      copyTitle2: push2Title,
+      copyBody2:  push2Body,
       netwinARS: s.netwinARS,
       totalDepositsARS: s.totalDepositsARS,
       daysSinceLastDeposit: s.daysSinceLastDeposit
@@ -425,6 +493,8 @@ async function computeAutomationPlan({ models, weeklyService, analysisFrom, anal
     analysisTo,
     preset: preset || 'custom',
     cooldownHours,
+    capPerUserPerWeek: AUTOMATION_CAP_PER_WEEK,
+    secondPushDelayHours: SECOND_PUSH_DELAY_HOURS,
     totalCandidates: statsByUser.size,
     totalTargets: targets.length,
     totalEngagement,
@@ -447,8 +517,9 @@ async function executeAutomationPlan({
   validUntil, triggeredBy, logger
 }) {
   const { User, MoneyGiveaway, NotificationHistory, WeeklyNotifBudget,
-          AutomationLaunch, EngagementCopyPool } = models;
+          AutomationLaunch, EngagementCopyPool, ScheduledNotification } = models;
   const wk = weeklyService._weekKey();
+  const SECOND_PUSH_DELAY_MS = (plan.secondPushDelayHours || 96) * 3600 * 1000;
 
   if (!plan.targets || plan.targets.length === 0) {
     return { skipped: 'no-targets' };
@@ -618,6 +689,33 @@ async function executeAutomationPlan({
     }
   }
 
+  // 7b) Programar push 2 para cada target (a 96h del launch). El cron de
+  // ScheduledNotification (poller) lo dispara en su momento. Cada user
+  // recibe un copy DISTINTO al del push 1 (ya elegido en computePlan).
+  // Asi cada cliente recibe exactamente 2 notifs en la semana, las dos
+  // distintas, con valor agregado del servicio (reembolsos + regalos
+  // diarios) cuando son engagement.
+  const secondPushAt = new Date(Date.now() + SECOND_PUSH_DELAY_MS);
+  let scheduledCount = 0;
+  for (const t of liveTargets) {
+    try {
+      await ScheduledNotification.create({
+        id: uuidv4(),
+        scheduledFor: secondPushAt,
+        status: 'pending',
+        title: t.copyTitle2 || '🎰 Pasá a jugar',
+        body: t.copyBody2 || 'Te esperamos en la app — reembolsos diarios + regalos rotativos.',
+        targetUsername: String(t.username).toLowerCase().trim(),
+        audiencePrefix: null,
+        extraType: 'none',
+        createdBy: 'automation-' + (triggeredBy || 'admin') + ':' + launchId
+      });
+      scheduledCount++;
+    } catch (e) {
+      logger && logger.warn(`[automation] no se pudo programar 2do push para ${t.username}: ${e.message}`);
+    }
+  }
+
   // 8) NotificationHistory (para reusar la maquinaria de tracking existente).
   await NotificationHistory.create({
     id: historyId,
@@ -658,7 +756,11 @@ async function executeAutomationPlan({
     sentBy: triggeredBy || 'admin'
   });
 
-  // 9) Anotar en WeeklyNotifBudget (cap+cooldown).
+  // 9) Anotar en WeeklyNotifBudget el cap 2/semana — push 1 (ya enviado)
+  // + push 2 (programado y reservado). Llamamos recordSent dos veces para
+  // que count llegue a 2 ya, asi un launch posterior en la misma semana
+  // bloquea por cap. El segundo push real, cuando se dispare por el cron,
+  // NO vuelve a llamar recordSent (ya cuenta).
   for (const t of liveTargets) {
     await weeklyService.recordSent({
       username: t.username,
@@ -670,15 +772,31 @@ async function executeAutomationPlan({
       bonusPct: t.bonusPct || null,
       WeeklyNotifBudget
     });
+    await weeklyService.recordSent({
+      username: t.username,
+      weekKey: wk,
+      type: 'automation-scheduled',
+      historyId,
+      tier: t.segment,
+      giftAmount: null,
+      bonusPct: null,
+      WeeklyNotifBudget
+    });
   }
 
-  // 10) Incrementar usageCount de copies asignados.
-  const copyTitles = new Set(engagementTargets.map(t => t.copyTitle).filter(Boolean));
-  for (const title of copyTitles) {
-    const usedBy = engagementTargets.filter(t => t.copyTitle === title).length;
+  // 10) Incrementar usageCount de copies asignados (push 1 engagement
+  // + push 2 de TODOS los targets, ya que push 2 es engagement para todos).
+  const allEngagementCopyTitles = new Map(); // title -> count
+  for (const t of engagementTargets) {
+    if (t.copyTitle) allEngagementCopyTitles.set(t.copyTitle, (allEngagementCopyTitles.get(t.copyTitle) || 0) + 1);
+  }
+  for (const t of liveTargets) {
+    if (t.copyTitle2) allEngagementCopyTitles.set(t.copyTitle2, (allEngagementCopyTitles.get(t.copyTitle2) || 0) + 1);
+  }
+  for (const [title, n] of allEngagementCopyTitles) {
     await EngagementCopyPool.updateOne(
       { title },
-      { $inc: { usageCount: usedBy } }
+      { $inc: { usageCount: n } }
     ).catch(() => {});
   }
 
@@ -714,7 +832,9 @@ async function executeAutomationPlan({
       kind: t.kind,
       giftAmount: t.giftAmount || 0,
       bonusPct: t.bonusPct || 0,
-      copyTitle: t.copyTitle || null
+      copyTitle: t.copyTitle || null,
+      copyTitle2: t.copyTitle2 || null,
+      secondPushAt
     })),
     sentCount: totalSent,
     failureCount: totalFailed,
@@ -733,7 +853,9 @@ async function executeAutomationPlan({
     droppedAtSend,
     totalCostARS,
     engagementCount: engagementTargets.length,
-    bonusCount: moneyTargets.length + promoTargets.length
+    bonusCount: moneyTargets.length + promoTargets.length,
+    scheduledCount,
+    secondPushAt
   };
 }
 

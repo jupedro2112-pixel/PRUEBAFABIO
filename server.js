@@ -10049,7 +10049,8 @@ const _strategyModels = {
   NotificationHistory, DailyPlayerStats,
   WeeklyStrategyConfig, WeeklyNotifBudget, WeeklyStrategyReport,
   RefundReminderConfig,
-  AutomationLaunch, EngagementCopyPool
+  AutomationLaunch, EngagementCopyPool,
+  ScheduledNotification
 };
 
 async function _runWeeklyStrategyChecker() {
