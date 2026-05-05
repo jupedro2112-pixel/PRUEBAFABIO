@@ -64,6 +64,20 @@ const raffleSchema = new mongoose.Schema({
   // inscribirse. Sirve como gancho: el primer relampago es libre, los
   // siguientes son recompensa para quienes ya jugaron pagos.
   requiresPaidTicket: { type: Boolean, default: false },
+
+  // Audiencia por equipo o usuario. Permite que el admin restrinja la
+  // visibilidad y participacion del sorteo.
+  //   'all'    -> todos los users (default)
+  //   'except' -> todos los equipos EXCEPTO los listados en audienceTeams
+  //   'only'   -> SOLO los equipos listados en audienceTeams
+  //   'user'   -> SOLO los usernames listados en audienceUsernames
+  //              (modo testing: el admin elige 1 usuario especifico para
+  //              probar el sorteo antes de abrirlo a todos)
+  // El equipo se deriva del prefijo del username (mismo helper que el
+  // refundReminder y los pushes segmentados: pickTeamNameForUsername).
+  audienceMode: { type: String, enum: ['all', 'except', 'only', 'user'], default: 'all' },
+  audienceTeams: { type: [String], default: [] },
+  audienceUsernames: { type: [String], default: [] },
   // Numero de instancia dentro del tipo. Cada vez que se llena un sorteo,
   // se crea otro con instanceNumber = previo + 1.
   instanceNumber: { type: Number, default: 1, min: 1 },

@@ -9072,6 +9072,24 @@ function _renderRaffleAdminCard(r) {
     html += '  </div>';
     html += '  <div style="font-size:10px;color:#888;line-height:1.4;">📅 ' + drawDate + ' · ' + (r.participants||0) + ' personas · Premio ' + _fmtMoney(r.prizeValueARS) + '</div>';
 
+    // Badge de audiencia: solo si el sorteo tiene restriccion (mode != all).
+    // Util para que el admin vea de un vistazo a quien le llega.
+    const audMode = r.audienceMode || 'all';
+    if (audMode !== 'all') {
+        let audTxt = '', audColor = '#aaa';
+        if (audMode === 'user') {
+            audTxt = '🧪 TEST · ' + (r.audienceUsernames || []).join(', ');
+            audColor = '#ffeb3b';
+        } else if (audMode === 'except') {
+            audTxt = '🚫 Excepto: ' + (r.audienceTeams || []).join(', ');
+            audColor = '#ff8080';
+        } else if (audMode === 'only') {
+            audTxt = '🎯 Solo: ' + (r.audienceTeams || []).join(', ');
+            audColor = '#66ff66';
+        }
+        html += '  <div style="font-size:10px;color:' + audColor + ';background:rgba(255,255,255,0.04);border:1px solid ' + audColor + '40;border-radius:5px;padding:4px 7px;line-height:1.3;">' + escapeHtml(audTxt) + '</div>';
+    }
+
     if (r.status === 'drawn') {
         const claimStatus = r.prizeClaimedAt
             ? '<span style="color:#66ff66;">✅ Reclamado ' + new Date(r.prizeClaimedAt).toLocaleString('es-AR') + '</span>'
@@ -9526,6 +9544,25 @@ function seedLightningRaffle() {
                 '</div>' +
             '</label>' +
 
+            '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:8px;">' +
+                '<div style="color:#00d4ff;font-size:12px;font-weight:800;margin-bottom:6px;">👥 Audiencia (¿a quiénes les llega?)</div>' +
+                '<div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:#ddd;">' +
+                    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="lightAudMode" value="all" checked onchange="_lightUpdateTeamsBox()"> A todos los equipos</label>' +
+                    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="lightAudMode" value="except" onchange="_lightUpdateTeamsBox()"> A todos <strong style="color:#ff8080;">excepto</strong> los equipos elegidos</label>' +
+                    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="lightAudMode" value="only" onchange="_lightUpdateTeamsBox()"> <strong style="color:#66ff66;">Solo</strong> a los equipos elegidos</label>' +
+                    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="lightAudMode" value="user" onchange="_lightUpdateTeamsBox()"> 🧪 <strong style="color:#ffeb3b;">Solo a 1 usuario específico (test)</strong></label>' +
+                '</div>' +
+                '<div id="lightTeamsBox" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed rgba(0,212,255,0.30);">' +
+                    '<div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Equipos</div>' +
+                    '<div id="lightTeamsList" style="display:flex;flex-wrap:wrap;gap:6px;color:#aaa;font-size:11px;">⏳ Cargando…</div>' +
+                '</div>' +
+                '<div id="lightUserBox" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,235,59,0.30);">' +
+                    '<div style="color:#ffeb3b;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;">Username (sin @)</div>' +
+                    '<input id="lightAudUser" type="text" maxlength="80" placeholder="ej: lalodj" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,235,59,0.40);padding:8px 10px;border-radius:6px;font-size:13px;box-sizing:border-box;">' +
+                    '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:5px;">Solo este usuario va a ver el sorteo. Útil para testear el flujo antes de abrirlo a todos.</div>' +
+                '</div>' +
+            '</div>' +
+
             '<label style="display:flex;align-items:flex-start;gap:8px;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:10px;margin-bottom:14px;cursor:pointer;">' +
                 '<input type="checkbox" id="lightAutoAnnounce" checked style="margin-top:2px;flex-shrink:0;">' +
                 '<div>' +
@@ -9543,6 +9580,48 @@ function seedLightningRaffle() {
     setTimeout(() => { try { document.getElementById('lightPrize').focus(); document.getElementById('lightPrize').select(); } catch (_) {} }, 100);
 }
 
+// Toggle de los paneles de audiencia segun el modo seleccionado:
+//   'all'           -> nada visible
+//   'except'/'only' -> lista de equipos (carga lazy 1 sola vez)
+//   'user'          -> input de username
+// Idempotente: re-llamarla con el mismo modo no rompe nada.
+async function _lightUpdateTeamsBox() {
+    const radios = document.querySelectorAll('input[name="lightAudMode"]');
+    let mode = 'all';
+    for (const r of radios) { if (r.checked) { mode = r.value; break; } }
+    const teamsBox = document.getElementById('lightTeamsBox');
+    const userBox = document.getElementById('lightUserBox');
+    if (teamsBox) teamsBox.style.display = (mode === 'except' || mode === 'only') ? 'block' : 'none';
+    if (userBox) userBox.style.display = (mode === 'user') ? 'block' : 'none';
+    if (mode === 'user') {
+        setTimeout(() => { try { document.getElementById('lightAudUser')?.focus(); } catch (_) {} }, 50);
+        return;
+    }
+    if (mode !== 'except' && mode !== 'only') return;
+    const list = document.getElementById('lightTeamsList');
+    if (!list || list.dataset.loaded === '1') return;
+    try {
+        const r = await authFetch('/api/admin/calendar/teams-available');
+        const d = await r.json();
+        const teams = (d && d.teams) || [];
+        if (teams.length === 0) {
+            list.innerHTML = '<span style="color:#888;">No hay equipos configurados.</span>';
+            list.dataset.loaded = '1';
+            return;
+        }
+        let h = '';
+        for (const t of teams) {
+            h += '<label style="display:inline-flex;align-items:center;gap:4px;color:#ddd;cursor:pointer;background:rgba(255,255,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:6px;padding:4px 8px;">' +
+                '<input type="checkbox" class="lightTeamChk" value="' + escapeHtml(t) + '"> ' + escapeHtml(t) +
+            '</label>';
+        }
+        list.innerHTML = h;
+        list.dataset.loaded = '1';
+    } catch (e) {
+        list.innerHTML = '<span style="color:#888;">No se pudo cargar equipos.</span>';
+    }
+}
+
 // Submit del form modal: arma el body y llama al endpoint. Anti-double
 // click + cierra modal + ofrece anuncio si el checkbox esta tildado.
 async function seedLightningRaffleSubmit() {
@@ -9554,6 +9633,25 @@ async function seedLightningRaffleSubmit() {
     if (!Number.isFinite(prize) || prize < 100) { alert('Premio inválido (mínimo $100).'); return; }
     if (!Number.isFinite(cupos) || cupos < 2 || cupos > 1000) { alert('Cupos inválidos (2 a 1000).'); return; }
 
+    // Audiencia: lee modo + equipos / usernames segun el panel visible.
+    let audienceMode = 'all';
+    const radios = document.querySelectorAll('input[name="lightAudMode"]');
+    for (const r of radios) { if (r.checked) { audienceMode = r.value; break; } }
+    let audienceTeams = [];
+    let audienceUsernames = [];
+    if (audienceMode === 'except' || audienceMode === 'only') {
+        audienceTeams = Array.from(document.querySelectorAll('.lightTeamChk:checked')).map(c => c.value);
+        if (audienceTeams.length === 0) {
+            alert('Elegí al menos 1 equipo o cambiá el modo a "A todos los equipos".');
+            return;
+        }
+    } else if (audienceMode === 'user') {
+        const raw = (document.getElementById('lightAudUser')?.value || '').trim();
+        if (!raw) { alert('Ingresá el username del usuario para testear.'); return; }
+        audienceUsernames = raw.split(/[\s,]+/).map(u => u.replace(/^@/, '').toLowerCase()).filter(Boolean);
+        if (audienceUsernames.length === 0) { alert('Username inválido.'); return; }
+    }
+
     seedLightningRaffleSubmit._busy = true;
     try {
         const resp = await authFetch('/api/admin/raffles/seed-lightning', {
@@ -9562,7 +9660,10 @@ async function seedLightningRaffleSubmit() {
             body: JSON.stringify({
                 prizeValueARS: prize,
                 totalTickets: cupos,
-                requiresPaidTicket
+                requiresPaidTicket,
+                audienceMode,
+                audienceTeams,
+                audienceUsernames
             })
         });
         const d = await resp.json();
@@ -9574,7 +9675,9 @@ async function seedLightningRaffleSubmit() {
         showToast('⚡ Sorteo RELÁMPAGO creado: ' + d.raffle.name, 'success');
         loadRafflesLightningAdmin();
         loadRafflesAdmin();
-        if (autoAnnounce) {
+        // En modo 'user' (test) no anunciamos: el sorteo es invisible para
+        // el resto, mandar push a todos seria contraproducente.
+        if (autoAnnounce && audienceMode !== 'user') {
             announceRaffleOpen(d.raffle.id, {
                 title: '⚡ Nuevo sorteo RELÁMPAGO · $' + (d.raffle.prizeValueARS || prize).toLocaleString('es-AR'),
                 body: requiresPaidTicket

@@ -11521,6 +11521,37 @@ function _argDayKey(date) {
   return `${y}-${m}-${day}`;
 }
 
+// Resuelve si un user esta dentro de la audiencia de un sorteo (segun el
+// audienceMode + audienceTeams). El equipo se deriva del prefijo del username
+// usando la config global 'userLinesByPrefix'. Si linesConfig es null o el
+// modo es 'all', devuelve true sin chequear nada.
+//
+// El parametro linesConfig se pasa para no leer de DB en cada llamada
+// (caller hace 1 sola lectura y la reutiliza para todos los raffles).
+function _userInRaffleAudience(raffle, username, linesConfig) {
+  const mode = raffle && raffle.audienceMode;
+  if (!mode || mode === 'all') return true;
+  const u = String(username || '').toLowerCase().trim();
+  // Modo testing: solo los usernames listados pasan. No depende de equipos.
+  if (mode === 'user') {
+    const allowed = (raffle.audienceUsernames || [])
+      .map(x => String(x || '').toLowerCase().trim())
+      .filter(Boolean);
+    if (allowed.length === 0) return true; // lista vacia = no restringe
+    return allowed.includes(u);
+  }
+  const teams = (raffle.audienceTeams || []).map(t => String(t).toLowerCase().trim()).filter(Boolean);
+  if (teams.length === 0) return true; // mode con lista vacia = todos pasan
+  const userTeam = String(pickTeamNameForUsername(linesConfig, username) || '').toLowerCase().trim();
+  if (mode === 'except') {
+    return !teams.includes(userTeam);
+  }
+  if (mode === 'only') {
+    return teams.includes(userTeam);
+  }
+  return true;
+}
+
 function _isoWeekKey(date) {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = d.getUTCDay() || 7;
@@ -11652,9 +11683,15 @@ async function _autoEnrollFreeRaffles(username) {
       // Solo los que requieran umbral van a saltar mas abajo.
     }
 
+    // Lines config para filtro de audiencia (best-effort; null no bloquea).
+    let linesCfg = null;
+    try { linesCfg = await getConfig('userLinesByPrefix'); } catch (_) {}
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const r of freeRaffles) {
       if (weeklyDeposits < (r.minCargasARS || 0)) continue;
+      // Si el sorteo tiene audienceMode restringido y este user no entra,
+      // skip (no se le asigna numero ni le aparece como "anotado").
+      if (!_userInRaffleAudience(r, username, linesCfg)) continue;
 
       // Ya enrolado en este sorteo? Skip.
       const alreadyIn = await RaffleParticipation.findOne({
@@ -11916,7 +11953,14 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     ]);
 
     const balance = balanceRes && balanceRes.balance ? Number(balanceRes.balance) : 0;
-    const raffles = rafflesRes;
+    // Cargamos la config de prefijos UNA vez para filtrar audiencia. Si
+    // falla, dejamos pasar todos (defensa: no bloquear UX por una config
+    // suelta — es solo un filtro de marketing, no de seguridad critica).
+    let linesConfig = null;
+    try { linesConfig = await getConfig('userLinesByPrefix'); } catch (_) {}
+    // Filtro de audiencia: si un sorteo tiene audienceMode != 'all' y este
+    // user no entra, lo sacamos de la lista (no lo ve siquiera).
+    const raffles = rafflesRes.filter(r => _userInRaffleAudience(r, username, linesConfig));
     const myByRaffle = {};
     for (const p of myPartsRes) myByRaffle[p.raffleId] = p;
 
@@ -12139,6 +12183,15 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
     if (raffle.status !== 'active') {
       logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} status=${raffle.status}`);
       return res.status(400).json({ error: `Este sorteo ya no acepta compras (estado: ${raffle.status}).` });
+    }
+    // Audience gate: si tiene mode != 'all', validamos que el user este
+    // dentro del segmento permitido por equipo.
+    if (raffle.audienceMode && raffle.audienceMode !== 'all') {
+      let linesCfg = null;
+      try { linesCfg = await getConfig('userLinesByPrefix'); } catch (_) {}
+      if (!_userInRaffleAudience(raffle, username, linesCfg)) {
+        return res.status(403).json({ error: 'Este sorteo no está disponible para tu equipo.' });
+      }
     }
     // Free clasicos (free_p100/p500/p1m/p2m) son auto-enroll por threshold
     // de cargas semanales — el user NO compra nada. Pero el RELAMPAGO si
@@ -13189,6 +13242,23 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
     const requiresPaidTicket = (typeof b.requiresPaidTicket === 'boolean')
       ? b.requiresPaidTicket
       : prevCount > 0;
+    // Audiencia: 4 modos (all, except, only, user). Sanitizamos los equipos
+    // (lowercase, trim, dedup) y los usernames (lowercase, trim, dedup) para
+    // que el filter sea consistente con _userInRaffleAudience. El modo 'user'
+    // es solo para testing: el admin elige 1 (o pocos) usernames y nadie mas
+    // ve el sorteo.
+    const audienceMode = ['all', 'except', 'only', 'user'].includes(b.audienceMode) ? b.audienceMode : 'all';
+    const audienceTeamsRaw = Array.isArray(b.audienceTeams) ? b.audienceTeams : [];
+    const audienceTeams = Array.from(new Set(
+      audienceTeamsRaw.map(t => String(t || '').trim()).filter(Boolean)
+    )).slice(0, 50);
+    const audienceUsernamesRaw = Array.isArray(b.audienceUsernames) ? b.audienceUsernames : [];
+    const audienceUsernames = Array.from(new Set(
+      audienceUsernamesRaw.map(u => String(u || '').toLowerCase().trim()).filter(Boolean)
+    )).slice(0, 20);
+    if (audienceMode === 'user' && audienceUsernames.length === 0) {
+      return res.status(400).json({ error: 'En modo "Solo a 1 usuario (test)" tenés que ingresar al menos 1 username.' });
+    }
     const drawArg = _nextMondayDraw();
     const weekKey = _isoWeekKey(drawArg);
     const id = uuidv4();
@@ -13216,6 +13286,9 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
       isFree: true,
       minCargasARS: 0,
       requiresPaidTicket,
+      audienceMode,
+      audienceTeams,
+      audienceUsernames,
       lotteryRule: 'Sorteo RELÁMPAGO. Mismo mecanismo que los demás: 1° premio de la Lotería Nacional Nocturna del lunes próximo.',
       createdAt: new Date()
     });
@@ -13652,7 +13725,11 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
         lotteryDrawNumber: r.lotteryDrawNumber,
         prizeClaimable: r.prizeClaimable || false,
         prizeClaimedAt: r.prizeClaimedAt,
-        drawnAt: r.drawnAt
+        drawnAt: r.drawnAt,
+        audienceMode: r.audienceMode || 'all',
+        audienceTeams: r.audienceTeams || [],
+        audienceUsernames: r.audienceUsernames || [],
+        requiresPaidTicket: !!r.requiresPaidTicket
       }))
     });
   } catch (err) {
