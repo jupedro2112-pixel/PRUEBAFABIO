@@ -9074,6 +9074,12 @@ function _renderRaffleAdminCard(r) {
         const cancelTitle = r.isFree ? 'Eliminar sorteo gratis (saca a todos los anotados, no hay plata que devolver)' : 'Cancelar y reembolsar';
         html += '    <button type="button" onclick="cancelRaffle(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.40);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="' + escapeHtml(cancelTitle) + '">' + cancelLabel + '</button>';
     }
+    // Borrar definitivo solo si esta drawn/cancelled/archived Y nadie compro.
+    // Sirve para limpiar pruebas o sorteos vacios sin dejar basura. Si hubo
+    // gente que jugo, NO aparece el boton — preservamos el historial.
+    if ((r.status === 'drawn' || r.status === 'cancelled' || r.status === 'archived') && (r.participants || 0) === 0) {
+        html += '    <button type="button" onclick="deleteRaffleHard(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.15);color:#ff6b6b;border:1px solid #ff6b6b;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;" title="Borrar definitivamente (solo permitido porque no hay participantes)">🗑️ Borrar</button>';
+    }
     html += '  </div>';
     html += '</div>';
     return html;
@@ -9393,6 +9399,33 @@ async function cancelRaffle(id) {
         loadRafflesAdmin();
     } catch (e) { showToast('Error de conexión', 'error'); }
     finally { cancelRaffle._busy = false; }
+}
+
+// Borrar definitivo un sorteo. Solo lo ofrecemos cuando NO hay participantes
+// (boton ya filtra eso). Doble check del lado server por si la UI miente.
+async function deleteRaffleHard(id) {
+    const r = (_rafflesAdminCache && _rafflesAdminCache.raffles || []).find(x => x.id === id);
+    if (!r) return;
+    if ((r.participants || 0) > 0) {
+        alert('Este sorteo tiene participantes — no se puede borrar. Usá Archivar.');
+        return;
+    }
+    if (!confirm('¿Borrar definitivamente "' + r.name + '"?\n\nNo tiene participantes, así que no se pierde nada.\nNo se puede deshacer.')) return;
+    if (deleteRaffleHard._busy) return;
+    deleteRaffleHard._busy = true;
+    try {
+        const resp = await authFetch('/api/admin/raffles/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await resp.json();
+        if (!resp.ok) {
+            alert('❌ ' + (d.error || 'Error') + (d.participants ? ' (participantes: ' + d.participants + ')' : ''));
+            return;
+        }
+        showToast('🗑️ Borrado · ' + (d.deletedName || ''), 'success');
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+    finally { deleteRaffleHard._busy = false; }
 }
 
 async function cleanupRaffles() {

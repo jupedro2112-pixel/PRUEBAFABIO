@@ -12768,6 +12768,38 @@ app.post('/api/admin/raffles/:id/cancel', authMiddleware, superAdminMiddleware, 
   }
 });
 
+// DELETE /api/admin/raffles/:id — borra DEFINITIVAMENTE un sorteo. Solo permitido
+// si el sorteo esta drawn/cancelled/archived Y no tiene NINGUNA participacion
+// registrada. Sirve para limpiar pruebas o sorteos vacios sin dejar basura
+// en el panel. Para sorteos con gente que jugo, hay que cancelar (que reembolsa)
+// o archivar (cleanup) para preservar historial — nunca borrar a la fuerza.
+app.delete('/api/admin/raffles/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status === 'active' || raffle.status === 'closed') {
+      return res.status(400).json({ error: 'No se puede borrar un sorteo activo/cerrado. Sorteálo o cancelálo primero.' });
+    }
+    const partsCount = await RaffleParticipation.countDocuments({ raffleId: raffle.id });
+    if (partsCount > 0) {
+      return res.status(400).json({
+        error: `Este sorteo tiene ${partsCount} ${partsCount === 1 ? 'participante' : 'participantes'} — no se borra para preservar historial. Usá "Archivar" en su lugar.`,
+        participants: partsCount
+      });
+    }
+    // Limpiar tambien spends huerfanos (defensa en profundidad — no deberian
+    // existir si partsCount=0 pero por si acaso). RaffleSpend NO bloquea la
+    // baja del sorteo, son logs.
+    await RaffleSpend.deleteMany({ raffleId: raffle.id }).catch(() => {});
+    await Raffle.deleteOne({ id: raffle.id });
+    logger.info(`[raffles] DELETE ${raffle.name} (${raffle.id}) status=${raffle.status} por ${req.user.username || 'admin'}`);
+    res.json({ success: true, deletedId: raffle.id, deletedName: raffle.name });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id DELETE: ${err.message}`);
+    res.status(500).json({ error: 'Error eliminando sorteo' });
+  }
+});
+
 // POST /api/admin/raffles/cleanup — archiva 'drawn' y 'cancelled' y reseed.
 // Idempotente. Por defecto respeta la ventana de 24h del banner de
 // "Felicitaciones" del ganador. Si admin pasa ?force=1, archiva todo.
