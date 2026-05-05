@@ -76,7 +76,7 @@ VIP.raffles = (function () {
                 html += '<div style="color:#bbe6bb;font-size:11px;margin-top:2px;">Ya está disponible para jugar — ¡buena suerte! 🎰</div>';
                 html += '</div>';
             } else if (needsClaim) {
-                html += '<button type="button" onclick="VIP.raffles.claimPrize(' + JSON.stringify(c.id) + ')" style="width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:13px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1px;box-shadow:0 4px 10px rgba(255,215,0,0.30);">🎁 RECLAMAR $' + _fmt(c.prizeValueARS) + '</button>';
+                html += '<button type="button" data-raffle-action="claim" data-raffle-id="' + _esc(c.id) + '" style="width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:13px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1px;box-shadow:0 4px 10px rgba(255,215,0,0.30);">🎁 RECLAMAR $' + _fmt(c.prizeValueARS) + '</button>';
                 html += '<div style="color:#ffe699;font-size:10px;text-align:center;margin-top:6px;">⚠️ La acreditación automática falló — tocá el botón para acreditar manualmente.</div>';
             } else {
                 html += '<div style="background:rgba(255,170,102,0.15);border:1px solid rgba(255,170,102,0.40);border-radius:8px;padding:10px;text-align:center;">';
@@ -106,7 +106,7 @@ VIP.raffles = (function () {
             html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;margin-top:8px;">';
             html += '<div style="color:#fff;font-weight:800;font-size:14px;margin-bottom:4px;">' + (c.emoji || '🏆') + ' ' + _esc(c.name) + '</div>';
             html += '<div style="color:#ddd;font-size:12px;margin-bottom:8px;">Número ganador: <strong>#' + c.winningTicketNumber + '</strong> · Premio: <strong>$' + _fmt(c.prizeValueARS) + '</strong></div>';
-            html += '<button type="button" onclick="VIP.raffles.claimPrize(' + JSON.stringify(c.id) + ')" style="width:100%;background:#ffd700;color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">🎁 RECLAMAR $' + _fmt(c.prizeValueARS) + '</button>';
+            html += '<button type="button" data-raffle-action="claim" data-raffle-id="' + _esc(c.id) + '" style="width:100%;background:#ffd700;color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">🎁 RECLAMAR $' + _fmt(c.prizeValueARS) + '</button>';
             html += '</div>';
         }
         html += '</div>';
@@ -169,7 +169,7 @@ VIP.raffles = (function () {
             html += '<div style="background:rgba(212,175,55,0.05);border:1px dashed rgba(212,175,55,0.30);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
             html += '💡 <strong style="color:#ffd700;">Tip:</strong> tocá <strong>"Elegir números"</strong> y elegí los que quieras del 1 al 100. Si no querés elegir, podés pedir aleatorio. Hasta 50 números por compra.';
             html += '</div>';
-            html += '<button type="button" onclick="VIP.raffles.openPicker(' + JSON.stringify(r.id) + ')" ' + (canAfford ? '' : 'disabled') + ' style="width:100%;background:' + (canAfford ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + (canAfford ? '🎫 ELEGIR NÚMEROS' : '🔒 SIN SALDO ($' + _fmt(r.entryCost) + ' por número)') + '</button>';
+            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" ' + (canAfford ? '' : 'disabled') + ' style="width:100%;background:' + (canAfford ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + (canAfford ? '🎫 ELEGIR NÚMEROS' : '🔒 SIN SALDO ($' + _fmt(r.entryCost) + ' por número)') + '</button>';
         }
 
         html += '</div>';
@@ -272,9 +272,43 @@ VIP.raffles = (function () {
         body.innerHTML = html;
     }
 
+    // Listener delegado: en lugar de inline onclick="" (que se rompe cuando
+    // el id contiene comillas o caracteres reservados), interceptamos clicks
+    // sobre [data-raffle-action] y disparamos la accion correspondiente.
+    // Esto se monta UNA sola vez la primera vez que se abre el modal.
+    let _delegationMounted = false;
+    function _mountDelegation() {
+        if (_delegationMounted) return;
+        _delegationMounted = true;
+        document.body.addEventListener('click', function (ev) {
+            const btn = ev.target.closest && ev.target.closest('[data-raffle-action]');
+            if (!btn) return;
+            if (btn.disabled) return;
+            const action = btn.getAttribute('data-raffle-action');
+            const id = btn.getAttribute('data-raffle-id') || '';
+            if (action === 'open-picker') return openPicker(id);
+            if (action === 'close-picker') return closePicker();
+            if (action === 'pick-random') return pickRandom();
+            if (action === 'clear-pick') return clearPick();
+            if (action === 'confirm-buy') return confirmPickerBuy();
+            if (action === 'claim') return claimPrize(id);
+            if (action === 'toggle-pick') {
+                const n = parseInt(btn.getAttribute('data-num'), 10);
+                if (Number.isFinite(n)) togglePick(n);
+                return;
+            }
+            if (action === 'close-bought') {
+                const m = document.getElementById('rafflesBoughtModal');
+                if (m) m.style.display = 'none';
+                return;
+            }
+        }, false);
+    }
+
     async function open() {
         const modal = document.getElementById('rafflesModal');
         if (!modal) return;
+        _mountDelegation();
         modal.style.display = 'flex';
         _data = null;
         _render();
@@ -309,7 +343,7 @@ VIP.raffles = (function () {
         const cost = _picker.picked.size * (r.entryCost || 0);
 
         let html = '';
-        html += '<button type="button" onclick="VIP.raffles.closePicker()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;">✕</button>';
+        html += '<button type="button" data-raffle-action="close-picker" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;">✕</button>';
         html += '<h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
         html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + ' · $' + _fmt(r.entryCost) + ' por número</div>';
         html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
@@ -327,9 +361,9 @@ VIP.raffles = (function () {
             else if (isTaken) { bg = 'rgba(255,107,107,0.30)'; color = '#888'; cursor = 'not-allowed'; }
             else if (isPicked) { bg = 'linear-gradient(135deg,#ffd700,#f7931e)'; color = '#000'; cursor = 'pointer'; }
             else { bg = 'rgba(102,255,102,0.10)'; color = '#cfe9cf'; cursor = 'pointer'; }
-            const onclick = (!isTaken && !isMine) ? 'onclick="VIP.raffles.togglePick(' + n + ')"' : '';
+            const dataAttrs = (!isTaken && !isMine) ? 'data-raffle-action="toggle-pick" data-num="' + n + '"' : '';
             const tdec = (isTaken || isMine) ? 'text-decoration:line-through;' : '';
-            html += '<button type="button" ' + onclick + ' style="background:' + bg + ';color:' + color + ';border:none;padding:6px 0;border-radius:4px;font-size:12px;font-weight:700;cursor:' + cursor + ';' + tdec + '">' + n + '</button>';
+            html += '<button type="button" ' + dataAttrs + ' style="background:' + bg + ';color:' + color + ';border:none;padding:6px 0;border-radius:4px;font-size:12px;font-weight:700;cursor:' + cursor + ';' + tdec + '">' + n + '</button>';
         }
         html += '</div>';
 
@@ -342,9 +376,9 @@ VIP.raffles = (function () {
         html += '</div>';
 
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-        html += '<button type="button" onclick="VIP.raffles.pickRandom()" style="flex:1;min-width:100px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">🎲 Aleatorio (5)</button>';
-        html += '<button type="button" onclick="VIP.raffles.clearPick()" style="background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.30);padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Limpiar</button>';
-        html += '<button type="button" id="raffle_pick_buy" onclick="VIP.raffles.confirmPickerBuy()" ' + (pickedArr.length === 0 ? 'disabled' : '') + ' style="flex:2;min-width:160px;background:' + (pickedArr.length ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (pickedArr.length ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">🎫 COMPRAR ' + pickedArr.length + ' POR $' + _fmt(cost) + '</button>';
+        html += '<button type="button" data-raffle-action="pick-random" style="flex:1;min-width:100px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">🎲 Aleatorio (5)</button>';
+        html += '<button type="button" data-raffle-action="clear-pick" style="background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.30);padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Limpiar</button>';
+        html += '<button type="button" id="raffle_pick_buy" data-raffle-action="confirm-buy" ' + (pickedArr.length === 0 ? 'disabled' : '') + ' style="flex:2;min-width:160px;background:' + (pickedArr.length ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (pickedArr.length ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">🎫 COMPRAR ' + pickedArr.length + ' POR $' + _fmt(cost) + '</button>';
         html += '</div>';
 
         const pickerBody = document.getElementById('rafflesPickerBody');
@@ -522,7 +556,7 @@ VIP.raffles = (function () {
                 '<div style="color:#fff;font-size:13px;margin-bottom:6px;">Tu/s número/s para <strong>' + _esc(raffle.name) + '</strong>:</div>' +
                 numStr +
                 '<div style="color:#dde9d4;font-size:12px;line-height:1.5;margin-bottom:14px;">Sorteo el lunes en la Lotería Nacional Nocturna. Si tu número gana, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.</div>' +
-                '<button type="button" onclick="document.getElementById(\'rafflesBoughtModal\').style.display=\'none\'" style="width:100%;background:#ffd700;color:#000;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">¡PERFECTO!</button>';
+                '<button type="button" data-raffle-action="close-bought" style="width:100%;background:#ffd700;color:#000;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">¡PERFECTO!</button>';
         }
         modal.style.display = 'flex';
     }
