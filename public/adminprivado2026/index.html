@@ -133,6 +133,10 @@
                     <span>🎁</span>
                     <span>Sorteo gratis</span>
                 </a>
+                <a href="#" class="nav-item" data-section="rafflesLightning">
+                    <span>⚡</span>
+                    <span>Sorteo relámpago</span>
+                </a>
 
                 <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
 
@@ -1041,19 +1045,43 @@
                     <button class="refresh-btn" onclick="loadRafflesFreeAdmin()" title="Refrescar">🔄</button>
                 </div>
                 <div style="background:rgba(77,171,255,0.06);border:1px solid rgba(77,171,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0 0 6px;color:#4dabff;font-weight:700;font-size:13px;">4 sorteos GRATIS para clientes activos · auto-participación por cargas del mes</p>
+                    <p style="margin:0 0 6px;color:#4dabff;font-weight:700;font-size:13px;">4 sorteos GRATIS para clientes activos · auto-participación por cargas de la semana (lun-dom)</p>
                     <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
                         <strong>👑 $2.000.000</strong> (mín. $200k cargas),
                         <strong>💎 $1.000.000</strong> (mín. $100k),
                         <strong>💰 $500.000</strong> (mín. $100k),
                         <strong>🎯 $100.000</strong> (mín. $50k).
-                        Cuando un cliente abre la app y cumple el mínimo de cargas en los últimos 30 días,
+                        Cuando un cliente abre la app y cumple el mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>,
                         el sistema le asigna <strong>automáticamente</strong> un número (1 por persona, 100 personas tope).
                         Mismo draw que los pagos: lunes Lotería Nocturna 1° premio.
                         El ganador recibe el premio <strong style="color:#66ff66;">acreditado automáticamente</strong> al saldo.
                     </p>
                 </div>
                 <div id="rafflesFreeAdminContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: SORTEOS RELÁMPAGO (one-shot, hero)
+                 ============================================ -->
+            <section id="rafflesLightningSection" class="section">
+                <div class="panel-header">
+                    <h2>⚡ Sorteo relámpago</h2>
+                    <button class="refresh-btn" onclick="loadRafflesLightningAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:linear-gradient(135deg,rgba(0,212,255,0.12),rgba(255,235,59,0.10));border:1px solid #ffeb3b;border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#ffeb3b;font-weight:700;font-size:13px;">⚡ Sorteo RELÁMPAGO · gratis, una sola vez · hero del modal</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Premio configurable (default <strong>$200.000</strong>), <strong>100 cupos</strong>,
+                        <strong style="color:#ffeb3b;">inscripción gratis</strong> · <strong>1 cupo por persona</strong>.
+                        El user entra al modal, elige su número del 1 al 100 y ve cómo se va llenando el cupo en tiempo real.
+                        Cuando se llena (o lo sorteás manualmente), <strong>NO respawnea automáticamente</strong> —
+                        si querés correr otro, tocás de nuevo "⚡ Sorteo relámpago" en la sección Sorteos pagos.
+                        Mismo draw que los demás (lunes Lotería Nocturna 1° premio).
+                    </p>
+                </div>
+                <div id="rafflesLightningAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

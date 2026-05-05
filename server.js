@@ -11630,28 +11630,31 @@ setTimeout(() => { _ensureActiveRafflesSeeded().catch(() => {}); }, 5000);
 async function _autoEnrollFreeRaffles(username) {
   const enrolled = []; // { raffleId, ticketNumber, raffleName, prizeValueARS, raffleType }
   try {
-    // Incluimos 'relampago' aca porque tambien es free auto-enroll. La diferencia
-    // clave es que NO respawnea cuando se llena/sortea (lo manejamos abajo).
-    const enrollableTypes = [...Array.from(FREE_RAFFLE_TYPE_SET), 'relampago'];
+    // Solo los free clasicos (free_p100/p500/p1m/p2m) auto-enrolean. RELAMPAGO
+    // queda afuera: el dueno quiere que la gente entre, ELIJA su numero del
+    // grid 1-100 y vea como se llena el cupo en tiempo real (interaccion +
+    // FOMO). El relampago se maneja por el endpoint /buy con entryCost=0.
     const freeRaffles = await Raffle.find(
-      { raffleType: { $in: enrollableTypes }, status: 'active' }
+      { raffleType: { $in: Array.from(FREE_RAFFLE_TYPE_SET) }, status: 'active' }
     ).lean();
     if (freeRaffles.length === 0) return enrolled;
 
-    // Cargas del user en los ultimos 30 dias (monthly). Reusamos el helper
-    // que ya tenemos para reembolsos.
-    let monthlyDeposits = 0;
+    // Cargas del user esta semana (lun-dom corriente). Antes era 'monthly'
+    // (30 dias rolling) pero el dueno aclaro que el sorteo es semanal y el
+    // umbral debe medirse de lunes a domingo, no en una ventana de 30 dias.
+    let weeklyDeposits = 0;
     try {
-      const m = await getRealMovementsTotals(username, 'monthly');
-      monthlyDeposits = Number(m && m.deposits) || 0;
+      const m = await getRealMovementsTotals(username, 'weekly');
+      weeklyDeposits = Number(m && m.deposits) || 0;
     } catch (e) {
       logger.warn(`[free-raffles] cargas check fail ${username}: ${e.message}`);
-      return enrolled;
+      // No abortamos: para 'relampago' (minCargasARS=0) seguimos el flujo.
+      // Solo los que requieran umbral van a saltar mas abajo.
     }
 
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const r of freeRaffles) {
-      if (monthlyDeposits < (r.minCargasARS || 0)) continue;
+      if (weeklyDeposits < (r.minCargasARS || 0)) continue;
 
       // Ya enrolado en este sorteo? Skip.
       const alreadyIn = await RaffleParticipation.findOne({
@@ -12136,9 +12139,32 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} status=${raffle.status}`);
       return res.status(400).json({ error: `Este sorteo ya no acepta compras (estado: ${raffle.status}).` });
     }
-    if (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType)) {
-      logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} is FREE`);
-      return res.status(400).json({ error: 'Este es un sorteo GRATIS. La participación es automática para clientes que cumplan el mínimo de cargas.' });
+    // Free clasicos (free_p100/p500/p1m/p2m) son auto-enroll por threshold
+    // de cargas semanales — el user NO compra nada. Pero el RELAMPAGO si
+    // requiere que el user elija su numero del grid (interaccion intencional
+    // del owner para que la gente vea el cupo llenarse). Asi que para
+    // 'relampago' permitimos el buy con entryCost=0 y limite 1 cupo.
+    if (raffle.raffleType !== 'relampago' && (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType))) {
+      logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} is FREE auto-enroll`);
+      return res.status(400).json({ error: 'Este es un sorteo GRATIS automático. Te anotamos solo si cumplís el mínimo de cargas semanales.' });
+    }
+    // Relampago: 1 cupo por persona max. Validar antes de reservar para que
+    // el error sea claro (el unique index lo atajaria igual pero con error feo).
+    if (raffle.raffleType === 'relampago') {
+      const safeBuy = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const already = await RaffleParticipation.findOne({
+        raffleId: raffle.id,
+        username: { $regex: '^' + safeBuy + '$', $options: 'i' }
+      }, { ticketNumbers: 1 }).lean();
+      if (already) {
+        return res.status(400).json({
+          error: `Ya estás anotado en este RELÁMPAGO con el número #${already.ticketNumbers && already.ticketNumbers[0]}. Es 1 cupo por persona.`,
+          alreadyEnrolledNumber: already.ticketNumbers && already.ticketNumbers[0]
+        });
+      }
+      if (quantity > 1) {
+        return res.status(400).json({ error: 'En el RELÁMPAGO solo se permite 1 número por persona.' });
+      }
     }
 
     // Cutoff: no vender cupos en las 3 horas previas al draw para evitar que
@@ -12193,50 +12219,51 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
 
     const buyQty = pickedNumbers.length;
     const totalCost = buyQty * (raffle.entryCost || 0);
-    if (totalCost <= 0) {
+    const isFreeRaffleBuy = (raffle.entryCost || 0) === 0;
+    // Para free (relampago) saltamos toda la verificacion de saldo y el
+    // withdraw — la inscripcion es gratis. Solo los pagos pasan por aca.
+    if (!isFreeRaffleBuy && totalCost <= 0) {
       logger.error(`[raffles] BUY REJ ${username}: totalCost=${totalCost} (entryCost=${raffle.entryCost} buyQty=${buyQty}) — config rota`);
       return res.status(500).json({ error: 'Configuración del sorteo inválida (entryCost = 0). Avisá al admin.' });
     }
 
-    // Balance check con retry. Si JUGAYGANA esta intermitente o la sesion
-    // se renovo, el primer call puede devolver null aunque el user exista.
-    // Reintentamos una vez para distinguir "fetch failed" de "balance 0".
+    // Balance check con retry — solo para sorteos pagos.
     let balance = 0;
-    let userFetchOk = false;
-    let userInfo = null;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        userInfo = await jugaygana.getUserInfoByName(username);
-        if (userInfo) {
-          userFetchOk = true;
-          balance = Number(userInfo.balance) || 0;
-          break;
+    if (!isFreeRaffleBuy) {
+      let userFetchOk = false;
+      let userInfo = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          userInfo = await jugaygana.getUserInfoByName(username);
+          if (userInfo) {
+            userFetchOk = true;
+            balance = Number(userInfo.balance) || 0;
+            break;
+          }
+        } catch (e) {
+          logger.warn(`[raffles] BUY balance fetch exc ${username} attempt=${attempt}: ${e.message}`);
         }
-      } catch (e) {
-        logger.warn(`[raffles] BUY balance fetch exc ${username} attempt=${attempt}: ${e.message}`);
+        if (attempt === 1) await new Promise(r => setTimeout(r, 500));
       }
-      if (attempt === 1) await new Promise(r => setTimeout(r, 500));
-    }
 
-    if (!userFetchOk) {
-      // No pudimos verificar saldo. NO marcamos saldo insuficiente porque
-      // el user podria tener fondos. Le pedimos que reintente.
-      logger.error(`[raffles] BUY REJ ${username}: no se pudo obtener user info de JUGAYGANA tras 2 intentos`);
-      return res.status(503).json({
-        error: 'No pudimos verificar tu saldo en JUGAYGANA en este momento. Probá de nuevo en unos segundos.',
-        retry: true
-      });
-    }
+      if (!userFetchOk) {
+        logger.error(`[raffles] BUY REJ ${username}: no se pudo obtener user info de JUGAYGANA tras 2 intentos`);
+        return res.status(503).json({
+          error: 'No pudimos verificar tu saldo en JUGAYGANA en este momento. Probá de nuevo en unos segundos.',
+          retry: true
+        });
+      }
 
-    if (balance < totalCost) {
-      logger.warn(`[raffles] BUY REJ ${username}: saldo insuficiente balance=$${balance} needed=$${totalCost} (qty=${buyQty} x $${raffle.entryCost})`);
-      return res.status(400).json({
-        error: `Saldo insuficiente. Necesitás $${totalCost.toLocaleString('es-AR')} y tenés $${balance.toLocaleString('es-AR')} en JUGAYGANA.`,
-        needed: totalCost,
-        balance,
-        entryCost: raffle.entryCost,
-        cuposIntended: buyQty
-      });
+      if (balance < totalCost) {
+        logger.warn(`[raffles] BUY REJ ${username}: saldo insuficiente balance=$${balance} needed=$${totalCost} (qty=${buyQty} x $${raffle.entryCost})`);
+        return res.status(400).json({
+          error: `Saldo insuficiente. Necesitás $${totalCost.toLocaleString('es-AR')} y tenés $${balance.toLocaleString('es-AR')} en JUGAYGANA.`,
+          needed: totalCost,
+          balance,
+          entryCost: raffle.entryCost,
+          cuposIntended: buyQty
+        });
+      }
     }
 
     // Reserva atomica: el update solo prospera si NINGUN pickedNumber esta en
@@ -12276,21 +12303,28 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       ? `#${assignedNumbers[0]}`
       : `#${assignedNumbers.join(', #')}`;
 
-    const wRes = await jugaygana.withdrawFromUser(username, totalCost, `Sorteo ${raffle.name} ${numStr}`);
-    if (!wRes || !wRes.success) {
-      // Liberar los numeros reservados (quitar del array claimed + decrement counter).
-      await Raffle.updateOne(
-        { id: raffleId },
-        { $pull: { claimedNumbers: { $in: reservedNumbers } }, $inc: { _ticketCounter: -buyQty } }
-      ).catch(() => {});
-      reservedNumbers = [];
-      const errMsg = (wRes && wRes.error) || 'Error desconocido al descontar saldo';
-      logger.error(`[raffles] withdraw failed ${username} ${raffle.name}: ${errMsg}`);
-      return res.status(503).json({ error: `No se pudo procesar el pago: ${errMsg}.` });
+    // Withdraw solo para sorteos pagos. Relampago/free saltea esto.
+    let txId = null;
+    if (!isFreeRaffleBuy) {
+      const wRes = await jugaygana.withdrawFromUser(username, totalCost, `Sorteo ${raffle.name} ${numStr}`);
+      if (!wRes || !wRes.success) {
+        await Raffle.updateOne(
+          { id: raffleId },
+          { $pull: { claimedNumbers: { $in: reservedNumbers } }, $inc: { _ticketCounter: -buyQty } }
+        ).catch(() => {});
+        reservedNumbers = [];
+        const errMsg = (wRes && wRes.error) || 'Error desconocido al descontar saldo';
+        logger.error(`[raffles] withdraw failed ${username} ${raffle.name}: ${errMsg}`);
+        return res.status(503).json({ error: `No se pudo procesar el pago: ${errMsg}.` });
+      }
+      withdrew = true;
+      txId = (wRes && wRes.data && (wRes.data.transfer_id || wRes.data.transferId || wRes.data.transaction_id || wRes.data.transactionId)) || null;
+    } else {
+      // Inscripcion gratis: marcamos withdrew=true por compatibilidad con la
+      // logica de cleanup mas abajo (asi no intenta refund si algo falla).
+      withdrew = true;
     }
-    withdrew = true;
-    const txId = (wRes && wRes.data && (wRes.data.transfer_id || wRes.data.transferId || wRes.data.transaction_id || wRes.data.transactionId)) || null;
-    logger.info(`[raffles] BUY OK ${username} +${buyQty} numeros [${assignedNumbers.join(',')}] ${raffle.name} = $${totalCost} (txid: ${txId || 'n/a'})`);
+    logger.info(`[raffles] BUY OK ${username} +${buyQty} numeros [${assignedNumbers.join(',')}] ${raffle.name} = $${totalCost} ${isFreeRaffleBuy ? '(gratis)' : '(txid: ' + (txId || 'n/a') + ')'}`);
 
     // Log inmutable de gasto: alimenta el cierre diario. Best-effort: si
     // falla, el cobro ya esta hecho y no debemos tirar la compra (queda
@@ -13396,8 +13430,13 @@ app.get('/api/admin/raffles/spend-daily/:dayKey', authMiddleware, adminMiddlewar
 app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await _ensureActiveRafflesSeededCached();
-    const kind = (req.query.kind === 'free') ? 'free' : 'paid';
-    const typeList = (kind === 'free' ? FREE_RAFFLE_TYPES : RAFFLE_TYPES).map(t => t.type);
+    const kind = (req.query.kind === 'free') ? 'free'
+                : (req.query.kind === 'relampago') ? 'relampago'
+                : 'paid';
+    let typeList;
+    if (kind === 'relampago') typeList = ['relampago'];
+    else if (kind === 'free') typeList = FREE_RAFFLE_TYPES.map(t => t.type);
+    else typeList = RAFFLE_TYPES.map(t => t.type);
     const nextDraw = _nextMondayDraw();
     const drawArg = new Date(nextDraw.getTime() - 3 * 3600 * 1000);
     const dashboardWeek = _isoWeekKey(drawArg);
@@ -13429,8 +13468,39 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
     const aggById = {};
     for (const a of partsAgg) aggById[a._id] = a;
 
-    // Stats por tipo (esta semana). Itera el typeList correcto (paid o free).
-    const cfgList = (kind === 'free') ? FREE_RAFFLE_TYPES : RAFFLE_TYPES;
+    // Stats por tipo (esta semana). Itera el typeList correcto.
+    let cfgList;
+    if (kind === 'relampago') {
+      // Para relampago derivamos config "on the fly" desde los raffles
+      // existentes (no hay array fijo porque cada uno se crea on-demand
+      // con valores potencialmente distintos).
+      cfgList = weekRaffles
+        .filter(r => r.raffleType === 'relampago')
+        .map(r => ({
+          type: 'relampago',
+          emoji: r.emoji || '⚡',
+          name: r.name,
+          prize: r.prizeValueARS || 0,
+          entryCost: 0,
+          minCargasARS: 0,
+          totalTickets: r.totalTickets || 0
+        }))
+        .filter((c, i, a) => a.findIndex(x => x.name === c.name) === i);
+      // Si no hay ningun relampago todavia, mostramos placeholder.
+      if (cfgList.length === 0) {
+        cfgList = [{
+          type: 'relampago',
+          emoji: '⚡',
+          name: '⚡ RELÁMPAGO · $200.000',
+          prize: 200000,
+          entryCost: 0,
+          minCargasARS: 0,
+          totalTickets: 100
+        }];
+      }
+    } else {
+      cfgList = (kind === 'free') ? FREE_RAFFLE_TYPES : RAFFLE_TYPES;
+    }
     const byType = {};
     for (const cfg of cfgList) {
       byType[cfg.type] = {
@@ -13550,8 +13620,13 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
 app.get('/api/admin/raffles/history', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(52, parseInt(req.query.limit, 10) || 12));
-    const kind = (req.query.kind === 'free') ? 'free' : 'paid';
-    const typeList = (kind === 'free' ? FREE_RAFFLE_TYPES : RAFFLE_TYPES).map(t => t.type);
+    const kind = (req.query.kind === 'free') ? 'free'
+                : (req.query.kind === 'relampago') ? 'relampago'
+                : 'paid';
+    let typeList;
+    if (kind === 'relampago') typeList = ['relampago'];
+    else if (kind === 'free') typeList = FREE_RAFFLE_TYPES.map(t => t.type);
+    else typeList = RAFFLE_TYPES.map(t => t.type);
     // Pipeline: agrupar Raffles por weekKey, joinear participaciones para revenue y cupos.
     const raffles = await Raffle.find(
       {

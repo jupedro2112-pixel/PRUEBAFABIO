@@ -271,7 +271,7 @@ VIP.raffles = (function () {
             const partLabel = enrolled ? 'Tu #' + myNums[0] + ' está en carrera' : (sold + ' personas en carrera');
             html += _renderPendingBlock(r, '#4dabff', partLabel);
         } else if (!enrolled) {
-            html += '<div style="background:rgba(255,170,102,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;line-height:1.5;">⚠️ <strong>No estás anotado todavía.</strong> Necesitás <strong>$' + _fmt(r.minCargasARS) + '</strong> de cargas en los últimos 30 días. Cuando llegues al monto, te anotamos automáticamente.</div>';
+            html += '<div style="background:rgba(255,170,102,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;line-height:1.5;">⚠️ <strong>No estás anotado todavía.</strong> Necesitás <strong>$' + _fmt(r.minCargasARS) + '</strong> de cargas <strong>esta semana (lun-dom)</strong>. Cuando llegues al monto, te anotamos automáticamente.</div>';
         }
 
         html += '</div>';
@@ -374,10 +374,9 @@ VIP.raffles = (function () {
         } else if (closed) {
             html += '<div style="background:rgba(0,0,0,0.40);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;">⏳ Cupo lleno · esperando sorteo</div>';
         } else {
-            // Cupo disponible: mensaje de auto-inscripcion
-            html += '<div style="background:rgba(255,235,59,0.20);border:1px dashed #ffeb3b;border-radius:10px;padding:10px;text-align:center;font-size:12px;color:#fff;font-weight:700;">';
-            html += 'Te anotamos automáticamente al abrir esta pantalla. Si aún no aparece tu número, refrescá.';
-            html += '</div>';
+            // Boton para abrir el picker. El relampago usa el mismo flujo
+            // de buy que los pagos pero con entryCost=0 y limite 1 cupo.
+            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);">⚡ ELEGIR MI NÚMERO GRATIS</button>';
         }
         html += '</div>';
         return html;
@@ -450,7 +449,7 @@ VIP.raffles = (function () {
             html += '<h3 style="margin:0;color:#4dabff;font-size:14px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
             html += '<div style="background:rgba(77,171,255,0.06);border-left:3px solid #4dabff;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
-            html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> No tenés que pagar — si llegás al mínimo de cargas en los últimos 30 días, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
+            html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> Si llegás al mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
             html += '</div>';
             for (const r of free) html += _renderFreeCard(r);
         }
@@ -572,14 +571,17 @@ VIP.raffles = (function () {
         const taken = new Set((r.claimedNumbers || []).map(n => Number(n)));
         const myNums = new Set((r.myTicketNumbers || []).map(n => Number(n)));
         const total = r.totalTickets || 100;
+        const isLightning = r.raffleType === 'relampago';
         const cost = _picker.picked.size * (r.entryCost || 0);
 
         let html = '';
         html += '<button type="button" data-raffle-action="close-picker" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;">✕</button>';
-        html += '<h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
-        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + ' · $' + _fmt(r.entryCost) + ' por número</div>';
-        html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
-        html += '🎯 Tocá los números que querés (<strong style="color:#ffd700;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = los que vas a comprar). Hasta 50 por compra.';
+        html += '<h3 style="color:' + (isLightning ? '#ffeb3b' : '#ffd700') + ';margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">' + (isLightning
+            ? 'Premio $' + _fmt(r.prizeValueARS) + ' · GRATIS · 1 número por persona'
+            : 'Premio $' + _fmt(r.prizeValueARS) + ' · $' + _fmt(r.entryCost) + ' por número') + '</div>';
+        html += '<div style="background:' + (isLightning ? 'rgba(255,235,59,0.10);border:1px solid rgba(255,235,59,0.40)' : 'rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30)') + ';border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
+        html += '🎯 Tocá ' + (isLightning ? '<strong>1 número</strong> que quieras' : 'los números que querés') + ' (<strong style="color:#66ff66;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = el que ' + (isLightning ? 'vas a inscribir' : 'vas a comprar') + ').' + (isLightning ? '' : ' Hasta 50 por compra.');
         html += '</div>';
 
         // Grid 10x10
@@ -603,14 +605,24 @@ VIP.raffles = (function () {
         const pickedArr = Array.from(_picker.picked).sort((a, b) => a - b);
         html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;margin-bottom:8px;">';
         html += '<div style="color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">SELECCIÓN (' + pickedArr.length + ')</div>';
-        html += '<div style="color:#ffd700;font-size:14px;font-weight:900;word-break:break-word;">' + (pickedArr.length ? pickedArr.map(n => '#' + n).join(', ') : '— ninguno —') + '</div>';
-        html += '<div style="color:#fff;font-size:13px;font-weight:700;margin-top:6px;">Total: <strong style="color:#ffd700;">$' + _fmt(cost) + '</strong></div>';
+        html += '<div style="color:' + (isLightning ? '#ffeb3b' : '#ffd700') + ';font-size:14px;font-weight:900;word-break:break-word;">' + (pickedArr.length ? pickedArr.map(n => '#' + n).join(', ') : '— ninguno —') + '</div>';
+        if (!isLightning) {
+            html += '<div style="color:#fff;font-size:13px;font-weight:700;margin-top:6px;">Total: <strong style="color:#ffd700;">$' + _fmt(cost) + '</strong></div>';
+        }
         html += '</div>';
 
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-        html += '<button type="button" data-raffle-action="pick-random" style="flex:1;min-width:100px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">🎲 Aleatorio (5)</button>';
+        if (!isLightning) {
+            html += '<button type="button" data-raffle-action="pick-random" style="flex:1;min-width:100px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">🎲 Aleatorio (5)</button>';
+        }
         html += '<button type="button" data-raffle-action="clear-pick" style="background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.30);padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Limpiar</button>';
-        html += '<button type="button" id="raffle_pick_buy" data-raffle-action="confirm-buy" ' + (pickedArr.length === 0 ? 'disabled' : '') + ' style="flex:2;min-width:160px;background:' + (pickedArr.length ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (pickedArr.length ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">🎫 COMPRAR ' + pickedArr.length + ' POR $' + _fmt(cost) + '</button>';
+        const ctaText = isLightning
+            ? '⚡ INSCRIBIRME GRATIS' + (pickedArr.length ? ' (#' + pickedArr[0] + ')' : '')
+            : '🎫 COMPRAR ' + pickedArr.length + ' POR $' + _fmt(cost);
+        const ctaBg = isLightning
+            ? (pickedArr.length ? 'linear-gradient(135deg,#ffeb3b,#ffd700)' : 'rgba(120,120,120,0.40)')
+            : (pickedArr.length ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)');
+        html += '<button type="button" id="raffle_pick_buy" data-raffle-action="confirm-buy" ' + (pickedArr.length === 0 ? 'disabled' : '') + ' style="flex:2;min-width:160px;background:' + ctaBg + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (pickedArr.length ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + ctaText + '</button>';
         html += '</div>';
 
         const pickerBody = document.getElementById('rafflesPickerBody');
@@ -620,7 +632,9 @@ VIP.raffles = (function () {
     function openPicker(raffleId) {
         const r = (_data && _data.raffles || []).find(x => x.id === raffleId);
         if (!r) return;
-        if (r.isFree) return;
+        // Free clasicos (auto-enroll) NO usan picker. Pero relampago si: el
+        // dueno quiere que el user elija su numero del grid (free + 1 cupo max).
+        if (r.isFree && r.raffleType !== 'relampago') return;
         _picker = { raffleId, picked: new Set() };
         let modal = document.getElementById('rafflesPickerModal');
         if (!modal) {
@@ -643,13 +657,21 @@ VIP.raffles = (function () {
 
     function togglePick(n) {
         if (!_picker) return;
+        const r = (_data && _data.raffles || []).find(x => x.id === _picker.raffleId);
+        const isLightning = r && r.raffleType === 'relampago';
         if (_picker.picked.has(n)) _picker.picked.delete(n);
         else {
-            if (_picker.picked.size >= 50) {
-                VIP.ui.showToast('⚠️ Tope 50 números por compra', 'warning');
-                return;
+            if (isLightning) {
+                // Solo 1 cupo: si toca otro numero, reemplaza la seleccion.
+                _picker.picked.clear();
+                _picker.picked.add(n);
+            } else {
+                if (_picker.picked.size >= 50) {
+                    VIP.ui.showToast('⚠️ Tope 50 números por compra', 'warning');
+                    return;
+                }
+                _picker.picked.add(n);
             }
-            _picker.picked.add(n);
         }
         _renderPicker();
     }

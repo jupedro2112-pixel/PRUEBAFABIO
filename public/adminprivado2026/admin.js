@@ -226,6 +226,8 @@ function showSection(sectionKey) {
         loadRafflesAdmin();
     } else if (sectionKey === 'rafflesFree') {
         loadRafflesFreeAdmin();
+    } else if (sectionKey === 'rafflesLightning') {
+        loadRafflesLightningAdmin();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -8665,6 +8667,10 @@ async function loadRafflesAdmin() {
 
 async function loadRafflesFreeAdmin() {
     return _loadRafflesGeneric('free', 'rafflesFreeAdminContent');
+}
+
+async function loadRafflesLightningAdmin() {
+    return _loadRafflesGeneric('relampago', 'rafflesLightningAdminContent');
 }
 
 async function _loadRafflesGeneric(kind, containerId) {
