@@ -271,7 +271,26 @@ VIP.raffles = (function () {
             const partLabel = enrolled ? 'Tu #' + myNums[0] + ' está en carrera' : (sold + ' personas en carrera');
             html += _renderPendingBlock(r, '#4dabff', partLabel);
         } else if (!enrolled) {
-            html += '<div style="background:rgba(255,170,102,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;line-height:1.5;">⚠️ <strong>No estás anotado todavía.</strong> Necesitás <strong>$' + _fmt(r.minCargasARS) + '</strong> de cargas <strong>esta semana (lun-dom)</strong>. Cuando llegues al monto, te anotamos automáticamente.</div>';
+            // Calcular si el user llego al threshold de cargas semanales.
+            // _data.weeklyDeposits viene del backend en /active. Si no vino
+            // (call-site viejo), asumimos 0 — en peor caso el server le dice
+            // "te faltan $X" cuando intente comprar.
+            const wd = (_data && Number(_data.weeklyDeposits)) || 0;
+            const threshold = r.minCargasARS || 0;
+            const reached = threshold > 0 ? wd >= threshold : true;
+            const shortfall = Math.max(0, threshold - wd);
+            if (reached) {
+                // Usuario califica → puede elegir su numero (mismo flow que paid/relampago).
+                html += '<div style="background:rgba(102,255,102,0.08);border:1px dashed rgba(102,255,102,0.40);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
+                html += '✅ <strong style="color:#66ff66;">¡Calificás!</strong> Llegaste al mínimo de cargas. Tocá <strong>"Elegir mi número"</strong> y reservá tu cupo (1 por persona).';
+                html += '</div>';
+                html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#66ff66,#4dabff);color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🎁 ELEGIR MI NÚMERO (GRATIS)</button>';
+            } else {
+                html += '<div style="background:rgba(255,170,102,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;line-height:1.5;">';
+                html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom) para entrar a este sorteo.<br>';
+                html += '<span style="color:#ddd;font-size:11px;">Llevás <strong style="color:#fff;">$' + _fmt(wd) + '</strong> de $' + _fmt(threshold) + '. Cuando llegues, podés elegir tu número.</span>';
+                html += '</div>';
+            }
         }
 
         html += '</div>';
@@ -438,10 +457,13 @@ VIP.raffles = (function () {
             html += _renderDrawnSummary(otherDrawn);
         }
 
-        // Header con saldo
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;">';
+        // Header con saldo + boton refrescar. El boton es util cuando el
+        // user creo cuenta nueva o cargo plata y quiere ver el sorteo
+        // actualizado sin esperar el polling de 20s.
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;gap:10px;">';
         html += '<div><div style="color:#aaa;font-size:11px;font-weight:700;letter-spacing:1px;">SALDO DISPONIBLE</div><div style="color:#ffd700;font-size:20px;font-weight:900;">$' + _fmt(balance) + '</div></div>';
-        html += '<div style="text-align:right;color:#aaa;font-size:11px;line-height:1.4;">Sorteos<br><strong style="color:#fff;font-size:13px;">todos los lunes</strong></div></div>';
+        html += '<button type="button" data-raffle-action="refresh" id="rafflesRefreshBtn" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;flex-shrink:0;" title="Forzar actualización">🔄 Refrescar</button>';
+        html += '</div>';
 
         // === PAGOS ===
         if (paid.length > 0) {
@@ -512,6 +534,17 @@ VIP.raffles = (function () {
                 _render();
                 return;
             }
+            if (action === 'refresh') {
+                // Forzar refetch saltando cualquier cache. Mostramos feedback
+                // visual cambiando el texto del boton mientras esta en vuelo.
+                const refreshBtn = document.getElementById('rafflesRefreshBtn');
+                if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = '⏳ Buscando...'; }
+                _fetchActive().then(d => {
+                    if (d) { _data = d; _dataFetchedAt = Date.now(); _render(); }
+                    if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '🔄 Refrescar'; }
+                });
+                return;
+            }
         }, false);
     }
 
@@ -546,11 +579,15 @@ VIP.raffles = (function () {
         // Si isFresh: ya tenemos data nueva, no pedimos nada extra.
 
         if (_refreshTimer) clearInterval(_refreshTimer);
+        // Auto-refresh cada 20s mientras el modal este visible. Antes era
+        // 30s pero el dueno noto que a veces los sorteos nuevos tardaban
+        // demasiado en aparecer — bajar a 20s mejora la sensacion de
+        // "se actualiza solo" sin sumar carga al server (cache 60s).
         _refreshTimer = setInterval(async () => {
             if (modal.style.display !== 'flex') return;
             const d = await _fetchActive();
             if (d) { _data = d; _dataFetchedAt = Date.now(); _render(); }
-        }, 30000);
+        }, 20000);
     }
 
     // Prefetch oportunista: cuando arranca la app y el user esta autenticado,
@@ -585,19 +622,23 @@ VIP.raffles = (function () {
         const myNums = new Set((r.myTicketNumbers || []).map(n => Number(n)));
         const total = r.totalTickets || 100;
         const isLightning = r.raffleType === 'relampago';
+        // Sorteos gratis (free_p100/p500/p1m/p2m) tambien son 1 cupo max y
+        // entryCost=0 — comparten el flow del lightning excepto por el copy.
+        const isFreeWeekly = !isLightning && r.isFree;
+        const isOneCupo = isLightning || isFreeWeekly;
         const cost = _picker.picked.size * (r.entryCost || 0);
 
-        // RELAMPAGO usa la MISMA UI que los pagos (mismo color dorado, mismo
-        // texto base) pero con costo $0 visible. El dueno quiere que la gente
-        // se familiarice con el flujo de "elegir y comprar" en un sorteo gratis
-        // antes de animarse a uno pago. Lo unico distinto es la nota de
-        // "1 numero por persona" como aclaracion abajo.
+        // RELAMPAGO + FREE usan la MISMA UI que los pagos (mismo color dorado,
+        // mismo texto base) pero con costo $0 visible. El dueno quiere que la
+        // gente se familiarice con el flujo de "elegir y comprar" gratis antes
+        // de animarse a uno pago. La unica diferencia es la nota de
+        // "1 numero por persona" abajo.
         let html = '';
         html += '<button type="button" data-raffle-action="close-picker" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;">✕</button>';
         html += '<h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
-        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + ' · <strong style="color:' + (isLightning ? '#66ff66' : '#ffd700') + ';">$' + _fmt(r.entryCost) + '</strong> por número' + (isLightning ? ' · 1 por persona' : '') + '</div>';
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + ' · <strong style="color:' + (isOneCupo ? '#66ff66' : '#ffd700') + ';">$' + _fmt(r.entryCost) + '</strong> por número' + (isOneCupo ? ' · 1 por persona' : '') + '</div>';
         html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
-        html += '🎯 Tocá ' + (isLightning ? '<strong>el número</strong> que quieras' : 'los números que querés') + ' (<strong style="color:#66ff66;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = el que vas a comprar).' + (isLightning ? '' : ' Hasta 50 por compra.');
+        html += '🎯 Tocá ' + (isOneCupo ? '<strong>el número</strong> que quieras' : 'los números que querés') + ' (<strong style="color:#66ff66;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = el que vas a comprar).' + (isOneCupo ? '' : ' Hasta 50 por compra.');
         html += '</div>';
 
         // Grid 10x10
@@ -621,21 +662,21 @@ VIP.raffles = (function () {
         const pickedArr = Array.from(_picker.picked).sort((a, b) => a - b);
         html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;margin-bottom:8px;">';
         html += '<div style="color:#aaa;font-size:11px;font-weight:700;margin-bottom:4px;">SELECCIÓN (' + pickedArr.length + ')</div>';
-        html += '<div style="color:' + (isLightning ? '#ffeb3b' : '#ffd700') + ';font-size:14px;font-weight:900;word-break:break-word;">' + (pickedArr.length ? pickedArr.map(n => '#' + n).join(', ') : '— ninguno —') + '</div>';
-        if (!isLightning) {
+        html += '<div style="color:' + (isOneCupo ? '#ffeb3b' : '#ffd700') + ';font-size:14px;font-weight:900;word-break:break-word;">' + (pickedArr.length ? pickedArr.map(n => '#' + n).join(', ') : '— ninguno —') + '</div>';
+        if (!isOneCupo) {
             html += '<div style="color:#fff;font-size:13px;font-weight:700;margin-top:6px;">Total: <strong style="color:#ffd700;">$' + _fmt(cost) + '</strong></div>';
         }
         html += '</div>';
 
         html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-        if (!isLightning) {
+        if (!isOneCupo) {
             html += '<button type="button" data-raffle-action="pick-random" style="flex:1;min-width:100px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">🎲 Aleatorio (5)</button>';
         }
         html += '<button type="button" data-raffle-action="clear-pick" style="background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.30);padding:10px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Limpiar</button>';
-        const ctaText = isLightning
-            ? '⚡ INSCRIBIRME GRATIS' + (pickedArr.length ? ' (#' + pickedArr[0] + ')' : '')
+        const ctaText = isOneCupo
+            ? (isLightning ? '⚡ INSCRIBIRME GRATIS' : '🎁 INSCRIBIRME GRATIS') + (pickedArr.length ? ' (#' + pickedArr[0] + ')' : '')
             : '🎫 COMPRAR ' + pickedArr.length + ' POR $' + _fmt(cost);
-        const ctaBg = isLightning
+        const ctaBg = isOneCupo
             ? (pickedArr.length ? 'linear-gradient(135deg,#ffeb3b,#ffd700)' : 'rgba(120,120,120,0.40)')
             : (pickedArr.length ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)');
         html += '<button type="button" id="raffle_pick_buy" data-raffle-action="confirm-buy" ' + (pickedArr.length === 0 ? 'disabled' : '') + ' style="flex:2;min-width:160px;background:' + ctaBg + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (pickedArr.length ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + ctaText + '</button>';
@@ -648,9 +689,10 @@ VIP.raffles = (function () {
     function openPicker(raffleId) {
         const r = (_data && _data.raffles || []).find(x => x.id === raffleId);
         if (!r) return;
-        // Free clasicos (auto-enroll) NO usan picker. Pero relampago si: el
-        // dueno quiere que el user elija su numero del grid (free + 1 cupo max).
-        if (r.isFree && r.raffleType !== 'relampago') return;
+        // Todos los sorteos usan picker ahora (paid, relampago y free clasicos).
+        // El owner pidio que la gente elija su numero en TODOS los sorteos
+        // gratis para hacer la UX consistente y mantener el FOMO de ver el
+        // cupo llenarse en tiempo real.
         _picker = { raffleId, picked: new Set() };
         let modal = document.getElementById('rafflesPickerModal');
         if (!modal) {
@@ -674,10 +716,11 @@ VIP.raffles = (function () {
     function togglePick(n) {
         if (!_picker) return;
         const r = (_data && _data.raffles || []).find(x => x.id === _picker.raffleId);
-        const isLightning = r && r.raffleType === 'relampago';
+        // Lightning + free clasicos = 1 cupo max. Solo paid permite multi-pick.
+        const isOneCupo = r && (r.raffleType === 'relampago' || r.isFree);
         if (_picker.picked.has(n)) _picker.picked.delete(n);
         else {
-            if (isLightning) {
+            if (isOneCupo) {
                 // Solo 1 cupo: si toca otro numero, reemplaza la seleccion.
                 _picker.picked.clear();
                 _picker.picked.add(n);
@@ -818,29 +861,31 @@ VIP.raffles = (function () {
         }
         const body = document.getElementById('rafflesBoughtBody');
         const isLightning = raffle && raffle.raffleType === 'relampago';
+        const isFreeWeekly = raffle && !isLightning && raffle.isFree;
+        const isOneCupo = isLightning || isFreeWeekly;
         if (body) {
             const numStr = arr.length === 1
                 ? '<div style="font-size:64px;font-weight:900;color:#ffd700;margin:14px 0;line-height:1;">#' + arr[0] + '</div>'
                 : '<div style="font-size:18px;font-weight:900;color:#ffd700;margin:14px 0;word-break:break-word;line-height:1.5;">' + arr.map(n => '#' + n).join(' · ') + '</div>';
-            // Para relampago mostramos un mensaje educativo: "asi de facil
-            // es participar — los pagos funcionan igual". El owner quiere
-            // usar el relampago como onboarding al sistema de sorteos pagos.
-            const headerLabel = isLightning ? '¡Inscripción confirmada!' : '¡Compra confirmada!';
-            const intro = isLightning
+            // Para gratis (lightning + free) mostramos un mensaje educativo:
+            // "asi de facil es participar — los pagos funcionan igual". El owner
+            // quiere usar los gratis como onboarding al sistema de sorteos pagos.
+            const headerLabel = isOneCupo ? '¡Inscripción confirmada!' : '¡Compra confirmada!';
+            const intro = isOneCupo
                 ? 'Tu número en <strong>' + _esc(raffle.name) + '</strong>:'
                 : 'Tu/s número/s para <strong>' + _esc(raffle.name) + '</strong>:';
-            const tutorialMsg = isLightning
+            const tutorialMsg = isOneCupo
                 ? '<div style="background:rgba(255,215,0,0.15);border:1px dashed #ffd700;border-radius:10px;padding:11px;margin-bottom:14px;color:#fff;font-size:12.5px;line-height:1.5;">' +
                     '<div style="color:#ffd700;font-weight:900;font-size:13px;margin-bottom:4px;">💡 ¡Así de fácil es participar!</div>' +
                     'Los <strong style="color:#ffd700;">sorteos pagos</strong> funcionan igual: elegís tu número del 1 al 100, lo pagás con tu saldo y si sale, <strong>cobrás el premio en el acto</strong> en tu cuenta.' +
                   '</div>'
                 : '<div style="color:#dde9d4;font-size:12px;line-height:1.5;margin-bottom:14px;">Sorteo el lunes en la Lotería Nacional Nocturna. Si tu número gana, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.</div>';
-            body.innerHTML = '<div style="font-size:48px;margin-bottom:8px;">' + (isLightning ? '⚡' : '🎫') + '</div>' +
+            body.innerHTML = '<div style="font-size:48px;margin-bottom:8px;">' + (isLightning ? '⚡' : (isFreeWeekly ? '🎁' : '🎫')) + '</div>' +
                 '<div style="color:#66ff66;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">' + headerLabel + '</div>' +
                 '<div style="color:#fff;font-size:13px;margin-bottom:6px;">' + intro + '</div>' +
                 numStr +
                 tutorialMsg +
-                '<button type="button" data-raffle-action="close-bought" style="width:100%;background:#ffd700;color:#000;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">' + (isLightning ? '🎫 VER SORTEOS PAGOS' : '¡PERFECTO!') + '</button>';
+                '<button type="button" data-raffle-action="close-bought" style="width:100%;background:#ffd700;color:#000;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">' + (isOneCupo ? '🎫 VER SORTEOS PAGOS' : '¡PERFECTO!') + '</button>';
         }
         modal.style.display = 'flex';
     }

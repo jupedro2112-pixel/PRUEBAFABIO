@@ -12004,13 +12004,20 @@ async function _ensureActiveRafflesSeeded() {
 setTimeout(() => { _ensureActiveRafflesSeeded().catch(() => {}); }, 5000);
 
 // =============================
-// AUTO-ENROLLMENT EN FREE RAFFLES
+// AUTO-ENROLLMENT EN FREE RAFFLES (DESHABILITADO)
 // =============================
-// Cuando el user abre el modal de sorteos, llamamos a este helper para que
-// — si tiene >= minCargasARS de cargas en los ultimos 30 dias — se le
-// asigne automaticamente un numero en cada free raffle elegible (siempre y
-// cuando todavia haya cupo y no este enrolado). 1 numero por persona max.
-async function _autoEnrollFreeRaffles(username) {
+// HISTORICO: este helper auto-asignaba un numero al user si superaba el
+// threshold de cargas semanales. El owner cambio la UX: ahora la gente
+// que llega al threshold tiene que ELEGIR su numero del grid (mismo flow
+// que paid/relampago), por interaccion + FOMO. Dejamos la funcion como
+// no-op para no romper los call-sites; el pick se maneja desde /buy con
+// entryCost=0 y validacion de threshold antes de reservar.
+async function _autoEnrollFreeRaffles(_username) {
+  return [];
+}
+
+// Dead code preservado abajo por si necesitamos revertir. NUNCA se ejecuta.
+async function _autoEnrollFreeRaffles_LEGACY_DISABLED(username) {
   const enrolled = []; // { raffleId, ticketNumber, raffleName, prizeValueARS, raffleType }
   try {
     // Solo los free clasicos (free_p100/p500/p1m/p2m) auto-enrolean. RELAMPAGO
@@ -12313,6 +12320,24 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     // Filtro de audiencia: si un sorteo tiene audienceMode != 'all' y este
     // user no entra, lo sacamos de la lista (no lo ve siquiera).
     const raffles = rafflesRes.filter(r => _userInRaffleAudience(r, username, linesConfig));
+
+    // Cargas semanales del user — solo las consultamos si hay al menos un
+    // free raffle visible. Para que el front sepa si el user llego al
+    // threshold de cada sorteo gratis (y muestre picker o "te faltan $X").
+    let weeklyDeposits = 0;
+    const hasFreeWeekly = raffles.some(r =>
+      r.raffleType !== 'relampago'
+      && (r.isFree || FREE_RAFFLE_TYPE_SET.has(r.raffleType))
+      && r.status === 'active'
+    );
+    if (hasFreeWeekly) {
+      try {
+        const m = await getRealMovementsTotals(username, 'weekly');
+        weeklyDeposits = Number(m && m.deposits) || 0;
+      } catch (_) {
+        weeklyDeposits = 0;
+      }
+    }
     const myByRaffle = {};
     for (const p of myPartsRes) myByRaffle[p.raffleId] = p;
 
@@ -12377,6 +12402,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       balance,
       lotteryRule: RAFFLE_LOTTERY_RULE,
       autoEnrolled,
+      weeklyDeposits,
       raffles: raffles.map(r => ({
         id: r.id,
         name: r.name,
@@ -12545,14 +12571,55 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         return res.status(403).json({ error: 'Este sorteo no está disponible para tu equipo.' });
       }
     }
-    // Free clasicos (free_p100/p500/p1m/p2m) son auto-enroll por threshold
-    // de cargas semanales — el user NO compra nada. Pero el RELAMPAGO si
-    // requiere que el user elija su numero del grid (interaccion intencional
-    // del owner para que la gente vea el cupo llenarse). Asi que para
-    // 'relampago' permitimos el buy con entryCost=0 y limite 1 cupo.
-    if (raffle.raffleType !== 'relampago' && (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType))) {
-      logger.warn(`[raffles] BUY REJ ${username}: raffle ${raffle.name} is FREE auto-enroll`);
-      return res.status(400).json({ error: 'Este es un sorteo GRATIS automático. Te anotamos solo si cumplís el mínimo de cargas semanales.' });
+    // Free clasicos (free_p100/p500/p1m/p2m): el user llega cuando supera
+    // el threshold de cargas semanales y desde la app elige su numero del
+    // grid (mismo UX que paid/relampago). Validamos:
+    //   1) entryCost = 0 (sino seria un sorteo pago)
+    //   2) cargas semanales >= minCargasARS
+    //   3) 1 cupo max por persona
+    //   4) tiene que mandar pickedNumbers (no aleatorio)
+    const isFreeWeekly = raffle.raffleType !== 'relampago'
+      && (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType));
+    if (isFreeWeekly) {
+      // Threshold check
+      if ((raffle.minCargasARS || 0) > 0) {
+        let weeklyDeposits = 0;
+        try {
+          const m = await getRealMovementsTotals(username, 'weekly');
+          weeklyDeposits = Number(m && m.deposits) || 0;
+        } catch (e) {
+          logger.warn(`[raffles] FREE buy threshold check fail ${username}: ${e.message}`);
+          return res.status(503).json({ error: 'No pudimos verificar tus cargas. Probá en un minuto.' });
+        }
+        if (weeklyDeposits < raffle.minCargasARS) {
+          const falta = raffle.minCargasARS - weeklyDeposits;
+          return res.status(403).json({
+            error: `Te faltan $${falta.toLocaleString('es-AR')} de cargas esta semana para entrar a este sorteo gratis.`,
+            notEnoughDeposits: true,
+            weeklyDeposits,
+            requiredDeposits: raffle.minCargasARS,
+            shortfall: falta
+          });
+        }
+      }
+      // 1 cupo max
+      const safeBuy = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const already = await RaffleParticipation.findOne({
+        raffleId: raffle.id,
+        username: { $regex: '^' + safeBuy + '$', $options: 'i' }
+      }, { ticketNumbers: 1 }).lean();
+      if (already) {
+        return res.status(400).json({
+          error: `Ya estás anotado en este sorteo gratis con el número #${already.ticketNumbers && already.ticketNumbers[0]}. Es 1 cupo por persona.`,
+          alreadyEnrolledNumber: already.ticketNumbers && already.ticketNumbers[0]
+        });
+      }
+      if (quantity > 1) {
+        return res.status(400).json({ error: 'En los sorteos gratis solo se permite 1 número por persona.' });
+      }
+      if (!rawPicked || rawPicked.length === 0) {
+        return res.status(400).json({ error: 'En los sorteos gratis tenés que ELEGIR vos tu número del grid.' });
+      }
     }
     // Relampago: 1 cupo por persona max. Validar antes de reservar para que
     // el error sea claro (el unique index lo atajaria igual pero con error feo).
@@ -12839,8 +12906,10 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         { $set: { status: 'closed' } }
       );
       if (closeRes.modifiedCount === 1) {
-        const cfg = RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
-        if (cfg) {
+        // Buscamos config en paid Y free. Relampago no respawnea (one-shot).
+        let cfg = RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
+        if (!cfg) cfg = FREE_RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
+        if (cfg && raffle.raffleType !== 'relampago') {
           try {
             await _spawnRaffleInstance(cfg, (raffle.instanceNumber || 1) + 1);
             logger.info(`[raffles] respawn ${cfg.type} #${(raffle.instanceNumber || 1) + 1}`);
