@@ -1602,6 +1602,20 @@
             </button>
         </div>
 
+        <!-- Refunds-only: Card grande de sorteos mensuales — CTA imposible
+             de no ver. Click abre el modal con los 3 sorteos. -->
+        <div id="rafflesHomeCard" onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#1a0033 0%,#2d0052 50%,#1a0033 100%);border:2px solid #d4af37;border-radius:16px;padding:18px;margin:12px auto;max-width:560px;box-shadow:0 4px 20px rgba(212,175,55,0.30);position:relative;overflow:hidden;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:200px;">
+                    <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:2px;font-weight:800;margin-bottom:4px;">🎁 SORTEOS MENSUALES</div>
+                    <div style="color:#ffd700;font-size:18px;font-weight:900;line-height:1.3;margin-bottom:6px;">iPhone · Viaje al Caribe · Auto</div>
+                    <div style="color:#aaa;font-size:11px;line-height:1.5;">Tus pérdidas del mes te dan créditos para participar. Cuanto más perdés, más cupos podés ocupar.</div>
+                </div>
+                <div style="font-size:46px;line-height:1;">📱🏖️🚗</div>
+            </div>
+            <button type="button" onclick="event.stopPropagation();VIP.raffles && VIP.raffles.open()" style="margin-top:12px;width:100%;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:13px;border-radius:11px;font-weight:900;font-size:15px;letter-spacing:1px;cursor:pointer;box-shadow:0 3px 12px rgba(212,175,55,0.40);">🎫 VER Y PARTICIPAR</button>
+        </div>
+
         <!-- Refunds-only: Bono de bienvenida $2.000 — debajo del bloque
              "Abrir plataforma". Por unica vez por instalar la app.
              onclick inline como fallback: el render tambien lo enlaza,
