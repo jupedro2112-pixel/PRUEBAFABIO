@@ -7840,13 +7840,13 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
 });
 
 // ============================================
-// BONO DE BIENVENIDA — $10.000 one-time por usuario
+// BONO DE BIENVENIDA — $2.000 one-time por usuario
 // Requisitos client-side: PWA instalada + notificaciones activas. El backend
 // NO los puede verificar (son flags del navegador), confia en que el flujo
 // del cliente solo dispara la request cuando ambos estan OK. La proteccion
 // real contra doble cobro es el indice unique de RefundClaim.
 // ============================================
-const WELCOME_BONUS_AMOUNT = 10000;
+const WELCOME_BONUS_AMOUNT = 2000;
 
 // Caps de seguridad para el money giveaway. Si el admin (o un atacante con
 // la cookie) crea un giveaway con cifras absurdas (typo de un 0 de mas, o

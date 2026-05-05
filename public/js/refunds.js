@@ -65,7 +65,7 @@ VIP.refunds = (function () {
         const titleEl = document.querySelector('#refundRequirementsModal .modal-header h2');
         if (titleEl) {
             titleEl.textContent = isWelcome
-                ? '🎁 Pasos para tu bono de $10.000'
+                ? '🎁 Pasos para tu bono de $2.000'
                 : '🔒 Para reclamar tu reembolso';
         }
 
@@ -108,7 +108,7 @@ VIP.refunds = (function () {
         }
 
         // Mensaje introductorio: cambia segun en que paso esta el user.
-        const subjectClaim = isWelcome ? 'tu bono de $10.000' : 'tu reembolso';
+        const subjectClaim = isWelcome ? 'tu bono de $2.000' : 'tu reembolso';
         if (introMsg) {
             if (!installed) {
                 introMsg.innerHTML = 'Para desbloquear ' + subjectClaim + ' tenés que completar 3 pasos. <strong>Empezá instalando la app.</strong>';
@@ -648,7 +648,7 @@ VIP.refunds = (function () {
     });
 
     // =====================================================
-    // BONO DE BIENVENIDA $10.000 (one-time, requiere PWA + notifs)
+    // BONO DE BIENVENIDA $2.000 (one-time, requiere PWA + notifs)
     // =====================================================
     let _welcomeStatus = null; // { amount, claimed, claimedAt, status }
 
@@ -672,7 +672,7 @@ VIP.refunds = (function () {
         // El backend sigue siendo la fuente de verdad real, pero esto
         // garantiza que el cliente que ya reclamo nunca lo ve devuelta.
         if (_isLocallyMarkedClaimed()) {
-            _welcomeStatus = { amount: 10000, claimed: true };
+            _welcomeStatus = { amount: 2000, claimed: true };
             renderWelcomeBonusCard();
         }
         try {
@@ -711,8 +711,8 @@ VIP.refunds = (function () {
             return;
         }
 
-        const s = _welcomeStatus || { amount: 10000, claimed: false };
-        const amountNum = Number(s.amount || 10000);
+        const s = _welcomeStatus || { amount: 2000, claimed: false };
+        const amountNum = Number(s.amount || 2000);
 
         // Si ya reclamo (en este device o cualquier otro: el backend lo
         // chequea por userId Y username, asi que aunque borre la app y

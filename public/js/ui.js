@@ -625,7 +625,7 @@ CBU activo: ${cbuNumber}`;
                             ⚠️ DESPUÉS DE INSTALAR
                         </p>
                         <p style="margin:0;color:#fff;font-size:12px;line-height:1.5;">
-                            Abrí la app desde el ícono que quedó en tu pantalla y <strong>aceptá las notificaciones</strong>. Sin eso no podés desbloquear el bono de $10.000.
+                            Abrí la app desde el ícono que quedó en tu pantalla y <strong>aceptá las notificaciones</strong>. Sin eso no podés desbloquear el bono de $2.000.
                         </p>
                     </div>
 

@@ -6009,7 +6009,7 @@ function _helpBlocks() {
                 '<li>😴 <strong>Tibios</strong> (30-90 días): empezaron a despegarse. Bonus de recuperación + WhatsApp personalizado.</li>',
                 '<li>🥶 <strong>Fríos</strong> (90-180 días): semi-perdidos. Necesitan un regalo más fuerte para volver.</li>',
                 '<li>❄️ <strong>Congelados</strong> (180+ días): perdidos hace tiempo. Último intento — campaña masiva con bonus alto.</li>',
-                '<li>👻 <strong>Nunca cargaron</strong>: se registraron pero no depositaron. Welcome bonus de $10.000 + WhatsApp es la clave.</li>',
+                '<li>👻 <strong>Nunca cargaron</strong>: se registraron pero no depositaron. Welcome bonus de $2.000 + WhatsApp es la clave.</li>',
                 '</ul>',
                 '<h4 style="color:#fff;margin-top:14px;">Cómo usar:</h4>',
                 '<ol>',
@@ -6058,7 +6058,7 @@ function _helpBlocks() {
             icon: '🎁',
             title: 'Welcome bonus — cómo se reclama y cómo seguir el reporte',
             body: [
-                '<p>Todo usuario nuevo tiene <strong>$10.000 de welcome bonus</strong> esperándolo. Para reclamarlo necesita:</p>',
+                '<p>Todo usuario nuevo tiene <strong>$2.000 de welcome bonus</strong> esperándolo. Para reclamarlo necesita:</p>',
                 '<ol>',
                 '<li>Bajar la app.</li>',
                 '<li>Loguearse (con su user de JUGAYGANA).</li>',
