@@ -11883,7 +11883,10 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     // puede pasar ?waitEnroll=1 cuando quiera bloquear (ej. PR primer load
     // tras cargar plata).
     const waitEnroll = String(req.query.waitEnroll || '') === '1';
-    const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type)];
+    // 'relampago' va aparte (no esta en RAFFLE_TYPES ni FREE_RAFFLE_TYPES por
+    // ser one-shot). Sin esto, el filter de raffleType en la query lo descarta
+    // y el user no ve el sorteo ni en el modal ni en el hero.
+    const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // Paralelizamos las 3 fuentes pesadas: saldo en JUGAYGANA, lista de
