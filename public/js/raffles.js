@@ -33,6 +33,21 @@ VIP.raffles = (function () {
         return '<div style="width:100%;height:160px;background:linear-gradient(135deg,#3d1f6e,#1a0033);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:70px;">' + (r.emoji || '🎁') + '</div>';
     }
 
+    function _formatNumbers(nums) {
+        if (!nums || !nums.length) return '';
+        const sorted = nums.slice().sort((a, b) => a - b);
+        // Compactar rangos consecutivos: [142,143,144,200] -> "#142-144, #200"
+        const groups = [];
+        let start = sorted[0], prev = sorted[0];
+        for (let i = 1; i < sorted.length; i++) {
+            if (sorted[i] === prev + 1) { prev = sorted[i]; continue; }
+            groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
+            start = prev = sorted[i];
+        }
+        groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
+        return groups.join(', ');
+    }
+
     function _renderRaffle(r) {
         const userCupos = r.userCupos || 0;
         const maxBuyable = r.userMaxBuyable || 0;
@@ -71,6 +86,19 @@ VIP.raffles = (function () {
             chancesLabel = '<small style="color:#666;">Sin cupos vendidos todavía</small>';
         }
 
+        // Caja con LOS NUMEROS asignados al user (si tiene). Es el dato más
+        // importante: cada cupo tiene un número y el ganador es el que tenga
+        // el número que salga en la Lotería Nacional.
+        let myNumbersBox = '';
+        if (r.userTicketNumbers && r.userTicketNumbers.length > 0) {
+            const fmt = _formatNumbers(r.userTicketNumbers);
+            myNumbersBox = '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:8px;padding:10px;text-align:center;">' +
+                '<div style="color:#b39dff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">🎫 Tus números</div>' +
+                '<div style="color:#ffd700;font-weight:900;font-size:14px;margin-top:4px;word-break:break-word;">' + _esc(fmt) + '</div>' +
+                '<small style="color:#888;display:block;margin-top:4px;">Si la Lotería Nacional saca alguno de estos, ganás 🏆</small>' +
+                '</div>';
+        }
+
         // Premio + payout proyectado.
         let prizeInfo = '';
         if (r.prizeValueARS && r.prizeValueARS > 0) {
@@ -92,6 +120,7 @@ VIP.raffles = (function () {
                '  <p style="color:#aaa;margin:0;font-size:12px;line-height:1.5;">' + _esc(r.description || '') + '</p>' +
                '</div>' +
                prizeInfo +
+               myNumbersBox +
                '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;color:#888;">' +
                '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants||0) + '</strong> personas</span>' +
                '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos vendidos</span>' +
@@ -183,7 +212,7 @@ VIP.raffles = (function () {
         const inp = _qtyInput(raffleId);
         const qty = inp ? Math.max(1, parseInt(inp.value, 10) || 1) : 1;
         const cost = inp ? (parseInt(inp.dataset.cost, 10) || 0) * qty : 0;
-        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '? Se descuenta de tu monto cargado del mes.')) return;
+        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '?\n\nSe te asignan ' + qty + ' número' + (qty===1?'':'s') + ' único' + (qty===1?'':'s') + ' del sorteo. El ganador se determina por la Lotería Nacional del primer lunes del próximo mes.')) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/participate`, {
                 method: 'POST',

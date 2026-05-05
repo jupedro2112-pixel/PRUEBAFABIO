@@ -7997,15 +7997,23 @@ function _renderRaffleAdminCard(r) {
         html += '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:8px;padding:10px;text-align:center;">';
         html += '  <div style="color:#b39dff;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🏆 Ganador</div>';
         html += '  <div style="color:#ffd700;font-weight:900;font-size:16px;margin-top:4px;">' + escapeHtml(r.winnerUsername) + '</div>';
-        html += '  <small style="color:#888;">Ticket #' + r.winningTicketNumber + ' · sorteado ' + (r.drawnAt ? new Date(r.drawnAt).toLocaleString('es-AR') : '') + '</small>';
+        html += '  <small style="color:#888;">Número ganador #' + r.winningTicketNumber + ' · sorteado ' + (r.drawnAt ? new Date(r.drawnAt).toLocaleString('es-AR') : '') + '</small>';
+        if (r.lotteryDrawSource) {
+            html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;">📰 ' + escapeHtml(r.lotteryDrawSource) + '</div>';
+        }
+        html += '</div>';
+    }
+    if (r.status === 'closed') {
+        html += '<div style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);border-radius:8px;padding:8px;text-align:center;">';
+        html += '  <small style="color:#ffc850;">⏳ Cerrado · esperando número de Lotería Nacional para sortear</small>';
         html += '</div>';
     }
     // Acciones.
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
     html += '  <button onclick="editRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">✏️ Editar</button>';
-    html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">👥 Ver participantes</button>';
-    if (r.status === 'active' && (r.totalCuposSold || 0) > 0) {
-        html += '  <button onclick="drawRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">🎰 Sortear</button>';
+    html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">👥 Ver números</button>';
+    if ((r.status === 'active' || r.status === 'closed') && (r.totalCuposSold || 0) > 0) {
+        html += '  <button onclick="drawRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">🎰 Sortear (Lotería)</button>';
     }
     html += '</div>';
     html += '</div>';
@@ -8046,6 +8054,20 @@ async function editRaffle(id) {
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
 
+function _formatTicketNumbers(nums) {
+    if (!nums || !nums.length) return '(sin números)';
+    const sorted = nums.slice().sort((a, b) => a - b);
+    const groups = [];
+    let start = sorted[0], prev = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i] === prev + 1) { prev = sorted[i]; continue; }
+        groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
+        start = prev = sorted[i];
+    }
+    groups.push(start === prev ? '#' + start : '#' + start + '-' + prev);
+    return groups.join(', ');
+}
+
 async function viewRaffleParticipants(id) {
     try {
         const r = await authFetch('/api/admin/raffles/' + id + '/participants');
@@ -8053,7 +8075,13 @@ async function viewRaffleParticipants(id) {
         if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
         const list = (d.participants || [])
             .sort((a,b) => (b.cuposCount||1) - (a.cuposCount||1))
-            .map((p, i) => (i+1) + '. ' + p.username + ' · ' + (p.cuposCount||1) + ' cupos (' + (p.chancePct||0) + '%) · pagó $' + (p.entryCostPaid||0).toLocaleString('es-AR') + (p.isWinner ? ' 🏆' : '')).join('\n');
+            .map((p, i) =>
+                (i+1) + '. ' + p.username +
+                ' · ' + (p.cuposCount||1) + ' cupos (' + (p.chancePct||0) + '%)' +
+                ' · pagó $' + (p.entryCostPaid||0).toLocaleString('es-AR') +
+                (p.isWinner ? ' 🏆' : '') +
+                '\n   🎫 Números: ' + _formatTicketNumbers(p.ticketNumbers)
+            ).join('\n\n');
         alert('🎁 ' + (d.raffle && d.raffle.prizeName) + '\n' +
               '👥 ' + d.uniqueParticipants + ' personas · 🎫 ' + d.totalCuposSold + '/' + (d.raffle && d.raffle.totalTickets) + ' cupos vendidos\n\n' +
               (list || '(sin participantes)'));
@@ -8061,20 +8089,49 @@ async function viewRaffleParticipants(id) {
 }
 
 async function drawRaffle(id) {
-    if (!confirm('¿Sortear este sorteo ahora? El estado pasa a "sorteado" y no se puede deshacer.')) return;
+    const r = (_rafflesAdminCache || []).find(x => x.id === id);
+    if (!r) return;
+    const lotteryNumberStr = prompt(
+        '🎟️ Sorteo de ' + r.prizeName + '\n\n' +
+        'Entrá el NÚMERO que salió en el primer premio de la Lotería Nacional ' +
+        '(primer lunes del mes — números válidos: 1 a ' + r.totalTickets + '):'
+    );
+    if (lotteryNumberStr === null) return;
+    const lotteryNumber = parseInt(lotteryNumberStr.replace(/[^\d]/g, ''), 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        showToast('Número de lotería inválido', 'error');
+        return;
+    }
+    const lotteryDrawSource = prompt(
+        'Descripción del sorteo (opcional): ej. "Lotería Nacional Nocturna - 1er premio - 06/05/2026"',
+        'Lotería Nacional - 1er premio'
+    );
+    if (lotteryDrawSource === null) return;
+    if (!confirm('¿Sortear con el número ' + lotteryNumber + '? El estado pasa a "sorteado" y no se puede deshacer.')) return;
     try {
-        const r = await authFetch('/api/admin/raffles/' + id + '/draw', { method: 'POST' });
-        const d = await r.json();
-        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        const resp = await authFetch('/api/admin/raffles/' + id + '/draw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                lotteryNumber,
+                lotteryDrawSource: lotteryDrawSource.trim(),
+                lotteryDrawDate: new Date().toISOString()
+            })
+        });
+        const d = await resp.json();
+        if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
         let msg = '🎰 ¡SORTEADO!\n\n';
         msg += '🏆 Ganador: ' + d.winnerUsername + ' (con ' + (d.winnerCupos || 1) + ' cupo' + ((d.winnerCupos||1)===1?'':'s') + ')\n';
-        msg += '🎫 Ticket: #' + d.winningTicketNumber + ' de ' + d.totalCuposSold + ' cupos vendidos\n';
-        msg += '👥 ' + d.uniqueParticipants + ' personas distintas\n';
+        msg += '🎫 Número ganador: #' + d.winningTicketNumber + ' (Lotería Nacional)\n';
+        msg += '📊 ' + d.totalCuposSold + ' cupos vendidos · ' + d.uniqueParticipants + ' personas distintas\n';
         if (d.prizeValueARS && d.prizeValueARS > 0) {
             msg += '\n💎 Valor del premio: $' + d.prizeValueARS.toLocaleString('es-AR') + '\n';
             msg += '📊 Cupo: ' + d.fillRatePct + '%\n';
             msg += '💵 Payout: $' + d.projectedPayoutARS.toLocaleString('es-AR') + '\n';
             msg += '\n' + (d.payoutNote || '');
+        }
+        if (d.pushNotifications) {
+            msg += '\n\n📲 Push: ganador ' + (d.pushNotifications.winnerPushed||0) + ' · perdedores ' + (d.pushNotifications.losersPushed||0);
         }
         alert(msg);
         loadRafflesAdmin();

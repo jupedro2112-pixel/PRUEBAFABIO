@@ -9839,89 +9839,61 @@ setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
 
 // ============================================================
-// AUTO-DRAW DE SORTEOS — primer lunes del mes proximo
+// AUTO-CLOSE DE SORTEOS — primer lunes del mes proximo
 // ============================================================
-// Cada 6h chequeamos sorteos con status active/closed cuya drawDate
-// ya pasó. Los sorteamos automáticamente y notificamos ganador +
-// perdedores. Si un sorteo no tiene cupos vendidos lo marcamos como
-// 'cancelled' (no se puede sortear con 0 entradas).
+// Cada 6h chequeamos sorteos con status='active' cuya drawDate ya pasó.
+// Los pasamos a 'closed' (no se pueden vender más cupos) y avisamos a
+// todos los participantes que ya cerró. El admin después tiene que
+// entrar el número que salió en la Lotería Nacional (primer premio
+// del primer lunes) y disparar el draw manual desde el panel.
+//
+// Si un sorteo cierra sin cupos vendidos lo marcamos como 'cancelled'.
+// NO sorteamos automáticamente — el ganador siempre lo determina la
+// lotería real, no un random.
 async function _runAutoRaffleDraws() {
   try {
     const due = await Raffle.find({
-      status: { $in: ['active', 'closed'] },
+      status: 'active',
       drawDate: { $lte: new Date() }
     }).limit(20).lean();
     for (const r of due) {
       try {
-        const parts = await RaffleParticipation.find({ raffleId: r.id }).lean();
+        const parts = await RaffleParticipation.find({ raffleId: r.id }, { username: 1, cuposCount: 1, _id: 0 }).lean();
         let totalCupos = 0;
         for (const p of parts) totalCupos += (p.cuposCount || 1);
         if (totalCupos === 0) {
           await Raffle.updateOne(
             { id: r.id },
-            { $set: { status: 'cancelled', drawnAt: new Date(), drawnBy: 'auto-draw' } }
+            { $set: { status: 'cancelled', drawnAt: new Date(), drawnBy: 'auto-close' } }
           );
           logger.warn(`[raffles] auto-cancel ${r.name} (${r.monthKey}): sin cupos`);
           continue;
         }
-        const winningTicket = 1 + Math.floor(Math.random() * totalCupos);
-        let acc = 0, winner = null;
-        for (const p of parts) {
-          acc += (p.cuposCount || 1);
-          if (winningTicket <= acc) { winner = p; break; }
-        }
-        if (!winner) winner = parts[parts.length - 1];
-
         await Raffle.updateOne(
           { id: r.id },
-          { $set: {
-              status: 'drawn',
-              winnerUsername: winner.username,
-              winningTicketNumber: winningTicket,
-              drawnAt: new Date(),
-              drawnBy: 'auto-draw'
-          } }
+          { $set: { status: 'closed' } }
         );
-        await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
-
-        const payout = _projectedPayoutARS(r, totalCupos);
-        const fillPct = r.totalTickets > 0 ? Math.round((totalCupos / r.totalTickets) * 100) : 0;
-
-        // Push al ganador.
+        // Aviso a participantes que cerró y se va a determinar el ganador
+        // por Lotería Nacional. Best-effort.
         try {
-          const note = fillPct >= 100
-            ? `Te llevás el premio completo: $${(r.prizeValueARS||0).toLocaleString('es-AR')}.`
-            : `Cupo al ${fillPct}% — proporcional: $${payout.toLocaleString('es-AR')}.`;
-          await sendNotificationToAllUsers(
-            User,
-            '🏆 ¡GANASTE EL SORTEO! ' + (r.emoji || '🎁'),
-            '¡Ganaste el sorteo de ' + r.prizeName + '! ' + note + ' Pasá por WhatsApp para coordinar la entrega.',
-            { source: 'raffle-autodraw', raffleId: r.id, isWinner: 'true' },
-            { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
-          );
-        } catch (e) { logger.warn(`[raffles auto-draw] winner push: ${e.message}`); }
-
-        // Push a perdedores.
-        try {
-          const losers = parts.filter(p => p.username !== winner.username).map(p => p.username);
-          if (losers.length > 0) {
+          const usernames = parts.map(p => p.username);
+          if (usernames.length > 0) {
             await sendNotificationToAllUsers(
               User,
-              'Sorteo de ' + (r.emoji || '🎁') + ' ' + r.prizeName + ' sorteado',
-              'Esta vez no fue 😔 Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!',
-              { source: 'raffle-autodraw', raffleId: r.id, isWinner: 'false' },
-              { username: { $in: losers } }
+              'Sorteo cerrado ' + (r.emoji || '🎁') + ' ' + r.prizeName,
+              'El sorteo cerró con ' + totalCupos + ' cupos vendidos. El ganador se determina por el primer premio de la Lotería Nacional. ¡Suerte!',
+              { source: 'raffle-autoclose', raffleId: r.id },
+              { username: { $in: usernames } }
             );
           }
-        } catch (e) { logger.warn(`[raffles auto-draw] losers push: ${e.message}`); }
-
-        logger.info(`[raffles] auto-draw ${r.name} (${r.monthKey}): ganador ${winner.username}, ticket #${winningTicket}/${totalCupos}, payout $${payout}`);
+        } catch (e) { logger.warn(`[raffles auto-close] participants push: ${e.message}`); }
+        logger.info(`[raffles] auto-close ${r.name} (${r.monthKey}): cerrado con ${totalCupos} cupos vendidos, esperando draw manual con número de lotería`);
       } catch (e) {
-        logger.error(`[raffles auto-draw] ${r.id}: ${e.message}`);
+        logger.error(`[raffles auto-close] ${r.id}: ${e.message}`);
       }
     }
   } catch (e) {
-    logger.error(`[raffles auto-draw] global: ${e.message}`);
+    logger.error(`[raffles auto-close] global: ${e.message}`);
   }
 }
 // Arranca a los 5 min del boot y corre cada 6 horas.
@@ -11430,7 +11402,7 @@ function _projectedPayoutARS(raffle, participantCount) {
 async function _ensureRafflesSeededForMonth(monthKey) {
   const existing = await Raffle.find(
     { monthKey },
-    { name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _id: 0 }
+    { id: 1, name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _ticketCounter: 1, _id: 0 }
   ).lean();
   const existingByName = new Map(existing.map(r => [r.name, r]));
   const drawDate = _firstMondayOfNextMonth(monthKey);
@@ -11458,6 +11430,37 @@ async function _ensureRafflesSeededForMonth(monthKey) {
       if (Object.keys(update).length) {
         await Raffle.updateOne({ monthKey, name: def.name }, { $set: update }).catch(() => {});
       }
+
+      // Backfill de _ticketCounter + ticketNumbers para participations
+      // pre-existentes (creadas antes de que existieran los numeros). Idempotente:
+      // solo corre si el counter está en 0 y hay cupos vendidos sin numbers.
+      try {
+        if (!ex._ticketCounter || ex._ticketCounter === 0) {
+          const parts = await RaffleParticipation
+            .find({ raffleId: ex.id }, { id: 1, cuposCount: 1, ticketNumbers: 1, joinedAt: 1, _id: 0 })
+            .sort({ joinedAt: 1 }).lean();
+          if (parts.length > 0) {
+            let counter = 0;
+            const ops = [];
+            for (const p of parts) {
+              const cnt = p.cuposCount || 1;
+              if (!Array.isArray(p.ticketNumbers) || p.ticketNumbers.length !== cnt) {
+                const nums = [];
+                for (let i = 1; i <= cnt; i++) nums.push(counter + i);
+                ops.push(
+                  RaffleParticipation.updateOne({ id: p.id }, { $set: { ticketNumbers: nums } }).catch(() => {})
+                );
+              }
+              counter += cnt;
+            }
+            await Promise.all(ops);
+            await Raffle.updateOne({ id: ex.id }, { $set: { _ticketCounter: counter } }).catch(() => {});
+            logger.info(`[raffles] backfill numeros ${ex.name} (${monthKey}): ${parts.length} participations, counter=${counter}`);
+          }
+        }
+      } catch (e) {
+        logger.warn(`[raffles] backfill numeros ${ex.name}: ${e.message}`);
+      }
     }
   }
 }
@@ -11483,13 +11486,18 @@ async function _getUserRaffleBudget(username, monthKey) {
   const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const parts = await RaffleParticipation.find(
     { raffleId: { $in: raffleIds }, username: { $regex: '^' + safe + '$', $options: 'i' } },
-    { raffleId: 1, entryCostPaid: 1, cuposCount: 1, _id: 0 }
+    { raffleId: 1, entryCostPaid: 1, cuposCount: 1, ticketNumbers: 1, _id: 0 }
   ).lean();
   const spent = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
   // Mapa raffleId -> cuposCount para que el caller sepa cuantos cupos tiene
-  // el user en cada sorteo.
+  // el user en cada sorteo. Idem ticketNumbersByRaffle para mostrar los
+  // numeros asignados en la UI.
   const cuposByRaffle = {};
-  for (const p of parts) cuposByRaffle[p.raffleId] = (cuposByRaffle[p.raffleId] || 0) + (p.cuposCount || 1);
+  const ticketNumbersByRaffle = {};
+  for (const p of parts) {
+    cuposByRaffle[p.raffleId] = (cuposByRaffle[p.raffleId] || 0) + (p.cuposCount || 1);
+    ticketNumbersByRaffle[p.raffleId] = p.ticketNumbers || [];
+  }
   return {
     monthlyDeposit,
     // Backward compat: clientes viejos leen `netwinLoss`. Pisamos con el mismo
@@ -11498,7 +11506,8 @@ async function _getUserRaffleBudget(username, monthKey) {
     spent,
     available: Math.max(0, monthlyDeposit - spent),
     participatingIn: parts.map(p => p.raffleId),
-    cuposByRaffle
+    cuposByRaffle,
+    ticketNumbersByRaffle
   };
 }
 
@@ -11530,6 +11539,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       const totalCuposSold = agg.totalCupos || 0;
       const cuposRemaining = Math.max(0, r.totalTickets - totalCuposSold);
       const userCupos = budget.cuposByRaffle[r.id] || 0;
+      const userTicketNumbers = budget.ticketNumbersByRaffle[r.id] || [];
       const maxAffordableNow = Math.floor(budget.available / Math.max(1, r.entryCost));
       const maxBuyableNow = Math.min(maxAffordableNow, cuposRemaining);
       return {
@@ -11550,8 +11560,13 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         totalCuposSold,
         cuposRemaining,
         uniqueParticipants: agg.uniqueUsers || 0,
+        // Lottery.
+        lotteryDrawNumber: r.lotteryDrawNumber || null,
+        lotteryDrawSource: r.lotteryDrawSource || null,
+        winnerUsername: r.winnerUsername || null,
         // Estado per-user.
         userCupos,
+        userTicketNumbers,
         userIsParticipating: userCupos > 0,
         userCanAfford: budget.available >= r.entryCost,
         userMaxBuyable: maxBuyableNow
@@ -11599,22 +11614,39 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
       });
     }
 
-    // Cap por sorteo: la cantidad total de cupos vendidos no puede pasar
-    // raffle.totalTickets. Calculamos lo vendido y bloqueamos si se excede.
-    const sold = await RaffleParticipation.aggregate([
-      { $match: { raffleId: raffle.id } },
-      { $group: { _id: null, total: { $sum: '$cuposCount' } } }
-    ]);
-    const totalCuposSold = (sold[0] && sold[0].total) || 0;
-    if (totalCuposSold + quantity > raffle.totalTickets) {
-      const remaining = raffle.totalTickets - totalCuposSold;
+    // Cap atómico vía $inc en _ticketCounter del Raffle. Solo incrementa
+    // si _ticketCounter + quantity <= totalTickets. Si pasa el cap el
+    // findOneAndUpdate devuelve null y bloqueamos. Esto previene race
+    // conditions y asegura numeros únicos secuenciales sin colisión.
+    const reserved = await Raffle.findOneAndUpdate(
+      {
+        id: raffle.id,
+        status: 'active',
+        $expr: { $lte: [{ $add: ['$_ticketCounter', quantity] }, '$totalTickets'] }
+      },
+      { $inc: { _ticketCounter: quantity } },
+      { new: true }
+    );
+    if (!reserved) {
+      // Re-leer para reportar bien al user (puede ser cap completo o
+      // status inactivo).
+      const fresh = await Raffle.findOne({ id: raffle.id }, { _ticketCounter: 1, totalTickets: 1, status: 1 }).lean();
+      if (fresh && fresh.status !== 'active') {
+        return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
+      }
+      const remaining = fresh ? Math.max(0, (fresh.totalTickets || 0) - (fresh._ticketCounter || 0)) : 0;
       return res.status(400).json({
         error: `Solo quedan ${remaining} cupo${remaining===1?'':'s'} disponibles en este sorteo (vos pediste ${quantity}).`,
         cuposRemaining: remaining
       });
     }
+    // Numeros asignados a esta compra: del (counterPrev + 1) al counterNew.
+    const counterAfter = reserved._ticketCounter;
+    const assignedNumbers = [];
+    for (let i = quantity; i > 0; i--) assignedNumbers.push(counterAfter - i + 1);
 
-    // Upsert: si ya tenia cupos, $inc; si no, crea nuevo doc.
+    // Upsert participation con los numeros recien asignados. Si ya tenia
+    // cupos los acumula con $push.
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const existing = await RaffleParticipation.findOne({
       raffleId: raffle.id,
@@ -11626,6 +11658,7 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
         existing.cuposCount = (existing.cuposCount || 1) + quantity;
         existing.entryCostPaid = (existing.entryCostPaid || 0) + totalCost;
         existing.lastBoughtAt = new Date();
+        existing.ticketNumbers = (existing.ticketNumbers || []).concat(assignedNumbers);
         updated = await existing.save();
       } else {
         updated = await RaffleParticipation.create({
@@ -11635,14 +11668,16 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
           joinedAt: new Date(),
           lastBoughtAt: new Date(),
           cuposCount: quantity,
+          ticketNumbers: assignedNumbers,
           entryCostPaid: totalCost,
-          netwinAtEntry: budget.netwinLoss
+          netwinAtEntry: budget.monthlyDeposit
         });
       }
     } catch (e) {
       if (e && e.code === 11000) {
         // Race condition: alguien insertó entre el findOne y el create.
-        // Reintentamos como update.
+        // Reintentamos como update preservando los numeros que ya
+        // reservamos atomicamente arriba.
         const retry = await RaffleParticipation.findOne({
           raffleId: raffle.id,
           username: { $regex: '^' + safe + '$', $options: 'i' }
@@ -11651,6 +11686,7 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
           retry.cuposCount = (retry.cuposCount || 1) + quantity;
           retry.entryCostPaid = (retry.entryCostPaid || 0) + totalCost;
           retry.lastBoughtAt = new Date();
+          retry.ticketNumbers = (retry.ticketNumbers || []).concat(assignedNumbers);
           updated = await retry.save();
         } else {
           throw e;
@@ -11661,11 +11697,16 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
     }
 
     const newBudget = await _getUserRaffleBudget(username, raffle.monthKey);
+    const assignedRange = assignedNumbers.length === 1
+      ? `#${assignedNumbers[0]}`
+      : `#${assignedNumbers[0]} al #${assignedNumbers[assignedNumbers.length-1]}`;
     res.json({
       success: true,
-      message: `¡Listo! Sumaste ${quantity} cupo${quantity===1?'':'s'} al sorteo de ${raffle.prizeName}. Total tuyo: ${updated.cuposCount} cupo${updated.cuposCount===1?'':'s'}.`,
+      message: `¡Listo! Sumaste ${quantity} cupo${quantity===1?'':'s'} al sorteo de ${raffle.prizeName}. Tus números: ${assignedRange}. Total tuyo: ${updated.cuposCount} cupo${updated.cuposCount===1?'':'s'}.`,
       cuposBought: quantity,
+      assignedNumbers,
       userCuposTotal: updated.cuposCount,
+      userTicketNumbers: updated.ticketNumbers || [],
       budget: {
         monthlyDeposit: newBudget.monthlyDeposit,
         netwinLoss: newBudget.netwinLoss,
@@ -11770,9 +11811,24 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status === 'drawn') return res.status(400).json({ error: 'Este sorteo ya fue sorteado.' });
 
-    // Modelo MULTI-CUPO: cada participacion tiene cuposCount. Total de
-    // cupos vendidos = suma. Sorteamos un numero entre 1..totalCuposSold
-    // y buscamos a quien le pertenece.
+    // Draw por LOTERÍA NACIONAL: admin entra el número que salió en el
+    // primer premio de la Lotería Nacional (primer lunes del mes).
+    // Se busca a la participation que tenga ese número en sus
+    // ticketNumbers.
+    const lotteryNumber = parseInt(req.body && req.body.lotteryNumber, 10);
+    const lotteryDrawSource = String((req.body && req.body.lotteryDrawSource) || '').slice(0, 200).trim();
+    const lotteryDrawDateRaw = req.body && req.body.lotteryDrawDate;
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+      return res.status(400).json({
+        error: 'Falta el número de la Lotería Nacional. Pasalo en lotteryNumber (entero ≥ 1).'
+      });
+    }
+    if (lotteryNumber > raffle.totalTickets) {
+      return res.status(400).json({
+        error: `El número ${lotteryNumber} excede el cupo total del sorteo (${raffle.totalTickets}).`
+      });
+    }
+
     const parts = await RaffleParticipation.find({ raffleId: raffle.id })
       .sort({ joinedAt: 1 }).lean();
     let totalCuposSold = 0;
@@ -11781,18 +11837,29 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       return res.status(400).json({ error: 'No hay cupos vendidos.' });
     }
 
-    const winningTicket = 1 + Math.floor(Math.random() * totalCuposSold);
-    let acc = 0;
-    let winner = null;
-    for (const p of parts) {
-      acc += (p.cuposCount || 1);
-      if (winningTicket <= acc) { winner = p; break; }
+    // Buscar la participation que posee este numero en sus ticketNumbers.
+    const winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(lotteryNumber));
+    if (!winner) {
+      return res.status(400).json({
+        error: `Nadie compró el número ${lotteryNumber}. Sólo se vendieron ${totalCuposSold} cupos (números 1..${totalCuposSold}). Verificá el número de la lotería o aplicá la regla de "cupo desierto" según corresponda.`,
+        cuposSold: totalCuposSold,
+        cuposRemaining: Math.max(0, raffle.totalTickets - totalCuposSold)
+      });
     }
-    if (!winner) winner = parts[parts.length - 1]; // fallback defensivo
+
+    const winningTicket = lotteryNumber;
+    let lotteryDrawDate = null;
+    if (lotteryDrawDateRaw) {
+      const d = new Date(lotteryDrawDateRaw);
+      if (!isNaN(d.getTime())) lotteryDrawDate = d;
+    }
 
     raffle.status = 'drawn';
     raffle.winnerUsername = winner.username;
     raffle.winningTicketNumber = winningTicket;
+    raffle.lotteryDrawNumber = winningTicket;
+    if (lotteryDrawSource) raffle.lotteryDrawSource = lotteryDrawSource;
+    if (lotteryDrawDate) raffle.lotteryDrawDate = lotteryDrawDate;
     raffle.drawnAt = new Date();
     raffle.drawnBy = req.user.username || 'admin';
     await raffle.save();
@@ -11814,7 +11881,7 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       const winRes = await sendNotificationToAllUsers(
         User,
         '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'),
-        '¡Ganaste el sorteo de ' + raffle.prizeName + '! ' + payoutNote + ' Pasá por WhatsApp para coordinar la entrega.',
+        '¡Ganaste el sorteo de ' + raffle.prizeName + ' con el número ' + winningTicket + ' (sorteado por Lotería Nacional)! ' + payoutNote + ' Pasá por WhatsApp para coordinar la entrega.',
         { source: 'raffle-draw', raffleId: raffle.id, isWinner: 'true' },
         { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
       );
@@ -11833,7 +11900,7 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
         const loseRes = await sendNotificationToAllUsers(
           User,
           'Sorteo de ' + (raffle.emoji || '🎁') + ' ' + raffle.prizeName + ' sorteado',
-          'Esta vez no fue 😔 Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!',
+          'La Lotería Nacional sacó el número ' + winningTicket + '. Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!',
           { source: 'raffle-draw', raffleId: raffle.id, isWinner: 'false' },
           { username: { $in: loserUsernames } }
         );
@@ -11847,7 +11914,11 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       success: true,
       winnerUsername: winner.username,
       winnerCupos: winner.cuposCount || 1,
+      winnerTicketNumbers: winner.ticketNumbers || [],
       winningTicketNumber: winningTicket,
+      lotteryDrawNumber: winningTicket,
+      lotteryDrawSource: raffle.lotteryDrawSource || null,
+      lotteryDrawDate: raffle.lotteryDrawDate || null,
       totalCuposSold,
       uniqueParticipants: parts.length,
       prizeValueARS: raffle.prizeValueARS || 0,

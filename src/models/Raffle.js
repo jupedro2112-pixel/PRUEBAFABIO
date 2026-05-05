@@ -3,19 +3,17 @@
  *
  * Modelo:
  *   - Cada sorteo tiene una FECHA de mes (monthKey "2026-05" = mayo 2026).
- *   - Para participar el user paga `entryCost` de su NETWIN LOSS del mes
- *     en curso (no plata real, "creditos del sorteo"). Si entryCost = 20000
- *     y el user perdió 100.000 en el mes, le quedan 80.000 disponibles
+ *   - Para participar el user paga `entryCost` de su MONTO CARGADO del mes
+ *     en curso (no plata real, "creditos del sorteo"). Si entryCost = 50000
+ *     y el user cargó 100.000 en el mes, le quedan 50.000 disponibles
  *     para otros sorteos.
- *   - Cada sorteo tiene un POOL FIJO de tickets (totalTickets). Cuando se
- *     hace el draw, los tickets se reparten en partes iguales entre todos
- *     los participantes (floor(totalTickets/participantCount)).
- *   - El draw lo hace el admin manualmente (primer lunes del mes proximo).
- *
- * Defaults sembrados al primer fetch:
- *   - iPhone:        entryCost 20.000 · 500 tickets
- *   - Viaje al Caribe (2 personas): entryCost 50.000 · 1000 tickets
- *   - Auto Gol Trend 2015: entryCost 100.000 · 500 tickets
+ *   - Cada sorteo tiene un POOL FIJO de cupos (totalTickets). Cada cupo
+ *     comprado recibe un NÚMERO ÚNICO secuencial (1..totalTickets).
+ *   - El ganador se determina por el primer premio de la LOTERÍA NACIONAL
+ *     del primer lunes del mes próximo. Admin entra el lotteryDrawNumber
+ *     y el sistema busca a quién le pertenece ese número.
+ *   - Si la cantidad de cupos vendidos no llega a totalTickets, el ganador
+ *     recibe el proporcional al fill rate.
  */
 const mongoose = require('mongoose');
 
@@ -27,19 +25,23 @@ const raffleSchema = new mongoose.Schema({
   imageUrl: { type: String, default: null, maxlength: 800 },
   emoji: { type: String, default: '🎁', maxlength: 8 },
 
-  // Mes al que aplica este sorteo. El budget de netwin loss del user para
+  // Mes al que aplica este sorteo. El budget de cargas del user para
   // entrar se mide sobre este mes. Formato: "YYYY-MM" en TZ Argentina.
   monthKey: { type: String, required: true, index: true },
 
-  // Costo de entrada (loss credits, no plata real).
+  // Costo de entrada (credits = monto cargado, no plata real).
   entryCost: { type: Number, required: true, min: 0 },
-  // Total de tickets a repartir entre participantes.
+  // Total de cupos disponibles. Cada cupo tiene un número único 1..totalTickets.
   totalTickets: { type: Number, required: true, min: 1 },
-  // Valor del premio en pesos. Si la cantidad de participantes no llega a
+  // Valor del premio en pesos. Si la cantidad de cupos vendidos no llega a
   // totalTickets, el ganador recibe el proporcional:
-  //   actualPayout = prizeValueARS * min(1, participantCount / totalTickets)
-  // Si llega o supera, recibe el premio completo.
+  //   actualPayout = prizeValueARS * min(1, totalCuposSold / totalTickets)
   prizeValueARS: { type: Number, default: 0, min: 0 },
+
+  // Contador atomico de cupos asignados. Se incrementa por $inc en cada
+  // participacion para asegurar numeros secuenciales sin duplicados ni
+  // race conditions.
+  _ticketCounter: { type: Number, default: 0, min: 0 },
 
   // Fecha en la que se sortea (informativa). Primer lunes del mes proximo.
   drawDate: { type: Date, required: true, index: true },
@@ -55,7 +57,15 @@ const raffleSchema = new mongoose.Schema({
   winnerUsername: { type: String, default: null },
   winningTicketNumber: { type: Number, default: null },
   drawnAt: { type: Date, default: null },
-  drawnBy: { type: String, default: null }
+  drawnBy: { type: String, default: null },
+
+  // Trazabilidad de la Lotería Nacional que determinó al ganador.
+  // lotteryDrawNumber es el número que salió y que determinó el cupo
+  // ganador. lotteryDrawSource describe qué sorteo de lotería fue
+  // (ej. "Lotería Nacional Nocturna - Primer premio - 06/05/2026").
+  lotteryDrawDate: { type: Date, default: null },
+  lotteryDrawNumber: { type: Number, default: null },
+  lotteryDrawSource: { type: String, default: null, maxlength: 200 }
 }, { timestamps: true });
 
 raffleSchema.index({ monthKey: 1, status: 1 });
