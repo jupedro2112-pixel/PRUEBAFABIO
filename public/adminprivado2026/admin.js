@@ -8548,31 +8548,121 @@ function closeRaffleDetailModal() {
 function _renderRaffleDetail(d) {
     const r = d.raffle;
     const parts = d.participants || [];
-    let html = '<h2 style="color:#d4af37;margin:0 0 4px;font-size:18px;">' + (r.emoji||'🎁') + ' ' + escapeHtml(r.name) + '</h2>';
-    html += '<div style="color:#aaa;font-size:12px;margin-bottom:12px;">Premio ' + _fmtMoney(r.prizeValueARS) + ' · ' + r.cuposSold + '/' + r.totalTickets + ' cupos · ' + _fmtMoney(r.entryCost) + ' por número · ' + parts.length + ' personas</div>';
+    const isFree = !!r.isFree;
+    const accent = isFree ? '#4dabff' : '#d4af37';
+    const accentRgba = isFree ? '77,171,255' : '212,175,55';
+    const winNum = r.winningTicketNumber;
+    const totalPaid = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
+    const totalCupos = parts.reduce((s, p) => s + (p.cuposCount || 0), 0);
+
+    let html = '<h2 style="color:' + accent + ';margin:0 0 4px;font-size:18px;">' + (r.emoji||'🎁') + ' ' + escapeHtml(r.name) + (isFree ? ' <span style="color:#4dabff;font-size:11px;background:rgba(77,171,255,0.15);padding:2px 8px;border-radius:6px;border:1px solid #4dabff;letter-spacing:1px;">GRATIS</span>' : '') + '</h2>';
+
+    // Linea de info del sorteo
+    const subBits = [
+        'Premio <strong style="color:#fff;">' + _fmtMoney(r.prizeValueARS) + '</strong>',
+        '<strong style="color:#fff;">' + r.cuposSold + '/' + r.totalTickets + '</strong> cupos',
+        isFree
+            ? 'Mín. carga: <strong style="color:#fff;">' + _fmtMoney(r.minCargasARS) + '</strong>'
+            : _fmtMoney(r.entryCost) + ' por número',
+        '<strong style="color:#fff;">' + parts.length + '</strong> personas',
+        'Sorteo: ' + (r.drawDate ? new Date(r.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—')
+    ];
+    html += '<div style="color:#aaa;font-size:12px;margin-bottom:12px;line-height:1.6;">' + subBits.join(' · ') + '</div>';
+
+    // Banner del ganador si ya se sorteó
     if (r.status === 'drawn' && r.winnerUsername) {
-        html += '<div style="background:rgba(0,212,255,0.10);border:1px solid #00d4ff;border-radius:8px;padding:10px;margin-bottom:12px;color:#fff;font-size:13px;">🏆 Ganador: <strong>' + escapeHtml(r.winnerUsername) + '</strong> · número <strong>#' + r.winningTicketNumber + '</strong></div>';
+        const claimStatus = r.prizeClaimedAt
+            ? '<span style="color:#66ff66;">✅ Premio acreditado ' + new Date(r.prizeClaimedAt).toLocaleString('es-AR') + '</span>'
+            : '<span style="color:#ffaa66;">⏳ Premio sin acreditar todavía</span>';
+        html += '<div style="background:rgba(0,212,255,0.10);border:1px solid #00d4ff;border-radius:8px;padding:10px;margin-bottom:12px;color:#fff;font-size:13px;line-height:1.5;">🏆 Ganador: <strong>' + escapeHtml(r.winnerUsername) + '</strong> · número <strong>#' + winNum + '</strong><br>' + claimStatus + '</div>';
     }
+
+    // Totales del sorteo
+    if (parts.length > 0) {
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:12px;">';
+        html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Personas</div><div style="color:#fff;font-size:16px;font-weight:900;">' + parts.length + '</div></div>';
+        html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cupos</div><div style="color:#00d4ff;font-size:16px;font-weight:900;">' + totalCupos + '</div></div>';
+        if (!isFree) {
+            html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Recaudado</div><div style="color:#d4af37;font-size:16px;font-weight:900;">' + _fmtMoney(totalPaid) + '</div></div>';
+        }
+        html += '</div>';
+    }
+
     if (parts.length === 0) {
         html += '<div style="text-align:center;padding:30px;color:#888;">Aún no hay participantes.</div>';
         return html;
     }
-    html += '<div style="max-height:60vh;overflow-y:auto;">';
+
+    // Tabla con quien compro que numero
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:60vh;overflow-y:auto;">';
     html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
-    html += '<thead><tr style="border-bottom:1px solid rgba(255,255,255,0.10);color:#aaa;text-align:left;"><th style="padding:6px 8px;">Usuario</th><th style="padding:6px 8px;">Cupos</th><th style="padding:6px 8px;">Números</th><th style="padding:6px 8px;text-align:right;">Pagó</th></tr></thead><tbody>';
+    html += '<thead style="position:sticky;top:0;background:#2d0052;z-index:1;"><tr style="color:' + accent + ';text-align:left;">';
+    html += '<th style="padding:8px 10px;font-weight:800;">#</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cupos</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Números</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">' + (isFree ? 'Cuándo' : 'Pagó') + '</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;width:30px;"></th>';
+    html += '</tr></thead><tbody>';
+
+    let idx = 1;
     for (const p of parts) {
-        const win = p.isWinner ? ' style="background:rgba(0,212,255,0.10);"' : '';
-        const winBadge = p.isWinner ? ' 🏆' : '';
-        const numStr = (p.ticketNumbers || []).join(', ');
-        html += '<tr' + win + '>';
-        html += '<td style="padding:6px 8px;color:#fff;font-weight:600;">' + escapeHtml(p.username) + winBadge + '</td>';
-        html += '<td style="padding:6px 8px;color:#ddd;">' + (p.cuposCount||0) + '</td>';
-        html += '<td style="padding:6px 8px;color:#aaa;font-family:monospace;font-size:11px;">' + escapeHtml(numStr) + '</td>';
-        html += '<td style="padding:6px 8px;color:#d4af37;text-align:right;">' + _fmtMoney(p.entryCostPaid) + '</td>';
+        const isWin = !!p.isWinner;
+        const rowBg = isWin ? 'background:rgba(255,215,0,0.12);' : '';
+        const winBadge = isWin ? ' 🏆' : '';
+        // Resaltar el numero ganador entre los del user.
+        const nums = (p.ticketNumbers || []).map(n => {
+            const isWinNum = (winNum && n === winNum && isWin);
+            return isWinNum
+                ? '<span style="color:#ffd700;font-weight:900;background:rgba(255,215,0,0.20);padding:1px 5px;border-radius:4px;">#' + n + '</span>'
+                : '#' + n;
+        }).join(' ');
+
+        const lastBuy = p.lastBoughtAt ? new Date(p.lastBoughtAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+        const purchasesN = (p.purchases || []).length;
+        const hasMultiplePurchases = purchasesN > 1;
+
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);' + rowBg + '">';
+        html += '<td style="padding:8px 10px;color:#666;font-weight:700;">' + idx + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(p.username) + winBadge + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;text-align:center;font-weight:700;">' + (p.cuposCount||0) + '</td>';
+        html += '<td style="padding:8px 10px;color:#ddd;font-family:monospace;font-size:11px;line-height:1.6;word-break:break-word;">' + nums + '</td>';
+        html += '<td style="padding:8px 10px;color:' + accent + ';text-align:right;white-space:nowrap;font-weight:800;">' + (isFree ? '<span style="color:#aaa;font-weight:400;font-size:10px;">' + lastBuy + '</span>' : _fmtMoney(p.entryCostPaid)) + '</td>';
+        html += '<td style="padding:6px;text-align:center;">' + (hasMultiplePurchases ? '<button type="button" onclick="_toggleParticipantPurchases(this)" style="background:none;border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:4px;width:22px;height:22px;cursor:pointer;font-size:11px;" title="Ver compras (' + purchasesN + ')">+</button>' : '') + '</td>';
         html += '</tr>';
+
+        // Subfila colapsada con el historial de compras (solo paid con >1 compra).
+        if (hasMultiplePurchases) {
+            html += '<tr class="raffle-purchases-row" style="display:none;background:rgba(0,0,0,0.25);">';
+            html += '<td colspan="6" style="padding:10px 14px;font-size:11px;">';
+            html += '<div style="color:#aaa;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Historial de compras (' + purchasesN + ')</div>';
+            html += '<div style="display:flex;flex-direction:column;gap:4px;">';
+            for (const s of p.purchases) {
+                const dt = s.createdAt ? new Date(s.createdAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+                const numL = (s.ticketNumbers || []).slice().sort((a,b)=>a-b).map(n => '#' + n).join(' ');
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:rgba(255,255,255,0.03);padding:6px 8px;border-radius:5px;">';
+                html += '<span style="color:#aaa;white-space:nowrap;">' + dt + '</span>';
+                html += '<span style="color:#ddd;font-family:monospace;flex:1;">' + numL + '</span>';
+                html += '<span style="color:' + accent + ';font-weight:800;white-space:nowrap;">' + _fmtMoney(s.amountARS) + '</span>';
+                html += '</div>';
+            }
+            html += '</div></td></tr>';
+        }
+        idx++;
     }
     html += '</tbody></table></div>';
     return html;
+}
+
+// Toggle del subrow de compras dentro de _renderRaffleDetail.
+function _toggleParticipantPurchases(btn) {
+    const tr = btn.closest('tr');
+    if (!tr) return;
+    const next = tr.nextElementSibling;
+    if (!next || !next.classList.contains('raffle-purchases-row')) return;
+    const isOpen = next.style.display !== 'none';
+    next.style.display = isOpen ? 'none' : 'table-row';
+    btn.textContent = isOpen ? '+' : '−';
 }
 
 async function drawRaffle(id) {

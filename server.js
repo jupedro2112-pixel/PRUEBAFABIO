@@ -11854,7 +11854,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       jugaygana.getUserInfoByName(username).catch(() => null),
       Raffle.find(
         { status: { $in: ['active', 'closed', 'drawn'] }, raffleType: { $in: allTypes } }
-      ).sort({ isFree: 1, raffleType: 1, instanceNumber: 1 }).lean(),
+      ).sort({ isFree: 1, prizeValueARS: -1, instanceNumber: 1 }).lean(),
       RaffleParticipation.find(
         { username: { $regex: '^' + safe + '$', $options: 'i' } },
         { raffleId: 1, ticketNumbers: 1, cuposCount: 1, isWinner: 1, _id: 0 }
@@ -12350,7 +12350,29 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
   try {
     const raffle = await Raffle.findOne({ id: req.params.id }).lean();
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
-    const parts = await RaffleParticipation.find({ raffleId: raffle.id }).sort({ joinedAt: 1 }).lean();
+    const parts = await RaffleParticipation.find({ raffleId: raffle.id })
+      .sort({ entryCostPaid: -1, lastBoughtAt: -1 })
+      .lean();
+
+    // Para los pagos, traemos cada COMPRA individual desde RaffleSpend para
+    // poder mostrar el historial completo del user en este sorteo (no solo
+    // el acumulado). Si es free, RaffleSpend va a estar vacio.
+    const spends = await RaffleSpend.find({ raffleId: raffle.id })
+      .sort({ createdAt: 1 })
+      .lean();
+    const spendsByUser = {};
+    for (const s of spends) {
+      const k = String(s.username).toLowerCase();
+      if (!spendsByUser[k]) spendsByUser[k] = [];
+      spendsByUser[k].push({
+        amountARS: s.amountARS,
+        cuposCount: s.cuposCount,
+        ticketNumbers: s.ticketNumbers || [],
+        jugayganaTxId: s.jugayganaTxId,
+        createdAt: s.createdAt
+      });
+    }
+
     res.json({
       raffle: {
         id: raffle.id, name: raffle.name, prizeName: raffle.prizeName,
@@ -12359,15 +12381,23 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         entryCost: raffle.entryCost, prizeValueARS: raffle.prizeValueARS,
         status: raffle.status, winnerUsername: raffle.winnerUsername,
         winningTicketNumber: raffle.winningTicketNumber,
-        drawDate: raffle.drawDate, lotteryRule: raffle.lotteryRule
+        drawDate: raffle.drawDate, lotteryRule: raffle.lotteryRule,
+        isFree: !!raffle.isFree, minCargasARS: raffle.minCargasARS || 0,
+        raffleType: raffle.raffleType, instanceNumber: raffle.instanceNumber,
+        weekKey: raffle.weekKey,
+        prizeClaimedAt: raffle.prizeClaimedAt,
+        drawnAt: raffle.drawnAt
       },
       participants: parts.map(p => ({
         username: p.username,
         cuposCount: p.cuposCount,
-        ticketNumbers: p.ticketNumbers || [],
+        ticketNumbers: (p.ticketNumbers || []).slice().sort((a, b) => a - b),
         entryCostPaid: p.entryCostPaid,
         joinedAt: p.joinedAt,
-        isWinner: p.isWinner
+        lastBoughtAt: p.lastBoughtAt,
+        isWinner: p.isWinner,
+        // Historial de compras de este user en este sorteo (solo paid).
+        purchases: spendsByUser[String(p.username).toLowerCase()] || []
       }))
     });
   } catch (err) {
@@ -12891,23 +12921,39 @@ app.get('/api/admin/raffles/spend-daily/:dayKey', authMiddleware, adminMiddlewar
   }
 });
 
-// GET /api/admin/raffles/dashboard — KPIs de la semana actual.
+// GET /api/admin/raffles/dashboard — KPIs de la semana del proximo draw.
 // Resumen rápido para el panel: 4 sorteos activos + agregados por tipo +
 // top compradores + recaudación de la semana.
+//
+// El "weekKey del dashboard" no es el de la semana calendario actual, sino
+// el de la semana del PROXIMO Lunes (= weekKey con el que se crearon los
+// sorteos activos). Esto es lo que el admin espera ver: "que pasa con los
+// sorteos que se van a sortear el lunes que viene". Antes mostraba la
+// semana calendario actual (ej: martes 5/5 -> W19) pero los sorteos
+// activos tenian weekKey = W20 (semana del lunes 11/5 que es el draw),
+// asi el dashboard quedaba vacio.
 app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    await _ensureActiveRafflesSeeded();
+    await _ensureActiveRafflesSeededCached();
     const kind = (req.query.kind === 'free') ? 'free' : 'paid';
     const typeList = (kind === 'free' ? FREE_RAFFLE_TYPES : RAFFLE_TYPES).map(t => t.type);
-    const currentWeek = _isoWeekKey(_argZonedNow());
-    // Sorteos del weekKey actual (incluye drawn por si ya se sorteo en la semana actual).
+    const nextDraw = _nextMondayDraw();
+    const drawArg = new Date(nextDraw.getTime() - 3 * 3600 * 1000);
+    const dashboardWeek = _isoWeekKey(drawArg);
+    const calendarWeek = _isoWeekKey(_argZonedNow());
+    // Sorteos del weekKey del proximo draw (incluye drawn por si ya se
+    // sorteo en la semana del draw). Tambien aceptamos sorteos sin weekKey
+    // (legacy) que esten active/closed para no perderlos del panel.
     const weekRaffles = await Raffle.find(
       {
-        weekKey: currentWeek,
+        $or: [
+          { weekKey: dashboardWeek },
+          { weekKey: { $in: ['', null] }, status: { $in: ['active', 'closed'] } }
+        ],
         status: { $in: ['active', 'closed', 'drawn'] },
         raffleType: { $in: typeList }
       }
-    ).sort({ raffleType: 1, instanceNumber: 1 }).lean();
+    ).sort({ prizeValueARS: -1, instanceNumber: 1 }).lean();
 
     const ids = weekRaffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([
@@ -12994,8 +13040,9 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
     }
 
     res.json({
-      weekKey: currentWeek,
-      drawDate: _nextMondayDraw(),
+      weekKey: dashboardWeek,
+      calendarWeek,
+      drawDate: nextDraw,
       kpis: {
         totalRevenue,
         totalCuposSold,
@@ -13007,7 +13054,7 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
         prizesPending,
         netProfit: totalRevenue - prizesPaid - prizesPending
       },
-      byType: Object.values(byType),
+      byType: Object.values(byType).sort((a, b) => (b.prize || 0) - (a.prize || 0)),
       topBuyers,
       raffles: weekRaffles.map(r => ({
         id: r.id,
