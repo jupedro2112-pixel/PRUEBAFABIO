@@ -55,12 +55,27 @@ VIP.raffles = (function () {
             ? '<small style="color:#ffd700;">Si se sortea ahora: ' + r.ticketsPerParticipantIfDrawnNow + ' ticket(s) por persona</small>'
             : '<small style="color:#666;">Sin participantes todavía</small>';
 
+        // Premio + payout proyectado.
+        let prizeInfo = '';
+        if (r.prizeValueARS && r.prizeValueARS > 0) {
+            const fill = r.fillRatePct || 0;
+            const projected = r.projectedPayoutARS || 0;
+            prizeInfo = '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:9px 12px;text-align:center;">' +
+                '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">💎 Premio si se llena el cupo</div>' +
+                '<div style="color:#ffd700;font-weight:900;font-size:16px;margin:2px 0;">$' + r.prizeValueARS.toLocaleString('es-AR') + '</div>' +
+                '<div style="color:' + (fill >= 100 ? '#25d366' : '#ffc850') + ';font-size:11px;">' +
+                '  Cupo actual: ' + fill + '% → si se sortea ahora pagaría <strong>$' + projected.toLocaleString('es-AR') + '</strong>' +
+                '</div>' +
+                '</div>';
+        }
+
         return '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;">' +
                _renderImage(r) +
                '<div>' +
                '  <h3 style="color:#ffd700;margin:0 0 4px;font-size:17px;font-weight:800;">' + (r.emoji || '🎁') + ' ' + _esc(r.prizeName) + '</h3>' +
                '  <p style="color:#aaa;margin:0;font-size:12px;line-height:1.5;">' + _esc(r.description || '') + '</p>' +
                '</div>' +
+               prizeInfo +
                '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;color:#888;">' +
                '  <span>👥 <strong style="color:#fff;">' + r.participantCount + '</strong> participan</span>' +
                '  <span>🎫 <strong style="color:#fff;">' + r.totalTickets + '</strong> tickets totales</span>' +

@@ -35,6 +35,11 @@ const raffleSchema = new mongoose.Schema({
   entryCost: { type: Number, required: true, min: 0 },
   // Total de tickets a repartir entre participantes.
   totalTickets: { type: Number, required: true, min: 1 },
+  // Valor del premio en pesos. Si la cantidad de participantes no llega a
+  // totalTickets, el ganador recibe el proporcional:
+  //   actualPayout = prizeValueARS * min(1, participantCount / totalTickets)
+  // Si llega o supera, recibe el premio completo.
+  prizeValueARS: { type: Number, default: 0, min: 0 },
 
   // Fecha en la que se sortea (informativa). Primer lunes del mes proximo.
   drawDate: { type: Date, required: true, index: true },

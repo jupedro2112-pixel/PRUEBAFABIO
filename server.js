@@ -11298,43 +11298,66 @@ const RAFFLE_DEFAULTS = [
   {
     name: 'Sorteo iPhone',
     prizeName: 'iPhone (modelo del mes)',
-    description: 'Sorteamos un iPhone entre los que perdieron al menos $20.000 este mes. Cada $20.000 perdidos = 1 entrada. Pool: 500 tickets.',
+    description: 'Sorteamos un iPhone entre los que perdieron al menos $20.000 este mes. Cada $20.000 perdidos = 1 entrada. Pool: 500 tickets. Si no se llena, paga proporcional.',
     emoji: '📱',
     entryCost: 20000,
-    totalTickets: 500
+    totalTickets: 500,
+    prizeValueARS: 1500000
   },
   {
     name: 'Sorteo Viaje al Caribe (x2)',
     prizeName: 'Viaje al Caribe para 2 personas',
-    description: 'Vacaciones para 2 al Caribe. Para entrar: perder al menos $50.000 este mes. Pool: 1000 tickets.',
+    description: 'Vacaciones para 2 al Caribe. Para entrar: perder al menos $50.000 este mes. Pool: 1000 tickets. Si no se llena, paga proporcional.',
     emoji: '🏖️',
     entryCost: 50000,
-    totalTickets: 1000
+    totalTickets: 1000,
+    prizeValueARS: 4000000
   },
   {
     name: 'Sorteo Auto Gol Trend 2015',
     prizeName: 'Auto Gol Trend 2015',
-    description: 'Te llevás un auto. Para entrar: perder al menos $100.000 este mes. Pool: 500 tickets.',
+    description: 'Te llevás un auto. Para entrar: perder al menos $100.000 este mes. Pool: 500 tickets. Si no se llena, paga proporcional.',
     emoji: '🚗',
     entryCost: 100000,
-    totalTickets: 500
+    totalTickets: 500,
+    prizeValueARS: 10000000
   }
 ];
 
+// Calcula el payout proporcional al fill rate del sorteo. Si se llena (>=)
+// totalTickets de participantes, paga el premio completo. Si no, escalado.
+function _projectedPayoutARS(raffle, participantCount) {
+  const prize = Number(raffle.prizeValueARS) || 0;
+  if (prize <= 0) return 0;
+  const total = Number(raffle.totalTickets) || 0;
+  if (total <= 0) return prize;
+  const ratio = Math.min(1, (participantCount || 0) / total);
+  return Math.round(prize * ratio);
+}
+
 async function _ensureRafflesSeededForMonth(monthKey) {
-  const existing = await Raffle.find({ monthKey }, { name: 1, _id: 0 }).lean();
-  const existingNames = new Set(existing.map(r => r.name));
+  const existing = await Raffle.find({ monthKey }, { name: 1, prizeValueARS: 1, _id: 0 }).lean();
+  const existingByName = new Map(existing.map(r => [r.name, r]));
   const drawDate = _firstMondayOfNextMonth(monthKey);
   for (const def of RAFFLE_DEFAULTS) {
-    if (existingNames.has(def.name)) continue;
-    await Raffle.create({
-      id: uuidv4(),
-      ...def,
-      monthKey,
-      drawDate,
-      status: 'active',
-      imageUrl: null
-    }).catch(err => logger.warn(`[raffles] seed ${def.name}: ${err.message}`));
+    const ex = existingByName.get(def.name);
+    if (!ex) {
+      await Raffle.create({
+        id: uuidv4(),
+        ...def,
+        monthKey,
+        drawDate,
+        status: 'active',
+        imageUrl: null
+      }).catch(err => logger.warn(`[raffles] seed ${def.name}: ${err.message}`));
+    } else if (!ex.prizeValueARS && def.prizeValueARS) {
+      // Migracion: rellena el prizeValueARS en los sorteos viejos que se
+      // sembraron antes de que existiera el campo.
+      await Raffle.updateOne(
+        { monthKey, name: def.name },
+        { $set: { prizeValueARS: def.prizeValueARS } }
+      ).catch(() => {});
+    }
   }
 }
 
@@ -11401,6 +11424,9 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         emoji: r.emoji,
         entryCost: r.entryCost,
         totalTickets: r.totalTickets,
+        prizeValueARS: r.prizeValueARS || 0,
+        projectedPayoutARS: _projectedPayoutARS(r, participantCount),
+        fillRatePct: r.totalTickets > 0 ? Math.round((participantCount / r.totalTickets) * 100) : 0,
         drawDate: r.drawDate,
         status: r.status,
         participantCount,
@@ -11488,7 +11514,9 @@ app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) 
         ...r,
         participantCount: p.count,
         totalCreditsCommitted: p.sumPaid,
-        ticketsPerParticipantIfDrawnNow: p.count > 0 ? Math.floor(r.totalTickets / p.count) : null
+        ticketsPerParticipantIfDrawnNow: p.count > 0 ? Math.floor(r.totalTickets / p.count) : null,
+        projectedPayoutARS: _projectedPayoutARS(r, p.count),
+        fillRatePct: r.totalTickets > 0 ? Math.round((p.count / r.totalTickets) * 100) : 0
       };
     });
     res.json({ success: true, raffles: enriched });
@@ -11528,6 +11556,7 @@ app.put('/api/admin/raffles/:id', authMiddleware, adminMiddleware, async (req, r
     if (typeof b.emoji === 'string') update.emoji = b.emoji.slice(0, 8);
     if (Number.isFinite(Number(b.entryCost))) update.entryCost = Math.max(0, Math.round(Number(b.entryCost)));
     if (Number.isFinite(Number(b.totalTickets))) update.totalTickets = Math.max(1, Math.round(Number(b.totalTickets)));
+    if (Number.isFinite(Number(b.prizeValueARS))) update.prizeValueARS = Math.max(0, Math.round(Number(b.prizeValueARS)));
     if (b.drawDate) {
       const dd = new Date(b.drawDate);
       if (!isNaN(dd.getTime())) update.drawDate = dd;
@@ -11576,12 +11605,21 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       { $set: { isWinner: true } }
     );
 
+    const projectedPayoutARS = _projectedPayoutARS(raffle, parts.length);
+    const fillRatePct = raffle.totalTickets > 0 ? Math.round((parts.length / raffle.totalTickets) * 100) : 0;
+
     res.json({
       success: true,
       winnerUsername: winner.username,
       winningTicketNumber: winningTicket,
       ticketsPerParticipant,
       totalParticipants: parts.length,
+      prizeValueARS: raffle.prizeValueARS || 0,
+      projectedPayoutARS,
+      fillRatePct,
+      payoutNote: fillRatePct >= 100
+        ? 'Cupo completo — paga el premio completo.'
+        : `Cupo al ${fillRatePct}% — paga proporcional ($${projectedPayoutARS.toLocaleString('es-AR')} de un premio total de $${(raffle.prizeValueARS||0).toLocaleString('es-AR')}).`,
       raffle
     });
   } catch (err) {
