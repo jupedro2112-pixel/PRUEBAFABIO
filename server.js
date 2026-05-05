@@ -14754,6 +14754,356 @@ app.get('/api/admin/stats/players', authMiddleware, adminMiddleware, async (req,
 });
 
 // ============================================
+// SEGMENTACION DE JUGADORES — PANEL "TOP JUGADORES"
+// ============================================
+// Endpoint que cruza PlayerStats + DailyPlayerStats + UserLineLookup + User
+// para devolver listados por segmento con todo lo que hace falta para
+// decidir accion (push, WA por linea del equipo, bono).
+//
+// Segmentos custom (umbrales pedidos por owner):
+//   CALIENTE   : 10+ cargas en los ultimos 7 dias
+//   EN_RIESGO  : sin carga hace 5-9 dias
+//   PERDIDO    : sin carga hace 10-19 dias
+//   INACTIVO   : sin carga hace 20+ dias O nunca cargo
+//
+// Periodo:
+//   w1/w2/w3/w4 = semanas calendario del mes actual (1-7, 8-14, 15-21, 22-fin)
+//   month       = mes actual completo
+//
+// Filtros: team (lineTeamName), hasApp (yes/no/all), tier (VIP..BRONCE), limit.
+// ============================================
+const _SEGMENT_THRESHOLDS = {
+  caliente: { last7dDepositCountMin: 10 },
+  en_riesgo: { daysSinceMin: 5, daysSinceMax: 9 },
+  perdido: { daysSinceMin: 10, daysSinceMax: 19 },
+  inactivo: { daysSinceMin: 20 } // o null lastRealDepositDate
+};
+
+function _computeCustomSegment(daysSince, depositCountLast7d) {
+  // CALIENTE prima sobre el resto: aunque esten ACTIVOS, los super
+  // frecuentes los flaggeamos para que el admin los vea aparte.
+  if ((depositCountLast7d || 0) >= _SEGMENT_THRESHOLDS.caliente.last7dDepositCountMin) {
+    return 'CALIENTE';
+  }
+  if (daysSince == null) return 'INACTIVO';
+  if (daysSince >= _SEGMENT_THRESHOLDS.inactivo.daysSinceMin) return 'INACTIVO';
+  if (daysSince >= _SEGMENT_THRESHOLDS.perdido.daysSinceMin) return 'PERDIDO';
+  if (daysSince >= _SEGMENT_THRESHOLDS.en_riesgo.daysSinceMin) return 'EN_RIESGO';
+  return 'ACTIVO';
+}
+
+// Calcula los limites del rango (inicio, fin) en UTC para un periodo dado
+// del mes calendario actual ARG. Devuelve { from: Date, to: Date, label }.
+function _computePeriodRange(period) {
+  const argNow = _argZonedNow();
+  const y = argNow.getUTCFullYear();
+  const m = argNow.getUTCMonth();
+  // monthStart en ARG (00:00 ARG = 03:00 UTC)
+  const monthStartArg = new Date(Date.UTC(y, m, 1));
+  // monthEnd: dia 1 del mes siguiente, 00:00 ARG
+  const monthEndArg = new Date(Date.UTC(y, m + 1, 1));
+
+  let fromArg, toArg, label;
+  if (period === 'w1') {
+    fromArg = new Date(Date.UTC(y, m, 1));
+    toArg = new Date(Date.UTC(y, m, 8));
+    label = 'Semana 1 (1-7)';
+  } else if (period === 'w2') {
+    fromArg = new Date(Date.UTC(y, m, 8));
+    toArg = new Date(Date.UTC(y, m, 15));
+    label = 'Semana 2 (8-14)';
+  } else if (period === 'w3') {
+    fromArg = new Date(Date.UTC(y, m, 15));
+    toArg = new Date(Date.UTC(y, m, 22));
+    label = 'Semana 3 (15-21)';
+  } else if (period === 'w4') {
+    fromArg = new Date(Date.UTC(y, m, 22));
+    toArg = monthEndArg;
+    label = 'Semana 4 (22-fin)';
+  } else {
+    fromArg = monthStartArg;
+    toArg = monthEndArg;
+    label = 'Mes completo';
+  }
+  // Pasar de "midnight ARG" a UTC real (sumar 3h).
+  const from = new Date(fromArg.getTime() + 3 * 3600 * 1000);
+  const to = new Date(toArg.getTime() + 3 * 3600 * 1000);
+  return { from, to, label, period };
+}
+
+// GET /api/admin/players/segments — listado de jugadores por segmento custom.
+//
+// Query:
+//   period   : w1 | w2 | w3 | w4 | month   (default month)
+//   segment  : caliente | en_riesgo | perdido | inactivo | all (default all)
+//   team     : team name (lineTeamName) — exact match
+//   hasApp   : yes | no | all (default all) — yes = tiene fcmToken (app instalada y push activos)
+//   tier     : VIP | ORO | PLATA | BRONCE | NUEVO | SIN_DATOS
+//   limit    : max rows (default 500, max 2000)
+//
+// Devuelve: { range, counts: {caliente, en_riesgo, perdido, inactivo}, players[] }
+app.get('/api/admin/players/segments', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const period = ['w1', 'w2', 'w3', 'w4', 'month'].includes(req.query.period) ? req.query.period : 'month';
+    const requestedSegment = String(req.query.segment || 'all').toLowerCase();
+    const teamFilter = req.query.team ? String(req.query.team).trim() : null;
+    const hasApp = ['yes', 'no'].includes(req.query.hasApp) ? req.query.hasApp : 'all';
+    const tierFilter = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO', 'SIN_DATOS'].includes(req.query.tier) ? req.query.tier : null;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 500, 2000);
+
+    const range = _computePeriodRange(period);
+    const last7dStart = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+
+    // 1) Base: PlayerStats con filtro de tier.
+    const psQuery = {};
+    if (tierFilter) psQuery.tier = tierFilter;
+    const allStats = await PlayerStats.find(psQuery)
+      .sort({ realDeposits30d: -1 })
+      .limit(2000)
+      .lean();
+
+    if (allStats.length === 0) {
+      return res.json({
+        range,
+        counts: { CALIENTE: 0, EN_RIESGO: 0, PERDIDO: 0, INACTIVO: 0, ACTIVO: 0, total: 0 },
+        players: []
+      });
+    }
+
+    const usernames = allStats.map(p => p.username).filter(Boolean);
+
+    // 2) Cargas en periodo seleccionado (DailyPlayerStats agg)
+    const periodAgg = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernames }, dateUtc: { $gte: range.from, $lt: range.to } } },
+      { $group: {
+        _id: '$username',
+        chargesInPeriod: { $sum: '$depositCount' },
+        depositsInPeriod: { $sum: '$depositSum' }
+      } }
+    ]);
+    const periodMap = {};
+    for (const a of periodAgg) periodMap[a._id] = a;
+
+    // 3) Cargas en los ultimos 7 dias (para detectar CALIENTE)
+    const last7Agg = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernames }, dateUtc: { $gte: last7dStart } } },
+      { $group: {
+        _id: '$username',
+        chargesLast7d: { $sum: '$depositCount' },
+        depositsLast7d: { $sum: '$depositSum' }
+      } }
+    ]);
+    const last7Map = {};
+    for (const a of last7Agg) last7Map[a._id] = a;
+
+    // 4) Equipos (UserLineLookup)
+    const norms = usernames.map(u => String(u).toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const lineupRows = await UserLineLookup.find({ usernameNorm: { $in: norms } })
+      .select('usernameNorm linePhone lineTeamName')
+      .lean();
+    const teamByNorm = {};
+    for (const r of lineupRows) teamByNorm[r.usernameNorm] = r;
+
+    // 5) App + telefono + nombre real (User)
+    const userRows = await User.find(
+      { username: { $in: usernames } },
+      { username: 1, fcmToken: 1, fcmTokens: 1, phone: 1, whatsapp: 1, name: 1, createdAt: 1, _id: 0 }
+    ).lean();
+    const userByName = {};
+    for (const u of userRows) {
+      userByName[String(u.username).toLowerCase()] = u;
+    }
+
+    // 6) Bonus claims agregados (welcome/giveaway) en el periodo seleccionado
+    // — para el ROI por bono.
+    const giveawayAgg = await MoneyGiveawayClaim.aggregate([
+      { $match: { username: { $in: usernames }, status: 'completed' } },
+      { $group: {
+        _id: '$username',
+        count: { $sum: 1 },
+        totalARS: { $sum: '$amount' },
+        lastClaimAt: { $max: '$claimedAt' }
+      } }
+    ]);
+    const givByName = {};
+    for (const g of giveawayAgg) givByName[g._id] = g;
+
+    // 7) Computar segmento + componer
+    const counts = { CALIENTE: 0, EN_RIESGO: 0, PERDIDO: 0, INACTIVO: 0, ACTIVO: 0 };
+    const out = [];
+    for (const ps of allStats) {
+      const uname = ps.username;
+      const ulow = String(uname).toLowerCase();
+      const norm = ulow.replace(/[^a-z0-9]/g, '');
+      const usr = userByName[ulow] || null;
+      const team = teamByNorm[norm] || null;
+      const last7 = last7Map[uname] || { chargesLast7d: 0, depositsLast7d: 0 };
+      const inP = periodMap[uname] || { chargesInPeriod: 0, depositsInPeriod: 0 };
+      const giv = givByName[uname] || null;
+
+      const daysSince = ps.lastRealDepositDate
+        ? Math.floor((Date.now() - new Date(ps.lastRealDepositDate).getTime()) / (24 * 3600 * 1000))
+        : null;
+
+      const segment = _computeCustomSegment(daysSince, last7.chargesLast7d);
+      counts[segment] = (counts[segment] || 0) + 1;
+
+      // Filtros segmento + team + app
+      if (requestedSegment !== 'all' && requestedSegment.toUpperCase() !== segment) continue;
+      if (teamFilter && (!team || team.lineTeamName !== teamFilter)) continue;
+
+      const hasFcm = !!(usr && (usr.fcmToken || (Array.isArray(usr.fcmTokens) && usr.fcmTokens.length > 0)));
+      if (hasApp === 'yes' && !hasFcm) continue;
+      if (hasApp === 'no' && hasFcm) continue;
+
+      out.push({
+        username: uname,
+        userId: ps.userId,
+        name: usr ? usr.name : null,
+        phone: usr ? (usr.phone || usr.whatsapp || null) : null,
+        accountCreatedAt: usr ? usr.createdAt : null,
+
+        tier: ps.tier,
+        activityStatus: ps.activityStatus,
+        segment,
+
+        hasApp: hasFcm,
+        lastSeenApp: ps.lastSeenApp,
+
+        team: team ? team.lineTeamName : null,
+        linePhone: team ? team.linePhone : null,
+
+        lastRealDepositDate: ps.lastRealDepositDate,
+        daysSinceLastDeposit: daysSince,
+
+        // Periodo seleccionado
+        chargesInPeriod: inP.chargesInPeriod || 0,
+        depositsInPeriod: inP.depositsInPeriod || 0,
+
+        // Ult 7 dias (para CALIENTE)
+        chargesLast7d: last7.chargesLast7d || 0,
+        depositsLast7d: last7.depositsLast7d || 0,
+
+        // 30 dias rolling (cache PlayerStats)
+        realDeposits30d: ps.realDeposits30d || 0,
+        realChargesCount30d: ps.realChargesCount30d || 0,
+        bonusGiven30d: ps.bonusGiven30d || 0,
+        netToHouse30d: ps.netToHouse30d || 0,
+        isOpportunist: !!ps.isOpportunist,
+
+        // ROI por bono
+        bonusClaimsCount: giv ? giv.count : 0,
+        bonusClaimsTotal: giv ? giv.totalARS : 0,
+        lastBonusClaimAt: giv ? giv.lastClaimAt : null,
+        roiPerBonus: (giv && giv.totalARS > 0) ? (ps.realDeposits30d || 0) / giv.totalARS : null,
+
+        recoveryAttemptsLifetime: ps.recoveryAttemptsLifetime || 0,
+        lastRecoveryPushAt: ps.lastRecoveryPushAt
+      });
+    }
+
+    out.sort((a, b) => (b.realDeposits30d || 0) - (a.realDeposits30d || 0));
+    const sliced = out.slice(0, limit);
+
+    // Listas auxiliares para el cliente
+    const teamSet = new Set();
+    for (const r of lineupRows) if (r.lineTeamName) teamSet.add(r.lineTeamName);
+    const teamsAvailable = [...teamSet].sort();
+
+    res.json({
+      range,
+      counts: {
+        ...counts,
+        total: allStats.length,
+        shown: sliced.length
+      },
+      filters: { period, segment: requestedSegment, team: teamFilter, hasApp, tier: tierFilter, limit },
+      teamsAvailable,
+      players: sliced
+    });
+  } catch (err) {
+    logger.error(`/api/admin/players/segments: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/players/segments/notify — manda push masivo a todos los
+// players de un segmento (filtrado por team/hasApp). Solo afecta a los con
+// app instalada (fcmToken). Si hasApp=no, se ignora (sin destino para push).
+app.post('/api/admin/players/segments/notify', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const segment = String(body.segment || '').toUpperCase();
+    const team = body.team ? String(body.team).trim() : null;
+    const tier = body.tier ? String(body.tier) : null;
+    const title = String(body.title || '').slice(0, 80).trim();
+    const text = String(body.body || '').slice(0, 240).trim();
+    if (!title || !text) return res.status(400).json({ error: 'Falta title o body' });
+    if (!['CALIENTE', 'EN_RIESGO', 'PERDIDO', 'INACTIVO', 'ACTIVO'].includes(segment)) {
+      return res.status(400).json({ error: 'segment invalido' });
+    }
+
+    // Reutilizamos /segments para filtrar (con hasApp=yes obligatorio).
+    const psQuery = {};
+    if (tier) psQuery.tier = tier;
+    const allStats = await PlayerStats.find(psQuery).limit(2000).lean();
+    const usernames = allStats.map(p => p.username);
+
+    const last7dStart = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const last7Agg = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernames }, dateUtc: { $gte: last7dStart } } },
+      { $group: { _id: '$username', chargesLast7d: { $sum: '$depositCount' } } }
+    ]);
+    const last7Map = {};
+    for (const a of last7Agg) last7Map[a._id] = a.chargesLast7d;
+
+    const norms = usernames.map(u => String(u).toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const lineupRows = await UserLineLookup.find({ usernameNorm: { $in: norms } })
+      .select('usernameNorm lineTeamName').lean();
+    const teamByNorm = {};
+    for (const r of lineupRows) teamByNorm[r.usernameNorm] = r.lineTeamName;
+
+    const targets = [];
+    for (const ps of allStats) {
+      const daysSince = ps.lastRealDepositDate
+        ? Math.floor((Date.now() - new Date(ps.lastRealDepositDate).getTime()) / (24 * 3600 * 1000))
+        : null;
+      const seg = _computeCustomSegment(daysSince, last7Map[ps.username] || 0);
+      if (seg !== segment) continue;
+      if (team) {
+        const norm = String(ps.username).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (teamByNorm[norm] !== team) continue;
+      }
+      targets.push(ps.username);
+    }
+
+    if (targets.length === 0) {
+      return res.json({ success: true, eligible: 0, sent: 0, message: 'No hay destinatarios con app en ese segmento.' });
+    }
+
+    const result = await sendNotificationToAllUsers(
+      User,
+      title,
+      text,
+      { source: 'segments-bulk', segment, team: team || '' },
+      { username: { $in: targets } }
+    );
+
+    res.json({
+      success: true,
+      eligible: targets.length,
+      sent: (result && result.successCount) || 0,
+      failed: (result && result.failureCount) || 0,
+      segment,
+      team: team || null
+    });
+  } catch (err) {
+    logger.error(`/api/admin/players/segments/notify: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // EXPORT DEL PLAN SEMANAL DE RECUPERACIÓN A .XLSX
 // ============================================
 // Genera un workbook con:

@@ -170,6 +170,7 @@ function showSection(sectionKey) {
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
         topEngagement: 'topEngagementSection',
+        topPlayers: 'topPlayersSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
@@ -213,6 +214,8 @@ function showSection(sectionKey) {
         loadWelcomeBonusReport();
     } else if (sectionKey === 'topEngagement') {
         loadStatsAll();
+    } else if (sectionKey === 'topPlayers') {
+        loadTopPlayers();
     } else if (sectionKey === 'automations') {
         loadAutomations();
     } else if (sectionKey === 'automation') {
@@ -8840,4 +8843,293 @@ async function testFireAutomation() {
         const list = (d.notifications || []).map(n => '  ' + n.n + ') ' + n.kind + ' · ' + new Date(n.scheduledFor).toLocaleTimeString('es-AR') + ' — ' + n.title).join('\n');
         alert('🧪 Test programado para ' + d.username + ':\n\n' + list + '\n\n💡 El cron poller corre cada 60s, así que puede haber hasta 1min de delay sobre el horario programado.');
     } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+
+// ============================================================
+// TOP JUGADORES — segmentacion custom por owner
+// ============================================================
+const _TOP_PLAYERS_STATE = {
+    period: 'month',     // w1 | w2 | w3 | w4 | month
+    segment: 'all',      // all | caliente | en_riesgo | perdido | inactivo
+    team: '',
+    hasApp: 'all',       // all | yes | no
+    tier: '',
+    limit: 500,
+    data: null
+};
+
+const _TOP_PLAYERS_SEGMENTS = [
+    { key: 'CALIENTE',  label: 'Calientes',   emoji: '🔥', color: '#ff6b35', desc: '10+ cargas última semana' },
+    { key: 'ACTIVO',    label: 'Activos',     emoji: '✅', color: '#66ff66', desc: 'Hizo carga reciente' },
+    { key: 'EN_RIESGO', label: 'En riesgo',   emoji: '⚠️', color: '#ffaa66', desc: 'Sin carga 5-9 días' },
+    { key: 'PERDIDO',   label: 'Perdidos',    emoji: '😟', color: '#ff8080', desc: 'Sin carga 10-19 días' },
+    { key: 'INACTIVO',  label: 'Inactivos',   emoji: '💀', color: '#888888', desc: 'Sin carga 20+ días' }
+];
+
+async function loadTopPlayers() {
+    const c = document.getElementById('topPlayersContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state">⏳ Cargando segmentación…</div>';
+    const qs = new URLSearchParams({
+        period: _TOP_PLAYERS_STATE.period,
+        segment: _TOP_PLAYERS_STATE.segment,
+        hasApp: _TOP_PLAYERS_STATE.hasApp,
+        limit: String(_TOP_PLAYERS_STATE.limit)
+    });
+    if (_TOP_PLAYERS_STATE.team) qs.set('team', _TOP_PLAYERS_STATE.team);
+    if (_TOP_PLAYERS_STATE.tier) qs.set('tier', _TOP_PLAYERS_STATE.tier);
+    try {
+        const r = await authFetch('/api/admin/players/segments?' + qs.toString());
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            c.innerHTML = '<div style="color:#ff8080;padding:20px;">' + (err.error || 'Error') + '</div>';
+            return;
+        }
+        _TOP_PLAYERS_STATE.data = await r.json();
+        c.innerHTML = _renderTopPlayers();
+    } catch (e) {
+        console.error('loadTopPlayers:', e);
+        c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión</div>';
+    }
+}
+
+function _setTopPlayersFilter(key, val) {
+    _TOP_PLAYERS_STATE[key] = val;
+    loadTopPlayers();
+}
+
+function _renderTopPlayers() {
+    const d = _TOP_PLAYERS_STATE.data;
+    if (!d) return '<div class="empty-state">Sin datos</div>';
+    const counts = d.counts || {};
+    const players = d.players || [];
+    const teams = d.teamsAvailable || [];
+    const range = d.range || {};
+
+    let html = '';
+
+    // Periodo
+    html += '<div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11px;color:#aaa;margin-bottom:8px;">';
+    html += '<span style="font-weight:800;text-transform:uppercase;letter-spacing:1px;">Periodo:</span>';
+    const periods = [
+        { k: 'w1', label: 'Semana 1' },
+        { k: 'w2', label: 'Semana 2' },
+        { k: 'w3', label: 'Semana 3' },
+        { k: 'w4', label: 'Semana 4' },
+        { k: 'month', label: 'Mes completo' }
+    ];
+    for (const p of periods) {
+        const active = _TOP_PLAYERS_STATE.period === p.k;
+        html += '<button type="button" onclick="_setTopPlayersFilter(\'period\',\'' + p.k + '\')" style="background:' + (active ? '#d4af37' : 'rgba(255,255,255,0.06)') + ';color:' + (active ? '#000' : '#fff') + ';border:1px solid rgba(212,175,55,0.40);padding:5px 10px;border-radius:6px;font-weight:' + (active ? '900' : '700') + ';font-size:11px;cursor:pointer;">' + p.label + '</button>';
+    }
+    html += '<span style="margin-left:8px;color:#666;font-size:10px;">' + escapeHtml(range.label || '') + '</span>';
+    html += '</div>';
+
+    // Filtros equipo / app / tier
+    html += '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:11px;color:#aaa;">';
+    html += '<span style="font-weight:800;text-transform:uppercase;letter-spacing:1px;">App:</span>';
+    for (const a of [{ k: 'all', l: 'Todos' }, { k: 'yes', l: 'Con app' }, { k: 'no', l: 'Sin app' }]) {
+        const active = _TOP_PLAYERS_STATE.hasApp === a.k;
+        html += '<button type="button" onclick="_setTopPlayersFilter(\'hasApp\',\'' + a.k + '\')" style="background:' + (active ? '#00d4ff' : 'rgba(255,255,255,0.06)') + ';color:' + (active ? '#000' : '#fff') + ';border:1px solid rgba(0,212,255,0.40);padding:4px 9px;border-radius:6px;font-weight:' + (active ? '900' : '700') + ';font-size:11px;cursor:pointer;">' + a.l + '</button>';
+    }
+
+    html += '<span style="margin-left:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Equipo:</span>';
+    html += '<select onchange="_setTopPlayersFilter(\'team\', this.value)" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:11px;">';
+    html += '<option value="">— todos —</option>';
+    for (const t of teams) {
+        const sel = _TOP_PLAYERS_STATE.team === t ? ' selected' : '';
+        html += '<option value="' + escapeHtml(t) + '"' + sel + '>' + escapeHtml(t) + '</option>';
+    }
+    html += '</select>';
+
+    html += '<span style="margin-left:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Tier:</span>';
+    html += '<select onchange="_setTopPlayersFilter(\'tier\', this.value)" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:11px;">';
+    for (const t of [{ k: '', l: '— todos —' }, { k: 'VIP', l: 'VIP' }, { k: 'ORO', l: 'ORO' }, { k: 'PLATA', l: 'PLATA' }, { k: 'BRONCE', l: 'BRONCE' }, { k: 'NUEVO', l: 'NUEVO' }, { k: 'SIN_DATOS', l: 'Sin datos' }]) {
+        const sel = _TOP_PLAYERS_STATE.tier === t.k ? ' selected' : '';
+        html += '<option value="' + t.k + '"' + sel + '>' + t.l + '</option>';
+    }
+    html += '</select>';
+    html += '</div></div>';
+
+    // Tarjetas de segmentos clickeables
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-bottom:12px;">';
+    const allSeg = { key: 'all', label: 'Todos', emoji: '👥', color: '#fff', desc: 'Todos los jugadores' };
+    const totalShown = counts.total || 0;
+    const segCards = [allSeg, ..._TOP_PLAYERS_SEGMENTS];
+    for (const s of segCards) {
+        const isAll = s.key === 'all';
+        const count = isAll ? totalShown : (counts[s.key] || 0);
+        const active = (_TOP_PLAYERS_STATE.segment.toLowerCase() === s.key.toLowerCase());
+        html += '<button type="button" onclick="_setTopPlayersFilter(\'segment\',\'' + s.key.toLowerCase() + '\')" style="background:' + (active ? 'rgba(' + _hexToRgb(s.color) + ',0.15)' : 'rgba(0,0,0,0.30)') + ';border:2px solid ' + (active ? s.color : 'rgba(255,255,255,0.10)') + ';border-radius:10px;padding:10px;text-align:left;cursor:pointer;color:#fff;">';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;"><span style="font-size:18px;">' + s.emoji + '</span><span style="color:' + s.color + ';font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:1px;">' + s.label + '</span></div>';
+        html += '<div style="color:#fff;font-size:22px;font-weight:900;">' + count.toLocaleString('es-AR') + '</div>';
+        html += '<div style="color:#888;font-size:10px;margin-top:2px;">' + s.desc + '</div>';
+        html += '</button>';
+    }
+    html += '</div>';
+
+    // Bulk notify (solo si filtro segment != all y hay con app)
+    if (_TOP_PLAYERS_STATE.segment !== 'all') {
+        const segUp = _TOP_PLAYERS_STATE.segment.toUpperCase();
+        const segMeta = _TOP_PLAYERS_SEGMENTS.find(s => s.key === segUp);
+        const eligible = players.filter(p => p.hasApp).length;
+        const noAppCount = players.filter(p => !p.hasApp).length;
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;">';
+        html += '<div style="font-size:12px;color:#ddd;">';
+        html += '<strong>' + eligible + '</strong> con app (push directo) · <strong>' + noAppCount + '</strong> sin app (WhatsApp por línea del equipo)';
+        html += '</div>';
+        if (eligible > 0) {
+            html += '<button type="button" onclick="_openTopPlayersNotifyModal(\'' + segUp + '\')" style="background:linear-gradient(135deg,#00d4ff,#0088ff);color:#000;border:none;padding:8px 14px;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer;">📲 Notificar ' + (segMeta ? segMeta.label : segUp) + ' con app (' + eligible + ')</button>';
+        }
+        html += '</div>';
+    }
+
+    // Tabla de jugadores
+    if (players.length === 0) {
+        html += '<div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">No hay jugadores en este segmento con los filtros aplicados.</div>';
+        return html;
+    }
+
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:65vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '<thead style="position:sticky;top:0;background:#2d0052;z-index:1;"><tr style="color:#d4af37;text-align:left;">';
+    html += '<th style="padding:8px 10px;font-weight:800;">#</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Estado</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Tier</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">App</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Equipo</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Cargas (período)</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">$ período</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Días sin carga</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">$ neto 30d</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Bonos 30d</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Acción</th>';
+    html += '</tr></thead><tbody>';
+
+    let idx = 1;
+    for (const p of players) {
+        const segMeta = _TOP_PLAYERS_SEGMENTS.find(s => s.key === p.segment) || { color: '#fff', emoji: '·', label: p.segment };
+        const tierColor = { VIP: '#ffd700', ORO: '#f0a060', PLATA: '#bbbbbb', BRONCE: '#cd7f32', NUEVO: '#66ff66', SIN_DATOS: '#666' }[p.tier] || '#888';
+        const opp = p.isOpportunist ? ' <span title="Oportunista" style="color:#ff8080;font-size:11px;">⚠️</span>' : '';
+        const wa = p.linePhone ? '<a href="https://wa.me/' + encodeURIComponent(p.linePhone.replace(/[^\d]/g, '')) + '" target="_blank" style="color:#25D366;text-decoration:none;font-weight:700;">📞</a>' : '';
+        const dni = p.daysSinceLastDeposit;
+        const dniStr = dni == null ? 'nunca' : (dni + ' día' + (dni === 1 ? '' : 's'));
+
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:8px 10px;color:#666;">' + idx + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(p.username) + opp + '</td>';
+        html += '<td style="padding:8px 10px;color:' + segMeta.color + ';font-weight:800;font-size:11px;">' + segMeta.emoji + ' ' + segMeta.label + '</td>';
+        html += '<td style="padding:8px 10px;color:' + tierColor + ';font-weight:800;">' + (p.tier || '—') + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;">' + (p.hasApp ? '<span style="color:#66ff66;font-weight:800;">✅</span>' : '<span style="color:#888;">❌</span>') + '</td>';
+        html += '<td style="padding:8px 10px;color:#ddd;font-size:10.5px;">' + (p.team ? escapeHtml(p.team) : '<span style="color:#666;">—</span>') + ' ' + wa + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;text-align:right;font-weight:700;">' + (p.chargesInPeriod || 0) + '</td>';
+        html += '<td style="padding:8px 10px;color:#d4af37;text-align:right;font-weight:800;white-space:nowrap;">' + _fmtMoney(p.depositsInPeriod) + '</td>';
+        html += '<td style="padding:8px 10px;color:' + (dni == null ? '#888' : (dni > 19 ? '#888' : (dni > 9 ? '#ff8080' : (dni > 4 ? '#ffaa66' : '#66ff66')))) + ';text-align:center;font-weight:800;">' + dniStr + '</td>';
+        html += '<td style="padding:8px 10px;color:' + ((p.netToHouse30d || 0) >= 0 ? '#66ff66' : '#ff8080') + ';text-align:right;font-weight:700;white-space:nowrap;">' + _fmtMoney(p.netToHouse30d) + '</td>';
+        html += '<td style="padding:8px 10px;color:#aaa;text-align:right;white-space:nowrap;">' + _fmtMoney(p.bonusGiven30d) + (p.roiPerBonus != null ? '<div style="color:#666;font-size:10px;">ROI ' + (p.roiPerBonus.toFixed(1)) + 'x</div>' : '') + '</td>';
+        html += '<td style="padding:6px;text-align:center;white-space:nowrap;">';
+        html += '<button type="button" onclick="_topPlayerDetail(' + escapeJsArg(p.username) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer;">Ver</button>';
+        html += '</td>';
+        html += '</tr>';
+        idx++;
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
+function _hexToRgb(hex) {
+    const h = String(hex || '#fff').replace('#', '');
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    return r + ',' + g + ',' + b;
+}
+
+function _topPlayerDetail(username) {
+    const d = _TOP_PLAYERS_STATE.data;
+    if (!d) return;
+    const p = (d.players || []).find(x => x.username === username);
+    if (!p) return;
+    const last = p.lastRealDepositDate ? new Date(p.lastRealDepositDate).toLocaleString('es-AR') : 'nunca';
+    const seenApp = p.lastSeenApp ? new Date(p.lastSeenApp).toLocaleString('es-AR') : 'nunca';
+    const lines = [
+        '👤 ' + p.username + (p.name ? ' (' + p.name + ')' : ''),
+        '',
+        '📊 Segmento: ' + p.segment + ' · Tier: ' + p.tier + ' · ' + p.activityStatus,
+        '📱 App: ' + (p.hasApp ? 'INSTALADA ✅' : 'NO instalada ❌') + ' · Última visita: ' + seenApp,
+        '👥 Equipo: ' + (p.team || '—') + (p.linePhone ? ' (línea ' + p.linePhone + ')' : ''),
+        '📞 Teléfono: ' + (p.phone || '—'),
+        '',
+        '— CARGAS REALES —',
+        'Última carga: ' + last + ' (' + (p.daysSinceLastDeposit == null ? 'nunca' : p.daysSinceLastDeposit + 'd atrás') + ')',
+        'Período seleccionado: ' + p.chargesInPeriod + ' cargas · $' + (p.depositsInPeriod || 0).toLocaleString('es-AR'),
+        'Última semana: ' + p.chargesLast7d + ' cargas · $' + (p.depositsLast7d || 0).toLocaleString('es-AR'),
+        'Últimos 30 días: ' + p.realChargesCount30d + ' cargas · $' + (p.realDeposits30d || 0).toLocaleString('es-AR'),
+        '',
+        '— BONOS RECIBIDOS —',
+        'Total: ' + p.bonusClaimsCount + ' bonos · $' + (p.bonusClaimsTotal || 0).toLocaleString('es-AR'),
+        '$ Bonos 30d: ' + (p.bonusGiven30d || 0).toLocaleString('es-AR'),
+        'Neto a la casa 30d: $' + (p.netToHouse30d || 0).toLocaleString('es-AR'),
+        'ROI por bono: ' + (p.roiPerBonus != null ? p.roiPerBonus.toFixed(2) + 'x' : '—'),
+        p.isOpportunist ? '⚠️ FLAGGED: oportunista (reclama bonos sin cargar)' : '',
+        '',
+        '— RECUPERACIÓN —',
+        'Pushes lifetime: ' + p.recoveryAttemptsLifetime,
+        'Último push: ' + (p.lastRecoveryPushAt ? new Date(p.lastRecoveryPushAt).toLocaleString('es-AR') : 'nunca')
+    ].filter(Boolean).join('\n');
+    alert(lines);
+}
+
+function _openTopPlayersNotifyModal(segment) {
+    let modal = document.getElementById('topPlayersNotifyModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'topPlayersNotifyModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:center;justify-content:center;padding:14px;';
+    const segMeta = _TOP_PLAYERS_SEGMENTS.find(s => s.key === segment) || { label: segment, color: '#fff' };
+    const teamLabel = _TOP_PLAYERS_STATE.team ? ' del equipo ' + _TOP_PLAYERS_STATE.team : '';
+    modal.innerHTML =
+        '<div style="background:#1a0033;border:2px solid ' + segMeta.color + ';border-radius:12px;max-width:480px;width:100%;padding:18px;">' +
+        '  <h3 style="color:' + segMeta.color + ';margin:0 0 6px;font-size:16px;">📲 Notificar a ' + segMeta.label + teamLabel + '</h3>' +
+        '  <div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">Push masivo solo a los que tienen la app instalada con notificaciones activas. Los sin app NO reciben (para esos usá WhatsApp por la línea del equipo).</div>' +
+        '  <label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Título</label>' +
+        '  <input id="topNotifyTitle" type="text" maxlength="80" placeholder="Ej: Te extrañamos 🎁" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 10px;box-sizing:border-box;">' +
+        '  <label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Mensaje</label>' +
+        '  <textarea id="topNotifyBody" maxlength="240" placeholder="Volvé hoy y te damos $X. Hasta las 23:59." style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 12px;box-sizing:border-box;min-height:75px;resize:vertical;"></textarea>' +
+        '  <div style="display:flex;gap:8px;">' +
+        '    <button type="button" onclick="document.getElementById(\'topPlayersNotifyModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+        '    <button type="button" onclick="_sendTopPlayersNotify(\'' + segment + '\')" style="flex:2;background:linear-gradient(135deg,' + segMeta.color + ',#00d4ff);color:#000;border:none;padding:10px;border-radius:6px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">📤 Enviar push</button>' +
+        '  </div>' +
+        '</div>';
+    document.body.appendChild(modal);
+    setTimeout(() => { try { document.getElementById('topNotifyTitle').focus(); } catch (_) {} }, 100);
+}
+
+async function _sendTopPlayersNotify(segment) {
+    const title = (document.getElementById('topNotifyTitle')?.value || '').trim();
+    const body = (document.getElementById('topNotifyBody')?.value || '').trim();
+    if (!title || !body) { alert('Falta título o mensaje'); return; }
+    if (!confirm('Enviar push a TODOS los jugadores ' + segment + (_TOP_PLAYERS_STATE.team ? ' del equipo ' + _TOP_PLAYERS_STATE.team : '') + ' con app?')) return;
+    try {
+        const r = await authFetch('/api/admin/players/segments/notify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                segment,
+                team: _TOP_PLAYERS_STATE.team || null,
+                tier: _TOP_PLAYERS_STATE.tier || null,
+                title,
+                body
+            })
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo enviar')); return; }
+        alert('✅ Push enviado\n\nElegibles: ' + d.eligible + '\nEnviadas: ' + d.sent + '\nFallidas: ' + (d.failed || 0));
+        document.getElementById('topPlayersNotifyModal')?.remove();
+    } catch (e) {
+        alert('Error de conexión');
+    }
 }

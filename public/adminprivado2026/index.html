@@ -109,6 +109,10 @@
                     <span>🏆</span>
                     <span>Top estadísticas</span>
                 </a>
+                <a href="#" class="nav-item" data-section="topPlayers">
+                    <span>🔥</span>
+                    <span>Top jugadores</span>
+                </a>
                 <a href="#" class="nav-item" data-section="teams">
                     <span>📊</span>
                     <span>Equipos</span>
@@ -819,6 +823,29 @@
                     Tocá <strong>🔍 Revalidar tokens</strong> para forzar el chequeo ahora (detecta apps desinstaladas en tiempo real).
                 </div>
                 <div id="welcomeBonusReportContent" class="report-content">
+                    <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: TOP JUGADORES — segmentacion custom
+                 (calientes / en riesgo / perdidos / inactivos)
+                 con filtros por periodo, equipo, app y tier.
+                 ============================================ -->
+            <section id="topPlayersSection" class="section">
+                <div class="panel-header">
+                    <h2>🔥 Top jugadores</h2>
+                    <button class="refresh-btn" onclick="loadTopPlayers()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(255,107,53,0.06);border:1px solid rgba(255,107,53,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
+                        Segmentación por <strong style="color:#ff6b35;">cargas reales</strong> en JUGAYGANA.
+                        Calientes = 10+ cargas última semana · En riesgo = sin carga 5-9 días · Perdidos = 10-19 días · Inactivos = 20+ días.
+                        Filtrá por <strong>período</strong> (semana del mes / mes completo), <strong>equipo</strong>, <strong>app instalada</strong> y <strong>tier</strong>.
+                        Para jugadores con app: bulk push directo. Para los sin app: WhatsApp por la línea del equipo.
+                    </p>
+                </div>
+                <div id="topPlayersContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
