@@ -69,6 +69,15 @@ const strategySchema = new mongoose.Schema({
   targetTeams: { type: [String], default: [] }, // si vacio, todos los equipos
   hasAppOnly: { type: Boolean, default: true }, // por default solo a los con app
 
+  // Para type='refund': qué tipos de reembolso incluir (cualquiera con
+  // claim disponible HOY). Default = los 3 (diario/semanal/mensual). El
+  // service refundReminderService computa quien tiene cada tipo, los
+  // unimos en la audiencia final.
+  refundTypes: {
+    type: [{ type: String, enum: ['daily', 'weekly', 'monthly'] }],
+    default: ['daily', 'weekly', 'monthly']
+  },
+
   // Estado.
   status: { type: String, enum: ['pendiente', 'lanzando', 'lanzado', 'completado', 'cancelado'], default: 'pendiente', index: true },
 

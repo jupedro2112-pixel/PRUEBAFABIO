@@ -4325,9 +4325,20 @@ function _renderStrategyCard(s) {
         html += '</div>';
     }
 
+    // Linea de tipos para refund: chips con cada tipo activo (daily/weekly/monthly)
+    if (s.type === 'refund' && s.refundTypes && s.refundTypes.length > 0) {
+        const labels = { daily: '📅 Diario', weekly: '📆 Semanal', monthly: '🗓 Mensual' };
+        html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">';
+        for (const t of s.refundTypes) {
+            html += '<span style="background:rgba(212,175,55,0.10);color:#ffd700;border:1px solid rgba(212,175,55,0.30);padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">' + (labels[t] || t) + '</span>';
+        }
+        html += '</div>';
+    }
+
     html += '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
     if (s.status === 'pendiente') {
         html += '<button onclick="_calLaunchStrategy(' + escapeJsArg(s.id) + ')" style="flex:1;background:linear-gradient(135deg,#ff5050,#ff8080);color:#fff;border:none;padding:6px;border-radius:5px;font-weight:900;font-size:10.5px;cursor:pointer;letter-spacing:0.5px;">🚀 Lanzar</button>';
+        html += '<button onclick="_calPreviewAudience(' + escapeJsArg(s.id) + ')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;" title="Ver destinatarios">👥</button>';
         html += '<button onclick="_calOpenStratModal(' + s.dayIndex + ', ' + escapeJsArg(s.id) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">✏</button>';
         if (!s.isPinned) {
             html += '<button onclick="_calDeleteStrategy(' + escapeJsArg(s.id) + ')" style="background:rgba(255,80,80,0.10);color:#ff5050;border:1px solid rgba(255,80,80,0.30);padding:6px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">✖</button>';
@@ -4402,7 +4413,18 @@ function _calOpenStratModal(dayIndex, editingId) {
         '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Equipos (vacío = todos)</label>' +
         '<select id="cal_teams" multiple size="4" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin:3px 0 8px;">' + teamsOpts + '</select>' +
 
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;"><input id="cal_hasApp" type="checkbox" ' + (!editing || editing.hasAppOnly ? 'checked' : '') + '><label for="cal_hasApp" style="color:#aaa;font-size:11px;">Solo enviar a usuarios con app instalada (recomendado)</label></div>' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;"><input id="cal_hasApp" type="checkbox" ' + (!editing || editing.hasAppOnly ? 'checked' : '') + '><label for="cal_hasApp" style="color:#aaa;font-size:11px;">Solo enviar a usuarios con app instalada (recomendado)</label></div>' +
+
+        // refundTypes solo visible si type=refund (lo togglea el handler abajo)
+        '<div id="cal_refundTypesBox" style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:6px;padding:8px;margin-bottom:12px;display:' + ((editing && editing.type === 'refund') ? 'block' : 'none') + ';">' +
+        '  <div style="color:#ffd700;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px;">Tipos de reembolso a incluir</div>' +
+        '  <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:#ddd;">' +
+        '    <label><input id="cal_rt_daily" type="checkbox" ' + ((!editing || (editing.refundTypes || ['daily','weekly','monthly']).includes('daily')) ? 'checked' : '') + '> 📅 Diario</label>' +
+        '    <label><input id="cal_rt_weekly" type="checkbox" ' + ((!editing || (editing.refundTypes || ['daily','weekly','monthly']).includes('weekly')) ? 'checked' : '') + '> 📆 Semanal</label>' +
+        '    <label><input id="cal_rt_monthly" type="checkbox" ' + ((!editing || (editing.refundTypes || ['daily','weekly','monthly']).includes('monthly')) ? 'checked' : '') + '> 🗓 Mensual</label>' +
+        '  </div>' +
+        '  <div style="color:#888;font-size:10px;margin-top:5px;line-height:1.5;">Audiencia automática: union de usuarios con cada tipo pendiente HOY (con cargas y sin reclamar todavía).</div>' +
+        '</div>' +
 
         '<div style="display:flex;gap:8px;">' +
         '<button onclick="document.getElementById(\'calStratModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
@@ -4410,6 +4432,14 @@ function _calOpenStratModal(dayIndex, editingId) {
         '</div>' +
         '</div>';
     document.body.appendChild(modal);
+    // Toggle refundTypes box cuando cambia el type
+    const typeSel = document.getElementById('cal_type');
+    if (typeSel) {
+        typeSel.addEventListener('change', () => {
+            const box = document.getElementById('cal_refundTypesBox');
+            if (box) box.style.display = (typeSel.value === 'refund') ? 'block' : 'none';
+        });
+    }
 }
 
 const _DAYS_FULL_CLIENT = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
@@ -4423,6 +4453,10 @@ function _calFindStrategy(id) {
 
 async function _calSaveStrategy(dayIndex, editingId) {
     const get = (id) => document.getElementById(id);
+    const refundTypes = [];
+    if (get('cal_rt_daily')?.checked) refundTypes.push('daily');
+    if (get('cal_rt_weekly')?.checked) refundTypes.push('weekly');
+    if (get('cal_rt_monthly')?.checked) refundTypes.push('monthly');
     const body = {
         type: get('cal_type').value,
         title: get('cal_title').value.trim(),
@@ -4432,8 +4466,13 @@ async function _calSaveStrategy(dayIndex, editingId) {
         targetTier: get('cal_tier').value || null,
         targetTeams: Array.from(get('cal_teams').selectedOptions).map(o => o.value),
         hasAppOnly: get('cal_hasApp').checked,
+        refundTypes,
         dayIndex
     };
+    if (body.type === 'refund' && refundTypes.length === 0) {
+        alert('Para refund necesitás al menos 1 tipo (diario / semanal / mensual)');
+        return;
+    }
     if (!body.title || !body.body) { alert('Falta título o mensaje'); return; }
     if (body.bonusPercent > 0 && body.bonusPercent < 50) { alert('El bono mínimo es 50%'); return; }
     const wk = _CAL_STATE.weekKey;
@@ -4491,6 +4530,180 @@ async function _calRefreshPerf(id) {
         if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo')); return; }
         await loadCalendarPlan(wk);
     } catch (e) { alert('Error de conexión'); }
+}
+
+// ============================================================
+// QUICK LAUNCH (presets de Lanzar ahora)
+// ============================================================
+function _quickLaunchPresetOpen(cfgJson, label) {
+    let cfg;
+    try { cfg = (typeof cfgJson === 'string') ? JSON.parse(cfgJson) : cfgJson; } catch (_) { cfg = cfgJson; }
+    if (!cfg) return;
+    let modal = document.getElementById('quickLaunchModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'quickLaunchModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:center;justify-content:center;padding:14px;overflow-y:auto;';
+    const tierChecks = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].map(t =>
+        '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#ddd;"><input type="checkbox" id="ql_t_' + t + '"' + ((cfg.tiers || []).includes(t) ? ' checked' : '') + '> ' + t + '</label>'
+    ).join(' ');
+
+    modal.innerHTML =
+        '<div style="background:#1a0033;border:2px solid #ffaa44;border-radius:14px;max-width:560px;width:100%;padding:18px 16px;">' +
+        '<h3 style="color:#ffaa44;margin:0 0 4px;font-size:16px;">⚡ ' + escapeHtml(label) + '</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-bottom:12px;">Editá lo que quieras y tocá <strong>Lanzar ahora</strong>. Queda registrado en el calendario semanal con su rendimiento.</div>' +
+
+        '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Título</label>' +
+        '<input id="ql_title" type="text" maxlength="80" value="' + escapeHtml(cfg.title || '') + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:6px;margin:3px 0 8px;box-sizing:border-box;">' +
+
+        '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Mensaje</label>' +
+        '<textarea id="ql_body" maxlength="240" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:6px;margin:3px 0 10px;box-sizing:border-box;min-height:65px;resize:vertical;">' + escapeHtml(cfg.body || '') + '</textarea>' +
+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">' +
+        '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Bono %</label><input id="ql_bonus" type="number" min="0" max="100" step="5" value="' + (cfg.bonusPercent || 0) + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin-top:3px;"><div style="color:#666;font-size:10px;margin-top:2px;">0% = sin bono · mín 50% si hay</div></div>' +
+        '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Segmento</label>' +
+        '<select id="ql_segment" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px;border-radius:5px;margin-top:3px;">' +
+        ['all','caliente','en_riesgo','perdido','inactivo','activo'].map(s => '<option value="' + s + '"' + (cfg.targetSegment === s ? ' selected' : '') + '>' + s.toUpperCase() + '</option>').join('') +
+        '</select></div>' +
+        '</div>' +
+
+        '<label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Tiers (vacío = todos)</label>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:10px;margin:5px 0 12px;padding:8px;background:rgba(0,0,0,0.30);border-radius:6px;">' + tierChecks + '</div>' +
+
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;"><input id="ql_hasApp" type="checkbox" ' + (cfg.hasAppOnly !== false ? 'checked' : '') + '><label for="ql_hasApp" style="color:#aaa;font-size:11px;">Solo a usuarios con app instalada</label></div>' +
+
+        '<div style="display:flex;gap:8px;">' +
+        '<button onclick="document.getElementById(\'quickLaunchModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+        '<button onclick="_quickLaunchExecute()" style="flex:2;background:linear-gradient(135deg,#ff5050,#ff8888);color:#fff;border:none;padding:10px;border-radius:6px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🚀 LANZAR AHORA</button>' +
+        '</div></div>';
+    document.body.appendChild(modal);
+}
+
+async function _quickLaunchExecute() {
+    const get = (id) => document.getElementById(id);
+    const tiers = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].filter(t => get('ql_t_' + t)?.checked);
+    const body = {
+        title: get('ql_title').value.trim(),
+        body: get('ql_body').value.trim(),
+        bonusPercent: parseInt(get('ql_bonus').value, 10) || 0,
+        type: 'bonus',
+        targetSegment: get('ql_segment').value,
+        tiers,
+        targetTeams: [],
+        hasAppOnly: get('ql_hasApp').checked
+    };
+    if (!body.title || !body.body) { alert('Falta título o mensaje'); return; }
+    if (body.bonusPercent > 0 && body.bonusPercent < 50) { alert('El bono mínimo es 50%'); return; }
+    if (!confirm('¿Lanzar AHORA?\n\nSegmento: ' + body.targetSegment.toUpperCase() + (tiers.length ? ' · Tiers: ' + tiers.join('+') : ' · todos los tiers') + '\nBono: ' + (body.bonusPercent || 'sin bono') + (body.bonusPercent ? '%' : ''))) return;
+
+    try {
+        const r = await authFetch('/api/admin/calendar/quick-launch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('Error: ' + (d.error || 'no se pudo lanzar')); return; }
+        alert('🚀 Lanzado\n\nElegibles: ' + d.eligible + '\nEnviadas: ' + d.sent + '\nFallidas: ' + (d.failed || 0) + '\n\n📊 Quedó registrado en el calendario semanal — entrá ahí y tocá "Refrescar rendimiento" en unas horas para ver el ROI.');
+        document.getElementById('quickLaunchModal')?.remove();
+    } catch (e) {
+        alert('Error de conexión');
+    }
+}
+
+async function _calPreviewAudience(id) {
+    const wk = _CAL_STATE.weekKey;
+    const s = _calFindStrategy(id);
+    if (!s) return;
+    let modal = document.getElementById('calPreviewModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'calPreviewModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.innerHTML = '<div style="background:#1a0033;border:2px solid #00d4ff;border-radius:14px;max-width:680px;width:100%;margin:8px auto;padding:18px 16px;"><h3 style="color:#00d4ff;margin:0 0 6px;font-size:16px;">👥 Destinatarios — ' + escapeHtml(s.title) + '</h3><div id="calPreviewBody" style="color:#aaa;text-align:center;padding:30px;">⏳ Calculando audiencia…</div><div style="display:flex;gap:8px;margin-top:12px;"><button onclick="document.getElementById(\'calPreviewModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button></div></div>';
+    document.body.appendChild(modal);
+
+    try {
+        const r = await authFetch('/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(id) + '/preview?limit=300');
+        const d = await r.json();
+        if (!r.ok) {
+            document.getElementById('calPreviewBody').innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>';
+            return;
+        }
+
+        let html = '';
+        // Resumen
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:10px;">';
+        html += '<div style="font-size:13px;color:#fff;font-weight:800;">Total a recibir: <span style="color:#00d4ff;font-size:20px;">' + d.total + '</span> usuarios</div>';
+
+        // Si es refund, mostrar desglose por tipo
+        if (d.type === 'refund' && d.breakdown && d.breakdown.byType) {
+            html += '<div style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:6px;">';
+            const labels = { daily: '📅 Diario', weekly: '📆 Semanal', monthly: '🗓 Mensual' };
+            for (const t of Object.keys(d.breakdown.byType)) {
+                const b = d.breakdown.byType[t];
+                if (b.error) {
+                    html += '<div style="background:rgba(255,80,80,0.10);border-radius:6px;padding:8px;font-size:11px;"><strong>' + (labels[t] || t) + '</strong><br><span style="color:#ff8080;">Error: ' + escapeHtml(b.error) + '</span></div>';
+                } else {
+                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;">';
+                    html += '<div style="color:#ffd700;font-weight:800;">' + (labels[t] || t) + '</div>';
+                    html += '<div style="color:#aaa;">Elegibles: <strong style="color:#fff;">' + (b.eligible || 0) + '</strong></div>';
+                    html += '<div style="color:#aaa;">Sin app: ' + (b.withoutChannel || 0) + '</div>';
+                    html += '<div style="color:#aaa;">Ya reclamaron: ' + (b.alreadyClaimed || 0) + '</div>';
+                    html += '<div style="color:#66ff66;font-weight:700;">Quedan: ' + (b.finalAudience || 0) + '</div>';
+                    html += '<div style="color:#666;font-size:9px;margin-top:3px;">period: ' + (b.periodKey || '—') + '</div>';
+                    html += '</div>';
+                }
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Lista de usuarios
+        const sample = d.sample || [];
+        if (sample.length === 0) {
+            html += '<div style="text-align:center;padding:20px;color:#888;">No hay destinatarios con los filtros actuales.</div>';
+        } else {
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;max-height:50vh;overflow-y:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+            html += '<thead style="position:sticky;top:0;background:#2d0052;"><tr style="color:#00d4ff;text-align:left;">';
+            html += '<th style="padding:7px 9px;font-weight:800;">Usuario</th>';
+            if (d.type === 'refund') {
+                html += '<th style="padding:7px 9px;font-weight:800;">Tipos pendientes</th>';
+                html += '<th style="padding:7px 9px;font-weight:800;text-align:right;">$ a reclamar</th>';
+            } else {
+                html += '<th style="padding:7px 9px;font-weight:800;">Segmento</th>';
+                html += '<th style="padding:7px 9px;font-weight:800;">Tier</th>';
+                html += '<th style="padding:7px 9px;font-weight:800;text-align:right;">Días sin carga</th>';
+            }
+            html += '<th style="padding:7px 9px;font-weight:800;">Equipo</th>';
+            html += '</tr></thead><tbody>';
+            const tlabels = { daily: '📅', weekly: '📆', monthly: '🗓' };
+            for (const u of sample) {
+                html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
+                html += '<td style="padding:6px 9px;color:#fff;font-weight:600;">' + escapeHtml(u.username) + '</td>';
+                if (d.type === 'refund') {
+                    html += '<td style="padding:6px 9px;color:#ddd;">' + ((u.types || []).map(t => tlabels[t] || t).join(' ')) + '</td>';
+                    html += '<td style="padding:6px 9px;color:#d4af37;text-align:right;font-weight:800;">' + _fmtMoney(u.potentialAmount) + '</td>';
+                } else {
+                    html += '<td style="padding:6px 9px;color:#aaa;">' + escapeHtml(u.segment || '—') + '</td>';
+                    html += '<td style="padding:6px 9px;color:#aaa;">' + escapeHtml(u.tier || '—') + '</td>';
+                    html += '<td style="padding:6px 9px;color:#aaa;text-align:right;">' + (u.daysSinceLastDeposit == null ? '—' : u.daysSinceLastDeposit + 'd') + '</td>';
+                }
+                html += '<td style="padding:6px 9px;color:#aaa;font-size:10px;">' + (u.lineTeamName ? escapeHtml(u.lineTeamName) : '—') + '</td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+            if (d.truncated) {
+                html += '<div style="color:#666;font-size:10px;text-align:center;margin-top:6px;">Mostrando primeros ' + sample.length + ' de ' + d.total + '. Al lanzar van todos.</div>';
+            }
+        }
+
+        document.getElementById('calPreviewBody').innerHTML = html;
+    } catch (e) {
+        const body = document.getElementById('calPreviewBody');
+        if (body) body.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>';
+    }
 }
 
 function _calViewDetail(id) {
@@ -6644,6 +6857,71 @@ function _adhocRenderTab() {
     html += '<br><span style="color:#ffc850;">Respeta cap semanal (' + (typeof _strategyConfigCache !== "undefined" && _strategyConfigCache ? _strategyConfigCache.capPerUserPerWeek : 2) + ') + cooldown — los que ya recibieron 2 pushes esta semana NO se les manda.</span>';
     html += '</div>';
     html += '</div>';
+
+    // ============ PRESETS RAPIDOS ============
+    html += '<div style="background:linear-gradient(135deg,rgba(255,170,68,0.08),rgba(255,80,80,0.06));border:1px solid rgba(255,170,68,0.40);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px;">';
+    html += '<div><div style="color:#ffaa44;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;">⚡ Presets rápidos · 1 click</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-top:2px;">Sin análisis previo — directo al destinatario. Editable antes de lanzar.</div></div>';
+    html += '</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px;">';
+    const presets = [
+        {
+            id: 'p_50_perdedores_chicos',
+            label: '🎁 50% bono · perdedores chicos',
+            sub: 'BRONCE + PLATA · PERDIDO',
+            color: '#ffaa66',
+            cfg: {
+                title: '🎁 50% extra para vos',
+                body: 'Cargá HOY y te duplicamos un 50% de lo que pongas. Volvé a jugar, esta vez ganás. Hasta las 23:59.',
+                bonusPercent: 50, type: 'bonus',
+                targetSegment: 'perdido', tiers: ['BRONCE', 'PLATA'], hasAppOnly: true
+            }
+        },
+        {
+            id: 'p_100_inactivos',
+            label: '🚀 100% bono · inactivos top',
+            sub: 'ORO + VIP · INACTIVO',
+            color: '#ff5050',
+            cfg: {
+                title: '🔥 Te duplicamos lo que cargues',
+                body: 'Hace tiempo no te vemos. Volvé hoy y te ponemos el doble. 100% extra sobre lo que cargues. Ahora.',
+                bonusPercent: 100, type: 'bonus',
+                targetSegment: 'inactivo', tiers: ['ORO', 'VIP'], hasAppOnly: true
+            }
+        },
+        {
+            id: 'p_75_riesgo',
+            label: '⚠️ 75% bono · en riesgo',
+            sub: 'Todos los tiers · EN RIESGO',
+            color: '#ffd700',
+            cfg: {
+                title: '⏳ No te alejes — bono del 75%',
+                body: 'Te tenemos un regalo. Cargá hoy y te ponemos un 75% extra. Quedan horas, aprovechalo.',
+                bonusPercent: 75, type: 'bonus',
+                targetSegment: 'en_riesgo', tiers: [], hasAppOnly: true
+            }
+        },
+        {
+            id: 'p_calientes_gracias',
+            label: '👑 Mensaje VIP a calientes',
+            sub: 'Sin bono · agradecimiento',
+            color: '#66ff66',
+            cfg: {
+                title: '👑 Sos VIP — gracias por estar',
+                body: 'Sos uno de los que mantienen esto andando. Te tenemos preparada una sorpresa esta semana, atento al chat.',
+                bonusPercent: 0, type: 'push',
+                targetSegment: 'caliente', tiers: [], hasAppOnly: true
+            }
+        }
+    ];
+    for (const p of presets) {
+        html += '<button onclick="_quickLaunchPresetOpen(' + escapeJsArg(JSON.stringify(p.cfg)) + ', ' + escapeJsArg(p.label) + ')" style="background:rgba(0,0,0,0.40);border:1px solid ' + p.color + ';border-radius:8px;padding:10px;text-align:left;color:#fff;cursor:pointer;display:flex;flex-direction:column;gap:3px;">';
+        html += '<span style="color:' + p.color + ';font-weight:800;font-size:12px;">' + p.label + '</span>';
+        html += '<span style="color:#aaa;font-size:10.5px;">' + p.sub + '</span>';
+        html += '</button>';
+    }
+    html += '</div></div>';
 
     // ============ FORM DE ANÁLISIS ============
     html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:16px;margin-bottom:14px;">';

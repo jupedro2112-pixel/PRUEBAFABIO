@@ -15143,11 +15143,18 @@ function _weekStartFromKey(weekKey) {
 }
 
 // Auto-fija una strategy "refund" en CADA dia de la semana si todavia no
-// existe una. Esto satisface el pedido del owner: "fijo siempre el msj
-// del reembolso" — diario, semanal o mensual segun lo que el user tenga
-// para reclamar (la audiencia se evalua al lanzar).
+// existe una. Satisface "fijo siempre el msj del reembolso" del owner:
+// la audiencia es la UNION de quienes tienen reembolso pendiente
+// (daily/weekly/monthly) HOY — el cron de refundReminderService ya sabe
+// quienes son. Copy pre-configurado pero editable.
 async function _ensureRefundPinnedDaily(plan) {
   let added = 0;
+  // El "lunes" es el primer dia de la semana (dayIndex=0). El sabado=5,
+  // domingo=6. Pre-llenamos copy especifico segun el dia de la semana
+  // — los lunes resaltamos el reembolso semanal (que se calcula los
+  // lunes), el dia 1 del mes el monthly. Pero el resto el daily.
+  // Como esto se ejecuta una vez al crear el plan, dejamos copy generico
+  // que cubre los 3 tipos.
   for (let i = 0; i < 7; i++) {
     let day = plan.days.find(d => d.dayIndex === i);
     if (!day) {
@@ -15156,21 +15163,37 @@ async function _ensureRefundPinnedDaily(plan) {
     }
     const hasRefund = (day.strategies || []).some(s => s.type === 'refund' && s.isPinned);
     if (!hasRefund) {
+      // Copy pre-terminado pensado para HOY:
+      //   - Lunes: hablamos de reembolso semanal (cierre del sabado/domingo)
+      //   - Dia 1: hablamos de reembolso mensual
+      //   - Resto: reembolso diario (perdida del dia anterior)
+      // El admin puede editar despues.
+      let title, body;
+      if (i === 0) {
+        // Lunes
+        title = '💰 Tu reembolso semanal te espera';
+        body = 'Cerramos la semana — si jugaste y no ganaste, tu reembolso ya está disponible. Entrá a la app y reclamalo antes de que se pierda.';
+      } else {
+        // Resto de la semana: reembolso diario + cualquier semanal/mensual pendiente
+        title = '💰 Tenés reembolso disponible HOY';
+        body = 'No te lo lleves a perder. Pasá por la app, tocá Reclamar y te devolvemos lo que te corresponde.';
+      }
       day.strategies.push({
         id: uuidv4(),
         dayIndex: i,
         order: 0,
         type: 'refund',
-        title: '💰 Tenés reembolso para reclamar',
-        body: 'Cargaste y no ganaste hoy. Te devolvemos parte de lo que jugaste — entrá a la app y tocá Reclamar.',
+        title,
+        body,
         bonusPercent: 0,
         targetSegment: 'all',
         targetTier: null,
         targetTeams: [],
         hasAppOnly: true,
+        refundTypes: ['daily', 'weekly', 'monthly'],
         status: 'pendiente',
         isPinned: true,
-        notes: 'Auto-fijo todos los días: notifica solo a usuarios que tengan reembolso disponible (diario / semanal / mensual segun corresponda). Editable, no se elimina.'
+        notes: 'Difusion pre-configurada y FIJA. Audiencia automatica: usuarios con reembolso pendiente (diario/semanal/mensual) HOY, con app instalada y notifs activas, sin clamar todavia el periodo actual. Tocá "Ver destinatarios" para previsualizar exactamente a quien le llega antes de lanzar. El copy es editable, los filtros tambien.'
       });
       added++;
     }
@@ -15217,18 +15240,93 @@ function _recalcPlanSummary(plan) {
   };
 }
 
-// Resuelve la audiencia (lista de usernames) para una strategy en el
-// momento del lanzamiento. Combina segmento custom + tier + equipos +
-// hasApp filter. Reusa la logica de _computeCustomSegment.
+// Resuelve audiencia para una strategy. Si type='refund', delegamos al
+// refundReminderService que ya sabe quien tiene reembolso disponible
+// para reclamar HOY (cruzando DailyPlayerStats con netLoss > 0 y
+// RefundClaim ausente para el periodKey actual). Soporta union de los
+// 3 tipos (daily+weekly+monthly) para que un push diario alcance a
+// cualquiera con algo pendiente.
+//
+// Para tipos push/bonus, segmentamos por segmento custom + tier + equipo.
+//
+// Devuelve { usernames: [...], breakdown: {...debugInfo} } para que el
+// preview muestre desgloses utiles al admin.
 async function _resolveStrategyAudience(strategy) {
+  // ====== refund: delega al service ======
+  if (strategy.type === 'refund') {
+    const types = (strategy.refundTypes && strategy.refundTypes.length > 0)
+      ? strategy.refundTypes
+      : ['daily', 'weekly', 'monthly'];
+    const teamFilter = (strategy.targetTeams && strategy.targetTeams.length === 1)
+      ? strategy.targetTeams[0]
+      : null; // si hay multiples, filtramos despues
+    const teamsAllowed = (strategy.targetTeams && strategy.targetTeams.length > 0)
+      ? new Set(strategy.targetTeams)
+      : null;
+
+    const breakdown = { byType: {}, totalUnique: 0 };
+    const allUsers = new Map(); // lower(username) -> { username, types: [], lineTeamName, potentialAmount }
+
+    for (const t of types) {
+      try {
+        const r = await refundReminderService.computeRefundReminderAudience({
+          type: t,
+          teamFilter, // si hay UN solo team, podemos filtrar a nivel service
+          models: _strategyModels,
+          weeklyService: weeklyStrategyService,
+          logger
+        });
+        breakdown.byType[t] = {
+          eligible: r.totals.eligible,
+          alreadyClaimed: r.totals.alreadyClaimed,
+          withoutChannel: r.totals.withoutChannel,
+          finalAudience: r.totals.finalAudience,
+          periodKey: r.periodKey,
+          windowFrom: r.window && r.window.start,
+          windowTo: r.window && r.window.end
+        };
+        for (const u of (r.perUser || [])) {
+          // Multi-team filter (si hay >= 2 teams, lo aplicamos aca).
+          if (teamsAllowed && teamsAllowed.size > 0 && !teamsAllowed.has(u.lineTeamName)) continue;
+          const k = String(u.username).toLowerCase();
+          if (!allUsers.has(k)) {
+            allUsers.set(k, {
+              username: u.username,
+              types: [t],
+              lineTeamName: u.lineTeamName,
+              potentialAmount: u.potentialAmount || 0
+            });
+          } else {
+            const e = allUsers.get(k);
+            if (!e.types.includes(t)) e.types.push(t);
+            // Sumar el potential de todos los tipos.
+            e.potentialAmount = (e.potentialAmount || 0) + (u.potentialAmount || 0);
+          }
+        }
+      } catch (e) {
+        logger.warn(`[calendar refund-audience] type=${t} fail: ${e.message}`);
+        breakdown.byType[t] = { error: e.message };
+      }
+    }
+
+    const list = [...allUsers.values()];
+    breakdown.totalUnique = list.length;
+
+    return {
+      usernames: list.map(u => u.username),
+      breakdown,
+      details: list.sort((a, b) => (b.potentialAmount || 0) - (a.potentialAmount || 0))
+    };
+  }
+
+  // ====== push/bonus: segmento custom + tier + equipo ======
   const psQuery = {};
   if (strategy.targetTier) psQuery.tier = strategy.targetTier;
   const allStats = await PlayerStats.find(psQuery).limit(5000).lean();
-  if (allStats.length === 0) return [];
+  if (allStats.length === 0) return { usernames: [], breakdown: { totalUnique: 0 }, details: [] };
 
   const usernames = allStats.map(p => p.username);
 
-  // Para detectar CALIENTE.
   const last7dStart = new Date(Date.now() - 7 * 24 * 3600 * 1000);
   const last7Agg = await DailyPlayerStats.aggregate([
     { $match: { username: { $in: usernames }, dateUtc: { $gte: last7dStart } } },
@@ -15237,14 +15335,12 @@ async function _resolveStrategyAudience(strategy) {
   const last7Map = {};
   for (const a of last7Agg) last7Map[a._id] = a.chargesLast7d;
 
-  // Equipos (UserLineLookup).
   const norms = usernames.map(u => String(u).toLowerCase().replace(/[^a-z0-9]/g, ''));
   const lineupRows = await UserLineLookup.find({ usernameNorm: { $in: norms } })
     .select('usernameNorm lineTeamName').lean();
   const teamByNorm = {};
   for (const r of lineupRows) teamByNorm[r.usernameNorm] = r.lineTeamName;
 
-  // App tokens.
   let usersWithApp = new Set();
   if (strategy.hasAppOnly) {
     const userRows = await User.find(
@@ -15254,26 +15350,16 @@ async function _resolveStrategyAudience(strategy) {
     usersWithApp = new Set(userRows.map(u => String(u.username).toLowerCase()));
   }
 
-  // Para refund-type: filtramos a los que tienen reembolso pendiente.
-  let usersWithRefund = null;
-  if (strategy.type === 'refund') {
-    const claimable = await RefundClaim.find(
-      { status: 'pending' },
-      { username: 1, _id: 0 }
-    ).lean();
-    usersWithRefund = new Set(claimable.map(c => String(c.username).toLowerCase()));
-  }
-
   const segReq = String(strategy.targetSegment || 'all').toUpperCase();
   const teamSet = new Set(strategy.targetTeams || []);
   const useTeamFilter = teamSet.size > 0;
 
   const targets = [];
+  const details = [];
   for (const ps of allStats) {
     const ulow = String(ps.username).toLowerCase();
     const norm = ulow.replace(/[^a-z0-9]/g, '');
     if (strategy.hasAppOnly && !usersWithApp.has(ulow)) continue;
-    if (usersWithRefund && !usersWithRefund.has(ulow)) continue;
 
     const daysSince = ps.lastRealDepositDate
       ? Math.floor((Date.now() - new Date(ps.lastRealDepositDate).getTime()) / (24 * 3600 * 1000))
@@ -15281,14 +15367,21 @@ async function _resolveStrategyAudience(strategy) {
     const seg = _computeCustomSegment(daysSince, last7Map[ps.username] || 0);
     if (segReq !== 'ALL' && seg !== segReq) continue;
 
+    const tname = teamByNorm[norm] || null;
     if (useTeamFilter) {
-      const team = teamByNorm[norm];
-      if (!team || !teamSet.has(team)) continue;
+      if (!tname || !teamSet.has(tname)) continue;
     }
 
     targets.push(ps.username);
+    details.push({
+      username: ps.username,
+      segment: seg,
+      tier: ps.tier,
+      lineTeamName: tname,
+      daysSinceLastDeposit: daysSince
+    });
   }
-  return targets;
+  return { usernames: targets, breakdown: { totalUnique: targets.length }, details };
 }
 
 app.get('/api/admin/calendar/week', authMiddleware, adminMiddleware, async (req, res) => {
@@ -15352,6 +15445,10 @@ app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, adminMidd
       plan.days.push(day);
     }
 
+    const validRefundTypes = ['daily', 'weekly', 'monthly'];
+    const refundTypes = Array.isArray(body.refundTypes)
+      ? body.refundTypes.filter(t => validRefundTypes.includes(t))
+      : validRefundTypes.slice();
     const newStrat = {
       id: uuidv4(),
       dayIndex,
@@ -15365,6 +15462,7 @@ app.post('/api/admin/calendar/week/:weekKey/strategy', authMiddleware, adminMidd
       targetTier: ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].includes(body.targetTier) ? body.targetTier : null,
       targetTeams: Array.isArray(body.targetTeams) ? body.targetTeams.map(String).slice(0, 50) : [],
       hasAppOnly: body.hasAppOnly !== false,
+      refundTypes: refundTypes.length > 0 ? refundTypes : validRefundTypes,
       status: 'pendiente',
       isPinned: false,
       notes: String(body.notes || '').slice(0, 500)
@@ -15410,6 +15508,14 @@ app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddle
     if (b.targetTier !== undefined) found.targetTier = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].includes(b.targetTier) ? b.targetTier : null;
     if (Array.isArray(b.targetTeams)) found.targetTeams = b.targetTeams.map(String).slice(0, 50);
     if (b.hasAppOnly != null) found.hasAppOnly = !!b.hasAppOnly;
+    if (Array.isArray(b.refundTypes)) {
+      const valid = ['daily', 'weekly', 'monthly'];
+      const ts = b.refundTypes.filter(t => valid.includes(t));
+      if (found.type === 'refund' && ts.length === 0) {
+        return res.status(400).json({ error: 'Para una difusión de reembolso necesitás al menos un tipo (daily/weekly/monthly).' });
+      }
+      found.refundTypes = ts;
+    }
     if (b.notes != null) found.notes = String(b.notes).slice(0, 500);
     plan.markModified('days');
     _recalcPlanSummary(plan);
@@ -15417,6 +15523,172 @@ app.put('/api/admin/calendar/strategy/:weekKey/:id', authMiddleware, adminMiddle
     res.json({ success: true, strategy: found });
   } catch (err) {
     logger.error(`/api/admin/calendar/strategy edit: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/calendar/quick-launch — lanza una difusion ad-hoc
+// (sin necesidad de guardarla en el plan). Resuelve audiencia con la
+// misma logica que el calendar y envia push masivo. Util para presets
+// como "50% bono a perdedores chicos" desde la pestaña Lanzar ahora.
+//
+// Body: title, body, type, bonusPercent, targetSegment, tiers[],
+//       targetTeams[], hasAppOnly, refundTypes[]
+//
+// Si tiers tiene mas de 1 entrada, hacemos 1 llamada por tier y unimos
+// los resultados (PlayerStats query es por tier exacto). Asi
+// "perdedores chicos" puede pegarle a BRONCE+PLATA en una sola accion.
+app.post('/api/admin/calendar/quick-launch', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const title = String(b.title || '').slice(0, 100).trim();
+    const body = String(b.body || '').slice(0, 500).trim();
+    if (!title || !body) return res.status(400).json({ error: 'Falta title o body' });
+    const bonusPercent = Math.max(0, Math.min(100, parseInt(b.bonusPercent, 10) || 0));
+    if (bonusPercent > 0 && bonusPercent < 50) return res.status(400).json({ error: 'Bono mínimo 50%' });
+    const type = ['push', 'refund', 'bonus'].includes(b.type) ? b.type : 'push';
+    const tiers = Array.isArray(b.tiers) ? b.tiers.filter(t => ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO'].includes(t)) : [];
+
+    // Construimos una "pseudo-strategy" para reutilizar _resolveStrategyAudience.
+    const baseStrategy = {
+      type,
+      title,
+      body,
+      bonusPercent,
+      bonusFlatARS: 0,
+      targetSegment: String(b.targetSegment || 'all').toLowerCase(),
+      targetTier: null,
+      targetTeams: Array.isArray(b.targetTeams) ? b.targetTeams.map(String) : [],
+      hasAppOnly: b.hasAppOnly !== false,
+      refundTypes: Array.isArray(b.refundTypes) && b.refundTypes.length > 0
+        ? b.refundTypes.filter(t => ['daily','weekly','monthly'].includes(t))
+        : ['daily','weekly','monthly']
+    };
+
+    // Si hay tiers multiples, iteramos y unimos.
+    let allTargets = new Set();
+    let unionDetails = [];
+    if (tiers.length === 0) {
+      const aud = await _resolveStrategyAudience(baseStrategy);
+      for (const u of (aud.usernames || [])) allTargets.add(u);
+      unionDetails = aud.details || [];
+    } else {
+      for (const t of tiers) {
+        const aud = await _resolveStrategyAudience({ ...baseStrategy, targetTier: t });
+        for (const u of (aud.usernames || [])) allTargets.add(u);
+        unionDetails = unionDetails.concat(aud.details || []);
+      }
+    }
+    const targets = [...allTargets];
+    if (targets.length === 0) {
+      return res.status(400).json({ error: 'No hay destinatarios con esos filtros.', sample: [] });
+    }
+
+    const bonusBadge = bonusPercent > 0 ? ` 🎁 BONO ${bonusPercent}%` : '';
+    const sendResult = await sendNotificationToAllUsers(
+      User,
+      title + bonusBadge,
+      body,
+      {
+        source: 'quick-launch',
+        type,
+        bonusPercent: String(bonusPercent),
+        targetSegment: baseStrategy.targetSegment,
+        tiers: tiers.join(',') || 'all'
+      },
+      { username: { $in: targets } }
+    );
+
+    // Tambien lo guardamos en el plan de la semana actual como una strategy
+    // ya lanzada — asi queda en el historial y la performance se puede
+    // medir despues.
+    const weekKey = _isoWeekKey(_argZonedNow());
+    const weekStart = _weekStartFromKey(weekKey);
+    let plan = await WeeklyCalendarPlan.findOne({ weekKey });
+    if (!plan) {
+      plan = new WeeklyCalendarPlan({
+        weekKey, weekStartDate: weekStart,
+        days: _DAY_LABELS.map((l, i) => ({ dayIndex: i, label: l, strategies: [] })),
+        createdBy: req.user.username || 'admin'
+      });
+      await _ensureRefundPinnedDaily(plan);
+    }
+    const argNow = _argZonedNow();
+    const dayIdx = (argNow.getUTCDay() || 7) - 1; // 0=lunes
+    let day = plan.days.find(d => d.dayIndex === dayIdx);
+    if (!day) {
+      day = { dayIndex: dayIdx, label: _DAY_LABELS[dayIdx], strategies: [] };
+      plan.days.push(day);
+    }
+    day.strategies.push({
+      id: uuidv4(),
+      dayIndex: dayIdx,
+      order: day.strategies.length,
+      type, title, body,
+      bonusPercent,
+      bonusFlatARS: 0,
+      targetSegment: baseStrategy.targetSegment,
+      targetTier: tiers.length === 1 ? tiers[0] : null,
+      targetTeams: baseStrategy.targetTeams,
+      hasAppOnly: baseStrategy.hasAppOnly,
+      refundTypes: baseStrategy.refundTypes,
+      status: 'lanzado',
+      isPinned: false,
+      launchedAt: new Date(),
+      launchedBy: req.user.username || 'admin',
+      targetUsernames: targets.slice(0, 5000),
+      sentCount: (sendResult && sendResult.successCount) || 0,
+      deliveredCount: (sendResult && sendResult.successCount) || 0,
+      failedCount: (sendResult && sendResult.failureCount) || 0,
+      performance: { sentiment: 'sin_datos' },
+      notes: tiers.length > 1 ? `Quick-launch a tiers: ${tiers.join('+')}` : 'Quick-launch'
+    });
+    plan.markModified('days');
+    if (plan.status === 'draft') plan.status = 'active';
+    _recalcPlanSummary(plan);
+    await plan.save();
+
+    res.json({
+      success: true,
+      eligible: targets.length,
+      sent: (sendResult && sendResult.successCount) || 0,
+      failed: (sendResult && sendResult.failureCount) || 0,
+      tiers: tiers.length > 0 ? tiers : ['all'],
+      sample: unionDetails.slice(0, 30)
+    });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/quick-launch: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/calendar/strategy/:weekKey/:id/preview — devuelve la
+// audiencia que recibiria el push si se lanzara AHORA. Para refund-type
+// trae el desglose por tipo (daily/weekly/monthly) y la lista de users
+// con cuanto le tocaria de reembolso. Para push/bonus, trae los users
+// del segmento + tier + equipo + app filter.
+app.get('/api/admin/calendar/strategy/:weekKey/:id/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { weekKey, id } = req.params;
+    const plan = await WeeklyCalendarPlan.findOne({ weekKey }).lean();
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    let found = null;
+    for (const d of (plan.days || [])) for (const s of (d.strategies || [])) if (s.id === id) found = s;
+    if (!found) return res.status(404).json({ error: 'Strategy no encontrada' });
+
+    const aud = await _resolveStrategyAudience(found);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 200, 1000));
+    res.json({
+      success: true,
+      strategyId: id,
+      type: found.type,
+      total: (aud.usernames || []).length,
+      breakdown: aud.breakdown || {},
+      sample: (aud.details || []).slice(0, limit),
+      truncated: (aud.details || []).length > limit
+    });
+  } catch (err) {
+    logger.error(`/api/admin/calendar/strategy preview: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -15468,12 +15740,18 @@ app.post('/api/admin/calendar/strategy/:weekKey/:id/launch', authMiddleware, adm
     let targets = [];
     let sendResult = null;
     try {
-      targets = await _resolveStrategyAudience(found);
+      const aud = await _resolveStrategyAudience(found);
+      targets = aud.usernames || [];
       if (targets.length === 0) {
         found.status = 'pendiente';
         plan.markModified('days');
         await plan.save();
-        return res.status(400).json({ error: 'No hay destinatarios que cumplan los filtros (segmento + tier + equipo + app).' });
+        return res.status(400).json({
+          error: found.type === 'refund'
+            ? 'No hay usuarios con reembolso pendiente para reclamar HOY (cruzando los tipos seleccionados, equipo y app).'
+            : 'No hay destinatarios que cumplan los filtros (segmento + tier + equipo + app).',
+          breakdown: aud.breakdown
+        });
       }
 
       const bonusBadge = found.bonusPercent > 0
