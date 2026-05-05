@@ -3,17 +3,19 @@
  *
  * Modelo:
  *   - Cada sorteo tiene una FECHA de mes (monthKey "2026-05" = mayo 2026).
- *   - Para participar el user paga `entryCost` de su MONTO CARGADO del mes
- *     en curso (no plata real, "creditos del sorteo"). Si entryCost = 50000
- *     y el user cargó 100.000 en el mes, le quedan 50.000 disponibles
- *     para otros sorteos.
+ *   - Para participar el user paga `entryCost` de su SALDO REAL en JUGAYGANA
+ *     (se descuenta del balance via jugaygana.withdrawFromUser).
  *   - Cada sorteo tiene un POOL FIJO de cupos (totalTickets). Cada cupo
  *     comprado recibe un NÚMERO ÚNICO secuencial (1..totalTickets).
- *   - El ganador se determina por el primer premio de la LOTERÍA NACIONAL
- *     del primer lunes del mes próximo. Admin entra el lotteryDrawNumber
- *     y el sistema busca a quién le pertenece ese número.
+ *   - El ganador se determina por la QUINIELA NACIONAL del primer lunes del
+ *     mes próximo. Cada sorteo tiene un `lotteryRule` que describe la posicion
+ *     exacta (ej. "1° puesto Quiniela Matutina"). Admin entra el numero
+ *     ganador y el sistema busca a quien le pertenece. Si el cupo está
+ *     incompleto, el numero se mapea al rango vendido vía modulo.
  *   - Si la cantidad de cupos vendidos no llega a totalTickets, el ganador
  *     recibe el proporcional al fill rate.
+ *   - Pueden coexistir varias instancias del mismo tipo en un mes (ej. 10
+ *     sorteos de iPhone con instanceNumber 1..10).
  */
 const mongoose = require('mongoose');
 
@@ -25,9 +27,24 @@ const raffleSchema = new mongoose.Schema({
   imageUrl: { type: String, default: null, maxlength: 800 },
   emoji: { type: String, default: '🎁', maxlength: 8 },
 
-  // Mes al que aplica este sorteo. El budget de cargas del user para
-  // entrar se mide sobre este mes. Formato: "YYYY-MM" en TZ Argentina.
+  // Mes al que aplica este sorteo. Formato: "YYYY-MM" en TZ Argentina.
   monthKey: { type: String, required: true, index: true },
+
+  // Tipo de sorteo (para agrupar en UI cuando hay multiples instancias).
+  raffleType: {
+    type: String,
+    enum: ['iphone', 'caribe', 'auto', 'other'],
+    default: 'other',
+    index: true
+  },
+  // Numero de instancia dentro del tipo (1..10 para iPhones, 1..5 para Caribes,
+  // 1 para Auto). Permite tener varios sorteos del mismo tipo en el mismo mes.
+  instanceNumber: { type: Number, default: 1, min: 1 },
+  // Texto que describe contra qué sorteo de Quiniela se determina el ganador.
+  // Ej. "1° puesto Quiniela Matutina del primer lunes del mes próximo".
+  // Aporta transparencia: cualquier user puede verificar el numero ganador en
+  // los resultados oficiales de la Quiniela.
+  lotteryRule: { type: String, default: '', maxlength: 300 },
 
   // Costo de entrada (credits = monto cargado, no plata real).
   entryCost: { type: Number, required: true, min: 0 },

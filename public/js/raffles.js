@@ -57,7 +57,7 @@ VIP.raffles = (function () {
         if (r.status !== 'active') {
             actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.10);color:#888;border:none;border-radius:10px;font-weight:800;font-size:14px;">Cerrado</button>';
         } else if (maxBuyable === 0 && userCupos === 0) {
-            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Cada cupo vale $' + r.entryCost.toLocaleString('es-AR') + ' (cargá al menos eso este mes)</button>';
+            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Cada cupo vale $' + r.entryCost.toLocaleString('es-AR') + ' · saldo insuficiente</button>';
         } else if (maxBuyable === 0 && userCupos > 0) {
             actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.50);border-radius:10px;font-weight:800;font-size:14px;cursor:default;">✅ Tenés ' + userCupos + ' cupo' + (userCupos===1?'':'s') + ' · sin créditos para más</button>';
         } else {
@@ -113,13 +113,24 @@ VIP.raffles = (function () {
                 '</div>';
         }
 
+        const headerName = r.instanceNumber > 1
+            ? _esc(r.prizeName) + ' #' + r.instanceNumber
+            : _esc(r.prizeName);
+        const lotteryRuleBlock = r.lotteryRule
+            ? '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px 10px;text-align:center;">' +
+              '  <div style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">🎯 Cómo se sortea</div>' +
+              '  <div style="color:#ddd;font-size:11px;margin-top:3px;line-height:1.4;">' + _esc(r.lotteryRule) + '</div>' +
+              '</div>'
+            : '';
+
         return '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:10px;">' +
                _renderImage(r) +
                '<div>' +
-               '  <h3 style="color:#ffd700;margin:0 0 4px;font-size:17px;font-weight:800;">' + (r.emoji || '🎁') + ' ' + _esc(r.prizeName) + '</h3>' +
+               '  <h3 style="color:#ffd700;margin:0 0 4px;font-size:17px;font-weight:800;">' + (r.emoji || '🎁') + ' ' + headerName + '</h3>' +
                '  <p style="color:#aaa;margin:0;font-size:12px;line-height:1.5;">' + _esc(r.description || '') + '</p>' +
                '</div>' +
                prizeInfo +
+               lotteryRuleBlock +
                myNumbersBox +
                '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;color:#888;">' +
                '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants||0) + '</strong> personas</span>' +
@@ -139,17 +150,14 @@ VIP.raffles = (function () {
             list.innerHTML = '<div style="text-align:center;padding:30px;color:#ff8080;">No se pudieron cargar los sorteos. Probá más tarde.</div>';
             return;
         }
-        // Budget bar.
+        // Budget bar — ahora muestra SALDO REAL en JUGAYGANA.
         const bar = document.getElementById('rafflesBudgetBar');
         const av = document.getElementById('rafflesBudgetAvailable');
         const detail = document.getElementById('rafflesBudgetDetail');
         if (_data.budget && av && detail) {
-            av.textContent = '$' + (_data.budget.available || 0).toLocaleString('es-AR');
-            const cargas = (_data.budget.monthlyDeposit != null
-                ? _data.budget.monthlyDeposit
-                : (_data.budget.netwinLoss || 0));
-            detail.textContent = 'Cargas del mes: $' + cargas.toLocaleString('es-AR') +
-                                 ' · Ya usado en sorteos: $' + (_data.budget.spent || 0).toLocaleString('es-AR');
+            const balance = _data.budget.balance != null ? _data.budget.balance : (_data.budget.available || 0);
+            av.textContent = '$' + balance.toLocaleString('es-AR');
+            detail.textContent = 'Saldo en JUGAYGANA · Ya gastado en sorteos: $' + (_data.budget.spent || 0).toLocaleString('es-AR');
             if (bar) bar.style.display = 'block';
         }
         const raffles = _data.raffles || [];
@@ -157,7 +165,35 @@ VIP.raffles = (function () {
             list.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">No hay sorteos activos este mes.</div>';
             return;
         }
-        list.innerHTML = raffles.map(_renderRaffle).join('');
+        // Agrupar por raffleType. Orden: iphone, caribe, auto, other.
+        const groupOrder = ['iphone', 'caribe', 'auto', 'other'];
+        const groupLabels = {
+            iphone: '📱 iPhones',
+            caribe: '🏖️ Viajes al Caribe',
+            auto: '🚗 Auto',
+            other: '🎁 Otros'
+        };
+        const grouped = {};
+        for (const r of raffles) {
+            const t = r.raffleType || 'other';
+            if (!grouped[t]) grouped[t] = [];
+            grouped[t].push(r);
+        }
+        let html = '';
+        for (const t of groupOrder) {
+            const group = grouped[t];
+            if (!group || group.length === 0) continue;
+            // Sort by instanceNumber.
+            group.sort((a, b) => (a.instanceNumber||0) - (b.instanceNumber||0));
+            const totalCupos = group.reduce((s, r) => s + (r.totalCuposSold||0), 0);
+            const totalCap = group.reduce((s, r) => s + (r.totalTickets||0), 0);
+            html += '<div style="margin:6px 0 4px;display:flex;justify-content:space-between;align-items:baseline;">';
+            html += '  <h4 style="color:#d4af37;margin:0;font-size:14px;letter-spacing:1px;text-transform:uppercase;">' + groupLabels[t] + ' <span style="color:#888;font-size:11px;font-weight:400;">· ' + group.length + ' sorteo' + (group.length===1?'':'s') + '</span></h4>';
+            html += '  <small style="color:#888;">' + totalCupos + '/' + totalCap + ' cupos vendidos</small>';
+            html += '</div>';
+            html += group.map(_renderRaffle).join('');
+        }
+        list.innerHTML = html;
     }
 
     async function open() {
@@ -212,7 +248,7 @@ VIP.raffles = (function () {
         const inp = _qtyInput(raffleId);
         const qty = inp ? Math.max(1, parseInt(inp.value, 10) || 1) : 1;
         const cost = inp ? (parseInt(inp.dataset.cost, 10) || 0) * qty : 0;
-        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '?\n\nSe te asignan ' + qty + ' número' + (qty===1?'':'s') + ' único' + (qty===1?'':'s') + ' del sorteo. El ganador se determina por la Lotería Nacional del primer lunes del próximo mes.')) return;
+        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '?\n\n💰 Se descuenta de tu saldo en JUGAYGANA.\n🎫 Te asignan ' + qty + ' número' + (qty===1?'':'s') + ' único' + (qty===1?'':'s') + ' del sorteo.\n🏆 El ganador se determina por la Quiniela Nacional del primer lunes del mes próximo (resultado oficial — totalmente transparente y verificable).')) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/participate`, {
                 method: 'POST',

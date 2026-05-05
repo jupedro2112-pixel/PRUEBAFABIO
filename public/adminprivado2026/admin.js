@@ -7933,20 +7933,50 @@ function _renderRafflesAdmin(raffles) {
     if (!raffles || raffles.length === 0) {
         return '<div style="text-align:center;padding:40px;color:#888;">Sin sorteos. Se siembran automáticamente cuando un user abre la sección 🎁 SORTEOS en la app.</div>';
     }
-    // Agrupar por monthKey (más reciente primero).
+    // Agrupar por monthKey (más reciente primero), y dentro de cada mes por raffleType.
     const byMonth = {};
     for (const r of raffles) {
         if (!byMonth[r.monthKey]) byMonth[r.monthKey] = [];
         byMonth[r.monthKey].push(r);
     }
     const months = Object.keys(byMonth).sort((a, b) => b.localeCompare(a));
+    const typeOrder = ['iphone', 'caribe', 'auto', 'other'];
+    const typeLabels = {
+        iphone: '📱 iPhones',
+        caribe: '🏖️ Viajes al Caribe',
+        auto: '🚗 Auto Gol Trend',
+        other: '🎁 Otros / Legacy'
+    };
 
     let html = '';
     for (const mk of months) {
-        html += '<h3 style="color:#d4af37;font-size:14px;margin:20px 0 10px;text-transform:uppercase;letter-spacing:1px;">📅 ' + escapeHtml(mk) + '</h3>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">';
-        for (const r of byMonth[mk]) html += _renderRaffleAdminCard(r);
+        const monthRaffles = byMonth[mk];
+        // Totales del mes para el header.
+        const totalRevenue = monthRaffles.reduce((s, r) => s + ((r.totalCuposSold||0) * (r.entryCost||0)), 0);
+        const totalSold = monthRaffles.reduce((s, r) => s + (r.totalCuposSold||0), 0);
+        const totalCap = monthRaffles.reduce((s, r) => s + (r.totalTickets||0), 0);
+        html += '<div style="display:flex;justify-content:space-between;align-items:baseline;margin:20px 0 10px;flex-wrap:wrap;gap:10px;">';
+        html += '  <h3 style="color:#d4af37;font-size:14px;margin:0;text-transform:uppercase;letter-spacing:1px;">📅 ' + escapeHtml(mk) + ' · ' + monthRaffles.length + ' sorteos</h3>';
+        html += '  <small style="color:#888;">Recaudación: <strong style="color:#25d366;">$' + totalRevenue.toLocaleString('es-AR') + '</strong> · ' + totalSold + '/' + totalCap + ' cupos</small>';
         html += '</div>';
+        // Group by type within month.
+        const byType = {};
+        for (const r of monthRaffles) {
+            const t = r.raffleType || 'other';
+            if (!byType[t]) byType[t] = [];
+            byType[t].push(r);
+        }
+        for (const t of typeOrder) {
+            const list = byType[t];
+            if (!list || list.length === 0) continue;
+            list.sort((a, b) => (a.instanceNumber||0) - (b.instanceNumber||0));
+            html += '<div style="margin:10px 0 6px;">';
+            html += '  <h4 style="color:#aaa;font-size:12px;margin:0 0 6px;font-weight:600;">' + typeLabels[t] + ' <span style="color:#666;font-size:11px;font-weight:400;">· ' + list.length + ' sorteo' + (list.length===1?'':'s') + '</span></h4>';
+            html += '</div>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:10px;">';
+            for (const r of list) html += _renderRaffleAdminCard(r);
+            html += '</div>';
+        }
     }
     return html;
 }
@@ -7968,9 +7998,12 @@ function _renderRaffleAdminCard(r) {
     let html = '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.25);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">';
     html += imagePreview;
     html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">';
-    html += '  <div><h4 style="margin:0;color:#ffd700;font-size:14px;">' + escapeHtml(r.prizeName) + '</h4><small style="color:#888;">' + escapeHtml(r.name) + '</small></div>';
+    html += '  <div><h4 style="margin:0;color:#ffd700;font-size:14px;">' + escapeHtml(r.prizeName) + (r.instanceNumber > 1 ? ' #' + r.instanceNumber : '') + '</h4><small style="color:#888;">' + escapeHtml(r.name) + '</small></div>';
     html += '  ' + statusBadge;
     html += '</div>';
+    if (r.lotteryRule) {
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.25);border-radius:6px;padding:6px 8px;font-size:10px;color:#aaa;">🎯 ' + escapeHtml(r.lotteryRule) + '</div>';
+    }
     html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;flex-wrap:wrap;gap:6px;">';
     html += '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants || 0) + '</strong> personas</span>';
     html += '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos vendidos</span>';
@@ -8139,8 +8172,15 @@ function _renderRaffleDetail(d) {
     html += '<button onclick="closeRaffleDetailModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>';
 
     // Header.
-    html += '<h2 style="color:#d4af37;margin:0 0 4px;font-size:22px;font-weight:900;">' + (raffle.emoji || '🎁') + ' ' + escapeHtml(raffle.prizeName || raffle.name || 'Sorteo') + '</h2>';
-    html += '<p style="margin:0 0 14px;color:#aaa;font-size:12px;">' + escapeHtml(raffle.monthKey || '') + ' · sorteado por Lotería Nacional el primer lunes del mes próximo · cupo de $' + (raffle.entryCost||0).toLocaleString('es-AR') + ' por número</p>';
+    const titleSuffix = raffle.instanceNumber > 1 ? ' #' + raffle.instanceNumber : '';
+    html += '<h2 style="color:#d4af37;margin:0 0 4px;font-size:22px;font-weight:900;">' + (raffle.emoji || '🎁') + ' ' + escapeHtml(raffle.prizeName || raffle.name || 'Sorteo') + titleSuffix + '</h2>';
+    html += '<p style="margin:0 0 8px;color:#aaa;font-size:12px;">' + escapeHtml(raffle.monthKey || '') + ' · cupo de $' + (raffle.entryCost||0).toLocaleString('es-AR') + ' por número (pago con saldo JUGAYGANA)</p>';
+    if (raffle.lotteryRule) {
+        html += '<div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px 14px;margin-bottom:14px;">';
+        html += '  <div style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:1px;">🎯 Cómo se sortea</div>';
+        html += '  <div style="color:#ddd;font-size:13px;margin-top:4px;">' + escapeHtml(raffle.lotteryRule) + '</div>';
+        html += '</div>';
+    }
 
     // KPIs.
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;">';

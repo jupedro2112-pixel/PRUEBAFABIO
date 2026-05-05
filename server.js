@@ -11316,20 +11316,27 @@ app.get('/api/admin/strategy/budget-status', authMiddleware, adminMiddleware, as
 // ============================================================
 // SORTEOS MENSUALES 🎁
 // ============================================================
-// Sorteos mensuales VIP-style. Para participar el user paga `entryCost`
-// de su MONTO CARGADO del mes en curso (no plata real, son "credits"
-// del sorteo, derivados de depositSum agregado de DailyPlayerStats).
-// Cuanto más cargó el user en el mes, más cupos puede comprar.
-// El pool de tickets totales se reparte entre participantes al hacer
-// el draw — si no se llena, el premio paga proporcional al fill rate.
+// Sorteos mensuales tipo lotería. Para participar el user paga `entryCost`
+// de su SALDO REAL en JUGAYGANA (se descuenta del balance vía
+// jugaygana.withdrawFromUser). Cada sorteo tiene un POOL FIJO de cupos —
+// cada cupo es un NUMERO único secuencial (1..totalTickets). El ganador
+// se determina por la QUINIELA NACIONAL del primer lunes del mes próximo,
+// usando una posicion específica por sorteo (lotteryRule).
 //
-// Defaults sembrados para el mes actual al primer GET /api/raffles/active:
-//   1. iPhone:              cost  50.000 / 1000 tickets / premio  $1.500.000
-//   2. Caribe x2:           cost 100.000 / 1000 tickets / premio  $4.000.000
-//   3. Auto Gol Trend 2015: cost 100.000 / 1000 tickets / premio $10.000.000
+// Catálogo mensual (16 sorteos):
+//   - 10 iPhones: $35.000 × 100 cupos = $3.5M revenue, premio $1.5M, ganancia $2M c/u
+//                 → cada uno se sortea por un puesto distinto de la Matutina.
+//   -  5 Viajes al Caribe x2: $8.000 × 1000 cupos = $8M revenue, premio $4M, ganancia $4M c/u
+//                 → cada uno se sortea por un puesto distinto de la Vespertina.
+//   -  1 Auto Gol Trend 2015: $25.000 × 1000 cupos = $25M revenue, premio $10M, ganancia $15M
+//                 → 1° puesto Quiniela Nocturna del primer lunes.
+//
+// Si el cupo no se llena: payout proporcional al fill rate. Si la quiniela
+// saca un numero fuera del rango vendido, se cicla por modulo al rango
+// vendido para que siempre haya un ganador.
 //
 // Endpoints:
-//   GET  /api/raffles/active                   — lista para el user (con budget)
+//   GET  /api/raffles/active                   — lista para el user (con balance)
 //   POST /api/raffles/:id/participate           — entrar al sorteo
 //   GET  /api/admin/raffles                     — admin: todos + counts
 //   GET  /api/admin/raffles/:id/participants    — admin: lista detallada
@@ -11358,34 +11365,65 @@ function _firstMondayOfNextMonth(monthKey) {
   return firstOfNext;
 }
 
-const RAFFLE_DEFAULTS = [
-  {
-    name: 'Sorteo iPhone',
-    prizeName: 'iPhone (modelo del mes)',
-    description: 'Sorteamos un iPhone entre los que cargaron al menos $50.000 este mes. Cada $50.000 cargados = 1 cupo (podés comprar varios). Pool: 1000 cupos. Si no se llena, el premio paga proporcional.',
-    emoji: '📱',
-    entryCost: 50000,
-    totalTickets: 1000,
-    prizeValueARS: 1500000
-  },
-  {
-    name: 'Sorteo Viaje al Caribe (x2)',
-    prizeName: 'Viaje al Caribe para 2 personas',
-    description: 'Vacaciones para 2 al Caribe. Para entrar: cargá al menos $100.000 este mes. Cada $100.000 cargados = 1 cupo. Pool: 1000 cupos. Si no se llena, paga proporcional.',
-    emoji: '🏖️',
-    entryCost: 100000,
-    totalTickets: 1000,
-    prizeValueARS: 4000000
-  },
-  {
+// Genera los 16 sorteos del mes (10 iPhones, 5 Caribes, 1 Auto). Cada uno
+// con su lotteryRule (posicion exacta de Quiniela que determina al ganador
+// — máxima transparencia, cualquiera puede verificar el resultado oficial).
+function _buildRaffleDefaults() {
+  const out = [];
+  // 10 iPhones — Quiniela Matutina, puestos 1° al 10° del primer lunes.
+  for (let i = 1; i <= 10; i++) {
+    out.push({
+      name: `Sorteo iPhone #${i}`,
+      prizeName: 'iPhone (modelo del mes)',
+      description: `Sorteamos un iPhone — 100 números a $35.000 cada uno. El ganador es el ${i}° puesto de la Quiniela Matutina del primer lunes del mes próximo. Si el cupo no se llena, el premio paga proporcional.`,
+      emoji: '📱',
+      entryCost: 35000,
+      totalTickets: 100,
+      prizeValueARS: 1500000,
+      raffleType: 'iphone',
+      instanceNumber: i,
+      lotteryRule: `${i}° puesto de la Quiniela Matutina del primer lunes del mes próximo (resultado oficial publicado por la Lotería Nacional).`
+    });
+  }
+  // 5 Caribes — Quiniela Vespertina, puestos 1° al 5°.
+  for (let i = 1; i <= 5; i++) {
+    out.push({
+      name: `Sorteo Viaje al Caribe #${i}`,
+      prizeName: 'Viaje al Caribe para 2 personas',
+      description: `Vacaciones para 2 al Caribe — 1000 números a $8.000 cada uno. El ganador es el ${i}° puesto de la Quiniela Vespertina del primer lunes del mes próximo. Si el cupo no se llena, paga proporcional.`,
+      emoji: '🏖️',
+      entryCost: 8000,
+      totalTickets: 1000,
+      prizeValueARS: 4000000,
+      raffleType: 'caribe',
+      instanceNumber: i,
+      lotteryRule: `${i}° puesto de la Quiniela Vespertina del primer lunes del mes próximo (resultado oficial publicado por la Lotería Nacional).`
+    });
+  }
+  // 1 Auto Gol Trend 2015.
+  out.push({
     name: 'Sorteo Auto Gol Trend 2015',
     prizeName: 'Auto Gol Trend 2015',
-    description: 'Te llevás un auto. Para entrar: cargá al menos $100.000 este mes. Cada $100.000 cargados = 1 cupo. Pool: 1000 cupos. Si no se llena, paga proporcional.',
+    description: 'Te llevás un auto — 1000 números a $25.000 cada uno. El ganador es el 1° puesto de la Quiniela Nocturna del primer lunes del mes próximo. Si el cupo no se llena, paga proporcional.',
     emoji: '🚗',
-    entryCost: 100000,
+    entryCost: 25000,
     totalTickets: 1000,
-    prizeValueARS: 10000000
-  }
+    prizeValueARS: 10000000,
+    raffleType: 'auto',
+    instanceNumber: 1,
+    lotteryRule: '1° puesto de la Quiniela Nocturna del primer lunes del mes próximo (resultado oficial publicado por la Lotería Nacional).'
+  });
+  return out;
+}
+const RAFFLE_DEFAULTS = _buildRaffleDefaults();
+// Nombres de sorteos del modelo viejo (3 sorteos cargas-based) que se
+// cancelan automaticamente si no tienen participaciones — para que la
+// transicion al modelo nuevo (16 sorteos via saldo) no muestre data stale.
+// "Sorteo Auto Gol Trend 2015" comparte nombre con el Auto del modelo
+// nuevo: el seeding lo migra in-place a entryCost/totalTickets nuevos.
+const LEGACY_RAFFLE_NAMES_TO_CLEAN = [
+  'Sorteo iPhone',
+  'Sorteo Viaje al Caribe (x2)'
 ];
 
 // Calcula el payout proporcional al fill rate del sorteo. Si se llena (>=)
@@ -11400,9 +11438,29 @@ function _projectedPayoutARS(raffle, participantCount) {
 }
 
 async function _ensureRafflesSeededForMonth(monthKey) {
+  // Limpieza: cancela sorteos legacy del mes que no tienen participantes
+  // (modelo viejo cargas-based, antes del switch a saldo + 16 sorteos).
+  // Idempotente — si ya están cancelados o tienen participantes no se tocan.
+  for (const legacyName of LEGACY_RAFFLE_NAMES_TO_CLEAN) {
+    try {
+      const oldR = await Raffle.findOne({ monthKey, name: legacyName }, { id: 1, status: 1, _id: 0 }).lean();
+      if (!oldR || oldR.status === 'cancelled' || oldR.status === 'drawn') continue;
+      const partCount = await RaffleParticipation.countDocuments({ raffleId: oldR.id });
+      if (partCount === 0) {
+        await Raffle.updateOne(
+          { monthKey, name: legacyName },
+          { $set: { status: 'cancelled', drawnAt: new Date(), drawnBy: 'auto-migrate-to-quiniela-model' } }
+        );
+        logger.info(`[raffles] auto-cancel legacy ${legacyName} (${monthKey}): sin participantes, migrando al modelo Quiniela`);
+      }
+    } catch (e) {
+      logger.warn(`[raffles] cleanup legacy ${legacyName}: ${e.message}`);
+    }
+  }
+
   const existing = await Raffle.find(
     { monthKey },
-    { id: 1, name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _ticketCounter: 1, _id: 0 }
+    { id: 1, name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _ticketCounter: 1, raffleType: 1, instanceNumber: 1, lotteryRule: 1, _id: 0 }
   ).lean();
   const existingByName = new Map(existing.map(r => [r.name, r]));
   const drawDate = _firstMondayOfNextMonth(monthKey);
@@ -11419,14 +11477,17 @@ async function _ensureRafflesSeededForMonth(monthKey) {
       }).catch(err => logger.warn(`[raffles] seed ${def.name}: ${err.message}`));
     } else {
       // Migracion idempotente: alinea entryCost / totalTickets / description /
-      // prizeValueARS de los sorteos ya sembrados en el mes con los defaults
-      // actuales. No borra participaciones ya hechas (entryCostPaid es snapshot
-      // por participacion). Solo actualiza si el valor cambió.
+      // prizeValueARS / raffleType / instanceNumber / lotteryRule con los
+      // defaults actuales. No borra participaciones ya hechas (entryCostPaid
+      // es snapshot por participacion).
       const update = {};
       if (!ex.prizeValueARS && def.prizeValueARS) update.prizeValueARS = def.prizeValueARS;
       if (ex.entryCost !== def.entryCost) update.entryCost = def.entryCost;
       if (ex.totalTickets !== def.totalTickets) update.totalTickets = def.totalTickets;
       if (ex.description !== def.description) update.description = def.description;
+      if (ex.raffleType !== def.raffleType) update.raffleType = def.raffleType;
+      if (ex.instanceNumber !== def.instanceNumber) update.instanceNumber = def.instanceNumber;
+      if (ex.lotteryRule !== def.lotteryRule) update.lotteryRule = def.lotteryRule;
       if (Object.keys(update).length) {
         await Raffle.updateOne({ monthKey, name: def.name }, { $set: update }).catch(() => {});
       }
@@ -11466,21 +11527,20 @@ async function _ensureRafflesSeededForMonth(monthKey) {
 }
 
 async function _getUserRaffleBudget(username, monthKey) {
-  // Modelo VIP: el budget de cupos se construye con el MONTO CARGADO del mes
-  // (depositSum agregado de DailyPlayerStats). No depende de si ganó o perdió,
-  // solo de cuánto cargó. Más cargas = más cupos disponibles.
-  const [yStr, mStr] = monthKey.split('-');
-  const y = parseInt(yStr), m = parseInt(mStr);
-  const monthStart = new Date(Date.UTC(y, m - 1, 1));
-  const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
-  const stats = await DailyPlayerStats.aggregate([
-    { $match: { username: String(username).toLowerCase(), dateUtc: { $gte: monthStart, $lt: monthEnd } } },
-    { $group: { _id: null, deposits: { $sum: '$depositSum' } } }
-  ]);
-  const monthlyDeposit = (stats[0] && stats[0].deposits) || 0;
+  // Modelo Quiniela: el budget para cupos = SALDO REAL en JUGAYGANA.
+  // Cuando el user compra un cupo se descuenta de su balance vía
+  // jugaygana.withdrawFromUser. Esta función solo lee el saldo actual y
+  // las participaciones del mes para mostrar el estado de cada sorteo.
+  let balance = 0;
+  try {
+    const balRes = await jugayganaMovements.getUserBalance(username);
+    if (balRes && balRes.success && Number.isFinite(balRes.balance)) {
+      balance = Math.max(0, Number(balRes.balance));
+    }
+  } catch (e) {
+    logger.warn(`[raffles] getUserBalance(${username}): ${e.message}`);
+  }
 
-  // Suma lo ya gastado en sorteos de este mes (cupos × entryCost por
-  // sorteo, sumando todas las participaciones del user).
   const ourRaffles = await Raffle.find({ monthKey }, { id: 1, _id: 0 }).lean();
   const raffleIds = ourRaffles.map(r => r.id);
   const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -11489,9 +11549,6 @@ async function _getUserRaffleBudget(username, monthKey) {
     { raffleId: 1, entryCostPaid: 1, cuposCount: 1, ticketNumbers: 1, _id: 0 }
   ).lean();
   const spent = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
-  // Mapa raffleId -> cuposCount para que el caller sepa cuantos cupos tiene
-  // el user en cada sorteo. Idem ticketNumbersByRaffle para mostrar los
-  // numeros asignados en la UI.
   const cuposByRaffle = {};
   const ticketNumbersByRaffle = {};
   for (const p of parts) {
@@ -11499,12 +11556,12 @@ async function _getUserRaffleBudget(username, monthKey) {
     ticketNumbersByRaffle[p.raffleId] = p.ticketNumbers || [];
   }
   return {
-    monthlyDeposit,
-    // Backward compat: clientes viejos leen `netwinLoss`. Pisamos con el mismo
-    // valor que monthlyDeposit para que sigan funcionando hasta que se actualicen.
-    netwinLoss: monthlyDeposit,
-    spent,
-    available: Math.max(0, monthlyDeposit - spent),
+    balance,                   // saldo real en JUGAYGANA
+    spent,                     // total gastado en sorteos del mes
+    available: balance,        // disponible para nuevos cupos = saldo
+    // Backward compat con clientes viejos (no rompen, ven $0 en estos campos):
+    monthlyDeposit: 0,
+    netwinLoss: 0,
     participatingIn: parts.map(p => p.raffleId),
     cuposByRaffle,
     ticketNumbersByRaffle
@@ -11556,11 +11613,15 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         fillRatePct: r.totalTickets > 0 ? Math.round((totalCuposSold / r.totalTickets) * 100) : 0,
         drawDate: r.drawDate,
         status: r.status,
+        // Tipo / instancia / regla de Quiniela.
+        raffleType: r.raffleType || 'other',
+        instanceNumber: r.instanceNumber || 1,
+        lotteryRule: r.lotteryRule || '',
         // Cupos.
         totalCuposSold,
         cuposRemaining,
         uniqueParticipants: agg.uniqueUsers || 0,
-        // Lottery.
+        // Lottery (resultado si ya se sorteo).
         lotteryDrawNumber: r.lotteryDrawNumber || null,
         lotteryDrawSource: r.lotteryDrawSource || null,
         winnerUsername: r.winnerUsername || null,
@@ -11577,10 +11638,12 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       success: true,
       monthKey,
       budget: {
-        monthlyDeposit: budget.monthlyDeposit,
-        netwinLoss: budget.netwinLoss, // alias backward-compat
+        balance: budget.balance,
         spent: budget.spent,
-        available: budget.available
+        available: budget.available,
+        // backward-compat (clientes viejos):
+        monthlyDeposit: budget.monthlyDeposit,
+        netwinLoss: budget.netwinLoss
       },
       raffles: enriched
     });
@@ -11591,34 +11654,38 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
+  let reserved = null;
+  let withdrew = false;
+  let raffle = null;
+  let totalCost = 0;
+  let username = null;
+  let quantity = 1;
   try {
-    const username = req.user.username;
-    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    username = req.user.username;
+    raffle = await Raffle.findOne({ id: req.params.id }).lean();
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
 
-    // Cantidad de cupos a comprar en esta operación. Default 1, max 1000
-    // por seguridad. El usuario puede comprar tantos cupos como su budget
-    // y el cupo del sorteo permitan.
-    const quantity = Math.max(1, Math.min(1000, parseInt(req.body && req.body.quantity, 10) || 1));
-    const totalCost = raffle.entryCost * quantity;
+    quantity = Math.max(1, Math.min(1000, parseInt(req.body && req.body.quantity, 10) || 1));
+    totalCost = raffle.entryCost * quantity;
 
-    // Re-check budget contra DB en este momento.
-    const budget = await _getUserRaffleBudget(username, raffle.monthKey);
-    if (budget.available < totalCost) {
-      const maxAffordable = Math.floor(budget.available / Math.max(1, raffle.entryCost));
+    // PASO 1: leer saldo real en JUGAYGANA y verificar que alcanza.
+    const balRes = await jugayganaMovements.getUserBalance(username);
+    if (!balRes || !balRes.success) {
+      return res.status(503).json({ error: 'No pudimos leer tu saldo en este momento. Probá de nuevo en unos segundos.' });
+    }
+    const balance = Number(balRes.balance) || 0;
+    if (balance < totalCost) {
+      const maxAffordable = Math.floor(balance / Math.max(1, raffle.entryCost));
       return res.status(400).json({
-        error: `Te faltan créditos: necesitás $${totalCost.toLocaleString('es-AR')} (${quantity} cupo${quantity===1?'':'s'} de $${raffle.entryCost.toLocaleString('es-AR')}) y tenés $${budget.available.toLocaleString('es-AR')} disponibles este mes (alcanza para ${maxAffordable} cupo${maxAffordable===1?'':'s'}).`,
-        budget,
+        error: `Saldo insuficiente: necesitás $${totalCost.toLocaleString('es-AR')} (${quantity} cupo${quantity===1?'':'s'} de $${raffle.entryCost.toLocaleString('es-AR')}) y tu saldo es $${balance.toLocaleString('es-AR')}. Cargá en JUGAYGANA para participar (alcanza para ${maxAffordable} cupo${maxAffordable===1?'':'s'}).`,
+        balance,
         maxAffordable
       });
     }
 
-    // Cap atómico vía $inc en _ticketCounter del Raffle. Solo incrementa
-    // si _ticketCounter + quantity <= totalTickets. Si pasa el cap el
-    // findOneAndUpdate devuelve null y bloqueamos. Esto previene race
-    // conditions y asegura numeros únicos secuenciales sin colisión.
-    const reserved = await Raffle.findOneAndUpdate(
+    // PASO 2: reservar numeros de cupo atomicamente (cap check via $expr).
+    reserved = await Raffle.findOneAndUpdate(
       {
         id: raffle.id,
         status: 'active',
@@ -11628,8 +11695,6 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
       { new: true }
     );
     if (!reserved) {
-      // Re-leer para reportar bien al user (puede ser cap completo o
-      // status inactivo).
       const fresh = await Raffle.findOne({ id: raffle.id }, { _ticketCounter: 1, totalTickets: 1, status: 1 }).lean();
       if (fresh && fresh.status !== 'active') {
         return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
@@ -11640,13 +11705,29 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
         cuposRemaining: remaining
       });
     }
-    // Numeros asignados a esta compra: del (counterPrev + 1) al counterNew.
     const counterAfter = reserved._ticketCounter;
     const assignedNumbers = [];
     for (let i = quantity; i > 0; i--) assignedNumbers.push(counterAfter - i + 1);
+    const numbersStr = assignedNumbers.length === 1
+      ? `#${assignedNumbers[0]}`
+      : `#${assignedNumbers[0]}-${assignedNumbers[assignedNumbers.length-1]}`;
 
-    // Upsert participation con los numeros recien asignados. Si ya tenia
-    // cupos los acumula con $push.
+    // PASO 3: descontar saldo en JUGAYGANA. Si falla, revert del counter.
+    const wRes = await jugaygana.withdrawFromUser(
+      username,
+      totalCost,
+      `Sorteo: ${raffle.prizeName} ${numbersStr} (${raffle.name})`
+    );
+    if (!wRes || !wRes.success) {
+      // Revert: liberar los numeros reservados.
+      await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -quantity } }).catch(() => {});
+      const errMsg = (wRes && wRes.error) || 'Error desconocido al descontar saldo';
+      logger.error(`[raffles] withdraw failed for ${username} on ${raffle.name}: ${errMsg}`);
+      return res.status(503).json({ error: `No se pudo procesar el pago: ${errMsg}. Tu saldo no fue tocado, intentá de nuevo.` });
+    }
+    withdrew = true;
+
+    // PASO 4: crear/actualizar participation. Si falla acá, refundeamos.
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const existing = await RaffleParticipation.findOne({
       raffleId: raffle.id,
@@ -11670,14 +11751,11 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
           cuposCount: quantity,
           ticketNumbers: assignedNumbers,
           entryCostPaid: totalCost,
-          netwinAtEntry: budget.monthlyDeposit
+          netwinAtEntry: balance
         });
       }
     } catch (e) {
       if (e && e.code === 11000) {
-        // Race condition: alguien insertó entre el findOne y el create.
-        // Reintentamos como update preservando los numeros que ya
-        // reservamos atomicamente arriba.
         const retry = await RaffleParticipation.findOne({
           raffleId: raffle.id,
           username: { $regex: '^' + safe + '$', $options: 'i' }
@@ -11708,15 +11786,34 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
       userCuposTotal: updated.cuposCount,
       userTicketNumbers: updated.ticketNumbers || [],
       budget: {
-        monthlyDeposit: newBudget.monthlyDeposit,
-        netwinLoss: newBudget.netwinLoss,
+        balance: newBudget.balance,
         spent: newBudget.spent,
-        available: newBudget.available
+        available: newBudget.available,
+        monthlyDeposit: newBudget.monthlyDeposit,
+        netwinLoss: newBudget.netwinLoss
       }
     });
   } catch (err) {
     logger.error(`/api/raffles/participate: ${err.message}`);
-    res.status(500).json({ error: 'Error del servidor' });
+    // Si ya descontamos saldo pero falló al crear la participation,
+    // refundeamos al usuario para que no pierda plata. Best-effort.
+    if (withdrew && username && totalCost > 0 && raffle) {
+      try {
+        await jugaygana.depositToUser(
+          username,
+          totalCost,
+          `REFUND sorteo (error al guardar): ${raffle.name}`
+        );
+        logger.warn(`[raffles] REFUND ${totalCost} a ${username} por error en participate ${raffle.name}`);
+      } catch (refundErr) {
+        logger.error(`[raffles] CRÍTICO: refund falló para ${username} ${totalCost}: ${refundErr.message}`);
+      }
+    }
+    if (reserved && raffle && quantity > 0) {
+      // También revertimos los numeros reservados.
+      await Raffle.updateOne({ id: raffle.id }, { $inc: { _ticketCounter: -quantity } }).catch(() => {});
+    }
+    res.status(500).json({ error: 'Error del servidor — si se descontó saldo, fue revertido. Probá de nuevo.' });
   }
 });
 
