@@ -12166,6 +12166,13 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       if (quantity > 1) {
         return res.status(400).json({ error: 'En el RELÁMPAGO solo se permite 1 número por persona.' });
       }
+      // Defense in depth: el owner pidio explicitamente que el user ELIJA
+      // su numero (no aleatorio). El front siempre manda pickedNumbers porque
+      // el boton se habilita despues de tap, pero por si llega un buy sin
+      // pickedNumbers (bug o cliente custom) lo rechazamos.
+      if (!rawPicked || rawPicked.length === 0) {
+        return res.status(400).json({ error: 'En el RELÁMPAGO tenés que ELEGIR vos tu número (no es aleatorio).' });
+      }
       // Gate: si este relampago lo requiere, exigir al menos 1 participation
       // en algun sorteo PAGO. Asi convertimos el primer relampago (libre)
       // en gancho hacia los pagos -> el segundo en adelante recompensa a

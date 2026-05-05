@@ -9492,48 +9492,101 @@ async function forceSeedRaffles() {
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
 
-// Crea el sorteo RELAMPAGO on-demand. Una sola vez: si ya hay uno
-// activo o cerrado-en-espera, el endpoint avisa. Free + 100 cupos por
-// default, premio $200k. Cuando se sortea, NO respawnea — el admin
-// vuelve a tocar el boton si quiere otro.
-async function seedLightningRaffle() {
-    const prize = prompt('Premio del sorteo RELÁMPAGO (en pesos)', '200000');
-    if (prize === null) return;
-    const cupos = prompt('Cantidad de cupos (2 a 1000)', '100');
-    if (cupos === null) return;
-    if (!confirm('¿Crear sorteo RELÁMPAGO?\n\nPremio: $' + (parseInt(prize, 10) || 200000).toLocaleString('es-AR') + '\nCupos: ' + (parseInt(cupos, 10) || 100) + '\nInscripción: GRATIS para todos\n\nVa a aparecer arriba de todo en la app y se inscribe automático cuando entran. Es por única vez (no respawnea solo).')) return;
-    if (seedLightningRaffle._busy) return;
-    seedLightningRaffle._busy = true;
+// Abre el modal de configuracion del sorteo RELAMPAGO. Reemplazo de los
+// prompt() encadenados — UX mucho mas clara con form proper, validacion
+// visual y opciones para "requiere haber jugado pago" + auto-anunciar.
+function seedLightningRaffle() {
+    let modal = document.getElementById('lightningConfigModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'lightningConfigModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML =
+        '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #ffeb3b;border-radius:14px;max-width:520px;width:100%;margin:8px auto;padding:18px 16px;box-shadow:0 0 30px rgba(255,235,59,0.35);">' +
+            '<h3 style="color:#ffeb3b;margin:0 0 4px;font-size:18px;">⚡ Crear sorteo RELÁMPAGO</h3>' +
+            '<div style="color:#cce4ff;font-size:11.5px;margin-bottom:14px;line-height:1.5;">Sorteo gratis, 1 cupo por persona, el user elige su número del grid 1-100. <strong style="color:#fff;">No respawnea automático</strong> — cuando este se llena o se sortea, tocás de nuevo "Crear" para abrir otro.</div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">' +
+                '<div>' +
+                    '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Premio (ARS)</label>' +
+                    '<input id="lightPrize" type="number" min="100" step="1000" value="200000" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,235,59,0.40);padding:9px 10px;border-radius:6px;font-size:14px;margin-top:3px;box-sizing:border-box;">' +
+                '</div>' +
+                '<div>' +
+                    '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Cupos (2 a 1000)</label>' +
+                    '<input id="lightCupos" type="number" min="2" max="1000" step="1" value="100" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,235,59,0.40);padding:9px 10px;border-radius:6px;font-size:14px;margin-top:3px;box-sizing:border-box;">' +
+                '</div>' +
+            '</div>' +
+
+            '<label style="display:flex;align-items:flex-start;gap:8px;background:rgba(255,235,59,0.06);border:1px solid rgba(255,235,59,0.30);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;">' +
+                '<input type="checkbox" id="lightRequirePaid" style="margin-top:2px;flex-shrink:0;">' +
+                '<div>' +
+                    '<div style="color:#ffeb3b;font-size:12px;font-weight:800;">🎫 Solo para clientes con número pago previo</div>' +
+                    '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:2px;">Si tildás esto, solo van a poder inscribirse usuarios con al menos 1 número en algún sorteo pago. Útil del segundo relámpago en adelante.</div>' +
+                '</div>' +
+            '</label>' +
+
+            '<label style="display:flex;align-items:flex-start;gap:8px;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:10px;margin-bottom:14px;cursor:pointer;">' +
+                '<input type="checkbox" id="lightAutoAnnounce" checked style="margin-top:2px;flex-shrink:0;">' +
+                '<div>' +
+                    '<div style="color:#66ff66;font-size:12px;font-weight:800;">📣 Anunciar a usuarios al crear</div>' +
+                    '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:2px;">Después de crear, abre el modal de anuncio con copy pre-cargado para que mandes el push.</div>' +
+                '</div>' +
+            '</label>' +
+
+            '<div style="display:flex;gap:8px;">' +
+                '<button onclick="document.getElementById(\'lightningConfigModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+                '<button onclick="seedLightningRaffleSubmit()" style="flex:2;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:1px;">⚡ CREAR SORTEO</button>' +
+            '</div>' +
+        '</div>';
+    document.body.appendChild(modal);
+    setTimeout(() => { try { document.getElementById('lightPrize').focus(); document.getElementById('lightPrize').select(); } catch (_) {} }, 100);
+}
+
+// Submit del form modal: arma el body y llama al endpoint. Anti-double
+// click + cierra modal + ofrece anuncio si el checkbox esta tildado.
+async function seedLightningRaffleSubmit() {
+    if (seedLightningRaffleSubmit._busy) return;
+    const prize = parseInt(document.getElementById('lightPrize')?.value, 10);
+    const cupos = parseInt(document.getElementById('lightCupos')?.value, 10);
+    const requiresPaidTicket = !!document.getElementById('lightRequirePaid')?.checked;
+    const autoAnnounce = !!document.getElementById('lightAutoAnnounce')?.checked;
+    if (!Number.isFinite(prize) || prize < 100) { alert('Premio inválido (mínimo $100).'); return; }
+    if (!Number.isFinite(cupos) || cupos < 2 || cupos > 1000) { alert('Cupos inválidos (2 a 1000).'); return; }
+
+    seedLightningRaffleSubmit._busy = true;
     try {
         const resp = await authFetch('/api/admin/raffles/seed-lightning', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                prizeValueARS: parseInt(prize, 10) || 200000,
-                totalTickets: parseInt(cupos, 10) || 100
+                prizeValueARS: prize,
+                totalTickets: cupos,
+                requiresPaidTicket
             })
         });
         const d = await resp.json();
         if (!resp.ok) {
-            alert('❌ ' + (d.error || 'Error') + (d.raffle ? '\n\nActivo: ' + d.raffle.name + ' (' + d.raffle.cuposSold + '/' + d.raffle.totalTickets + ')' : ''));
+            alert('❌ ' + (d.error || 'Error') + (d.raffle ? '\n\nActivo: ' + d.raffle.name + ' (' + (d.raffle.cuposSold || 0) + '/' + (d.raffle.totalTickets || 0) + ')\n\nBorrá o sorteá el actual antes de crear otro.' : ''));
             return;
         }
+        document.getElementById('lightningConfigModal')?.remove();
         showToast('⚡ Sorteo RELÁMPAGO creado: ' + d.raffle.name, 'success');
-        // Refrescar la seccion de relampago (donde el admin esta ahora) y
-        // tambien la de pagos por si la tiene abierta en otra pestaña visual.
         loadRafflesLightningAdmin();
         loadRafflesAdmin();
-        if (confirm('¿Querés anunciar el sorteo a los usuarios ahora?')) {
+        if (autoAnnounce) {
             announceRaffleOpen(d.raffle.id, {
-                title: '⚡ Nuevo sorteo RELÁMPAGO · $' + (d.raffle.prizeValueARS || 200000).toLocaleString('es-AR'),
-                body: '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo en tiempo real. 1 número por persona.',
+                title: '⚡ Nuevo sorteo RELÁMPAGO · $' + (d.raffle.prizeValueARS || prize).toLocaleString('es-AR'),
+                body: requiresPaidTicket
+                    ? '¡Solo para clientes con número pago previo! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena.'
+                    : '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo. 1 número por persona.',
                 presetType: 'relampago'
             });
         }
     } catch (e) {
-        showToast('Error de conexión', 'error');
+        alert('Error de conexión');
     }
-    finally { seedLightningRaffle._busy = false; }
+    finally { seedLightningRaffleSubmit._busy = false; }
 }
 
 // Crea un sorteo de prueba on-demand. Pensado para validar el flujo
