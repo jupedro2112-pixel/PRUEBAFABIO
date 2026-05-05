@@ -7295,6 +7295,12 @@ function _renderAutomationPlanTab() {
     const fromDefault = new Date(Date.now() - 7*86400000).toISOString().slice(0, 10);
 
     let html = '';
+    // Modo test: dispara todas las notifs a un user para chequear que llegan.
+    html += '<div style="background:rgba(255,200,80,0.06);border:1px solid rgba(255,200,80,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">';
+    html += '  <div><strong style="color:#ffc850;font-size:12px;">🧪 Modo test</strong> <small style="color:#888;">— mandate todas las notifs del pool + samples de bono a un usuario de prueba para verificar que llegan</small></div>';
+    html += '  <button onclick="testFireAutomation()" style="padding:8px 16px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#ffc850,#ff9933);color:#000;border:none;border-radius:8px;cursor:pointer;">🧪 Probar a un usuario</button>';
+    html += '</div>';
+
     html += '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">';
     html += '  <strong style="color:#b39dff;font-size:13px;">📅 Rango de análisis:</strong>';
     html += '  <button onclick="setAutomationPreset(\'daily\')" id="autoPresetDaily" class="auto2-preset" style="padding:7px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:12px;cursor:pointer;font-weight:700;">Hoy</button>';
@@ -7628,5 +7634,34 @@ async function deleteAutomationCopy(id) {
         if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
         showToast('Eliminado', 'success');
         _renderAutomationCopiesTab();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// 🧪 Modo test: dispara todas las notifs (engagement + samples de bonus)
+// a un usuario para verificar UX. Usa ScheduledNotification (cron poller),
+// espaciadas ~100s entre cada una para que el SO no las agrupe.
+async function testFireAutomation() {
+    const username = (prompt('Usuario para testear (ej: lalodj):') || '').trim();
+    if (!username) return;
+    const intervalSeconds = parseInt(prompt('Intervalo entre notifs (segundos, default 100):', '100'), 10) || 100;
+    const ok = confirm('Vas a disparar TODAS las notifs (engagement pool + 2 samples de bono) al usuario "' + username + '" cada ' + intervalSeconds + 's. ¿Confirmás?');
+    if (!ok) return;
+    try {
+        const r = await authFetch('/api/admin/automation/test-fire', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, intervalSeconds, includeBonus: true })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error en test', 'error');
+            return;
+        }
+        const last = d.lastAt ? new Date(d.lastAt).toLocaleTimeString('es-AR') : '?';
+        const first = d.firstAt ? new Date(d.firstAt).toLocaleTimeString('es-AR') : '?';
+        showToast('✅ ' + d.total + ' notifs programadas para ' + d.username + ' (entre ' + first + ' y ' + last + ')', 'success');
+        // Mostrar detalle.
+        const list = (d.notifications || []).map(n => '  ' + n.n + ') ' + n.kind + ' · ' + new Date(n.scheduledFor).toLocaleTimeString('es-AR') + ' — ' + n.title).join('\n');
+        alert('🧪 Test programado para ' + d.username + ':\n\n' + list + '\n\n💡 El cron poller corre cada 60s, así que puede haber hasta 1min de delay sobre el horario programado.');
     } catch (e) { showToast('Error de conexión', 'error'); }
 }

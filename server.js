@@ -10620,6 +10620,107 @@ app.delete('/api/admin/automation/copies/:id', authMiddleware, adminMiddleware, 
   }
 });
 
+// POST /api/admin/automation/test-fire
+// Modo test: dispara TODOS los copies activos + 2 samples de bonus contra
+// un único usuario, espaciados en el tiempo (default 100s = todas en ~20min).
+// Usa ScheduledNotification (cron poller existente) para que sobreviva
+// reinicios. NO toca WeeklyNotifBudget ni crea AutomationLaunch — es test.
+//
+// Body: { username, intervalSeconds?, includeBonus? }
+// Validamos que el user existe y tiene app+notifs (sino las notifs no
+// llegan y no servia el test).
+app.post('/api/admin/automation/test-fire', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const { username, intervalSeconds, includeBonus } = req.body || {};
+    if (!username || typeof username !== 'string') {
+      return res.status(400).json({ error: 'username requerido' });
+    }
+    const interval = Math.max(30, Math.min(300, parseInt(intervalSeconds) || 100));
+    const targetUser = String(username).trim().toLowerCase();
+    const wantBonus = includeBonus !== false;
+
+    // Verificar que el user existe y tiene canal (app+notifs).
+    const userDoc = await User.findOne(
+      { username: { $regex: '^' + targetUser.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } },
+      { username: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, _id: 0 }
+    ).lean();
+    if (!userDoc) return res.status(404).json({ error: 'Usuario no encontrado: ' + targetUser });
+    const tokens = Array.isArray(userDoc.fcmTokens) ? userDoc.fcmTokens : [];
+    const legacyMatch = userDoc.fcmTokenContext === 'standalone' && userDoc.notifPermission === 'granted';
+    const arrayMatch = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
+    if (!legacyMatch && !arrayMatch) {
+      return res.status(400).json({
+        error: 'El usuario "' + userDoc.username + '" no tiene la app + notifs activas. Las notifs no llegarian.'
+      });
+    }
+
+    // Construir la lista de notifs a programar.
+    const copies = await EngagementCopyPool.find({ enabled: true }).sort({ createdAt: 1 }).lean();
+    const queue = copies.map(c => ({ kind: 'engagement', title: c.title, body: c.body }));
+
+    if (wantBonus) {
+      // Sample regalo $: usamos un mensaje claro de test.
+      queue.push({
+        kind: 'bonus_money',
+        title: '🎁 [TEST] Tenés un regalo esperándote',
+        body: 'Sample regalo $: abrí la app y reclamalo antes de que se termine.'
+      });
+      // Sample bono % carga.
+      queue.push({
+        kind: 'bonus_promo',
+        title: '🎁 [TEST] Bono 50% próxima carga',
+        body: 'Sample promo: 50% de bono en tu próxima carga, válido por 48h. Reclamá por WhatsApp.'
+      });
+    }
+
+    if (queue.length === 0) {
+      return res.status(400).json({ error: 'No hay copies habilitados para testear.' });
+    }
+
+    const now = Date.now();
+    const created = [];
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
+      const scheduledFor = new Date(now + (i + 1) * interval * 1000);
+      try {
+        await ScheduledNotification.create({
+          id: uuidv4(),
+          scheduledFor,
+          status: 'pending',
+          title: '[TEST ' + (i+1) + '/' + queue.length + '] ' + item.title.slice(0, 150),
+          body: item.body.slice(0, 480),
+          targetUsername: targetUser,
+          audiencePrefix: null,
+          extraType: 'none',
+          createdBy: 'automation-test:' + (req.user.username || 'admin')
+        });
+        created.push({
+          n: i + 1,
+          kind: item.kind,
+          title: item.title,
+          scheduledFor: scheduledFor.toISOString()
+        });
+      } catch (e) {
+        logger.warn(`[automation-test] no se pudo crear notif ${i+1}: ${e.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      username: userDoc.username,
+      total: created.length,
+      intervalSeconds: interval,
+      firstAt: created[0] ? created[0].scheduledFor : null,
+      lastAt: created[created.length - 1] ? created[created.length - 1].scheduledFor : null,
+      notifications: created
+    });
+  } catch (err) {
+    logger.error(`POST automation/test-fire: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================
 // RECORDATORIOS DE REEMBOLSO (daily/weekly/monthly)
 // ============================================================
