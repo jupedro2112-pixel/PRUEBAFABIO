@@ -1348,6 +1348,96 @@
             white-space: nowrap !important;
             text-transform: uppercase;
         }
+
+        /* ============================================================
+           Card de sorteos en home (#rafflesHomeCard).
+           Desktop: emojis a la derecha en flex. Mobile: layout compacto
+           con tipografia mas chica y emojis abajo del titulo, asi todo
+           el contenido entra centrado sin cortar.
+           ============================================================ */
+        #rafflesHomeCard {
+            cursor: pointer;
+            background: linear-gradient(135deg, #1a0033 0%, #2d0052 50%, #1a0033 100%);
+            border: 2px solid #d4af37;
+            border-radius: 16px;
+            padding: 16px;
+            margin: 12px auto;
+            max-width: 560px;
+            box-shadow: 0 4px 20px rgba(212, 175, 55, 0.30);
+            position: relative;
+            overflow: hidden;
+        }
+        #rafflesHomeCard .raffles-home-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        #rafflesHomeCard .raffles-home-text { flex: 1; min-width: 0; }
+        #rafflesHomeCard .raffles-home-title {
+            color: #d4af37;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 800;
+            margin-bottom: 4px;
+        }
+        #rafflesHomeCard .raffles-home-amounts {
+            color: #ffd700;
+            font-size: 18px;
+            font-weight: 900;
+            line-height: 1.3;
+            margin-bottom: 6px;
+        }
+        #rafflesHomeCard .raffles-home-desc {
+            color: #aaa;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        #rafflesHomeCard .raffles-home-emojis {
+            font-size: 42px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        #rafflesHomeCard .raffles-home-cta {
+            margin-top: 12px;
+            width: 100%;
+            background: linear-gradient(135deg, #d4af37, #f7931e);
+            color: #000;
+            border: none;
+            padding: 12px;
+            border-radius: 11px;
+            font-weight: 900;
+            font-size: 15px;
+            letter-spacing: 1px;
+            cursor: pointer;
+            box-shadow: 0 3px 12px rgba(212, 175, 55, 0.40);
+        }
+        @media (max-width: 600px) {
+            #rafflesHomeCard {
+                padding: 12px;
+                margin: 10px 12px;
+                border-radius: 14px;
+            }
+            #rafflesHomeCard .raffles-home-row {
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                gap: 6px;
+            }
+            #rafflesHomeCard .raffles-home-title {
+                font-size: 10.5px;
+                letter-spacing: 1.4px;
+            }
+            #rafflesHomeCard .raffles-home-amounts { font-size: 16px; }
+            #rafflesHomeCard .raffles-home-desc { font-size: 10.5px; line-height: 1.45; }
+            #rafflesHomeCard .raffles-home-emojis { font-size: 26px; order: 2; margin-top: 2px; }
+            #rafflesHomeCard .raffles-home-cta {
+                margin-top: 10px;
+                padding: 11px;
+                font-size: 13.5px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1603,17 +1693,21 @@
         </div>
 
         <!-- Refunds-only: Card grande de sorteos pagados — CTA imposible
-             de no ver. Click abre el modal con los 4 sorteos. -->
-        <div id="rafflesHomeCard" onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#1a0033 0%,#2d0052 50%,#1a0033 100%);border:2px solid #d4af37;border-radius:16px;padding:18px;margin:12px auto;max-width:560px;box-shadow:0 4px 20px rgba(212,175,55,0.30);position:relative;overflow:hidden;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                <div style="flex:1;min-width:200px;">
-                    <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:2px;font-weight:800;margin-bottom:4px;">🎁 SORTEOS SEMANALES · PAGOS Y GRATIS</div>
-                    <div style="color:#ffd700;font-size:18px;font-weight:900;line-height:1.3;margin-bottom:6px;">$2M · $1M · $500k · $100k</div>
-                    <div style="color:#aaa;font-size:11px;line-height:1.5;"><strong style="color:#ffd700;">Pagos:</strong> elegí tu número. <strong style="color:#4dabff;">Gratis:</strong> auto-anotación si sos cliente activo. Sorteo todos los lunes Lotería Nocturna. Premio acreditado automáticamente.</div>
+             de no ver. Click abre el modal con los 4 sorteos.
+             En mobile la card se compacta (emojis abajo del titulo,
+             tipografia reducida) para que todo el contenido entre sin
+             cortar. Desktop conserva el layout amplio con emojis a la
+             derecha. -->
+        <div id="rafflesHomeCard" onclick="VIP.raffles && VIP.raffles.open()">
+            <div class="raffles-home-row">
+                <div class="raffles-home-text">
+                    <div class="raffles-home-title">🎁 SORTEOS SEMANALES · PAGOS Y GRATIS</div>
+                    <div class="raffles-home-amounts">$2M · $1M · $500k · $100k</div>
+                    <div class="raffles-home-desc"><strong style="color:#ffd700;">Pagos:</strong> elegí tu número. <strong style="color:#4dabff;">Gratis:</strong> auto-anotación si sos cliente activo. Sorteo todos los lunes Lotería Nocturna. Premio acreditado automáticamente.</div>
                 </div>
-                <div style="font-size:46px;line-height:1;">👑💎💰🎯</div>
+                <div class="raffles-home-emojis">👑💎💰🎯</div>
             </div>
-            <button type="button" onclick="event.stopPropagation();VIP.raffles && VIP.raffles.open()" style="margin-top:12px;width:100%;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:13px;border-radius:11px;font-weight:900;font-size:15px;letter-spacing:1px;cursor:pointer;box-shadow:0 3px 12px rgba(212,175,55,0.40);">🎫 VER Y PARTICIPAR</button>
+            <button type="button" class="raffles-home-cta" onclick="event.stopPropagation();VIP.raffles && VIP.raffles.open()">🎫 VER Y PARTICIPAR</button>
         </div>
 
         <!-- Refunds-only: Bono de bienvenida $5.000 — debajo del bloque
