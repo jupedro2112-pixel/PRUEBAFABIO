@@ -75,6 +75,7 @@ const {
   RefundReminderConfig,
   Raffle,
   RaffleParticipation,
+  RaffleSpend,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -11469,6 +11470,15 @@ function _argZonedNow() {
   return new Date(Date.now() - 3 * 3600 * 1000);
 }
 
+// Clave de dia (YYYY-MM-DD) en TZ ARG. La usamos para agrupar spend diario.
+function _argDayKey(date) {
+  const d = new Date((date ? date.getTime() : Date.now()) - 3 * 3600 * 1000);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function _isoWeekKey(date) {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const dayNum = d.getUTCDay() || 7;
@@ -11530,9 +11540,25 @@ async function _ensureActiveRafflesSeeded() {
     try {
       const existing = await Raffle.findOne(
         { raffleType: cfg.type, status: 'active' },
-        { id: 1 }
+        { id: 1, drawDate: 1, name: 1 }
       ).lean();
-      if (existing) continue;
+
+      // Auto-fix: si el sorteo activo tiene drawDate en el pasado (cron del
+      // martes no corrio o boot tardio), lo cerramos y dejamos que se cree
+      // uno nuevo abajo. Sin esto el cutoff de 3hs pre-draw bloquea las
+      // compras y el usuario ve "Este sorteo cerro las ventas".
+      if (existing) {
+        if (existing.drawDate && new Date(existing.drawDate).getTime() < Date.now()) {
+          await Raffle.updateOne(
+            { id: existing.id, status: 'active' },
+            { $set: { status: 'closed' } }
+          );
+          logger.warn(`[raffles] auto-rotate stale ${cfg.type} (drawDate paso): ${existing.name}`);
+        } else {
+          continue;
+        }
+      }
+
       const last = await Raffle.findOne(
         { raffleType: cfg.type },
         { instanceNumber: 1 }
@@ -11985,7 +12011,29 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       return res.status(503).json({ error: `No se pudo procesar el pago: ${errMsg}.` });
     }
     withdrew = true;
-    logger.info(`[raffles] BUY OK ${username} +${buyQty} numeros [${assignedNumbers.join(',')}] ${raffle.name} = $${totalCost} (txid: ${(wRes.transactionId || wRes.transferId || 'n/a')})`);
+    const txId = (wRes && wRes.data && (wRes.data.transfer_id || wRes.data.transferId || wRes.data.transaction_id || wRes.data.transactionId)) || null;
+    logger.info(`[raffles] BUY OK ${username} +${buyQty} numeros [${assignedNumbers.join(',')}] ${raffle.name} = $${totalCost} (txid: ${txId || 'n/a'})`);
+
+    // Log inmutable de gasto: alimenta el cierre diario. Best-effort: si
+    // falla, el cobro ya esta hecho y no debemos tirar la compra (queda
+    // logueado en winston con [raffles-spend] para reconciliar a mano).
+    try {
+      await RaffleSpend.create({
+        id: uuidv4(),
+        username,
+        raffleId,
+        raffleType: raffle.raffleType,
+        raffleName: raffle.name,
+        cuposCount: buyQty,
+        ticketNumbers: assignedNumbers,
+        amountARS: totalCost,
+        jugayganaTxId: txId ? String(txId) : null,
+        createdAt: new Date(),
+        dayKeyArg: _argDayKey()
+      });
+    } catch (logErr) {
+      logger.error(`[raffles-spend] insert fail ${username} ${raffle.name} $${totalCost} txid=${txId || 'n/a'}: ${logErr.message}`);
+    }
 
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const existing = await RaffleParticipation.findOne({ raffleId, username: { $regex: '^' + safe + '$', $options: 'i' } });
@@ -12043,10 +12091,17 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     logger.error(`/api/raffles/buy: ${err.message}`);
-    if (counterIncremented > 0 && !withdrew) {
-      await Raffle.updateOne({ id: raffleId }, { $inc: { _ticketCounter: -counterIncremented } }).catch(() => {});
+    // Si reservamos numeros pero NO se cobro (excepcion entre reservar y
+    // withdraw, o entre withdraw y participation), liberamos los numeros
+    // para que otros puedan comprarlos. Si ya se cobro, los numeros quedan
+    // marcados como reservados (es lo correcto: el user pago).
+    if (reservedNumbers && reservedNumbers.length > 0 && !withdrew) {
+      await Raffle.updateOne(
+        { id: raffleId },
+        { $pull: { claimedNumbers: { $in: reservedNumbers } }, $inc: { _ticketCounter: -reservedNumbers.length } }
+      ).catch(() => {});
     }
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || 'Error procesando la compra' });
   }
 });
 
@@ -12536,6 +12591,156 @@ app.post('/api/admin/raffles/seed', authMiddleware, adminMiddleware, async (req,
     const after = await Raffle.countDocuments({ status: 'active' });
     res.json({ success: true, before, after, created: Math.max(0, after - before) });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/raffles/spend-daily — cierre diario de gasto en sorteos pagos.
+// Devuelve por dia (TZ ARG): total ARS, cantidad de compras, cupos vendidos,
+// usuarios unicos, y desglose por tipo. La fuente es RaffleSpend (un row por
+// compra individual). El default trae los ultimos 30 dias.
+//
+// Query params:
+//   ?days=30     -> rango (default 30)
+//   ?from=YYYY-MM-DD&to=YYYY-MM-DD -> rango explicito (override)
+//   ?kind=paid   -> solo paid (default). free no genera spend.
+app.get('/api/admin/raffles/spend-daily', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const daysParam = Math.max(1, Math.min(365, parseInt(req.query.days, 10) || 30));
+    const from = (req.query.from && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from)) ? req.query.from : null;
+    const to = (req.query.to && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to)) ? req.query.to : null;
+
+    let dayKeyMatch;
+    if (from && to) {
+      dayKeyMatch = { $gte: from, $lte: to };
+    } else {
+      // Tomar las ultimas N fechas (TZ ARG) -> calculamos lista de claves.
+      const argNow = _argZonedNow();
+      const keys = [];
+      for (let i = 0; i < daysParam; i++) {
+        const d = new Date(argNow);
+        d.setUTCDate(argNow.getUTCDate() - i);
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        keys.push(`${y}-${m}-${day}`);
+      }
+      dayKeyMatch = { $in: keys };
+    }
+
+    const paidTypes = RAFFLE_TYPES.map(t => t.type);
+    const match = { dayKeyArg: dayKeyMatch, raffleType: { $in: paidTypes } };
+
+    // Agregado por dia.
+    const byDay = await RaffleSpend.aggregate([
+      { $match: match },
+      { $group: {
+          _id: '$dayKeyArg',
+          totalARS: { $sum: '$amountARS' },
+          buys: { $sum: 1 },
+          cupos: { $sum: '$cuposCount' },
+          users: { $addToSet: '$username' }
+      } },
+      { $project: {
+          _id: 0,
+          dayKey: '$_id',
+          totalARS: 1,
+          buys: 1,
+          cupos: 1,
+          uniqueUsers: { $size: '$users' }
+      } },
+      { $sort: { dayKey: -1 } }
+    ]);
+
+    // Desglose por tipo de sorteo (sumado en el rango).
+    const byType = await RaffleSpend.aggregate([
+      { $match: match },
+      { $group: {
+          _id: '$raffleType',
+          totalARS: { $sum: '$amountARS' },
+          buys: { $sum: 1 },
+          cupos: { $sum: '$cuposCount' }
+      } },
+      { $project: { _id: 0, raffleType: '$_id', totalARS: 1, buys: 1, cupos: 1 } },
+      { $sort: { totalARS: -1 } }
+    ]);
+
+    // Totales del rango completo.
+    const totals = byDay.reduce((acc, r) => {
+      acc.totalARS += r.totalARS || 0;
+      acc.buys += r.buys || 0;
+      acc.cupos += r.cupos || 0;
+      return acc;
+    }, { totalARS: 0, buys: 0, cupos: 0 });
+
+    // Usuarios unicos del rango entero (no se puede sumar uniqueUsers por dia).
+    const uniqRangeAgg = await RaffleSpend.aggregate([
+      { $match: match },
+      { $group: { _id: '$username' } },
+      { $count: 'n' }
+    ]);
+    totals.uniqueUsers = (uniqRangeAgg[0] && uniqRangeAgg[0].n) || 0;
+
+    // Fill-in: si un dia no tiene compras, lo devolvemos con ceros para que
+    // la UI muestre todos los dias del rango (mejor UX que un grafico
+    // saltando dias).
+    const byDayMap = Object.fromEntries(byDay.map(r => [r.dayKey, r]));
+    const requestedKeys = (dayKeyMatch.$in)
+      ? dayKeyMatch.$in
+      : (() => {
+          const keys = [];
+          const start = new Date(from + 'T00:00:00Z');
+          const end = new Date(to + 'T00:00:00Z');
+          for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+            const y = d.getUTCFullYear();
+            const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            keys.push(`${y}-${m}-${day}`);
+          }
+          return keys.reverse();
+        })();
+    const filled = requestedKeys.map(k => byDayMap[k] || ({
+      dayKey: k, totalARS: 0, buys: 0, cupos: 0, uniqueUsers: 0
+    }));
+
+    res.json({
+      success: true,
+      range: { days: daysParam, from: from || filled[filled.length - 1]?.dayKey, to: to || filled[0]?.dayKey },
+      totals,
+      byDay: filled,
+      byType,
+      typesIncluded: paidTypes
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/spend-daily: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/raffles/spend-daily/:dayKey — detalle del dia (cada compra).
+// Util para abrir un dia y ver quien compro que.
+app.get('/api/admin/raffles/spend-daily/:dayKey', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dayKey = String(req.params.dayKey || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) {
+      return res.status(400).json({ error: 'dayKey invalido (formato YYYY-MM-DD)' });
+    }
+    const paidTypes = RAFFLE_TYPES.map(t => t.type);
+    const rows = await RaffleSpend.find(
+      { dayKeyArg: dayKey, raffleType: { $in: paidTypes } },
+      { _id: 0, id: 1, username: 1, raffleType: 1, raffleName: 1, cuposCount: 1, ticketNumbers: 1, amountARS: 1, jugayganaTxId: 1, createdAt: 1 }
+    ).sort({ createdAt: -1 }).limit(2000).lean();
+
+    const totals = rows.reduce((acc, r) => {
+      acc.totalARS += r.amountARS || 0;
+      acc.buys += 1;
+      acc.cupos += r.cuposCount || 0;
+      return acc;
+    }, { totalARS: 0, buys: 0, cupos: 0 });
+
+    res.json({ success: true, dayKey, totals, rows });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/spend-daily/:dayKey: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

@@ -40,6 +40,7 @@ const AutomationLaunch = require('./AutomationLaunch');
 const EngagementCopyPool = require('./EngagementCopyPool');
 const Raffle = require('./Raffle');
 const RaffleParticipation = require('./RaffleParticipation');
+const RaffleSpend = require('./RaffleSpend');
 
 
 /**
@@ -452,6 +453,7 @@ module.exports = {
   EngagementCopyPool,
   Raffle,
   RaffleParticipation,
+  RaffleSpend,
 
   // Funciones de conexión
   connectDB,

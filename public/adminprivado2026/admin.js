@@ -8000,6 +8000,8 @@ async function sendRefundReminderPush(type) {
 let _rafflesAdminCache = null;       // dashboard data
 let _rafflesHistoryCache = null;     // history weeks
 let _rafflesHistoryDetailCache = {}; // por weekKey -> detalle
+let _rafflesSpendCache = null;       // cierre diario (paid only)
+let _rafflesSpendDays = 30;          // rango por defecto
 
 async function loadRafflesAdmin() {
     return _loadRafflesGeneric('paid', 'rafflesAdminContent');
@@ -8015,12 +8017,21 @@ async function _loadRafflesGeneric(kind, containerId) {
     c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando dashboard…</div>';
     try {
         const qs = '?kind=' + encodeURIComponent(kind);
-        // Manejo granular: si history falla pero dashboard anda, igual
-        // mostramos el dashboard (degradacion graceful).
-        const [dashRes, histRes] = await Promise.allSettled([
+        // Manejo granular: si history o spend fallan, igual mostramos lo que hay.
+        // El cierre diario es paid-only (free no genera caja), asi que solo lo
+        // pedimos cuando kind === 'paid'.
+        const calls = [
             authFetch('/api/admin/raffles/dashboard' + qs),
             authFetch('/api/admin/raffles/history' + qs + '&limit=12')
-        ]);
+        ];
+        if (kind === 'paid') {
+            calls.push(authFetch('/api/admin/raffles/spend-daily?days=' + _rafflesSpendDays));
+        }
+        const results = await Promise.allSettled(calls);
+        const dashRes = results[0];
+        const histRes = results[1];
+        const spendRes = (kind === 'paid') ? results[2] : null;
+
         // Dashboard es obligatorio.
         if (dashRes.status !== 'fulfilled' || !dashRes.value.ok) {
             const err = dashRes.status === 'fulfilled'
@@ -8037,14 +8048,191 @@ async function _loadRafflesGeneric(kind, containerId) {
         } else {
             console.warn('history fetch failed, mostrando dashboard sin historial');
         }
+        let spend = null;
+        if (spendRes && spendRes.status === 'fulfilled' && spendRes.value.ok) {
+            try { spend = await spendRes.value.json(); } catch (_) { spend = null; }
+        }
         _rafflesAdminCache = dash;
         _rafflesAdminCache.__kind = kind;
         _rafflesHistoryCache = hist.weeks || [];
+        _rafflesSpendCache = spend;
         c.innerHTML = _renderRafflesAdmin();
     } catch (e) {
         console.error('_loadRafflesGeneric error:', e);
         c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>';
     }
+}
+
+async function reloadRafflesSpend(days) {
+    const d = parseInt(days, 10);
+    if (Number.isFinite(d) && d > 0 && d <= 365) _rafflesSpendDays = d;
+    try {
+        const r = await authFetch('/api/admin/raffles/spend-daily?days=' + _rafflesSpendDays);
+        if (!r.ok) {
+            alert('No se pudo recargar el cierre diario');
+            return;
+        }
+        _rafflesSpendCache = await r.json();
+        const c = document.getElementById('rafflesAdminContent');
+        if (c) c.innerHTML = _renderRafflesAdmin();
+    } catch (e) {
+        console.error('reloadRafflesSpend:', e);
+        alert('Error de conexión recargando cierre diario');
+    }
+}
+
+async function viewRafflesSpendDay(dayKey) {
+    if (!dayKey) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/spend-daily/' + encodeURIComponent(dayKey));
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert('Error: ' + (err.error || 'no se pudo cargar el detalle'));
+            return;
+        }
+        const data = await r.json();
+        _showRafflesSpendDayModal(data);
+    } catch (e) {
+        console.error('viewRafflesSpendDay:', e);
+        alert('Error de conexión');
+    }
+}
+
+function _showRafflesSpendDayModal(data) {
+    const dayKey = data.dayKey || '—';
+    const t = data.totals || {};
+    const rows = data.rows || [];
+    let html = '';
+    html += '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;" onclick="if(event.target===this)this.remove()">';
+    html += '  <div style="background:#1a0033;border:2px solid #d4af37;border-radius:14px;max-width:780px;width:100%;margin:8px auto;padding:18px 14px 16px;position:relative;">';
+    html += '    <button type="button" onclick="this.closest(\'div[style*=fixed]\').remove()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;line-height:1;">✕</button>';
+    html += '    <h3 style="color:#ffd700;margin:0 0 6px;font-size:16px;">📅 Cierre diario · ' + escapeHtml(dayKey) + '</h3>';
+    html += '    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">';
+    html += '      <div style="background:rgba(0,0,0,0.30);padding:8px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;font-weight:700;letter-spacing:1px;">Recaudado</div><div style="color:#d4af37;font-size:16px;font-weight:900;">' + _fmtMoney(t.totalARS) + '</div></div>';
+    html += '      <div style="background:rgba(0,0,0,0.30);padding:8px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;font-weight:700;letter-spacing:1px;">Compras</div><div style="color:#fff;font-size:16px;font-weight:900;">' + (t.buys || 0) + '</div></div>';
+    html += '      <div style="background:rgba(0,0,0,0.30);padding:8px;border-radius:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;font-weight:700;letter-spacing:1px;">Cupos</div><div style="color:#00d4ff;font-size:16px;font-weight:900;">' + (t.cupos || 0) + '</div></div>';
+    html += '    </div>';
+    if (rows.length === 0) {
+        html += '    <div style="text-align:center;padding:24px;color:#888;">Sin compras este dia.</div>';
+    } else {
+        html += '    <div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;max-height:60vh;overflow-y:auto;">';
+        html += '      <table style="width:100%;border-collapse:collapse;font-size:11px;">';
+        html += '        <thead style="position:sticky;top:0;background:#2d0052;"><tr>';
+        html += '          <th style="text-align:left;padding:8px;color:#d4af37;font-weight:800;">Hora</th>';
+        html += '          <th style="text-align:left;padding:8px;color:#d4af37;font-weight:800;">Usuario</th>';
+        html += '          <th style="text-align:left;padding:8px;color:#d4af37;font-weight:800;">Sorteo</th>';
+        html += '          <th style="text-align:right;padding:8px;color:#d4af37;font-weight:800;">Cupos</th>';
+        html += '          <th style="text-align:right;padding:8px;color:#d4af37;font-weight:800;">Monto</th>';
+        html += '          <th style="text-align:left;padding:8px;color:#d4af37;font-weight:800;">Tx</th>';
+        html += '        </tr></thead><tbody>';
+        for (const r of rows) {
+            const dt = r.createdAt ? new Date(r.createdAt) : null;
+            const hora = dt ? dt.toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }) : '—';
+            const numStr = (r.ticketNumbers && r.ticketNumbers.length)
+                ? '<div style="color:#888;font-size:10px;margin-top:2px;">#' + r.ticketNumbers.slice(0, 12).join(', #') + (r.ticketNumbers.length > 12 ? ' …' : '') + '</div>'
+                : '';
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
+            html += '  <td style="padding:8px;color:#aaa;white-space:nowrap;">' + hora + '</td>';
+            html += '  <td style="padding:8px;color:#fff;font-weight:700;">' + escapeHtml(r.username || '') + '</td>';
+            html += '  <td style="padding:8px;color:#ddd;">' + escapeHtml(r.raffleName || r.raffleType || '') + numStr + '</td>';
+            html += '  <td style="padding:8px;color:#fff;text-align:right;">' + (r.cuposCount || 0) + '</td>';
+            html += '  <td style="padding:8px;color:#d4af37;font-weight:800;text-align:right;white-space:nowrap;">' + _fmtMoney(r.amountARS) + '</td>';
+            html += '  <td style="padding:8px;color:#666;font-size:10px;font-family:monospace;">' + escapeHtml(r.jugayganaTxId || '—') + '</td>';
+            html += '</tr>';
+        }
+        html += '      </tbody></table>';
+        html += '    </div>';
+    }
+    html += '  </div>';
+    html += '</div>';
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstChild);
+}
+
+function _renderRafflesSpendSection(spend) {
+    if (!spend || !spend.byDay) {
+        return '<div style="text-align:center;padding:18px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">Cierre diario no disponible (sin datos todavía).</div>';
+    }
+    const t = spend.totals || {};
+    const range = spend.range || {};
+    let html = '';
+
+    // Banner totales del rango
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:10px;">';
+    html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Total recaudado</div><div style="color:#d4af37;font-size:16px;font-weight:900;">' + _fmtMoney(t.totalARS) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Compras</div><div style="color:#fff;font-size:16px;font-weight:900;">' + (t.buys || 0) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cupos</div><div style="color:#00d4ff;font-size:16px;font-weight:900;">' + (t.cupos || 0) + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Usuarios</div><div style="color:#66ff66;font-size:16px;font-weight:900;">' + (t.uniqueUsers || 0) + '</div></div>';
+    html += '</div>';
+
+    // Selector de rango
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:11px;color:#aaa;">';
+    html += '  <span>Rango:</span>';
+    for (const d of [7, 14, 30, 60, 90]) {
+        const active = (range.days === d);
+        html += '  <button type="button" onclick="reloadRafflesSpend(' + d + ')" style="background:' + (active ? '#d4af37' : 'rgba(255,255,255,0.06)') + ';color:' + (active ? '#000' : '#fff') + ';border:1px solid rgba(212,175,55,0.40);padding:4px 9px;border-radius:5px;font-weight:' + (active ? '900' : '700') + ';font-size:11px;cursor:pointer;">' + d + ' días</button>';
+    }
+    html += '  <span style="color:#666;margin-left:6px;">' + escapeHtml(range.from || '') + ' → ' + escapeHtml(range.to || '') + '</span>';
+    html += '</div>';
+
+    // Tabla por día (descendente, dia mas reciente arriba)
+    const byDay = spend.byDay || [];
+    if (byDay.length === 0) {
+        html += '<div style="text-align:center;padding:18px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">Sin compras en el rango seleccionado.</div>';
+    } else {
+        // Calcular el max para la barra de progreso visual.
+        const maxARS = byDay.reduce((m, r) => Math.max(m, r.totalARS || 0), 0);
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;max-height:420px;overflow-y:auto;">';
+        html += '  <table style="width:100%;border-collapse:collapse;font-size:11px;">';
+        html += '    <thead style="position:sticky;top:0;background:#2d0052;"><tr>';
+        html += '      <th style="text-align:left;padding:8px;color:#d4af37;font-weight:800;">Día</th>';
+        html += '      <th style="text-align:right;padding:8px;color:#d4af37;font-weight:800;">Recaudado</th>';
+        html += '      <th style="text-align:right;padding:8px;color:#d4af37;font-weight:800;">Compras</th>';
+        html += '      <th style="text-align:right;padding:8px;color:#d4af37;font-weight:800;">Cupos</th>';
+        html += '      <th style="text-align:right;padding:8px;color:#d4af37;font-weight:800;">Usuarios</th>';
+        html += '      <th style="text-align:left;padding:8px;color:#d4af37;font-weight:800;width:30%;"></th>';
+        html += '      <th style="text-align:center;padding:8px;color:#d4af37;font-weight:800;"></th>';
+        html += '    </tr></thead><tbody>';
+        for (const r of byDay) {
+            const isToday = (r.dayKey === byDay[0].dayKey); // primer fila = hoy
+            const pct = maxARS > 0 ? Math.round(((r.totalARS || 0) / maxARS) * 100) : 0;
+            const dayLabel = (() => {
+                try {
+                    const d = new Date(r.dayKey + 'T00:00:00-03:00');
+                    return d.toLocaleDateString('es-AR', { weekday:'short', day:'2-digit', month:'2-digit' });
+                } catch (_) { return r.dayKey; }
+            })();
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);' + (isToday ? 'background:rgba(212,175,55,0.06);' : '') + '">';
+            html += '  <td style="padding:8px;color:#fff;font-weight:700;white-space:nowrap;">' + escapeHtml(r.dayKey) + ' <span style="color:#888;font-weight:400;">· ' + escapeHtml(dayLabel) + '</span></td>';
+            html += '  <td style="padding:8px;text-align:right;color:#d4af37;font-weight:800;white-space:nowrap;">' + _fmtMoney(r.totalARS) + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#fff;">' + (r.buys || 0) + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#00d4ff;">' + (r.cupos || 0) + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#66ff66;">' + (r.uniqueUsers || 0) + '</td>';
+            html += '  <td style="padding:8px;"><div style="height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#d4af37,#ffd700);"></div></div></td>';
+            html += '  <td style="padding:6px;text-align:center;">' + ((r.buys || 0) > 0 ? '<button type="button" onclick="viewRafflesSpendDay(' + JSON.stringify(r.dayKey) + ')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:4px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">Ver</button>' : '') + '</td>';
+            html += '</tr>';
+        }
+        html += '    </tbody></table>';
+        html += '</div>';
+    }
+
+    // Desglose por tipo
+    if (spend.byType && spend.byType.length > 0) {
+        html += '<div style="margin-top:10px;font-size:11px;color:#aaa;">';
+        html += '<div style="font-weight:800;color:#d4af37;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Desglose por sorteo</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;">';
+        for (const t of spend.byType) {
+            html += '  <div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px 10px;">';
+            html += '    <div style="color:#fff;font-weight:700;font-size:12px;">' + escapeHtml(t.raffleType) + '</div>';
+            html += '    <div style="color:#d4af37;font-weight:800;font-size:13px;">' + _fmtMoney(t.totalARS) + '</div>';
+            html += '    <div style="color:#888;font-size:10px;">' + (t.cupos || 0) + ' cupos · ' + (t.buys || 0) + ' compras</div>';
+            html += '  </div>';
+        }
+        html += '</div></div>';
+    }
+
+    return html;
 }
 
 function _fmtMoney(n) { return '$' + (Number(n) || 0).toLocaleString('es-AR'); }
@@ -8159,6 +8347,15 @@ function _renderRafflesAdmin() {
             idx++;
         }
         html += '  </div>';
+        html += '</div>';
+    }
+
+    // ===== Cierre diario (solo paid) =====
+    if (!isFree) {
+        html += '<div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 4px;text-transform:uppercase;letter-spacing:1px;">💵 Cierre diario · gasto en sorteos pagos</h3>';
+        html += '  <div style="color:#aaa;font-size:11px;margin-bottom:10px;line-height:1.5;">Suma diaria de lo que la gente gastó comprando números (descontado de su saldo en JUGAYGANA). Es el dato para cuadrar el cierre contable contra la diferencia de la plataforma.</div>';
+        html += _renderRafflesSpendSection(_rafflesSpendCache);
         html += '</div>';
     }
 

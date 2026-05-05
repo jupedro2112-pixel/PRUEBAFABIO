@@ -40,7 +40,8 @@ const {
   ActivePlayersSnapshot,
   RefundReminderConfig,
   Raffle,
-  RaffleParticipation
+  RaffleParticipation,
+  RaffleSpend
 } = require('../src/models');
 
 // ============================================
@@ -354,6 +355,7 @@ module.exports = {
   RefundReminderConfig,
   Raffle,
   RaffleParticipation,
+  RaffleSpend,
   // Helpers
   getConfig,
   setConfig,
