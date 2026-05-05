@@ -11903,6 +11903,28 @@ function _nextMondayDraw() {
 
 // Devuelve { mode, teams } leyendo Config 'raffle_audience_paid' o
 // 'raffle_audience_free'. Si no esta seteado, devuelve { mode:'all', teams:[] }.
+// Cuenta cuantas cargas REALES tuvo un user en los ultimos 7 dias. "Real"
+// significa Transaction.type === 'deposit' — los bonus, refunds, fire_rewards
+// y referral commissions van con type distinto y NO se cuentan. Asi medimos
+// actividad real del jugador sin que las bonificaciones inflen el numero.
+//
+// Lookup case-insensitive para matchear como Transaction guarda el username.
+async function _getRealChargeCountLastWeek(username) {
+  if (!username) return 0;
+  const since = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+  const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try {
+    return await Transaction.countDocuments({
+      username: { $regex: '^' + safe + '$', $options: 'i' },
+      type: 'deposit',
+      timestamp: { $gte: since }
+    });
+  } catch (e) {
+    logger.warn(`[raffles] _getRealChargeCountLastWeek ${username}: ${e.message}`);
+    return 0;
+  }
+}
+
 async function _readRaffleAudienceConfig(kind) {
   const key = kind === 'free' ? 'raffle_audience_free' : 'raffle_audience_paid';
   try {
@@ -12430,7 +12452,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         myTicketNumbers: (myByRaffle[r.id] && myByRaffle[r.id].ticketNumbers) || [],
         myCuposCount: (myByRaffle[r.id] && myByRaffle[r.id].cuposCount) || 0,
         iAmWinner: (myByRaffle[r.id] && myByRaffle[r.id].isWinner) || false,
-        requiresPaidTicket: !!r.requiresPaidTicket
+        requiresPaidTicket: !!r.requiresPaidTicket,
+        requiresMinChargesLastWeek: r.requiresMinChargesLastWeek || 0
       })),
       claimable,
       recentWins
@@ -12658,6 +12681,21 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
           return res.status(403).json({
             error: 'Este RELÁMPAGO es exclusivo para clientes que ya tienen al menos 1 número en sorteos pagos. ¡Comprá uno y volvé al próximo gratis!',
             requiresPaidTicket: true
+          });
+        }
+      }
+      // Gate: si requiere N cargas REALES en los ultimos 7 dias. Las
+      // bonificaciones no cuentan — solo cargas con plata propia. Util para
+      // sorteos de "recompensa por actividad" (jugadores constantes) sin
+      // mirar el monto, solo la frecuencia.
+      const minCharges = Number(raffle.requiresMinChargesLastWeek) || 0;
+      if (minCharges > 0) {
+        const userCharges = await _getRealChargeCountLastWeek(username);
+        if (userCharges < minCharges) {
+          return res.status(403).json({
+            error: `Este RELÁMPAGO es solo para usuarios con al menos ${minCharges} cargas en la última semana. Vos tenés ${userCharges}. ¡Cargá unas más y vení al próximo!`,
+            requiresMinChargesLastWeek: minCharges,
+            userChargesLastWeek: userCharges
           });
         }
       }
@@ -13663,6 +13701,11 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
     const requiresPaidTicket = (typeof b.requiresPaidTicket === 'boolean')
       ? b.requiresPaidTicket
       : prevCount > 0;
+    // Threshold de cargas reales en la ultima semana (0 = sin requerimiento).
+    // Cap razonable (1..50) para evitar valores absurdos. Las cargas se
+    // cuentan via Transaction type='deposit' (los bonus no cuentan).
+    const requiresMinChargesLastWeek = Math.max(0, Math.min(50, parseInt(b.requiresMinChargesLastWeek, 10) || 0));
+
     // Audiencia: 4 modos (all, except, only, user). Sanitizamos los equipos
     // (lowercase, trim, dedup) y los usernames (lowercase, trim, dedup) para
     // que el filter sea consistente con _userInRaffleAudience. El modo 'user'
@@ -13710,6 +13753,7 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
       audienceMode,
       audienceTeams,
       audienceUsernames,
+      requiresMinChargesLastWeek,
       lotteryRule: 'Sorteo RELÁMPAGO. Mismo mecanismo que los demás: 1° premio de la Lotería Nacional Nocturna del lunes próximo.',
       createdAt: new Date()
     });

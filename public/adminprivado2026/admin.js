@@ -10007,6 +10007,12 @@ function seedLightningRaffle() {
                 '</div>' +
             '</label>' +
 
+            '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:10px;margin-bottom:8px;">' +
+                '<label for="lightMinChargesWeek" style="display:block;color:#66ff66;font-size:12px;font-weight:800;margin-bottom:4px;cursor:pointer;">📊 Mínimo de cargas en la última semana</label>' +
+                '<input id="lightMinChargesWeek" type="number" min="0" max="50" step="1" value="0" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(102,255,102,0.40);padding:8px 10px;border-radius:6px;font-size:14px;box-sizing:border-box;">' +
+                '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:5px;"><strong style="color:#fff;">0 = sin requisito.</strong> Si ponés ej. <strong style="color:#66ff66;">3</strong>, solo van a poder anotarse los que hayan tenido <strong>3 o más cargas reales</strong> en los últimos 7 días. Las bonificaciones <strong>NO cuentan</strong> — solo cargas con plata propia.</div>' +
+            '</div>' +
+
             '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:8px;">' +
                 '<div style="color:#00d4ff;font-size:12px;font-weight:800;margin-bottom:6px;">👥 Audiencia (¿a quiénes les llega?)</div>' +
                 '<div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px;color:#ddd;">' +
@@ -10092,6 +10098,7 @@ async function seedLightningRaffleSubmit() {
     const prize = parseInt(document.getElementById('lightPrize')?.value, 10);
     const cupos = parseInt(document.getElementById('lightCupos')?.value, 10);
     const requiresPaidTicket = !!document.getElementById('lightRequirePaid')?.checked;
+    const requiresMinChargesLastWeek = Math.max(0, Math.min(50, parseInt(document.getElementById('lightMinChargesWeek')?.value, 10) || 0));
     const autoAnnounce = !!document.getElementById('lightAutoAnnounce')?.checked;
     if (!Number.isFinite(prize) || prize < 100) { alert('Premio inválido (mínimo $100).'); return; }
     if (!Number.isFinite(cupos) || cupos < 2 || cupos > 1000) { alert('Cupos inválidos (2 a 1000).'); return; }
@@ -10124,6 +10131,7 @@ async function seedLightningRaffleSubmit() {
                 prizeValueARS: prize,
                 totalTickets: cupos,
                 requiresPaidTicket,
+                requiresMinChargesLastWeek,
                 audienceMode,
                 audienceTeams,
                 audienceUsernames

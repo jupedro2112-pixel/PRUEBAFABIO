@@ -367,17 +367,26 @@ VIP.raffles = (function () {
         let html = '<div style="background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:18px;padding:18px 16px;margin-bottom:18px;box-shadow:0 0 30px rgba(255,235,59,0.40),0 4px 24px rgba(0,150,255,0.30);position:relative;overflow:hidden;">';
         html += '<div style="position:absolute;top:-15px;right:-15px;font-size:120px;opacity:0.10;line-height:1;">⚡</div>';
         const exclusive = !!r.requiresPaidTicket;
+        const minCharges = Number(r.requiresMinChargesLastWeek) || 0;
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
         html += '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>';
         html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · 1 POR PERSONA</span>';
         if (exclusive) {
             html += '<span style="background:rgba(255,107,107,0.30);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:1px;border:1px solid #ff8080;">SOLO CON PAGO PREVIO</span>';
         }
+        if (minCharges > 0) {
+            html += '<span style="background:rgba(102,255,102,0.20);color:#aaffaa;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:1px;border:1px solid #66ff66;">' + minCharges + '+ CARGAS ÚLT. SEMANA</span>';
+        }
         html += '</div>';
         html += '<div style="color:#fff;font-size:24px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + '</div>';
-        const subtext = exclusive
-            ? '🎫 Exclusivo para clientes con al menos 1 número en sorteos pagos · ' + total + ' lugares'
-            : '¡Entrá y mirá! Inscripción gratuita · 1 cupo por persona · ' + total + ' lugares';
+        let subtext;
+        if (minCharges > 0) {
+            subtext = '🎯 Exclusivo para jugadores con <strong>' + minCharges + '+ cargas reales</strong> en los últimos 7 días · ' + total + ' lugares';
+        } else if (exclusive) {
+            subtext = '🎫 Exclusivo para clientes con al menos 1 número en sorteos pagos · ' + total + ' lugares';
+        } else {
+            subtext = '¡Entrá y mirá! Inscripción gratuita · 1 cupo por persona · ' + total + ' lugares';
+        }
         html += '<div style="color:#fff;font-size:12.5px;line-height:1.4;margin-bottom:10px;font-weight:600;">' + subtext + '</div>';
 
         // Barra de progreso

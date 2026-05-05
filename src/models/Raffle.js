@@ -64,6 +64,12 @@ const raffleSchema = new mongoose.Schema({
   // inscribirse. Sirve como gancho: el primer relampago es libre, los
   // siguientes son recompensa para quienes ya jugaron pagos.
   requiresPaidTicket: { type: Boolean, default: false },
+  // Solo aplica a 'relampago': si > 0, el user necesita haber tenido al
+  // menos N cargas REALES (Transaction type='deposit') en los ultimos 7
+  // dias para poder anotarse. Las bonificaciones (type='bonus') NO cuentan
+  // — solo cargas reales con plata propia. Sirve para apuntar campañas a
+  // jugadores activos sin importar el monto.
+  requiresMinChargesLastWeek: { type: Number, default: 0, min: 0 },
 
   // Audiencia por equipo o usuario. Permite que el admin restrinja la
   // visibilidad y participacion del sorteo.
