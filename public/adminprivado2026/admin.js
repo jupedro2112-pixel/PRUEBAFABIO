@@ -8901,6 +8901,22 @@ function _campaignKpi(label, value, color) {
     '</div>';
 }
 
+// Pinta una "etapa" del funnel (visita -> registro -> install -> reclamo).
+// 'arrow' es el separador visual a la izquierda (vacio para la 1ra etapa).
+function _funnelStep(label, value, sub, color, arrow) {
+    let html = '<div style="display:flex;align-items:stretch;">';
+    if (arrow) {
+        html += '<div style="display:flex;align-items:center;color:#666;font-size:18px;padding:0 6px;flex-shrink:0;">' + arrow + '</div>';
+    }
+    html += '<div style="flex:1;background:rgba(0,0,0,0.30);border:1px solid ' + color + '40;border-radius:8px;padding:10px;text-align:center;">';
+    html += '<div style="color:' + color + ';font-size:20px;font-weight:900;line-height:1;">' + value + '</div>';
+    html += '<div style="color:#fff;font-size:10.5px;margin-top:5px;font-weight:700;">' + label + '</div>';
+    html += '<div style="color:#888;font-size:9.5px;margin-top:2px;">' + sub + '</div>';
+    html += '</div>';
+    html += '</div>';
+    return html;
+}
+
 async function copyCampaignLink(path) {
     // Mismo dominio publico que muestra la tarjeta. Si en el futuro queremos
     // hacerlo configurable, hay que sacarlo a un Config global.
@@ -8930,7 +8946,60 @@ async function loadCampaignDetail(code) {
             box.innerHTML = '<div style="color:#ff8080;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
             return;
         }
-        let h = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;">';
+        let h = '';
+
+        // ============ FUNNEL: visita -> registro -> install -> reclamo ============
+        const fn = d.funnel || { signups: 0, installed: 0, claimed: 0, claimedAmountTotal: 0 };
+        const visitsForFunnel = d.uniqueIps || 0; // base = unicos para no inflar con F5s
+        const pct = function (num, den) {
+            if (!den || den === 0) return '—';
+            return Math.round((num / den) * 100) + '%';
+        };
+        h += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(102,255,102,0.04));border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:14px;margin-bottom:8px;">';
+        h += '<div style="color:#fff;font-weight:800;font-size:13px;margin-bottom:10px;">🎯 Funnel de conversión</div>';
+        h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px;">';
+        h += _funnelStep('1. Visitaron', visitsForFunnel.toLocaleString('es-AR'), '(visitantes únicos)', '#00d4ff', '');
+        h += _funnelStep('2. Se registraron', (fn.signups || 0).toLocaleString('es-AR'), pct(fn.signups, visitsForFunnel) + ' de visitas', '#4dabff', '→');
+        h += _funnelStep('3. Instalaron app', (fn.installed || 0).toLocaleString('es-AR'), pct(fn.installed, fn.signups) + ' de registrados', '#ffeb3b', '→');
+        h += _funnelStep('4. Reclamaron bono', (fn.claimed || 0).toLocaleString('es-AR'), pct(fn.claimed, fn.installed) + ' de instalados', '#66ff66', '→');
+        h += '</div>';
+        if (fn.claimedAmountTotal > 0) {
+            h += '<div style="color:#aaa;font-size:11px;text-align:right;border-top:1px dashed rgba(255,255,255,0.10);padding-top:8px;">';
+            h += '💰 Plata regalada en bonos: <strong style="color:#66ff66;">$' + (fn.claimedAmountTotal || 0).toLocaleString('es-AR') + '</strong>';
+            h += '</div>';
+        }
+        h += '</div>';
+
+        // ============ Tabla de users atribuidos ============
+        if (d.attributed && d.attributed.length > 0) {
+            h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;margin-bottom:8px;">';
+            h += '<div style="color:#fff;font-weight:800;font-size:12px;margin-bottom:8px;">👥 Usuarios atribuidos a esta campaña (' + d.attributed.length + ')</div>';
+            h += '<div style="max-height:320px;overflow-y:auto;">';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+            h += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.10);">';
+            h += '<th style="padding:5px 6px;">User</th>';
+            h += '<th style="padding:5px 6px;">Se registró</th>';
+            h += '<th style="padding:5px 6px;text-align:center;">App</th>';
+            h += '<th style="padding:5px 6px;text-align:center;">Bono $</th>';
+            h += '<th style="padding:5px 6px;">Reclamó</th>';
+            h += '</tr></thead><tbody>';
+            for (const u of d.attributed) {
+                const signedUp = u.signedUpAt ? new Date(u.signedUpAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+                const claimedAt = u.bonusClaimedAt ? new Date(u.bonusClaimedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+                h += '  <td style="padding:5px 6px;color:#fff;font-weight:600;">' + escapeHtml(u.username || '—') + '</td>';
+                h += '  <td style="padding:5px 6px;color:#ddd;white-space:nowrap;">' + escapeHtml(signedUp) + '</td>';
+                h += '  <td style="padding:5px 6px;text-align:center;">' + (u.installed ? '<span style="color:#66ff66;font-weight:800;">✅</span>' : '<span style="color:#666;">—</span>') + '</td>';
+                h += '  <td style="padding:5px 6px;text-align:center;">' + (u.claimedBonus ? '<span style="color:#66ff66;font-weight:800;">$' + (u.bonusAmount || 0).toLocaleString('es-AR') + '</span>' : '<span style="color:#666;">—</span>') + '</td>';
+                h += '  <td style="padding:5px 6px;color:#aaa;white-space:nowrap;">' + escapeHtml(claimedAt) + '</td>';
+                h += '</tr>';
+            }
+            h += '</tbody></table>';
+            h += '</div>';
+            h += '</div>';
+        }
+
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:12px;">';
 
         // By-day chart simple (barras horizontales)
         h += '<div style="color:#fff;font-weight:800;font-size:12px;margin-bottom:8px;">📅 Visitas por día (últimos 30 días, ARG)</div>';

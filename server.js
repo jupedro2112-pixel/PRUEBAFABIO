@@ -1420,7 +1420,16 @@ app.post('/api/upload/presigned-url', authMiddleware, async (req, res) => {
 // Registro de usuario
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
-    const { username, password, email, phone, referralCode, otpCode } = req.body;
+    const { username, password, email, phone, referralCode, otpCode, campaignCode: bodyCampaignCode } = req.body;
+    // Sanitizamos el campaignCode aca para tenerlo listo cuando creemos el
+    // user. El front lo lee de localStorage (donde queda guardado al cargar
+    // el home con ?c=<code>). Permitimos slug-style 2-60 chars; si no matchea
+    // simplemente lo ignoramos (mejor null que basura).
+    let campaignCode = null;
+    if (bodyCampaignCode && typeof bodyCampaignCode === 'string') {
+      const c = bodyCampaignCode.toLowerCase().trim();
+      if (/^[a-z0-9_-]{2,60}$/.test(c)) campaignCode = c;
+    }
     
     if (!username || !password) {
       return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
@@ -1531,7 +1540,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       referredByUserId: isValidReferral ? referrer.id : null,
       referredByCode: isValidReferral ? normalizedReferralCode : null,
       referredAt: isValidReferral ? new Date() : null,
-      referralStatus: isValidReferral ? 'referred' : 'none'
+      referralStatus: isValidReferral ? 'referred' : 'none',
+      // Attribution de campaña (first-touch). Si vino de un link tipo
+      // ?c=promo2k queda atado para el reporte del admin.
+      campaignCode: campaignCode,
+      campaignCodeAt: campaignCode ? new Date() : null
     });
 
     // Registrar evento de referido para trazabilidad
@@ -8584,7 +8597,7 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
     const _7d  = new Date(now.getTime() - 7 * 86400000);
     const _30d = new Date(now.getTime() - 30 * 86400000);
 
-    const [totalVisits, uniqueIpsAgg, visits24h, visits7d, byDay, recent] = await Promise.all([
+    const [totalVisits, uniqueIpsAgg, visits24h, visits7d, byDay, recent, attributedUsers] = await Promise.all([
       LandingVisit.countDocuments({ code }),
       LandingVisit.aggregate([
         { $match: { code } },
@@ -8615,10 +8628,82 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
         { $sort: { day: 1 } }
       ]),
       LandingVisit.find({ code }, { ipHash: 1, userAgent: 1, referer: 1, username: 1, at: 1 })
-        .sort({ at: -1 }).limit(50).lean()
+        .sort({ at: -1 }).limit(50).lean(),
+      // Funnel: traemos el set de users atribuidos a esta campaña con los
+      // campos que necesitamos para distinguir registrados vs instalados.
+      // hasApp = el user tiene un fcmToken con context='standalone' (PWA).
+      // El reclamo del bono se computa abajo via RefundClaim.
+      User.find(
+        { campaignCode: code },
+        { id: 1, username: 1, createdAt: 1, fcmTokenContext: 1, fcmTokens: 1 }
+      ).lean()
     ]);
 
     const uniqueIps = (uniqueIpsAgg[0] && uniqueIpsAgg[0].count) || 0;
+
+    // Funnel — calcular cuantos de los users atribuidos:
+    //   1) se registraron (signups = attributedUsers.length)
+    //   2) instalaron la app (hasApp por fcmTokenContext='standalone')
+    //   3) reclamaron el bono $10k/$5k/$2k de bienvenida (welcome_install).
+    const signups = attributedUsers.length;
+    const installedUsernames = [];
+    for (const u of attributedUsers) {
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const hasApp = u.fcmTokenContext === 'standalone'
+        || tokens.some(t => t && t.context === 'standalone');
+      if (hasApp) installedUsernames.push(String(u.username || '').toLowerCase());
+    }
+    const installed = installedUsernames.length;
+
+    let claimed = 0, claimedAmountTotal = 0;
+    if (signups > 0) {
+      const usernames = attributedUsers.map(u => String(u.username || '').toLowerCase()).filter(Boolean);
+      // Lookup case-insensitive sobre RefundClaim. Match por username exact-lowercase
+      // funciona porque tanto User.username como RefundClaim.username se guardan
+      // en el mismo casing en este sistema (ver welcome bonus claim handler).
+      const claims = await RefundClaim.find(
+        {
+          type: 'welcome_install',
+          status: 'completed',
+          username: { $in: usernames }
+        },
+        { username: 1, amount: 1, claimedAt: 1 }
+      ).lean();
+      claimed = claims.length;
+      claimedAmountTotal = claims.reduce((s, c) => s + (c.amount || 0), 0);
+    }
+
+    // Tabla detallada de los users atribuidos: util para que el admin pueda
+    // ver fila por fila quien entro, se registro, instalo y reclamo.
+    const usernamesLc = attributedUsers.map(u => String(u.username || '').toLowerCase());
+    const claimsByUser = {};
+    if (usernamesLc.length > 0) {
+      const allClaims = await RefundClaim.find(
+        {
+          type: 'welcome_install',
+          status: 'completed',
+          username: { $in: usernamesLc }
+        },
+        { username: 1, amount: 1, claimedAt: 1 }
+      ).lean();
+      for (const c of allClaims) {
+        const k = String(c.username || '').toLowerCase();
+        claimsByUser[k] = c;
+      }
+    }
+    const installedSet = new Set(installedUsernames);
+    const attributed = attributedUsers.map(u => {
+      const lc = String(u.username || '').toLowerCase();
+      const claim = claimsByUser[lc];
+      return {
+        username: u.username,
+        signedUpAt: u.createdAt,
+        installed: installedSet.has(lc),
+        claimedBonus: !!claim,
+        bonusAmount: claim ? (claim.amount || 0) : 0,
+        bonusClaimedAt: claim ? claim.claimedAt : null
+      };
+    }).sort((a, b) => new Date(b.signedUpAt || 0) - new Date(a.signedUpAt || 0));
 
     res.json({
       code,
@@ -8635,7 +8720,15 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
         referer: r.referer,
         username: r.username,
         at: r.at
-      }))
+      })),
+      // Funnel: visitas -> registros -> instalaron -> reclamaron bono.
+      funnel: {
+        signups,
+        installed,
+        claimed,
+        claimedAmountTotal
+      },
+      attributed
     });
   } catch (err) {
     logger.error(`/api/admin/landings/${req.params.code}/stats error: ${err.message}`);

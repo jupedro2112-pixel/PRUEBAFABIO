@@ -212,6 +212,21 @@ const userSchema = new mongoose.Schema({
     default: 'none',
     index: true
   },
+  // Codigo de campaña de marketing por la que vino el user (ej: 'promo2k').
+  // Se setea al registrarse cuando el front detecta ?c=<code> en la URL y lo
+  // tiene en localStorage. Permite hacer attribution para medir conversion
+  // por campaña: cuanta gente entro al link, cuantos crearon cuenta, cuantos
+  // reclamaron el bono, cuantos cargaron despues. Una vez seteado no se cambia
+  // (first-touch attribution). null si vinieron por trafico directo.
+  campaignCode: {
+    type: String,
+    default: null,
+    lowercase: true,
+    trim: true,
+    maxlength: 60,
+    index: true
+  },
+  campaignCodeAt: { type: Date, default: null },
   excludedFromReferral: {
     type: Boolean,
     default: false,

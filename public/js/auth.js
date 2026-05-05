@@ -133,6 +133,16 @@ VIP.auth = (function () {
         if (submitBtn) { submitBtn.textContent = 'Creando cuenta...'; submitBtn.disabled = true; }
 
         try {
+            // Attribution de campaña: si el user vino por un link tipo
+            // ?c=promo2k, lo guardamos en localStorage al cargar el home y
+            // ahora lo mandamos al backend para atarlo al user. First-touch:
+            // si ya hay un valor previo no lo sobreescribimos.
+            let campaignCode = null;
+            try {
+                const stored = localStorage.getItem('campaignCode');
+                if (stored && /^[a-z0-9_-]{2,60}$/.test(stored)) campaignCode = stored;
+            } catch (_) {}
+
             const response = await fetch(`${VIP.config.API_URL}/api/auth/register`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -142,6 +152,7 @@ VIP.auth = (function () {
                     email: email || null,
                     phone,
                     referralCode: referralCode || undefined,
+                    campaignCode: campaignCode || undefined,
                     otpCode
                 })
             });
