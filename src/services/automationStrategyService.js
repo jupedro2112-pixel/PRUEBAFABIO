@@ -245,6 +245,38 @@ function _pickCopy(copies, segment, username, runSalt, excludeTitles) {
   return eligible[eligible.length - 1];
 }
 
+// Variantes del push de bono — rotativas entre lanzamientos para que un
+// user que recibe oferta dos campañas distintas no vea el mismo texto.
+// Push 1 (regalo $) — el user solo abre la app y reclama el MoneyGiveaway.
+const BONUS_MONEY_VARIANTS = [
+  { title: '🎁 Tenés un regalo esperándote', body: 'Abrí la app y reclamalo antes de que se termine.' },
+  { title: '💸 Te dejamos plata extra', body: 'Tu regalo del día está listo — pasá a la app y agarralo.' },
+  { title: '🎰 Pasá a buscar tu premio', body: 'Te tiramos un regalo, abrí la app y reclamalo en segundos.' },
+  { title: '✨ Tu cuenta está más cargada', body: 'Te dejamos un extra para que juegues hoy. Reclamá en la app.' },
+  { title: '🍀 Hoy te toca regalo', body: 'Solo por hoy: regalo extra para vos. Abrí la app y reclamalo ya.' }
+];
+// Push 1 (bono % próxima carga) — el user va a WhatsApp con el código.
+const BONUS_PROMO_VARIANTS = [
+  { title: (pct) => `🎁 ${pct}% de bono en tu próxima carga`, body: (pct, dt) => `🎁 ${pct}% de bono en tu próxima carga — válido por 48h. Reclamá por WhatsApp.` },
+  { title: (pct) => `💸 Cargá hoy y te damos ${pct}% más`, body: (pct) => `Tu próxima carga viene con ${pct}% extra. WhatsApp para reclamar el código.` },
+  { title: (pct) => `🚀 Tu carga viene con ${pct}% extra`, body: (pct) => `Solo por 48h: ${pct}% de bono sobre tu próxima carga. Pasá por WhatsApp.` },
+  { title: (pct) => `🔥 Bonus ${pct}% activado`, body: (pct) => `Te activamos un bono del ${pct}% sobre tu próxima carga — WhatsApp para el código.` }
+];
+
+function _pickBonusMoneyVariant(username, runSalt) {
+  const s = String(username) + ':' + String(runSalt) + ':bm';
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return BONUS_MONEY_VARIANTS[(h >>> 0) % BONUS_MONEY_VARIANTS.length];
+}
+function _pickBonusPromoVariant(username, runSalt, pct) {
+  const s = String(username) + ':' + String(runSalt) + ':bp';
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const v = BONUS_PROMO_VARIANTS[(h >>> 0) % BONUS_PROMO_VARIANTS.length];
+  return { title: v.title(pct), body: v.body(pct) };
+}
+
 // Pre-fetch: para cada user, los titulos de copies que ya recibio en los
 // ultimos `weeks` lanzamientos de Automatización. Aggregation única. Los
 // users sin historia no aparecen en el map (devuelve Set vacío via .get).
@@ -403,13 +435,22 @@ async function computeAutomationPlan({ models, weeklyService, analysisFrom, anal
 
     if (getsBonus) {
       // Push 1 = oferta. Push 2 (a 4d) = engagement con valor agregado.
+      // Rotamos el copy del push 1 entre 4-5 variantes para que un user
+      // que recibe oferta en dos campañas distintas no vea el mismo texto.
+      // La rotacion es deterministica por (username, runSalt) — distinto
+      // runSalt por launch garantiza variacion entre runs.
       kind = seg.bonusKind;
       giftAmount = seg.suggestGiftAmount(s) || 0;
       bonusPct = seg.suggestBonusPct(s) || 0;
-      push1Title = '🎁 Tenés un regalo esperándote';
-      push1Body  = (kind === 'whatsapp_promo')
-        ? `🎁 ${bonusPct}% de bono en tu próxima carga — válido por 48h. Reclamá por WhatsApp.`
-        : 'Abrí la app y reclamá tu regalo de plata antes de que se termine.';
+      if (kind === 'whatsapp_promo') {
+        const v = _pickBonusPromoVariant(s.username, runSalt, bonusPct);
+        push1Title = v.title;
+        push1Body  = v.body;
+      } else {
+        const v = _pickBonusMoneyVariant(s.username, runSalt);
+        push1Title = v.title;
+        push1Body  = v.body;
+      }
     } else {
       // Engagement-only en ambos pushes (con copies distintos).
       kind = 'engagement';
@@ -640,14 +681,18 @@ async function executeAutomationPlan({
   let totalSent = 0;
   let totalFailed = 0;
 
-  // Engagement: agrupar por (title, body) para minimizar llamadas a FCM.
+  // Agrupar TODOS los targets (engagement + bonus) por (title, body) ya que
+  // ambos kinds tienen su copy rotado per-user (engagement del pool, bonus
+  // de las variantes BONUS_*_VARIANTS). Asi cada batch FCM va con su
+  // titulo/body propio y nunca repetimos texto.
   const engagementByCopy = new Map();
-  for (const t of engagementTargets) {
+  for (const t of liveTargets) {
     const k = (t.copyTitle || '') + ' ' + (t.copyBody || '');
     if (!engagementByCopy.has(k)) {
       engagementByCopy.set(k, {
         title: t.copyTitle,
         body: t.copyBody,
+        kind: t.kind,
         usernames: []
       });
     }
@@ -657,37 +702,26 @@ async function executeAutomationPlan({
     try {
       const r = await sendPushFn(
         User,
-        group.title,
-        group.body,
-        { source: 'automation-strategy', strategyType: 'automation-engagement', historyId, launchId },
+        group.title || '🎰 Pasá a jugar',
+        group.body || 'Te esperamos en la app.',
+        {
+          source: 'automation-strategy',
+          strategyType: 'automation-' + (group.kind === 'engagement' ? 'engagement' : 'bonus'),
+          historyId, launchId
+        },
         { username: { $in: group.usernames } }
       );
       totalSent += r.successCount || 0;
       totalFailed += r.failureCount || 0;
     } catch (err) {
-      logger && logger.warn(`[automation] engagement batch failed: ${err.message}`);
+      logger && logger.warn(`[automation] batch failed (${group.kind}): ${err.message}`);
       totalFailed += group.usernames.length;
     }
   }
 
-  // Bonus: un solo push para todos los con oferta.
+  // Referencia de bonus targets — ya fueron enviados en el agrupado por
+  // copy de arriba. La conservamos para reportes de breakdown.
   const bonusTargets = [...moneyTargets, ...promoTargets];
-  if (bonusTargets.length > 0) {
-    try {
-      const r = await sendPushFn(
-        User,
-        '🎁 Tenés un regalo esperándote',
-        'Abrí la app y reclamalo antes de que se termine.',
-        { source: 'automation-strategy', strategyType: 'automation-bonus', historyId, launchId },
-        { username: { $in: bonusTargets.map(t => t.username) } }
-      );
-      totalSent += r.successCount || 0;
-      totalFailed += r.failureCount || 0;
-    } catch (err) {
-      logger && logger.warn(`[automation] bonus batch failed: ${err.message}`);
-      totalFailed += bonusTargets.length;
-    }
-  }
 
   // 7b) Programar push 2 para cada target (a 96h del launch). El cron de
   // ScheduledNotification (poller) lo dispara en su momento. Cada user

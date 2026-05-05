@@ -10543,6 +10543,139 @@ app.get('/api/admin/automation/launch/:id', authMiddleware, adminMiddleware, asy
   }
 });
 
+// POST /api/admin/automation/launch/:id/evaluate
+// Computa el outcome del launch a partir de DailyPlayerStats (cargas
+// reales post-launch). Calcula:
+//   - chargesAfterCount: cuantos targets cargaron al menos 1 vez post-launch
+//   - chargesAfterARS: total $ depositado por todos los targets post-launch
+//   - roiRatio: chargesARS / totalCostARS (si cost > 0)
+//   - verdict: good (≥3) | regular (1-3) | bad (<1)
+//   - bySegment: breakdown per segmento
+//   - byCopy: breakdown per copy (cuál convirtió mejor)
+// Persiste outcome y verdict en el doc.
+//
+// Nota de freshness: DailyPlayerStats se llena con imports CSV de JUGAYGANA.
+// Si los stats están desactualizados, el outcome también lo está. Para
+// real-time consultaríamos JUGAYGANA directo (más lento) — por ahora
+// vamos con DailyPlayerStats que es lo que ya alimenta toda la estrategia.
+app.post('/api/admin/automation/launch/:id/evaluate', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin.' });
+    const launch = await AutomationLaunch.findOne({ id: req.params.id }).lean();
+    if (!launch) return res.status(404).json({ error: 'Launch no encontrado.' });
+
+    const launchedAt = new Date(launch.launchedAt);
+    const since = launchedAt;
+    const usernames = (launch.targets || []).map(t => String(t.username || '').toLowerCase()).filter(Boolean);
+    if (usernames.length === 0) return res.status(400).json({ error: 'Launch sin targets.' });
+
+    // Aggregar deposits desde launchedAt hasta hoy.
+    const stats = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernames }, dateUtc: { $gte: since } } },
+      { $group: {
+          _id: '$username',
+          totalDeposits: { $sum: '$depositSum' },
+          depositCount: { $sum: '$depositCount' }
+      }}
+    ]);
+    const statsByUser = new Map(stats.map(s => [String(s._id).toLowerCase(), s]));
+
+    // Per-target outcome.
+    let chargesAfterCount = 0;
+    let chargesAfterARS = 0;
+    const segMap = {}; // segment -> { count, charged, ars, cost, conversionPct }
+    const copyMap = {}; // copyTitle -> { count, charged, ars, conversionPct }
+
+    for (const t of (launch.targets || [])) {
+      const lower = String(t.username || '').toLowerCase();
+      const s = statsByUser.get(lower);
+      const charged = !!(s && (s.totalDeposits || 0) > 0);
+      const ars = s ? Number(s.totalDeposits) || 0 : 0;
+      if (charged) chargesAfterCount++;
+      chargesAfterARS += ars;
+
+      // Per-segment.
+      const segKey = t.segment || 'unknown';
+      if (!segMap[segKey]) segMap[segKey] = { segment: segKey, count: 0, charged: 0, ars: 0, cost: 0 };
+      segMap[segKey].count++;
+      if (charged) segMap[segKey].charged++;
+      segMap[segKey].ars += ars;
+      segMap[segKey].cost += (t.kind === 'money' ? (t.giftAmount || 0) : 0);
+
+      // Per-copy (push 1).
+      const copyKey = t.copyTitle || '(sin copy)';
+      if (!copyMap[copyKey]) copyMap[copyKey] = { copyTitle: copyKey, count: 0, charged: 0, ars: 0 };
+      copyMap[copyKey].count++;
+      if (charged) copyMap[copyKey].charged++;
+      copyMap[copyKey].ars += ars;
+    }
+
+    // Conversion % per segment / copy.
+    for (const k of Object.keys(segMap)) {
+      const e = segMap[k];
+      e.conversionPct = e.count > 0 ? Math.round((e.charged / e.count) * 1000) / 10 : 0;
+      e.roiRatio = e.cost > 0 ? Math.round((e.ars / e.cost) * 100) / 100 : null;
+    }
+    for (const k of Object.keys(copyMap)) {
+      const e = copyMap[k];
+      e.conversionPct = e.count > 0 ? Math.round((e.charged / e.count) * 1000) / 10 : 0;
+    }
+
+    const totalCost = Number(launch.totalCostARS) || 0;
+    const roiRatio = totalCost > 0 ? Math.round((chargesAfterARS / totalCost) * 100) / 100 : null;
+
+    let verdict = 'pending';
+    if (totalCost > 0) {
+      if (roiRatio >= 3)      verdict = 'good';
+      else if (roiRatio >= 1) verdict = 'regular';
+      else                    verdict = 'bad';
+    } else {
+      // Sin costo (todo engagement): juzgamos por % de conversion.
+      const conv = launch.targets.length > 0 ? (chargesAfterCount / launch.targets.length) * 100 : 0;
+      if (conv >= 20)     verdict = 'good';
+      else if (conv >= 5) verdict = 'regular';
+      else                verdict = 'bad';
+    }
+
+    const bySegment = Object.values(segMap).sort((a, b) => b.count - a.count);
+    const byCopy = Object.values(copyMap).sort((a, b) => b.conversionPct - a.conversionPct);
+
+    // Persistir.
+    await AutomationLaunch.updateOne(
+      { id: launch.id },
+      {
+        $set: {
+          verdict,
+          verdictComputedAt: new Date(),
+          outcomeChargesAfterCount: chargesAfterCount,
+          outcomeChargesAfterARS: chargesAfterARS,
+          outcomeRoiRatio: roiRatio || 0
+        }
+      }
+    );
+
+    res.json({
+      success: true,
+      verdict,
+      verdictComputedAt: new Date().toISOString(),
+      summary: {
+        totalTargets: launch.targets.length,
+        chargesAfterCount,
+        chargesAfterARS,
+        totalCostARS: totalCost,
+        roiRatio,
+        conversionPct: launch.targets.length > 0 ? Math.round((chargesAfterCount / launch.targets.length) * 1000) / 10 : 0,
+        evaluatedHoursAfterLaunch: Math.round((Date.now() - launchedAt.getTime()) / 3600000)
+      },
+      bySegment,
+      byCopy
+    });
+  } catch (err) {
+    logger.error(`POST automation/launch/:id/evaluate: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/automation/copies', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     // Trigger seeding via a dummy compute? No — simpler: si está vacío, sembramos acá.

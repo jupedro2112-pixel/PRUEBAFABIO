@@ -7498,7 +7498,7 @@ async function _renderAutomationHistoryTab() {
             return;
         }
         let html = '<table class="report-table"><thead><tr>';
-        html += '<th>Lanzado</th><th>Por</th><th>Rango</th><th style="text-align:center;">Targets</th><th style="text-align:center;">💌</th><th style="text-align:center;">🎁</th><th style="text-align:right;">Costo</th><th style="text-align:right;">Cargas post</th><th>Veredicto</th>';
+        html += '<th>Lanzado</th><th>Por</th><th>Rango</th><th style="text-align:center;">Targets</th><th style="text-align:center;">💌</th><th style="text-align:center;">🎁</th><th style="text-align:right;">Costo</th><th style="text-align:right;">Cargas post</th><th>Veredicto</th><th style="text-align:center;">Acción</th>';
         html += '</tr></thead><tbody>';
         for (const l of launches) {
             const verdictBadge = _autoVerdictBadge(l.verdict);
@@ -7519,12 +7519,86 @@ async function _renderAutomationHistoryTab() {
             } else {
                 html += '<small style="color:#666;">—</small>';
             }
-            html += '</td><td>' + verdictBadge + '</td></tr>';
+            html += '</td><td>' + verdictBadge + '</td>';
+            html += '<td style="text-align:center;"><button onclick="evaluateAutomationLaunch(\'' + l.id + '\')" style="padding:5px 10px;background:rgba(120,80,255,0.20);color:#b39dff;border:1px solid rgba(120,80,255,0.40);border-radius:6px;font-size:11px;cursor:pointer;font-weight:700;">📈 Analizar</button></td>';
+            html += '</tr>';
         }
         html += '</tbody></table>';
-        html += '<p style="color:#888;font-size:11px;margin-top:10px;">El veredicto se calcula a las 48h del lanzamiento (rentabilidad = cargas reales post / costo bono).</p>';
+        html += '<p style="color:#888;font-size:11px;margin-top:10px;">📈 <strong>Analizar</strong> calcula veredicto + breakdown por segmento y por copy con datos actuales (DailyPlayerStats). Lo podés correr desde 24h post-launch en adelante.</p>';
+        html += '<div id="automationDetailContainer" style="margin-top:18px;"></div>';
         c.innerHTML = html;
     } catch (e) { c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>'; }
+}
+
+async function evaluateAutomationLaunch(launchId) {
+    const container = document.getElementById('automationDetailContainer');
+    if (container) container.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">⏳ Calculando análisis…</div>';
+    try {
+        const r = await authFetch('/api/admin/automation/launch/' + launchId + '/evaluate', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error evaluando', 'error'); if (container) container.innerHTML = ''; return; }
+        if (container) container.innerHTML = _renderAutomationDetail(launchId, d);
+        showToast('✅ Análisis listo: ' + d.verdict.toUpperCase(), 'success');
+        // Refrescar la tabla para ver el nuevo veredicto.
+        setTimeout(() => _renderAutomationHistoryTab(), 800);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+function _renderAutomationDetail(launchId, d) {
+    const s = d.summary || {};
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(120,80,255,0.10),rgba(0,212,255,0.06));border:1px solid rgba(120,120,255,0.30);border-radius:12px;padding:16px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">';
+    html += '    <h3 style="margin:0;color:#b39dff;font-size:14px;">📈 Análisis del launch <small style="color:#888;font-weight:400;">(' + (s.evaluatedHoursAfterLaunch || 0) + 'h post-launch)</small></h3>';
+    html += '    ' + _autoVerdictBadge(d.verdict);
+    html += '  </div>';
+
+    // Stat cards
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;">';
+    html += _autoStatCard('🎯 Targets', s.totalTargets || 0, '#b39dff');
+    html += _autoStatCard('✅ Cargaron post', (s.chargesAfterCount || 0) + ' (' + (s.conversionPct || 0) + '%)', '#25d366');
+    html += _autoStatCard('💵 Cargas $', '$' + (s.chargesAfterARS || 0).toLocaleString('es-AR'), '#00d4ff');
+    html += _autoStatCard('💸 Costo', '$' + (s.totalCostARS || 0).toLocaleString('es-AR'), '#ff8800');
+    html += _autoStatCard('📊 ROI ratio', s.roiRatio != null ? s.roiRatio + 'x' : '—', s.roiRatio >= 3 ? '#25d366' : (s.roiRatio >= 1 ? '#ffc850' : '#ff5050'));
+    html += '</div>';
+
+    // Per-segment
+    if (d.bySegment && d.bySegment.length > 0) {
+        html += '<h4 style="color:#b39dff;font-size:12px;margin:16px 0 8px;">Por segmento</h4>';
+        html += '<table class="report-table" style="font-size:12px;"><thead><tr><th>Segmento</th><th style="text-align:center;">Targets</th><th style="text-align:center;">Cargaron</th><th style="text-align:center;">Conv %</th><th style="text-align:right;">$ Cargado</th><th style="text-align:right;">Costo</th><th style="text-align:right;">ROI</th></tr></thead><tbody>';
+        for (const seg of d.bySegment) {
+            const roiColor = seg.roiRatio == null ? '#888' : (seg.roiRatio >= 3 ? '#25d366' : (seg.roiRatio >= 1 ? '#ffc850' : '#ff5050'));
+            html += '<tr>';
+            html += '<td>' + escapeHtml(seg.segment) + '</td>';
+            html += '<td style="text-align:center;">' + seg.count + '</td>';
+            html += '<td style="text-align:center;color:#25d366;">' + seg.charged + '</td>';
+            html += '<td style="text-align:center;font-weight:700;">' + seg.conversionPct + '%</td>';
+            html += '<td style="text-align:right;">$' + (seg.ars || 0).toLocaleString('es-AR') + '</td>';
+            html += '<td style="text-align:right;">$' + (seg.cost || 0).toLocaleString('es-AR') + '</td>';
+            html += '<td style="text-align:right;color:' + roiColor + ';font-weight:700;">' + (seg.roiRatio != null ? seg.roiRatio + 'x' : '—') + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+    }
+
+    // Per-copy
+    if (d.byCopy && d.byCopy.length > 0) {
+        html += '<h4 style="color:#b39dff;font-size:12px;margin:16px 0 8px;">Por copy (cuál convirtió mejor)</h4>';
+        html += '<table class="report-table" style="font-size:12px;"><thead><tr><th>Copy</th><th style="text-align:center;">Targets</th><th style="text-align:center;">Cargaron</th><th style="text-align:center;">Conv %</th><th style="text-align:right;">$ Cargado</th></tr></thead><tbody>';
+        for (const cp of d.byCopy) {
+            html += '<tr>';
+            html += '<td><small>' + escapeHtml(cp.copyTitle) + '</small></td>';
+            html += '<td style="text-align:center;">' + cp.count + '</td>';
+            html += '<td style="text-align:center;color:#25d366;">' + cp.charged + '</td>';
+            html += '<td style="text-align:center;font-weight:700;">' + cp.conversionPct + '%</td>';
+            html += '<td style="text-align:right;">$' + (cp.ars || 0).toLocaleString('es-AR') + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+    }
+    html += '<p style="color:#888;font-size:11px;margin-top:10px;">📊 <strong>ROI ratio</strong> = $ cargado / costo. <strong>🟢 ≥3x rentable</strong> · 🟡 1-3x regular · 🔴 &lt;1x mala. Para campañas sin costo (todo engagement) se evalua por % de conversión: 🟢 ≥20% · 🟡 ≥5% · 🔴 &lt;5%.</p>';
+    html += '</div>';
+    return html;
 }
 
 function _autoVerdictBadge(v) {
