@@ -11344,15 +11344,17 @@ app.get('/api/admin/strategy/budget-status', authMiddleware, adminMiddleware, as
 // ============================================================
 // SORTEOS MENSUALES 🎁
 // ============================================================
-// Sorteos mensuales con prize pool fijo. Para participar el user paga
-// `entryCost` de su NETWIN LOSS del mes en curso (no plata real, son
-// "credits" del sorteo). El pool de tickets totales se reparte entre
-// participantes al hacer el draw.
+// Sorteos mensuales VIP-style. Para participar el user paga `entryCost`
+// de su MONTO CARGADO del mes en curso (no plata real, son "credits"
+// del sorteo, derivados de depositSum agregado de DailyPlayerStats).
+// Cuanto más cargó el user en el mes, más cupos puede comprar.
+// El pool de tickets totales se reparte entre participantes al hacer
+// el draw — si no se llena, el premio paga proporcional al fill rate.
 //
 // Defaults sembrados para el mes actual al primer GET /api/raffles/active:
-//   1. iPhone:        cost 20.000 / 500 tickets
-//   2. Caribe x2:     cost 50.000 / 1000 tickets
-//   3. Auto Gol Trend 2015: cost 100.000 / 500 tickets
+//   1. iPhone:              cost  50.000 / 1000 tickets / premio  $1.500.000
+//   2. Caribe x2:           cost 100.000 / 1000 tickets / premio  $4.000.000
+//   3. Auto Gol Trend 2015: cost 100.000 / 1000 tickets / premio $10.000.000
 //
 // Endpoints:
 //   GET  /api/raffles/active                   — lista para el user (con budget)
@@ -11388,28 +11390,28 @@ const RAFFLE_DEFAULTS = [
   {
     name: 'Sorteo iPhone',
     prizeName: 'iPhone (modelo del mes)',
-    description: 'Sorteamos un iPhone entre los que perdieron al menos $20.000 este mes. Cada $20.000 perdidos = 1 entrada. Pool: 500 tickets. Si no se llena, paga proporcional.',
+    description: 'Sorteamos un iPhone entre los que cargaron al menos $50.000 este mes. Cada $50.000 cargados = 1 cupo (podés comprar varios). Pool: 1000 cupos. Si no se llena, el premio paga proporcional.',
     emoji: '📱',
-    entryCost: 20000,
-    totalTickets: 500,
+    entryCost: 50000,
+    totalTickets: 1000,
     prizeValueARS: 1500000
   },
   {
     name: 'Sorteo Viaje al Caribe (x2)',
     prizeName: 'Viaje al Caribe para 2 personas',
-    description: 'Vacaciones para 2 al Caribe. Para entrar: perder al menos $50.000 este mes. Pool: 1000 tickets. Si no se llena, paga proporcional.',
+    description: 'Vacaciones para 2 al Caribe. Para entrar: cargá al menos $100.000 este mes. Cada $100.000 cargados = 1 cupo. Pool: 1000 cupos. Si no se llena, paga proporcional.',
     emoji: '🏖️',
-    entryCost: 50000,
+    entryCost: 100000,
     totalTickets: 1000,
     prizeValueARS: 4000000
   },
   {
     name: 'Sorteo Auto Gol Trend 2015',
     prizeName: 'Auto Gol Trend 2015',
-    description: 'Te llevás un auto. Para entrar: perder al menos $100.000 este mes. Pool: 500 tickets. Si no se llena, paga proporcional.',
+    description: 'Te llevás un auto. Para entrar: cargá al menos $100.000 este mes. Cada $100.000 cargados = 1 cupo. Pool: 1000 cupos. Si no se llena, paga proporcional.',
     emoji: '🚗',
     entryCost: 100000,
-    totalTickets: 500,
+    totalTickets: 1000,
     prizeValueARS: 10000000
   }
 ];
@@ -11426,7 +11428,10 @@ function _projectedPayoutARS(raffle, participantCount) {
 }
 
 async function _ensureRafflesSeededForMonth(monthKey) {
-  const existing = await Raffle.find({ monthKey }, { name: 1, prizeValueARS: 1, _id: 0 }).lean();
+  const existing = await Raffle.find(
+    { monthKey },
+    { name: 1, prizeValueARS: 1, entryCost: 1, totalTickets: 1, description: 1, _id: 0 }
+  ).lean();
   const existingByName = new Map(existing.map(r => [r.name, r]));
   const drawDate = _firstMondayOfNextMonth(monthKey);
   for (const def of RAFFLE_DEFAULTS) {
@@ -11440,32 +11445,36 @@ async function _ensureRafflesSeededForMonth(monthKey) {
         status: 'active',
         imageUrl: null
       }).catch(err => logger.warn(`[raffles] seed ${def.name}: ${err.message}`));
-    } else if (!ex.prizeValueARS && def.prizeValueARS) {
-      // Migracion: rellena el prizeValueARS en los sorteos viejos que se
-      // sembraron antes de que existiera el campo.
-      await Raffle.updateOne(
-        { monthKey, name: def.name },
-        { $set: { prizeValueARS: def.prizeValueARS } }
-      ).catch(() => {});
+    } else {
+      // Migracion idempotente: alinea entryCost / totalTickets / description /
+      // prizeValueARS de los sorteos ya sembrados en el mes con los defaults
+      // actuales. No borra participaciones ya hechas (entryCostPaid es snapshot
+      // por participacion). Solo actualiza si el valor cambió.
+      const update = {};
+      if (!ex.prizeValueARS && def.prizeValueARS) update.prizeValueARS = def.prizeValueARS;
+      if (ex.entryCost !== def.entryCost) update.entryCost = def.entryCost;
+      if (ex.totalTickets !== def.totalTickets) update.totalTickets = def.totalTickets;
+      if (ex.description !== def.description) update.description = def.description;
+      if (Object.keys(update).length) {
+        await Raffle.updateOne({ monthKey, name: def.name }, { $set: update }).catch(() => {});
+      }
     }
   }
 }
 
 async function _getUserRaffleBudget(username, monthKey) {
-  // Calcula netwin loss del mes desde DailyPlayerStats (Argentina TZ aprox).
+  // Modelo VIP: el budget de cupos se construye con el MONTO CARGADO del mes
+  // (depositSum agregado de DailyPlayerStats). No depende de si ganó o perdió,
+  // solo de cuánto cargó. Más cargas = más cupos disponibles.
   const [yStr, mStr] = monthKey.split('-');
   const y = parseInt(yStr), m = parseInt(mStr);
-  // Mes en TZ Argentina: 1 del mes 00:00 ART = -3h UTC del 30/31 anterior 21:00.
-  // Para simplicidad usamos UTC: 1 del mes 00:00 UTC al 1 del mes siguiente 00:00 UTC.
   const monthStart = new Date(Date.UTC(y, m - 1, 1));
   const monthEnd = new Date(Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1));
   const stats = await DailyPlayerStats.aggregate([
     { $match: { username: String(username).toLowerCase(), dateUtc: { $gte: monthStart, $lt: monthEnd } } },
-    { $group: { _id: null, deposits: { $sum: '$depositSum' }, withdraws: { $sum: '$withdrawSum' } } }
+    { $group: { _id: null, deposits: { $sum: '$depositSum' } } }
   ]);
-  const dep = (stats[0] && stats[0].deposits) || 0;
-  const wit = (stats[0] && stats[0].withdraws) || 0;
-  const netwinLoss = Math.max(0, dep - wit);
+  const monthlyDeposit = (stats[0] && stats[0].deposits) || 0;
 
   // Suma lo ya gastado en sorteos de este mes (cupos × entryCost por
   // sorteo, sumando todas las participaciones del user).
@@ -11482,9 +11491,12 @@ async function _getUserRaffleBudget(username, monthKey) {
   const cuposByRaffle = {};
   for (const p of parts) cuposByRaffle[p.raffleId] = (cuposByRaffle[p.raffleId] || 0) + (p.cuposCount || 1);
   return {
-    netwinLoss,
+    monthlyDeposit,
+    // Backward compat: clientes viejos leen `netwinLoss`. Pisamos con el mismo
+    // valor que monthlyDeposit para que sigan funcionando hasta que se actualicen.
+    netwinLoss: monthlyDeposit,
     spent,
-    available: Math.max(0, netwinLoss - spent),
+    available: Math.max(0, monthlyDeposit - spent),
     participatingIn: parts.map(p => p.raffleId),
     cuposByRaffle
   };
@@ -11550,7 +11562,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       success: true,
       monthKey,
       budget: {
-        netwinLoss: budget.netwinLoss,
+        monthlyDeposit: budget.monthlyDeposit,
+        netwinLoss: budget.netwinLoss, // alias backward-compat
         spent: budget.spent,
         available: budget.available
       },
@@ -11653,7 +11666,12 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
       message: `¡Listo! Sumaste ${quantity} cupo${quantity===1?'':'s'} al sorteo de ${raffle.prizeName}. Total tuyo: ${updated.cuposCount} cupo${updated.cuposCount===1?'':'s'}.`,
       cuposBought: quantity,
       userCuposTotal: updated.cuposCount,
-      budget: { netwinLoss: newBudget.netwinLoss, spent: newBudget.spent, available: newBudget.available }
+      budget: {
+        monthlyDeposit: newBudget.monthlyDeposit,
+        netwinLoss: newBudget.netwinLoss,
+        spent: newBudget.spent,
+        available: newBudget.available
+      }
     });
   } catch (err) {
     logger.error(`/api/raffles/participate: ${err.message}`);

@@ -42,7 +42,7 @@ VIP.raffles = (function () {
         if (r.status !== 'active') {
             actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.10);color:#888;border:none;border-radius:10px;font-weight:800;font-size:14px;">Cerrado</button>';
         } else if (maxBuyable === 0 && userCupos === 0) {
-            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Cada cupo vale $' + r.entryCost.toLocaleString('es-AR') + ' (perdé al menos eso)</button>';
+            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Cada cupo vale $' + r.entryCost.toLocaleString('es-AR') + ' (cargá al menos eso este mes)</button>';
         } else if (maxBuyable === 0 && userCupos > 0) {
             actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.50);border-radius:10px;font-weight:800;font-size:14px;cursor:default;">✅ Tenés ' + userCupos + ' cupo' + (userCupos===1?'':'s') + ' · sin créditos para más</button>';
         } else {
@@ -116,7 +116,10 @@ VIP.raffles = (function () {
         const detail = document.getElementById('rafflesBudgetDetail');
         if (_data.budget && av && detail) {
             av.textContent = '$' + (_data.budget.available || 0).toLocaleString('es-AR');
-            detail.textContent = 'Pérdida del mes: $' + (_data.budget.netwinLoss || 0).toLocaleString('es-AR') +
+            const cargas = (_data.budget.monthlyDeposit != null
+                ? _data.budget.monthlyDeposit
+                : (_data.budget.netwinLoss || 0));
+            detail.textContent = 'Cargas del mes: $' + cargas.toLocaleString('es-AR') +
                                  ' · Ya usado en sorteos: $' + (_data.budget.spent || 0).toLocaleString('es-AR');
             if (bar) bar.style.display = 'block';
         }
@@ -180,7 +183,7 @@ VIP.raffles = (function () {
         const inp = _qtyInput(raffleId);
         const qty = inp ? Math.max(1, parseInt(inp.value, 10) || 1) : 1;
         const cost = inp ? (parseInt(inp.dataset.cost, 10) || 0) * qty : 0;
-        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '? Se descuenta de tu pérdida del mes.')) return;
+        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '? Se descuenta de tu monto cargado del mes.')) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/participate`, {
                 method: 'POST',
