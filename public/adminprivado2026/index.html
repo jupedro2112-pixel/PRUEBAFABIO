@@ -960,10 +960,14 @@
                 <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
                     <p style="margin:0 0 6px;color:#d4af37;font-weight:700;font-size:13px;">Sorteos del mes</p>
                     <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
-                        Cada mes se siembran automáticamente 3 sorteos (iPhone, Caribe, Auto).
-                        Editá la imagen, monto de entrada o cantidad de tickets si querés. El draw
-                        manual reparte los tickets entre los participantes y elige número ganador
-                        random.
+                        Cada mes se siembran automáticamente 3 sorteos (iPhone, Caribe, Auto). Cada
+                        cupo recibe un número único secuencial y los jugadores compran cupos según
+                        cuánto cargaron en el mes. El primer lunes del mes próximo el cron cierra
+                        los sorteos y vos entrás el número que salió en el primer premio de la
+                        Lotería Nacional. Si el cupo está incompleto y la lotería saca un número
+                        fuera del rango vendido, se mapea por módulo al rango vendido (siempre hay
+                        ganador) y el premio paga proporcional al fill rate. Hacé click en
+                        "📋 Detalle" para ver la grilla cupo × cupo.
                     </p>
                 </div>
                 <div id="rafflesAdminContent" style="min-height:200px;">

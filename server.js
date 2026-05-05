@@ -11815,6 +11815,14 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     // primer premio de la Lotería Nacional (primer lunes del mes).
     // Se busca a la participation que tenga ese número en sus
     // ticketNumbers.
+    //
+    // REGLA DE CUPO INCOMPLETO: si el cupo no se llenó (ej. solo se vendieron
+    // 300 de 1000 cupos) y la lotería saca un número fuera del rango
+    // vendido (ej. 547), el número se MAPEA al rango vendido vía modulo
+    // para que siempre haya un ganador entre los cupos sold:
+    //   mappedNumber = ((lotteryNumber - 1) % totalCuposSold) + 1
+    // El premio sigue pagando proporcional al fill rate del sorteo —
+    // no se "regala" un premio completo cuando el cupo está incompleto.
     const lotteryNumber = parseInt(req.body && req.body.lotteryNumber, 10);
     const lotteryDrawSource = String((req.body && req.body.lotteryDrawSource) || '').slice(0, 200).trim();
     const lotteryDrawDateRaw = req.body && req.body.lotteryDrawDate;
@@ -11837,17 +11845,18 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       return res.status(400).json({ error: 'No hay cupos vendidos.' });
     }
 
-    // Buscar la participation que posee este numero en sus ticketNumbers.
-    const winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(lotteryNumber));
+    // Mapeo del número de lotería al rango vendido (siempre da en el blanco).
+    // Si el cupo está completo (sold == totalTickets), el módulo es identidad.
+    const mappedNumber = ((lotteryNumber - 1) % totalCuposSold) + 1;
+    const wasMapped = (mappedNumber !== lotteryNumber);
+    const winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(mappedNumber));
     if (!winner) {
-      return res.status(400).json({
-        error: `Nadie compró el número ${lotteryNumber}. Sólo se vendieron ${totalCuposSold} cupos (números 1..${totalCuposSold}). Verificá el número de la lotería o aplicá la regla de "cupo desierto" según corresponda.`,
-        cuposSold: totalCuposSold,
-        cuposRemaining: Math.max(0, raffle.totalTickets - totalCuposSold)
+      return res.status(500).json({
+        error: `Inconsistencia: número mapeado ${mappedNumber} no aparece en ningún ticketNumbers (sold=${totalCuposSold}). Verificá el backfill de números.`
       });
     }
 
-    const winningTicket = lotteryNumber;
+    const winningTicket = mappedNumber;
     let lotteryDrawDate = null;
     if (lotteryDrawDateRaw) {
       const d = new Date(lotteryDrawDateRaw);
@@ -11857,7 +11866,7 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     raffle.status = 'drawn';
     raffle.winnerUsername = winner.username;
     raffle.winningTicketNumber = winningTicket;
-    raffle.lotteryDrawNumber = winningTicket;
+    raffle.lotteryDrawNumber = lotteryNumber; // numero crudo que salio en la loteria
     if (lotteryDrawSource) raffle.lotteryDrawSource = lotteryDrawSource;
     if (lotteryDrawDate) raffle.lotteryDrawDate = lotteryDrawDate;
     raffle.drawnAt = new Date();
@@ -11878,10 +11887,13 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       const payoutNote = fillRatePct >= 100
         ? `Te llevás el premio completo: $${(raffle.prizeValueARS||0).toLocaleString('es-AR')}.`
         : `Cupo al ${fillRatePct}% — te llevás el proporcional: $${projectedPayoutARS.toLocaleString('es-AR')}.`;
+      const lotteryDescr = wasMapped
+        ? 'Lotería Nacional sacó el ' + lotteryNumber + ' → mapeado al ' + winningTicket + ' (cupo incompleto, ciclado al rango vendido)'
+        : 'Lotería Nacional - número ' + winningTicket;
       const winRes = await sendNotificationToAllUsers(
         User,
         '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'),
-        '¡Ganaste el sorteo de ' + raffle.prizeName + ' con el número ' + winningTicket + ' (sorteado por Lotería Nacional)! ' + payoutNote + ' Pasá por WhatsApp para coordinar la entrega.',
+        '¡Ganaste el sorteo de ' + raffle.prizeName + ' con el número ' + winningTicket + '! ' + lotteryDescr + '. ' + payoutNote + ' Pasá por WhatsApp para coordinar la entrega.',
         { source: 'raffle-draw', raffleId: raffle.id, isWinner: 'true' },
         { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
       );
@@ -11897,10 +11909,13 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
         .filter(p => p.username !== winner.username)
         .map(p => p.username);
       if (loserUsernames.length > 0) {
+        const loserMsg = wasMapped
+          ? 'La Lotería Nacional sacó el ' + lotteryNumber + ' → mapeado al ' + winningTicket + ' (cupo incompleto). Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo!'
+          : 'La Lotería Nacional sacó el número ' + winningTicket + '. Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!';
         const loseRes = await sendNotificationToAllUsers(
           User,
           'Sorteo de ' + (raffle.emoji || '🎁') + ' ' + raffle.prizeName + ' sorteado',
-          'La Lotería Nacional sacó el número ' + winningTicket + '. Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!',
+          loserMsg,
           { source: 'raffle-draw', raffleId: raffle.id, isWinner: 'false' },
           { username: { $in: loserUsernames } }
         );
@@ -11916,7 +11931,11 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       winnerCupos: winner.cuposCount || 1,
       winnerTicketNumbers: winner.ticketNumbers || [],
       winningTicketNumber: winningTicket,
-      lotteryDrawNumber: winningTicket,
+      lotteryDrawNumber: lotteryNumber,
+      lotteryWasMapped: wasMapped,
+      lotteryMappingNote: wasMapped
+        ? `Lotería sacó ${lotteryNumber} pero solo había ${totalCuposSold} cupos vendidos → mapeado al ${winningTicket} (((${lotteryNumber}-1) % ${totalCuposSold}) + 1).`
+        : null,
       lotteryDrawSource: raffle.lotteryDrawSource || null,
       lotteryDrawDate: raffle.lotteryDrawDate || null,
       totalCuposSold,

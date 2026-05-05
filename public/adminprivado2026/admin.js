@@ -8011,7 +8011,7 @@ function _renderRaffleAdminCard(r) {
     // Acciones.
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
     html += '  <button onclick="editRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">✏️ Editar</button>';
-    html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">👥 Ver números</button>';
+    html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">📋 Detalle</button>';
     if ((r.status === 'active' || r.status === 'closed') && (r.totalCuposSold || 0) > 0) {
         html += '  <button onclick="drawRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">🎰 Sortear (Lotería)</button>';
     }
@@ -8068,24 +8068,176 @@ function _formatTicketNumbers(nums) {
     return groups.join(', ');
 }
 
+// Color determinístico por username (hash → HSL).
+function _userColor(username) {
+    const s = String(username || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h * 31) + s.charCodeAt(i)) | 0;
+    return 'hsl(' + (Math.abs(h) % 360) + ', 65%, 55%)';
+}
+
 async function viewRaffleParticipants(id) {
+    // Reemplaza el alert() viejo por un modal completo de "Sorteo": header
+    // con info y fill bar, lista de jugadores ordenada y grilla cupo×cupo.
+    let modal = document.getElementById('raffleDetailModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'raffleDetailModal';
+        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;align-items:center;justify-content:center;padding:20px;overflow-y:auto;';
+        modal.onclick = function(e) { if (e.target === modal) closeRaffleDetailModal(); };
+        modal.innerHTML = '<div id="raffleDetailContent" style="background:linear-gradient(135deg,#1a0033 0%,#2d0052 100%);border:2px solid #d4af37;border-radius:18px;max-width:1100px;width:100%;max-height:92vh;overflow-y:auto;padding:24px 22px;position:relative;"></div>';
+        document.body.appendChild(modal);
+    }
+    const content = document.getElementById('raffleDetailContent');
+    content.innerHTML = '<div style="text-align:center;padding:60px;color:#888;">⏳ Cargando…</div>';
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    modal.dataset.raffleId = id;
+
     try {
         const r = await authFetch('/api/admin/raffles/' + id + '/participants');
         const d = await r.json();
-        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
-        const list = (d.participants || [])
-            .sort((a,b) => (b.cuposCount||1) - (a.cuposCount||1))
-            .map((p, i) =>
-                (i+1) + '. ' + p.username +
-                ' · ' + (p.cuposCount||1) + ' cupos (' + (p.chancePct||0) + '%)' +
-                ' · pagó $' + (p.entryCostPaid||0).toLocaleString('es-AR') +
-                (p.isWinner ? ' 🏆' : '') +
-                '\n   🎫 Números: ' + _formatTicketNumbers(p.ticketNumbers)
-            ).join('\n\n');
-        alert('🎁 ' + (d.raffle && d.raffle.prizeName) + '\n' +
-              '👥 ' + d.uniqueParticipants + ' personas · 🎫 ' + d.totalCuposSold + '/' + (d.raffle && d.raffle.totalTickets) + ' cupos vendidos\n\n' +
-              (list || '(sin participantes)'));
-    } catch (e) { showToast('Error de conexión', 'error'); }
+        if (!r.ok) { content.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        content.innerHTML = _renderRaffleDetail(d);
+    } catch (e) {
+        content.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>';
+    }
+}
+
+function closeRaffleDetailModal() {
+    const m = document.getElementById('raffleDetailModal');
+    if (m) m.style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+async function refreshRaffleDetail() {
+    const m = document.getElementById('raffleDetailModal');
+    if (!m || !m.dataset.raffleId) return;
+    return viewRaffleParticipants(m.dataset.raffleId);
+}
+
+function _renderRaffleDetail(d) {
+    const raffle = d.raffle || {};
+    const parts = (d.participants || []).slice().sort((a,b) => (b.cuposCount||1) - (a.cuposCount||1));
+    const totalCuposSold = d.totalCuposSold || 0;
+    const totalTickets = raffle.totalTickets || 0;
+    const cuposRemaining = d.cuposRemaining || 0;
+    const fillPct = totalTickets > 0 ? Math.round((totalCuposSold / totalTickets) * 100) : 0;
+    const projectedPayout = totalTickets > 0
+        ? Math.round((raffle.prizeValueARS || 0) * Math.min(1, totalCuposSold / totalTickets))
+        : 0;
+
+    // Map cupo number -> owner username (sparse).
+    const cupoOwner = {};
+    for (const p of parts) {
+        const nums = p.ticketNumbers || [];
+        for (const n of nums) cupoOwner[n] = p.username;
+    }
+
+    let html = '';
+    // Cierre.
+    html += '<button onclick="closeRaffleDetailModal()" style="position:absolute;top:12px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;" title="Cerrar">✕</button>';
+
+    // Header.
+    html += '<h2 style="color:#d4af37;margin:0 0 4px;font-size:22px;font-weight:900;">' + (raffle.emoji || '🎁') + ' ' + escapeHtml(raffle.prizeName || raffle.name || 'Sorteo') + '</h2>';
+    html += '<p style="margin:0 0 14px;color:#aaa;font-size:12px;">' + escapeHtml(raffle.monthKey || '') + ' · sorteado por Lotería Nacional el primer lunes del mes próximo · cupo de $' + (raffle.entryCost||0).toLocaleString('es-AR') + ' por número</p>';
+
+    // KPIs.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px;">';
+    html += _kpiBlock('Cupos vendidos', totalCuposSold + ' / ' + totalTickets, '#ffd700');
+    html += _kpiBlock('Fill rate', fillPct + '%', fillPct >= 100 ? '#25d366' : '#ffc850');
+    html += _kpiBlock('Personas', String(d.uniqueParticipants || 0), '#00d4ff');
+    html += _kpiBlock('Premio', '$' + (raffle.prizeValueARS||0).toLocaleString('es-AR'), '#ffd700');
+    html += _kpiBlock('Payout proyectado', '$' + projectedPayout.toLocaleString('es-AR'), fillPct >= 100 ? '#25d366' : '#ffc850');
+    html += _kpiBlock('Recaudación', '$' + (totalCuposSold * (raffle.entryCost||0)).toLocaleString('es-AR'), '#fff');
+    html += '</div>';
+
+    // Fill bar.
+    html += '<div style="background:rgba(0,0,0,0.50);border-radius:10px;overflow:hidden;height:14px;margin-bottom:14px;">';
+    html += '  <div style="height:100%;width:' + Math.min(100,fillPct) + '%;background:linear-gradient(90deg,#d4af37,#f7931e);transition:width 0.3s;"></div>';
+    html += '</div>';
+
+    // Lottery info if drawn.
+    if (raffle.status === 'drawn') {
+        html += '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '  <div style="color:#b39dff;font-size:11px;text-transform:uppercase;letter-spacing:1px;">🏆 Resultado</div>';
+        html += '  <div style="margin-top:6px;color:#ffd700;font-size:15px;font-weight:800;">' + escapeHtml(raffle.winnerUsername || '—') + ' ganó con el número #' + (raffle.winningTicketNumber || '?') + '</div>';
+        if (raffle.lotteryDrawNumber && raffle.lotteryDrawNumber !== raffle.winningTicketNumber) {
+            html += '  <div style="color:#ffc850;font-size:12px;margin-top:4px;">Lotería sacó el ' + raffle.lotteryDrawNumber + ' → mapeado al ' + raffle.winningTicketNumber + ' (cupo incompleto, ciclado al rango vendido)</div>';
+        }
+        if (raffle.lotteryDrawSource) {
+            html += '  <div style="color:#aaa;font-size:11px;margin-top:4px;">📰 ' + escapeHtml(raffle.lotteryDrawSource) + '</div>';
+        }
+        if (raffle.drawnAt) {
+            html += '  <div style="color:#888;font-size:10px;margin-top:4px;">Sorteado ' + new Date(raffle.drawnAt).toLocaleString('es-AR') + ' por ' + escapeHtml(raffle.drawnBy || 'admin') + '</div>';
+        }
+        html += '</div>';
+    }
+
+    // Refresh + estado.
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">';
+    html += '  <h3 style="color:#d4af37;margin:0;font-size:14px;text-transform:uppercase;letter-spacing:1px;">📋 Detalle por jugador</h3>';
+    html += '  <button onclick="refreshRaffleDetail()" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;font-weight:700;">🔄 Refrescar</button>';
+    html += '</div>';
+
+    // Tabla por jugador.
+    if (parts.length === 0) {
+        html += '<div style="text-align:center;padding:30px;color:#666;background:rgba(0,0,0,0.30);border-radius:10px;">Aún no hay participantes en este sorteo.</div>';
+    } else {
+        html += '<div style="overflow-x:auto;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;margin-bottom:18px;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;color:#ddd;">';
+        html += '<thead><tr style="background:rgba(212,175,55,0.10);color:#d4af37;">';
+        html += '<th style="text-align:left;padding:10px 8px;">#</th>';
+        html += '<th style="text-align:left;padding:10px 8px;">Jugador</th>';
+        html += '<th style="text-align:right;padding:10px 8px;">Cupos</th>';
+        html += '<th style="text-align:right;padding:10px 8px;">% chance</th>';
+        html += '<th style="text-align:right;padding:10px 8px;">Pagó</th>';
+        html += '<th style="text-align:left;padding:10px 8px;">Números</th>';
+        html += '<th style="text-align:left;padding:10px 8px;">Entró</th>';
+        html += '<th style="text-align:left;padding:10px 8px;">Última compra</th>';
+        html += '</tr></thead><tbody>';
+        parts.forEach((p, i) => {
+            const color = _userColor(p.username);
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (p.isWinner ? 'background:rgba(120,80,255,0.10);' : '') + '">';
+            html += '  <td style="padding:8px;color:#888;">' + (i+1) + '</td>';
+            html += '  <td style="padding:8px;"><span style="display:inline-block;width:8px;height:8px;background:' + color + ';border-radius:50%;margin-right:6px;"></span><strong style="color:#fff;">' + escapeHtml(p.username) + '</strong>' + (p.isWinner ? ' 🏆' : '') + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#ffd700;font-weight:700;">' + (p.cuposCount||1) + '</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#ddd;">' + (p.chancePct||0) + '%</td>';
+            html += '  <td style="padding:8px;text-align:right;color:#25d366;">$' + (p.entryCostPaid||0).toLocaleString('es-AR') + '</td>';
+            html += '  <td style="padding:8px;color:#aaa;font-family:monospace;font-size:11px;max-width:280px;word-break:break-word;">' + escapeHtml(_formatTicketNumbers(p.ticketNumbers)) + '</td>';
+            html += '  <td style="padding:8px;color:#888;font-size:11px;">' + (p.joinedAt ? new Date(p.joinedAt).toLocaleString('es-AR') : '—') + '</td>';
+            html += '  <td style="padding:8px;color:#888;font-size:11px;">' + (p.lastBoughtAt ? new Date(p.lastBoughtAt).toLocaleString('es-AR') : '—') + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+    }
+
+    // Grilla de cupos: muestra todos los numeros 1..totalTickets coloreados
+    // por dueño (vacantes en gris). Ayuda a ver visualmente como se va llenando.
+    if (totalTickets > 0 && totalTickets <= 2000) {
+        html += '<details style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px 14px;">';
+        html += '<summary style="cursor:pointer;color:#d4af37;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:1px;">🎫 Grilla cupo × cupo (' + totalCuposSold + ' vendidos · ' + cuposRemaining + ' libres)</summary>';
+        html += '<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:2px;font-size:9px;font-family:monospace;">';
+        for (let n = 1; n <= totalTickets; n++) {
+            const owner = cupoOwner[n];
+            if (owner) {
+                html += '<span title="#' + n + ' · ' + escapeHtml(owner) + '" style="background:' + _userColor(owner) + ';color:#000;padding:2px 4px;border-radius:3px;font-weight:700;min-width:30px;text-align:center;">' + n + '</span>';
+            } else {
+                html += '<span title="#' + n + ' · libre" style="background:rgba(255,255,255,0.04);color:#555;padding:2px 4px;border-radius:3px;min-width:30px;text-align:center;">' + n + '</span>';
+            }
+        }
+        html += '</div>';
+        html += '</details>';
+    }
+
+    return html;
+}
+
+function _kpiBlock(label, value, color) {
+    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:10px;text-align:center;">' +
+           '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">' + label + '</div>' +
+           '  <div style="color:' + (color || '#fff') + ';font-size:16px;font-weight:900;margin-top:3px;">' + value + '</div>' +
+           '</div>';
 }
 
 async function drawRaffle(id) {
