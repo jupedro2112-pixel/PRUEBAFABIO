@@ -1640,6 +1640,12 @@
                      del header-right. JS lo muestra/oculta segun la API. -->
                 <span class="team-name" id="teamName" style="display:none;"></span>
                 <div class="user-action-btns">
+                    <!-- Refresh manual: full reload de la pagina. El owner pidio
+                         poder forzar un actualizar chiquito desde el home cuando
+                         no se ven los sorteos / saldo / etc. Es lo equivalente a
+                         tocar F5 del navegador, pero como la app vive como PWA
+                         standalone mucha gente no sabe como hacer F5. -->
+                    <button class="refresh-home-btn" id="refreshHomeBtn" title="Actualizar página" onclick="window.location.reload()" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">🔄 Actualizar</button>
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
                     <button class="logout-btn" id="logoutBtn" title="Cerrar sesión">🚪</button>

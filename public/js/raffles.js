@@ -271,26 +271,30 @@ VIP.raffles = (function () {
             const partLabel = enrolled ? 'Tu #' + myNums[0] + ' está en carrera' : (sold + ' personas en carrera');
             html += _renderPendingBlock(r, '#4dabff', partLabel);
         } else if (!enrolled) {
-            // Calcular si el user llego al threshold de cargas semanales.
-            // _data.weeklyDeposits viene del backend en /active. Si no vino
-            // (call-site viejo), asumimos 0 — en peor caso el server le dice
-            // "te faltan $X" cuando intente comprar.
+            // El boton "ELEGIR" se muestra SIEMPRE — el server valida el
+            // threshold de cargas en /buy y rechaza con un error claro si
+            // el user no llego. Antes el front gateaba el boton, lo que
+            // confundia a los users que pensaban "no me deja elegir el
+            // numero" cuando en realidad les faltaban cargas. Mostrar el
+            // boton + aviso lateral es mas transparente.
             const wd = (_data && Number(_data.weeklyDeposits)) || 0;
             const threshold = r.minCargasARS || 0;
             const reached = threshold > 0 ? wd >= threshold : true;
             const shortfall = Math.max(0, threshold - wd);
             if (reached) {
-                // Usuario califica → puede elegir su numero (mismo flow que paid/relampago).
                 html += '<div style="background:rgba(102,255,102,0.08);border:1px dashed rgba(102,255,102,0.40);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
                 html += '✅ <strong style="color:#66ff66;">¡Calificás!</strong> Llegaste al mínimo de cargas. Tocá <strong>"Elegir mi número"</strong> y reservá tu cupo (1 por persona).';
                 html += '</div>';
-                html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#66ff66,#4dabff);color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🎁 ELEGIR MI NÚMERO (GRATIS)</button>';
             } else {
-                html += '<div style="background:rgba(255,170,102,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;line-height:1.5;">';
-                html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom) para entrar a este sorteo.<br>';
-                html += '<span style="color:#ddd;font-size:11px;">Llevás <strong style="color:#fff;">$' + _fmt(wd) + '</strong> de $' + _fmt(threshold) + '. Cuando llegues, podés elegir tu número.</span>';
+                html += '<div style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.30);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ffaa66;line-height:1.5;">';
+                html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom).<br>';
+                html += '<span style="color:#ddd;">Llevás <strong style="color:#fff;">$' + _fmt(wd) + '</strong> de $' + _fmt(threshold) + '. Podés intentar elegir, pero el sistema rechaza si no llegaste.</span>';
                 html += '</div>';
             }
+            const ctaBg = reached
+                ? 'linear-gradient(135deg,#66ff66,#4dabff)'
+                : 'linear-gradient(135deg,#888,#aaa)';
+            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:' + ctaBg + ';color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🎁 ELEGIR MI NÚMERO (GRATIS)</button>';
         }
 
         html += '</div>';

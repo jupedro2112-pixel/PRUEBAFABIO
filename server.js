@@ -13649,8 +13649,19 @@ app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware
       const escapedTeams = teams.map(t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
       userFilter.username = { $regex: '^(' + escapedTeams.join('|') + ')', $options: 'i' };
     }
+    // hasAppOnly: filtra a users con la PWA instalada. El field correcto
+    // es fcmTokenContext='standalone' (token registrado desde la app
+    // standalone) o algun fcmTokens[*].context==='standalone'. Antes
+    // usabamos appNotif.subscribed que NO existe en el schema -> bug:
+    // el push no llegaba a nadie. Si hasAppOnly es false, no filtramos
+    // por contexto y aceptamos cualquier token (browser web tambien).
+    // sendNotificationToAllUsers ya garantiza que hay token; aca solo
+    // restringimos al subset standalone si el admin pidio "solo con app".
     if (hasAppOnly) {
-      userFilter['appNotif.subscribed'] = true;
+      userFilter.$or = [
+        { fcmTokenContext: 'standalone' },
+        { 'fcmTokens.context': 'standalone' }
+      ];
     }
 
     const result = await sendNotificationToAllUsers(
