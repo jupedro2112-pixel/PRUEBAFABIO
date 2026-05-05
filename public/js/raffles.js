@@ -273,6 +273,35 @@ VIP.raffles = (function () {
         return html;
     }
 
+    // Linea compacta para sorteos ya sorteados ('drawn'). Antes ocupaban
+    // una card entera al lado de los activos y se mezclaban; ahora van
+    // al final del modal en una sola linea ("ganaste/cerrado") para no
+    // robar atencion a los sorteos vivos.
+    function _renderDrawnLine(r) {
+        const youWon = !!r.iAmWinner;
+        const credited = !!r.prizeClaimedAt;
+        const claimable = !!r.prizeClaimable;
+        const accent = youWon ? '#66ff66' : '#888';
+        const bg = youWon ? 'rgba(102,255,102,0.08)' : 'rgba(255,255,255,0.03)';
+        let right;
+        if (youWon && claimable && !credited) {
+            right = '<button type="button" data-raffle-action="claim" data-raffle-id="' + _esc(r.id) + '" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:5px 10px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;letter-spacing:0.5px;">🎁 RECLAMAR $' + _fmt(r.prizeValueARS) + '</button>';
+        } else if (youWon && credited) {
+            right = '<span style="color:#66ff66;font-size:11px;font-weight:800;">✅ Acreditado</span>';
+        } else if (youWon) {
+            right = '<span style="color:#ffaa66;font-size:11px;font-weight:800;">⏳ Acreditando…</span>';
+        } else {
+            right = '<span style="color:#aaa;font-size:11px;">@' + _esc(r.winnerUsername || '—') + '</span>';
+        }
+        const label = youWon ? '🏆 GANASTE' : 'Cerrado';
+        return '<div style="background:' + bg + ';border:1px solid ' + accent + ';border-radius:8px;padding:7px 10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:12px;">' +
+            '<span style="font-size:14px;flex-shrink:0;">' + (r.emoji || '🎁') + '</span>' +
+            '<span style="color:' + accent + ';font-weight:900;letter-spacing:0.5px;flex-shrink:0;">' + label + '</span>' +
+            '<span style="color:#fff;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(r.name) + ' · #' + r.winningTicketNumber + '</span>' +
+            right +
+            '</div>';
+    }
+
     function _render() {
         const modal = document.getElementById('rafflesModal');
         const body = document.getElementById('rafflesModalBody');
@@ -283,8 +312,12 @@ VIP.raffles = (function () {
         }
         const balance = Number(_data.balance || 0);
         const allRaffles = (_data.raffles || []).filter(r => r.status !== 'archived' && r.status !== 'cancelled');
-        const paid = allRaffles.filter(r => !r.isFree);
-        const free = allRaffles.filter(r => r.isFree);
+        // Separamos sorteados vs activos/cerrados-en-espera. Los drawn van al
+        // final como linea compacta para no opacar los vivos.
+        const drawn = allRaffles.filter(r => r.status === 'drawn');
+        const liveRaffles = allRaffles.filter(r => r.status !== 'drawn');
+        const paid = liveRaffles.filter(r => !r.isFree);
+        const free = liveRaffles.filter(r => r.isFree);
 
         let html = '';
         const recentWins = _data.recentWins || [];
@@ -321,8 +354,22 @@ VIP.raffles = (function () {
             for (const r of free) html += _renderFreeCard(r);
         }
 
-        if (paid.length === 0 && free.length === 0) {
+        // === SORTEADOS (compacto) ===
+        if (drawn.length > 0) {
+            // Ordenar mas recientes primero
+            drawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
+            html += '<div style="margin:22px 0 8px;display:flex;align-items:center;gap:8px;">';
+            html += '<div style="flex:1;height:1px;background:rgba(255,255,255,0.10);"></div>';
+            html += '<h3 style="margin:0;color:#888;font-size:11px;font-weight:800;letter-spacing:2px;">🎲 SORTEADOS RECIENTES</h3>';
+            html += '<div style="flex:1;height:1px;background:rgba(255,255,255,0.10);"></div></div>';
+            for (const r of drawn) html += _renderDrawnLine(r);
+        }
+
+        if (paid.length === 0 && free.length === 0 && drawn.length === 0) {
             html += '<div style="text-align:center;color:#aaa;padding:30px 0;">No hay sorteos disponibles en este momento.</div>';
+        } else if (paid.length === 0 && free.length === 0) {
+            // Hay drawn pero no hay activos: mensaje claro de "vuelve pronto"
+            html += '<div style="text-align:center;color:#aaa;padding:18px 0;font-size:12px;">Los próximos sorteos arrancan en breve. Volvé en unos minutos 🎲</div>';
         }
 
         body.innerHTML = html;
@@ -681,5 +728,79 @@ VIP.raffles = (function () {
         }
     }
 
-    return { open, close, prefetch, openPicker, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize };
+    // ============================================================
+    // Banner de ganador reciente en el home (fuera del modal)
+    // ============================================================
+    // Pinta en #raffleWinnerHomeBanner el ganador mas reciente de las
+    // ultimas 6h. Si el user actual es el ganador, mostramos un banner
+    // personalizado de "FELICITACIONES" con CTA para abrir el modal y
+    // reclamar (si auto-credit fallo). Si el ganador es otro, mostramos
+    // un banner mas chico con "ultimo ganador: @user $X" para social proof.
+    async function loadHomeWinnerBanner() {
+        const container = document.getElementById('raffleWinnerHomeBanner');
+        if (!container) return;
+        try {
+            const r = await fetch(VIP.config.API_URL + '/api/raffles/recent-winners?hours=6', {
+                headers: { 'Authorization': 'Bearer ' + VIP.state.currentToken }
+            });
+            if (!r.ok) {
+                container.style.display = 'none';
+                container.innerHTML = '';
+                return;
+            }
+            const j = await r.json();
+            const winners = (j && j.winners) || [];
+            if (winners.length === 0) {
+                container.style.display = 'none';
+                container.innerHTML = '';
+                return;
+            }
+            // Si soy ganador en alguno, mostramos el personal (mas atencion).
+            const myWin = winners.find(w => w.isMe);
+            if (myWin) {
+                container.innerHTML = _renderHomeWinnerMine(myWin);
+            } else {
+                container.innerHTML = _renderHomeWinnerOthers(winners[0]);
+            }
+            container.style.display = 'block';
+        } catch (e) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+        }
+    }
+
+    function _renderHomeWinnerMine(w) {
+        const credited = !!w.prizeClaimedAt;
+        const needsClaim = !credited && w.prizeClaimable;
+        const ago = w.minutesAgo < 60 ? (w.minutesAgo + ' min') : (w.hoursAgo + ' h');
+        let body;
+        if (credited) {
+            body = '<div style="background:rgba(102,255,102,0.18);border:1px solid #66ff66;border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">✅ Premio acreditado a tu saldo · hace ' + ago + '</div>';
+        } else if (needsClaim) {
+            body = '<button type="button" onclick="VIP.raffles && VIP.raffles.open()" style="width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;box-shadow:0 3px 10px rgba(255,215,0,0.40);">🎁 RECLAMAR $' + _fmt(w.prizeValueARS) + '</button>';
+        } else {
+            body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Estamos acreditando tu premio…</div>';
+        }
+        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
+            '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🏆</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎉 ¡FELICITACIONES, GANASTE!</div>' +
+            '<div style="color:#fff;font-size:18px;font-weight:900;margin:4px 0 8px;">' + (w.emoji || '🏆') + ' ' + _esc(w.name) + ' — $' + _fmt(w.prizeValueARS) + '</div>' +
+            body +
+            '</div>';
+    }
+
+    function _renderHomeWinnerOthers(w) {
+        const ago = w.minutesAgo < 60 ? (w.minutesAgo + ' min') : (w.hoursAgo + ' h');
+        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#1a0033 0%,#2d0052 50%,#1a0033 100%);border:1px solid #d4af37;border-radius:12px;padding:10px 14px;margin:10px auto;max-width:560px;box-shadow:0 2px 12px rgba(212,175,55,0.20);display:flex;align-items:center;gap:10px;">' +
+            '<div style="font-size:28px;flex-shrink:0;">🏆</div>' +
+            '<div style="flex:1;min-width:0;">' +
+                '<div style="color:#d4af37;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;">Último ganador · hace ' + ago + '</div>' +
+                '<div style="color:#fff;font-size:13px;font-weight:800;line-height:1.3;margin-top:2px;"><span style="color:#ffd700;">@' + _esc(w.winnerUsername || '') + '</span> se llevó <span style="color:#66ff66;">$' + _fmt(w.prizeValueARS) + '</span></div>' +
+                '<div style="color:#aaa;font-size:10.5px;margin-top:1px;">' + (w.emoji || '🏆') + ' ' + _esc(w.name) + ' · ¡vos podés ser el próximo!</div>' +
+            '</div>' +
+            '<div style="color:#d4af37;font-size:18px;flex-shrink:0;">›</div>' +
+            '</div>';
+    }
+
+    return { open, close, prefetch, openPicker, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize, loadHomeWinnerBanner };
 })();

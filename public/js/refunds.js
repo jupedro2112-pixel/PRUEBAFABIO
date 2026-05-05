@@ -209,6 +209,13 @@ VIP.refunds = (function () {
         loadGiveawayStatus();
         // Cargar total historico para el subtexto del welcome.
         loadGiveawayTotal();
+        // Banner de ganador reciente en el home (ventana 6h). Es el cartel
+        // que el owner pidio para que la gente vea ganadores sin abrir el
+        // modal de sorteos. Render condicional (no aparece si no hay
+        // ganadores en la ventana).
+        if (VIP.raffles && typeof VIP.raffles.loadHomeWinnerBanner === 'function') {
+            VIP.raffles.loadHomeWinnerBanner();
+        }
     }
 
     // ---- Cache de montos en localStorage para evitar el flash de $0 en cold-start ----

@@ -1692,6 +1692,13 @@
             </button>
         </div>
 
+        <!-- Refunds-only: Banner de ganador reciente (ultimas 6h).
+             Render dinamico desde /api/raffles/recent-winners. Si el user
+             es el ganador, muestra "FELICITACIONES" personalizado. Si es
+             otro, muestra "Ultimo ganador: @user $X" como social proof.
+             Vacio cuando no hay ganadores en la ventana. -->
+        <div id="raffleWinnerHomeBanner" style="display:none;"></div>
+
         <!-- Refunds-only: Card grande de sorteos pagados — CTA imposible
              de no ver. Click abre el modal con los 4 sorteos.
              En mobile la card se compacta (emojis abajo del titulo,

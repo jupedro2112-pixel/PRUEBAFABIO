@@ -11974,6 +11974,54 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/raffles/recent-winners — ganadores recientes para el banner del home.
+// Ventana 6h por default. Sirve para social proof: cualquier user que abre la
+// app ve "alguien acaba de ganar" en el menu, sin tener que abrir el modal.
+// Si el caller es el ganador, devuelve isMe=true y el front muestra el banner
+// personalizado de "FELICITACIONES" en vez del generico.
+app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
+  try {
+    const hours = Math.max(1, Math.min(48, parseInt(req.query.hours, 10) || 6));
+    const cutoff = new Date(Date.now() - hours * 3600 * 1000);
+    const recent = await Raffle.find({
+      status: 'drawn',
+      winnerUsername: { $ne: null },
+      drawnAt: { $gte: cutoff }
+    })
+      .sort({ drawnAt: -1 })
+      .limit(5)
+      .select('id name prizeName prizeValueARS emoji winnerUsername winningTicketNumber drawnAt prizeClaimedAt prizeClaimable raffleType')
+      .lean();
+    const me = String((req.user && req.user.username) || '').toLowerCase();
+    const winners = recent.map(r => {
+      const isMe = String(r.winnerUsername || '').toLowerCase() === me;
+      const ageMs = Date.now() - new Date(r.drawnAt).getTime();
+      const hoursAgo = Math.max(0, Math.floor(ageMs / 3600000));
+      const minutesAgo = Math.max(0, Math.floor(ageMs / 60000));
+      return {
+        id: r.id,
+        name: r.name,
+        prizeName: r.prizeName,
+        prizeValueARS: r.prizeValueARS || 0,
+        emoji: r.emoji || '🏆',
+        winnerUsername: r.winnerUsername,
+        winningTicketNumber: r.winningTicketNumber,
+        drawnAt: r.drawnAt,
+        prizeClaimedAt: r.prizeClaimedAt || null,
+        prizeClaimable: !!r.prizeClaimable,
+        isMe,
+        hoursAgo,
+        minutesAgo,
+        raffleType: r.raffleType
+      };
+    });
+    res.json({ winners, windowHours: hours });
+  } catch (err) {
+    logger.error(`/api/raffles/recent-winners: ${err.message}`);
+    res.status(500).json({ error: 'Error obteniendo ganadores recientes' });
+  }
+});
+
 // POST /api/raffles/:id/buy — comprar N numeros con saldo de JUGAYGANA.
 // El user PUEDE elegir sus numeros (pickedNumbers[]) o dejar que el sistema
 // los asigne aleatoriamente entre los disponibles.
