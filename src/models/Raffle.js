@@ -59,6 +59,11 @@ const raffleSchema = new mongoose.Schema({
   // Si entryCost === 0 Y minCargasARS > 0 -> es un sorteo gratis exclusivo.
   // Lo marcamos explicito tambien para queries faciles.
   isFree: { type: Boolean, default: false, index: true },
+  // Solo aplica a 'relampago': si esta en true, el user necesita haber
+  // participado en al menos 1 sorteo PAGO (entryCost > 0) en el pasado para
+  // inscribirse. Sirve como gancho: el primer relampago es libre, los
+  // siguientes son recompensa para quienes ya jugaron pagos.
+  requiresPaidTicket: { type: Boolean, default: false },
   // Numero de instancia dentro del tipo. Cada vez que se llena un sorteo,
   // se crea otro con instanceNumber = previo + 1.
   instanceNumber: { type: Number, default: 1, min: 1 },

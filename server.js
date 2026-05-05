@@ -12007,7 +12007,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         prizeClaimedAt: r.prizeClaimedAt || null,
         myTicketNumbers: (myByRaffle[r.id] && myByRaffle[r.id].ticketNumbers) || [],
         myCuposCount: (myByRaffle[r.id] && myByRaffle[r.id].cuposCount) || 0,
-        iAmWinner: (myByRaffle[r.id] && myByRaffle[r.id].isWinner) || false
+        iAmWinner: (myByRaffle[r.id] && myByRaffle[r.id].isWinner) || false,
+        requiresPaidTicket: !!r.requiresPaidTicket
       })),
       claimable,
       recentWins
@@ -12164,6 +12165,22 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       }
       if (quantity > 1) {
         return res.status(400).json({ error: 'En el RELÁMPAGO solo se permite 1 número por persona.' });
+      }
+      // Gate: si este relampago lo requiere, exigir al menos 1 participation
+      // en algun sorteo PAGO. Asi convertimos el primer relampago (libre)
+      // en gancho hacia los pagos -> el segundo en adelante recompensa a
+      // los que ya jugaron pagos.
+      if (raffle.requiresPaidTicket) {
+        const paidPart = await RaffleParticipation.findOne({
+          username: { $regex: '^' + safeBuy + '$', $options: 'i' },
+          entryCostPaid: { $gt: 0 }
+        }, { _id: 1 }).lean();
+        if (!paidPart) {
+          return res.status(403).json({
+            error: 'Este RELÁMPAGO es exclusivo para clientes que ya tienen al menos 1 número en sorteos pagos. ¡Comprá uno y volvé al próximo gratis!',
+            requiresPaidTicket: true
+          });
+        }
       }
     }
 
@@ -13159,9 +13176,18 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
     const totalTickets = Math.max(2, Math.min(1000, parseInt(b.totalTickets, 10) || LIGHTNING_RAFFLE_CONFIG.totalTickets));
 
     const prevCount = await Raffle.countDocuments({ raffleType: 'relampago' });
+    // Regla del owner: el PRIMER relampago es para todos (hook). A partir
+    // del segundo, requiere haber participado en algun pago (gancho de
+    // upsell). Admin puede override pasando requiresPaidTicket en el body.
+    const requiresPaidTicket = (typeof b.requiresPaidTicket === 'boolean')
+      ? b.requiresPaidTicket
+      : prevCount > 0;
     const drawArg = _nextMondayDraw();
     const weekKey = _isoWeekKey(drawArg);
     const id = uuidv4();
+    const description = requiresPaidTicket
+      ? 'Sorteo RELÁMPAGO. Solo para clientes con al menos 1 número en sorteos pagos. ¡Entrá y mirá!'
+      : 'Sorteo RELÁMPAGO. Inscripción gratuita por única vez. ¡Entrá y mirá si hay cupo!';
     const created = await Raffle.create({
       id,
       raffleType: 'relampago',
@@ -13170,7 +13196,7 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
         ? LIGHTNING_RAFFLE_CONFIG.name
         : `⚡ RELÁMPAGO · $${prizeValueARS.toLocaleString('es-AR')}`,
       prizeName: `$${prizeValueARS.toLocaleString('es-AR')} en saldo`,
-      description: 'Sorteo RELÁMPAGO. Inscripción gratuita por única vez. ¡Entrá y mirá si hay cupo!',
+      description,
       emoji: '⚡',
       entryCost: 0,
       totalTickets,
@@ -13182,6 +13208,7 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
       status: 'active',
       isFree: true,
       minCargasARS: 0,
+      requiresPaidTicket,
       lotteryRule: 'Sorteo RELÁMPAGO. Mismo mecanismo que los demás: 1° premio de la Lotería Nacional Nocturna del lunes próximo.',
       createdAt: new Date()
     });

@@ -8906,12 +8906,13 @@ function _fmtPct(n, d) {
 function _renderRafflesAdmin() {
     const dash = _rafflesAdminCache || { kpis: {}, byType: [], topBuyers: [], raffles: [] };
     const isFree = dash.__kind === 'free';
+    const isLightning = dash.__kind === 'relampago';
     const k = dash.kpis || {};
     const drawDateStr = dash.drawDate ? new Date(dash.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
-    const accentColor = isFree ? '#4dabff' : '#d4af37';
-    const accentRGBA = isFree ? '77,171,255' : '212,175,55';
-    const titleEmoji = isFree ? '🎁' : '💰';
-    const titleText = isFree ? 'Sorteos GRATIS' : 'Sorteos PAGOS';
+    const accentColor = isLightning ? '#ffeb3b' : (isFree ? '#4dabff' : '#d4af37');
+    const accentRGBA = isLightning ? '255,235,59' : (isFree ? '77,171,255' : '212,175,55');
+    const titleEmoji = isLightning ? '⚡' : (isFree ? '🎁' : '💰');
+    const titleText = isLightning ? 'Sorteos RELÁMPAGO' : (isFree ? 'Sorteos GRATIS' : 'Sorteos PAGOS');
     let html = '';
 
     // ===== Banner / KPIs =====
@@ -8922,12 +8923,18 @@ function _renderRafflesAdmin() {
     html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">Sorteo programado: <strong style="color:#fff;">' + drawDateStr + '</strong> · Lotería Nocturna 1° premio</div>';
     html += '    </div>';
     html += '    <div style="display:flex;gap:6px;flex-wrap:wrap;">';
-    html += '      <button type="button" onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
-    if (!isFree) {
-        html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO gratis (premio $200k, 100 cupos, una sola vez)">⚡ Sorteo relámpago</button>';
+    // Boton "Force seed" solo en pagos (relampago no se seedea automatico,
+    // tiene su propio boton). Free tampoco — el cron auto-rotea los free.
+    if (!isFree && !isLightning) {
+        html += '      <button type="button" onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
         html += '      <button type="button" onclick="seedTestRaffle()" style="background:rgba(255,170,255,0.10);color:#ff80ff;border:1px solid rgba(255,170,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear un sorteo de prueba (entry $100, premio $500, 5 cupos por default) para validar el flujo completo">🧪 Sorteo prueba</button>';
         html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando de un sorteo activo (elegís sorteo + equipos + texto)">📣 Anunciar sorteo</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
+    }
+    // Crear sorteo relampago: SOLO en la seccion de relampago.
+    if (isLightning) {
+        html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO gratis (premio $200k, 100 cupos, una sola vez)">⚡ Crear sorteo relámpago</button>';
+        html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando del sorteo activo">📣 Anunciar</button>';
     }
     if ((k.rafflesFilled || 0) + (dash.raffles||[]).filter(r=>r.status==='drawn').length > 0) {
         html += '      <button type="button" onclick="cleanupRaffles()" style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">🧹 Archivar drawn</button>';
@@ -8987,9 +8994,8 @@ function _renderRafflesAdmin() {
     html += '<div style="margin-bottom:14px;">';
     html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">🎫 Sorteos de la semana</h3>';
     if (!dash.raffles || dash.raffles.length === 0) {
-        const isLightning = dash.__kind === 'relampago';
         if (isLightning) {
-            html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteo RELÁMPAGO activo.<br>Para crear uno, andá a <strong style="color:#ffeb3b;">Sorteos pagos</strong> y tocá <strong style="color:#ffeb3b;">⚡ Sorteo relámpago</strong>.</div>';
+            html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteo RELÁMPAGO activo.<br>Tocá <strong style="color:#ffeb3b;">⚡ Crear sorteo relámpago</strong> arriba para abrir uno.</div>';
         } else {
             html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteos activos. Tocá <strong>🌱 Force seed</strong>.</div>';
         }
@@ -9512,12 +9518,14 @@ async function seedLightningRaffle() {
             return;
         }
         showToast('⚡ Sorteo RELÁMPAGO creado: ' + d.raffle.name, 'success');
+        // Refrescar la seccion de relampago (donde el admin esta ahora) y
+        // tambien la de pagos por si la tiene abierta en otra pestaña visual.
+        loadRafflesLightningAdmin();
         loadRafflesAdmin();
-        // Flujo A: ofrecer anunciar inmediatamente
         if (confirm('¿Querés anunciar el sorteo a los usuarios ahora?')) {
             announceRaffleOpen(d.raffle.id, {
                 title: '⚡ Nuevo sorteo RELÁMPAGO · $' + (d.raffle.prizeValueARS || 200000).toLocaleString('es-AR'),
-                body: '¡GRATIS por única vez! Entrá a la app, te anotamos automático. ' + (d.raffle.totalTickets || 100) + ' cupos, primero llega primero adentro.',
+                body: '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo en tiempo real. 1 número por persona.',
                 presetType: 'relampago'
             });
         }

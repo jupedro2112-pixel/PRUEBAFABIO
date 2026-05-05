@@ -347,12 +347,19 @@ VIP.raffles = (function () {
 
         let html = '<div style="background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:18px;padding:18px 16px;margin-bottom:18px;box-shadow:0 0 30px rgba(255,235,59,0.40),0 4px 24px rgba(0,150,255,0.30);position:relative;overflow:hidden;">';
         html += '<div style="position:absolute;top:-15px;right:-15px;font-size:120px;opacity:0.10;line-height:1;">⚡</div>';
-        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+        const exclusive = !!r.requiresPaidTicket;
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
         html += '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>';
-        html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · ÚNICA VEZ</span>';
+        html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · 1 POR PERSONA</span>';
+        if (exclusive) {
+            html += '<span style="background:rgba(255,107,107,0.30);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:1px;border:1px solid #ff8080;">SOLO CON PAGO PREVIO</span>';
+        }
         html += '</div>';
         html += '<div style="color:#fff;font-size:24px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + '</div>';
-        html += '<div style="color:#fff;font-size:12.5px;line-height:1.4;margin-bottom:10px;font-weight:600;">¡Entrá y mirá! Inscripción gratuita · <strong style="color:#ffeb3b;">1 cupo por persona</strong> · ' + total + ' lugares</div>';
+        const subtext = exclusive
+            ? '🎫 Exclusivo para clientes con al menos 1 número en sorteos pagos · ' + total + ' lugares'
+            : '¡Entrá y mirá! Inscripción gratuita · 1 cupo por persona · ' + total + ' lugares';
+        html += '<div style="color:#fff;font-size:12.5px;line-height:1.4;margin-bottom:10px;font-weight:600;">' + subtext + '</div>';
 
         // Barra de progreso
         html += '<div style="height:10px;background:rgba(0,0,0,0.40);border-radius:5px;overflow:hidden;margin:8px 0 4px;">';
@@ -372,7 +379,13 @@ VIP.raffles = (function () {
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
         } else if (closed) {
-            html += '<div style="background:rgba(0,0,0,0.40);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;">⏳ Cupo lleno · esperando sorteo</div>';
+            // Cupo lleno: aviso + upsell (proximo gratis requiere haber
+            // jugado paid). Es la idea del owner: convertir el relampago
+            // en gancho hacia los sorteos pagos.
+            html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:11px;text-align:center;">';
+            html += '<div style="color:#fff;font-size:14px;font-weight:900;margin-bottom:6px;">⏳ SORTEO LLENO · esperá el próximo</div>';
+            html += '<div style="color:#ffeb3b;font-size:11.5px;font-weight:700;line-height:1.45;">Para participar del próximo sorteo <strong>GRATIS</strong> tenés que tener al menos <strong>1 número en algún sorteo pago</strong>.</div>';
+            html += '</div>';
         } else {
             // Boton para abrir el picker. El relampago usa el mismo flujo
             // de buy que los pagos pero con entryCost=0 y limite 1 cupo.
@@ -574,14 +587,17 @@ VIP.raffles = (function () {
         const isLightning = r.raffleType === 'relampago';
         const cost = _picker.picked.size * (r.entryCost || 0);
 
+        // RELAMPAGO usa la MISMA UI que los pagos (mismo color dorado, mismo
+        // texto base) pero con costo $0 visible. El dueno quiere que la gente
+        // se familiarice con el flujo de "elegir y comprar" en un sorteo gratis
+        // antes de animarse a uno pago. Lo unico distinto es la nota de
+        // "1 numero por persona" como aclaracion abajo.
         let html = '';
         html += '<button type="button" data-raffle-action="close-picker" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;">✕</button>';
-        html += '<h3 style="color:' + (isLightning ? '#ffeb3b' : '#ffd700') + ';margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
-        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">' + (isLightning
-            ? 'Premio $' + _fmt(r.prizeValueARS) + ' · GRATIS · 1 número por persona'
-            : 'Premio $' + _fmt(r.prizeValueARS) + ' · $' + _fmt(r.entryCost) + ' por número') + '</div>';
-        html += '<div style="background:' + (isLightning ? 'rgba(255,235,59,0.10);border:1px solid rgba(255,235,59,0.40)' : 'rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30)') + ';border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
-        html += '🎯 Tocá ' + (isLightning ? '<strong>1 número</strong> que quieras' : 'los números que querés') + ' (<strong style="color:#66ff66;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = el que ' + (isLightning ? 'vas a inscribir' : 'vas a comprar') + ').' + (isLightning ? '' : ' Hasta 50 por compra.');
+        html += '<h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + ' · <strong style="color:' + (isLightning ? '#66ff66' : '#ffd700') + ';">$' + _fmt(r.entryCost) + '</strong> por número' + (isLightning ? ' · 1 por persona' : '') + '</div>';
+        html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
+        html += '🎯 Tocá ' + (isLightning ? '<strong>el número</strong> que quieras' : 'los números que querés') + ' (<strong style="color:#66ff66;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = el que vas a comprar).' + (isLightning ? '' : ' Hasta 50 por compra.');
         html += '</div>';
 
         // Grid 10x10
@@ -801,16 +817,30 @@ VIP.raffles = (function () {
             document.body.appendChild(modal);
         }
         const body = document.getElementById('rafflesBoughtBody');
+        const isLightning = raffle && raffle.raffleType === 'relampago';
         if (body) {
             const numStr = arr.length === 1
                 ? '<div style="font-size:64px;font-weight:900;color:#ffd700;margin:14px 0;line-height:1;">#' + arr[0] + '</div>'
                 : '<div style="font-size:18px;font-weight:900;color:#ffd700;margin:14px 0;word-break:break-word;line-height:1.5;">' + arr.map(n => '#' + n).join(' · ') + '</div>';
-            body.innerHTML = '<div style="font-size:48px;margin-bottom:8px;">🎫</div>' +
-                '<div style="color:#66ff66;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">¡Compra confirmada!</div>' +
-                '<div style="color:#fff;font-size:13px;margin-bottom:6px;">Tu/s número/s para <strong>' + _esc(raffle.name) + '</strong>:</div>' +
+            // Para relampago mostramos un mensaje educativo: "asi de facil
+            // es participar — los pagos funcionan igual". El owner quiere
+            // usar el relampago como onboarding al sistema de sorteos pagos.
+            const headerLabel = isLightning ? '¡Inscripción confirmada!' : '¡Compra confirmada!';
+            const intro = isLightning
+                ? 'Tu número en <strong>' + _esc(raffle.name) + '</strong>:'
+                : 'Tu/s número/s para <strong>' + _esc(raffle.name) + '</strong>:';
+            const tutorialMsg = isLightning
+                ? '<div style="background:rgba(255,215,0,0.15);border:1px dashed #ffd700;border-radius:10px;padding:11px;margin-bottom:14px;color:#fff;font-size:12.5px;line-height:1.5;">' +
+                    '<div style="color:#ffd700;font-weight:900;font-size:13px;margin-bottom:4px;">💡 ¡Así de fácil es participar!</div>' +
+                    'Los <strong style="color:#ffd700;">sorteos pagos</strong> funcionan igual: elegís tu número del 1 al 100, lo pagás con tu saldo y si sale, <strong>cobrás el premio en el acto</strong> en tu cuenta.' +
+                  '</div>'
+                : '<div style="color:#dde9d4;font-size:12px;line-height:1.5;margin-bottom:14px;">Sorteo el lunes en la Lotería Nacional Nocturna. Si tu número gana, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.</div>';
+            body.innerHTML = '<div style="font-size:48px;margin-bottom:8px;">' + (isLightning ? '⚡' : '🎫') + '</div>' +
+                '<div style="color:#66ff66;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-bottom:6px;">' + headerLabel + '</div>' +
+                '<div style="color:#fff;font-size:13px;margin-bottom:6px;">' + intro + '</div>' +
                 numStr +
-                '<div style="color:#dde9d4;font-size:12px;line-height:1.5;margin-bottom:14px;">Sorteo el lunes en la Lotería Nacional Nocturna. Si tu número gana, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.</div>' +
-                '<button type="button" data-raffle-action="close-bought" style="width:100%;background:#ffd700;color:#000;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">¡PERFECTO!</button>';
+                tutorialMsg +
+                '<button type="button" data-raffle-action="close-bought" style="width:100%;background:#ffd700;color:#000;border:none;padding:12px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">' + (isLightning ? '🎫 VER SORTEOS PAGOS' : '¡PERFECTO!') + '</button>';
         }
         modal.style.display = 'flex';
     }
@@ -916,12 +946,18 @@ VIP.raffles = (function () {
             '<div style="color:#fff;font-size:20px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin:4px 0 6px;">Premio $' + _fmt(l.prizeValueARS) + '</div>' +
             (enrolled
                 ? '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:8px;padding:8px;text-align:center;color:#fff;font-size:13px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">✅ Estás anotado · Número #' + l.myTicket + '</div>'
-                : '<div style="height:8px;background:rgba(0,0,0,0.40);border-radius:4px;overflow:hidden;margin:4px 0;">' +
-                    '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
-                  '<div style="display:flex;justify-content:space-between;font-size:11px;color:#fff;font-weight:700;margin-bottom:6px;">' +
-                    '<span>' + sold + '/' + total + ' anotados</span>' +
-                    '<span>' + (l.status === 'active' ? '¡ENTRÁ Y ANOTATE!' : 'cupo lleno') + '</span>' +
-                  '</div>'
+                : (l.status !== 'active'
+                    ? '<div style="background:rgba(0,0,0,0.45);border-radius:8px;padding:9px;text-align:center;">' +
+                        '<div style="color:#fff;font-size:13px;font-weight:900;margin-bottom:4px;">⏳ SORTEO LLENO</div>' +
+                        '<div style="color:#ffeb3b;font-size:10.5px;font-weight:700;line-height:1.4;">Para el próximo: necesitás al menos 1 número en sorteos pagos.</div>' +
+                      '</div>'
+                    : '<div style="height:8px;background:rgba(0,0,0,0.40);border-radius:4px;overflow:hidden;margin:4px 0;">' +
+                        '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
+                      '<div style="display:flex;justify-content:space-between;font-size:11px;color:#fff;font-weight:700;margin-bottom:6px;">' +
+                        '<span>' + sold + '/' + total + ' anotados</span>' +
+                        '<span>¡ENTRÁ Y ANOTATE!</span>' +
+                      '</div>'
+                  )
             ) +
         '</div>';
     }
