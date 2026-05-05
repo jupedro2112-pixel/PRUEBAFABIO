@@ -995,11 +995,19 @@ VIP.raffles = (function () {
         const total = l.totalTickets || 0;
         const fillPct = total ? Math.round((sold / total) * 100) : 0;
         const enrolled = l.myTicket != null;
-        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,235,59,0.50),0 4px 18px rgba(0,150,255,0.30);position:relative;overflow:hidden;">' +
+        // El click abre el picker DIRECTO sobre este sorteo en vez del modal
+        // generico (que mostraba todos los demas sorteos y mareaba al user).
+        // openAndPickRaffle hace open() para cargar data + openPicker(id) para
+        // saltar derecho al grid 1-100. Si esta cerrado/sorteado, solo abre
+        // el modal (no hay picker que mostrar).
+        const clickAction = (l.status === 'active' && !enrolled)
+            ? 'VIP.raffles && VIP.raffles.openAndPickRaffle(' + JSON.stringify(l.id) + ')'
+            : 'VIP.raffles && VIP.raffles.open()';
+        return '<div onclick="' + clickAction + '" style="cursor:pointer;background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,235,59,0.50),0 4px 18px rgba(0,150,255,0.30);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;line-height:1;">⚡</div>' +
-            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">' +
                 '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>' +
-                '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · ÚNICA VEZ</span>' +
+                '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">SIN CARGO · MÁXIMO 1 POR PERSONA</span>' +
             '</div>' +
             '<div style="color:#fff;font-size:20px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin:4px 0 6px;">Premio $' + _fmt(l.prizeValueARS) + '</div>' +
             (enrolled
@@ -1013,8 +1021,9 @@ VIP.raffles = (function () {
                         '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
                       '<div style="display:flex;justify-content:space-between;font-size:11px;color:#fff;font-weight:700;margin-bottom:6px;">' +
                         '<span>' + sold + '/' + total + ' anotados</span>' +
-                        '<span>¡ENTRÁ Y ANOTATE!</span>' +
-                      '</div>'
+                        '<span>👉 ENTRÁ Y ELEGÍ TU NÚMERO</span>' +
+                      '</div>' +
+                      '<div style="background:#ffeb3b;color:#001a40;border-radius:8px;padding:9px;text-align:center;font-weight:900;font-size:13px;letter-spacing:1px;margin-top:4px;box-shadow:0 2px 8px rgba(255,235,59,0.40);">⚡ ELEGIR MI NÚMERO GRATIS</div>'
                   )
             ) +
         '</div>';
@@ -1096,5 +1105,20 @@ VIP.raffles = (function () {
         }, 1000);
     }
 
-    return { open, close, prefetch, openPicker, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize, loadHomeWinnerBanner };
+    // Helper para el banner del home: abre el modal Y el picker del sorteo
+    // especifico en una sola accion. Asi el user que toca el banner del
+    // relampago en el home cae directo sobre el grid 1-100 de ese sorteo,
+    // sin tener que pasar por el modal generico ni buscarlo.
+    async function openAndPickRaffle(raffleId) {
+        await open();
+        // Verificamos que el sorteo este en _data antes de abrir el picker
+        // (el await de open() garantiza que _data este populado en el primer
+        // load). Si no esta, fallback al modal generico.
+        const r = (_data && _data.raffles || []).find(x => x.id === raffleId);
+        if (r && r.status === 'active') {
+            openPicker(raffleId);
+        }
+    }
+
+    return { open, close, prefetch, openPicker, openAndPickRaffle, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize, loadHomeWinnerBanner };
 })();
