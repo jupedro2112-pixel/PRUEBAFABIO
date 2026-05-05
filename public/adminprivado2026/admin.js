@@ -8918,6 +8918,7 @@ function _renderRafflesAdmin() {
     html += '    <div style="display:flex;gap:6px;flex-wrap:wrap;">';
     html += '      <button type="button" onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
     if (!isFree) {
+        html += '      <button type="button" onclick="seedTestRaffle()" style="background:rgba(255,170,255,0.10);color:#ff80ff;border:1px solid rgba(255,170,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear un sorteo de prueba (entry $100, premio $500, 5 cupos por default) para validar el flujo completo">🧪 Sorteo prueba</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
     }
     if ((k.rafflesFilled || 0) + (dash.raffles||[]).filter(r=>r.status==='drawn').length > 0) {
@@ -9398,6 +9399,41 @@ async function forceSeedRaffles() {
         }
         loadRafflesAdmin();
     } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Crea un sorteo de prueba on-demand. Pensado para validar el flujo
+// punta a punta sin gastar mucha plata real (entry $100, premio $500,
+// 5 cupos por default). Si ya hay uno activo, el endpoint avisa.
+async function seedTestRaffle() {
+    const entry = prompt('Entrada del sorteo de prueba (en pesos)', '100');
+    if (entry === null) return;
+    const prize = prompt('Premio del sorteo de prueba (en pesos)', '500');
+    if (prize === null) return;
+    const cupos = prompt('Cantidad de cupos (2 a 100)', '5');
+    if (cupos === null) return;
+    if (seedTestRaffle._busy) return;
+    seedTestRaffle._busy = true;
+    try {
+        const resp = await authFetch('/api/admin/raffles/seed-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                entryCost: parseInt(entry, 10) || 100,
+                prizeValueARS: parseInt(prize, 10) || 500,
+                totalTickets: parseInt(cupos, 10) || 5
+            })
+        });
+        const d = await resp.json();
+        if (!resp.ok) {
+            alert('❌ ' + (d.error || 'Error') + (d.raffle ? '\n\nActivo: ' + d.raffle.name + ' (' + d.raffle.cuposSold + '/' + d.raffle.totalTickets + ')' : ''));
+            return;
+        }
+        showToast('🧪 Sorteo de prueba creado: ' + d.raffle.name, 'success');
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+    finally { seedTestRaffle._busy = false; }
 }
 
 // Lista los sorteos del modelo viejo (iphone/caribe/auto/other) que sigan

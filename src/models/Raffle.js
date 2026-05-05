@@ -41,6 +41,9 @@ const raffleSchema = new mongoose.Schema({
       'p1m', 'p2m', 'p500', 'p100',
       // Modelo free (clientes activos, auto-enrollment por carga):
       'free_p2m', 'free_p1m', 'free_p500', 'free_p100',
+      // Sorteo de prueba (admin lo seedea on-demand para validar el flujo
+      // buy -> draw -> auto-credit con poca plata real). No auto-respawnea.
+      'test',
       // Legacy (loss-credit):
       'iphone', 'caribe', 'auto', 'other'
     ],

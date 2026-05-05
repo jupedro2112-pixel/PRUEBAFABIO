@@ -12869,6 +12869,71 @@ app.post('/api/admin/raffles/seed', authMiddleware, superAdminMiddleware, async 
   }
 });
 
+// POST /api/admin/raffles/seed-test — crea un sorteo de prueba si no hay otro
+// activo. Pensado para validar el flujo punta a punta (buy -> draw -> auto-
+// credit) con poca plata real. NO auto-respawnea. Cuando se sortea, podes
+// llamar otra vez al endpoint para crear uno nuevo.
+//
+// Body opcional: { entryCost, prizeValueARS, totalTickets } para customizar.
+// Defaults: entryCost=$100, prize=$500, cupos=5.
+app.post('/api/admin/raffles/seed-test', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const existing = await Raffle.findOne({ raffleType: 'test', status: 'active' }).lean();
+    if (existing) {
+      return res.status(400).json({
+        error: 'Ya hay un sorteo de prueba activo. Sorteálo o cancelalo antes de crear otro.',
+        raffle: { id: existing.id, name: existing.name, cuposSold: existing._ticketCounter || 0, totalTickets: existing.totalTickets }
+      });
+    }
+    const b = req.body || {};
+    const entryCost = Math.max(1, parseInt(b.entryCost, 10) || 100);
+    const prizeValueARS = Math.max(1, parseInt(b.prizeValueARS, 10) || 500);
+    const totalTickets = Math.max(2, Math.min(100, parseInt(b.totalTickets, 10) || 5));
+
+    // instanceNumber: contar cuantos test hubo (active + drawn + archived) y
+    // sumar 1, para que el #N sea consistente con el flujo de paid.
+    const prevCount = await Raffle.countDocuments({ raffleType: 'test' });
+
+    const drawArg = _nextMondayDraw();
+    const weekKey = _isoWeekKey(drawArg);
+    const id = uuidv4();
+    const created = await Raffle.create({
+      id,
+      raffleType: 'test',
+      instanceNumber: prevCount + 1,
+      name: `🧪 Sorteo PRUEBA $${prizeValueARS.toLocaleString('es-AR')}`,
+      prizeName: `$${prizeValueARS.toLocaleString('es-AR')} en saldo`,
+      description: 'Sorteo de prueba para validar el flujo. Entrada baja, premio chico — sortealo cuando quieras desde admin.',
+      emoji: '🧪',
+      entryCost,
+      totalTickets,
+      prizeValueARS,
+      _ticketCounter: 0,
+      claimedNumbers: [],
+      drawDate: drawArg,
+      weekKey,
+      status: 'active',
+      isFree: false,
+      lotteryRule: 'Sorteo de PRUEBA. El admin lo sortea manualmente cuando quiera (no espera a la lotería).',
+      createdAt: new Date()
+    });
+    logger.info(`[raffles] TEST raffle creado #${prevCount + 1} entry=$${entryCost} prize=$${prizeValueARS} cupos=${totalTickets} id=${id}`);
+    res.json({
+      success: true,
+      raffle: {
+        id: created.id,
+        name: created.name,
+        entryCost: created.entryCost,
+        totalTickets: created.totalTickets,
+        prizeValueARS: created.prizeValueARS
+      }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/seed-test: ${err.message}`);
+    res.status(500).json({ error: 'Error creando sorteo de prueba' });
+  }
+});
+
 // GET /api/admin/raffles/spend-daily — cierre diario de gasto en sorteos pagos.
 // Devuelve por dia (TZ ARG): total ARS, cantidad de compras, cupos vendidos,
 // usuarios unicos, y desglose por tipo. La fuente es RaffleSpend (un row por
