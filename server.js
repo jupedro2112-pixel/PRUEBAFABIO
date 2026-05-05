@@ -9839,6 +9839,96 @@ setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
 
 // ============================================================
+// AUTO-DRAW DE SORTEOS — primer lunes del mes proximo
+// ============================================================
+// Cada 6h chequeamos sorteos con status active/closed cuya drawDate
+// ya pasó. Los sorteamos automáticamente y notificamos ganador +
+// perdedores. Si un sorteo no tiene cupos vendidos lo marcamos como
+// 'cancelled' (no se puede sortear con 0 entradas).
+async function _runAutoRaffleDraws() {
+  try {
+    const due = await Raffle.find({
+      status: { $in: ['active', 'closed'] },
+      drawDate: { $lte: new Date() }
+    }).limit(20).lean();
+    for (const r of due) {
+      try {
+        const parts = await RaffleParticipation.find({ raffleId: r.id }).lean();
+        let totalCupos = 0;
+        for (const p of parts) totalCupos += (p.cuposCount || 1);
+        if (totalCupos === 0) {
+          await Raffle.updateOne(
+            { id: r.id },
+            { $set: { status: 'cancelled', drawnAt: new Date(), drawnBy: 'auto-draw' } }
+          );
+          logger.warn(`[raffles] auto-cancel ${r.name} (${r.monthKey}): sin cupos`);
+          continue;
+        }
+        const winningTicket = 1 + Math.floor(Math.random() * totalCupos);
+        let acc = 0, winner = null;
+        for (const p of parts) {
+          acc += (p.cuposCount || 1);
+          if (winningTicket <= acc) { winner = p; break; }
+        }
+        if (!winner) winner = parts[parts.length - 1];
+
+        await Raffle.updateOne(
+          { id: r.id },
+          { $set: {
+              status: 'drawn',
+              winnerUsername: winner.username,
+              winningTicketNumber: winningTicket,
+              drawnAt: new Date(),
+              drawnBy: 'auto-draw'
+          } }
+        );
+        await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
+
+        const payout = _projectedPayoutARS(r, totalCupos);
+        const fillPct = r.totalTickets > 0 ? Math.round((totalCupos / r.totalTickets) * 100) : 0;
+
+        // Push al ganador.
+        try {
+          const note = fillPct >= 100
+            ? `Te llevás el premio completo: $${(r.prizeValueARS||0).toLocaleString('es-AR')}.`
+            : `Cupo al ${fillPct}% — proporcional: $${payout.toLocaleString('es-AR')}.`;
+          await sendNotificationToAllUsers(
+            User,
+            '🏆 ¡GANASTE EL SORTEO! ' + (r.emoji || '🎁'),
+            '¡Ganaste el sorteo de ' + r.prizeName + '! ' + note + ' Pasá por WhatsApp para coordinar la entrega.',
+            { source: 'raffle-autodraw', raffleId: r.id, isWinner: 'true' },
+            { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+          );
+        } catch (e) { logger.warn(`[raffles auto-draw] winner push: ${e.message}`); }
+
+        // Push a perdedores.
+        try {
+          const losers = parts.filter(p => p.username !== winner.username).map(p => p.username);
+          if (losers.length > 0) {
+            await sendNotificationToAllUsers(
+              User,
+              'Sorteo de ' + (r.emoji || '🎁') + ' ' + r.prizeName + ' sorteado',
+              'Esta vez no fue 😔 Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!',
+              { source: 'raffle-autodraw', raffleId: r.id, isWinner: 'false' },
+              { username: { $in: losers } }
+            );
+          }
+        } catch (e) { logger.warn(`[raffles auto-draw] losers push: ${e.message}`); }
+
+        logger.info(`[raffles] auto-draw ${r.name} (${r.monthKey}): ganador ${winner.username}, ticket #${winningTicket}/${totalCupos}, payout $${payout}`);
+      } catch (e) {
+        logger.error(`[raffles auto-draw] ${r.id}: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    logger.error(`[raffles auto-draw] global: ${e.message}`);
+  }
+}
+// Arranca a los 5 min del boot y corre cada 6 horas.
+setTimeout(() => { _runAutoRaffleDraws(); }, 5 * 60 * 1000);
+setInterval(() => { _runAutoRaffleDraws(); }, 6 * 60 * 60 * 1000);
+
+// ============================================================
 // SNAPSHOT DIARIO DE SALUD DEL CANAL DE PUSH
 // ============================================================
 // Cada día a las 00:05 ART contamos cuántos usuarios tienen PWA instalada
@@ -11697,6 +11787,44 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     const projectedPayoutARS = _projectedPayoutARS(raffle, totalCuposSold);
     const fillRatePct = raffle.totalTickets > 0 ? Math.round((totalCuposSold / raffle.totalTickets) * 100) : 0;
 
+    // Pushes: ganador y perdedores. Best-effort — no rompe el draw si falla.
+    let winnerPushed = 0, losersPushed = 0;
+    try {
+      const payoutNote = fillRatePct >= 100
+        ? `Te llevás el premio completo: $${(raffle.prizeValueARS||0).toLocaleString('es-AR')}.`
+        : `Cupo al ${fillRatePct}% — te llevás el proporcional: $${projectedPayoutARS.toLocaleString('es-AR')}.`;
+      const winRes = await sendNotificationToAllUsers(
+        User,
+        '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'),
+        '¡Ganaste el sorteo de ' + raffle.prizeName + '! ' + payoutNote + ' Pasá por WhatsApp para coordinar la entrega.',
+        { source: 'raffle-draw', raffleId: raffle.id, isWinner: 'true' },
+        { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+      );
+      winnerPushed = (winRes && winRes.successCount) || 0;
+    } catch (e) {
+      logger.warn(`[raffles] no se pudo notificar al ganador: ${e.message}`);
+    }
+
+    // Perdedores (todos los que NO son el ganador): push de "esta vez no fue"
+    // pero con CTA para el siguiente mes — mantiene engagement.
+    try {
+      const loserUsernames = parts
+        .filter(p => p.username !== winner.username)
+        .map(p => p.username);
+      if (loserUsernames.length > 0) {
+        const loseRes = await sendNotificationToAllUsers(
+          User,
+          'Sorteo de ' + (raffle.emoji || '🎁') + ' ' + raffle.prizeName + ' sorteado',
+          'Esta vez no fue 😔 Ganó @' + winner.username + '. ¡Cargá este mes y participá del próximo sorteo!',
+          { source: 'raffle-draw', raffleId: raffle.id, isWinner: 'false' },
+          { username: { $in: loserUsernames } }
+        );
+        losersPushed = (loseRes && loseRes.successCount) || 0;
+      }
+    } catch (e) {
+      logger.warn(`[raffles] no se pudo notificar a perdedores: ${e.message}`);
+    }
+
     res.json({
       success: true,
       winnerUsername: winner.username,
@@ -11707,6 +11835,10 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       prizeValueARS: raffle.prizeValueARS || 0,
       projectedPayoutARS,
       fillRatePct,
+      pushNotifications: {
+        winnerPushed,
+        losersPushed
+      },
       payoutNote: fillRatePct >= 100
         ? 'Cupo completo — paga el premio completo.'
         : `Cupo al ${fillRatePct}% — paga proporcional ($${projectedPayoutARS.toLocaleString('es-AR')} de un premio total de $${(raffle.prizeValueARS||0).toLocaleString('es-AR')}).`,
