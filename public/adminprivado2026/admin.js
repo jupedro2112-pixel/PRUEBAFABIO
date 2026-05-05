@@ -178,6 +178,7 @@ function showSection(sectionKey) {
         refundReminders: 'refundRemindersSection',
         raffles: 'rafflesSection',
         rafflesFree: 'rafflesFreeSection',
+        rafflesLightning: 'rafflesLightningSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
