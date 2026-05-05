@@ -273,6 +273,32 @@ VIP.raffles = (function () {
         return html;
     }
 
+    // Renderiza el bloque "SORTEADOS RECIENTES" arriba del modal. Por
+    // defecto muestra los 2 mas recientes y un boton "Ver todos (N)" que
+    // expande el resto. Estado expandido vive en _drawnExpanded.
+    let _drawnExpanded = false;
+    function _renderDrawnSummary(drawnList) {
+        const totalCount = drawnList.length;
+        const visibleN = _drawnExpanded ? totalCount : Math.min(2, totalCount);
+        const visible = drawnList.slice(0, visibleN);
+        const hidden = totalCount - visibleN;
+        const myWins = drawnList.filter(r => r.iAmWinner).length;
+
+        let html = '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;margin-bottom:14px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        html += '<div style="color:#aaa;font-size:10.5px;font-weight:800;letter-spacing:2px;text-transform:uppercase;">🎲 Sorteados recientes' + (myWins > 0 ? ' · <span style="color:#66ff66;">' + myWins + ' ganaste</span>' : '') + '</div>';
+        html += '<div style="color:#666;font-size:10px;">' + totalCount + ' sorteo' + (totalCount === 1 ? '' : 's') + '</div>';
+        html += '</div>';
+        for (const r of visible) html += _renderDrawnLine(r);
+        if (hidden > 0) {
+            html += '<button type="button" data-raffle-action="toggle-drawn" style="width:100%;background:rgba(0,212,255,0.08);color:#00d4ff;border:1px dashed rgba(0,212,255,0.40);padding:7px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;margin-top:4px;">▼ Ver todos (' + hidden + ' más)</button>';
+        } else if (_drawnExpanded && totalCount > 2) {
+            html += '<button type="button" data-raffle-action="toggle-drawn" style="width:100%;background:rgba(255,255,255,0.04);color:#aaa;border:1px dashed rgba(255,255,255,0.20);padding:7px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;margin-top:4px;">▲ Mostrar solo los más recientes</button>';
+        }
+        html += '</div>';
+        return html;
+    }
+
     // Linea compacta para sorteos ya sorteados ('drawn'). Antes ocupaban
     // una card entera al lado de los activos y se mezclaban; ahora van
     // al final del modal en una sola linea ("ganaste/cerrado") para no
@@ -321,7 +347,7 @@ VIP.raffles = (function () {
         html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · ÚNICA VEZ</span>';
         html += '</div>';
         html += '<div style="color:#fff;font-size:24px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + '</div>';
-        html += '<div style="color:#fff;font-size:12.5px;line-height:1.4;margin-bottom:10px;font-weight:600;">¡Entrá y mirá! Inscripción gratuita por única vez · ' + total + ' cupos</div>';
+        html += '<div style="color:#fff;font-size:12.5px;line-height:1.4;margin-bottom:10px;font-weight:600;">¡Entrá y mirá! Inscripción gratuita · <strong style="color:#ffeb3b;">1 cupo por persona</strong> · ' + total + ' lugares</div>';
 
         // Barra de progreso
         html += '<div style="height:10px;background:rgba(0,0,0,0.40);border-radius:5px;overflow:hidden;margin:8px 0 4px;">';
@@ -386,6 +412,15 @@ VIP.raffles = (function () {
             html += _renderLightningHero(heroLightning);
         }
 
+        // === SORTEADOS RECIENTES (compacto, arriba) ===
+        // Ordena mas reciente primero. Mostramos los ultimos 2 expandidos y
+        // el resto colapsado tras un toggle "Ver todos (N)". Asi le damos
+        // visibilidad al historial sin que invada los sorteos vivos.
+        if (otherDrawn.length > 0) {
+            otherDrawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
+            html += _renderDrawnSummary(otherDrawn);
+        }
+
         // Header con saldo
         html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;">';
         html += '<div><div style="color:#aaa;font-size:11px;font-weight:700;letter-spacing:1px;">SALDO DISPONIBLE</div><div style="color:#ffd700;font-size:20px;font-weight:900;">$' + _fmt(balance) + '</div></div>';
@@ -413,16 +448,6 @@ VIP.raffles = (function () {
             html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> No tenés que pagar — si llegás al mínimo de cargas en los últimos 30 días, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
             html += '</div>';
             for (const r of free) html += _renderFreeCard(r);
-        }
-
-        // === SORTEADOS (compacto) === (excluye relampago, que va en el hero)
-        if (otherDrawn.length > 0) {
-            otherDrawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
-            html += '<div style="margin:22px 0 8px;display:flex;align-items:center;gap:8px;">';
-            html += '<div style="flex:1;height:1px;background:rgba(255,255,255,0.10);"></div>';
-            html += '<h3 style="margin:0;color:#888;font-size:11px;font-weight:800;letter-spacing:2px;">🎲 SORTEADOS RECIENTES</h3>';
-            html += '<div style="flex:1;height:1px;background:rgba(255,255,255,0.10);"></div></div>';
-            for (const r of otherDrawn) html += _renderDrawnLine(r);
         }
 
         if (paid.length === 0 && free.length === 0 && otherDrawn.length === 0 && !heroLightning) {
@@ -463,6 +488,11 @@ VIP.raffles = (function () {
             if (action === 'close-bought') {
                 const m = document.getElementById('rafflesBoughtModal');
                 if (m) m.style.display = 'none';
+                return;
+            }
+            if (action === 'toggle-drawn') {
+                _drawnExpanded = !_drawnExpanded;
+                _render();
                 return;
             }
         }, false);
