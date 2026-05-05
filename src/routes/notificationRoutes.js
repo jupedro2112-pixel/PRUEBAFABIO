@@ -265,6 +265,16 @@ router.post('/register-token', async (req, res) => {
     if (normalizedPerm) {
       user.notifPermission = normalizedPerm;
     }
+
+    // Marca de "primera instalación PWA con notifs": se setea una sola vez
+    // cuando el user pasa a tener BOTH context='standalone' AND
+    // notifPermission='granted'. Permite detectar "clientes recuperados"
+    // (users que estaban en la lista de "sin app" y ahora aparecen).
+    if (normalizedCtx === 'standalone' && normalizedPerm === 'granted' && !user.appFirstInstalledAt) {
+      user.appFirstInstalledAt = new Date();
+      console.log('[FCM] 🎉 Cliente RECUPERADO (primera instalación PWA + notifs):', user.username);
+    }
+
     await user.save();
     
     console.log('[FCM] ✅ Token registrado exitosamente para usuario:', user.username, '(contexto:', normalizedCtx, ', permiso:', normalizedPerm + ')');

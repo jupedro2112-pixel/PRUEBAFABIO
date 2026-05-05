@@ -12526,10 +12526,14 @@ function _classifySegment(daysSince) {
 // armar la base de "alguna vez activos". `segment` filtra el resultado por
 // recency bucket; pasá 'all' (o nada) para todo, 'never' incluye usuarios
 // que NO depositaron en la ventana (tomados de User collection).
-async function _computeActivePlayers({ windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment, includeNeverDeposited }) {
+async function _computeActivePlayers({ windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment, includeNeverDeposited, recoveredLookbackDays }) {
   const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
   const now = Date.now();
   const wantNever = segment === 'never' || segment === 'all' || !!includeNeverDeposited;
+  // Ventana para "recuperados": users que instalaron app+notifs en los
+  // ultimos N dias (default 7). Se computa sobre appFirstInstalledAt.
+  const recoveredWindowMs = (Math.max(1, recoveredLookbackDays || 7)) * 24 * 3600 * 1000;
+  const recoveredSince = now - recoveredWindowMs;
 
   // 1) Aggregate de DailyPlayerStats: depósitos por username en la ventana.
   const stats = await DailyPlayerStats.aggregate([
@@ -12572,7 +12576,7 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     {
       username: 1, lineTeamName: 1, linePhone: 1,
       lastLogin: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1,
-      role: 1, createdAt: 1,
+      role: 1, createdAt: 1, appFirstInstalledAt: 1,
       _id: 0
     }
   ).lean();
@@ -12608,34 +12612,56 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     return { hasApp, hasNotifs, hasChannel };
   };
 
-  // 3) Enriquecer stats + clasificar por segment.
+  // 3) Enriquecer stats + clasificar por segment. Tambien computamos lista
+  // de RECUPERADOS: users que tienen hasChannel=true Y appFirstInstalledAt
+  // dentro de la ventana (default 7d). Se backfillea heuristicamente con la
+  // primera fcmTokens.updatedAt valida si el user no tiene el campo seteado.
   const all = []; // todos los users (stats + never), cada uno con .segment
+  const recovered = []; // users que recuperamos (instalaron app+notifs reciente)
   let totalWithApp = 0;
   let totalWithoutApp = 0;
-  for (const s of stats) {
-    const u = byUsername.get(String(s._id).toLowerCase());
-    if (!u) continue; // existe en DailyPlayerStats pero no en User (raro)
-    if (u.role && u.role !== 'user') continue;
+  const enrichRow = (u, statRow) => {
     const { hasApp, hasNotifs, hasChannel } = _channelOf(u);
     if (hasChannel) totalWithApp++;
     else totalWithoutApp++;
-    const lastTs = s.lastActivityDate ? new Date(s.lastActivityDate).getTime() : null;
+    // Determinar appFirstInstalledAt: campo del schema o fallback heuristico
+    // (la primera fcmTokens.updatedAt con context=standalone+granted).
+    let installedAt = u.appFirstInstalledAt ? new Date(u.appFirstInstalledAt).getTime() : null;
+    if (hasChannel && !installedAt) {
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const validTokens = tokens.filter(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.updatedAt);
+      if (validTokens.length > 0) {
+        installedAt = Math.min(...validTokens.map(t => new Date(t.updatedAt).getTime()));
+      }
+    }
+    const isRecovered = hasChannel && installedAt && installedAt >= recoveredSince;
+    const lastTs = statRow && statRow.lastActivityDate ? new Date(statRow.lastActivityDate).getTime() : null;
     const daysSince = lastTs ? Math.floor((now - lastTs) / (24 * 3600 * 1000)) : null;
-    all.push({
+    return {
       username: u.username,
       lineTeamName: u.lineTeamName || null,
       linePhone: u.linePhone || null,
       lastLogin: u.lastLogin || null,
-      totalDepositsARS: Number(s.totalDepositsARS) || 0,
-      depositCount: Number(s.depositCount) || 0,
-      totalWithdrawsARS: Number(s.totalWithdrawsARS) || 0,
-      withdrawCount: Number(s.withdrawCount) || 0,
-      lastActivityDate: s.lastActivityDate,
+      totalDepositsARS: statRow ? (Number(statRow.totalDepositsARS) || 0) : 0,
+      depositCount: statRow ? (Number(statRow.depositCount) || 0) : 0,
+      totalWithdrawsARS: statRow ? (Number(statRow.totalWithdrawsARS) || 0) : 0,
+      withdrawCount: statRow ? (Number(statRow.withdrawCount) || 0) : 0,
+      lastActivityDate: statRow ? statRow.lastActivityDate : null,
       daysSinceLastActivity: daysSince,
       segment: _classifySegment(daysSince),
       hasApp, hasNotifs, hasChannel,
+      appFirstInstalledAt: installedAt ? new Date(installedAt) : null,
+      isRecovered,
       welcomeBonusClaimed: welcomeClaimedSet.has(String(u.username).toLowerCase())
-    });
+    };
+  };
+  for (const s of stats) {
+    const u = byUsername.get(String(s._id).toLowerCase());
+    if (!u) continue; // existe en DailyPlayerStats pero no en User (raro)
+    if (u.role && u.role !== 'user') continue;
+    const row = enrichRow(u, s);
+    all.push(row);
+    if (row.isRecovered) recovered.push(row);
   }
 
   // 4) Si querés 'never', agregá los users que NO están en stats.
@@ -12644,24 +12670,9 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
       const lc = String(u.username).toLowerCase();
       if (statsSet.has(lc)) continue;
       if (u.role && u.role !== 'user') continue;
-      const { hasApp, hasNotifs, hasChannel } = _channelOf(u);
-      if (hasChannel) totalWithApp++;
-      else totalWithoutApp++;
-      all.push({
-        username: u.username,
-        lineTeamName: u.lineTeamName || null,
-        linePhone: u.linePhone || null,
-        lastLogin: u.lastLogin || null,
-        totalDepositsARS: 0,
-        depositCount: 0,
-        totalWithdrawsARS: 0,
-        withdrawCount: 0,
-        lastActivityDate: null,
-        daysSinceLastActivity: null,
-        segment: 'never',
-        hasApp, hasNotifs, hasChannel,
-        welcomeBonusClaimed: welcomeClaimedSet.has(String(u.username).toLowerCase())
-      });
+      const row = enrichRow(u, null);
+      all.push(row);
+      if (row.isRecovered) recovered.push(row);
     }
   }
 
@@ -12690,6 +12701,14 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     return (b.totalDepositsARS || 0) - (a.totalDepositsARS || 0);
   });
 
+  // Recuperados: ordenar por fecha de instalacion descendente y devolver
+  // siempre (no afectado por filtros de team/segment, es informacion global).
+  recovered.sort((a, b) => {
+    const ta = a.appFirstInstalledAt ? a.appFirstInstalledAt.getTime() : 0;
+    const tb = b.appFirstInstalledAt ? b.appFirstInstalledAt.getTime() : 0;
+    return tb - ta;
+  });
+
   return {
     players: out,
     windowDays,
@@ -12699,7 +12718,10 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
     matchedUsers: out.length,
     segmentCounts,
     segmentCountsWithoutApp,
-    segment: seg || 'all'
+    segment: seg || 'all',
+    recoveredRecently: recovered,
+    recoveredCount: recovered.length,
+    recoveredLookbackDays: Math.max(1, recoveredLookbackDays || 7)
   };
 }
 
@@ -12719,10 +12741,11 @@ app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req
     const groupByTeam = req.query.groupByTeam === 'true';
     const segmentRaw = req.query.segment ? String(req.query.segment).trim().toLowerCase() : 'all';
     const segment = ['all','hot','warm','cool','cold','never'].includes(segmentRaw) ? segmentRaw : 'all';
+    const recoveredLookbackDays = Math.min(Math.max(parseInt(req.query.recoveredLookbackDays) || 7, 1), 90);
 
     const t0 = Date.now();
     const r = await _computeActivePlayers({
-      windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment
+      windowDays, minDepositCount, minDepositARS, excludeWithApp, team, segment, recoveredLookbackDays
     });
 
     if (!groupByTeam) {
@@ -12770,6 +12793,9 @@ app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req
       segmentCountsWithoutApp: r.segmentCountsWithoutApp,
       segment: r.segment,
       teams,
+      recoveredRecently: r.recoveredRecently,
+      recoveredCount: r.recoveredCount,
+      recoveredLookbackDays: r.recoveredLookbackDays,
       computedInMs: Date.now() - t0
     });
   } catch (err) {

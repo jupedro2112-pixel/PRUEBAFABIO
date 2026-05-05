@@ -172,6 +172,14 @@ const userSchema = new mongoose.Schema({
     platform: { type: String, default: null }
   }],
 
+  // Marca temporal de la PRIMERA vez que el user instala la app (PWA
+  // standalone) con notificaciones granted. Se setea una sola vez en el
+  // endpoint /register-token cuando el flag de "channel" pasa de false
+  // a true. Sirve para detectar "clientes recuperados" en la sección
+  // de Activos sin app: si pasamos del estado sin-app → con-app+notif,
+  // este timestamp marca cuándo. NO se reescribe en re-installs.
+  appFirstInstalledAt: { type: Date, default: null, index: true },
+
   // =============================================
   // Campos de sistema de referidos
   // =============================================

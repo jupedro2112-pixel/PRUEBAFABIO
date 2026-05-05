@@ -5361,7 +5361,9 @@ function _apQueryString() {
     const exc = document.getElementById('apExcludeWithApp').value;
     const segEl = document.getElementById('apSegment');
     const seg = segEl ? segEl.value : 'all';
-    return 'windowDays=' + wd + '&minDepositCount=' + mc + '&minDepositARS=' + mars + '&excludeWithApp=' + exc + '&segment=' + seg + '&groupByTeam=true';
+    // recoveredLookbackDays: usamos la misma ventana que el filtro (si la
+    // ventana es 7d, recuperados de los últimos 7d; si es 30d, idem).
+    return 'windowDays=' + wd + '&minDepositCount=' + mc + '&minDepositARS=' + mars + '&excludeWithApp=' + exc + '&segment=' + seg + '&recoveredLookbackDays=' + Math.max(1, parseInt(wd) || 7) + '&groupByTeam=true';
 }
 
 const _AP_SEGMENT_META = {
@@ -5452,6 +5454,7 @@ async function loadActivePlayers() {
         _apCache = j;
         _apRenderPanorama(j);
         _apRenderSummary(j);
+        _apRenderRecovered(j);
         _apRenderTeams(j);
         if (evoR.ok) {
             const ev = await evoR.json();
@@ -5725,6 +5728,64 @@ function _apChip(label, value, color, sub) {
         '<div style="color:' + color + ';font-size:22px;font-weight:800;margin-top:4px;">' + value + '</div>' +
         (sub ? '<div style="color:#888;font-size:10px;margin-top:2px;">' + escapeHtml(sub) + '</div>' : '') +
         '</div>';
+}
+
+// 🎉 Lista de clientes RECUPERADOS: pasaron de "sin app" a "con app+notif".
+// Se computa con appFirstInstalledAt > now - lookbackDays (default 7).
+function _apRenderRecovered(j) {
+    const el = document.getElementById('apRecovered');
+    if (!el) return;
+    const recovered = j.recoveredRecently || [];
+    const lookback = j.recoveredLookbackDays || 7;
+    if (recovered.length === 0) {
+        el.innerHTML = '<div style="background:rgba(0,212,255,0.04);border:1px dashed rgba(0,212,255,0.30);border-radius:10px;padding:12px;color:#888;font-size:12px;text-align:center;">' +
+            '🎉 Recuperados últimos ' + lookback + ' días: <strong style="color:#aaa;">0</strong> · Cuando un cliente sin app la instala con notifs, aparece acá.' +
+            '</div>';
+        return;
+    }
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '<div style="background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.40);border-radius:10px;padding:12px 14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:10px;margin-bottom:8px;">';
+    html += '  <div><strong style="color:#25d366;font-size:14px;">🎉 ' + recovered.length + ' clientes RECUPERADOS</strong> <span style="color:#aaa;font-size:11px;">— últimos ' + lookback + ' días instalaron app + activaron notifs</span></div>';
+    html += '  <button onclick="apToggleRecoveredList()" style="background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.50);border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer;font-weight:700;" id="apRecoveredToggleBtn">▾ Ver lista</button>';
+    html += '</div>';
+    html += '<div id="apRecoveredList" style="display:none;max-height:340px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:8px;margin-top:6px;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+    html += '<thead><tr style="background:rgba(37,211,102,0.10);color:#25d366;">';
+    html += '<th style="text-align:left;padding:8px;">Username</th>';
+    html += '<th style="text-align:left;padding:8px;">Equipo</th>';
+    html += '<th style="text-align:left;padding:8px;">Línea</th>';
+    html += '<th style="text-align:right;padding:8px;">Cargas (' + j.windowDays + 'd)</th>';
+    html += '<th style="text-align:left;padding:8px;">Instaló app</th>';
+    html += '</tr></thead><tbody>';
+    for (const r of recovered) {
+        const installed = r.appFirstInstalledAt ? new Date(r.appFirstInstalledAt) : null;
+        const installedStr = installed
+            ? installed.toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+            : '—';
+        const hoursAgo = installed ? Math.round((Date.now() - installed.getTime()) / 3600000) : null;
+        const ago = hoursAgo == null ? '' : (hoursAgo < 24 ? `hace ${hoursAgo}h` : `hace ${Math.floor(hoursAgo/24)}d`);
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '  <td style="padding:8px;color:#fff;font-weight:700;">' + escapeHtml(r.username) + '</td>';
+        html += '  <td style="padding:8px;color:#ddd;">' + escapeHtml(r.lineTeamName || '—') + '</td>';
+        html += '  <td style="padding:8px;color:#aaa;font-family:monospace;font-size:10px;">' + escapeHtml(r.linePhone || '—') + '</td>';
+        html += '  <td style="padding:8px;text-align:right;color:#25d366;">$' + fmt(r.totalDepositsARS) + ' <small style="color:#666;">(' + (r.depositCount||0) + ')</small></td>';
+        html += '  <td style="padding:8px;color:#fff;">' + installedStr + ' <small style="color:#666;">' + ago + '</small></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '</div>';
+    html += '</div>';
+    el.innerHTML = html;
+}
+
+function apToggleRecoveredList() {
+    const list = document.getElementById('apRecoveredList');
+    const btn = document.getElementById('apRecoveredToggleBtn');
+    if (!list) return;
+    const isHidden = list.style.display === 'none';
+    list.style.display = isHidden ? 'block' : 'none';
+    if (btn) btn.textContent = isHidden ? '▴ Ocultar lista' : '▾ Ver lista';
 }
 
 function _apRenderTeams(j) {
