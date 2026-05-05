@@ -9068,7 +9068,11 @@ function _renderRaffleAdminCard(r) {
     html += '    <button type="button" onclick="viewRaffleParticipants(' + escapeJsArg(r.id) + ')" style="flex:1;min-width:90px;padding:7px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">📋 Detalle</button>';
     if (r.status === 'closed' || r.status === 'active') {
         html += '    <button type="button" onclick="drawRaffle(' + escapeJsArg(r.id) + ')" style="flex:1;min-width:90px;padding:7px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;">🎰 Sortear</button>';
-        html += '    <button type="button" onclick="cancelRaffle(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.40);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="Cancelar y reembolsar">✖</button>';
+        // Free no tiene reembolso (nadie pago), asi que el label dice "Eliminar".
+        // Paid mantiene "Cancelar y reembolsar" para dejar claro que se devuelve la plata.
+        const cancelLabel = r.isFree ? '🗑️ Eliminar' : '✖';
+        const cancelTitle = r.isFree ? 'Eliminar sorteo gratis (saca a todos los anotados, no hay plata que devolver)' : 'Cancelar y reembolsar';
+        html += '    <button type="button" onclick="cancelRaffle(' + escapeJsArg(r.id) + ')" style="padding:7px 9px;background:rgba(255,107,107,0.10);color:#ff6b6b;border:1px solid rgba(255,107,107,0.40);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="' + escapeHtml(cancelTitle) + '">' + cancelLabel + '</button>';
     }
     html += '  </div>';
     html += '</div>';
@@ -9366,14 +9370,29 @@ async function drawRaffle(id) {
 async function cancelRaffle(id) {
     const r = (_rafflesAdminCache && _rafflesAdminCache.raffles || []).find(x => x.id === id);
     if (!r) return;
-    if (!confirm('¿Cancelar "' + r.name + '" y reembolsar a los ' + (r.participants||0) + ' participantes? No se puede deshacer.')) return;
+    const isFree = !!r.isFree;
+    const personas = r.participants || 0;
+    const msg = isFree
+        ? '¿Eliminar el sorteo gratis "' + r.name + '"?\n\n' +
+          'Hay ' + personas + (personas === 1 ? ' persona anotada' : ' personas anotadas') + ' que va' + (personas === 1 ? '' : 'n') + ' a perder su lugar.\n' +
+          'Como es gratis no hay plata que devolver.\n\n' +
+          'En su lugar se va a crear un nuevo sorteo gratis automáticamente.\n\n' +
+          'No se puede deshacer.'
+        : '¿Cancelar el sorteo "' + r.name + '" y reembolsar a los ' + personas + ' participantes?\n\nLa plata vuelve al saldo de cada uno.\nNo se puede deshacer.';
+    if (!confirm(msg)) return;
+    if (cancelRaffle._busy) return;
+    cancelRaffle._busy = true;
     try {
         const resp = await authFetch('/api/admin/raffles/' + id + '/cancel', { method: 'POST' });
         const d = await resp.json();
         if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
-        showToast('✅ Cancelado · ' + (d.refundedCount||0) + ' reembolsos · ' + _fmtMoney(d.refundedAmount), 'success');
+        const toastMsg = isFree
+            ? '🗑️ Sorteo gratis eliminado. Los ' + personas + ' anotados ya no lo ven.'
+            : '✅ Cancelado · ' + (d.refundedCount||0) + ' reembolsos · ' + _fmtMoney(d.refundedAmount);
+        showToast(toastMsg, 'success');
         loadRafflesAdmin();
     } catch (e) { showToast('Error de conexión', 'error'); }
+    finally { cancelRaffle._busy = false; }
 }
 
 async function cleanupRaffles() {
