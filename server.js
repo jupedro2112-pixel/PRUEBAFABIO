@@ -13444,16 +13444,28 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
     // Sorteos del weekKey del proximo draw (incluye drawn por si ya se
     // sorteo en la semana del draw). Tambien aceptamos sorteos sin weekKey
     // (legacy) que esten active/closed para no perderlos del panel.
-    const weekRaffles = await Raffle.find(
-      {
+    // RELAMPAGO se trata distinto: como es one-shot y el weekKey lo seteamos
+    // al crear pero podria desfasar si se creo dias antes, lo traemos por
+    // raffleType independiente del weekKey.
+    let weekFilter;
+    if (kind === 'relampago') {
+      weekFilter = {
+        status: { $in: ['active', 'closed', 'drawn'] },
+        raffleType: 'relampago'
+      };
+    } else {
+      weekFilter = {
         $or: [
           { weekKey: dashboardWeek },
           { weekKey: { $in: ['', null] }, status: { $in: ['active', 'closed'] } }
         ],
         status: { $in: ['active', 'closed', 'drawn'] },
         raffleType: { $in: typeList }
-      }
-    ).sort({ prizeValueARS: -1, instanceNumber: 1 }).lean();
+      };
+    }
+    const weekRaffles = await Raffle.find(weekFilter)
+      .sort({ prizeValueARS: -1, instanceNumber: 1 })
+      .lean();
 
     const ids = weekRaffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([

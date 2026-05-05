@@ -8987,7 +8987,12 @@ function _renderRafflesAdmin() {
     html += '<div style="margin-bottom:14px;">';
     html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">🎫 Sorteos de la semana</h3>';
     if (!dash.raffles || dash.raffles.length === 0) {
-        html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteos activos. Tocá <strong>🌱 Force seed</strong>.</div>';
+        const isLightning = dash.__kind === 'relampago';
+        if (isLightning) {
+            html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteo RELÁMPAGO activo.<br>Para crear uno, andá a <strong style="color:#ffeb3b;">Sorteos pagos</strong> y tocá <strong style="color:#ffeb3b;">⚡ Sorteo relámpago</strong>.</div>';
+        } else {
+            html += '  <div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:8px;">No hay sorteos activos. Tocá <strong>🌱 Force seed</strong>.</div>';
+        }
     } else {
         html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:10px;">';
         for (const r of dash.raffles) html += _renderRaffleAdminCard(r);
