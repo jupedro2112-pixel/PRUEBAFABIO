@@ -8856,6 +8856,11 @@ async function loadCampaignsAdmin() {
             landings.unshift({ code: 'promo2k', totalVisits: 0, uniqueIps: 0, last24h: 0, last7d: 0, first: null, last: null });
         }
 
+        // Dominio publico que mostramos en el admin. Hardcodeamos
+        // autoreembolsos.com porque es el dominio definitivo para campañas
+        // (aunque el server responda en cualquiera, siempre presentamos este
+        // al admin para que copie el link tal cual va a salir publicado).
+        const PUBLIC_BASE = 'https://autoreembolsos.com';
         let html = '<div style="display:flex;flex-direction:column;gap:12px;">';
         for (const l of landings) {
             const url = '/' + l.code;
@@ -8864,7 +8869,7 @@ async function loadCampaignsAdmin() {
             html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">';
             html += '    <div>';
             html += '      <div style="color:#00d4ff;font-size:15px;font-weight:800;">' + (isPromo ? '⚡ ' : '📄 ') + escapeHtml(l.code) + '</div>';
-            html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">URL: <code style="color:#fff;background:rgba(0,0,0,0.30);padding:2px 6px;border-radius:4px;">' + escapeHtml(window.location.origin) + escapeHtml(url) + '</code></div>';
+            html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">URL: <code style="color:#fff;background:rgba(0,0,0,0.30);padding:2px 6px;border-radius:4px;">' + escapeHtml(PUBLIC_BASE) + escapeHtml(url) + '</code></div>';
             html += '    </div>';
             html += '    <div style="display:flex;gap:6px;">';
             html += '      <button type="button" onclick="copyCampaignLink(' + escapeJsArg(url) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 11px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">📋 Copiar link</button>';
@@ -8895,7 +8900,9 @@ function _campaignKpi(label, value, color) {
 }
 
 async function copyCampaignLink(path) {
-    const fullUrl = window.location.origin + path;
+    // Mismo dominio publico que muestra la tarjeta. Si en el futuro queremos
+    // hacerlo configurable, hay que sacarlo a un Config global.
+    const fullUrl = 'https://autoreembolsos.com' + path;
     try {
         await navigator.clipboard.writeText(fullUrl);
         showToast('📋 Link copiado: ' + fullUrl, 'success');
