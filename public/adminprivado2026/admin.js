@@ -166,6 +166,7 @@ function showSection(sectionKey) {
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
         automation: 'automationSection',
+        refundReminders: 'refundRemindersSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
@@ -206,6 +207,8 @@ function showSection(sectionKey) {
         loadAutomations();
     } else if (sectionKey === 'automation') {
         loadAutomationSection();
+    } else if (sectionKey === 'refundReminders') {
+        loadRefundRemindersSection();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -7738,6 +7741,170 @@ async function deleteAutomationCopy(id) {
         showToast('Eliminado', 'success');
         _renderAutomationCopiesTab();
     } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// =====================================================================
+// SECCIÓN 📅 REEMBOLSOS PENDIENTES
+// =====================================================================
+// Lista live de users que perdieron plata en el periodo y todavia no
+// reclamaron su reembolso. Se va vaciando a medida que reclaman (refresh).
+// Permite mandar push a todos los pendientes en un click (run-now).
+
+let _refundRemindersActiveTab = 'daily';
+let _refundRemindersData = { daily: null, weekly: null, monthly: null };
+let _refundRemindersPrevCount = { daily: null, weekly: null, monthly: null };
+
+function loadRefundRemindersSection() {
+    _refundRemindersActiveTab = 'daily';
+    _refundRemindersData = { daily: null, weekly: null, monthly: null };
+    refreshRefundReminders();
+}
+
+function switchRefundReminderTab(type) {
+    _refundRemindersActiveTab = type;
+    document.querySelectorAll('#refundRemindersSection .rem-tab-btn').forEach(b => {
+        const isActive = b.dataset.type === type;
+        if (isActive) {
+            b.style.background = 'rgba(37,211,102,0.15)';
+            b.style.borderColor = 'rgba(37,211,102,0.40)';
+            b.style.color = '#25d366';
+        } else {
+            b.style.background = 'rgba(0,0,0,0.30)';
+            b.style.borderColor = 'rgba(255,255,255,0.10)';
+            b.style.color = '#aaa';
+        }
+    });
+    refreshRefundReminders();
+}
+
+async function refreshRefundReminders() {
+    const type = _refundRemindersActiveTab;
+    const container = document.getElementById('refundRemindersContent');
+    if (!container) return;
+    container.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Buscando reembolsos pendientes…</div>';
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type })
+        });
+        const d = await r.json();
+        if (!r.ok) { container.innerHTML = '<div style="color:#ff8080;padding:20px;">' + (d.error || 'Error') + '</div>'; return; }
+
+        // Detectar si se vacio desde la ultima refresh: cuantos reclamaron mientras tanto.
+        const prev = _refundRemindersPrevCount[type];
+        const now = (d.totals && d.totals.finalAudience) || 0;
+        const justClaimed = (prev !== null && prev > now) ? (prev - now) : 0;
+        _refundRemindersPrevCount[type] = now;
+        _refundRemindersData[type] = d;
+
+        container.innerHTML = _renderRefundRemindersTab(type, d, justClaimed);
+    } catch (e) {
+        container.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión</div>';
+    }
+}
+
+function _renderRefundRemindersTab(type, data, justClaimed) {
+    const totals = data.totals || {};
+    const perUser = data.perUser || [];
+    const periodKey = data.periodKey || '';
+
+    let html = '';
+
+    // Stat cards.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">';
+    html += _autoStatCard('🎯 Pendientes ahora', totals.finalAudience || 0, '#25d366');
+    html += _autoStatCard('👥 Elegibles totales', totals.eligible || 0, '#b39dff');
+    html += _autoStatCard('✅ Ya reclamaron', totals.alreadyClaimed || 0, '#888');
+    html += _autoStatCard('⛔ Sin app/notifs', totals.withoutChannel || 0, '#ff8800');
+    if (justClaimed > 0) {
+        html += _autoStatCard('🆕 Reclamaron desde el último refresh', justClaimed, '#ffc850');
+    }
+    html += '</div>';
+
+    // Toolbar: refresh + send.
+    const btnLabel = type === 'daily' ? '💰 Reembolso diario' : (type === 'weekly' ? '📅 Reembolso semanal' : '🏆 Reembolso mensual');
+    html += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;">';
+    html += '  <strong style="color:#25d366;font-size:12px;">📋 ' + btnLabel + '</strong>';
+    if (periodKey) html += '  <small style="color:#666;">período <code style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;">' + escapeHtml(periodKey) + '</code></small>';
+    html += '  <button onclick="refreshRefundReminders()" style="margin-left:auto;padding:7px 14px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Actualizar</button>';
+    if (perUser.length > 0) {
+        html += '  <button onclick="sendRefundReminderPush(\'' + type + '\')" id="sendRefundReminderBtn" style="padding:8px 16px;background:linear-gradient(135deg,#25d366,#0a8055);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">📲 Mandar push a los ' + perUser.length + ' pendientes</button>';
+    }
+    html += '</div>';
+
+    if (perUser.length === 0) {
+        html += '<div style="text-align:center;padding:40px;color:#888;">';
+        html += '  <div style="font-size:42px;opacity:0.4;margin-bottom:10px;">✅</div>';
+        html += '  <p style="margin:0;font-size:13px;">No hay reembolsos pendientes para este período. ' + (totals.alreadyClaimed > 0 ? 'Todos los elegibles ya reclamaron.' : 'Nadie tuvo pérdida en el período.') + '</p>';
+        html += '</div>';
+        return html;
+    }
+
+    // Total a pagar si todos reclaman.
+    const totalPotential = perUser.reduce((s, u) => s + (u.potentialAmount || 0), 0);
+    html += '<p style="color:#aaa;font-size:12px;margin:0 0 10px;">💵 Total potencial si todos reclaman: <strong style="color:#25d366;">$' + totalPotential.toLocaleString('es-AR') + '</strong></p>';
+
+    // Search + table.
+    html += '<input type="text" id="refundRemindersSearch" placeholder="🔍 Buscar usuario…" oninput="filterRefundRemindersTable()" style="width:100%;max-width:300px;padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;margin-bottom:10px;">';
+    html += '<div id="refundRemindersTableContainer">' + _renderRefundRemindersTable(perUser) + '</div>';
+    return html;
+}
+
+function _renderRefundRemindersTable(perUser) {
+    if (!perUser || perUser.length === 0) {
+        return '<div style="color:#888;padding:14px;text-align:center;">Sin resultados.</div>';
+    }
+    let html = '<table class="report-table"><thead><tr>';
+    html += '<th>Usuario</th><th>Equipo</th><th style="text-align:right;">💸 Pérdida neta</th><th style="text-align:right;">💰 Reembolso potencial</th>';
+    html += '</tr></thead><tbody>';
+    for (const u of perUser) {
+        html += '<tr>';
+        html += '<td>' + escapeHtml(u.username) + '</td>';
+        html += '<td><small>' + escapeHtml(u.lineTeamName || '—') + '</small></td>';
+        html += '<td style="text-align:right;">$' + (u.netLoss || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td style="text-align:right;color:#25d366;font-weight:700;">$' + (u.potentialAmount || 0).toLocaleString('es-AR') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+function filterRefundRemindersTable() {
+    const type = _refundRemindersActiveTab;
+    const data = _refundRemindersData[type];
+    if (!data) return;
+    const q = (document.getElementById('refundRemindersSearch') || {}).value || '';
+    const ql = q.toLowerCase().trim();
+    const filtered = ql
+        ? (data.perUser || []).filter(u => (u.username || '').toLowerCase().includes(ql))
+        : (data.perUser || []);
+    const tc = document.getElementById('refundRemindersTableContainer');
+    if (tc) tc.innerHTML = _renderRefundRemindersTable(filtered);
+}
+
+async function sendRefundReminderPush(type) {
+    const data = _refundRemindersData[type];
+    const count = data && data.perUser ? data.perUser.length : 0;
+    if (count === 0) { showToast('No hay pendientes a notificar', 'info'); return; }
+    const ok = confirm('Vas a mandar push a ' + count + ' usuarios con reembolso ' + type + ' pendiente. ¿Confirmás?');
+    if (!ok) return;
+    const btn = document.getElementById('sendRefundReminderBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando…'; }
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/run-now', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
+        const sent = (d.result && (d.result.sentCount || d.result.sent)) || (d.sent || count);
+        showToast('✅ Push enviado a ' + sent + ' users', 'success');
+        // Refrescar lista para ver el estado.
+        setTimeout(() => refreshRefundReminders(), 1500);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+    finally { if (btn) { btn.disabled = false; } }
 }
 
 // 🧪 Modo test: dispara todas las notifs (engagement + samples de bonus)

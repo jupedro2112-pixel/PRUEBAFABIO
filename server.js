@@ -10958,6 +10958,10 @@ app.post('/api/admin/refund-reminders/preview', authMiddleware, adminMiddleware,
       periodKey: r.periodKey,
       window: r.window,
       totals: r.totals,
+      // Lista completa de pendientes (la usa la sección "📅 Reembolsos
+      // pendientes" en vivo). El tab original de Automatizaciones lee
+      // 'sample' (los primeros 50) — backwards compatible.
+      perUser: r.perUser,
       sample: r.perUser.slice(0, 50),
       sampleSize: Math.min(50, r.perUser.length),
       computedInMs: Date.now() - t0

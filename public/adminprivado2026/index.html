@@ -102,6 +102,10 @@
                     <span>✨</span>
                     <span>Automatización</span>
                 </a>
+                <a href="#" class="nav-item" data-section="refundReminders">
+                    <span>📅</span>
+                    <span>Reembolsos pendientes</span>
+                </a>
                 <a href="#" class="nav-item" data-section="recovery">
                     <span>🔁</span>
                     <span>Recuperación <span id="recoveryBadge" style="display:none;background:#ff5050;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;"></span></span>
@@ -899,6 +903,42 @@
                 </div>
 
                 <div id="automationContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: REEMBOLSOS PENDIENTES 📅
+                 -----------------------------------------
+                 Lista live de users con reembolso elegible (perdieron
+                 plata en el periodo y NO reclamaron todavia). Se va
+                 vaciando a medida que reclaman. Permite mandar push
+                 a los pendientes con un click.
+                 ============================================ -->
+            <section id="refundRemindersSection" class="section">
+                <div class="panel-header">
+                    <h2>📅 Reembolsos pendientes</h2>
+                    <button class="refresh-btn" onclick="refreshRefundReminders()" title="Refrescar lista">🔄</button>
+                </div>
+
+                <div style="background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#25d366;font-weight:700;font-size:13px;">¿Quiénes aparecen acá?</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Solo users que <strong>perdieron plata en el período</strong> (diario = ayer, semanal =
+                        semana pasada, mensual = mes pasado), tienen <strong>app + notifs activas</strong>, y
+                        <strong>todavía NO reclamaron</strong>. Si no tienen pérdida, no hay reembolso → no aparecen.
+                        La lista se actualiza al tocar 🔄 — los que vayan reclamando desaparecen automáticamente.
+                    </p>
+                </div>
+
+                <!-- Tabs por tipo -->
+                <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,0.10);">
+                    <button class="rem-tab-btn active" data-type="daily" onclick="switchRefundReminderTab('daily')" style="padding:9px 14px;background:rgba(37,211,102,0.15);border:1px solid rgba(37,211,102,0.40);border-bottom:none;color:#25d366;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">💰 Diario</button>
+                    <button class="rem-tab-btn" data-type="weekly" onclick="switchRefundReminderTab('weekly')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">📅 Semanal</button>
+                    <button class="rem-tab-btn" data-type="monthly" onclick="switchRefundReminderTab('monthly')" style="padding:9px 14px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-bottom:none;color:#aaa;font-size:12px;font-weight:700;border-radius:8px 8px 0 0;cursor:pointer;">🏆 Mensual</button>
+                </div>
+
+                <div id="refundRemindersContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>
