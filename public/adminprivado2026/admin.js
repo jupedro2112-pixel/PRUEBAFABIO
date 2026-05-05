@@ -7972,9 +7972,9 @@ function _renderRaffleAdminCard(r) {
     html += '  ' + statusBadge;
     html += '</div>';
     html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;flex-wrap:wrap;gap:6px;">';
-    html += '  <span>👥 <strong style="color:#fff;">' + (r.participantCount || 0) + '</strong> participantes</span>';
-    html += '  <span>🎫 <strong style="color:#fff;">' + r.totalTickets + '</strong> tickets</span>';
-    html += '  <span>💰 <strong style="color:#fff;">$' + (r.entryCost||0).toLocaleString('es-AR') + '</strong> entrada</span>';
+    html += '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants || 0) + '</strong> personas</span>';
+    html += '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos vendidos</span>';
+    html += '  <span>💰 <strong style="color:#fff;">$' + (r.entryCost||0).toLocaleString('es-AR') + '</strong> por cupo</span>';
     html += '  <span>📅 ' + escapeHtml(drawDateStr) + '</span>';
     html += '</div>';
     // Premio + payout proyectado.
@@ -7988,8 +7988,10 @@ function _renderRaffleAdminCard(r) {
         html += '  <div style="color:' + projColor + ';font-size:10px;">Cupo ' + fill + '% → payout proyectado: <strong>$' + projected.toLocaleString('es-AR') + '</strong></div>';
         html += '</div>';
     }
-    if (r.ticketsPerParticipantIfDrawnNow != null && r.status === 'active') {
-        html += '<small style="color:#ffd700;text-align:center;">' + r.ticketsPerParticipantIfDrawnNow + ' tickets/persona si se sortea ahora</small>';
+    if (r.status === 'active' && (r.cuposRemaining || 0) > 0) {
+        html += '<small style="color:#888;text-align:center;">Quedan ' + r.cuposRemaining + ' cupos disponibles</small>';
+    } else if (r.status === 'active' && r.totalCuposSold >= r.totalTickets) {
+        html += '<small style="color:#25d366;text-align:center;">✅ Cupo completo</small>';
     }
     if (r.status === 'drawn' && r.winnerUsername) {
         html += '<div style="background:rgba(120,80,255,0.10);border:1px solid rgba(120,80,255,0.40);border-radius:8px;padding:10px;text-align:center;">';
@@ -8002,7 +8004,7 @@ function _renderRaffleAdminCard(r) {
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
     html += '  <button onclick="editRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">✏️ Editar</button>';
     html += '  <button onclick="viewRaffleParticipants(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">👥 Ver participantes</button>';
-    if (r.status === 'active' && (r.participantCount || 0) > 0) {
+    if (r.status === 'active' && (r.totalCuposSold || 0) > 0) {
         html += '  <button onclick="drawRaffle(\'' + r.id + '\')" style="flex:1;min-width:80px;padding:8px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">🎰 Sortear</button>';
     }
     html += '</div>';
@@ -8049,10 +8051,11 @@ async function viewRaffleParticipants(id) {
         const r = await authFetch('/api/admin/raffles/' + id + '/participants');
         const d = await r.json();
         if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
-        const list = (d.participants || []).map((p, i) => (i+1) + '. ' + p.username + ' · entry $' + (p.entryCostPaid||0).toLocaleString('es-AR') + ' · netwin $' + (p.netwinAtEntry||0).toLocaleString('es-AR') + (p.isWinner ? ' 🏆' : '')).join('\n');
-        const tpp = d.ticketsPerParticipant || 0;
+        const list = (d.participants || [])
+            .sort((a,b) => (b.cuposCount||1) - (a.cuposCount||1))
+            .map((p, i) => (i+1) + '. ' + p.username + ' · ' + (p.cuposCount||1) + ' cupos (' + (p.chancePct||0) + '%) · pagó $' + (p.entryCostPaid||0).toLocaleString('es-AR') + (p.isWinner ? ' 🏆' : '')).join('\n');
         alert('🎁 ' + (d.raffle && d.raffle.prizeName) + '\n' +
-              '👥 ' + d.participantCount + ' participantes · 🎫 ' + tpp + ' tickets c/u\n\n' +
+              '👥 ' + d.uniqueParticipants + ' personas · 🎫 ' + d.totalCuposSold + '/' + (d.raffle && d.raffle.totalTickets) + ' cupos vendidos\n\n' +
               (list || '(sin participantes)'));
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
@@ -8064,9 +8067,9 @@ async function drawRaffle(id) {
         const d = await r.json();
         if (!r.ok) { showToast(d.error || 'Error', 'error'); return; }
         let msg = '🎰 ¡SORTEADO!\n\n';
-        msg += '🏆 Ganador: ' + d.winnerUsername + '\n';
-        msg += '🎫 Ticket: #' + d.winningTicketNumber + ' de ' + (d.totalParticipants * d.ticketsPerParticipant) + '\n';
-        msg += '👥 ' + d.totalParticipants + ' participantes · ' + d.ticketsPerParticipant + ' tickets c/u\n';
+        msg += '🏆 Ganador: ' + d.winnerUsername + ' (con ' + (d.winnerCupos || 1) + ' cupo' + ((d.winnerCupos||1)===1?'':'s') + ')\n';
+        msg += '🎫 Ticket: #' + d.winningTicketNumber + ' de ' + d.totalCuposSold + ' cupos vendidos\n';
+        msg += '👥 ' + d.uniqueParticipants + ' personas distintas\n';
         if (d.prizeValueARS && d.prizeValueARS > 0) {
             msg += '\n💎 Valor del premio: $' + d.prizeValueARS.toLocaleString('es-AR') + '\n';
             msg += '📊 Cupo: ' + d.fillRatePct + '%\n';

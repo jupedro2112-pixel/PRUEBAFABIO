@@ -11377,20 +11377,26 @@ async function _getUserRaffleBudget(username, monthKey) {
   const wit = (stats[0] && stats[0].withdraws) || 0;
   const netwinLoss = Math.max(0, dep - wit);
 
-  // Suma lo ya gastado en sorteos de este mes.
+  // Suma lo ya gastado en sorteos de este mes (cupos × entryCost por
+  // sorteo, sumando todas las participaciones del user).
   const ourRaffles = await Raffle.find({ monthKey }, { id: 1, _id: 0 }).lean();
   const raffleIds = ourRaffles.map(r => r.id);
   const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const parts = await RaffleParticipation.find(
     { raffleId: { $in: raffleIds }, username: { $regex: '^' + safe + '$', $options: 'i' } },
-    { raffleId: 1, entryCostPaid: 1, _id: 0 }
+    { raffleId: 1, entryCostPaid: 1, cuposCount: 1, _id: 0 }
   ).lean();
   const spent = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
+  // Mapa raffleId -> cuposCount para que el caller sepa cuantos cupos tiene
+  // el user en cada sorteo.
+  const cuposByRaffle = {};
+  for (const p of parts) cuposByRaffle[p.raffleId] = (cuposByRaffle[p.raffleId] || 0) + (p.cuposCount || 1);
   return {
     netwinLoss,
     spent,
     available: Math.max(0, netwinLoss - spent),
-    participatingIn: parts.map(p => p.raffleId)
+    participatingIn: parts.map(p => p.raffleId),
+    cuposByRaffle
   };
 }
 
@@ -11404,17 +11410,26 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     const budget = await _getUserRaffleBudget(username, monthKey);
     const participatingSet = new Set(budget.participatingIn);
 
-    // Counts por raffle.
+    // Counts por raffle: cantidad de cupos vendidos (suma de cuposCount)
+    // y cantidad de personas distintas que participaron.
     const raffleIds = raffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([
       { $match: { raffleId: { $in: raffleIds } } },
-      { $group: { _id: '$raffleId', count: { $sum: 1 } } }
+      { $group: {
+          _id: '$raffleId',
+          totalCupos: { $sum: '$cuposCount' },
+          uniqueUsers: { $sum: 1 }
+      }}
     ]);
-    const countByRaffle = new Map(partsAgg.map(x => [x._id, x.count]));
+    const cuposByRaffleId = new Map(partsAgg.map(x => [x._id, x]));
 
     const enriched = raffles.map(r => {
-      const participantCount = countByRaffle.get(r.id) || 0;
-      const ticketsPerParticipant = participantCount > 0 ? Math.floor(r.totalTickets / participantCount) : null;
+      const agg = cuposByRaffleId.get(r.id) || { totalCupos: 0, uniqueUsers: 0 };
+      const totalCuposSold = agg.totalCupos || 0;
+      const cuposRemaining = Math.max(0, r.totalTickets - totalCuposSold);
+      const userCupos = budget.cuposByRaffle[r.id] || 0;
+      const maxAffordableNow = Math.floor(budget.available / Math.max(1, r.entryCost));
+      const maxBuyableNow = Math.min(maxAffordableNow, cuposRemaining);
       return {
         id: r.id,
         name: r.name,
@@ -11425,14 +11440,19 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         entryCost: r.entryCost,
         totalTickets: r.totalTickets,
         prizeValueARS: r.prizeValueARS || 0,
-        projectedPayoutARS: _projectedPayoutARS(r, participantCount),
-        fillRatePct: r.totalTickets > 0 ? Math.round((participantCount / r.totalTickets) * 100) : 0,
+        projectedPayoutARS: _projectedPayoutARS(r, totalCuposSold),
+        fillRatePct: r.totalTickets > 0 ? Math.round((totalCuposSold / r.totalTickets) * 100) : 0,
         drawDate: r.drawDate,
         status: r.status,
-        participantCount,
-        ticketsPerParticipantIfDrawnNow: ticketsPerParticipant,
-        userIsParticipating: participatingSet.has(r.id),
-        userCanAfford: budget.available >= r.entryCost
+        // Cupos.
+        totalCuposSold,
+        cuposRemaining,
+        uniqueParticipants: agg.uniqueUsers || 0,
+        // Estado per-user.
+        userCupos,
+        userIsParticipating: userCupos > 0,
+        userCanAfford: budget.available >= r.entryCost,
+        userMaxBuyable: maxBuyableNow
       };
     });
 
@@ -11459,38 +11479,90 @@ app.post('/api/raffles/:id/participate', authMiddleware, async (req, res) => {
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no está activo.' });
 
-    // Re-check budget en el momento (no en el momento del fetch del UI).
+    // Cantidad de cupos a comprar en esta operación. Default 1, max 1000
+    // por seguridad. El usuario puede comprar tantos cupos como su budget
+    // y el cupo del sorteo permitan.
+    const quantity = Math.max(1, Math.min(1000, parseInt(req.body && req.body.quantity, 10) || 1));
+    const totalCost = raffle.entryCost * quantity;
+
+    // Re-check budget contra DB en este momento.
     const budget = await _getUserRaffleBudget(username, raffle.monthKey);
-    if (budget.participatingIn.includes(raffle.id)) {
-      return res.status(400).json({ error: 'Ya estás participando en este sorteo.' });
-    }
-    if (budget.available < raffle.entryCost) {
+    if (budget.available < totalCost) {
+      const maxAffordable = Math.floor(budget.available / Math.max(1, raffle.entryCost));
       return res.status(400).json({
-        error: `Te faltan créditos: necesitás $${raffle.entryCost.toLocaleString('es-AR')} y tenés $${budget.available.toLocaleString('es-AR')} disponibles este mes.`,
-        budget
+        error: `Te faltan créditos: necesitás $${totalCost.toLocaleString('es-AR')} (${quantity} cupo${quantity===1?'':'s'} de $${raffle.entryCost.toLocaleString('es-AR')}) y tenés $${budget.available.toLocaleString('es-AR')} disponibles este mes (alcanza para ${maxAffordable} cupo${maxAffordable===1?'':'s'}).`,
+        budget,
+        maxAffordable
       });
     }
 
-    try {
-      await RaffleParticipation.create({
-        id: uuidv4(),
-        raffleId: raffle.id,
-        username,
-        joinedAt: new Date(),
-        entryCostPaid: raffle.entryCost,
-        netwinAtEntry: budget.netwinLoss
+    // Cap por sorteo: la cantidad total de cupos vendidos no puede pasar
+    // raffle.totalTickets. Calculamos lo vendido y bloqueamos si se excede.
+    const sold = await RaffleParticipation.aggregate([
+      { $match: { raffleId: raffle.id } },
+      { $group: { _id: null, total: { $sum: '$cuposCount' } } }
+    ]);
+    const totalCuposSold = (sold[0] && sold[0].total) || 0;
+    if (totalCuposSold + quantity > raffle.totalTickets) {
+      const remaining = raffle.totalTickets - totalCuposSold;
+      return res.status(400).json({
+        error: `Solo quedan ${remaining} cupo${remaining===1?'':'s'} disponibles en este sorteo (vos pediste ${quantity}).`,
+        cuposRemaining: remaining
       });
+    }
+
+    // Upsert: si ya tenia cupos, $inc; si no, crea nuevo doc.
+    const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const existing = await RaffleParticipation.findOne({
+      raffleId: raffle.id,
+      username: { $regex: '^' + safe + '$', $options: 'i' }
+    });
+    let updated;
+    try {
+      if (existing) {
+        existing.cuposCount = (existing.cuposCount || 1) + quantity;
+        existing.entryCostPaid = (existing.entryCostPaid || 0) + totalCost;
+        existing.lastBoughtAt = new Date();
+        updated = await existing.save();
+      } else {
+        updated = await RaffleParticipation.create({
+          id: uuidv4(),
+          raffleId: raffle.id,
+          username,
+          joinedAt: new Date(),
+          lastBoughtAt: new Date(),
+          cuposCount: quantity,
+          entryCostPaid: totalCost,
+          netwinAtEntry: budget.netwinLoss
+        });
+      }
     } catch (e) {
       if (e && e.code === 11000) {
-        return res.status(400).json({ error: 'Ya estás participando en este sorteo.' });
+        // Race condition: alguien insertó entre el findOne y el create.
+        // Reintentamos como update.
+        const retry = await RaffleParticipation.findOne({
+          raffleId: raffle.id,
+          username: { $regex: '^' + safe + '$', $options: 'i' }
+        });
+        if (retry) {
+          retry.cuposCount = (retry.cuposCount || 1) + quantity;
+          retry.entryCostPaid = (retry.entryCostPaid || 0) + totalCost;
+          retry.lastBoughtAt = new Date();
+          updated = await retry.save();
+        } else {
+          throw e;
+        }
+      } else {
+        throw e;
       }
-      throw e;
     }
 
     const newBudget = await _getUserRaffleBudget(username, raffle.monthKey);
     res.json({
       success: true,
-      message: '¡Listo! Estás participando del sorteo de ' + raffle.prizeName + '.',
+      message: `¡Listo! Sumaste ${quantity} cupo${quantity===1?'':'s'} al sorteo de ${raffle.prizeName}. Total tuyo: ${updated.cuposCount} cupo${updated.cuposCount===1?'':'s'}.`,
+      cuposBought: quantity,
+      userCuposTotal: updated.cuposCount,
       budget: { netwinLoss: newBudget.netwinLoss, spent: newBudget.spent, available: newBudget.available }
     });
   } catch (err) {
@@ -11505,18 +11577,25 @@ app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) 
     const ids = raffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([
       { $match: { raffleId: { $in: ids } } },
-      { $group: { _id: '$raffleId', count: { $sum: 1 }, sumPaid: { $sum: '$entryCostPaid' } } }
+      { $group: {
+          _id: '$raffleId',
+          count: { $sum: 1 },
+          sumPaid: { $sum: '$entryCostPaid' },
+          totalCupos: { $sum: '$cuposCount' }
+      }}
     ]);
     const byId = new Map(partsAgg.map(x => [x._id, x]));
     const enriched = raffles.map(r => {
-      const p = byId.get(r.id) || { count: 0, sumPaid: 0 };
+      const p = byId.get(r.id) || { count: 0, sumPaid: 0, totalCupos: 0 };
+      const totalCupos = p.totalCupos || 0;
       return {
         ...r,
-        participantCount: p.count,
+        uniqueParticipants: p.count,
+        totalCuposSold: totalCupos,
+        cuposRemaining: Math.max(0, r.totalTickets - totalCupos),
         totalCreditsCommitted: p.sumPaid,
-        ticketsPerParticipantIfDrawnNow: p.count > 0 ? Math.floor(r.totalTickets / p.count) : null,
-        projectedPayoutARS: _projectedPayoutARS(r, p.count),
-        fillRatePct: r.totalTickets > 0 ? Math.round((p.count / r.totalTickets) * 100) : 0
+        projectedPayoutARS: _projectedPayoutARS(r, totalCupos),
+        fillRatePct: r.totalTickets > 0 ? Math.round((totalCupos / r.totalTickets) * 100) : 0
       };
     });
     res.json({ success: true, raffles: enriched });
@@ -11531,13 +11610,19 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     const parts = await RaffleParticipation.find({ raffleId: raffle.id })
       .sort({ joinedAt: 1 }).lean();
-    const ticketsPerParticipant = parts.length > 0 ? Math.floor(raffle.totalTickets / parts.length) : 0;
+    let totalCuposSold = 0;
+    for (const p of parts) totalCuposSold += (p.cuposCount || 1);
     res.json({
       success: true,
       raffle,
-      participantCount: parts.length,
-      ticketsPerParticipant,
-      participants: parts
+      uniqueParticipants: parts.length,
+      totalCuposSold,
+      cuposRemaining: Math.max(0, raffle.totalTickets - totalCuposSold),
+      participants: parts.map(p => ({
+        ...p,
+        cuposCount: p.cuposCount || 1,
+        chancePct: totalCuposSold > 0 ? Math.round(((p.cuposCount || 1) / totalCuposSold) * 1000) / 10 : 0
+      }))
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -11577,21 +11662,25 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status === 'drawn') return res.status(400).json({ error: 'Este sorteo ya fue sorteado.' });
 
-    const parts = await RaffleParticipation.find({ raffleId: raffle.id }).lean();
-    if (parts.length === 0) {
-      return res.status(400).json({ error: 'No hay participantes.' });
-    }
-    const ticketsPerParticipant = Math.floor(raffle.totalTickets / parts.length);
-    if (ticketsPerParticipant <= 0) {
-      return res.status(400).json({ error: 'Hay más participantes que tickets totales.' });
+    // Modelo MULTI-CUPO: cada participacion tiene cuposCount. Total de
+    // cupos vendidos = suma. Sorteamos un numero entre 1..totalCuposSold
+    // y buscamos a quien le pertenece.
+    const parts = await RaffleParticipation.find({ raffleId: raffle.id })
+      .sort({ joinedAt: 1 }).lean();
+    let totalCuposSold = 0;
+    for (const p of parts) totalCuposSold += (p.cuposCount || 1);
+    if (totalCuposSold === 0) {
+      return res.status(400).json({ error: 'No hay cupos vendidos.' });
     }
 
-    // Asignacion: i-esimo participante recibe tickets [i*tpp+1, (i+1)*tpp].
-    // Numero ganador: random 1..(parts.length * tpp).
-    const usedTickets = parts.length * ticketsPerParticipant;
-    const winningTicket = 1 + Math.floor(Math.random() * usedTickets);
-    const winnerIdx = Math.floor((winningTicket - 1) / ticketsPerParticipant);
-    const winner = parts[winnerIdx];
+    const winningTicket = 1 + Math.floor(Math.random() * totalCuposSold);
+    let acc = 0;
+    let winner = null;
+    for (const p of parts) {
+      acc += (p.cuposCount || 1);
+      if (winningTicket <= acc) { winner = p; break; }
+    }
+    if (!winner) winner = parts[parts.length - 1]; // fallback defensivo
 
     raffle.status = 'drawn';
     raffle.winnerUsername = winner.username;
@@ -11605,15 +11694,16 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       { $set: { isWinner: true } }
     );
 
-    const projectedPayoutARS = _projectedPayoutARS(raffle, parts.length);
-    const fillRatePct = raffle.totalTickets > 0 ? Math.round((parts.length / raffle.totalTickets) * 100) : 0;
+    const projectedPayoutARS = _projectedPayoutARS(raffle, totalCuposSold);
+    const fillRatePct = raffle.totalTickets > 0 ? Math.round((totalCuposSold / raffle.totalTickets) * 100) : 0;
 
     res.json({
       success: true,
       winnerUsername: winner.username,
+      winnerCupos: winner.cuposCount || 1,
       winningTicketNumber: winningTicket,
-      ticketsPerParticipant,
-      totalParticipants: parts.length,
+      totalCuposSold,
+      uniqueParticipants: parts.length,
       prizeValueARS: raffle.prizeValueARS || 0,
       projectedPayoutARS,
       fillRatePct,

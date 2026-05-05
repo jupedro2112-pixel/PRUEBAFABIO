@@ -34,26 +34,42 @@ VIP.raffles = (function () {
     }
 
     function _renderRaffle(r) {
-        const youIn = r.userIsParticipating;
-        const canAfford = r.userCanAfford;
-        const myTicketsIfDrawn = r.userIsParticipating && r.ticketsPerParticipantIfDrawnNow != null
-            ? r.ticketsPerParticipantIfDrawnNow : null;
+        const userCupos = r.userCupos || 0;
+        const maxBuyable = r.userMaxBuyable || 0;
         const drawDateStr = r.drawDate ? new Date(r.drawDate).toLocaleDateString('es-AR') : '—';
 
-        let actionBtn;
+        let actionBlock;
         if (r.status !== 'active') {
-            actionBtn = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.10);color:#888;border:none;border-radius:10px;font-weight:800;font-size:14px;">Cerrado</button>';
-        } else if (youIn) {
-            actionBtn = '<button disabled style="width:100%;padding:11px;background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.50);border-radius:10px;font-weight:800;font-size:14px;cursor:default;">✅ Estás participando' + (myTicketsIfDrawn ? ' · ' + myTicketsIfDrawn + ' tickets' : '') + '</button>';
-        } else if (!canAfford) {
-            actionBtn = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Necesitás $' + r.entryCost.toLocaleString('es-AR') + ' en pérdidas</button>';
+            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.10);color:#888;border:none;border-radius:10px;font-weight:800;font-size:14px;">Cerrado</button>';
+        } else if (maxBuyable === 0 && userCupos === 0) {
+            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(255,255,255,0.06);color:#888;border:1px solid rgba(255,255,255,0.10);border-radius:10px;font-weight:800;font-size:14px;cursor:not-allowed;">🔒 Cada cupo vale $' + r.entryCost.toLocaleString('es-AR') + ' (perdé al menos eso)</button>';
+        } else if (maxBuyable === 0 && userCupos > 0) {
+            actionBlock = '<button disabled style="width:100%;padding:11px;background:rgba(37,211,102,0.20);color:#25d366;border:1px solid rgba(37,211,102,0.50);border-radius:10px;font-weight:800;font-size:14px;cursor:default;">✅ Tenés ' + userCupos + ' cupo' + (userCupos===1?'':'s') + ' · sin créditos para más</button>';
         } else {
-            actionBtn = '<button onclick="VIP.raffles.participate(\'' + r.id + '\')" style="width:100%;padding:12px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:0.5px;">🎫 Participar (cuesta $' + r.entryCost.toLocaleString('es-AR') + ')</button>';
+            // Selector de cantidad + boton.
+            const youHave = userCupos > 0
+                ? '<div style="text-align:center;color:#25d366;font-size:11px;margin-bottom:6px;">Ya tenés <strong>' + userCupos + '</strong> cupo' + (userCupos===1?'':'s') + ' en este sorteo</div>'
+                : '';
+            actionBlock = youHave +
+                '<div style="display:flex;gap:6px;align-items:center;background:rgba(0,0,0,0.30);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:6px;">' +
+                '  <button onclick="VIP.raffles.adjustQty(\'' + r.id + '\', -1)" style="background:rgba(255,255,255,0.10);color:#fff;border:none;border-radius:6px;width:36px;height:36px;font-size:18px;cursor:pointer;font-weight:800;">−</button>' +
+                '  <input type="number" id="raffleQty_' + r.id + '" value="1" min="1" max="' + maxBuyable + '" data-cost="' + r.entryCost + '" oninput="VIP.raffles.refreshQtyLabel(\'' + r.id + '\')" style="flex:1;text-align:center;padding:8px;border-radius:6px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);color:#fff;font-weight:800;font-size:15px;min-width:50px;">' +
+                '  <button onclick="VIP.raffles.adjustQty(\'' + r.id + '\', 1)" style="background:rgba(255,255,255,0.10);color:#fff;border:none;border-radius:6px;width:36px;height:36px;font-size:18px;cursor:pointer;font-weight:800;">+</button>' +
+                '  <button onclick="VIP.raffles.setMax(\'' + r.id + '\', ' + maxBuyable + ')" style="background:rgba(255,200,80,0.20);color:#ffc850;border:1px solid rgba(255,200,80,0.40);border-radius:6px;padding:8px 10px;font-size:11px;cursor:pointer;font-weight:700;">MAX (' + maxBuyable + ')</button>' +
+                '</div>' +
+                '<button onclick="VIP.raffles.participate(\'' + r.id + '\')" style="width:100%;padding:12px;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:0.5px;margin-top:8px;">🎫 Comprar <span id="raffleQtyLabel_' + r.id + '">1 cupo</span> · <span id="raffleCostLabel_' + r.id + '">$' + r.entryCost.toLocaleString('es-AR') + '</span></button>';
         }
 
-        const ticketsLabel = r.ticketsPerParticipantIfDrawnNow != null
-            ? '<small style="color:#ffd700;">Si se sortea ahora: ' + r.ticketsPerParticipantIfDrawnNow + ' ticket(s) por persona</small>'
-            : '<small style="color:#666;">Sin participantes todavía</small>';
+        // Label de "tus chances".
+        let chancesLabel;
+        if (r.totalCuposSold > 0 && userCupos > 0) {
+            const chancePct = Math.round((userCupos / r.totalCuposSold) * 1000) / 10;
+            chancesLabel = '<small style="color:#ffd700;">Tus chances ahora: <strong>' + userCupos + '/' + r.totalCuposSold + '</strong> cupos (' + chancePct + '%)</small>';
+        } else if (r.totalCuposSold > 0) {
+            chancesLabel = '<small style="color:#888;">Hay ' + r.totalCuposSold + ' cupo' + (r.totalCuposSold===1?'':'s') + ' vendido' + (r.totalCuposSold===1?'':'s') + ' de ' + r.totalTickets + '</small>';
+        } else {
+            chancesLabel = '<small style="color:#666;">Sin cupos vendidos todavía</small>';
+        }
 
         // Premio + payout proyectado.
         let prizeInfo = '';
@@ -77,12 +93,13 @@ VIP.raffles = (function () {
                '</div>' +
                prizeInfo +
                '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;color:#888;">' +
-               '  <span>👥 <strong style="color:#fff;">' + r.participantCount + '</strong> participan</span>' +
-               '  <span>🎫 <strong style="color:#fff;">' + r.totalTickets + '</strong> tickets totales</span>' +
-               '  <span>📅 Sorteo: <strong style="color:#fff;">' + _esc(drawDateStr) + '</strong></span>' +
+               '  <span>👥 <strong style="color:#fff;">' + (r.uniqueParticipants||0) + '</strong> personas</span>' +
+               '  <span>🎫 <strong style="color:#fff;">' + (r.totalCuposSold||0) + '/' + r.totalTickets + '</strong> cupos vendidos</span>' +
+               '  <span>💰 <strong style="color:#fff;">$' + r.entryCost.toLocaleString('es-AR') + '</strong> por cupo</span>' +
+               '  <span>📅 <strong style="color:#fff;">' + _esc(drawDateStr) + '</strong></span>' +
                '</div>' +
-               '<div style="text-align:center;">' + ticketsLabel + '</div>' +
-               actionBtn +
+               '<div style="text-align:center;">' + chancesLabel + '</div>' +
+               actionBlock +
                '</div>';
     }
 
@@ -127,15 +144,51 @@ VIP.raffles = (function () {
         document.body.style.overflow = '';
     }
 
+    function _qtyInput(raffleId) {
+        return document.getElementById('raffleQty_' + raffleId);
+    }
+    function adjustQty(raffleId, delta) {
+        const inp = _qtyInput(raffleId);
+        if (!inp) return;
+        const max = parseInt(inp.max, 10) || 1;
+        const cur = parseInt(inp.value, 10) || 1;
+        const next = Math.max(1, Math.min(max, cur + delta));
+        inp.value = next;
+        refreshQtyLabel(raffleId);
+    }
+    function setMax(raffleId, max) {
+        const inp = _qtyInput(raffleId);
+        if (!inp) return;
+        inp.value = max;
+        refreshQtyLabel(raffleId);
+    }
+    function refreshQtyLabel(raffleId) {
+        const inp = _qtyInput(raffleId);
+        if (!inp) return;
+        const cost = parseInt(inp.dataset.cost, 10) || 0;
+        const max = parseInt(inp.max, 10) || 1;
+        let q = parseInt(inp.value, 10) || 1;
+        if (q < 1) q = 1;
+        if (q > max) { q = max; inp.value = max; }
+        const lblQ = document.getElementById('raffleQtyLabel_' + raffleId);
+        const lblC = document.getElementById('raffleCostLabel_' + raffleId);
+        if (lblQ) lblQ.textContent = q + ' cupo' + (q===1?'':'s');
+        if (lblC) lblC.textContent = '$' + (cost * q).toLocaleString('es-AR');
+    }
+
     async function participate(raffleId) {
-        if (!confirm('¿Participar de este sorteo? Te van a descontar los créditos correspondientes.')) return;
+        const inp = _qtyInput(raffleId);
+        const qty = inp ? Math.max(1, parseInt(inp.value, 10) || 1) : 1;
+        const cost = inp ? (parseInt(inp.dataset.cost, 10) || 0) * qty : 0;
+        if (!confirm('¿Comprar ' + qty + ' cupo' + (qty===1?'':'s') + ' por $' + cost.toLocaleString('es-AR') + '? Se descuenta de tu pérdida del mes.')) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/raffles/${raffleId}/participate`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${VIP.state.currentToken}`,
                     'Content-Type': 'application/json'
-                }
+                },
+                body: JSON.stringify({ quantity: qty })
             });
             const d = await r.json();
             if (!r.ok || !d.success) {
@@ -143,7 +196,6 @@ VIP.raffles = (function () {
                 return;
             }
             VIP.ui.showToast(d.message || '¡Listo!', 'success');
-            // Refrescar lista para mostrar nuevo estado.
             _data = await _fetchActive();
             _render();
         } catch (e) {
@@ -151,5 +203,5 @@ VIP.raffles = (function () {
         }
     }
 
-    return { open, close, participate };
+    return { open, close, participate, adjustQty, setMax, refreshQtyLabel };
 })();
