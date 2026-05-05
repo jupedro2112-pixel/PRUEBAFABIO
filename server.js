@@ -11503,6 +11503,9 @@ function _nextMondayDraw() {
 }
 
 async function _spawnRaffleInstance(typeCfg, instanceNumber) {
+  // Spawn altera el set de active raffles -> invalidar cache para que el
+  // proximo /api/raffles/active vea el sorteo nuevo en seguida.
+  if (typeof _invalidateSeedCache === 'function') _invalidateSeedCache();
   const draw = _nextMondayDraw();
   // weekKey corresponde a la SEMANA del sorteo (no del momento de creacion).
   const drawArg = new Date(draw.getTime() - 3 * 3600 * 1000);
@@ -11804,6 +11807,19 @@ async function _runWeeklyRaffleRotation(triggeredBy = 'cron') {
 setTimeout(() => { _runWeeklyRaffleRotation('cron').catch(() => {}); }, 60 * 1000);
 setInterval(() => { _runWeeklyRaffleRotation('cron').catch(() => {}); }, 60 * 60 * 1000);
 
+// Cache del seed check: corremos _ensureActiveRafflesSeeded como mucho 1 vez
+// cada 60s. La primera request paga el costo; las demas hits dentro del
+// proximo minuto saltean los 8 findOne. Combinado con la auto-rotacion al
+// crear un sorteo cuando se llena, el TTL de 60s no afecta UX.
+let _seedLastRunTs = 0;
+const _SEED_TTL_MS = 60 * 1000;
+async function _ensureActiveRafflesSeededCached() {
+  if (Date.now() - _seedLastRunTs < _SEED_TTL_MS) return;
+  await _ensureActiveRafflesSeeded();
+  _seedLastRunTs = Date.now();
+}
+function _invalidateSeedCache() { _seedLastRunTs = 0; }
+
 // =============================
 // USER ENDPOINTS
 // =============================
@@ -11811,36 +11827,45 @@ setInterval(() => { _runWeeklyRaffleRotation('cron').catch(() => {}); }, 60 * 60
 app.get('/api/raffles/active', authMiddleware, async (req, res) => {
   try {
     const username = req.user.username;
-    await _ensureActiveRafflesSeeded();
 
-    // Auto-enrollment en sorteos GRATIS para clientes que cumplen threshold.
-    // Best-effort: si falla, no rompe la response (solo el user no ve sus
-    // numeros gratis hasta el siguiente refresh).
-    let autoEnrolled = [];
-    try { autoEnrolled = await _autoEnrollFreeRaffles(username); } catch (_) {}
+    // Seed check con TTL 60s para no pagar 8 findOne en cada apertura.
+    await _ensureActiveRafflesSeededCached();
 
-    // Listamos active + closed + drawn (no archived ni cancelled). Incluye
-    // paid Y free types. El user ve los 'drawn' por unos minutos para
-    // enterarse del resultado.
+    // Auto-enroll free raffles. Por defecto va EN BACKGROUND (no bloquea la
+    // response del modal — el user lo ve en el siguiente refresh). El cliente
+    // puede pasar ?waitEnroll=1 cuando quiera bloquear (ej. PR primer load
+    // tras cargar plata).
+    const waitEnroll = String(req.query.waitEnroll || '') === '1';
     const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type)];
-    const raffles = await Raffle.find(
-      { status: { $in: ['active', 'closed', 'drawn'] }, raffleType: { $in: allTypes } }
-    ).sort({ isFree: 1, raffleType: 1, instanceNumber: 1 }).lean();
-
-    let balance = 0;
-    try {
-      const u = await jugaygana.getUserInfoByName(username);
-      balance = u && u.balance ? Number(u.balance) : 0;
-    } catch (_) {}
-
-    const ids = raffles.map(r => r.id);
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const myParts = await RaffleParticipation.find(
-      { raffleId: { $in: ids }, username: { $regex: '^' + safe + '$', $options: 'i' } },
-      { raffleId: 1, ticketNumbers: 1, cuposCount: 1, isWinner: 1, _id: 0 }
-    ).lean();
+
+    // Paralelizamos las 3 fuentes pesadas: saldo en JUGAYGANA, lista de
+    // raffles en mongo, y participaciones del user en mongo. Antes era
+    // secuencial: balance (red) -> raffles (db) -> myParts (db).
+    let autoEnrollPromise = null;
+    if (waitEnroll) {
+      autoEnrollPromise = _autoEnrollFreeRaffles(username).catch(() => []);
+    } else {
+      // Background: si falla, perfectly fine, se intenta de nuevo proximo refresh
+      _autoEnrollFreeRaffles(username).catch(() => {});
+    }
+
+    const [balanceRes, rafflesRes, myPartsRes, autoEnrolled] = await Promise.all([
+      jugaygana.getUserInfoByName(username).catch(() => null),
+      Raffle.find(
+        { status: { $in: ['active', 'closed', 'drawn'] }, raffleType: { $in: allTypes } }
+      ).sort({ isFree: 1, raffleType: 1, instanceNumber: 1 }).lean(),
+      RaffleParticipation.find(
+        { username: { $regex: '^' + safe + '$', $options: 'i' } },
+        { raffleId: 1, ticketNumbers: 1, cuposCount: 1, isWinner: 1, _id: 0 }
+      ).lean(),
+      autoEnrollPromise || Promise.resolve([])
+    ]);
+
+    const balance = balanceRes && balanceRes.balance ? Number(balanceRes.balance) : 0;
+    const raffles = rafflesRes;
     const myByRaffle = {};
-    for (const p of myParts) myByRaffle[p.raffleId] = p;
+    for (const p of myPartsRes) myByRaffle[p.raffleId] = p;
 
     // Pendientes de reclamar (auto-credit fallo o todavia no se acredito).
     const claimable = raffles
@@ -12706,6 +12731,7 @@ app.post('/api/admin/raffles/purge-legacy', authMiddleware, adminMiddleware, asy
 // boot todavia no corrio o algo se rompio. Idempotente.
 app.post('/api/admin/raffles/seed', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    _invalidateSeedCache();
     const before = await Raffle.countDocuments({ status: 'active' });
     await _ensureActiveRafflesSeeded();
     const after = await Raffle.countDocuments({ status: 'active' });

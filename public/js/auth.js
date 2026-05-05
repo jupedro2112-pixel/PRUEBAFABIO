@@ -910,6 +910,13 @@ VIP.auth = (function () {
         VIP.refunds.loadRefundStatus();
         VIP.ui.loadCanalInformativoUrl();
 
+        // Prefetch oportunista de sorteos: ya que el user esta autenticado,
+        // calentamos la cache para que cuando abra el modal sea instantaneo.
+        // Se hace despues de un tickito para no bloquear el render principal.
+        if (VIP.raffles && typeof VIP.raffles.prefetch === 'function') {
+            setTimeout(() => { try { VIP.raffles.prefetch(); } catch (_) {} }, 1500);
+        }
+
         return userLoaded;
     }
 

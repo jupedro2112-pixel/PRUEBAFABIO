@@ -11,23 +11,40 @@
 window.VIP = window.VIP || {};
 
 VIP.raffles = (function () {
+    // _data se mantiene entre aperturas: la primera vez que el user abre el
+    // modal, hay un fetch (~200-500ms). En las aperturas siguientes mostramos
+    // instantaneo lo que tenemos y refresheamos en background. Despues de
+    // cerrar y abrir el modal, NO hay flash de "Cargando…".
     let _data = null;
+    let _dataFetchedAt = 0;
+    const _DATA_FRESHNESS_MS = 30 * 1000; // 30s = render directo, mas viejo refresca y muestra
     let _refreshTimer = null;
     let _buying = false;
     let _claiming = false;
     let _picker = null; // { raffleId, picked: Set<number> }
+    let _inflightFetch = null;
 
     async function _fetchActive() {
-        try {
-            const r = await fetch(`${VIP.config.API_URL}/api/raffles/active`, {
-                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
-            });
-            if (!r.ok) return null;
-            return await r.json();
-        } catch (e) {
-            console.error('raffles fetch error:', e);
-            return null;
-        }
+        // Coalesce: si ya hay un fetch en vuelo, devolvemos esa promesa para
+        // no duplicar trabajo cuando _render se dispara varias veces seguidas.
+        if (_inflightFetch) return _inflightFetch;
+        _inflightFetch = (async () => {
+            try {
+                const r = await fetch(`${VIP.config.API_URL}/api/raffles/active`, {
+                    headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+                });
+                if (!r.ok) return null;
+                return await r.json();
+            } catch (e) {
+                console.error('raffles fetch error:', e);
+                return null;
+            } finally {
+                // Liberamos el slot en el siguiente tick para que callers que
+                // esperaban la misma promesa terminen de leerla antes.
+                setTimeout(() => { _inflightFetch = null; }, 0);
+            }
+        })();
+        return _inflightFetch;
     }
 
     function _esc(s) {
@@ -310,23 +327,57 @@ VIP.raffles = (function () {
         if (!modal) return;
         _mountDelegation();
         modal.style.display = 'flex';
-        _data = null;
+
+        // Render INSTANTANEO: si ya tenemos data en cache, la mostramos
+        // mientras pedimos la fresca en background. El user no ve flash
+        // de "Cargando…" en aperturas posteriores. Tampoco prefetchamos
+        // inutilmente si la data es muy reciente.
+        const haveCache = !!_data;
+        const isFresh = haveCache && (Date.now() - _dataFetchedAt) < _DATA_FRESHNESS_MS;
         _render();
-        const data = await _fetchActive();
-        if (data) { _data = data; _render(); }
+
+        if (!haveCache) {
+            // Primera vez: hacemos fetch y bloqueamos al loader.
+            const data = await _fetchActive();
+            if (data) { _data = data; _dataFetchedAt = Date.now(); _render(); }
+        } else if (!isFresh) {
+            // Cache vieja (>30s): refresh en background sin bloquear UI.
+            _fetchActive().then(d => {
+                if (d && modal.style.display === 'flex') {
+                    _data = d;
+                    _dataFetchedAt = Date.now();
+                    _render();
+                }
+            });
+        }
+        // Si isFresh: ya tenemos data nueva, no pedimos nada extra.
+
         if (_refreshTimer) clearInterval(_refreshTimer);
         _refreshTimer = setInterval(async () => {
             if (modal.style.display !== 'flex') return;
             const d = await _fetchActive();
-            if (d) { _data = d; _render(); }
+            if (d) { _data = d; _dataFetchedAt = Date.now(); _render(); }
         }, 30000);
+    }
+
+    // Prefetch oportunista: cuando arranca la app y el user esta autenticado,
+    // disparamos un fetch tibio en background para que la primera apertura
+    // del modal ya tenga data. No bloquea nada, no muestra UI.
+    function prefetch() {
+        if (_data) return; // ya tenemos
+        if (!VIP || !VIP.state || !VIP.state.currentToken) return;
+        _fetchActive().then(d => {
+            if (d) { _data = d; _dataFetchedAt = Date.now(); }
+        });
     }
 
     function close() {
         const modal = document.getElementById('rafflesModal');
         if (modal) modal.style.display = 'none';
         if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
-        _data = null;
+        // Mantenemos _data en memoria para que la PROXIMA apertura sea
+        // instantanea. Solo limpiamos el picker y la cache se mantiene fresca
+        // por _DATA_FRESHNESS_MS antes de re-fetch.
         _picker = null;
         const pm = document.getElementById('rafflesPickerModal');
         if (pm) pm.style.display = 'none';
@@ -591,5 +642,5 @@ VIP.raffles = (function () {
         }
     }
 
-    return { open, close, openPicker, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize };
+    return { open, close, prefetch, openPicker, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize };
 })();
