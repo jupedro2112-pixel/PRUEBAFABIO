@@ -176,6 +176,7 @@ function showSection(sectionKey) {
         automation: 'automationSection',
         refundReminders: 'refundRemindersSection',
         raffles: 'rafflesSection',
+        rafflesFree: 'rafflesFreeSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
@@ -220,6 +221,8 @@ function showSection(sectionKey) {
         loadRefundRemindersSection();
     } else if (sectionKey === 'raffles') {
         loadRafflesAdmin();
+    } else if (sectionKey === 'rafflesFree') {
+        loadRafflesFreeAdmin();
     } else if (sectionKey === 'recovery') {
         loadRecovery();
     } else if (sectionKey === 'teams') {
@@ -7999,15 +8002,24 @@ let _rafflesHistoryCache = null;     // history weeks
 let _rafflesHistoryDetailCache = {}; // por weekKey -> detalle
 
 async function loadRafflesAdmin() {
-    const c = document.getElementById('rafflesAdminContent');
+    return _loadRafflesGeneric('paid', 'rafflesAdminContent');
+}
+
+async function loadRafflesFreeAdmin() {
+    return _loadRafflesGeneric('free', 'rafflesFreeAdminContent');
+}
+
+async function _loadRafflesGeneric(kind, containerId) {
+    const c = document.getElementById(containerId);
     if (!c) return;
     c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando dashboard…</div>';
     try {
+        const qs = '?kind=' + encodeURIComponent(kind);
         // Manejo granular: si history falla pero dashboard anda, igual
         // mostramos el dashboard (degradacion graceful).
         const [dashRes, histRes] = await Promise.allSettled([
-            authFetch('/api/admin/raffles/dashboard'),
-            authFetch('/api/admin/raffles/history?limit=12')
+            authFetch('/api/admin/raffles/dashboard' + qs),
+            authFetch('/api/admin/raffles/history' + qs + '&limit=12')
         ]);
         // Dashboard es obligatorio.
         if (dashRes.status !== 'fulfilled' || !dashRes.value.ok) {
@@ -8026,10 +8038,11 @@ async function loadRafflesAdmin() {
             console.warn('history fetch failed, mostrando dashboard sin historial');
         }
         _rafflesAdminCache = dash;
+        _rafflesAdminCache.__kind = kind;
         _rafflesHistoryCache = hist.weeks || [];
         c.innerHTML = _renderRafflesAdmin();
     } catch (e) {
-        console.error('loadRafflesAdmin error:', e);
+        console.error('_loadRafflesGeneric error:', e);
         c.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>';
     }
 }
@@ -8042,28 +8055,42 @@ function _fmtPct(n, d) {
 
 function _renderRafflesAdmin() {
     const dash = _rafflesAdminCache || { kpis: {}, byType: [], topBuyers: [], raffles: [] };
+    const isFree = dash.__kind === 'free';
     const k = dash.kpis || {};
     const drawDateStr = dash.drawDate ? new Date(dash.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+    const accentColor = isFree ? '#4dabff' : '#d4af37';
+    const accentRGBA = isFree ? '77,171,255' : '212,175,55';
+    const titleEmoji = isFree ? '🎁' : '💰';
+    const titleText = isFree ? 'Sorteos GRATIS' : 'Sorteos PAGOS';
     let html = '';
 
     // ===== Banner / KPIs =====
-    html += '<div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:1px solid rgba(' + accentRGBA + ',0.40);border-radius:12px;padding:14px;margin-bottom:14px;">';
     html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
     html += '    <div>';
-    html += '      <div style="color:#d4af37;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;">📊 Esta semana · ' + escapeHtml(dash.weekKey || '—') + '</div>';
+    html += '      <div style="color:' + accentColor + ';font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;">📊 ' + titleEmoji + ' ' + titleText + ' · semana ' + escapeHtml(dash.weekKey || '—') + '</div>';
     html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">Sorteo programado: <strong style="color:#fff;">' + drawDateStr + '</strong> · Lotería Nocturna 1° premio</div>';
     html += '    </div>';
     html += '    <div style="display:flex;gap:6px;flex-wrap:wrap;">';
-    html += '      <button onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
-    html += '      <button onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo (iPhone/Caribe/Auto)">🗑️ Sorteos viejos</button>';
+    html += '      <button type="button" onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
+    if (!isFree) {
+        html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
+    }
     if ((k.rafflesFilled || 0) + (dash.raffles||[]).filter(r=>r.status==='drawn').length > 0) {
-        html += '      <button onclick="cleanupRaffles()" style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">🧹 Archivar drawn</button>';
+        html += '      <button type="button" onclick="cleanupRaffles()" style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">🧹 Archivar drawn</button>';
     }
     html += '    </div>';
     html += '  </div>';
 
-    // KPI grid
-    const kpis = [
+    // KPI grid (free no recauda — mostramos costo de premios + personas)
+    const kpis = isFree ? [
+        { label: 'Cupos asignados', val: (k.totalCuposSold || 0) + ' / ' + (k.totalCupos || 0), sub: _fmtPct(k.totalCuposSold, k.totalCupos), color: '#fff' },
+        { label: 'Personas anotadas', val: String(k.uniqueBuyers || 0), color: '#4dabff' },
+        { label: 'Sorteos llenos',  val: (k.rafflesFilled || 0) + ' / ' + (k.rafflesCount || 0), color: '#ffaa66' },
+        { label: 'Premios pagados', val: _fmtMoney(k.prizesPaid),      color: '#66ff66' },
+        { label: 'Premios pendientes', val: _fmtMoney(k.prizesPending), color: '#ff8080' },
+        { label: 'Costo total premios', val: _fmtMoney((k.prizesPaid||0) + (k.prizesPending||0)), color: '#ffd700' }
+    ] : [
         { label: 'Recaudación',     val: _fmtMoney(k.totalRevenue),    color: '#d4af37' },
         { label: 'Cupos vendidos',  val: (k.totalCuposSold || 0) + ' / ' + (k.totalCupos || 0), sub: _fmtPct(k.totalCuposSold, k.totalCupos), color: '#fff' },
         { label: 'Personas',        val: String(k.uniqueBuyers || 0),  color: '#00d4ff' },
@@ -8115,8 +8142,8 @@ function _renderRafflesAdmin() {
     }
     html += '</div>';
 
-    // ===== Top compradores =====
-    if (dash.topBuyers && dash.topBuyers.length > 0) {
+    // ===== Top compradores (solo paid; en free no compran, se anotan) =====
+    if (!isFree && dash.topBuyers && dash.topBuyers.length > 0) {
         html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;">';
         html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">🏅 Top compradores · esta semana</h3>';
         html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;">';

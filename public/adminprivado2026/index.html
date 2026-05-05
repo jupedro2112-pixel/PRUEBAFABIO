@@ -122,8 +122,12 @@
                     <span>Reembolsos pendientes</span>
                 </a>
                 <a href="#" class="nav-item" data-section="raffles">
+                    <span>💰</span>
+                    <span>Sorteos semanales pagos</span>
+                </a>
+                <a href="#" class="nav-item" data-section="rafflesFree">
                     <span>🎁</span>
-                    <span>Sorteos semanales</span>
+                    <span>Sorteo gratis</span>
                 </a>
 
                 <div class="nav-spacer nav-spacer-lg" aria-hidden="true"></div>
@@ -978,7 +982,7 @@
                  ============================================ -->
             <section id="rafflesSection" class="section">
                 <div class="panel-header">
-                    <h2>🎁 Sorteos pagados</h2>
+                    <h2>💰 Sorteos semanales pagos</h2>
                     <button class="refresh-btn" onclick="loadRafflesAdmin()" title="Refrescar">🔄</button>
                 </div>
                 <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
@@ -988,14 +992,41 @@
                         <strong>💎 $1.000.000</strong> (100 × $15k),
                         <strong>💰 $500.000</strong> (100 × $7,5k),
                         <strong>🎯 $100.000</strong> (100 × $2k).
-                        Cuando se llena un cupo se abre otra instancia automáticamente.
-                        Sorteo todos los lunes en la
+                        El user elige sus números del 1 al 100. Cuando se llena un cupo se abre otra instancia.
+                        Sorteo automático todos los lunes en la
                         <strong style="color:#d4af37;">Lotería Nacional Nocturna (1° premio)</strong>.
-                        El martes a la mañana entrá acá, cargá el número que salió y opcionalmente el ganador.
-                        Cuando termines, tocá <strong>🧹 Limpiar</strong> para archivar los sorteados.
+                        El martes a la mañana cargás el número y el ganador recibe el premio
+                        <strong style="color:#66ff66;">acreditado automáticamente</strong> a su saldo.
+                        Cron rota los sorteos cada martes 06:00 ARG.
                     </p>
                 </div>
                 <div id="rafflesAdminContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: SORTEOS GRATIS (clientes activos)
+                 ============================================ -->
+            <section id="rafflesFreeSection" class="section">
+                <div class="panel-header">
+                    <h2>🎁 Sorteo gratis</h2>
+                    <button class="refresh-btn" onclick="loadRafflesFreeAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(77,171,255,0.06);border:1px solid rgba(77,171,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#4dabff;font-weight:700;font-size:13px;">4 sorteos GRATIS para clientes activos · auto-participación por cargas del mes</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        <strong>👑 $2.000.000</strong> (mín. $200k cargas),
+                        <strong>💎 $1.000.000</strong> (mín. $100k),
+                        <strong>💰 $500.000</strong> (mín. $100k),
+                        <strong>🎯 $100.000</strong> (mín. $50k).
+                        Cuando un cliente abre la app y cumple el mínimo de cargas en los últimos 30 días,
+                        el sistema le asigna <strong>automáticamente</strong> un número (1 por persona, 100 personas tope).
+                        Mismo draw que los pagos: lunes Lotería Nocturna 1° premio.
+                        El ganador recibe el premio <strong style="color:#66ff66;">acreditado automáticamente</strong> al saldo.
+                    </p>
+                </div>
+                <div id="rafflesFreeAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

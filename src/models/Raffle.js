@@ -36,10 +36,23 @@ const raffleSchema = new mongoose.Schema({
   // que las migraciones no rompan validacion.
   raffleType: {
     type: String,
-    enum: ['p1m', 'p2m', 'p500', 'p100', 'iphone', 'caribe', 'auto', 'other'],
+    enum: [
+      // Modelo paid actual:
+      'p1m', 'p2m', 'p500', 'p100',
+      // Modelo free (clientes activos, auto-enrollment por carga):
+      'free_p2m', 'free_p1m', 'free_p500', 'free_p100',
+      // Legacy (loss-credit):
+      'iphone', 'caribe', 'auto', 'other'
+    ],
     default: 'other',
     index: true
   },
+  // Costo minimo de cargas en los ultimos 30 dias para entrar al sorteo
+  // gratis. Solo aplica a free_*.
+  minCargasARS: { type: Number, default: 0, min: 0 },
+  // Si entryCost === 0 Y minCargasARS > 0 -> es un sorteo gratis exclusivo.
+  // Lo marcamos explicito tambien para queries faciles.
+  isFree: { type: Boolean, default: false, index: true },
   // Numero de instancia dentro del tipo. Cada vez que se llena un sorteo,
   // se crea otro con instanceNumber = previo + 1.
   instanceNumber: { type: Number, default: 1, min: 1 },
@@ -57,6 +70,12 @@ const raffleSchema = new mongoose.Schema({
 
   // Contador atomico de cupos vendidos. $inc en cada compra para evitar races.
   _ticketCounter: { type: Number, default: 0, min: 0 },
+
+  // Numeros ya tomados (1..totalTickets). El user elige sus numeros del grid
+  // y la compra solo prospera si NINGUNO de los pedidos esta en este array
+  // ($nin atomico en findOneAndUpdate). Si hay race, el segundo caller que
+  // intente reservar el mismo numero falla y reintenta con otro.
+  claimedNumbers: { type: [Number], default: [], index: true },
 
   // Fecha de sorteo: lunes de weekKey, 21:00 ARG (Loteria Nocturna).
   drawDate: { type: Date, required: true, index: true },

@@ -11444,6 +11444,23 @@ const RAFFLE_TYPES = [
     name: 'Sorteo $100.000',   prizeName: '$100.000 en saldo' }
 ];
 
+// Sorteos GRATIS para clientes activos. La auto-participacion ocurre cuando
+// el user abre el modal: si tuvo >= minCargasARS de cargas en los ultimos
+// 30 dias y todavia hay cupo (1 numero por persona, 100 personas tope),
+// se le asigna automaticamente un numero secuencial. Mismo draw que paid.
+const FREE_RAFFLE_TYPES = [
+  { type: 'free_p2m',  prize: 2000000, totalTickets: 100, minCargasARS: 200000, emoji: '👑',
+    name: 'Sorteo Gratis $2.000.000', prizeName: '$2.000.000 en saldo' },
+  { type: 'free_p1m',  prize: 1000000, totalTickets: 100, minCargasARS: 100000, emoji: '💎',
+    name: 'Sorteo Gratis $1.000.000', prizeName: '$1.000.000 en saldo' },
+  { type: 'free_p500', prize: 500000,  totalTickets: 100, minCargasARS: 100000, emoji: '💰',
+    name: 'Sorteo Gratis $500.000',   prizeName: '$500.000 en saldo' },
+  { type: 'free_p100', prize: 100000,  totalTickets: 100, minCargasARS: 50000,  emoji: '🎯',
+    name: 'Sorteo Gratis $100.000',   prizeName: '$100.000 en saldo' }
+];
+
+const FREE_RAFFLE_TYPE_SET = new Set(FREE_RAFFLE_TYPES.map(t => t.type));
+
 const RAFFLE_LOTTERY_RULE = '1° premio de la Lotería Nacional Nocturna del lunes próximo. Resultado oficial publicado por Lotería Nacional — verificable. Si el número sale fuera del rango vendido, se cicla al rango vendido por módulo.';
 
 // Devuelve un Date corrido a TZ Argentina (UTC-3, sin DST) para hacer
@@ -11478,33 +11495,38 @@ function _nextMondayDraw() {
 async function _spawnRaffleInstance(typeCfg, instanceNumber) {
   const draw = _nextMondayDraw();
   // weekKey corresponde a la SEMANA del sorteo (no del momento de creacion).
-  // Esto importa cuando se crea un sorteo despues del lunes de su semana
-  // ISO actual: la creacion ocurre en semana N pero el sorteo es en N+1.
-  // Ajustamos al draw para que el dashboard/history agrupe consistente.
   const drawArg = new Date(draw.getTime() - 3 * 3600 * 1000);
   const weekKey = _isoWeekKey(drawArg);
   const id = uuidv4();
+  const isFree = !!FREE_RAFFLE_TYPE_SET.has(typeCfg.type);
+  const description = isFree
+    ? `Sorteo GRATIS. Necesitás $${(typeCfg.minCargasARS||0).toLocaleString('es-AR')} de cargas en los últimos 30 días para entrar. ${typeCfg.totalTickets} cupos, 1 número por persona.`
+    : `Premio ${typeCfg.prizeName}. ${typeCfg.totalTickets} números a $${(typeCfg.entryCost||0).toLocaleString('es-AR')}.`;
   await Raffle.create({
     id,
     name: typeCfg.name + ' #' + instanceNumber,
     prizeName: typeCfg.prizeName,
-    description: `Premio ${typeCfg.prizeName}. ${typeCfg.totalTickets} números a $${typeCfg.entryCost.toLocaleString('es-AR')}.`,
+    description,
     emoji: typeCfg.emoji,
     raffleType: typeCfg.type,
     instanceNumber,
     weekKey,
-    entryCost: typeCfg.entryCost,
+    entryCost: isFree ? 0 : (typeCfg.entryCost || 0),
     totalTickets: typeCfg.totalTickets,
     prizeValueARS: typeCfg.prize,
     drawDate: draw,
     lotteryRule: RAFFLE_LOTTERY_RULE,
-    status: 'active'
+    status: 'active',
+    isFree,
+    minCargasARS: isFree ? (typeCfg.minCargasARS || 0) : 0
   });
   return id;
 }
 
 async function _ensureActiveRafflesSeeded() {
-  for (const cfg of RAFFLE_TYPES) {
+  // Paid + free, en una pasada.
+  const allTypes = [...RAFFLE_TYPES, ...FREE_RAFFLE_TYPES];
+  for (const cfg of allTypes) {
     try {
       const existing = await Raffle.findOne(
         { raffleType: cfg.type, status: 'active' },
@@ -11528,6 +11550,224 @@ async function _ensureActiveRafflesSeeded() {
 setTimeout(() => { _ensureActiveRafflesSeeded().catch(() => {}); }, 5000);
 
 // =============================
+// AUTO-ENROLLMENT EN FREE RAFFLES
+// =============================
+// Cuando el user abre el modal de sorteos, llamamos a este helper para que
+// — si tiene >= minCargasARS de cargas en los ultimos 30 dias — se le
+// asigne automaticamente un numero en cada free raffle elegible (siempre y
+// cuando todavia haya cupo y no este enrolado). 1 numero por persona max.
+async function _autoEnrollFreeRaffles(username) {
+  const enrolled = []; // { raffleId, ticketNumber, raffleName, prizeValueARS, raffleType }
+  try {
+    const freeRaffles = await Raffle.find(
+      { raffleType: { $in: Array.from(FREE_RAFFLE_TYPE_SET) }, status: 'active' }
+    ).lean();
+    if (freeRaffles.length === 0) return enrolled;
+
+    // Cargas del user en los ultimos 30 dias (monthly). Reusamos el helper
+    // que ya tenemos para reembolsos.
+    let monthlyDeposits = 0;
+    try {
+      const m = await getRealMovementsTotals(username, 'monthly');
+      monthlyDeposits = Number(m && m.deposits) || 0;
+    } catch (e) {
+      logger.warn(`[free-raffles] cargas check fail ${username}: ${e.message}`);
+      return enrolled;
+    }
+
+    const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    for (const r of freeRaffles) {
+      if (monthlyDeposits < (r.minCargasARS || 0)) continue;
+
+      // Ya enrolado en este sorteo? Skip.
+      const alreadyIn = await RaffleParticipation.findOne({
+        raffleId: r.id,
+        username: { $regex: '^' + safe + '$', $options: 'i' }
+      }, { _id: 1 }).lean();
+      if (alreadyIn) continue;
+
+      // Tomar el siguiente numero disponible (1..totalTickets).
+      const claimedSet = new Set((r.claimedNumbers || []).map(n => Number(n)));
+      let nextNum = 0;
+      for (let n = 1; n <= (r.totalTickets || 0); n++) {
+        if (!claimedSet.has(n)) { nextNum = n; break; }
+      }
+      if (nextNum === 0) continue; // cupo lleno
+
+      // Reservar atomicamente el numero.
+      const reserved = await Raffle.findOneAndUpdate(
+        {
+          id: r.id,
+          status: 'active',
+          claimedNumbers: { $nin: [nextNum] },
+          $expr: { $lt: [{ $size: { $ifNull: ['$claimedNumbers', []] } }, '$totalTickets'] }
+        },
+        {
+          $push: { claimedNumbers: nextNum },
+          $inc: { _ticketCounter: 1 }
+        },
+        { new: true }
+      );
+      if (!reserved) continue; // race lost; siguiente sorteo
+
+      // Crear participation gratuita.
+      try {
+        await RaffleParticipation.create({
+          id: uuidv4(),
+          raffleId: r.id,
+          username,
+          joinedAt: new Date(),
+          lastBoughtAt: new Date(),
+          cuposCount: 1,
+          ticketNumbers: [nextNum],
+          entryCostPaid: 0
+        });
+        enrolled.push({
+          raffleId: r.id,
+          ticketNumber: nextNum,
+          raffleName: r.name,
+          prizeValueARS: r.prizeValueARS,
+          raffleType: r.raffleType,
+          emoji: r.emoji
+        });
+        logger.info(`[free-raffles] auto-enroll ${username} #${nextNum} in ${r.name} (cargas=$${monthlyDeposits}, threshold=$${r.minCargasARS})`);
+
+        // Si llenamos el cupo con este enroll, cerrar y respawnear.
+        if ((reserved._ticketCounter || 0) >= (r.totalTickets || 0)) {
+          const closeRes = await Raffle.updateOne(
+            { id: r.id, status: 'active' },
+            { $set: { status: 'closed' } }
+          );
+          if (closeRes.modifiedCount === 1) {
+            const cfg = FREE_RAFFLE_TYPES.find(t => t.type === r.raffleType);
+            if (cfg) {
+              try { await _spawnRaffleInstance(cfg, (r.instanceNumber || 1) + 1); }
+              catch (e) { logger.warn(`[free-raffles] respawn ${cfg.type}: ${e.message}`); }
+            }
+          }
+        }
+      } catch (e) {
+        // Rollback de la reserva del numero si falla la creacion de participation.
+        await Raffle.updateOne(
+          { id: r.id },
+          { $pull: { claimedNumbers: nextNum }, $inc: { _ticketCounter: -1 } }
+        ).catch(() => {});
+        logger.warn(`[free-raffles] enroll exc ${username} ${r.name}: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    logger.error(`[free-raffles] _autoEnrollFreeRaffles ${username}: ${e.message}`);
+  }
+  return enrolled;
+}
+
+// =============================
+// AUTO-ROTACION SEMANAL DE SORTEOS
+// =============================
+// Cada martes 06:00 ARG (= 09:00 UTC) hacemos:
+//   - Archivar todos los sorteos 'drawn' (cleanup automatico).
+//   - Cancelar sorteos 'active' cuya drawDate ya paso (no se llenaron y el
+//     admin no sorteo). Se reembolsa a los participantes que pagaron.
+//   - Reseed: asegurar que haya 1 instancia 'active' por cada tipo.
+// El cron corre cada hora; solo dispara cuando es Tuesday entre 06:00-07:00
+// ARG y no se ejecuto ya en este martes (lock por timestamp).
+let _lastWeeklyRotationKey = null;
+
+async function _runWeeklyRaffleRotation(triggeredBy = 'cron') {
+  try {
+    const argNow = _argZonedNow();
+    const argDay = argNow.getUTCDay();    // 2 = martes en ARG-shifted
+    const argHour = argNow.getUTCHours();
+    const todayKey = `${argNow.getUTCFullYear()}-${argNow.getUTCMonth()}-${argNow.getUTCDate()}`;
+
+    // Si el trigger es manual (admin endpoint), corremos sin chequear.
+    if (triggeredBy === 'cron') {
+      // Solo Tuesday 06:00-06:59 ARG.
+      if (argDay !== 2 || argHour !== 6) return;
+      // No correr dos veces el mismo martes.
+      if (_lastWeeklyRotationKey === todayKey) return;
+    }
+
+    logger.info(`[raffles] weekly rotation start (trigger=${triggeredBy}, day=${todayKey})`);
+
+    // 1) Archivar drawn.
+    const drawnUpd = await Raffle.updateMany(
+      { status: 'drawn' },
+      { $set: { status: 'archived' } }
+    );
+
+    // 2) Cancelar active no-llenos cuya drawDate ya paso. Reembolsar.
+    // Aplica para paid Y free (los free no reembolsan plata pero sí se cierran).
+    const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type)];
+    const stale = await Raffle.find({
+      raffleType: { $in: allTypes },
+      status: 'active',
+      drawDate: { $lt: new Date() }
+    }).lean();
+    let cancelled = 0, refundedCount = 0, refundedAmount = 0;
+    for (const r of stale) {
+      try {
+        await Raffle.updateOne({ id: r.id }, { $set: { status: 'cancelled' } });
+        cancelled++;
+        const parts = await RaffleParticipation.find({ raffleId: r.id, refundedAt: null }).lean();
+        for (const p of parts) {
+          if (!p.entryCostPaid || p.entryCostPaid <= 0) continue;
+          const reserved = await RaffleParticipation.findOneAndUpdate(
+            { id: p.id, refundedAt: null },
+            { $set: { refundedAt: new Date(), refundedAmount: p.entryCostPaid } }
+          );
+          if (!reserved) continue;
+          try {
+            const cr = await jugaygana.creditUserBalance(p.username, p.entryCostPaid);
+            if (cr && cr.success) {
+              refundedCount++;
+              refundedAmount += p.entryCostPaid;
+              await RaffleParticipation.updateOne(
+                { id: p.id },
+                { $set: { refundedTxId: (cr.transactionId || cr.transferId) || null } }
+              ).catch(() => {});
+            } else {
+              await RaffleParticipation.updateOne(
+                { id: p.id },
+                { $set: { refundedAt: null, refundedAmount: 0 } }
+              ).catch(() => {});
+              logger.warn(`[raffles weekly-rotation] refund fail ${p.username} ${r.name}: ${cr && cr.error}`);
+            }
+          } catch (e) {
+            await RaffleParticipation.updateOne(
+              { id: p.id },
+              { $set: { refundedAt: null, refundedAmount: 0 } }
+            ).catch(() => {});
+            logger.error(`[raffles weekly-rotation] refund exc ${p.username} ${r.name}: ${e.message}`);
+          }
+        }
+      } catch (e) {
+        logger.error(`[raffles weekly-rotation] cancel ${r.name}: ${e.message}`);
+      }
+    }
+
+    // 3) Reseed.
+    await _ensureActiveRafflesSeeded();
+
+    if (triggeredBy === 'cron') _lastWeeklyRotationKey = todayKey;
+    logger.info(`[raffles] weekly rotation done: archived=${drawnUpd.modifiedCount||0} cancelled=${cancelled} refunded=${refundedCount}/$${refundedAmount}`);
+    return {
+      archived: drawnUpd.modifiedCount || 0,
+      cancelled,
+      refundedCount,
+      refundedAmount
+    };
+  } catch (e) {
+    logger.error(`[raffles weekly-rotation] global: ${e.message}`);
+    return null;
+  }
+}
+
+// Boot: arranca el cron 60s después; corre cada hora.
+setTimeout(() => { _runWeeklyRaffleRotation('cron').catch(() => {}); }, 60 * 1000);
+setInterval(() => { _runWeeklyRaffleRotation('cron').catch(() => {}); }, 60 * 60 * 1000);
+
+// =============================
 // USER ENDPOINTS
 // =============================
 
@@ -11536,13 +11776,19 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     const username = req.user.username;
     await _ensureActiveRafflesSeeded();
 
-    // Listamos active + closed + drawn (no archived ni cancelled). Solo
-    // tipos del modelo nuevo (paid). El user ve los 'drawn' por unos
-    // minutos para enterarse del resultado.
-    const newTypes = RAFFLE_TYPES.map(t => t.type);
+    // Auto-enrollment en sorteos GRATIS para clientes que cumplen threshold.
+    // Best-effort: si falla, no rompe la response (solo el user no ve sus
+    // numeros gratis hasta el siguiente refresh).
+    let autoEnrolled = [];
+    try { autoEnrolled = await _autoEnrollFreeRaffles(username); } catch (_) {}
+
+    // Listamos active + closed + drawn (no archived ni cancelled). Incluye
+    // paid Y free types. El user ve los 'drawn' por unos minutos para
+    // enterarse del resultado.
+    const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type)];
     const raffles = await Raffle.find(
-      { status: { $in: ['active', 'closed', 'drawn'] }, raffleType: { $in: newTypes } }
-    ).sort({ raffleType: 1, instanceNumber: 1 }).lean();
+      { status: { $in: ['active', 'closed', 'drawn'] }, raffleType: { $in: allTypes } }
+    ).sort({ isFree: 1, raffleType: 1, instanceNumber: 1 }).lean();
 
     let balance = 0;
     try {
@@ -11571,6 +11817,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     res.json({
       balance,
       lotteryRule: RAFFLE_LOTTERY_RULE,
+      autoEnrolled,
       raffles: raffles.map(r => ({
         id: r.id,
         name: r.name,
@@ -11582,8 +11829,11 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         entryCost: r.entryCost,
         totalTickets: r.totalTickets,
         prizeValueARS: r.prizeValueARS,
+        isFree: !!r.isFree,
+        minCargasARS: r.minCargasARS || 0,
         cuposSold: r._ticketCounter || 0,
         cuposRemaining: Math.max(0, (r.totalTickets || 0) - (r._ticketCounter || 0)),
+        claimedNumbers: r.claimedNumbers || [],
         drawDate: r.drawDate,
         lotteryRule: r.lotteryRule,
         status: r.status,
@@ -11601,21 +11851,30 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/raffles/:id/buy — comprar N cupos con saldo de JUGAYGANA.
-// Flujo: (1) chequea balance — (2) reserva atomicamente N numeros via $inc
-// con $expr para no exceder cupo — (3) descuenta saldo en JUGAYGANA — si
-// falla, libera los numeros — (4) crea/actualiza participation — (5) si
-// se lleno el cupo, marca closed y respawnea proxima instancia.
+// POST /api/raffles/:id/buy — comprar N numeros con saldo de JUGAYGANA.
+// El user PUEDE elegir sus numeros (pickedNumbers[]) o dejar que el sistema
+// los asigne aleatoriamente entre los disponibles.
+//
+// Flujo: (1) chequea balance — (2) reserva atomicamente los numeros via
+// findOneAndUpdate con $nin (ningun numero pedido puede estar tomado) +
+// $push + $inc — si falla, otro caller los tomo — (3) descuenta saldo en
+// JUGAYGANA — si falla, libera los numeros — (4) crea/actualiza
+// participation — (5) si se lleno el cupo, marca closed y respawnea.
 app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
   const username = req.user.username;
   const raffleId = req.params.id;
-  const quantity = Math.max(1, Math.min(50, parseInt(req.body && req.body.quantity, 10) || 1));
-  let counterIncremented = 0;
+  const body = req.body || {};
+  const rawPicked = Array.isArray(body.pickedNumbers) ? body.pickedNumbers : null;
+  const quantity = Math.max(1, Math.min(50, parseInt(body.quantity, 10) || (rawPicked ? rawPicked.length : 1)));
+  let reservedNumbers = [];
   let withdrew = false;
   try {
     const raffle = await Raffle.findOne({ id: raffleId }).lean();
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
     if (raffle.status !== 'active') return res.status(400).json({ error: 'Este sorteo ya no acepta compras.' });
+    if (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType)) {
+      return res.status(400).json({ error: 'Este es un sorteo GRATIS. La participación es automática para clientes que cumplan el mínimo de cargas.' });
+    }
 
     // Cutoff: no vender cupos en las 3 horas previas al draw para evitar que
     // alguien compre mientras el admin ya está cargando el ganador.
@@ -11626,9 +11885,42 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       }
     }
 
-    const remaining = Math.max(0, (raffle.totalTickets || 0) - (raffle._ticketCounter || 0));
+    const totalTickets = raffle.totalTickets || 0;
+    const claimedSet = new Set((raffle.claimedNumbers || []).map(n => Number(n)));
+    const remaining = Math.max(0, totalTickets - claimedSet.size);
     if (remaining <= 0) return res.status(400).json({ error: 'No quedan cupos en este sorteo.' });
-    const buyQty = Math.min(quantity, remaining);
+
+    // Determinar los numeros a reservar.
+    let pickedNumbers;
+    if (rawPicked) {
+      // Validar lo que pidio el user.
+      if (rawPicked.length === 0) return res.status(400).json({ error: 'No elegiste ningún número.' });
+      if (rawPicked.length !== quantity) return res.status(400).json({ error: 'Inconsistencia entre cantidad y números elegidos.' });
+      const cleaned = rawPicked.map(n => parseInt(n, 10)).filter(n => Number.isFinite(n));
+      if (cleaned.length !== rawPicked.length) return res.status(400).json({ error: 'Hay números inválidos en la selección.' });
+      const dedup = Array.from(new Set(cleaned));
+      if (dedup.length !== cleaned.length) return res.status(400).json({ error: 'No podés elegir el mismo número dos veces.' });
+      for (const n of dedup) {
+        if (n < 1 || n > totalTickets) return res.status(400).json({ error: `El número ${n} está fuera del rango (1 a ${totalTickets}).` });
+        if (claimedSet.has(n)) return res.status(400).json({ error: `El número ${n} ya está tomado por otro jugador. Elegí otro.`, takenNumber: n });
+      }
+      pickedNumbers = dedup;
+    } else {
+      // Aleatorio: tomamos `quantity` numeros disponibles del pool.
+      const buyQty = Math.min(quantity, remaining);
+      const available = [];
+      for (let n = 1; n <= totalTickets && available.length < buyQty * 3; n++) {
+        if (!claimedSet.has(n)) available.push(n);
+      }
+      // Mezclar y tomar buyQty
+      for (let i = available.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [available[i], available[j]] = [available[j], available[i]];
+      }
+      pickedNumbers = available.slice(0, buyQty);
+    }
+
+    const buyQty = pickedNumbers.length;
     const totalCost = buyQty * (raffle.entryCost || 0);
 
     let balance = 0;
@@ -11643,33 +11935,57 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
       });
     }
 
+    // Reserva atomica: el update solo prospera si NINGUN pickedNumber esta en
+    // claimedNumbers Y el cupo final no excede totalTickets. Si dos compras
+    // pelean por el mismo numero, una gana y la otra recibe null aqui.
     const reserved = await Raffle.findOneAndUpdate(
-      { id: raffleId, status: 'active', $expr: { $lte: [{ $add: ['$_ticketCounter', buyQty] }, '$totalTickets'] } },
-      { $inc: { _ticketCounter: buyQty } },
+      {
+        id: raffleId,
+        status: 'active',
+        claimedNumbers: { $nin: pickedNumbers },
+        $expr: { $lte: [{ $add: [{ $size: { $ifNull: ['$claimedNumbers', []] } }, buyQty] }, '$totalTickets'] }
+      },
+      {
+        $push: { claimedNumbers: { $each: pickedNumbers } },
+        $inc: { _ticketCounter: buyQty }
+      },
       { new: true }
     );
     if (!reserved) {
-      const fresh = await Raffle.findOne({ id: raffleId }, { _ticketCounter: 1, totalTickets: 1, status: 1 }).lean();
-      const r2 = fresh ? Math.max(0, (fresh.totalTickets || 0) - (fresh._ticketCounter || 0)) : 0;
-      return res.status(400).json({ error: `Solo quedan ${r2} cupo${r2 === 1 ? '' : 's'} (vos pediste ${buyQty}).`, cuposRemaining: r2 });
+      // Refetch para reportar bien al user
+      const fresh = await Raffle.findOne({ id: raffleId }, { claimedNumbers: 1, totalTickets: 1, status: 1 }).lean();
+      const freshSet = new Set((fresh && fresh.claimedNumbers || []).map(n => Number(n)));
+      const conflict = pickedNumbers.find(n => freshSet.has(n));
+      if (conflict) {
+        return res.status(409).json({
+          error: `Otro jugador tomó el número ${conflict} antes que vos. Elegí otro.`,
+          takenNumber: conflict
+        });
+      }
+      const r2 = fresh ? Math.max(0, (fresh.totalTickets || 0) - freshSet.size) : 0;
+      return res.status(400).json({ error: `No se pudo reservar (quedan ${r2} cupos).`, cuposRemaining: r2 });
     }
-    counterIncremented = buyQty;
+    reservedNumbers = pickedNumbers;
     const counterAfter = reserved._ticketCounter;
-    const assignedNumbers = [];
-    for (let i = buyQty; i > 0; i--) assignedNumbers.push(counterAfter - i + 1);
+    const assignedNumbers = [...pickedNumbers].sort((a, b) => a - b);
     const numStr = assignedNumbers.length === 1
       ? `#${assignedNumbers[0]}`
-      : `#${assignedNumbers[0]}-${assignedNumbers[assignedNumbers.length - 1]}`;
+      : `#${assignedNumbers.join(', #')}`;
 
     const wRes = await jugaygana.withdrawFromUser(username, totalCost, `Sorteo ${raffle.name} ${numStr}`);
     if (!wRes || !wRes.success) {
-      await Raffle.updateOne({ id: raffleId }, { $inc: { _ticketCounter: -buyQty } }).catch(() => {});
-      counterIncremented = 0;
+      // Liberar los numeros reservados (quitar del array claimed + decrement counter).
+      await Raffle.updateOne(
+        { id: raffleId },
+        { $pull: { claimedNumbers: { $in: reservedNumbers } }, $inc: { _ticketCounter: -buyQty } }
+      ).catch(() => {});
+      reservedNumbers = [];
       const errMsg = (wRes && wRes.error) || 'Error desconocido al descontar saldo';
       logger.error(`[raffles] withdraw failed ${username} ${raffle.name}: ${errMsg}`);
       return res.status(503).json({ error: `No se pudo procesar el pago: ${errMsg}.` });
     }
     withdrew = true;
+    logger.info(`[raffles] BUY OK ${username} +${buyQty} numeros [${assignedNumbers.join(',')}] ${raffle.name} = $${totalCost} (txid: ${(wRes.transactionId || wRes.transferId || 'n/a')})`);
 
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const existing = await RaffleParticipation.findOne({ raffleId, username: { $regex: '^' + safe + '$', $options: 'i' } });
@@ -11937,17 +12253,60 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
     if (lotteryDrawDate) raffle.lotteryDrawDate = lotteryDrawDate;
     raffle.drawnAt = new Date();
     raffle.drawnBy = req.user.username || 'admin';
-    raffle.prizeClaimable = true;
+    // Default: el premio se acredita automaticamente. Solo si el credit
+    // falla queda prizeClaimable=true para que el user reintente.
+    raffle.prizeClaimable = false;
     await raffle.save();
     await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
 
+    // === AUTO-CREDIT del premio al ganador ===
+    let prizeAutoCredited = false;
+    let autoCreditError = null;
+    const prize = Number(raffle.prizeValueARS) || 0;
+    if (prize > 0) {
+      try {
+        const credit = await jugaygana.creditUserBalance(winner.username, prize);
+        if (credit && credit.success) {
+          await Raffle.updateOne(
+            { id: raffle.id },
+            { $set: {
+              prizeClaimedAt: new Date(),
+              prizeClaimable: false,
+              prizeClaimTxId: (credit.transactionId || credit.transferId) || null
+            }}
+          );
+          prizeAutoCredited = true;
+          logger.info(`[raffles] AUTO-CREDIT OK ${winner.username} +$${prize} (${raffle.name})`);
+        } else {
+          // Credit fallo: marcar reclamable para que el user pueda intentar manualmente
+          autoCreditError = (credit && credit.error) || 'Error desconocido al acreditar';
+          await Raffle.updateOne(
+            { id: raffle.id },
+            { $set: { prizeClaimable: true } }
+          );
+          logger.error(`[raffles] AUTO-CREDIT FAIL ${winner.username} ${raffle.name}: ${autoCreditError} — marcado prizeClaimable para retry manual`);
+        }
+      } catch (e) {
+        autoCreditError = e.message;
+        await Raffle.updateOne(
+          { id: raffle.id },
+          { $set: { prizeClaimable: true } }
+        ).catch(() => {});
+        logger.error(`[raffles] AUTO-CREDIT EXC ${winner.username} ${raffle.name}: ${e.message}`);
+      }
+    }
+
     let winnerPushed = 0, losersPushed = 0;
     try {
+      const winTitle = '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
+      const winBody = prizeAutoCredited
+        ? `¡Ganaste $${prize.toLocaleString('es-AR')} con el número ${mappedNumber}! Ya te lo acreditamos a tu saldo. Entrá a JUGAYGANA a verlo.`
+        : `Ganaste el sorteo de ${raffle.prizeName} con el número ${mappedNumber}. Hubo un problema al acreditar — entrá a la app y tocá "Reclamar premio".`;
       const winRes = await sendNotificationToAllUsers(
         User,
-        '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'),
-        `Ganaste el sorteo de ${raffle.prizeName} con el número ${mappedNumber}. Lotería Nocturna sacó el ${lotteryNumber}. Entrá a la app y reclamá tu premio.`,
-        { source: 'raffle-win', raffleId: raffle.id, isWinner: 'true' },
+        winTitle,
+        winBody,
+        { source: 'raffle-win', raffleId: raffle.id, isWinner: 'true', autoCredited: prizeAutoCredited ? 'true' : 'false' },
         { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
       );
       winnerPushed = (winRes && winRes.successCount) || 0;
@@ -11978,6 +12337,8 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, adminMiddleware, async (
       lotteryWasMapped: wasMapped,
       totalCuposSold,
       prizeValueARS: raffle.prizeValueARS,
+      prizeAutoCredited,
+      autoCreditError,
       pushNotifications: { winnerPushed, losersPushed }
     });
   } catch (err) {
@@ -12185,10 +12546,16 @@ app.post('/api/admin/raffles/seed', authMiddleware, adminMiddleware, async (req,
 app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     await _ensureActiveRafflesSeeded();
+    const kind = (req.query.kind === 'free') ? 'free' : 'paid';
+    const typeList = (kind === 'free' ? FREE_RAFFLE_TYPES : RAFFLE_TYPES).map(t => t.type);
     const currentWeek = _isoWeekKey(_argZonedNow());
     // Sorteos del weekKey actual (incluye drawn por si ya se sorteo en la semana actual).
     const weekRaffles = await Raffle.find(
-      { weekKey: currentWeek, status: { $in: ['active', 'closed', 'drawn'] } }
+      {
+        weekKey: currentWeek,
+        status: { $in: ['active', 'closed', 'drawn'] },
+        raffleType: { $in: typeList }
+      }
     ).sort({ raffleType: 1, instanceNumber: 1 }).lean();
 
     const ids = weekRaffles.map(r => r.id);
@@ -12204,21 +12571,23 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
     const aggById = {};
     for (const a of partsAgg) aggById[a._id] = a;
 
-    // Stats por tipo (esta semana)
+    // Stats por tipo (esta semana). Itera el typeList correcto (paid o free).
+    const cfgList = (kind === 'free') ? FREE_RAFFLE_TYPES : RAFFLE_TYPES;
     const byType = {};
-    for (const cfg of RAFFLE_TYPES) {
+    for (const cfg of cfgList) {
       byType[cfg.type] = {
         type: cfg.type,
         emoji: cfg.emoji,
         label: cfg.name,
         prize: cfg.prize,
-        entryCost: cfg.entryCost,
+        entryCost: cfg.entryCost || 0,
+        minCargasARS: cfg.minCargasARS || 0,
         totalTickets: cfg.totalTickets,
         instances: 0,
         cuposSold: 0,
         revenue: 0,
-        filled: 0,        // instancias que se llenaron
-        drawn: 0,         // instancias sorteadas
+        filled: 0,
+        drawn: 0,
         active: 0
       };
     }
@@ -12322,9 +12691,15 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
 app.get('/api/admin/raffles/history', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(52, parseInt(req.query.limit, 10) || 12));
+    const kind = (req.query.kind === 'free') ? 'free' : 'paid';
+    const typeList = (kind === 'free' ? FREE_RAFFLE_TYPES : RAFFLE_TYPES).map(t => t.type);
     // Pipeline: agrupar Raffles por weekKey, joinear participaciones para revenue y cupos.
     const raffles = await Raffle.find(
-      { status: { $in: ['active', 'closed', 'drawn', 'archived'] }, weekKey: { $ne: '' } },
+      {
+        status: { $in: ['active', 'closed', 'drawn', 'archived'] },
+        weekKey: { $ne: '' },
+        raffleType: { $in: typeList }
+      },
       { id: 1, weekKey: 1, raffleType: 1, instanceNumber: 1, status: 1,
         prizeValueARS: 1, totalTickets: 1, prizeClaimedAt: 1, drawnAt: 1, drawDate: 1, _id: 0 }
     ).lean();
