@@ -8920,6 +8920,7 @@ function _renderRafflesAdmin() {
     if (!isFree) {
         html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO gratis (premio $200k, 100 cupos, una sola vez)">⚡ Sorteo relámpago</button>';
         html += '      <button type="button" onclick="seedTestRaffle()" style="background:rgba(255,170,255,0.10);color:#ff80ff;border:1px solid rgba(255,170,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear un sorteo de prueba (entry $100, premio $500, 5 cupos por default) para validar el flujo completo">🧪 Sorteo prueba</button>';
+        html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando de un sorteo activo (elegís sorteo + equipos + texto)">📣 Anunciar sorteo</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
     }
     if ((k.rafflesFilled || 0) + (dash.raffles||[]).filter(r=>r.status==='drawn').length > 0) {
@@ -9445,8 +9446,13 @@ async function forceSeedRaffles() {
         const resp = await authFetch('/api/admin/raffles/seed', { method: 'POST' });
         const d = await resp.json();
         if (!resp.ok) { alert('❌ ' + (d.error || 'Error')); return; }
-        if ((d.created || 0) > 0) {
-            showToast('🌱 Seed OK · ' + d.created + ' sorteo' + (d.created===1?'':'s') + ' nuevo' + (d.created===1?'':'s') + ' creado' + (d.created===1?'':'s'), 'success');
+        const created = d.created || 0;
+        if (created > 0) {
+            showToast('🌱 Seed OK · ' + created + ' sorteo' + (created===1?'':'s') + ' nuevo' + (created===1?'':'s') + ' creado' + (created===1?'':'s'), 'success');
+            // Flujo A: si se crearon nuevos, ofrecer anunciar via picker
+            if (confirm('¿Querés anunciar los sorteos nuevos a los usuarios ahora?')) {
+                announceRafflePicker();
+            }
         } else {
             showToast('🌱 Ya estaban los 4 sorteos activos. Nada que crear.', 'info');
         }
@@ -9482,6 +9488,14 @@ async function seedLightningRaffle() {
         }
         showToast('⚡ Sorteo RELÁMPAGO creado: ' + d.raffle.name, 'success');
         loadRafflesAdmin();
+        // Flujo A: ofrecer anunciar inmediatamente
+        if (confirm('¿Querés anunciar el sorteo a los usuarios ahora?')) {
+            announceRaffleOpen(d.raffle.id, {
+                title: '⚡ Nuevo sorteo RELÁMPAGO · $' + (d.raffle.prizeValueARS || 200000).toLocaleString('es-AR'),
+                body: '¡GRATIS por única vez! Entrá a la app, te anotamos automático. ' + (d.raffle.totalTickets || 100) + ' cupos, primero llega primero adentro.',
+                presetType: 'relampago'
+            });
+        }
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
@@ -9517,10 +9531,194 @@ async function seedTestRaffle() {
         }
         showToast('🧪 Sorteo de prueba creado: ' + d.raffle.name, 'success');
         loadRafflesAdmin();
+        if (confirm('¿Querés anunciar el sorteo a los usuarios ahora?')) {
+            announceRaffleOpen(d.raffle.id, {
+                title: '🧪 ' + d.raffle.name,
+                body: 'Sorteo de prueba abierto. Entrada $' + (d.raffle.entryCost || 100).toLocaleString('es-AR') + ', premio $' + (d.raffle.prizeValueARS || 500).toLocaleString('es-AR') + '. Entrá y elegí tu número.',
+                presetType: 'test'
+            });
+        }
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
     finally { seedTestRaffle._busy = false; }
+}
+
+// ============================================================
+// ANNOUNCE — Anunciar sorteo a los usuarios via push masivo
+// ============================================================
+// Flujo A (post-seed): el admin acaba de crear un sorteo. Le ofrecemos
+//   anunciarlo enseguida con copy pre-cargado.
+// Flujo B (standalone): boton "Anunciar sorteo" -> picker de sorteos
+//   activos -> modal de anuncio. Sirve para reanunciar despues.
+
+// Picker: lista los sorteos active/closed (vivos) y deja al admin elegir
+// uno para anunciar. Util cuando quiere reanunciar dias despues.
+async function announceRafflePicker() {
+    let modal = document.getElementById('announcePickerModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'announcePickerModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.style.display = 'none'; };
+    modal.innerHTML = '<div style="background:#1a0033;border:2px solid #66ff66;border-radius:12px;max-width:560px;width:100%;margin:8px auto;padding:18px 16px;">' +
+        '<h3 style="color:#66ff66;margin:0 0 10px;font-size:16px;">📣 Elegí el sorteo a anunciar</h3>' +
+        '<div id="announcePickerList" style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>' +
+        '<button onclick="document.getElementById(\'announcePickerModal\').remove()" style="margin-top:10px;width:100%;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>' +
+        '</div>';
+    document.body.appendChild(modal);
+
+    try {
+        const r = await authFetch('/api/admin/raffles');
+        const d = await r.json();
+        const list = document.getElementById('announcePickerList');
+        const live = (d.raffles || []).filter(x => x.status === 'active' || x.status === 'closed');
+        if (live.length === 0) {
+            list.innerHTML = '<div style="color:#888;padding:14px;font-size:12px;">No hay sorteos activos para anunciar.</div>';
+            return;
+        }
+        let h = '<div style="display:flex;flex-direction:column;gap:6px;">';
+        for (const r of live) {
+            const sold = r._ticketCounter || 0;
+            const total = r.totalTickets || 0;
+            const isLight = r.raffleType === 'relampago';
+            h += '<div onclick="announceRaffleFromPicker(' + escapeJsArg(r.id) + ')" style="cursor:pointer;background:rgba(255,255,255,0.04);border:1px solid ' + (isLight ? '#ffeb3b' : 'rgba(255,255,255,0.15)') + ';border-radius:8px;padding:10px;display:flex;align-items:center;gap:10px;">' +
+                '<div style="font-size:24px;">' + (r.emoji || '🎁') + '</div>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="color:#fff;font-weight:800;font-size:13px;line-height:1.3;">' + escapeHtml(r.name) + (isLight ? ' <span style="color:#ffeb3b;font-size:10px;">⚡</span>' : '') + '</div>' +
+                    '<div style="color:#aaa;font-size:11px;">' + sold + '/' + total + ' · Premio $' + (r.prizeValueARS || 0).toLocaleString('es-AR') + ' · ' + (r.isFree ? 'GRATIS' : 'Entry $' + (r.entryCost || 0).toLocaleString('es-AR')) + '</div>' +
+                '</div>' +
+                '<div style="color:#66ff66;font-size:18px;">›</div>' +
+            '</div>';
+        }
+        h += '</div>';
+        list.innerHTML = h;
+    } catch (e) {
+        const list = document.getElementById('announcePickerList');
+        if (list) list.innerHTML = '<div style="color:#ff8080;">Error de conexión</div>';
+    }
+}
+
+function announceRaffleFromPicker(id) {
+    const cache = (_rafflesAdminCache && _rafflesAdminCache.raffles) || [];
+    const r = cache.find(x => x.id === id);
+    document.getElementById('announcePickerModal')?.remove();
+    if (!r) {
+        // Si no esta en cache (por ejemplo otro tab), llamamos sin preset
+        announceRaffleOpen(id, { title: '', body: '' });
+        return;
+    }
+    const isLight = r.raffleType === 'relampago';
+    const isFree = r.isFree;
+    const presetType = isLight ? 'relampago' : (r.raffleType === 'test' ? 'test' : (isFree ? 'free' : 'paid'));
+    let title, body;
+    if (isLight) {
+        title = '⚡ Sorteo RELÁMPAGO · $' + (r.prizeValueARS || 0).toLocaleString('es-AR');
+        body = '¡GRATIS por única vez! Entrá ahora — te anotamos automático. ' + (r.totalTickets || 100) + ' cupos, primero llega primero adentro.';
+    } else if (isFree) {
+        title = '🎁 ' + r.name;
+        body = 'Sorteo GRATIS disponible. Si tenés cargas en los últimos 30 días te anotamos automático cuando entrés a la app.';
+    } else {
+        title = '🎫 ' + r.name + ' · Premio $' + (r.prizeValueARS || 0).toLocaleString('es-AR');
+        body = 'Elegí tu número de la suerte (1 al 100). Entrada $' + (r.entryCost || 0).toLocaleString('es-AR') + '. Si ganás, te acreditamos el premio automáticamente.';
+    }
+    announceRaffleOpen(id, { title, body, presetType });
+}
+
+// Modal de composicion del anuncio. preset = { title, body, presetType }
+async function announceRaffleOpen(raffleId, preset) {
+    preset = preset || {};
+    let modal = document.getElementById('announceRaffleModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'announceRaffleModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:40000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.style.display = 'none'; };
+    modal.innerHTML = '<div style="background:#1a0033;border:2px solid #66ff66;border-radius:14px;max-width:560px;width:100%;margin:8px auto;padding:18px 16px;">' +
+        '<h3 style="color:#66ff66;margin:0 0 4px;font-size:16px;">📣 Anunciar sorteo</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Push masivo. Limitado a 8 envíos por minuto.</div>' +
+        '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Título</label>' +
+        '<input id="announceTitle" type="text" maxlength="100" value="' + escapeHtml(preset.title || '') + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 10px;box-sizing:border-box;">' +
+        '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Mensaje</label>' +
+        '<textarea id="announceBody" maxlength="500" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 10px;box-sizing:border-box;min-height:75px;resize:vertical;">' + escapeHtml(preset.body || '') + '</textarea>' +
+        '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Equipos a notificar</label>' +
+        '<div id="announceTeamsBox" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin:4px 0 10px;max-height:160px;overflow-y:auto;">' +
+            '<label style="display:block;color:#fff;font-size:12px;font-weight:800;margin-bottom:6px;cursor:pointer;"><input type="checkbox" id="announceTeamsAll" checked onchange="_announceToggleAll(this.checked)"> ✅ Todos los equipos</label>' +
+            '<div id="announceTeamsList" style="display:flex;flex-wrap:wrap;gap:8px;color:#aaa;font-size:11px;">⏳ Cargando…</div>' +
+        '</div>' +
+        '<label style="display:block;color:#ddd;font-size:12px;font-weight:600;margin-bottom:12px;cursor:pointer;"><input type="checkbox" id="announceHasApp" checked> Solo a usuarios con app instalada</label>' +
+        '<div style="display:flex;gap:8px;">' +
+            '<button onclick="document.getElementById(\'announceRaffleModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+            '<button onclick="announceRaffleSend(' + escapeJsArg(raffleId) + ')" style="flex:2;background:linear-gradient(135deg,#66ff66,#00d4ff);color:#000;border:none;padding:10px;border-radius:6px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">📤 Enviar push</button>' +
+        '</div>' +
+        '</div>';
+    document.body.appendChild(modal);
+
+    // Cargar equipos disponibles
+    try {
+        const r = await authFetch('/api/admin/calendar/teams-available');
+        const d = await r.json();
+        const teams = (d && d.teams) || [];
+        const list = document.getElementById('announceTeamsList');
+        if (!list) return;
+        if (teams.length === 0) {
+            list.innerHTML = '<span style="color:#888;">No hay equipos configurados — el push va a todos.</span>';
+            return;
+        }
+        let h = '';
+        for (const t of teams) {
+            h += '<label style="display:inline-flex;align-items:center;gap:4px;color:#ddd;cursor:pointer;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:6px;padding:4px 8px;">' +
+                '<input type="checkbox" class="announceTeamChk" value="' + escapeHtml(t) + '" onchange="_announceUpdateAllChk()"> ' + escapeHtml(t) +
+            '</label>';
+        }
+        list.innerHTML = h;
+    } catch (e) {
+        const list = document.getElementById('announceTeamsList');
+        if (list) list.innerHTML = '<span style="color:#888;">No se pudo cargar equipos. El push va a todos.</span>';
+    }
+}
+
+// Toggle "todos los equipos" -> destildea individuales
+function _announceToggleAll(checked) {
+    const chks = document.querySelectorAll('.announceTeamChk');
+    if (checked) {
+        chks.forEach(c => { c.checked = false; });
+    }
+}
+
+// Si tildaste algun equipo, destilda "todos"
+function _announceUpdateAllChk() {
+    const all = document.getElementById('announceTeamsAll');
+    if (!all) return;
+    const anyChecked = Array.from(document.querySelectorAll('.announceTeamChk')).some(c => c.checked);
+    all.checked = !anyChecked;
+}
+
+async function announceRaffleSend(raffleId) {
+    const title = (document.getElementById('announceTitle')?.value || '').trim();
+    const body = (document.getElementById('announceBody')?.value || '').trim();
+    if (!title || !body) { alert('Falta título o mensaje'); return; }
+    const allTeams = document.getElementById('announceTeamsAll')?.checked;
+    const teams = allTeams ? [] : Array.from(document.querySelectorAll('.announceTeamChk:checked')).map(c => c.value);
+    const hasAppOnly = !!document.getElementById('announceHasApp')?.checked;
+    const teamsStr = teams.length === 0 ? 'todos los equipos' : teams.length + ' equipo' + (teams.length === 1 ? '' : 's');
+    if (!confirm('¿Mandar push a ' + teamsStr + (hasAppOnly ? ' (solo con app)' : '') + '?')) return;
+    if (announceRaffleSend._busy) return;
+    announceRaffleSend._busy = true;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/announce', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, body, teams, hasAppOnly })
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        alert('📤 Anuncio enviado\n\nElegibles: ' + (d.eligible || 0) + '\nEnviadas: ' + d.sent + '\nFallidas: ' + (d.failed || 0));
+        document.getElementById('announceRaffleModal')?.remove();
+    } catch (e) {
+        alert('Error de conexión');
+    }
+    finally { announceRaffleSend._busy = false; }
 }
 
 // Lista los sorteos del modelo viejo (iphone/caribe/auto/other) que sigan

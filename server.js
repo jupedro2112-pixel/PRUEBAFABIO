@@ -12971,6 +12971,66 @@ app.post('/api/admin/raffles/seed', authMiddleware, superAdminMiddleware, async 
   }
 });
 
+// POST /api/admin/raffles/:id/announce — push masivo anunciando un sorteo.
+// El admin compone titulo/body, elige equipos (vacio = todos) y si solo
+// gente con app o todos. Reusamos sendNotificationToAllUsers con filtro.
+//
+// Body: { title, body, teams: [], hasAppOnly: true }
+//
+// Limitamos a sorteos que estan vivos (active/closed) para no spamear con
+// avisos de sorteos ya sorteados o archivados.
+app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware, bulkLaunchLimiter, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status !== 'active' && raffle.status !== 'closed') {
+      return res.status(400).json({ error: `No se puede anunciar un sorteo en estado "${raffle.status}".` });
+    }
+    const b = req.body || {};
+    const title = String(b.title || '').slice(0, 100).trim();
+    const body = String(b.body || '').slice(0, 500).trim();
+    if (!title || !body) return res.status(400).json({ error: 'Faltan title y/o body.' });
+    const teams = Array.isArray(b.teams) ? b.teams.map(String).slice(0, 100) : [];
+    const hasAppOnly = b.hasAppOnly !== false;
+
+    // Filter de audiencia. Si teams vacio = todos (no team filter).
+    const userFilter = {};
+    if (teams.length > 0) {
+      // El prefijo del username matchea el equipo (case-insensitive).
+      const escapedTeams = teams.map(t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      userFilter.username = { $regex: '^(' + escapedTeams.join('|') + ')', $options: 'i' };
+    }
+    if (hasAppOnly) {
+      userFilter['appNotif.subscribed'] = true;
+    }
+
+    const result = await sendNotificationToAllUsers(
+      User,
+      title,
+      body,
+      {
+        source: 'raffle-announce',
+        raffleId: raffle.id,
+        raffleName: raffle.name,
+        raffleType: raffle.raffleType,
+        prizeValueARS: String(raffle.prizeValueARS || 0)
+      },
+      userFilter
+    );
+    logger.info(`[raffles] ANNOUNCE ${raffle.name} por ${req.user.username || 'admin'} teams=[${teams.join(',') || 'all'}] hasAppOnly=${hasAppOnly} sent=${(result && result.successCount) || 0}`);
+    res.json({
+      success: true,
+      sent: (result && result.successCount) || 0,
+      failed: (result && result.failureCount) || 0,
+      eligible: (result && result.totalSent) || 0,
+      teams: teams.length > 0 ? teams : ['all']
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/announce: ${err.message}`);
+    res.status(500).json({ error: 'Error enviando anuncio del sorteo' });
+  }
+});
+
 // POST /api/admin/raffles/seed-lightning — crea el sorteo RELAMPAGO si no hay
 // otro activo. Es free, hero del modal (arriba de todo), inscripcion automatica
 // cuando el user abre la app, 100 cupos. Una sola vez: si se llena o se sortea,
