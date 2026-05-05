@@ -63,6 +63,39 @@ VIP.raffles = (function () {
         return sorted.map(n => '#' + n).join(', ');
     }
 
+    // "Faltan X días/horas para el sorteo". Si la fecha ya paso, dice
+    // "El sorteo es HOY" (lunes mismo) o "Sorteado".
+    function _countdownText(drawDateStr) {
+        if (!drawDateStr) return 'Esperando fecha';
+        const ms = new Date(drawDateStr).getTime() - Date.now();
+        if (!Number.isFinite(ms)) return 'Esperando fecha';
+        if (ms <= 0) return 'Sorteándose ahora · revisá en un rato';
+        const days = Math.floor(ms / (24 * 3600 * 1000));
+        const hours = Math.floor((ms % (24 * 3600 * 1000)) / (3600 * 1000));
+        if (days >= 1) return 'Faltan ' + days + (days === 1 ? ' día' : ' días') + (hours > 0 ? ' y ' + hours + 'h' : '');
+        if (hours >= 1) return 'Faltan ' + hours + 'h';
+        const mins = Math.max(1, Math.floor(ms / 60000));
+        return 'Faltan ' + mins + ' min';
+    }
+
+    // Bloque "PENDIENTE de sorteo" para sorteos cerrados (cupo lleno).
+    // Mas visible que el aviso chiquito anterior — la gente ve que ya
+    // estan en carrera y cuando se sortea.
+    function _renderPendingBlock(r, accentColor, totalParticipantsLabel) {
+        const drawStr = r.drawDate
+            ? new Date(r.drawDate).toLocaleString('es-AR', { weekday:'long', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+            : '—';
+        const countdown = _countdownText(r.drawDate);
+        let html = '';
+        html += '<div style="background:linear-gradient(135deg,rgba(255,170,102,0.10),rgba(255,170,102,0.04));border:2px solid #ffaa66;border-radius:10px;padding:12px;text-align:center;">';
+        html += '  <div style="display:inline-block;background:#ffaa66;color:#000;font-weight:900;font-size:10px;letter-spacing:2px;padding:3px 10px;border-radius:12px;margin-bottom:6px;">⏳ COMPLETADO · PENDIENTE</div>';
+        html += '  <div style="color:#fff;font-size:13px;font-weight:800;line-height:1.4;margin-bottom:4px;">Cupo lleno. Estás en carrera 🎯</div>';
+        html += '  <div style="color:#ffaa66;font-size:12px;font-weight:800;letter-spacing:0.5px;margin-bottom:6px;">' + countdown + '</div>';
+        html += '  <div style="color:#ddd;font-size:11px;line-height:1.5;">📅 ' + drawStr + '<br>1° premio Lotería Nocturna' + (totalParticipantsLabel ? ' · ' + totalParticipantsLabel : '') + '</div>';
+        html += '</div>';
+        return html;
+    }
+
     // Banner unificado de "FELICITACIONES" para sorteos ganados en las
     // ultimas 24h. Si el premio ya fue acreditado automaticamente, mostramos
     // un mensaje celebratorio sin boton. Si todavia hay que reclamar, el
@@ -181,7 +214,9 @@ VIP.raffles = (function () {
                 : '🎲 Sorteado · número ganador <strong>#' + r.winningTicketNumber + '</strong> — ganó @' + _esc(r.winnerUsername || '');
             html += '</div>';
         } else if (closed) {
-            html += '<div style="background:rgba(255,107,53,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;">⏳ Cupo lleno. Esperando sorteo del lunes en la Lotería Nacional Nocturna.</div>';
+            const myCount = myNums.length;
+            const partLabel = myCount > 0 ? 'Tenés ' + myCount + (myCount === 1 ? ' número en juego' : ' números en juego') : (sold + ' jugadores anotados');
+            html += _renderPendingBlock(r, '#ffaa66', partLabel);
         } else {
             html += '<div style="background:rgba(212,175,55,0.05);border:1px dashed rgba(212,175,55,0.30);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
             html += '💡 <strong style="color:#ffd700;">Tip:</strong> tocá <strong>"Elegir números"</strong> y elegí los que quieras del 1 al 100. Si no querés elegir, podés pedir aleatorio. Hasta 50 números por compra.';
@@ -217,16 +252,20 @@ VIP.raffles = (function () {
         html += '<span>' + sold + '/' + total + ' anotados (' + fillPct + '%)</span>';
         html += '<span>' + remaining + ' lugares</span></div>';
 
+        // Caja "estas anotado" cuando aplica (independiente del estado del sorteo).
         if (enrolled) {
-            html += '<div style="background:rgba(77,171,255,0.15);border:1px solid #4dabff;border-radius:8px;padding:10px;text-align:center;">';
+            html += '<div style="background:rgba(77,171,255,0.15);border:1px solid #4dabff;border-radius:8px;padding:10px;text-align:center;margin-bottom:8px;">';
             html += '<div style="color:#4dabff;font-size:11px;font-weight:800;letter-spacing:1px;margin-bottom:4px;">✅ ESTÁS ANOTADO</div>';
             html += '<div style="color:#fff;font-size:18px;font-weight:900;">Número <strong>#' + myNums[0] + '</strong></div>';
             html += '</div>';
-        } else if (drawn) {
+        }
+
+        if (drawn) {
             html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;font-size:12px;color:#aaa;">🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber + '</div>';
         } else if (closed) {
-            html += '<div style="background:rgba(255,107,53,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;">⏳ Cupo lleno. Esperando el sorteo del lunes.</div>';
-        } else {
+            const partLabel = enrolled ? 'Tu #' + myNums[0] + ' está en carrera' : (sold + ' personas en carrera');
+            html += _renderPendingBlock(r, '#4dabff', partLabel);
+        } else if (!enrolled) {
             html += '<div style="background:rgba(255,170,102,0.10);border-radius:8px;padding:10px;font-size:12px;color:#ffaa66;line-height:1.5;">⚠️ <strong>No estás anotado todavía.</strong> Necesitás <strong>$' + _fmt(r.minCargasARS) + '</strong> de cargas en los últimos 30 días. Cuando llegues al monto, te anotamos automáticamente.</div>';
         }
 
