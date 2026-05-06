@@ -9397,7 +9397,8 @@ function _renderRafflesAdmin() {
     }
     // Crear sorteo relampago: SOLO en la seccion de relampago.
     if (isLightning) {
-        html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO gratis (premio $200k, 100 cupos, una sola vez)">⚡ Crear sorteo relámpago</button>';
+        html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO (premio configurable, hasta 3 simultáneos por auto-respawn)">⚡ Crear sorteo relámpago</button>';
+        html += '      <button type="button" onclick="viewLightningROI()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="ROI: cuánto cargaron los participantes después del relámpago vs. premio entregado">📊 ROI relámpago</button>';
         html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando del sorteo activo">📣 Anunciar</button>';
     }
     if ((k.rafflesFilled || 0) + (dash.raffles||[]).filter(r=>r.status==='drawn').length > 0) {
@@ -9723,13 +9724,15 @@ function _renderRaffleDetail(d) {
     const r = d.raffle;
     const parts = d.participants || [];
     const isFree = !!r.isFree;
-    const accent = isFree ? '#4dabff' : '#d4af37';
-    const accentRgba = isFree ? '77,171,255' : '212,175,55';
+    const isLightning = r.raffleType === 'relampago';
+    const lightning = d.lightning || null;
+    const accent = isLightning ? '#ffeb3b' : (isFree ? '#4dabff' : '#d4af37');
+    const accentRgba = isLightning ? '255,235,59' : (isFree ? '77,171,255' : '212,175,55');
     const winNum = r.winningTicketNumber;
     const totalPaid = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
     const totalCupos = parts.reduce((s, p) => s + (p.cuposCount || 0), 0);
 
-    let html = '<h2 style="color:' + accent + ';margin:0 0 4px;font-size:18px;">' + (r.emoji||'🎁') + ' ' + escapeHtml(r.name) + (isFree ? ' <span style="color:#4dabff;font-size:11px;background:rgba(77,171,255,0.15);padding:2px 8px;border-radius:6px;border:1px solid #4dabff;letter-spacing:1px;">GRATIS</span>' : '') + '</h2>';
+    let html = '<h2 style="color:' + accent + ';margin:0 0 4px;font-size:18px;">' + (r.emoji||'🎁') + ' ' + escapeHtml(r.name) + (isFree ? ' <span style="color:#4dabff;font-size:11px;background:rgba(77,171,255,0.15);padding:2px 8px;border-radius:6px;border:1px solid #4dabff;letter-spacing:1px;">GRATIS</span>' : '') + '<button type="button" onclick="viewRaffleParticipants(' + escapeJsArg(r.id) + ')" style="float:right;background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:5px 10px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;letter-spacing:0.5px;" title="Refrescar">🔄 Refrescar</button></h2>';
 
     // Linea de info del sorteo
     const subBits = [
@@ -9759,7 +9762,15 @@ function _renderRaffleDetail(d) {
         if (!isFree) {
             html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Recaudado</div><div style="color:#d4af37;font-size:16px;font-weight:900;">' + _fmtMoney(totalPaid) + '</div></div>';
         }
+        if (isLightning && lightning) {
+            const tq = lightning.totalQualifying || 0;
+            const pct = parts.length ? Math.round((tq / parts.length) * 100) : 0;
+            html += '  <div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:8px 10px;"><div style="color:#aaffaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Califican (' + lightning.minCargas + '+ cargas)</div><div style="color:#66ff66;font-size:16px;font-weight:900;">' + tq + '/' + parts.length + ' (' + pct + '%)</div></div>';
+        }
         html += '</div>';
+        if (isLightning && lightning) {
+            html += '<div style="background:rgba(255,235,59,0.06);border:1px dashed rgba(255,235,59,0.40);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#ffeb3b;line-height:1.5;">⚡ Regla relámpago: ganador necesita ≥<strong>' + lightning.minCargas + ' cargas reales</strong> con timestamp anterior al draw. ' + escapeHtml(lightning.cutoffNote || '') + '.</div>';
+        }
     }
 
     if (parts.length === 0) {
@@ -9775,6 +9786,10 @@ function _renderRaffleDetail(d) {
     html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cupos</th>';
     html += '<th style="padding:8px 10px;font-weight:800;">Números</th>';
+    if (isLightning) {
+        html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cargas</th>';
+        html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Califica</th>';
+    }
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">' + (isFree ? 'Cuándo' : 'Pagó') + '</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;width:30px;"></th>';
     html += '</tr></thead><tbody>';
@@ -9801,14 +9816,23 @@ function _renderRaffleDetail(d) {
         html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(p.username) + winBadge + '</td>';
         html += '<td style="padding:8px 10px;color:#fff;text-align:center;font-weight:700;">' + (p.cuposCount||0) + '</td>';
         html += '<td style="padding:8px 10px;color:#ddd;font-family:monospace;font-size:11px;line-height:1.6;word-break:break-word;">' + nums + '</td>';
+        if (isLightning) {
+            const cc = p.cargasCount || 0;
+            const need = p.cargasRequired || 5;
+            const ok = !!p.qualifies;
+            const cargasColor = ok ? '#66ff66' : (cc === 0 ? '#ff8080' : '#ffaa66');
+            html += '<td style="padding:8px 10px;text-align:center;font-weight:800;color:' + cargasColor + ';">' + cc + (cc < need ? ' <span style="color:#888;font-weight:400;font-size:10px;">(/'+ need + ')</span>' : '') + '</td>';
+            html += '<td style="padding:8px 10px;text-align:center;font-weight:900;">' + (ok ? '<span style="color:#66ff66;background:rgba(102,255,102,0.12);border:1px solid #66ff66;padding:2px 7px;border-radius:5px;">✅ Sí</span>' : '<span style="color:#ff8080;background:rgba(255,128,128,0.10);border:1px solid #ff8080;padding:2px 7px;border-radius:5px;">❌ No</span>') + '</td>';
+        }
         html += '<td style="padding:8px 10px;color:' + accent + ';text-align:right;white-space:nowrap;font-weight:800;">' + (isFree ? '<span style="color:#aaa;font-weight:400;font-size:10px;">' + lastBuy + '</span>' : _fmtMoney(p.entryCostPaid)) + '</td>';
         html += '<td style="padding:6px;text-align:center;">' + (hasMultiplePurchases ? '<button type="button" onclick="_toggleParticipantPurchases(this)" style="background:none;border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:4px;width:22px;height:22px;cursor:pointer;font-size:11px;" title="Ver compras (' + purchasesN + ')">+</button>' : '') + '</td>';
         html += '</tr>';
 
         // Subfila colapsada con el historial de compras (solo paid con >1 compra).
         if (hasMultiplePurchases) {
+            const colspan = isLightning ? 8 : 6;
             html += '<tr class="raffle-purchases-row" style="display:none;background:rgba(0,0,0,0.25);">';
-            html += '<td colspan="6" style="padding:10px 14px;font-size:11px;">';
+            html += '<td colspan="' + colspan + '" style="padding:10px 14px;font-size:11px;">';
             html += '<div style="color:#aaa;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Historial de compras (' + purchasesN + ')</div>';
             html += '<div style="display:flex;flex-direction:column;gap:4px;">';
             for (const s of p.purchases) {
@@ -9976,6 +10000,85 @@ async function forceSeedRaffles() {
 // Abre el modal de configuracion del sorteo RELAMPAGO. Reemplazo de los
 // prompt() encadenados — UX mucho mas clara con form proper, validacion
 // visual y opciones para "requiere haber jugado pago" + auto-anunciar.
+// Abre el modal de ROI del relampago. Lista los ultimos N relampagos y para
+// cada uno: participantes, cargas que hicieron despues del relampago,
+// premio entregado, neto. Sirve para que el dueno vea si la estrategia esta
+// generando cargas reales mas alla del premio que reparte.
+async function viewLightningROI() {
+    let modal = document.getElementById('lightningROIModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'lightningROIModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #66ff66;border-radius:14px;max-width:920px;width:100%;margin:8px auto;padding:18px 16px;position:relative;"><button onclick="document.getElementById(\'lightningROIModal\').remove()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button><div id="lightningROIBody"><div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div></div></div>';
+    document.body.appendChild(modal);
+    try {
+        const r = await authFetch('/api/admin/raffles/lightning-roi?limit=20');
+        const d = await r.json();
+        if (!r.ok) {
+            document.getElementById('lightningROIBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>';
+            return;
+        }
+        document.getElementById('lightningROIBody').innerHTML = _renderLightningROI(d);
+    } catch (e) {
+        document.getElementById('lightningROIBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>';
+    }
+}
+
+function _renderLightningROI(d) {
+    const t = d.totals || {};
+    const items = d.raffles || [];
+    let html = '<h2 style="color:#66ff66;margin:0 0 4px;font-size:18px;">📊 ROI · Relámpago</h2>';
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">Para cada relámpago: cuánto cargaron los participantes <strong style="color:#66ff66;">después</strong> del sorteo (o desde que se creó si todavía no se sorteó). Comparado contra el premio entregado, te dice si el gancho está generando actividad real.</div>';
+
+    if (items.length === 0) {
+        html += '<div style="color:#888;text-align:center;padding:30px;">Aún no hay sorteos relámpago en la base.</div>';
+        return html;
+    }
+
+    // Totales arriba.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:14px;">';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Sorteos</div><div style="color:#fff;font-size:18px;font-weight:900;">' + (t.totalRaffles || 0) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Participaciones</div><div style="color:#fff;font-size:18px;font-weight:900;">' + (t.totalEntries || 0) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cargas POST</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + _fmtMoney(t.totalCargasPostAmount || 0) + '</div><div style="color:#aaa;font-size:10px;font-weight:600;">' + (t.totalCargasPostCount || 0) + ' cargas</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Premios entregados</div><div style="color:#ff8080;font-size:18px;font-weight:900;">' + _fmtMoney(t.totalPrizeAwarded || 0) + '</div></div>';
+    const netColor = (t.totalNet || 0) >= 0 ? '#66ff66' : '#ff8080';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Net (cargas − premio)</div><div style="color:' + netColor + ';font-size:18px;font-weight:900;">' + _fmtMoney(t.totalNet || 0) + '</div></div>';
+    html += '</div>';
+
+    // Tabla.
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:55vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '<thead style="position:sticky;top:0;background:#001a40;z-index:1;"><tr style="color:#66ff66;text-align:left;">';
+    html += '<th style="padding:8px 10px;font-weight:800;">#</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Sorteo</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Estado</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Anotados</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Premio</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Cargas POST</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Net</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const it of items) {
+        const stColor = it.status === 'drawn' ? '#00d4ff' : (it.status === 'closed' ? '#ffaa66' : (it.status === 'active' ? '#66ff66' : '#888'));
+        const drawnTxt = it.drawnAt ? new Date(it.drawnAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+        const netColor2 = (it.net || 0) >= 0 ? '#66ff66' : '#ff8080';
+        const forfeitBadge = it.forfeited ? ' <span style="color:#ff8080;font-size:9px;background:rgba(255,128,128,0.15);padding:1px 5px;border-radius:4px;border:1px solid #ff8080;">FORFEIT</span>' : '';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
+        html += '<td style="padding:8px 10px;color:#aaa;font-weight:700;">#' + (it.instanceNumber || '?') + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(it.name || '') + forfeitBadge + '<div style="color:#888;font-size:10px;font-weight:400;">' + drawnTxt + (it.winnerUsername ? ' · 🏆 ' + escapeHtml(it.winnerUsername) : '') + '</div></td>';
+        html += '<td style="padding:8px 10px;text-align:center;color:' + stColor + ';font-weight:800;">' + it.status + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;color:#fff;font-weight:700;">' + (it.totalEntries || 0) + '/' + (it.totalTickets || 0) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:right;color:' + (it.prizeAwarded > 0 ? '#ff8080' : '#666') + ';font-weight:800;">' + (it.prizeAwarded > 0 ? '−' + _fmtMoney(it.prizeAwarded) : '—') + '</td>';
+        html += '<td style="padding:8px 10px;text-align:right;color:#66ff66;font-weight:800;">+' + _fmtMoney(it.cargasPostAmount || 0) + '<div style="color:#aaa;font-size:10px;font-weight:600;">' + (it.cargasPostCount || 0) + ' cargas · ' + (it.cargasPostUsers || 0) + ' users</div></td>';
+        html += '<td style="padding:8px 10px;text-align:right;color:' + netColor2 + ';font-weight:900;">' + _fmtMoney(it.net || 0) + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
 function seedLightningRaffle() {
     let modal = document.getElementById('lightningConfigModal');
     if (modal) modal.remove();

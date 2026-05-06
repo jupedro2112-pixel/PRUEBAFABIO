@@ -12438,6 +12438,21 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         weeklyDeposits = 0;
       }
     }
+    // Cargas TOTALES del user (no solo semanales) para mostrar en el hero
+    // del relampago si el user esta enrollado: "tenes X de 5 cargas — te
+    // faltan Y para reclamar". Solo lo calculamos si hay relampago visible.
+    let lightningCargasCount = null;
+    const hasLightningVisible = raffles.some(r => r.raffleType === 'relampago');
+    if (hasLightningVisible) {
+      try {
+        lightningCargasCount = await Transaction.countDocuments({
+          username: { $regex: '^' + safe + '$', $options: 'i' },
+          type: 'deposit'
+        });
+      } catch (_) {
+        lightningCargasCount = null;
+      }
+    }
     const myByRaffle = {};
     for (const p of myPartsRes) myByRaffle[p.raffleId] = p;
 
@@ -12503,6 +12518,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       lotteryRule: RAFFLE_LOTTERY_RULE,
       autoEnrolled,
       weeklyDeposits,
+      lightningCargasCount,
+      lightningCargasRequired: 5,
       raffles: raffles.map(r => ({
         id: r.id,
         name: r.name,
@@ -13267,6 +13284,52 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
       });
     }
 
+    // RELAMPAGO: enriquecemos cada participant con cargas reales (deposits)
+    // hasta el drawnAt si ya se sorteo, o hasta ahora si esta vivo. Asi el
+    // admin ve cuantos califican para reclamar (>=5 cargas pre-draw).
+    const isLightning = raffle.raffleType === 'relampago';
+    const LIGHTNING_MIN_CARGAS = 5;
+    const cargasByUser = {};
+    if (isLightning) {
+      const cutoff = raffle.drawnAt ? new Date(raffle.drawnAt) : null;
+      const promises = parts.map(async (p) => {
+        const safe = String(p.username || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const filter = {
+          username: { $regex: '^' + safe + '$', $options: 'i' },
+          type: 'deposit'
+        };
+        if (cutoff) filter.timestamp = { $lt: cutoff };
+        try {
+          cargasByUser[String(p.username).toLowerCase()] = await Transaction.countDocuments(filter);
+        } catch (_) {
+          cargasByUser[String(p.username).toLowerCase()] = 0;
+        }
+      });
+      await Promise.all(promises);
+    }
+
+    const participants = parts.map(p => {
+      const cargasCount = isLightning
+        ? (cargasByUser[String(p.username).toLowerCase()] || 0)
+        : null;
+      return {
+        username: p.username,
+        cuposCount: p.cuposCount,
+        ticketNumbers: (p.ticketNumbers || []).slice().sort((a, b) => a - b),
+        entryCostPaid: p.entryCostPaid,
+        joinedAt: p.joinedAt,
+        lastBoughtAt: p.lastBoughtAt,
+        isWinner: p.isWinner,
+        // Solo para relampago. cutoffAt = drawnAt si sorteado, else null.
+        cargasCount,
+        cargasRequired: isLightning ? LIGHTNING_MIN_CARGAS : null,
+        qualifies: isLightning ? cargasCount >= LIGHTNING_MIN_CARGAS : null,
+        purchases: spendsByUser[String(p.username).toLowerCase()] || []
+      };
+    });
+
+    const totalQualifying = isLightning ? participants.filter(p => p.qualifies).length : null;
+
     res.json({
       raffle: {
         id: raffle.id, name: raffle.name, prizeName: raffle.prizeName,
@@ -13282,17 +13345,15 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         prizeClaimedAt: raffle.prizeClaimedAt,
         drawnAt: raffle.drawnAt
       },
-      participants: parts.map(p => ({
-        username: p.username,
-        cuposCount: p.cuposCount,
-        ticketNumbers: (p.ticketNumbers || []).slice().sort((a, b) => a - b),
-        entryCostPaid: p.entryCostPaid,
-        joinedAt: p.joinedAt,
-        lastBoughtAt: p.lastBoughtAt,
-        isWinner: p.isWinner,
-        // Historial de compras de este user en este sorteo (solo paid).
-        purchases: spendsByUser[String(p.username).toLowerCase()] || []
-      }))
+      participants,
+      lightning: isLightning ? {
+        minCargas: LIGHTNING_MIN_CARGAS,
+        totalQualifying,
+        cutoff: raffle.drawnAt ? new Date(raffle.drawnAt).toISOString() : null,
+        cutoffNote: raffle.drawnAt
+          ? 'Cargas con timestamp anterior al draw'
+          : 'Cargas hasta ahora (sorteo aún pendiente)'
+      } : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -13894,6 +13955,103 @@ app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware
 //
 // Body opcional: { prizeValueARS, totalTickets } para customizar el premio o cupo.
 // Defaults: $200.000 premio, 100 cupos, gratis.
+// GET /api/admin/raffles/lightning-roi — metricas de impacto de la estrategia
+// del relampago. Para cada sorteo relampago (drawn / closed / active), trae:
+//   - participantes,
+//   - cargas+monto totales DESDE drawnAt (o createdAt si aun no se sorteo),
+//   - premio entregado (si se sorteo y se acredito),
+//   - net = cargas_post - premio (positivo = relampago "se pago" via cargas).
+// Asi el admin ve si el gancho funciona como conversion a cargas reales.
+app.get('/api/admin/raffles/lightning-roi', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit, 10) || 20));
+    const raffles = await Raffle.find(
+      { raffleType: 'relampago' },
+      { id: 1, name: 1, prizeValueARS: 1, totalTickets: 1, _ticketCounter: 1, status: 1, drawnAt: 1, prizeClaimedAt: 1, prizeForfeitedAt: 1, createdAt: 1, instanceNumber: 1, winnerUsername: 1, isFree: 1, entryCost: 1 }
+    ).sort({ createdAt: -1 }).limit(limit).lean();
+
+    const items = [];
+    for (const r of raffles) {
+      const parts = await RaffleParticipation.find({ raffleId: r.id }, { username: 1, entryCostPaid: 1 }).lean();
+      const totalEntries = parts.length;
+      const totalEntryRevenue = parts.reduce((s, p) => s + (p.entryCostPaid || 0), 0);
+      const cutoff = r.drawnAt || r.createdAt;
+      // Cargas POST (timestamp >= cutoff) de los participantes, agregadas
+      // por suma de monto + count.
+      const usernames = parts.map(p => p.username);
+      let cargasPostCount = 0;
+      let cargasPostAmount = 0;
+      let cargasPostUsers = 0;
+      if (usernames.length > 0 && cutoff) {
+        const safeUsernames = usernames.map(u => '^' + String(u).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$');
+        const agg = await Transaction.aggregate([
+          { $match: {
+            type: 'deposit',
+            timestamp: { $gte: new Date(cutoff) },
+            $or: safeUsernames.map(re => ({ username: { $regex: re, $options: 'i' } }))
+          }},
+          { $group: {
+            _id: { $toLower: '$username' },
+            count: { $sum: 1 },
+            amount: { $sum: { $ifNull: ['$amount', 0] } }
+          }}
+        ]);
+        cargasPostUsers = agg.length;
+        for (const a of agg) {
+          cargasPostCount += a.count || 0;
+          cargasPostAmount += a.amount || 0;
+        }
+      }
+      const prizeAwarded = (r.status === 'drawn' && r.prizeClaimedAt && !r.prizeForfeitedAt)
+        ? Number(r.prizeValueARS) || 0
+        : 0;
+      items.push({
+        id: r.id,
+        name: r.name,
+        instanceNumber: r.instanceNumber,
+        status: r.status,
+        isFree: !!r.isFree,
+        entryCost: r.entryCost || 0,
+        prizeValueARS: r.prizeValueARS || 0,
+        cuposSold: r._ticketCounter || 0,
+        totalTickets: r.totalTickets || 0,
+        createdAt: r.createdAt,
+        drawnAt: r.drawnAt || null,
+        winnerUsername: r.winnerUsername || null,
+        forfeited: !!r.prizeForfeitedAt,
+        totalEntries,
+        totalEntryRevenue,
+        cargasPostCount,
+        cargasPostAmount,
+        cargasPostUsers,
+        prizeAwarded,
+        net: totalEntryRevenue + cargasPostAmount - prizeAwarded
+      });
+    }
+
+    // Totales agregados de todos los relampagos.
+    const totals = items.reduce((acc, it) => {
+      acc.totalRaffles += 1;
+      acc.totalEntries += it.totalEntries;
+      acc.totalEntryRevenue += it.totalEntryRevenue;
+      acc.totalCargasPostCount += it.cargasPostCount;
+      acc.totalCargasPostAmount += it.cargasPostAmount;
+      acc.totalPrizeAwarded += it.prizeAwarded;
+      acc.totalNet += it.net;
+      return acc;
+    }, {
+      totalRaffles: 0, totalEntries: 0, totalEntryRevenue: 0,
+      totalCargasPostCount: 0, totalCargasPostAmount: 0,
+      totalPrizeAwarded: 0, totalNet: 0
+    });
+
+    res.json({ raffles: items, totals });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/lightning-roi: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     // Tope: hasta 3 relampagos active+closed simultaneos. El admin arma el N°1

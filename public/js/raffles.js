@@ -409,19 +409,21 @@ VIP.raffles = (function () {
                 (youWon ? '🏆 ¡GANASTE EL RELÁMPAGO! Número #' + r.winningTicketNumber : '🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber) +
                 '</div>';
         } else if (enrolled && closed) {
-            // Anotado + cupo lleno: card con su numero + aviso fuerte de
-            // requisito de actividad para reclamar + boton CARGÁ ACÁ wa.link.
+            // Anotado + cupo lleno: card con su numero + estado de cargas
+            // (cuantas tiene / cuantas le faltan) + aviso + boton wa.link.
             html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;margin-bottom:10px;">';
             html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO · CUPO LLENO</div>';
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
+            html += _renderLightningEligibilityStatus();
             html += _renderLightningClaimWarning();
-            html += _renderLightningCargarBtn('💬 QUIERO JUGAR', 'Cargá ANTES del sorteo · 5 cargas mínimo para reclamar');
+            html += _renderLightningCargarBtn('💬 QUIERO JUGAR', 'Cargá ANTES del sorteo del LUNES · mínimo 5 para reclamar');
         } else if (enrolled) {
             html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;">';
             html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO</div>';
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
+            html += _renderLightningEligibilityStatus();
             html += _renderLightningClaimWarning();
         } else if (closed) {
             // Cupo lleno y NO anotado: aviso + upsell. El nuevo relampago
@@ -445,9 +447,10 @@ VIP.raffles = (function () {
                 ? '⚡ ELEGIR MI NÚMERO ($' + _fmt(entryCost) + ')'
                 : '⚡ ELEGIR MI NÚMERO GRATIS';
             html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);">' + btnLabel + '</button>';
-            // Aviso prominente abajo del CTA: para que sepan ANTES de anotarse
-            // que reclamar requiere actividad. Asi nadie se anota pensando
-            // que es plata caida del cielo.
+            // Aviso prominente abajo del CTA: estado de cargas del user +
+            // explicacion de la regla. Asi sabe ANTES de anotarse cuanto le
+            // falta para poder reclamar si sale ganador.
+            html += _renderLightningEligibilityStatus();
             html += _renderLightningClaimWarning();
         }
         html += '</div>';
@@ -457,10 +460,36 @@ VIP.raffles = (function () {
     // Aviso "para reclamar necesitas actividad". Va en el hero del relampago
     // tanto en activo (antes de anotarse) como en cerrado (despues que se
     // llena el cupo). El owner pidio que esto se vea muy claro.
+    // Estado de elegibilidad del USER actual: cuantas cargas tiene vs el
+    // minimo (5). Va arriba del warning generico para que el user vea SU
+    // numero personal. Lee de _data.lightningCargasCount (cargas totales
+    // hasta ahora — cuando se sortea, el server filtra por timestamp<drawnAt
+    // pero hasta el draw, contamos todas).
+    function _renderLightningEligibilityStatus() {
+        if (!_data || _data.lightningCargasCount == null) return '';
+        const have = Number(_data.lightningCargasCount) || 0;
+        const need = Number(_data.lightningCargasRequired) || 5;
+        const ok = have >= need;
+        const missing = Math.max(0, need - have);
+        if (ok) {
+            return '<div style="background:rgba(102,255,102,0.12);border:2px solid #66ff66;border-radius:10px;padding:11px;margin-top:8px;font-size:12.5px;color:#fff;text-align:center;font-weight:800;line-height:1.45;">' +
+                '<div style="color:#66ff66;font-size:14px;font-weight:900;margin-bottom:3px;">✅ Cumplís con ' + have + ' cargas</div>' +
+                '<div>Vas a poder reclamar el premio si ganás.</div>' +
+            '</div>';
+        }
+        return '<div style="background:rgba(255,170,102,0.15);border:2px solid #ffaa66;border-radius:10px;padding:11px;margin-top:8px;font-size:12.5px;color:#fff;text-align:center;font-weight:800;line-height:1.45;">' +
+            '<div style="color:#ffaa66;font-size:14px;font-weight:900;margin-bottom:3px;">⚠️ Tenés ' + have + ' de ' + need + ' cargas</div>' +
+            '<div>Te ' + (missing === 1 ? 'falta' : 'faltan') + ' <strong style="color:#ffd700;">' + missing + '</strong> ' + (missing === 1 ? 'carga' : 'cargas') + ' ANTES del sorteo para poder reclamar.</div>' +
+        '</div>';
+    }
+
     function _renderLightningClaimWarning() {
-        return '<div style="background:rgba(255,170,102,0.12);border:2px dashed #ffaa66;border-radius:10px;padding:11px;margin-top:8px;font-size:12px;line-height:1.5;color:#fff;text-align:center;font-weight:700;">' +
-            '<div style="color:#ffaa66;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">⚠️ Para reclamar el premio</div>' +
-            '<div style="color:#fff;">Necesitás <strong style="color:#ffd700;">mínimo 5 cargas ANTES del sorteo</strong>. Las cargas DESPUÉS del sorteo <strong style="color:#ff8080;">NO cuentan</strong>. Es <strong>EXCLUSIVO PARA CLIENTES ACTIVOS</strong>.</div>' +
+        return '<div style="background:rgba(255,170,102,0.12);border:2px dashed #ffaa66;border-radius:10px;padding:11px;margin-top:8px;font-size:11.5px;line-height:1.6;color:#fff;font-weight:700;">' +
+            '<div style="color:#ffaa66;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;text-align:center;">⚠️ Cómo funciona el RELÁMPAGO</div>' +
+            '<div style="margin-bottom:3px;">📅 <strong style="color:#ffd700;">Sorteo el LUNES</strong> en la Lotería Nacional Nocturna.</div>' +
+            '<div style="margin-bottom:3px;">🎯 Hasta <strong style="color:#ffd700;">3 sorteos RELÁMPAGO por ciclo</strong> (cuando se llena uno, abrimos el siguiente).</div>' +
+            '<div style="margin-bottom:3px;">💰 Para reclamar el premio: <strong style="color:#ffd700;">5 cargas reales VIGENTES ANTES del sorteo</strong>. Las cargas DESPUÉS del sorteo <strong style="color:#ff8080;">NO cuentan</strong>.</div>' +
+            '<div>👥 <strong>EXCLUSIVO para clientes activos.</strong> Sin actividad no se acredita el premio.</div>' +
         '</div>';
     }
 
