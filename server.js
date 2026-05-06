@@ -643,7 +643,7 @@ app.use(cors({
   exposedHeaders: ['X-Total-Count', 'X-RateLimit-Remaining']
 }));
 app.use('/api/', generalLimiter);
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(mongoSanitize());
 app.use(xss());
 
@@ -14326,7 +14326,7 @@ async function _fetchCsvFromUrl(url) {
     }
     const ct = String(r.headers.get('content-type') || '').toLowerCase();
     const text = await r.text();
-    if (text.length > 5 * 1024 * 1024) throw new Error('CSV muy grande (max 5MB)');
+    if (text.length > 20 * 1024 * 1024) throw new Error('CSV muy grande (max 20MB)');
     // Si vino HTML, la URL no es CSV. Probable: sheet sin compartir publico
     // o link del editor en otro dominio. Damos instrucciones claras.
     if (ct.includes('text/html') || /^\s*<!doctype\s+html|^\s*<html/i.test(text)) {

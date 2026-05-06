@@ -9057,7 +9057,7 @@ async function uploadSegmentSubmit(slug) {
     let body = null;
     if (fileInput && fileInput.files && fileInput.files[0]) {
         const f = fileInput.files[0];
-        if (f.size > 5 * 1024 * 1024) { alert('Archivo muy grande (max 5MB)'); return; }
+        if (f.size > 20 * 1024 * 1024) { alert('Archivo muy grande (max 20MB). Si excede, recortá por fechas o subí en partes.'); return; }
         const text = await f.text();
         body = { csv: text, filename: f.name };
     } else if (url) {
