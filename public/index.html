@@ -1674,8 +1674,13 @@
                 <a id="canalInformativoBtn" href="#" target="_blank" rel="noopener noreferrer" class="plataforma-btn" title="Canal Informativo" style="display:none;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);">
                     📢 CANAL INFORMATIVO
                 </a>
-                <!-- BOTÓN APP - Instalar PWA (siempre visible; se oculta cuando la app ya está instalada) -->
-                <button class="app-install-btn" id="appInstallBtn" title="Instalar App">
+                <!-- BOTÓN APP - Instalar PWA. SIEMPRE visible (display:flex inline)
+                     en cualquier browser. Si beforeinstallprompt esta disponible
+                     dispara el prompt nativo; sino abre el modal con instrucciones
+                     paso-a-paso (Android/iOS/desktop). Asi la gente puede llegar
+                     a instalar la app desde cualquier navegador. Solo se oculta
+                     cuando la app esta corriendo en modo standalone. -->
+                <button class="app-install-btn" id="appInstallBtn" title="Instalar App" style="display:flex;">
                     📱 APP
                 </button>
                 <!-- BOTÓN NOTIFICACIONES - Solo visible en modo standalone/PWA instalada -->

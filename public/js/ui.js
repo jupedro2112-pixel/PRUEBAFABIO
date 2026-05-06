@@ -786,12 +786,14 @@ window.addEventListener('appinstalled', () => {
     // sepamos que ya instalo la app y mostremos 'Ingresa desde la app' en lugar de
     // las instrucciones de instalacion.
     try { localStorage.setItem('vipAppInstalled', '1'); } catch (_) {}
+    // NO ocultamos el boton "📱 APP" del header (appInstallBtn): asi si el
+    // user desinstala la app y reinstala desde otro browser, sigue teniendo
+    // acceso al boton para abrir las instrucciones. Solo escondemos los
+    // botones del login/header secundario.
     const loginInstallBtn  = document.getElementById('installBtn');
     const headerInstallBtn = document.getElementById('headerInstallBtn');
-    const appInstallBtn    = document.getElementById('appInstallBtn');
     if (loginInstallBtn)  { loginInstallBtn.style.display = 'none'; loginInstallBtn.classList.add('hidden'); }
     if (headerInstallBtn) { headerInstallBtn.style.display = 'none'; headerInstallBtn.classList.add('hidden'); }
-    if (appInstallBtn)    { appInstallBtn.classList.add('hidden'); }
     window.deferredPrompt = null;
     VIP.ui.showToast('✅ App instalada exitosamente', 'success');
 });
