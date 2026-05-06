@@ -359,7 +359,7 @@ VIP.raffles = (function () {
     // Hero card del RELAMPAGO. Va arriba de todo con gradiente electrico
     // y mensaje "ENTRA Y MIRÁ". Si el user ya esta inscripto, muestra su
     // numero asignado en lugar del CTA.
-    function _renderLightningHero(r) {
+    function _renderLightningHero(r, balance) {
         const sold = r.cuposSold || 0;
         const total = r.totalTickets || 0;
         const fillPct = total ? Math.round((sold / total) * 100) : 0;
@@ -367,14 +367,17 @@ VIP.raffles = (function () {
         const enrolled = myNums.length > 0;
         const closed = r.status !== 'active';
         const drawn = r.status === 'drawn';
+        const entryCost = Number(r.entryCost) || 0;
+        const isPaid = entryCost > 0;
+        const canAfford = !isPaid || (Number(balance) || 0) >= entryCost;
 
         let html = '<div style="background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:18px;padding:18px 16px;margin-bottom:18px;box-shadow:0 0 30px rgba(255,235,59,0.40),0 4px 24px rgba(0,150,255,0.30);position:relative;overflow:hidden;">';
         html += '<div style="position:absolute;top:-15px;right:-15px;font-size:120px;opacity:0.10;line-height:1;">⚡</div>';
         const exclusive = !!r.requiresPaidTicket;
         const minCharges = Number(r.requiresMinChargesLastWeek) || 0;
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">';
-        html += '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>';
-        html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">GRATIS · 1 POR PERSONA</span>';
+        html += '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO' + (isPaid ? ' PAGO' : '') + '</span>';
+        html += '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">' + (isPaid ? '$' + _fmt(entryCost) + ' POR NÚMERO · 1 POR PERSONA' : 'GRATIS · 1 POR PERSONA') + '</span>';
         if (exclusive) {
             html += '<span style="background:rgba(255,107,107,0.30);color:#fff;padding:3px 8px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:1px;border:1px solid #ff8080;">SOLO CON PAGO PREVIO</span>';
         }
@@ -418,13 +421,37 @@ VIP.raffles = (function () {
             html += '<div style="color:#fff;font-size:14px;font-weight:900;margin-bottom:6px;">⏳ SORTEO LLENO · esperá el próximo</div>';
             html += '<div style="color:#ffeb3b;font-size:11.5px;font-weight:700;line-height:1.45;">Para participar del próximo sorteo <strong>GRATIS</strong> tenés que tener al menos <strong>1 número en algún sorteo pago</strong>.</div>';
             html += '</div>';
+        } else if (isPaid && !canAfford) {
+            // Relampago PAGO sin saldo: redirige a WhatsApp en vez del picker.
+            // Asi el user que entra sin plata sale derecho al WP a cargar
+            // (en lugar de toparse con un error de "saldo insuficiente"
+            // despues de tap el grid).
+            html += _renderLightningCargarBtn();
         } else {
-            // Boton para abrir el picker. El relampago usa el mismo flujo
-            // de buy que los pagos pero con entryCost=0 y limite 1 cupo.
-            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);">⚡ ELEGIR MI NÚMERO GRATIS</button>';
+            // Boton para abrir el picker. Reutiliza el mismo flujo de buy
+            // que los pagos. Para gratis: entryCost=0, salta saldo. Para
+            // pago: descuenta saldo en /buy.
+            const btnLabel = isPaid
+                ? '⚡ ELEGIR MI NÚMERO ($' + _fmt(entryCost) + ')'
+                : '⚡ ELEGIR MI NÚMERO GRATIS';
+            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);">' + btnLabel + '</button>';
         }
         html += '</div>';
         return html;
+    }
+
+    // Boton verde "QUIERO CARGAR" que abre WhatsApp. Reusa la linea principal
+    // del user (VIP.state.linePhone) — si no hay, fallback al wa.link de
+    // soporte. Mismo estilo que el QUIERO CARGAR del home (auth.js) para
+    // consistencia visual y para que el user lo identifique al toque.
+    function _renderLightningCargarBtn() {
+        const linePhone = (VIP && VIP.state && VIP.state.linePhone) || '';
+        const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
+        const href = waNum ? 'https://wa.me/' + waNum : 'https://wa.link/metawin2026';
+        return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" style="display:block;width:100%;background:linear-gradient(135deg,#0f4c00,#1a8200);color:#fff;text-decoration:none;text-align:center;border:2px solid #66ff66;padding:13px;border-radius:10px;font-weight:900;font-size:14.5px;letter-spacing:1px;box-shadow:0 4px 12px rgba(102,255,102,0.30);box-sizing:border-box;">' +
+            '<div style="font-size:12px;font-weight:700;color:#aaffaa;margin-bottom:3px;">No tenés saldo suficiente</div>' +
+            '<div>💬 QUIERO CARGAR</div>' +
+        '</a>';
     }
 
     function _render() {
@@ -458,7 +485,7 @@ VIP.raffles = (function () {
 
         // === HERO RELAMPAGO === (arriba de todo)
         if (heroLightning) {
-            html += _renderLightningHero(heroLightning);
+            html += _renderLightningHero(heroLightning, balance);
         }
 
         // === SORTEADOS RECIENTES (compacto, arriba) ===
@@ -944,7 +971,7 @@ VIP.raffles = (function () {
     async function loadHomeWinnerBanner() {
         const container = document.getElementById('raffleWinnerHomeBanner');
         if (!container) return;
-        let winners = [], lightning = null;
+        let winners = [], lightning = null, homeBalance = null;
         try {
             const r = await fetch(VIP.config.API_URL + '/api/raffles/recent-winners?hours=6', {
                 headers: { 'Authorization': 'Bearer ' + VIP.state.currentToken }
@@ -953,6 +980,7 @@ VIP.raffles = (function () {
                 const j = await r.json();
                 winners = (j && j.winners) || [];
                 lightning = j && j.lightning;
+                homeBalance = j && (j.balance != null ? j.balance : null);
             }
         } catch (e) { /* fallback al CTA default */ }
 
@@ -966,7 +994,11 @@ VIP.raffles = (function () {
         if (myWin) {
             html = _renderHomeWinnerMine(myWin);
         } else if (lightning) {
-            html = _renderHomeLightningHero(lightning);
+            // Si hay relampago activo, mostramos el hero electrico ARRIBA y
+            // el CTA verde de sorteos semanales ABAJO. Antes solo se veia el
+            // relampago y el user perdia acceso visual a los sorteos pagos /
+            // gratis semanales desde el home.
+            html = _renderHomeLightningHero(lightning, homeBalance) + _renderHomeDefaultCta();
         } else if (winners.length > 0) {
             html = _renderHomeWinnerOthers(winners[0]);
         } else {
@@ -990,24 +1022,41 @@ VIP.raffles = (function () {
 
     // Hero del RELAMPAGO en el HOME (no en el modal). Mas pequenio y
     // clickeable -> abre el modal donde la card grande tiene mas detalle.
-    function _renderHomeLightningHero(l) {
+    function _renderHomeLightningHero(l, balance) {
         const sold = l.cuposSold || 0;
         const total = l.totalTickets || 0;
         const fillPct = total ? Math.round((sold / total) * 100) : 0;
         const enrolled = l.myTicket != null;
+        const entryCost = Number(l.entryCost) || 0;
+        const isPaid = entryCost > 0 && !l.isFree;
+        const canAfford = !isPaid || (Number(balance) || 0) >= entryCost;
+        // Si es PAGO y no alcanza el saldo, el card NO abre el picker:
+        // redirige al WhatsApp de carga (igual que el card del modal).
+        const linePhone = (VIP && VIP.state && VIP.state.linePhone) || '';
+        const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
+        const cargarHref = waNum ? 'https://wa.me/' + waNum : 'https://wa.link/metawin2026';
+        const showCargar = isPaid && !canAfford && l.status === 'active' && !enrolled;
         // El click abre el picker DIRECTO sobre este sorteo en vez del modal
         // generico (que mostraba todos los demas sorteos y mareaba al user).
         // openAndPickRaffle hace open() para cargar data + openPicker(id) para
         // saltar derecho al grid 1-100. Si esta cerrado/sorteado, solo abre
         // el modal (no hay picker que mostrar).
-        const clickAction = (l.status === 'active' && !enrolled)
-            ? 'VIP.raffles && VIP.raffles.openAndPickRaffle(' + JSON.stringify(l.id) + ')'
-            : 'VIP.raffles && VIP.raffles.open()';
+        const clickAction = showCargar
+            ? "window.open(" + JSON.stringify(cargarHref) + ",'_blank')"
+            : ((l.status === 'active' && !enrolled)
+                ? 'VIP.raffles && VIP.raffles.openAndPickRaffle(' + JSON.stringify(l.id) + ')'
+                : 'VIP.raffles && VIP.raffles.open()');
+        const badgeTxt = isPaid
+            ? ('$' + _fmt(entryCost) + ' POR NÚMERO · MÁXIMO 1 POR PERSONA')
+            : 'SIN CARGO · MÁXIMO 1 POR PERSONA';
+        const ctaLabel = isPaid
+            ? '⚡ ELEGIR MI NÚMERO ($' + _fmt(entryCost) + ')'
+            : '⚡ ELEGIR MI NÚMERO GRATIS';
         return '<div onclick="' + clickAction + '" style="cursor:pointer;background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,235,59,0.50),0 4px 18px rgba(0,150,255,0.30);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;line-height:1;">⚡</div>' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">' +
-                '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO</span>' +
-                '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">SIN CARGO · MÁXIMO 1 POR PERSONA</span>' +
+                '<span style="background:#ffeb3b;color:#001a40;padding:3px 9px;border-radius:6px;font-size:10px;font-weight:900;letter-spacing:2px;">⚡ RELÁMPAGO' + (isPaid ? ' PAGO' : '') + '</span>' +
+                '<span style="color:#fff;font-size:10px;font-weight:800;letter-spacing:1px;">' + badgeTxt + '</span>' +
             '</div>' +
             '<div style="color:#fff;font-size:20px;font-weight:900;line-height:1.1;text-shadow:0 2px 6px rgba(0,0,0,0.50);margin:4px 0 6px;">Premio $' + _fmt(l.prizeValueARS) + '</div>' +
             (enrolled
@@ -1021,9 +1070,14 @@ VIP.raffles = (function () {
                         '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
                       '<div style="display:flex;justify-content:space-between;font-size:11px;color:#fff;font-weight:700;margin-bottom:6px;">' +
                         '<span>' + sold + '/' + total + ' anotados</span>' +
-                        '<span>👉 ENTRÁ Y ELEGÍ TU NÚMERO</span>' +
+                        '<span>' + (showCargar ? '💬 CARGÁ Y ENTRÁ' : '👉 ENTRÁ Y ELEGÍ TU NÚMERO') + '</span>' +
                       '</div>' +
-                      '<div style="background:#ffeb3b;color:#001a40;border-radius:8px;padding:9px;text-align:center;font-weight:900;font-size:13px;letter-spacing:1px;margin-top:4px;box-shadow:0 2px 8px rgba(255,235,59,0.40);">⚡ ELEGIR MI NÚMERO GRATIS</div>'
+                      (showCargar
+                        ? '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200);color:#fff;border:2px solid #66ff66;border-radius:8px;padding:9px;text-align:center;font-weight:900;font-size:13px;letter-spacing:1px;margin-top:4px;box-shadow:0 2px 8px rgba(102,255,102,0.40);">' +
+                            '<div style="font-size:10.5px;color:#aaffaa;font-weight:700;margin-bottom:2px;">No tenés saldo suficiente</div>' +
+                            '<div>💬 QUIERO CARGAR</div>' +
+                          '</div>'
+                        : '<div style="background:#ffeb3b;color:#001a40;border-radius:8px;padding:9px;text-align:center;font-weight:900;font-size:13px;letter-spacing:1px;margin-top:4px;box-shadow:0 2px 8px rgba(255,235,59,0.40);">' + ctaLabel + '</div>')
                   )
             ) +
         '</div>';

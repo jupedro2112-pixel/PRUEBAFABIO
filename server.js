@@ -12529,10 +12529,11 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
     // El home usa esto para renderizar el hero electrico arriba del card
     // generico de "SORTEOS SEMANALES".
     let lightning = null;
+    let homeBalance = null;
     try {
       const light = await Raffle.findOne(
         { raffleType: 'relampago', status: { $in: ['active', 'closed'] } },
-        { id: 1, name: 1, prizeValueARS: 1, totalTickets: 1, _ticketCounter: 1, status: 1, drawDate: 1, emoji: 1 }
+        { id: 1, name: 1, prizeValueARS: 1, totalTickets: 1, _ticketCounter: 1, status: 1, drawDate: 1, emoji: 1, entryCost: 1, isFree: 1 }
       ).lean();
       if (light) {
         const myUsername = (req.user && req.user.username) || '';
@@ -12541,6 +12542,15 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
           { raffleId: light.id, username: { $regex: '^' + safeUser + '$', $options: 'i' } },
           { ticketNumbers: 1 }
         ).lean();
+        // Si el relampago es PAGO, traemos balance para que el front decida
+        // mostrar "QUIERO CARGAR" vs "ELEGIR MI NÚMERO ($X)" sin un round trip
+        // extra. Si es gratis, no necesitamos balance.
+        if (!light.isFree && (light.entryCost || 0) > 0) {
+          try {
+            const info = await jugaygana.getUserInfoByName(myUsername);
+            homeBalance = info && info.balance != null ? Number(info.balance) : 0;
+          } catch (_) { homeBalance = null; }
+        }
         lightning = {
           id: light.id,
           name: light.name,
@@ -12550,13 +12560,15 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
           status: light.status,
           drawDate: light.drawDate,
           emoji: light.emoji || '⚡',
+          entryCost: light.entryCost || 0,
+          isFree: !!light.isFree,
           myTicket: (myPart && myPart.ticketNumbers && myPart.ticketNumbers[0]) || null
         };
       }
     } catch (e) {
       logger.warn(`[raffles] recent-winners lightning fetch fail: ${e.message}`);
     }
-    res.json({ winners, windowHours: hours, lightning });
+    res.json({ winners, windowHours: hours, lightning, balance: homeBalance });
   } catch (err) {
     logger.error(`/api/raffles/recent-winners: ${err.message}`);
     res.status(500).json({ error: 'Error obteniendo ganadores recientes' });
@@ -13710,6 +13722,14 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
     const b = req.body || {};
     const prizeValueARS = Math.max(1, parseInt(b.prizeValueARS, 10) || LIGHTNING_RAFFLE_CONFIG.prize);
     const totalTickets = Math.max(2, Math.min(1000, parseInt(b.totalTickets, 10) || LIGHTNING_RAFFLE_CONFIG.totalTickets));
+    // Default: gratis (legacy). Admin puede pasar isFree=false + entryCost>0
+    // para crear un RELAMPAGO pago. Mismo flujo que los pagos semanales — el
+    // /buy descuenta saldo y si no alcanza, el front muestra QUIERO CARGAR.
+    const isFreeIn = (typeof b.isFree === 'boolean') ? b.isFree : true;
+    const entryCostIn = isFreeIn ? 0 : Math.max(1, parseInt(b.entryCost, 10) || 0);
+    if (!isFreeIn && entryCostIn < 1) {
+      return res.status(400).json({ error: 'Para un RELÁMPAGO PAGO, entryCost debe ser ≥ 1.' });
+    }
 
     const prevCount = await Raffle.countDocuments({ raffleType: 'relampago' });
     // Regla del owner: el PRIMER relampago es para todos (hook). A partir
@@ -13745,18 +13765,20 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
     const id = uuidv4();
     const description = requiresPaidTicket
       ? 'Sorteo RELÁMPAGO. Solo para clientes con al menos 1 número en sorteos pagos. ¡Entrá y mirá!'
-      : 'Sorteo RELÁMPAGO. Inscripción gratuita por única vez. ¡Entrá y mirá si hay cupo!';
+      : (isFreeIn
+        ? 'Sorteo RELÁMPAGO. Inscripción gratuita por única vez. ¡Entrá y mirá si hay cupo!'
+        : `Sorteo RELÁMPAGO PAGO. Entrada $${entryCostIn.toLocaleString('es-AR')} por número. ¡Entrá rápido antes que se llene!`);
     const created = await Raffle.create({
       id,
       raffleType: 'relampago',
       instanceNumber: prevCount + 1,
-      name: prizeValueARS === LIGHTNING_RAFFLE_CONFIG.prize
+      name: prizeValueARS === LIGHTNING_RAFFLE_CONFIG.prize && isFreeIn
         ? LIGHTNING_RAFFLE_CONFIG.name
-        : `⚡ RELÁMPAGO · $${prizeValueARS.toLocaleString('es-AR')}`,
+        : `⚡ RELÁMPAGO${isFreeIn ? '' : ' PAGO'} · $${prizeValueARS.toLocaleString('es-AR')}`,
       prizeName: `$${prizeValueARS.toLocaleString('es-AR')} en saldo`,
       description,
       emoji: '⚡',
-      entryCost: 0,
+      entryCost: entryCostIn,
       totalTickets,
       prizeValueARS,
       _ticketCounter: 0,
@@ -13764,7 +13786,7 @@ app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddlewa
       drawDate: drawArg,
       weekKey,
       status: 'active',
-      isFree: true,
+      isFree: isFreeIn,
       minCargasARS: 0,
       requiresPaidTicket,
       audienceMode,

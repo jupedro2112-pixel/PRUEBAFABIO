@@ -9999,6 +9999,18 @@ function seedLightningRaffle() {
                 '</div>' +
             '</div>' +
 
+            '<label style="display:flex;align-items:flex-start;gap:8px;background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;">' +
+                '<input type="checkbox" id="lightIsPaid" onchange="_lightTogglePaid()" style="margin-top:2px;flex-shrink:0;">' +
+                '<div style="flex:1;">' +
+                    '<div style="color:#d4af37;font-size:12px;font-weight:800;">💰 Sorteo PAGO (descuenta saldo)</div>' +
+                    '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:2px;">Sin tildar = gratis (default). Tildado = se descuenta saldo. Si el user no tiene saldo, le mostramos el botón <strong style="color:#66ff66;">💬 QUIERO CARGAR</strong> que abre WhatsApp.</div>' +
+                    '<div id="lightEntryCostBox" style="display:none;margin-top:8px;">' +
+                        '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Entrada (ARS por número)</label>' +
+                        '<input id="lightEntryCost" type="number" min="1" step="100" value="1000" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(212,175,55,0.40);padding:9px 10px;border-radius:6px;font-size:14px;margin-top:3px;box-sizing:border-box;">' +
+                    '</div>' +
+                '</div>' +
+            '</label>' +
+
             '<label style="display:flex;align-items:flex-start;gap:8px;background:rgba(255,235,59,0.06);border:1px solid rgba(255,235,59,0.30);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;">' +
                 '<input type="checkbox" id="lightRequirePaid" style="margin-top:2px;flex-shrink:0;">' +
                 '<div>' +
@@ -10049,6 +10061,13 @@ function seedLightningRaffle() {
     setTimeout(() => { try { document.getElementById('lightPrize').focus(); document.getElementById('lightPrize').select(); } catch (_) {} }, 100);
 }
 
+// Toggle de la seccion de "Entrada (ARS)" cuando se tilda PAGO. Idempotente.
+function _lightTogglePaid() {
+    const chk = document.getElementById('lightIsPaid');
+    const box = document.getElementById('lightEntryCostBox');
+    if (box) box.style.display = (chk && chk.checked) ? 'block' : 'none';
+}
+
 // Toggle de los paneles de audiencia segun el modo seleccionado:
 //   'all'           -> nada visible
 //   'except'/'only' -> lista de equipos (carga lazy 1 sola vez)
@@ -10097,11 +10116,14 @@ async function seedLightningRaffleSubmit() {
     if (seedLightningRaffleSubmit._busy) return;
     const prize = parseInt(document.getElementById('lightPrize')?.value, 10);
     const cupos = parseInt(document.getElementById('lightCupos')?.value, 10);
+    const isPaid = !!document.getElementById('lightIsPaid')?.checked;
+    const entryCost = isPaid ? parseInt(document.getElementById('lightEntryCost')?.value, 10) : 0;
     const requiresPaidTicket = !!document.getElementById('lightRequirePaid')?.checked;
     const requiresMinChargesLastWeek = Math.max(0, Math.min(50, parseInt(document.getElementById('lightMinChargesWeek')?.value, 10) || 0));
     const autoAnnounce = !!document.getElementById('lightAutoAnnounce')?.checked;
     if (!Number.isFinite(prize) || prize < 100) { alert('Premio inválido (mínimo $100).'); return; }
     if (!Number.isFinite(cupos) || cupos < 2 || cupos > 1000) { alert('Cupos inválidos (2 a 1000).'); return; }
+    if (isPaid && (!Number.isFinite(entryCost) || entryCost < 1)) { alert('Para un RELÁMPAGO PAGO, la entrada debe ser ≥ $1.'); return; }
 
     // Audiencia: lee modo + equipos / usernames segun el panel visible.
     let audienceMode = 'all';
@@ -10130,6 +10152,8 @@ async function seedLightningRaffleSubmit() {
             body: JSON.stringify({
                 prizeValueARS: prize,
                 totalTickets: cupos,
+                isFree: !isPaid,
+                entryCost,
                 requiresPaidTicket,
                 requiresMinChargesLastWeek,
                 audienceMode,
@@ -10150,10 +10174,12 @@ async function seedLightningRaffleSubmit() {
         // el resto, mandar push a todos seria contraproducente.
         if (autoAnnounce && audienceMode !== 'user') {
             announceRaffleOpen(d.raffle.id, {
-                title: '⚡ Nuevo sorteo RELÁMPAGO · $' + (d.raffle.prizeValueARS || prize).toLocaleString('es-AR'),
+                title: '⚡ Nuevo sorteo RELÁMPAGO' + (isPaid ? ' PAGO' : '') + ' · $' + (d.raffle.prizeValueARS || prize).toLocaleString('es-AR'),
                 body: requiresPaidTicket
                     ? '¡Solo para clientes con número pago previo! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena.'
-                    : '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo. 1 número por persona.',
+                    : (isPaid
+                        ? ('Entrada $' + entryCost.toLocaleString('es-AR') + ' por número · 1 por persona. Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo.')
+                        : '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo. 1 número por persona.'),
                 presetType: 'relampago'
             });
         }
