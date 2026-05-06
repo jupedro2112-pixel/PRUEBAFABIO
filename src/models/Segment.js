@@ -32,6 +32,11 @@ const segmentSchema = new mongoose.Schema({
   // Categoria visual (color/icon). Cualquier string corto que el front mapea.
   // Ej: 'top', 'recovery', 'wp', 'app', 'bonus', 'lightning', 'custom'.
   kind: { type: String, default: 'custom', maxlength: 32 },
+  // Si es true, este segmento es la "fuente maestra" usada por otras
+  // secciones del admin (ej. analisis de relampago) cuando el admin pide
+  // "Analizar con archivo maestro" en vez de cruzar contra JUGAYGANA live.
+  // Solo UN segmento puede ser master a la vez (validacion en server).
+  isMaster: { type: Boolean, default: false, index: true },
 
   // Lista de usernames del ultimo upload. Se REEMPLAZA en cada subida.
   // Lowercase + trim para matching consistente.

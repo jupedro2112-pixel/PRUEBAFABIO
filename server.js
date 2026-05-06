@@ -13371,16 +13371,20 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
       });
     }
 
-    // RELAMPAGO: enriquecemos cada participant con cargas REALES de JUGAYGANA
-    // (misma fuente que el panel del admin). Cutoff por default = drawnAt si
-    // ya se sorteo, o el query param ?cutoff=<ISO> si el admin paso uno
-    // (ej. para simular: "si fuera el lunes que viene, quien califica?").
-    // Sin cutoff = hasta ahora.
+    // RELAMPAGO: enriquecemos cada participant con count de cargas. Hay 2
+    // fuentes posibles, controladas por ?source:
+    //   - source=master (con ?from/?to opcional): lee las cargas del
+    //     segmento Master cargado desde Drive/CSV. Mucho mas rapido y
+    //     consistente con lo que el admin esta analizando en Segmentos.
+    //   - source=live (default): cuenta cargas reales en JUGAYGANA (lento
+    //     pero siempre actualizado).
     const isLightning = raffle.raffleType === 'relampago';
     const LIGHTNING_MIN_CARGAS = 5;
     const cargasByUser = {};
+    const cargasAmountByUser = {};
     let cutoffMs = null;
     let cutoffSource = 'live';
+    let masterUsedInfo = null;
     if (isLightning) {
       const queryCutoff = req.query && req.query.cutoff ? new Date(req.query.cutoff) : null;
       if (queryCutoff && !isNaN(queryCutoff.getTime())) {
@@ -13390,21 +13394,50 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         cutoffMs = new Date(raffle.drawnAt).getTime();
         cutoffSource = 'drawnAt';
       }
-      // Concurrency 5 (igual que weeklyStrategyService) para no saturar JUGAYGANA.
-      const concurrency = 5;
-      for (let i = 0; i < parts.length; i += concurrency) {
-        const slice = parts.slice(i, i + concurrency);
-        const results = await Promise.all(slice.map(p => _getLightningCargasCount(p.username, cutoffMs)));
-        for (let j = 0; j < slice.length; j++) {
-          cargasByUser[String(slice[j].username).toLowerCase()] = results[j];
+      const sourceMode = String((req.query && req.query.source) || 'live').toLowerCase();
+      if (sourceMode === 'master') {
+        // Leer del segmento maestro. Range opcional from/to (over-rides cutoff).
+        const master = await Segment.findOne({ isMaster: true }).lean();
+        if (!master) {
+          return res.status(400).json({ error: 'No hay segmento marcado como Maestro. Ir a Segmentos y marcar uno.' });
+        }
+        const fromQ = req.query.from ? new Date(req.query.from) : null;
+        const toQ = req.query.to ? new Date(req.query.to) : null;
+        const fromMs = fromQ && !isNaN(fromQ.getTime()) ? fromQ.getTime() : null;
+        const toMs = toQ && !isNaN(toQ.getTime()) ? toQ.getTime() : (cutoffMs || null);
+        masterUsedInfo = {
+          slug: master.slug,
+          name: master.name,
+          fromMs, toMs,
+          rowsCount: (master.rows || []).length
+        };
+        // No hace falta concurrency — todo en memoria.
+        for (const p of parts) {
+          const ul = String(p.username || '').toLowerCase().trim();
+          if (!ul) { cargasByUser[ul] = 0; continue; }
+          const r = await _getMasterCargasForUser(master, ul, fromMs, toMs);
+          cargasByUser[ul] = r.count;
+          cargasAmountByUser[ul] = r.amount;
+        }
+      } else {
+        // Live (JUGAYGANA). Concurrency 5 para no saturar.
+        const concurrency = 5;
+        for (let i = 0; i < parts.length; i += concurrency) {
+          const slice = parts.slice(i, i + concurrency);
+          const results = await Promise.all(slice.map(p => _getLightningCargasCount(p.username, cutoffMs)));
+          for (let j = 0; j < slice.length; j++) {
+            cargasByUser[String(slice[j].username).toLowerCase()] = results[j];
+          }
         }
       }
     }
 
     const participants = parts.map(p => {
+      const lower = String(p.username).toLowerCase();
       const cargasCount = isLightning
-        ? (cargasByUser[String(p.username).toLowerCase()] || 0)
+        ? (cargasByUser[lower] || 0)
         : null;
+      const cargasAmount = isLightning ? (cargasAmountByUser[lower] || null) : null;
       return {
         username: p.username,
         cuposCount: p.cuposCount,
@@ -13413,11 +13446,11 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         joinedAt: p.joinedAt,
         lastBoughtAt: p.lastBoughtAt,
         isWinner: p.isWinner,
-        // Solo para relampago. cutoffAt = drawnAt si sorteado, else null.
         cargasCount,
+        cargasAmount,
         cargasRequired: isLightning ? LIGHTNING_MIN_CARGAS : null,
         qualifies: isLightning ? cargasCount >= LIGHTNING_MIN_CARGAS : null,
-        purchases: spendsByUser[String(p.username).toLowerCase()] || []
+        purchases: spendsByUser[lower] || []
       };
     });
 
@@ -13444,11 +13477,17 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         totalQualifying,
         cutoff: cutoffMs ? new Date(cutoffMs).toISOString() : null,
         cutoffSource,
-        cutoffNote: cutoffSource === 'query'
-          ? 'Cargas con timestamp anterior a la fecha que elegiste'
-          : (cutoffSource === 'drawnAt'
-            ? 'Cargas con timestamp anterior al draw'
-            : 'Cargas hasta ahora (sorteo aún pendiente)')
+        sourceMode: masterUsedInfo ? 'master' : 'live',
+        masterUsed: masterUsedInfo,
+        cutoffNote: masterUsedInfo
+          ? ('Cargas leídas del archivo Maestro "' + (masterUsedInfo.name || masterUsedInfo.slug) + '"' +
+             (masterUsedInfo.fromMs ? ' · desde ' + new Date(masterUsedInfo.fromMs).toLocaleString('es-AR') : '') +
+             (masterUsedInfo.toMs ? ' · hasta ' + new Date(masterUsedInfo.toMs).toLocaleString('es-AR') : ''))
+          : (cutoffSource === 'query'
+            ? 'Cargas con timestamp anterior a la fecha que elegiste'
+            : (cutoffSource === 'drawnAt'
+              ? 'Cargas con timestamp anterior al draw'
+              : 'Cargas hasta ahora (sorteo aún pendiente)'))
       } : null
     });
   } catch (err) {
@@ -14432,6 +14471,7 @@ app.get('/api/admin/segments', authMiddleware, adminMiddleware, async (req, res)
         name: s.name,
         description: s.description || '',
         kind: s.kind || 'custom',
+        isMaster: !!s.isMaster,
         userCount: (s.usernames || []).length,
         uploadsCount: (s.uploads || []).length,
         lastUploadAt: s.uploads && s.uploads.length > 0 ? s.uploads[s.uploads.length - 1].at : null,
@@ -14478,6 +14518,52 @@ app.delete('/api/admin/segments/:slug', authMiddleware, superAdminMiddleware, as
     res.status(500).json({ error: err.message });
   }
 });
+
+// POST /api/admin/segments/:slug/master — marca este segmento como Master.
+// Solo UNO puede ser master a la vez — desmarca los demas.
+// Body: { isMaster: true|false }. Default true.
+app.post('/api/admin/segments/:slug/master', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').toLowerCase();
+    const seg = await Segment.findOne({ slug });
+    if (!seg) return res.status(404).json({ error: 'Segmento no encontrado' });
+    const setMaster = (req.body && typeof req.body.isMaster === 'boolean') ? req.body.isMaster : true;
+    if (setMaster) {
+      // Desmarca cualquier otro master.
+      await Segment.updateMany({ slug: { $ne: slug }, isMaster: true }, { $set: { isMaster: false } });
+      seg.isMaster = true;
+    } else {
+      seg.isMaster = false;
+    }
+    await seg.save();
+    res.json({ success: true, isMaster: seg.isMaster });
+  } catch (err) {
+    logger.error(`/api/admin/segments/:slug/master: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cuenta cargas (deposits) de un user en el segmento Maestro, en un rango de
+// fechas opcional. Reusa _normalizeTxLog format guardado en seg.rows. Mucho
+// mas rapido que ir a JUGAYGANA por cada user (es un find local + filter en
+// memoria).
+async function _getMasterCargasForUser(masterSeg, username, fromMs, toMs) {
+  if (!masterSeg || !masterSeg.rows || masterSeg.rows.length === 0) {
+    return { count: 0, amount: 0, hasAny: false };
+  }
+  const userLower = String(username || '').toLowerCase().trim();
+  if (!userLower) return { count: 0, amount: 0, hasAny: false };
+  let count = 0, amount = 0;
+  for (const r of masterSeg.rows) {
+    if (!r.u || r.kind !== 'deposit') continue;
+    if (r.u !== userLower) continue;
+    if (fromMs != null && r.t != null && r.t < fromMs) continue;
+    if (toMs != null && r.t != null && r.t > toMs) continue;
+    count++;
+    amount += r.amount || 0;
+  }
+  return { count, amount, hasAny: count > 0 };
+}
 
 // POST /api/admin/segments/:slug/upload — sube CSV (texto) o URL Sheets.
 // Body: { csv: "...", url: "https://..." }  — uno de los dos.

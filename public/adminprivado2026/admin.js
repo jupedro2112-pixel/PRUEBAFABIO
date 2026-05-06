@@ -8943,13 +8943,20 @@ async function loadSegmentsAdmin() {
                 : (s.lastUploadSource === 'lightning' ? '⚡ Relámpago'
                 : (s.lastUploadSource === 'file' ? '📄 Archivo' : ''));
             html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
-            html += '<td style="padding:9px 10px;color:#fff;font-weight:700;">' + escapeHtml(s.name) + '<div style="color:#888;font-size:10px;font-weight:400;">' + escapeHtml(s.slug) + (s.description ? ' · ' + escapeHtml(s.description) : '') + '</div></td>';
+            const masterBadge = s.isMaster ? ' <span style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;font-size:9.5px;font-weight:900;padding:1px 6px;border-radius:4px;letter-spacing:1px;">🌟 MASTER</span>' : '';
+            html += '<td style="padding:9px 10px;color:#fff;font-weight:700;">' + escapeHtml(s.name) + masterBadge + '<div style="color:#888;font-size:10px;font-weight:400;">' + escapeHtml(s.slug) + (s.description ? ' · ' + escapeHtml(s.description) : '') + '</div></td>';
             html += '<td style="padding:9px 10px;text-align:center;color:#00d4ff;font-weight:800;">' + (s.userCount || 0) + '</td>';
             html += '<td style="padding:9px 10px;text-align:center;color:#aaa;">' + (s.uploadsCount || 0) + '</td>';
             html += '<td style="padding:9px 10px;color:#ddd;font-size:11px;">' + last + (sourceTag ? ' <span style="color:#888;">· ' + sourceTag + '</span>' : '') + '</td>';
             html += '<td style="padding:9px 10px;display:flex;gap:5px;flex-wrap:wrap;">';
             html += '<button type="button" onclick="viewSegment(' + escapeJsArg(s.slug) + ')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">📋 Detalle</button>';
             html += '<button type="button" onclick="uploadSegmentModal(' + escapeJsArg(s.slug) + ')" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">⬆️ Subir</button>';
+            const masterBtnLabel = s.isMaster ? '🌟 Master' : '☆ Master';
+            const masterBtnTitle = s.isMaster ? 'Este segmento es el archivo Maestro (usado por análisis cross-section). Tocá para desmarcarlo.' : 'Marcar como archivo Maestro (lo usan otras secciones para analizar).';
+            const masterBtnStyle = s.isMaster
+                ? 'background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;'
+                : 'background:rgba(255,215,0,0.06);color:#ffd700;border:1px solid rgba(255,215,0,0.40);';
+            html += '<button type="button" title="' + escapeHtml(masterBtnTitle) + '" onclick="toggleMasterSegment(' + escapeJsArg(s.slug) + ',' + (s.isMaster ? 'false' : 'true') + ')" style="' + masterBtnStyle + 'padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">' + masterBtnLabel + '</button>';
             html += '<button type="button" onclick="deleteSegment(' + escapeJsArg(s.slug) + ')" style="background:rgba(255,107,107,0.10);color:#ff8080;border:1px solid rgba(255,107,107,0.40);padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">🗑️</button>';
             html += '</td>';
             html += '</tr>';
@@ -9107,6 +9114,22 @@ async function uploadSegmentSubmit(slug) {
         document.getElementById('uploadSegmentModal')?.remove();
         uploadSegmentModal(slug);
     } finally { uploadSegmentSubmit._busy = false; }
+}
+
+async function toggleMasterSegment(slug, makeMaster) {
+    const action = makeMaster ? 'marcar como Maestro' : 'desmarcar como Maestro';
+    if (!confirm('¿' + action.charAt(0).toUpperCase() + action.slice(1) + ' el segmento "' + slug + '"?' + (makeMaster ? '\n\nVa a desmarcar a cualquier otro Maestro existente.' : ''))) return;
+    try {
+        const r = await authFetch('/api/admin/segments/' + encodeURIComponent(slug) + '/master', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isMaster: !!makeMaster })
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast(makeMaster ? '🌟 Marcado como Maestro' : '☆ Desmarcado', 'success');
+        loadSegmentsAdmin();
+    } catch (e) { alert('Error de conexión'); }
 }
 
 async function deleteSegment(slug) {
@@ -10243,7 +10266,7 @@ async function toggleHistoryDetail(weekKey) {
     if (c) c.innerHTML = _renderRafflesAdmin();
 }
 
-async function viewRaffleParticipants(id, cutoffISO) {
+async function viewRaffleParticipants(id, cutoffISO, sourceMode, extra) {
     let modal = document.getElementById('raffleDetailModal');
     if (!modal) {
         modal = document.createElement('div');
@@ -10254,12 +10277,21 @@ async function viewRaffleParticipants(id, cutoffISO) {
         document.body.appendChild(modal);
     }
     modal.style.display = 'flex';
+    const usingMaster = sourceMode === 'master';
     const loaderTxt = cutoffISO
-        ? '⏳ Analizando cargas hasta ' + new Date(cutoffISO).toLocaleString('es-AR') + '… (puede tardar varios segundos por persona)'
+        ? (usingMaster
+            ? '⏳ Leyendo archivo Maestro…'
+            : '⏳ Analizando cargas en JUGAYGANA hasta ' + new Date(cutoffISO).toLocaleString('es-AR') + '… (puede tardar varios segundos por persona)')
         : '⏳ Cargando…';
     document.getElementById('raffleDetailBody').innerHTML = '<div style="text-align:center;padding:40px;color:#888;">' + loaderTxt + '</div>';
     try {
-        const url = '/api/admin/raffles/' + id + '/participants' + (cutoffISO ? '?cutoff=' + encodeURIComponent(cutoffISO) : '');
+        const params = new URLSearchParams();
+        if (cutoffISO) params.set('cutoff', cutoffISO);
+        if (sourceMode) params.set('source', sourceMode);
+        if (extra && extra.from) params.set('from', extra.from);
+        if (extra && extra.to) params.set('to', extra.to);
+        const qs = params.toString();
+        const url = '/api/admin/raffles/' + id + '/participants' + (qs ? '?' + qs : '');
         const r = await authFetch(url);
         const d = await r.json();
         if (!r.ok) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>'; return; }
@@ -10309,7 +10341,22 @@ function reanalyzeLightningParticipants(raffleId) {
         alert('Fecha inválida.');
         return;
     }
-    viewRaffleParticipants(raffleId, d.toISOString());
+    const srcSel = document.getElementById('lightningSourceMode');
+    const source = srcSel ? srcSel.value : 'live';
+    let extra = {};
+    if (source === 'master') {
+        const fromInp = document.getElementById('lightningMasterFrom');
+        const toInp = document.getElementById('lightningMasterTo');
+        if (fromInp && fromInp.value) {
+            const fd = new Date(fromInp.value);
+            if (!isNaN(fd.getTime())) extra.from = fd.toISOString();
+        }
+        if (toInp && toInp.value) {
+            const td = new Date(toInp.value);
+            if (!isNaN(td.getTime())) extra.to = td.toISOString();
+        }
+    }
+    viewRaffleParticipants(raffleId, d.toISOString(), source, extra);
 }
 
 function closeRaffleDetailModal() {
@@ -10373,13 +10420,43 @@ function _renderRaffleDetail(d) {
             // requiere formato sin zona; usamos local del navegador.
             const cutISO = lightning.cutoff || _nextMondayDrawISO();
             const cutLocal = _isoToDatetimeLocal(cutISO);
-            html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">';
-            html += '  <div style="flex:1;min-width:200px;">';
-            html += '    <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Fecha de corte</div>';
-            html += '    <input id="lightningCutoffInput" type="datetime-local" value="' + cutLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
-            html += '    <div style="color:#aaa;font-size:10.5px;margin-top:4px;line-height:1.4;">Solo cargas con timestamp <strong>anterior</strong> a esta fecha cuentan. Cambialo para simular el sorteo del lunes y ver quién va a calificar.</div>';
+            const sourceMode = lightning.sourceMode || 'live';
+            const masterUsed = lightning.masterUsed || null;
+            html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;">';
+            html += '  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">';
+
+            html += '    <div style="flex:1;min-width:160px;">';
+            html += '      <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">🔌 Fuente de cargas</div>';
+            html += '      <select id="lightningSourceMode" onchange="document.getElementById(\'lightningMasterRange\').style.display = (this.value === \'master\') ? \'block\' : \'none\';" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
+            html += '        <option value="live"' + (sourceMode === 'live' ? ' selected' : '') + '>JUGAYGANA (live · más lento)</option>';
+            html += '        <option value="master"' + (sourceMode === 'master' ? ' selected' : '') + '>🌟 Archivo Maestro (Drive)</option>';
+            html += '      </select>';
+            html += '    </div>';
+
+            html += '    <div style="flex:1;min-width:200px;">';
+            html += '      <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Fecha de corte (live) / hasta (master)</div>';
+            html += '      <input id="lightningCutoffInput" type="datetime-local" value="' + cutLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
+            html += '    </div>';
+
+            html += '    <button type="button" onclick="reanalyzeLightningParticipants(' + escapeJsArg(r.id) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
+
             html += '  </div>';
-            html += '  <button type="button" onclick="reanalyzeLightningParticipants(' + escapeJsArg(r.id) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
+
+            // Range Desde/Hasta — solo visible si fuente = master.
+            html += '  <div id="lightningMasterRange" style="display:' + (sourceMode === 'master' ? 'block' : 'none') + ';margin-top:8px;padding-top:8px;border-top:1px dashed rgba(0,212,255,0.30);">';
+            html += '    <div style="display:flex;flex-wrap:wrap;gap:8px;">';
+            html += '      <div style="flex:1;min-width:160px;"><div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Desde</div><input id="lightningMasterFrom" type="datetime-local" value="" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+            html += '      <div style="flex:1;min-width:160px;"><div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Hasta</div><input id="lightningMasterTo" type="datetime-local" value="' + cutLocal + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+            html += '    </div>';
+            html += '    <div style="color:#aaa;font-size:10.5px;margin-top:5px;line-height:1.4;">Cuenta cargas (deposits) del archivo Maestro entre Desde y Hasta. Si dejás Desde vacío, cuenta todo lo anterior a Hasta.</div>';
+            html += '  </div>';
+
+            // Notita explicativa segun modo activo.
+            const noteText = masterUsed
+                ? ('✅ Resultado leído del archivo Maestro "' + escapeHtml(masterUsed.name || masterUsed.slug || '?') + '" (' + (masterUsed.rowsCount || 0) + ' filas).')
+                : 'Modo live: pregunta a JUGAYGANA cada user (más lento, ~5-15s).';
+            html += '  <div style="color:#aaa;font-size:10.5px;margin-top:6px;line-height:1.4;">' + noteText + '</div>';
+
             html += '</div>';
         }
     }
