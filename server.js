@@ -13399,11 +13399,46 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     }
     await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
 
+    // === Regla del relampago: ganador necesita >= 5 cargas REALES con
+    // timestamp ANTERIOR al drawnAt. Cargas posteriores al sorteo NO cuentan.
+    // Si no califica, premio se "forfeit": no se acredita ni queda reclamable.
+    // Aplica solo a raffleType='relampago' (los pagos no tienen este gate).
+    const LIGHTNING_MIN_CARGAS = 5;
+    let lightningForfeited = false;
+    let lightningCargasCount = 0;
+    if (raffle.raffleType === 'relampago') {
+      const drawnAtTs = drawLock.drawnAt || new Date();
+      const safeWin = String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      try {
+        lightningCargasCount = await Transaction.countDocuments({
+          username: { $regex: '^' + safeWin + '$', $options: 'i' },
+          type: 'deposit',
+          timestamp: { $lt: drawnAtTs }
+        });
+      } catch (e) {
+        logger.warn(`[raffles] LIGHTNING cargas check fail ${winner.username}: ${e.message}`);
+      }
+      if (lightningCargasCount < LIGHTNING_MIN_CARGAS) {
+        lightningForfeited = true;
+        await Raffle.updateOne(
+          { id: raffle.id },
+          { $set: {
+            prizeForfeitedAt: new Date(),
+            prizeForfeitedReason: `winner cargas=${lightningCargasCount} < ${LIGHTNING_MIN_CARGAS}`,
+            prizeClaimable: false
+          }}
+        ).catch(() => {});
+        logger.info(`[raffles] LIGHTNING FORFEIT ${winner.username} cargas=${lightningCargasCount}/${LIGHTNING_MIN_CARGAS} ${raffle.name}`);
+      } else {
+        logger.info(`[raffles] LIGHTNING winner OK ${winner.username} cargas=${lightningCargasCount}/${LIGHTNING_MIN_CARGAS}`);
+      }
+    }
+
     // === AUTO-CREDIT del premio al ganador ===
     let prizeAutoCredited = false;
     let autoCreditError = null;
     const prize = Number(raffle.prizeValueARS) || 0;
-    if (prize > 0) {
+    if (prize > 0 && !lightningForfeited) {
       try {
         const credit = await jugaygana.creditUserBalance(winner.username, prize);
         if (credit && credit.success) {
@@ -13438,15 +13473,26 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
 
     let winnerPushed = 0, losersPushed = 0;
     try {
-      const winTitle = '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
-      const winBody = prizeAutoCredited
-        ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
-        : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`;
+      const winTitle = lightningForfeited
+        ? '🎲 Salió tu número pero…'
+        : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
+      const winBody = lightningForfeited
+        ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
+        : (prizeAutoCredited
+          ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
+          : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
       const winRes = await sendNotificationToAllUsers(
         User,
         winTitle,
         winBody,
-        { source: 'raffle-win', raffleId: raffle.id, isWinner: 'true', autoCredited: prizeAutoCredited ? 'true' : 'false', winningTicketNumber: String(mappedNumber) },
+        {
+          source: lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win',
+          raffleId: raffle.id,
+          isWinner: 'true',
+          autoCredited: prizeAutoCredited ? 'true' : 'false',
+          forfeited: lightningForfeited ? 'true' : 'false',
+          winningTicketNumber: String(mappedNumber)
+        },
         { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
       );
       winnerPushed = (winRes && winRes.successCount) || 0;
@@ -13468,11 +13514,21 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       }
       if (loserUsernames.length > 0) {
         const mapNote = wasMapped ? ` (mapeado a #${mappedNumber} dentro del cupo vendido)` : '';
+        const loseBody = lightningForfeited
+          ? `🎰 Número ganador: #${mappedNumber}${mapNote}. Salió @${winner.username} pero NO podía reclamar (no tenía ${LIGHTNING_MIN_CARGAS} cargas antes del sorteo). El premio quedó sin acreditar. Cargá ANTES del próximo para tener derecho.`
+          : `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`;
         const loseRes = await sendNotificationToAllUsers(
           User,
           (raffle.emoji || '🎁') + ' Salió el ' + raffle.prizeName,
-          `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`,
-          { source: 'raffle-lose', raffleId: raffle.id, isWinner: 'false', winningTicketNumber: String(mappedNumber), lotteryDrawNumber: String(lotteryNumber) },
+          loseBody,
+          {
+            source: lightningForfeited ? 'raffle-lose-forfeit' : 'raffle-lose',
+            raffleId: raffle.id,
+            isWinner: 'false',
+            forfeited: lightningForfeited ? 'true' : 'false',
+            winningTicketNumber: String(mappedNumber),
+            lotteryDrawNumber: String(lotteryNumber)
+          },
           { username: { $in: loserUsernames } }
         );
         losersPushed = (loseRes && loseRes.successCount) || 0;
@@ -13492,6 +13548,9 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       prizeValueARS: raffle.prizeValueARS,
       prizeAutoCredited,
       autoCreditError,
+      lightningForfeited,
+      lightningCargasCount: raffle.raffleType === 'relampago' ? lightningCargasCount : null,
+      lightningMinCargas: raffle.raffleType === 'relampago' ? LIGHTNING_MIN_CARGAS : null,
       pushNotifications: { winnerPushed, losersPushed }
     });
   } catch (err) {

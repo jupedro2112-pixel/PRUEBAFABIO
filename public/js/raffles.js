@@ -416,7 +416,7 @@ VIP.raffles = (function () {
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
             html += _renderLightningClaimWarning();
-            html += _renderLightningCargarBtn('💬 CARGÁ ACÁ', 'Cargá para tener actividad y poder reclamar el premio');
+            html += _renderLightningCargarBtn('💬 QUIERO JUGAR', 'Cargá ANTES del sorteo · 5 cargas mínimo para reclamar');
         } else if (enrolled) {
             html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;">';
             html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO</div>';
@@ -460,7 +460,7 @@ VIP.raffles = (function () {
     function _renderLightningClaimWarning() {
         return '<div style="background:rgba(255,170,102,0.12);border:2px dashed #ffaa66;border-radius:10px;padding:11px;margin-top:8px;font-size:12px;line-height:1.5;color:#fff;text-align:center;font-weight:700;">' +
             '<div style="color:#ffaa66;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">⚠️ Para reclamar el premio</div>' +
-            '<div style="color:#fff;">Necesitás <strong style="color:#ffd700;">mínimo 5 cargas</strong> y <strong style="color:#ffd700;">haber jugado con nosotros</strong>. Es <strong>EXCLUSIVO PARA CLIENTES ACTIVOS</strong> — sin actividad no se acredita el premio.</div>' +
+            '<div style="color:#fff;">Necesitás <strong style="color:#ffd700;">mínimo 5 cargas ANTES del sorteo</strong>. Las cargas DESPUÉS del sorteo <strong style="color:#ff8080;">NO cuentan</strong>. Es <strong>EXCLUSIVO PARA CLIENTES ACTIVOS</strong>.</div>' +
         '</div>';
     }
 
