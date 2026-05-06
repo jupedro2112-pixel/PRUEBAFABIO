@@ -1015,9 +1015,37 @@
             </section>
 
             <!-- ============================================
-                 SECCIÓN: SORTEOS MENSUALES 🎁
-                 Listado de sorteos por mes con counts, edición de
-                 imagen/copy, y botón de "sortear" que elige ganador.
+                 SECCIÓN: SORTEOS GRATIS (clientes activos)
+                 Movida ARRIBA de Pagos: politica nueva (solo gratis).
+                 ============================================ -->
+            <section id="rafflesFreeSection" class="section">
+                <div class="panel-header">
+                    <h2>🎁 Sorteo gratis</h2>
+                    <button class="refresh-btn" onclick="loadRafflesFreeAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(77,171,255,0.06);border:1px solid rgba(77,171,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#4dabff;font-weight:700;font-size:13px;">4 sorteos GRATIS para clientes activos · auto-participación por cargas de la semana (lun-dom)</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        <strong>👑 $2.000.000</strong> (mín. $200k cargas),
+                        <strong>💎 $1.000.000</strong> (mín. $100k),
+                        <strong>💰 $500.000</strong> (mín. $100k),
+                        <strong>🎯 $100.000</strong> (mín. $50k).
+                        Cuando un cliente abre la app y cumple el mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>,
+                        el sistema le asigna <strong>automáticamente</strong> un número (1 por persona, 100 personas tope).
+                        Mismo draw que los pagos: lunes Lotería Nocturna 1° premio.
+                        El ganador recibe el premio <strong style="color:#66ff66;">acreditado automáticamente</strong> al saldo.
+                    </p>
+                </div>
+                <div id="rafflesFreeAudienceBox" style="margin-bottom:14px;"></div>
+                <div id="rafflesFreeAdminContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: SORTEOS PAGOS — DESHABILITADOS
+                 Los activos siguen corriendo hasta sortearse, no se crean
+                 nuevos. Movida ABAJO de Gratis por politica nueva.
                  ============================================ -->
             <section id="rafflesSection" class="section">
                 <div class="panel-header">
@@ -1041,33 +1069,6 @@
                 </div>
                 <div id="rafflesPaidAudienceBox" style="margin-bottom:14px;"></div>
                 <div id="rafflesAdminContent" style="min-height:200px;">
-                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
-                </div>
-            </section>
-
-            <!-- ============================================
-                 SECCIÓN: SORTEOS GRATIS (clientes activos)
-                 ============================================ -->
-            <section id="rafflesFreeSection" class="section">
-                <div class="panel-header">
-                    <h2>🎁 Sorteo gratis</h2>
-                    <button class="refresh-btn" onclick="loadRafflesFreeAdmin()" title="Refrescar">🔄</button>
-                </div>
-                <div style="background:rgba(77,171,255,0.06);border:1px solid rgba(77,171,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0 0 6px;color:#4dabff;font-weight:700;font-size:13px;">4 sorteos GRATIS para clientes activos · auto-participación por cargas de la semana (lun-dom)</p>
-                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
-                        <strong>👑 $2.000.000</strong> (mín. $200k cargas),
-                        <strong>💎 $1.000.000</strong> (mín. $100k),
-                        <strong>💰 $500.000</strong> (mín. $100k),
-                        <strong>🎯 $100.000</strong> (mín. $50k).
-                        Cuando un cliente abre la app y cumple el mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>,
-                        el sistema le asigna <strong>automáticamente</strong> un número (1 por persona, 100 personas tope).
-                        Mismo draw que los pagos: lunes Lotería Nocturna 1° premio.
-                        El ganador recibe el premio <strong style="color:#66ff66;">acreditado automáticamente</strong> al saldo.
-                    </p>
-                </div>
-                <div id="rafflesFreeAudienceBox" style="margin-bottom:14px;"></div>
-                <div id="rafflesFreeAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>
