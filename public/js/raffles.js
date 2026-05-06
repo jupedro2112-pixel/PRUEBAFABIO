@@ -994,11 +994,10 @@ VIP.raffles = (function () {
         if (myWin) {
             html = _renderHomeWinnerMine(myWin);
         } else if (lightning) {
-            // Si hay relampago activo, mostramos el hero electrico ARRIBA y
-            // el CTA verde de sorteos semanales ABAJO. Antes solo se veia el
-            // relampago y el user perdia acceso visual a los sorteos pagos /
-            // gratis semanales desde el home.
-            html = _renderHomeLightningHero(lightning, homeBalance) + _renderHomeDefaultCta();
+            // Hero del relampago va SOLO dentro del modal (no en el home). El
+            // home muestra el CTA verde de sorteos semanales — al tocarlo se
+            // abre el modal donde el hero del relampago queda arriba de todo.
+            html = _renderHomeDefaultCta();
         } else if (winners.length > 0) {
             html = _renderHomeWinnerOthers(winners[0]);
         } else {

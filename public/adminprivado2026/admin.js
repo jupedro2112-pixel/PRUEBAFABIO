@@ -10170,18 +10170,39 @@ async function seedLightningRaffleSubmit() {
         showToast('⚡ Sorteo RELÁMPAGO creado: ' + d.raffle.name, 'success');
         loadRafflesLightningAdmin();
         loadRafflesAdmin();
-        // En modo 'user' (test) no anunciamos: el sorteo es invisible para
-        // el resto, mandar push a todos seria contraproducente.
-        if (autoAnnounce && audienceMode !== 'user') {
-            announceRaffleOpen(d.raffle.id, {
-                title: '⚡ Nuevo sorteo RELÁMPAGO' + (isPaid ? ' PAGO' : '') + ' · $' + (d.raffle.prizeValueARS || prize).toLocaleString('es-AR'),
-                body: requiresPaidTicket
-                    ? '¡Solo para clientes con número pago previo! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena.'
-                    : (isPaid
-                        ? ('Entrada $' + entryCost.toLocaleString('es-AR') + ' por número · 1 por persona. Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo.')
-                        : '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo. 1 número por persona.'),
-                presetType: 'relampago'
-            });
+        if (autoAnnounce) {
+            const announceTitle = '⚡ Nuevo sorteo RELÁMPAGO' + (isPaid ? ' PAGO' : '') + ' · $' + (d.raffle.prizeValueARS || prize).toLocaleString('es-AR');
+            const announceBody = requiresPaidTicket
+                ? '¡Solo para clientes con número pago previo! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena.'
+                : (isPaid
+                    ? ('Entrada $' + entryCost.toLocaleString('es-AR') + ' por número · 1 por persona. Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo.')
+                    : '¡GRATIS! Entrá, elegí tu número del 1 al 100 y mirá cómo se llena el cupo. 1 número por persona.');
+            if (audienceMode === 'user') {
+                // Modo test: push DIRECTO solo a esos usernames (sin abrir el
+                // modal masivo). Bypass hasAppOnly para que llegue a cualquier
+                // token (browser o PWA standalone).
+                try {
+                    const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(d.raffle.id) + '/announce', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: announceTitle, body: announceBody, usernames: audienceUsernames, hasAppOnly: false })
+                    });
+                    const dd = await r.json();
+                    if (r.ok) {
+                        showToast('📤 Push enviado a ' + audienceUsernames.join(', ') + ' (' + (dd.sent || 0) + '/' + (dd.eligible || 0) + ')', 'success');
+                    } else {
+                        showToast('⚠️ Push no enviado: ' + (dd.error || 'Error'), 'warning');
+                    }
+                } catch (_) {
+                    showToast('⚠️ Push no enviado (error de red)', 'warning');
+                }
+            } else {
+                announceRaffleOpen(d.raffle.id, {
+                    title: announceTitle,
+                    body: announceBody,
+                    presetType: 'relampago'
+                });
+            }
         }
     } catch (e) {
         alert('Error de conexión');

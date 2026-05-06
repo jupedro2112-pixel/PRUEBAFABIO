@@ -13652,28 +13652,36 @@ app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware
     const body = String(b.body || '').slice(0, 500).trim();
     if (!title || !body) return res.status(400).json({ error: 'Faltan title y/o body.' });
     const teams = Array.isArray(b.teams) ? b.teams.map(String).slice(0, 100) : [];
+    const usernames = Array.isArray(b.usernames)
+      ? b.usernames.map(u => String(u || '').toLowerCase().trim()).filter(Boolean).slice(0, 50)
+      : [];
     const hasAppOnly = b.hasAppOnly !== false;
 
-    // Filter de audiencia. Si teams vacio = todos (no team filter).
+    // Filter de audiencia. Hay 3 modos posibles:
+    //   1) usernames[] (test) -> match exacto por username, ignora teams y
+    //      hasAppOnly. Pensado para testear el sorteo con un user puntual y
+    //      garantizar que le llegue el push aunque tenga la app sin standalone.
+    //   2) teams[]            -> match por prefijo de username (equipo).
+    //   3) sin nada           -> todos.
     const userFilter = {};
-    if (teams.length > 0) {
-      // El prefijo del username matchea el equipo (case-insensitive).
-      const escapedTeams = teams.map(t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-      userFilter.username = { $regex: '^(' + escapedTeams.join('|') + ')', $options: 'i' };
-    }
-    // hasAppOnly: filtra a users con la PWA instalada. El field correcto
-    // es fcmTokenContext='standalone' (token registrado desde la app
-    // standalone) o algun fcmTokens[*].context==='standalone'. Antes
-    // usabamos appNotif.subscribed que NO existe en el schema -> bug:
-    // el push no llegaba a nadie. Si hasAppOnly es false, no filtramos
-    // por contexto y aceptamos cualquier token (browser web tambien).
-    // sendNotificationToAllUsers ya garantiza que hay token; aca solo
-    // restringimos al subset standalone si el admin pidio "solo con app".
-    if (hasAppOnly) {
-      userFilter.$or = [
-        { fcmTokenContext: 'standalone' },
-        { 'fcmTokens.context': 'standalone' }
-      ];
+    if (usernames.length > 0) {
+      const safeUsers = usernames.map(u => u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      userFilter.username = { $regex: '^(' + safeUsers.join('|') + ')$', $options: 'i' };
+    } else {
+      if (teams.length > 0) {
+        // El prefijo del username matchea el equipo (case-insensitive).
+        const escapedTeams = teams.map(t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        userFilter.username = { $regex: '^(' + escapedTeams.join('|') + ')', $options: 'i' };
+      }
+      // hasAppOnly: filtra a users con la PWA instalada. El field correcto
+      // es fcmTokenContext='standalone' (token registrado desde la app
+      // standalone) o algun fcmTokens[*].context==='standalone'.
+      if (hasAppOnly) {
+        userFilter.$or = [
+          { fcmTokenContext: 'standalone' },
+          { 'fcmTokens.context': 'standalone' }
+        ];
+      }
     }
 
     const result = await sendNotificationToAllUsers(
@@ -13689,13 +13697,14 @@ app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware
       },
       userFilter
     );
-    logger.info(`[raffles] ANNOUNCE ${raffle.name} por ${req.user.username || 'admin'} teams=[${teams.join(',') || 'all'}] hasAppOnly=${hasAppOnly} sent=${(result && result.successCount) || 0}`);
+    logger.info(`[raffles] ANNOUNCE ${raffle.name} por ${req.user.username || 'admin'} usernames=[${usernames.join(',') || '-'}] teams=[${teams.join(',') || 'all'}] hasAppOnly=${hasAppOnly} sent=${(result && result.successCount) || 0}`);
     res.json({
       success: true,
       sent: (result && result.successCount) || 0,
       failed: (result && result.failureCount) || 0,
       eligible: (result && result.totalSent) || 0,
-      teams: teams.length > 0 ? teams : ['all']
+      teams: teams.length > 0 ? teams : ['all'],
+      usernames
     });
   } catch (err) {
     logger.error(`/api/admin/raffles/announce: ${err.message}`);
