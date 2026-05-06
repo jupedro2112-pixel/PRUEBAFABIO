@@ -10409,6 +10409,204 @@ function closeRaffleDetailModal() {
     if (modal) modal.style.display = 'none';
 }
 
+// LUPA por fila — pide detalle al server (CSV daily + LIVE) y muestra
+// un mini modal flotante con la comparacion + breakdown por dia.
+async function openLightningUserDetail(raffleId, username) {
+    // Lee from/to del modal padre si estan.
+    const fromInp = document.getElementById('lightningMasterFrom');
+    const toInp = document.getElementById('lightningMasterTo');
+    const params = new URLSearchParams({ username });
+    if (fromInp && fromInp.value) {
+        const fd = new Date(fromInp.value);
+        if (!isNaN(fd.getTime())) params.set('from', fd.toISOString());
+    }
+    if (toInp && toInp.value) {
+        const td = new Date(toInp.value);
+        if (!isNaN(td.getTime())) params.set('to', td.toISOString());
+    }
+
+    // Modal vacio mientras carga.
+    let m = document.getElementById('lightningUserDetailModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'lightningUserDetailModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.65);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="lightningUserDetailBody" style="background:#1a0033;border:1px solid #00d4ff;border-radius:12px;padding:20px;max-width:680px;width:100%;max-height:88vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    document.getElementById('lightningUserDetailBody').innerHTML =
+        '<div style="padding:30px;text-align:center;color:#aaa;">🔍 Cargando detalle de ' + escapeHtml(username) + '... (LIVE puede tardar 5-10s)</div>';
+
+    try {
+        const resp = await authFetch('/api/admin/raffles/' + raffleId + '/user-detail?' + params.toString());
+        const d = await resp.json();
+        if (!resp.ok) {
+            document.getElementById('lightningUserDetailBody').innerHTML =
+                '<div style="color:#ff8080;padding:20px;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        document.getElementById('lightningUserDetailBody').innerHTML = _renderLightningUserDetail(d);
+    } catch (e) {
+        document.getElementById('lightningUserDetailBody').innerHTML =
+            '<div style="color:#ff8080;padding:20px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeLightningUserDetail() {
+    const m = document.getElementById('lightningUserDetailModal');
+    if (m) m.remove();
+}
+
+function _renderLightningUserDetail(d) {
+    const period = d.period || {};
+    const pFrom = period.from ? new Date(period.from).toLocaleString('es-AR') : '—';
+    const pTo = period.to ? new Date(period.to).toLocaleString('es-AR') : '—';
+    const daily = d.daily || { count: 0, amount: 0, perDay: [] };
+    const live = d.live;
+    const part = d.participation;
+    const mismatch = d.mismatch === true;
+
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px;">';
+    html += '  <h3 style="margin:0;color:#00d4ff;font-size:18px;">🔍 ' + escapeHtml(d.username) + '</h3>';
+    html += '  <button type="button" onclick="closeLightningUserDetail()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:12px;">Período: <b style="color:#fff;">' + pFrom + '</b> → <b style="color:#fff;">' + pTo + '</b></div>';
+
+    // Participation
+    if (part) {
+        const tickets = (part.ticketNumbers || []).map(n => '#' + n).join(' ');
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px;">';
+        html += '  <div style="color:#00d4ff;font-weight:800;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Participación</div>';
+        html += '  <div><b>' + (part.cuposCount || 0) + ' cupo(s)</b> · Pagó ' + _fmtMoney(part.entryCostPaid || 0) + '</div>';
+        html += '  <div style="color:#ddd;font-family:monospace;font-size:11px;margin-top:3px;">' + tickets + '</div>';
+        if (part.lastBoughtAt) html += '  <div style="color:#aaa;font-size:11px;margin-top:3px;">Última compra: ' + new Date(part.lastBoughtAt).toLocaleString('es-AR') + '</div>';
+        html += '</div>';
+    }
+
+    // Comparison summary
+    const liveText = (live && !live.error)
+        ? (live.count + ' (' + _fmtMoney(live.amount) + ')')
+        : '<span style="color:#ff8080;">' + escapeHtml((live && live.error) || 'sin datos live') + '</span>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">';
+    html += '  <div style="background:rgba(102,255,102,0.08);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#aaffaa;font-weight:800;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;">📄 CSV Importado</div>';
+    html += '    <div style="font-size:18px;font-weight:900;color:#66ff66;">' + daily.count + '<span style="font-size:11px;color:#aaa;font-weight:400;"> cargas</span></div>';
+    html += '    <div style="font-size:11px;color:#aaa;">' + _fmtMoney(daily.amount) + '</div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(255,235,59,0.08);border:1px solid rgba(255,235,59,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#ffeb3b;font-weight:800;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;">⚡ JUGAYGANA Live</div>';
+    html += '    <div style="font-size:18px;font-weight:900;color:#ffeb3b;">' + liveText + '</div>';
+    html += '  </div>';
+    html += '</div>';
+
+    if (mismatch) {
+        html += '<div style="background:rgba(255,170,0,0.10);border:1px solid #ffaa00;border-radius:8px;padding:8px 12px;margin-bottom:10px;color:#ffaa00;font-size:12px;font-weight:700;">⚠️ DISCREPANCIA: el CSV dice ' + daily.count + ' cargas pero LIVE dice ' + (live && live.count) + '. Revisá el archivo importado o re-importá.</div>';
+    }
+
+    // Per-day breakdown del CSV
+    if (daily.perDay && daily.perDay.length > 0) {
+        html += '<details open style="margin-bottom:10px;"><summary style="color:#aaa;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:6px 0;">📆 Desglose por día (CSV) — ' + daily.perDay.length + ' días</summary>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;margin-top:4px;">';
+        html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#aaa;text-align:left;"><th style="padding:5px;">Día</th><th style="padding:5px;text-align:center;">Cargas</th><th style="padding:5px;text-align:right;">Monto</th></tr></thead><tbody>';
+        for (const row of daily.perDay) {
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);"><td style="padding:5px;color:#ddd;">' + new Date(row.date).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit' }) + '</td><td style="padding:5px;text-align:center;color:#66ff66;font-weight:700;">' + row.count + '</td><td style="padding:5px;text-align:right;color:#fff;">' + _fmtMoney(row.amount) + '</td></tr>';
+        }
+        html += '</tbody></table></div></details>';
+    } else {
+        html += '<div style="color:#888;font-size:11.5px;margin-bottom:10px;font-style:italic;">📄 Sin filas en el CSV importado para este período.</div>';
+    }
+
+    // Depositos crudos del LIVE
+    if (live && live.deposits && live.deposits.length > 0) {
+        html += '<details style="margin-bottom:10px;"><summary style="color:#aaa;cursor:pointer;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:6px 0;">⚡ Depósitos LIVE (' + live.deposits.length + ')</summary>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;margin-top:4px;max-height:240px;overflow-y:auto;">';
+        html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#aaa;text-align:left;"><th style="padding:5px;">Cuándo</th><th style="padding:5px;text-align:right;">Monto</th></tr></thead><tbody>';
+        for (const dep of live.deposits) {
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);"><td style="padding:5px;color:#ddd;">' + new Date(dep.ts).toLocaleString('es-AR') + '</td><td style="padding:5px;text-align:right;color:#fff;font-weight:700;">' + _fmtMoney(dep.amount) + '</td></tr>';
+        }
+        html += '</tbody></table></div></details>';
+    }
+
+    return html;
+}
+
+// Verifica la columna Cargas: corre CSV (daily) + LIVE en paralelo y
+// pinta en amarillo las filas con discrepancias.
+async function verifyLightningCargas(raffleId) {
+    const fromInp = document.getElementById('lightningMasterFrom');
+    const toInp = document.getElementById('lightningMasterTo');
+    const params = new URLSearchParams();
+    if (fromInp && fromInp.value) {
+        const fd = new Date(fromInp.value);
+        if (!isNaN(fd.getTime())) params.set('from', fd.toISOString());
+    }
+    if (toInp && toInp.value) {
+        const td = new Date(toInp.value);
+        if (!isNaN(td.getTime())) params.set('to', td.toISOString());
+    }
+    const url = '/api/admin/raffles/' + raffleId + '/verify-cargas' + (params.toString() ? '?' + params.toString() : '');
+
+    // Banner de loading arriba del modal.
+    const body = document.getElementById('raffleDetailBody');
+    let banner = document.getElementById('verifyCargasBanner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'verifyCargasBanner';
+        banner.style.cssText = 'background:rgba(255,235,59,0.10);border:1px solid #ffeb3b;border-radius:8px;padding:8px 12px;margin-bottom:10px;color:#ffeb3b;font-size:12px;font-weight:700;';
+        body.insertBefore(banner, body.firstChild);
+    }
+    banner.innerHTML = '⏳ Verificando cargas contra LIVE para todos los participantes... (puede tardar)';
+
+    try {
+        const r = await authFetch(url);
+        const d = await r.json();
+        if (!r.ok) {
+            banner.style.background = 'rgba(255,128,128,0.10)';
+            banner.style.borderColor = '#ff8080';
+            banner.style.color = '#ff8080';
+            banner.innerHTML = '❌ ' + escapeHtml(d.error || 'Error');
+            return;
+        }
+        const byUser = {};
+        for (const row of (d.rows || [])) byUser[String(row.username).toLowerCase()] = row;
+
+        // Pintar filas mismatch en amarillo + agregar tooltip con liveCount.
+        const tbody = body.querySelector('table tbody');
+        if (tbody) {
+            const rows = tbody.querySelectorAll('tr');
+            rows.forEach(tr => {
+                const ucell = tr.querySelector('td[data-username]');
+                if (!ucell) return;
+                const u = String(ucell.getAttribute('data-username') || '').toLowerCase();
+                const v = byUser[u];
+                if (!v) return;
+                if (v.mismatch) {
+                    tr.style.background = 'rgba(255,235,59,0.10)';
+                    tr.title = 'CSV: ' + v.dailyCount + ' · LIVE: ' + v.liveCount + ' (diff ' + v.diff + ')';
+                }
+            });
+        }
+
+        if (d.mismatchesCount === 0) {
+            banner.style.background = 'rgba(102,255,102,0.10)';
+            banner.style.borderColor = '#66ff66';
+            banner.style.color = '#66ff66';
+            banner.innerHTML = '✅ Todo coincide: ' + d.total + '/' + d.total + ' participantes con cargas iguales en CSV y LIVE.';
+        } else {
+            banner.innerHTML = '⚠️ ' + d.mismatchesCount + ' de ' + d.total + ' participantes con discrepancia entre CSV y LIVE — filas resaltadas en amarillo. Pasá el mouse para ver los valores.';
+        }
+    } catch (e) {
+        banner.style.background = 'rgba(255,128,128,0.10)';
+        banner.style.borderColor = '#ff8080';
+        banner.style.color = '#ff8080';
+        banner.innerHTML = '❌ Error: ' + escapeHtml(e.message || '');
+    }
+}
+
 function _renderRaffleDetail(d) {
     const r = d.raffle;
     const parts = d.participants || [];
@@ -10534,7 +10732,7 @@ function _renderRaffleDetail(d) {
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cupos</th>';
     html += '<th style="padding:8px 10px;font-weight:800;">Números</th>';
     if (isLightning) {
-        html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cargas</th>';
+        html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cargas <button type="button" onclick="verifyLightningCargas(' + escapeJsArg(r.id) + ')" title="Verificar contra LIVE — marca discrepancias en amarillo" style="background:rgba(255,235,59,0.18);color:#ffeb3b;border:1px solid rgba(255,235,59,0.5);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:800;cursor:pointer;margin-left:4px;">✓</button></th>';
         html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Califica</th>';
     }
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">' + (isFree ? 'Cuándo' : 'Pagó') + '</th>';
@@ -10560,7 +10758,7 @@ function _renderRaffleDetail(d) {
 
         html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);' + rowBg + '">';
         html += '<td style="padding:8px 10px;color:#666;font-weight:700;">' + idx + '</td>';
-        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(p.username) + winBadge + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;" data-username="' + escapeHtml(p.username) + '">' + escapeHtml(p.username) + winBadge + (isLightning ? ' <button type="button" onclick="openLightningUserDetail(' + escapeJsArg(r.id) + ',' + escapeJsArg(p.username) + ')" title="Lupa: detalle de cargas y depósitos" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.45);border-radius:4px;padding:1px 5px;font-size:10px;cursor:pointer;margin-left:4px;">🔍</button>' : '') + '</td>';
         html += '<td style="padding:8px 10px;color:#fff;text-align:center;font-weight:700;">' + (p.cuposCount||0) + '</td>';
         html += '<td style="padding:8px 10px;color:#ddd;font-family:monospace;font-size:11px;line-height:1.6;word-break:break-word;">' + nums + '</td>';
         if (isLightning) {

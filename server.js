@@ -13727,6 +13727,200 @@ app.post(
   }
 );
 
+// GET /api/admin/raffles/:id/user-detail?username=X&from=ISO&to=ISO
+// Vista de detalle (lupa) para un usuario en un sorteo. Devuelve:
+//   - participation: tickets, cupos, pagado
+//   - daily: cargas y monto desde DailyPlayerStats (por dia) en el periodo
+//   - live: cargas y deposits crudos desde JUGAYGANA en el periodo
+//   - mismatch: bool si daily.count != live.count
+app.get('/api/admin/raffles/:id/user-detail', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    const usernameRaw = String(req.query.username || '').trim();
+    if (!usernameRaw) return res.status(400).json({ error: 'username requerido.' });
+    const username = usernameRaw.toLowerCase();
+
+    const fromQ = req.query.from ? new Date(req.query.from) : null;
+    const toQ = req.query.to ? new Date(req.query.to) : null;
+    const fromMs = fromQ && !isNaN(fromQ.getTime())
+      ? fromQ.getTime()
+      : (raffle.createdAt ? new Date(raffle.createdAt).getTime() : 0);
+    const toMs = toQ && !isNaN(toQ.getTime())
+      ? toQ.getTime()
+      : (raffle.drawnAt ? new Date(raffle.drawnAt).getTime() : Date.now());
+
+    // Participation.
+    const part = await RaffleParticipation.findOne({
+      raffleId: raffle.id,
+      $or: [
+        { username: usernameRaw },
+        { username: usernameRaw.toLowerCase() },
+        { username: { $regex: '^' + usernameRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+      ]
+    }).lean();
+
+    // Daily breakdown.
+    const dayStart = new Date(fromMs); dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(toMs); dayEnd.setUTCHours(23, 59, 59, 999);
+    const dailyRows = await DailyPlayerStats.find({
+      username,
+      dateUtc: { $gte: dayStart, $lte: dayEnd }
+    }).sort({ dateUtc: 1 }).lean();
+    const daily = {
+      count: dailyRows.reduce((s, r) => s + (r.depositCount || 0), 0),
+      amount: dailyRows.reduce((s, r) => s + (r.depositSum || 0), 0),
+      perDay: dailyRows.map(r => ({
+        date: r.dateUtc,
+        count: r.depositCount || 0,
+        amount: r.depositSum || 0,
+        withdrawCount: r.withdrawCount || 0,
+        bonusCount: r.bonusCount || 0
+      }))
+    };
+
+    // Live breakdown (best effort — si falla, devolvemos null).
+    let live = null;
+    try {
+      const fmt = (d) => {
+        const x = new Date(d);
+        return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+      };
+      const r = await jugayganaMovements.getUserMovements(usernameRaw, {
+        startDate: fmt(fromMs),
+        endDate: fmt(toMs),
+        pageSize: 500
+      });
+      if (r && r.success) {
+        const deposits = [];
+        let count = 0, amount = 0;
+        for (const m of (r.movements || [])) {
+          const candidates = [m.timestamp, m.Timestamp, m.date, m.Date, m.datetime, m.fecha, m.Fecha, m.createdAt];
+          let ts = null;
+          for (const c of candidates) {
+            if (!c) continue;
+            const t = new Date(c).getTime();
+            if (isFinite(t) && t > 0) { ts = t; break; }
+          }
+          if (ts == null) continue;
+          if (ts < fromMs || ts > toMs) continue;
+          const type = String(m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toLowerCase();
+          let amt = 0;
+          for (const k of ['amount', 'Amount', 'value', 'Value', 'monto', 'Monto']) {
+            if (m[k] !== undefined) { amt = parseFloat(m[k]); break; }
+          }
+          const isDep = type.includes('deposit') || type.includes('credit') || type.includes('carga') || type.includes('recarga');
+          if (!isDep) continue;
+          deposits.push({ ts, amount: amt, type });
+          count++;
+          amount += amt;
+        }
+        deposits.sort((a, b) => b.ts - a.ts);
+        live = { count, amount, deposits };
+      } else {
+        live = { count: 0, amount: 0, deposits: [], error: (r && r.error) || 'sin respuesta' };
+      }
+    } catch (e) {
+      live = { count: 0, amount: 0, deposits: [], error: e.message };
+    }
+
+    res.json({
+      raffle: { id: raffle.id, name: raffle.name },
+      username: usernameRaw,
+      period: { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() },
+      participation: part ? {
+        ticketNumbers: (part.ticketNumbers || []).slice().sort((a, b) => a - b),
+        cuposCount: part.cuposCount,
+        entryCostPaid: part.entryCostPaid,
+        joinedAt: part.joinedAt,
+        lastBoughtAt: part.lastBoughtAt,
+        isWinner: part.isWinner
+      } : null,
+      daily,
+      live,
+      mismatch: live && !live.error ? (daily.count !== live.count) : null
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/user-detail: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/raffles/:id/verify-cargas?from=ISO&to=ISO
+// Corre el cruce contra DailyPlayerStats y contra LIVE en paralelo, devuelve
+// la lista de mismatches para que el admin pueda revisar uno por uno.
+// LIMITADO a sorteos relampago (sino no aplica).
+app.get('/api/admin/raffles/:id/verify-cargas', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.raffleType !== 'relampago') {
+      return res.status(400).json({ error: 'Solo aplica a relámpagos.' });
+    }
+
+    const fromQ = req.query.from ? new Date(req.query.from) : null;
+    const toQ = req.query.to ? new Date(req.query.to) : null;
+    const fromMs = fromQ && !isNaN(fromQ.getTime())
+      ? fromQ.getTime()
+      : (raffle.createdAt ? new Date(raffle.createdAt).getTime() : 0);
+    const toMs = toQ && !isNaN(toQ.getTime())
+      ? toQ.getTime()
+      : (raffle.drawnAt ? new Date(raffle.drawnAt).getTime() : Date.now());
+
+    const parts = await RaffleParticipation.find({ raffleId: raffle.id }).lean();
+    const usernamesLc = parts.map(p => String(p.username || '').toLowerCase().trim()).filter(Boolean);
+
+    // Daily counts.
+    const dayStart = new Date(fromMs); dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(toMs); dayEnd.setUTCHours(23, 59, 59, 999);
+    const dailyAgg = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernamesLc }, dateUtc: { $gte: dayStart, $lte: dayEnd } } },
+      { $group: { _id: '$username', count: { $sum: '$depositCount' }, amount: { $sum: '$depositSum' } } }
+    ]);
+    const dailyByUser = {};
+    for (const row of dailyAgg) dailyByUser[row._id] = { count: row.count || 0, amount: row.amount || 0 };
+
+    // Live counts (concurrency 5).
+    const liveByUser = {};
+    const concurrency = 5;
+    for (let i = 0; i < parts.length; i += concurrency) {
+      const slice = parts.slice(i, i + concurrency);
+      const results = await Promise.all(slice.map(p => _getLightningCargasCount(p.username, toMs)));
+      for (let j = 0; j < slice.length; j++) {
+        const lc = String(slice[j].username).toLowerCase();
+        liveByUser[lc] = { count: results[j] || 0 };
+      }
+    }
+
+    const rows = parts.map(p => {
+      const lc = String(p.username || '').toLowerCase();
+      const d = dailyByUser[lc] || { count: 0, amount: 0 };
+      const l = liveByUser[lc] || { count: 0 };
+      return {
+        username: p.username,
+        dailyCount: d.count,
+        dailyAmount: d.amount,
+        liveCount: l.count,
+        diff: d.count - l.count,
+        mismatch: d.count !== l.count
+      };
+    });
+
+    const mismatches = rows.filter(r => r.mismatch);
+
+    res.json({
+      raffle: { id: raffle.id, name: raffle.name },
+      period: { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() },
+      total: rows.length,
+      mismatchesCount: mismatches.length,
+      rows
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/verify-cargas: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/:id/draw
 // El admin carga (a) lotteryNumber: numero crudo de la Loteria Nacional
 // Nocturna (1er premio); el sistema mapea por modulo si el cupo esta
