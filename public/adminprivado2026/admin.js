@@ -9513,13 +9513,28 @@ function _renderRaffleAdminCard(r) {
     const sold = r.cuposSold || 0;
     const total = r.totalTickets || 0;
     const fillPct = total ? Math.round((sold / total) * 100) : 0;
-    const statusLabel = {
-        active:   { txt: 'Activo · vendiendo',    color: '#66ff66' },
-        closed:   { txt: 'Cupo lleno · esperando sorteo', color: '#ffaa66' },
-        drawn:    { txt: 'Sorteado',              color: '#00d4ff' },
-        archived: { txt: 'Archivado',             color: '#777' },
-        cancelled:{ txt: 'Cancelado',             color: '#ff6666' }
-    }[r.status] || { txt: r.status, color: '#aaa' };
+    // Status label dinamico para 'drawn': diferenciamos completado vs
+    // pendiente vs forfeit. Asi de un vistazo el admin ve cual sorteo ya
+    // termino del todo y cual esta esperando algo.
+    let statusLabel;
+    if (r.status === 'drawn') {
+        if (r.prizeForfeitedAt) {
+            statusLabel = { txt: '❌ Sorteado · ganador NO calificó', color: '#ff8080' };
+        } else if (r.prizeClaimedAt) {
+            statusLabel = { txt: '✅ Completado · premio acreditado', color: '#66ff66' };
+        } else if (r.prizeClaimable) {
+            statusLabel = { txt: '🎁 Sorteado · esperando reclamo', color: '#ffaa66' };
+        } else {
+            statusLabel = { txt: '✅ Completado', color: '#66ff66' };
+        }
+    } else {
+        statusLabel = {
+            active:   { txt: 'Activo · vendiendo',    color: '#66ff66' },
+            closed:   { txt: 'Cupo lleno · esperando sorteo', color: '#ffaa66' },
+            archived: { txt: 'Archivado',             color: '#777' },
+            cancelled:{ txt: 'Cancelado',             color: '#ff6666' }
+        }[r.status] || { txt: r.status, color: '#aaa' };
+    }
     const drawDate = r.drawDate ? new Date(r.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
 
     let html = '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">';
@@ -9555,9 +9570,13 @@ function _renderRaffleAdminCard(r) {
     }
 
     if (r.status === 'drawn') {
-        const claimStatus = r.prizeClaimedAt
-            ? '<span style="color:#66ff66;">✅ Reclamado ' + new Date(r.prizeClaimedAt).toLocaleString('es-AR') + '</span>'
-            : '<span style="color:#ffaa66;">⏳ Esperando que el ganador reclame</span>';
+        const claimStatus = r.prizeForfeitedAt
+            ? '<span style="color:#ff8080;">❌ Forfeit · ganador no calificaba (' + escapeHtml(r.prizeForfeitedReason || '') + ')</span>'
+            : (r.prizeClaimedAt
+                ? '<span style="color:#66ff66;">✅ Premio acreditado ' + new Date(r.prizeClaimedAt).toLocaleString('es-AR') + '</span>'
+                : (r.prizeClaimable
+                    ? '<span style="color:#ffaa66;">⏳ Esperando que el ganador reclame</span>'
+                    : '<span style="color:#aaa;">Premio sin acreditar</span>'));
         html += '  <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:8px;font-size:11px;line-height:1.5;color:#ddd;">';
         html += '    🏆 <strong>' + escapeHtml(r.winnerUsername || '—') + '</strong> con número <strong>#' + r.winningTicketNumber + '</strong>';
         if (r.lotteryDrawNumber && r.lotteryDrawNumber !== r.winningTicketNumber) {

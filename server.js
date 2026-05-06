@@ -14692,6 +14692,8 @@ app.get('/api/admin/raffles/dashboard', authMiddleware, adminMiddleware, async (
         lotteryDrawNumber: r.lotteryDrawNumber,
         prizeClaimable: r.prizeClaimable || false,
         prizeClaimedAt: r.prizeClaimedAt,
+        prizeForfeitedAt: r.prizeForfeitedAt || null,
+        prizeForfeitedReason: r.prizeForfeitedReason || null,
         drawnAt: r.drawnAt,
         audienceMode: r.audienceMode || 'all',
         audienceTeams: r.audienceTeams || [],
