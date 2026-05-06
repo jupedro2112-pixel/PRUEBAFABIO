@@ -699,11 +699,40 @@ VIP.raffles = (function () {
         }, false);
     }
 
+    // Swipe-down-to-close: gesto comun en iOS. Solo dispara si el user
+    // arrastra >120px hacia abajo Y el modal estaba scrolleado al tope (asi
+    // el scroll normal del contenido no se confunde con cerrar). Idempotente:
+    // si ya tiene listener, no se duplica.
+    function _attachSwipeToClose(modalEl, closeFn) {
+        if (!modalEl || modalEl.__swipeAttached) return;
+        modalEl.__swipeAttached = true;
+        let startY = null;
+        let startScroll = 0;
+        modalEl.addEventListener('touchstart', function (e) {
+            if (!e.touches || e.touches.length !== 1) { startY = null; return; }
+            startY = e.touches[0].clientY;
+            startScroll = modalEl.scrollTop || 0;
+        }, { passive: true });
+        modalEl.addEventListener('touchend', function (e) {
+            if (startY == null) return;
+            const t = (e.changedTouches && e.changedTouches[0]) || null;
+            const endY = t ? t.clientY : startY;
+            const dy = endY - startY;
+            startY = null;
+            // Solo cerrar si swipe down >120px y el modal estaba arriba del
+            // todo (no si el user estaba scrolleando hacia abajo dentro).
+            if (dy > 120 && startScroll <= 5) {
+                try { closeFn(); } catch (_) {}
+            }
+        });
+    }
+
     async function open() {
         const modal = document.getElementById('rafflesModal');
         if (!modal) return;
         _mountDelegation();
         modal.style.display = 'flex';
+        _attachSwipeToClose(modal, close);
 
         // Render INSTANTANEO: si ya tenemos data en cache, la mostramos
         // mientras pedimos la fresca en background. El user no ve flash
@@ -785,8 +814,11 @@ VIP.raffles = (function () {
         // de animarse a uno pago. La unica diferencia es la nota de
         // "1 numero por persona" abajo.
         let html = '';
-        html += '<button type="button" data-raffle-action="close-picker" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:24px;cursor:pointer;line-height:1;">✕</button>';
-        html += '<h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
+        // Boton X grande con safe-area-inset-top para no quedar tapado por
+        // el notch del iPhone. Tap area 44x44 (HIG). Background semitransparente
+        // para que se vea siempre, incluso sobre el grid de numeros.
+        html += '<button type="button" data-raffle-action="close-picker" style="position:absolute;top:max(8px,env(safe-area-inset-top));right:8px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:22px;cursor:pointer;line-height:1;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;z-index:5;">✕</button>';
+        html += '<h3 style="color:#ffd700;margin:0 0 4px;font-size:18px;padding-right:52px;">' + (r.emoji || '🎁') + ' ' + _esc(r.name) + '</h3>';
         html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Premio $' + _fmt(r.prizeValueARS) + ' · <strong style="color:' + (isOneCupo ? '#66ff66' : '#ffd700') + ';">$' + _fmt(r.entryCost) + '</strong> por número' + (isOneCupo ? ' · 1 por persona' : '') + '</div>';
         html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 10px;font-size:11.5px;color:#ddd;margin-bottom:10px;line-height:1.4;">';
         html += '🎯 Tocá ' + (isOneCupo ? '<strong>el número</strong> que quieras' : 'los números que querés') + ' (<strong style="color:#66ff66;">verde</strong> = libres, <strong style="color:#ff6b6b;">rojo</strong> = tomados, <strong style="color:#ffd700;">dorado</strong> = el que vas a comprar).' + (isOneCupo ? '' : ' Hasta 50 por compra.');
@@ -833,6 +865,10 @@ VIP.raffles = (function () {
         html += '<button type="button" id="raffle_pick_buy" data-raffle-action="confirm-buy" ' + (pickedArr.length === 0 ? 'disabled' : '') + ' style="flex:2;min-width:160px;background:' + ctaBg + ';color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (pickedArr.length ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + ctaText + '</button>';
         html += '</div>';
 
+        // Boton "VOLVER" al pie. Siempre accesible — la X de arriba a veces queda
+        // tapada por el notch del iPhone y este boton es el escape natural.
+        html += '<button type="button" data-raffle-action="close-picker" style="margin-top:14px;width:100%;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.25);padding:13px;border-radius:10px;font-weight:800;font-size:13.5px;cursor:pointer;letter-spacing:0.5px;">← VOLVER</button>';
+
         const pickerBody = document.getElementById('rafflesPickerBody');
         if (pickerBody) pickerBody.innerHTML = html;
     }
@@ -855,6 +891,7 @@ VIP.raffles = (function () {
             document.body.appendChild(modal);
         }
         modal.style.display = 'flex';
+        _attachSwipeToClose(modal, closePicker);
         _renderPicker();
     }
 
