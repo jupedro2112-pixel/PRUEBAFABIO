@@ -9055,11 +9055,13 @@ async function uploadSegmentSubmit(slug) {
     const fileInput = document.getElementById('segUploadFile');
     const url = (document.getElementById('segUploadUrl')?.value || '').trim();
     let body = null;
+    let bodySizeKb = 0;
     if (fileInput && fileInput.files && fileInput.files[0]) {
         const f = fileInput.files[0];
         if (f.size > 20 * 1024 * 1024) { alert('Archivo muy grande (max 20MB). Si excede, recortá por fechas o subí en partes.'); return; }
         const text = await f.text();
         body = { csv: text, filename: f.name };
+        bodySizeKb = Math.round(text.length / 1024);
     } else if (url) {
         body = { url };
     } else {
@@ -9067,19 +9069,43 @@ async function uploadSegmentSubmit(slug) {
         return;
     }
     uploadSegmentSubmit._busy = true;
+    // Reemplazar el modal con un loader claro mientras procesa, asi el user no
+    // ve la pantalla congelada — uploads de varios MB pueden tardar 10-30s.
+    const modal = document.getElementById('uploadSegmentModal');
+    if (modal) {
+        modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #66ff66;border-radius:14px;max-width:420px;width:100%;margin:8px auto;padding:30px 20px;text-align:center;">' +
+            '<div style="font-size:36px;margin-bottom:10px;">⏳</div>' +
+            '<div style="color:#66ff66;font-size:14px;font-weight:900;margin-bottom:6px;">Procesando…</div>' +
+            '<div style="color:#aaa;font-size:11.5px;line-height:1.5;">' +
+                (url ? 'Bajando CSV de la URL y parseando.' : 'Subiendo ' + bodySizeKb + ' KB y parseando.') +
+                '<br>Puede tardar entre 10 y 60 segundos según el tamaño.' +
+            '</div>' +
+        '</div>';
+    }
     try {
         const r = await authFetch('/api/admin/segments/' + encodeURIComponent(slug) + '/upload', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
-        const d = await r.json();
-        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        let d = {};
+        try { d = await r.json(); } catch (_) {}
+        if (!r.ok) {
+            const msg = (d && d.error) || ('HTTP ' + r.status + ' — el server rechazó el upload.');
+            alert('❌ ' + msg);
+            // Re-abrir modal para que el user pueda corregir
+            document.getElementById('uploadSegmentModal')?.remove();
+            uploadSegmentModal(slug);
+            return;
+        }
         document.getElementById('uploadSegmentModal')?.remove();
-        showToast('✅ ' + d.rowsCount + ' usuarios cargados en "' + slug + '"', 'success');
+        showToast('✅ ' + (d.rowsCount || 0) + ' usuarios cargados en "' + slug + '"', 'success');
         loadSegmentsAdmin();
     } catch (e) {
-        alert('Error de conexión');
+        console.error('uploadSegmentSubmit error:', e);
+        alert('Error de conexión: ' + (e && e.message ? e.message : 'sin detalle') + '\n\nProbá de nuevo. Si el archivo es grande puede tardar — esperá 60s antes de cancelar.');
+        document.getElementById('uploadSegmentModal')?.remove();
+        uploadSegmentModal(slug);
     } finally { uploadSegmentSubmit._busy = false; }
 }
 
