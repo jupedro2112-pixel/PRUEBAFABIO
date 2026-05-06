@@ -370,6 +370,22 @@ VIP.raffles = (function () {
         const entryCost = Number(r.entryCost) || 0;
         const isPaid = entryCost > 0;
         const canAfford = !isPaid || (Number(balance) || 0) >= entryCost;
+        // Detectamos si el user esta anotado en OTRO relampago (active+closed).
+        // Regla: 1 cupo por persona en TODOS los relampagos abiertos. Si esta
+        // anotado en otro, no puede anotarse en este -> se muestra
+        // "NO DISPONIBLE" en lugar del boton ELEGIR.
+        let enrolledOther = null;
+        if (!enrolled && !drawn && _data && _data.raffles) {
+            for (const x of _data.raffles) {
+                if (x.raffleType !== 'relampago') continue;
+                if (x.id === r.id) continue;
+                if (x.status !== 'active' && x.status !== 'closed') continue;
+                if (x.myTicketNumbers && x.myTicketNumbers.length > 0) {
+                    enrolledOther = x;
+                    break;
+                }
+            }
+        }
 
         let html = '<div style="background:linear-gradient(135deg,#001a40 0%,#003f7a 35%,#ffeb3b 100%);background-size:200% 200%;border:3px solid #ffeb3b;border-radius:18px;padding:18px 16px;margin-bottom:18px;box-shadow:0 0 30px rgba(255,235,59,0.40),0 4px 24px rgba(0,150,255,0.30);position:relative;overflow:hidden;">';
         html += '<div style="position:absolute;top:-15px;right:-15px;font-size:120px;opacity:0.10;line-height:1;">⚡</div>';
@@ -405,53 +421,55 @@ VIP.raffles = (function () {
 
         if (drawn) {
             const youWon = !!r.iAmWinner;
-            html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;">' +
+            html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;margin-bottom:10px;">' +
                 (youWon ? '🏆 ¡GANASTE EL RELÁMPAGO! Número #' + r.winningTicketNumber : '🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber) +
                 '</div>';
         } else if (enrolled && closed) {
-            // Anotado + cupo lleno: card con su numero + estado de cargas
-            // (cuantas tiene / cuantas le faltan) + aviso + boton wa.link.
             html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;margin-bottom:10px;">';
             html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO · CUPO LLENO</div>';
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
             html += _renderLightningEligibilityStatus();
             html += _renderLightningClaimWarning();
-            html += _renderLightningCargarBtn('💬 QUIERO JUGAR', 'Cargá ANTES del sorteo del LUNES · mínimo 5 para reclamar');
         } else if (enrolled) {
-            html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;">';
+            html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;margin-bottom:10px;">';
             html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO</div>';
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
             html += _renderLightningEligibilityStatus();
             html += _renderLightningClaimWarning();
         } else if (closed) {
-            // Cupo lleno y NO anotado: aviso + upsell. El nuevo relampago
-            // (auto-respawn) va a aparecer mas abajo como otro hero/card si
-            // existe. Aca solo informamos del estado.
-            html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:11px;text-align:center;">';
+            html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:11px;text-align:center;margin-bottom:10px;">';
             html += '<div style="color:#fff;font-size:14px;font-weight:900;margin-bottom:6px;">⏳ SORTEO LLENO · esperá el próximo</div>';
             html += '<div style="color:#ffeb3b;font-size:11.5px;font-weight:700;line-height:1.45;">Si abrimos otro relámpago, vas a poder anotarte ahí.</div>';
             html += '</div>';
+        } else if (enrolledOther) {
+            // El user esta anotado en OTRO relampago abierto. NO puede entrar
+            // a este. Mostramos un aviso "NO DISPONIBLE" claro con el numero
+            // que ya tiene en el otro sorteo, en lugar de un boton roto.
+            html += '<div style="background:rgba(120,120,120,0.30);border:2px dashed rgba(255,255,255,0.40);border-radius:10px;padding:13px;text-align:center;margin-bottom:10px;">';
+            html += '<div style="color:#aaa;font-size:14px;font-weight:900;letter-spacing:1px;margin-bottom:5px;">🔒 NO DISPONIBLE</div>';
+            html += '<div style="color:#fff;font-size:12.5px;line-height:1.5;font-weight:700;">Ya estás anotado en <strong style="color:#ffeb3b;">' + _esc(enrolledOther.name || 'otro RELÁMPAGO') + '</strong> con número <strong style="color:#ffeb3b;">#' + (enrolledOther.myTicketNumbers && enrolledOther.myTicketNumbers[0]) + '</strong>.</div>';
+            html += '<div style="color:#aaa;font-size:11px;margin-top:6px;line-height:1.4;">Solo se permite <strong>1 número por persona</strong> en sorteos relámpago. Cuando se sortee tu sorteo actual, vas a poder anotarte en uno nuevo.</div>';
+            html += '</div>';
+            html += _renderLightningEligibilityStatus();
+            html += _renderLightningClaimWarning();
         } else if (isPaid && !canAfford) {
-            // Relampago PAGO sin saldo: redirige a WhatsApp en vez del picker.
-            // Asi el user que entra sin plata sale derecho al WP a cargar
-            // (en lugar de toparse con un error de "saldo insuficiente"
-            // despues de tap el grid).
             html += _renderLightningCargarBtn();
         } else {
-            // Boton para abrir el picker. Reutiliza el mismo flujo de buy
-            // que los pagos. Para gratis: entryCost=0, salta saldo. Para
-            // pago: descuenta saldo en /buy.
             const btnLabel = isPaid
                 ? '⚡ ELEGIR MI NÚMERO ($' + _fmt(entryCost) + ')'
                 : '⚡ ELEGIR MI NÚMERO GRATIS';
-            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);">' + btnLabel + '</button>';
-            // Aviso prominente abajo del CTA: estado de cargas del user +
-            // explicacion de la regla. Asi sabe ANTES de anotarse cuanto le
-            // falta para poder reclamar si sale ganador.
+            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);margin-bottom:10px;">' + btnLabel + '</button>';
             html += _renderLightningEligibilityStatus();
             html += _renderLightningClaimWarning();
+        }
+        // SIEMPRE mostramos el wa.link (excepto cuando ya se mostro como CTA
+        // principal en el caso pago-sin-saldo). El owner pidio que el atajo a
+        // WhatsApp este cerca en CADA sorteo, en cualquier estado, para que
+        // la gente pueda cargar/preguntar de un toque.
+        if (!(isPaid && !canAfford && !enrolled && !closed && !drawn)) {
+            html += _renderLightningCargarBtn('💬 QUIERO JUGAR', 'Cargá tu plata · WhatsApp directo a tu línea');
         }
         html += '</div>';
         return html;
@@ -1195,11 +1213,17 @@ VIP.raffles = (function () {
         const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
         const cargarHref = waNum ? 'https://wa.me/' + waNum : 'https://wa.link/metawin2026';
         const showCargar = isPaid && !canAfford && l.status === 'active' && !enrolled;
-        const clickAction = showCargar
-            ? "event.stopPropagation();window.open(" + JSON.stringify(cargarHref) + ",'_blank')"
-            : ((l.status === 'active' && !enrolled)
-                ? 'event.stopPropagation();VIP.raffles && VIP.raffles.openAndPickRaffle(' + JSON.stringify(l.id) + ')'
-                : 'event.stopPropagation();VIP.raffles && VIP.raffles.open()');
+        // Si el user esta anotado en OTRO relampago (server lo manda en
+        // myEnrolledOther), avisamos NO DISPONIBLE en lugar del CTA.
+        const otherEnrolled = l.myEnrolledOther || null;
+        const blockedByOther = !enrolled && !!otherEnrolled && l.status === 'active';
+        const clickAction = blockedByOther
+            ? "event.stopPropagation();VIP.raffles && VIP.raffles.open()"
+            : (showCargar
+                ? "event.stopPropagation();window.open(" + JSON.stringify(cargarHref) + ",'_blank')"
+                : ((l.status === 'active' && !enrolled)
+                    ? 'event.stopPropagation();VIP.raffles && VIP.raffles.openAndPickRaffle(' + JSON.stringify(l.id) + ')'
+                    : 'event.stopPropagation();VIP.raffles && VIP.raffles.open()'));
         const badgeTxt = isPaid
             ? ('$' + _fmt(entryCost) + ' POR NÚMERO · 1 POR PERSONA')
             : 'SIN CARGO · MÁXIMO 1 POR PERSONA';
@@ -1215,23 +1239,29 @@ VIP.raffles = (function () {
             '<div style="color:#fff;font-size:18px;font-weight:900;line-height:1.1;text-shadow:0 2px 4px rgba(0,0,0,0.50);margin:3px 0 6px;">Premio $' + _fmt(l.prizeValueARS) + '</div>' +
             (enrolled
                 ? '<div style="background:rgba(255,235,59,0.20);border:1.5px solid #ffeb3b;border-radius:7px;padding:7px;text-align:center;color:#fff;font-size:12px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">✅ Estás anotado · Número #' + l.myTicket + '</div>'
-                : (l.status !== 'active'
-                    ? '<div style="background:rgba(0,0,0,0.45);border-radius:7px;padding:8px;text-align:center;">' +
-                        '<div style="color:#fff;font-size:12px;font-weight:900;margin-bottom:3px;">⏳ SORTEO LLENO</div>' +
-                        '<div style="color:#ffeb3b;font-size:10px;font-weight:700;line-height:1.4;">Si abrimos otro relámpago, vas a poder anotarte.</div>' +
+                : (blockedByOther
+                    ? '<div style="background:rgba(120,120,120,0.30);border:2px dashed rgba(255,255,255,0.40);border-radius:7px;padding:9px;text-align:center;">' +
+                        '<div style="color:#aaa;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:3px;">🔒 NO DISPONIBLE</div>' +
+                        '<div style="color:#fff;font-size:10.5px;font-weight:700;line-height:1.4;">Ya estás anotado en <strong style="color:#ffeb3b;">' + _esc(otherEnrolled.raffleName || 'otro RELÁMPAGO') + '</strong> con #<strong style="color:#ffeb3b;">' + (otherEnrolled.ticketNumber != null ? otherEnrolled.ticketNumber : '—') + '</strong></div>' +
                       '</div>'
-                    : '<div style="height:7px;background:rgba(0,0,0,0.40);border-radius:4px;overflow:hidden;margin:3px 0;">' +
-                        '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
-                      '<div style="display:flex;justify-content:space-between;font-size:10.5px;color:#fff;font-weight:700;margin-bottom:5px;">' +
-                        '<span>' + sold + '/' + total + ' anotados</span>' +
-                        '<span>' + (showCargar ? '💬 CARGÁ Y ENTRÁ' : '👉 ENTRÁ Y ELEGÍ') + '</span>' +
-                      '</div>' +
-                      (showCargar
-                        ? '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200);color:#fff;border:2px solid #66ff66;border-radius:7px;padding:8px;text-align:center;font-weight:900;font-size:12px;letter-spacing:1px;margin-top:3px;box-shadow:0 2px 6px rgba(102,255,102,0.40);">' +
-                            '<div style="font-size:9.5px;color:#aaffaa;font-weight:700;margin-bottom:2px;">No tenés saldo suficiente</div>' +
-                            '<div>💬 QUIERO CARGAR</div>' +
+                    : (l.status !== 'active'
+                        ? '<div style="background:rgba(0,0,0,0.45);border-radius:7px;padding:8px;text-align:center;">' +
+                            '<div style="color:#fff;font-size:12px;font-weight:900;margin-bottom:3px;">⏳ SORTEO LLENO</div>' +
+                            '<div style="color:#ffeb3b;font-size:10px;font-weight:700;line-height:1.4;">Si abrimos otro relámpago, vas a poder anotarte.</div>' +
                           '</div>'
-                        : '<div style="background:#ffeb3b;color:#001a40;border-radius:7px;padding:8px;text-align:center;font-weight:900;font-size:12px;letter-spacing:1px;margin-top:3px;box-shadow:0 2px 6px rgba(255,235,59,0.40);">' + ctaLabel + '</div>')
+                        : '<div style="height:7px;background:rgba(0,0,0,0.40);border-radius:4px;overflow:hidden;margin:3px 0;">' +
+                            '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
+                          '<div style="display:flex;justify-content:space-between;font-size:10.5px;color:#fff;font-weight:700;margin-bottom:5px;">' +
+                            '<span>' + sold + '/' + total + ' anotados</span>' +
+                            '<span>' + (showCargar ? '💬 CARGÁ Y ENTRÁ' : '👉 ENTRÁ Y ELEGÍ') + '</span>' +
+                          '</div>' +
+                          (showCargar
+                            ? '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200);color:#fff;border:2px solid #66ff66;border-radius:7px;padding:8px;text-align:center;font-weight:900;font-size:12px;letter-spacing:1px;margin-top:3px;box-shadow:0 2px 6px rgba(102,255,102,0.40);">' +
+                                '<div style="font-size:9.5px;color:#aaffaa;font-weight:700;margin-bottom:2px;">No tenés saldo suficiente</div>' +
+                                '<div>💬 QUIERO CARGAR</div>' +
+                              '</div>'
+                            : '<div style="background:#ffeb3b;color:#001a40;border-radius:7px;padding:8px;text-align:center;font-weight:900;font-size:12px;letter-spacing:1px;margin-top:3px;box-shadow:0 2px 6px rgba(255,235,59,0.40);">' + ctaLabel + '</div>')
+                      )
                   )
             ) +
         '</div>';

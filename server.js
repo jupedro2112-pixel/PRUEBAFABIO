@@ -12695,6 +12695,27 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
           { raffleId: light.id, username: { $regex: '^' + safeUser + '$', $options: 'i' } },
           { ticketNumbers: 1 }
         ).lean();
+        // Si el user esta anotado en OTRO relampago (no este), lo informamos
+        // para que el front muestre "NO DISPONIBLE — ya estas anotado en N°X
+        // con #Y" en lugar del boton "ELEGIR MI NUMERO". Regla 1 cupo por
+        // persona en TODOS los relampagos abiertos.
+        const otherIds = lights.map(l => l.id).filter(id => id !== light.id);
+        let myEnrolledOther = null;
+        if (otherIds.length > 0) {
+          const other = await RaffleParticipation.findOne(
+            { raffleId: { $in: otherIds }, username: { $regex: '^' + safeUser + '$', $options: 'i' } },
+            { ticketNumbers: 1, raffleId: 1 }
+          ).lean();
+          if (other) {
+            const otherRaffle = lights.find(l => l.id === other.raffleId);
+            myEnrolledOther = {
+              raffleId: other.raffleId,
+              raffleName: (otherRaffle && otherRaffle.name) || 'otro RELÁMPAGO',
+              status: (otherRaffle && otherRaffle.status) || 'active',
+              ticketNumber: (other.ticketNumbers && other.ticketNumbers[0]) || null
+            };
+          }
+        }
         // Si el relampago es PAGO, traemos balance para que el front decida
         // mostrar "QUIERO CARGAR" vs "ELEGIR MI NÚMERO ($X)" sin un round trip
         // extra. Si es gratis, no necesitamos balance.
@@ -12715,7 +12736,8 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
           emoji: light.emoji || '⚡',
           entryCost: light.entryCost || 0,
           isFree: !!light.isFree,
-          myTicket: (myPart && myPart.ticketNumbers && myPart.ticketNumbers[0]) || null
+          myTicket: (myPart && myPart.ticketNumbers && myPart.ticketNumbers[0]) || null,
+          myEnrolledOther
         };
       }
     } catch (e) {
