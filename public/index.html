@@ -1506,6 +1506,128 @@
             text-transform: uppercase;
         }
 
+        /* ============================================
+           LAYOUT V2: refunds top, bono, fila usuario+cargar+saldo,
+           abrir plataforma, sorteo abajo. Compacto en 1 pantalla.
+           ============================================ */
+        #chatScreen .header {
+            order: 1 !important;
+            margin-top: 0 !important;
+        }
+        #chatScreen .header-center {
+            flex-direction: row !important;
+            gap: 6px !important;
+            width: 100% !important;
+        }
+        #chatScreen .header-center .refund-btn {
+            flex: 1 1 0 !important;
+            width: auto !important;
+            min-height: 64px !important;
+            font-size: 11px !important;
+            padding: 8px 4px !important;
+            border-radius: 10px !important;
+            justify-content: center !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-label-full {
+            display: none !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-label-short {
+            display: block !important;
+            font-size: 18px !important;
+            line-height: 1 !important;
+            margin-bottom: 2px !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-amount {
+            font-size: 13px !important;
+            font-weight: 900 !important;
+            margin: 1px 0 !important;
+        }
+        #chatScreen .header-center .refund-btn .refund-timer {
+            font-size: 9px !important;
+            opacity: 0.85 !important;
+            margin: 0 !important;
+        }
+
+        /* Bono de bienvenida abajo de los reembolsos */
+        .welcome-bonus-card {
+            order: 2 !important;
+            margin-top: 8px !important;
+        }
+
+        /* Saldo card: nueva fila usuario | cargar | saldo */
+        .user-balance-card {
+            order: 3 !important;
+            padding: 12px 14px !important;
+            gap: 10px !important;
+        }
+        .user-balance-card .balance-row-v2 {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            flex-wrap: nowrap !important;
+            justify-content: space-between !important;
+        }
+        .user-balance-card .username-pill {
+            flex: 0 1 auto;
+            background: rgba(212,175,55,0.15);
+            border: 1px solid rgba(212,175,55,0.45);
+            color: #ffd700;
+            font-weight: 800;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            max-width: 35%;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+        .user-balance-card .cargar-cta {
+            flex: 1 1 auto;
+            background: linear-gradient(135deg,#25d366,#128c7e);
+            color: #fff;
+            border: none;
+            padding: 9px 8px;
+            border-radius: 10px;
+            font-weight: 800;
+            font-size: 12px;
+            cursor: pointer;
+            text-decoration: none;
+            text-align: center;
+            white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(37,211,102,0.30);
+        }
+        .user-balance-card .cargar-cta:active { transform: scale(0.98); }
+        .user-balance-card .balance-amount-inline {
+            flex: 0 0 auto;
+            font-size: 17px;
+            font-weight: 900;
+            color: #00ff99;
+            font-family: monospace;
+            text-shadow: 0 1px 4px rgba(0,255,153,0.30);
+            letter-spacing: 0.5px;
+        }
+
+        /* Sorteo semanal banner abajo del Abrir plataforma */
+        #raffleWinnerHomeBanner {
+            order: 4 !important;
+        }
+
+        /* Username badge legacy oculto — username ahora vive en la balance row */
+        #refundsLogoutBtn {
+            display: none !important;
+        }
+
+        /* Welcome message compacto para que entre todo en una pantalla */
+        .refunds-welcome {
+            margin-bottom: 4px !important;
+            order: 0.5 !important;
+        }
+        .refunds-welcome h2 {
+            font-size: 13px !important;
+            margin: 4px 0 !important;
+            line-height: 1.2 !important;
+        }
+
     </style>
 </head>
 <body>
@@ -1798,11 +1920,14 @@
             <button id="lineChangedDismiss" type="button">✓ Entendido, ya lo agendé</button>
         </div>
 
-        <!-- Refunds-only: Saldo + acceso a la plataforma JUGAYGANA -->
+        <!-- Refunds-only: Saldo + acceso a la plataforma JUGAYGANA.
+             Layout v2: fila con username + boton "QUIERO CARGAR" + saldo,
+             y abajo el boton "Abrir plataforma" full width. -->
         <div id="userBalanceCard" class="user-balance-card">
-            <div class="balance-info">
-                <span class="balance-label">💰 Tu saldo en la plataforma</span>
-                <span id="userBalanceAmount" class="balance-amount">$0</span>
+            <div class="balance-row-v2">
+                <span class="username-pill" id="balanceUsernamePill">@usuario</span>
+                <a class="cargar-cta" id="cargarCtaBtn" href="https://wa.link/metawin2026" target="_blank" rel="noopener noreferrer">💸 QUIERO CARGAR</a>
+                <span class="balance-amount-inline" id="userBalanceAmount">$0</span>
             </div>
             <button id="goToPlatformBtn" type="button" class="platform-btn-cta">
                 🎰 Abrir plataforma
