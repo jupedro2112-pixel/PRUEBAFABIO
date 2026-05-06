@@ -179,6 +179,7 @@ function showSection(sectionKey) {
         raffles: 'rafflesSection',
         rafflesFree: 'rafflesFreeSection',
         rafflesLightning: 'rafflesLightningSection',
+        segments: 'segmentsSection',
         campaigns: 'campaignsSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
@@ -230,6 +231,8 @@ function showSection(sectionKey) {
         loadRafflesFreeAdmin();
     } else if (sectionKey === 'rafflesLightning') {
         loadRafflesLightningAdmin();
+    } else if (sectionKey === 'segments') {
+        loadSegmentsAdmin();
     } else if (sectionKey === 'campaigns') {
         loadCampaignsAdmin();
     } else if (sectionKey === 'recovery') {
@@ -8900,6 +8903,385 @@ async function audienceConfigSave(kind) {
 
 async function loadRafflesLightningAdmin() {
     return _loadRafflesGeneric('relampago', 'rafflesLightningAdminContent');
+}
+
+// ============================================
+// SEGMENTOS — listas de usernames (CSV file o URL Sheets) para analizar
+// conversion contra cargas reales de JUGAYGANA. Usado para top jugadores,
+// recuperacion, sin WP, con app, bonus 5k/10k/2k, participantes de un
+// relampago, etc.
+// ============================================
+
+async function loadSegmentsAdmin() {
+    const c = document.getElementById('segmentsAdminContent');
+    if (!c) return;
+    c.innerHTML = '<div style="text-align:center;padding:30px;color:#888;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/segments');
+        const d = await r.json();
+        if (!r.ok) {
+            c.innerHTML = '<div style="color:#ff8080;padding:18px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        const list = d.segments || [];
+        if (list.length === 0) {
+            c.innerHTML = '<div style="text-align:center;padding:40px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">No hay segmentos creados todavía.<br><br>Tocá <strong style="color:#66ff66;">"➕ Nuevo segmento"</strong> arriba para empezar (top jugadores, recuperación, bonus 5k, etc.).</div>';
+            return;
+        }
+        let html = '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<thead style="background:#001a40;"><tr style="color:#00d4ff;text-align:left;">';
+        html += '<th style="padding:9px 10px;font-weight:800;">Segmento</th>';
+        html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Usuarios</th>';
+        html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Subidas</th>';
+        html += '<th style="padding:9px 10px;font-weight:800;">Última actualización</th>';
+        html += '<th style="padding:9px 10px;font-weight:800;">Acciones</th>';
+        html += '</tr></thead><tbody>';
+        for (const s of list) {
+            const last = s.lastUploadAt ? new Date(s.lastUploadAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+            const sourceTag = s.lastUploadSource === 'sheets-url' ? '🔗 Sheets'
+                : (s.lastUploadSource === 'lightning' ? '⚡ Relámpago'
+                : (s.lastUploadSource === 'file' ? '📄 Archivo' : ''));
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
+            html += '<td style="padding:9px 10px;color:#fff;font-weight:700;">' + escapeHtml(s.name) + '<div style="color:#888;font-size:10px;font-weight:400;">' + escapeHtml(s.slug) + (s.description ? ' · ' + escapeHtml(s.description) : '') + '</div></td>';
+            html += '<td style="padding:9px 10px;text-align:center;color:#00d4ff;font-weight:800;">' + (s.userCount || 0) + '</td>';
+            html += '<td style="padding:9px 10px;text-align:center;color:#aaa;">' + (s.uploadsCount || 0) + '</td>';
+            html += '<td style="padding:9px 10px;color:#ddd;font-size:11px;">' + last + (sourceTag ? ' <span style="color:#888;">· ' + sourceTag + '</span>' : '') + '</td>';
+            html += '<td style="padding:9px 10px;display:flex;gap:5px;flex-wrap:wrap;">';
+            html += '<button type="button" onclick="viewSegment(' + escapeJsArg(s.slug) + ')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">📋 Detalle</button>';
+            html += '<button type="button" onclick="uploadSegmentModal(' + escapeJsArg(s.slug) + ')" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">⬆️ Subir</button>';
+            html += '<button type="button" onclick="deleteSegment(' + escapeJsArg(s.slug) + ')" style="background:rgba(255,107,107,0.10);color:#ff8080;border:1px solid rgba(255,107,107,0.40);padding:5px 9px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">🗑️</button>';
+            html += '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        c.innerHTML = html;
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:18px;">Error de conexión</div>';
+    }
+}
+
+function newSegmentModal() {
+    let modal = document.getElementById('newSegmentModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'newSegmentModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #66ff66;border-radius:14px;max-width:480px;width:100%;margin:8px auto;padding:18px 16px;">' +
+        '<h3 style="color:#66ff66;margin:0 0 8px;font-size:16px;">➕ Nuevo segmento</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-bottom:14px;line-height:1.5;">Creá un segmento vacío. Después le subís el CSV o URL de Sheets.</div>' +
+        '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Nombre</label>' +
+        '<input id="segNewName" type="text" maxlength="120" placeholder="Ej: Top jugadores · semana 18" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 10px;box-sizing:border-box;">' +
+        '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Tipo (opcional)</label>' +
+        '<select id="segNewKind" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 10px;box-sizing:border-box;">' +
+            '<option value="custom">Custom</option>' +
+            '<option value="top">🏆 Top jugadores</option>' +
+            '<option value="recovery">🔁 Recuperación</option>' +
+            '<option value="wp">📞 Sin WP</option>' +
+            '<option value="app">📱 Con app</option>' +
+            '<option value="bonus">🎁 Bonus</option>' +
+            '<option value="lightning">⚡ Relámpago</option>' +
+        '</select>' +
+        '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">Descripción (opcional)</label>' +
+        '<textarea id="segNewDesc" maxlength="500" placeholder="Notas internas — para qué creaste este segmento" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 10px;border-radius:6px;font-size:13px;margin:4px 0 14px;box-sizing:border-box;min-height:60px;resize:vertical;"></textarea>' +
+        '<div style="display:flex;gap:8px;">' +
+            '<button onclick="document.getElementById(\'newSegmentModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+            '<button onclick="newSegmentSubmit()" style="flex:2;background:linear-gradient(135deg,#66ff66,#4dabff);color:#000;border:none;padding:10px;border-radius:7px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">➕ CREAR</button>' +
+        '</div>' +
+    '</div>';
+    document.body.appendChild(modal);
+    setTimeout(() => { try { document.getElementById('segNewName').focus(); } catch (_) {} }, 80);
+}
+
+async function newSegmentSubmit() {
+    if (newSegmentSubmit._busy) return;
+    const name = (document.getElementById('segNewName')?.value || '').trim();
+    const kind = (document.getElementById('segNewKind')?.value || 'custom');
+    const description = (document.getElementById('segNewDesc')?.value || '').trim();
+    if (!name) { alert('Falta nombre'); return; }
+    newSegmentSubmit._busy = true;
+    try {
+        const r = await authFetch('/api/admin/segments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, kind, description })
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        document.getElementById('newSegmentModal')?.remove();
+        showToast('✅ Segmento creado: ' + d.segment.name, 'success');
+        loadSegmentsAdmin();
+        // Abre directo el modal de subida.
+        setTimeout(() => uploadSegmentModal(d.segment.slug), 300);
+    } catch (e) {
+        alert('Error de conexión');
+    } finally { newSegmentSubmit._busy = false; }
+}
+
+function uploadSegmentModal(slug) {
+    let modal = document.getElementById('uploadSegmentModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'uploadSegmentModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #66ff66;border-radius:14px;max-width:560px;width:100%;margin:8px auto;padding:18px 16px;">' +
+        '<h3 style="color:#66ff66;margin:0 0 4px;font-size:16px;">⬆️ Subir lista a "' + escapeHtml(slug) + '"</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">Pisa la lista actual pero queda registro en historial. Usá <strong>una de las dos opciones</strong>: archivo CSV o URL de Sheets publicado-a-web.</div>' +
+
+        '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:11px;margin-bottom:10px;">' +
+            '<label style="color:#66ff66;font-size:12px;font-weight:800;display:block;margin-bottom:6px;">📄 Opción A · Archivo CSV</label>' +
+            '<input id="segUploadFile" type="file" accept=".csv,text/csv,text/plain" style="width:100%;color:#fff;font-size:12px;">' +
+            '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:5px;">Columnas detectadas automáticamente. Tiene que tener al menos una columna <strong>username</strong> (o user / usuario / nombre / nick).</div>' +
+        '</div>' +
+
+        '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:11px;margin-bottom:14px;">' +
+            '<label style="color:#00d4ff;font-size:12px;font-weight:800;display:block;margin-bottom:6px;">🔗 Opción B · URL de Google Sheets (publicado-a-web como CSV)</label>' +
+            '<input id="segUploadUrl" type="url" placeholder="https://docs.google.com/spreadsheets/.../pub?output=csv" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:8px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;">' +
+            '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:5px;">En tu Sheet: <strong>Archivo → Compartir → Publicar a la web</strong> → "como CSV" → copiar URL.</div>' +
+        '</div>' +
+
+        '<div style="display:flex;gap:8px;">' +
+            '<button onclick="document.getElementById(\'uploadSegmentModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+            '<button onclick="uploadSegmentSubmit(' + escapeJsArg(slug) + ')" style="flex:2;background:linear-gradient(135deg,#66ff66,#4dabff);color:#000;border:none;padding:10px;border-radius:7px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">⬆️ SUBIR</button>' +
+        '</div>' +
+    '</div>';
+    document.body.appendChild(modal);
+}
+
+async function uploadSegmentSubmit(slug) {
+    if (uploadSegmentSubmit._busy) return;
+    const fileInput = document.getElementById('segUploadFile');
+    const url = (document.getElementById('segUploadUrl')?.value || '').trim();
+    let body = null;
+    if (fileInput && fileInput.files && fileInput.files[0]) {
+        const f = fileInput.files[0];
+        if (f.size > 5 * 1024 * 1024) { alert('Archivo muy grande (max 5MB)'); return; }
+        const text = await f.text();
+        body = { csv: text, filename: f.name };
+    } else if (url) {
+        body = { url };
+    } else {
+        alert('Elegí un archivo CSV o pegá una URL.');
+        return;
+    }
+    uploadSegmentSubmit._busy = true;
+    try {
+        const r = await authFetch('/api/admin/segments/' + encodeURIComponent(slug) + '/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        document.getElementById('uploadSegmentModal')?.remove();
+        showToast('✅ ' + d.rowsCount + ' usuarios cargados en "' + slug + '"', 'success');
+        loadSegmentsAdmin();
+    } catch (e) {
+        alert('Error de conexión');
+    } finally { uploadSegmentSubmit._busy = false; }
+}
+
+async function deleteSegment(slug) {
+    if (!confirm('¿Borrar el segmento "' + slug + '"? Se pierde la lista actual y todo el historial.')) return;
+    try {
+        const r = await authFetch('/api/admin/segments/' + encodeURIComponent(slug), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('🗑️ Segmento borrado', 'success');
+        loadSegmentsAdmin();
+    } catch (e) { alert('Error de conexión'); }
+}
+
+async function importLightningSegmentModal() {
+    // Busca relampagos disponibles para importar.
+    let modal = document.getElementById('importLightningModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'importLightningModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #ffeb3b;border-radius:14px;max-width:520px;width:100%;margin:8px auto;padding:18px 16px;">' +
+        '<h3 style="color:#ffeb3b;margin:0 0 4px;font-size:16px;">⚡ Importar relámpago como segmento</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">Crea un segmento nuevo con los participantes del relámpago elegido. Después podés analizar quién cargó después.</div>' +
+        '<div id="importLightningList" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;max-height:300px;overflow-y:auto;margin-bottom:14px;color:#aaa;font-size:12px;">⏳ Cargando relámpagos…</div>' +
+        '<div style="display:flex;gap:8px;">' +
+            '<button onclick="document.getElementById(\'importLightningModal\').remove()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+        '</div>' +
+    '</div>';
+    document.body.appendChild(modal);
+    try {
+        const r = await authFetch('/api/admin/raffles/lightning-roi?limit=20');
+        const d = await r.json();
+        const list = (d && d.raffles) || [];
+        const cont = document.getElementById('importLightningList');
+        if (list.length === 0) {
+            cont.innerHTML = '<div style="text-align:center;padding:20px;">No hay relámpagos creados.</div>';
+            return;
+        }
+        let html = '';
+        for (const it of list) {
+            const drawnTxt = it.drawnAt ? new Date(it.drawnAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+            html += '<div onclick="importLightningPick(' + escapeJsArg(it.id) + ',' + escapeJsArg(it.name) + ')" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:7px;padding:9px 11px;margin-bottom:6px;cursor:pointer;">';
+            html += '<div style="color:#fff;font-weight:700;font-size:13px;">⚡ ' + escapeHtml(it.name) + ' <span style="color:#888;font-weight:400;font-size:10.5px;">· ' + escapeHtml(it.status) + '</span></div>';
+            html += '<div style="color:#aaa;font-size:10.5px;line-height:1.4;margin-top:3px;">' + (it.totalEntries || 0) + ' anotados · premio $' + (it.prizeValueARS||0).toLocaleString('es-AR') + ' · ' + drawnTxt + '</div>';
+            html += '</div>';
+        }
+        cont.innerHTML = html;
+    } catch (e) {
+        const cont = document.getElementById('importLightningList');
+        if (cont) cont.innerHTML = '<div style="color:#ff8080;padding:20px;text-align:center;">Error cargando relámpagos</div>';
+    }
+}
+
+async function importLightningPick(raffleId, raffleName) {
+    const slugDefault = ('relampago-' + (raffleName || 'rid')).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0, 60);
+    const name = prompt('Nombre del segmento:', '⚡ ' + (raffleName || 'Relámpago'));
+    if (!name) return;
+    const slug = (prompt('Slug (auto-sugerido):', slugDefault) || slugDefault).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0, 60);
+    if (!slug) return;
+    try {
+        // Crea el segmento (si ya existe, lo importa igual al mismo).
+        const cr = await authFetch('/api/admin/segments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, slug, kind: 'lightning' })
+        });
+        const cd = await cr.json();
+        if (!cr.ok && !/Ya existe/.test(cd.error || '')) { alert('❌ ' + (cd.error || 'Error')); return; }
+        // Importa los participantes.
+        const ir = await authFetch('/api/admin/segments/' + encodeURIComponent(slug) + '/import-lightning', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ raffleId })
+        });
+        const id = await ir.json();
+        if (!ir.ok) { alert('❌ ' + (id.error || 'Error')); return; }
+        document.getElementById('importLightningModal')?.remove();
+        showToast('⚡ Importados ' + id.rowsCount + ' participantes a "' + slug + '"', 'success');
+        loadSegmentsAdmin();
+    } catch (e) { alert('Error de conexión'); }
+}
+
+async function viewSegment(slug, sinceISO) {
+    let modal = document.getElementById('segmentDetailModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'segmentDetailModal';
+        modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;';
+        modal.onclick = function (e) { if (e.target === modal) modal.style.display = 'none'; };
+        modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #00d4ff;border-radius:12px;max-width:920px;width:100%;margin:8px auto;padding:18px 16px;position:relative;"><button onclick="document.getElementById(\'segmentDetailModal\').style.display=\'none\'" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button><div id="segmentDetailBody"><div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div></div></div>';
+        document.body.appendChild(modal);
+    }
+    modal.style.display = 'flex';
+    const body = document.getElementById('segmentDetailBody');
+    body.innerHTML = '<div style="text-align:center;padding:40px;color:#888;">' + (sinceISO ? '⏳ Analizando cargas (puede tardar varios segundos por persona)…' : '⏳ Cargando…') + '</div>';
+    try {
+        const url = '/api/admin/segments/' + encodeURIComponent(slug) + '?analyze=1' + (sinceISO ? '&since=' + encodeURIComponent(sinceISO) : '');
+        const r = await authFetch(url);
+        const d = await r.json();
+        if (!r.ok) { body.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        body.innerHTML = _renderSegmentDetail(d);
+    } catch (e) { body.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>'; }
+}
+
+function _renderSegmentDetail(d) {
+    const s = d.segment;
+    const users = d.users || [];
+    const totals = d.totals || {};
+    const uploads = d.uploads || [];
+    const cutoff = s.cutoffUsed ? new Date(s.cutoffUsed).toLocaleString('es-AR') : '—';
+    const cutoffLocal = s.cutoffUsed ? _isoToDatetimeLocal(s.cutoffUsed) : '';
+    const conv = users.length ? Math.round((totals.converted || 0) / users.length * 100) : 0;
+    let html = '<h2 style="color:#00d4ff;margin:0 0 4px;font-size:18px;">📊 ' + escapeHtml(s.name) + '</h2>';
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">' + escapeHtml(s.slug) + (s.description ? ' · ' + escapeHtml(s.description) : '') + '</div>';
+
+    // Stats
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px;">';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Usuarios</div><div style="color:#fff;font-size:18px;font-weight:900;">' + users.length + '</div></div>';
+    if (d.analyzed) {
+        html += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:9px 12px;"><div style="color:#aaffaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cargaron después</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + (totals.converted || 0) + '/' + users.length + ' (' + conv + '%)</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Monto cargado</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + _fmtMoney(totals.totalAmountPost || 0) + '</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cargas (count)</div><div style="color:#fff;font-size:18px;font-weight:900;">' + (totals.totalCargasPost || 0) + '</div></div>';
+    }
+    html += '</div>';
+
+    // Cutoff selector
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">';
+    html += '<div style="flex:1;min-width:200px;">';
+    html += '<div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Cuento cargas DESDE</div>';
+    html += '<input id="segCutoffInput" type="datetime-local" value="' + cutoffLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
+    html += '<div style="color:#aaa;font-size:10.5px;margin-top:4px;line-height:1.4;">Default: fecha de la última subida (' + cutoff + '). Cambiá para evaluar otra ventana.</div>';
+    html += '</div>';
+    html += '<button type="button" onclick="reanalyzeSegment(' + escapeJsArg(s.slug) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
+    html += '</div>';
+
+    // Tabla
+    if (users.length > 0) {
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:55vh;overflow-y:auto;margin-bottom:14px;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '<thead style="position:sticky;top:0;background:#001a40;z-index:1;"><tr style="color:#00d4ff;text-align:left;">';
+        html += '<th style="padding:8px 10px;font-weight:800;">#</th>';
+        html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
+        if (d.analyzed) {
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cargas POST</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Monto POST</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Volvió</th>';
+        }
+        html += '</tr></thead><tbody>';
+        let i = 1;
+        for (const u of users) {
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
+            html += '<td style="padding:7px 10px;color:#666;font-weight:700;">' + i + '</td>';
+            html += '<td style="padding:7px 10px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + '</td>';
+            if (d.analyzed) {
+                const c = u.cargasPostCount || 0;
+                const a = u.cargasPostAmount || 0;
+                const cargasColor = u.converted ? '#66ff66' : '#888';
+                html += '<td style="padding:7px 10px;text-align:center;color:' + cargasColor + ';font-weight:800;">' + c + '</td>';
+                html += '<td style="padding:7px 10px;text-align:right;color:' + cargasColor + ';font-weight:800;">' + (a > 0 ? _fmtMoney(a) : '—') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:center;font-weight:900;">' + (u.converted ? '<span style="color:#66ff66;background:rgba(102,255,102,0.12);border:1px solid #66ff66;padding:2px 7px;border-radius:5px;">✅ Sí</span>' : '<span style="color:#aaa;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.20);padding:2px 7px;border-radius:5px;">— No</span>') + '</td>';
+            }
+            html += '</tr>';
+            i++;
+        }
+        html += '</tbody></table></div>';
+    }
+
+    // Historial de subidas
+    if (uploads.length > 0) {
+        html += '<details style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;">';
+        html += '<summary style="cursor:pointer;color:#00d4ff;font-weight:800;font-size:12px;letter-spacing:0.5px;">📜 Historial de subidas (' + uploads.length + ')</summary>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-top:10px;">';
+        html += '<thead><tr style="color:#aaa;text-align:left;border-bottom:1px solid rgba(255,255,255,0.10);">';
+        html += '<th style="padding:6px 8px;font-weight:700;">Fecha</th>';
+        html += '<th style="padding:6px 8px;font-weight:700;">Por</th>';
+        html += '<th style="padding:6px 8px;font-weight:700;">Fuente</th>';
+        html += '<th style="padding:6px 8px;font-weight:700;text-align:right;">Filas</th>';
+        html += '</tr></thead><tbody>';
+        for (const up of uploads) {
+            const at = up.at ? new Date(up.at).toLocaleString('es-AR') : '—';
+            const srcTag = up.source === 'sheets-url' ? '🔗 Sheets URL' : (up.source === 'lightning' ? '⚡ Relámpago' : (up.source === 'file' ? '📄 Archivo' : up.source || '—'));
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+            html += '<td style="padding:5px 8px;color:#ddd;">' + at + '</td>';
+            html += '<td style="padding:5px 8px;color:#aaa;">' + escapeHtml(up.by || '—') + '</td>';
+            html += '<td style="padding:5px 8px;color:#fff;font-weight:600;">' + escapeHtml(srcTag) + (up.sourceDetail ? '<div style="color:#888;font-size:10px;font-weight:400;word-break:break-all;">' + escapeHtml(up.sourceDetail) + '</div>' : '') + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#00d4ff;font-weight:700;">' + (up.rowsCount || 0) + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></details>';
+    }
+
+    return html;
+}
+
+function reanalyzeSegment(slug) {
+    const inp = document.getElementById('segCutoffInput');
+    if (!inp || !inp.value) { alert('Elegí una fecha'); return; }
+    const d = new Date(inp.value);
+    if (isNaN(d.getTime())) { alert('Fecha inválida'); return; }
+    viewSegment(slug, d.toISOString());
 }
 
 // ============================================

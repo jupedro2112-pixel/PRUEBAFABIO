@@ -137,6 +137,10 @@
                     <span>⚡</span>
                     <span>Sorteo relámpago</span>
                 </a>
+                <a href="#" class="nav-item" data-section="segments">
+                    <span>📊</span>
+                    <span>Segmentos</span>
+                </a>
                 <a href="#" class="nav-item" data-section="campaigns">
                     <span>📊</span>
                     <span>Campañas (links)</span>
@@ -1088,6 +1092,35 @@
                     </p>
                 </div>
                 <div id="rafflesLightningAdminContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: SEGMENTOS
+                 -----------------------------------------
+                 Sistema general para subir listas de usuarios (CSV o
+                 Sheets URL) por categoría (top jugadores, recuperación,
+                 sin WP, con app, bonus 5k/10k/2k, etc.) y cruzar contra
+                 cargas reales de JUGAYGANA para ver conversion.
+                 ============================================ -->
+            <section id="segmentsSection" class="section">
+                <div class="panel-header">
+                    <h2>📊 Segmentos</h2>
+                    <button class="refresh-btn" onclick="loadSegmentsAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(102,255,102,0.08));border:1px solid rgba(0,212,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">📊 Cómo funciona</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Subís listas de usuarios (top jugadores, recuperación, clientes con app, bonus 5k/10k/2k, etc.) en CSV o pegando una URL de Google Sheets publicado-a-web. El sistema cruza cada username contra cargas reales en JUGAYGANA y te muestra <strong style="color:#66ff66;">cuántos volvieron a cargar después</strong> de la subida + el monto total.<br>
+                        Las subidas quedan en <strong>historial</strong> — podés re-subir cuando quieras (pisa la lista pero deja registro).
+                    </p>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+                    <button type="button" onclick="newSegmentModal()" style="background:linear-gradient(135deg,#66ff66,#4dabff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">➕ Nuevo segmento</button>
+                    <button type="button" onclick="importLightningSegmentModal()" style="background:linear-gradient(135deg,rgba(255,235,59,0.18),rgba(255,235,59,0.08));color:#fff7c2;border:1px solid #ffeb3b;padding:9px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">⚡ Importar de relámpago</button>
+                </div>
+                <div id="segmentsAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

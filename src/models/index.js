@@ -43,6 +43,7 @@ const RaffleParticipation = require('./RaffleParticipation');
 const RaffleSpend = require('./RaffleSpend');
 const WeeklyCalendarPlan = require('./WeeklyCalendarPlan');
 const LandingVisit = require('./LandingVisit');
+const Segment = require('./Segment');
 
 
 /**
@@ -458,6 +459,7 @@ module.exports = {
   RaffleSpend,
   WeeklyCalendarPlan,
   LandingVisit,
+  Segment,
 
   // Funciones de conexión
   connectDB,

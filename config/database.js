@@ -42,7 +42,8 @@ const {
   Raffle,
   RaffleParticipation,
   RaffleSpend,
-  WeeklyCalendarPlan
+  WeeklyCalendarPlan,
+  Segment
 } = require('../src/models');
 
 // ============================================
@@ -358,6 +359,7 @@ module.exports = {
   RaffleParticipation,
   RaffleSpend,
   WeeklyCalendarPlan,
+  Segment,
   // Helpers
   getConfig,
   setConfig,

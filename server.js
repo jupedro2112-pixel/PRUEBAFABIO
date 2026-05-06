@@ -77,6 +77,7 @@ const {
   RaffleParticipation,
   RaffleSpend,
   WeeklyCalendarPlan,
+  Segment,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -14137,6 +14138,411 @@ app.get('/api/admin/raffles/lightning-roi', authMiddleware, superAdminMiddleware
     res.json({ raffles: items, totals });
   } catch (err) {
     logger.error(`/api/admin/raffles/lightning-roi: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// SEGMENTOS (listas de usuarios para analizar conversion)
+// =====================================================================
+// El admin sube CSV / pega URL Sheets con una lista de usuarios (top
+// jugadores, recuperacion, sin WP, con app, bonus 5k/10k/2k, etc.) y el
+// sistema cruza contra Transaction.deposit (real, JUGAYGANA) para mostrar
+// quien volvio a cargar despues de la subida + monto + conversion %.
+//
+// Endpoints:
+//   GET    /api/admin/segments             — list all segments (resumen)
+//   POST   /api/admin/segments             — crear segmento (slug, name, kind)
+//   GET    /api/admin/segments/:slug       — detalle con conversion analysis
+//   POST   /api/admin/segments/:slug/upload  — subir CSV (texto) o URL Sheets
+//   POST   /api/admin/segments/:slug/import-lightning — importar de un raffle
+//   DELETE /api/admin/segments/:slug       — borrar
+// =====================================================================
+
+// Parser CSV minimalista que maneja: comas, comillas dobles, comillas dobles
+// escapadas (""). NO maneja saltos de linea dentro de celdas (raro y
+// suficientemente atipico que prefiero rechazar la fila a meter una libreria).
+// Devuelve array de arrays de strings.
+function _parseCsv(text) {
+  if (!text) return [];
+  const rows = [];
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const cells = [];
+    let cur = '';
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQ) {
+        if (c === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i++; }
+          else { inQ = false; }
+        } else { cur += c; }
+      } else {
+        if (c === ',') { cells.push(cur); cur = ''; }
+        else if (c === '"' && cur === '') { inQ = true; }
+        else { cur += c; }
+      }
+    }
+    cells.push(cur);
+    rows.push(cells.map(s => s.trim()));
+  }
+  return rows;
+}
+
+// Convierte rows crudos en una lista de objetos. Si hay header, lo usa para
+// las keys (lowercase). Si no, asume que la primera columna es username.
+// Detecta header viendo si la primera fila contiene "username" o "user".
+function _csvRowsToObjects(rows) {
+  if (rows.length === 0) return { items: [], headers: [] };
+  const first = rows[0].map(s => String(s).toLowerCase().trim());
+  const looksLikeHeader = first.some(c => /^(username|user|usuario|nombre|nick|telefono|phone|email)$/.test(c));
+  let headers, dataRows;
+  if (looksLikeHeader) {
+    headers = first;
+    dataRows = rows.slice(1);
+  } else {
+    headers = ['username'];
+    dataRows = rows;
+  }
+  const items = [];
+  for (const r of dataRows) {
+    const obj = {};
+    for (let i = 0; i < headers.length; i++) {
+      const k = headers[i] || ('col' + i);
+      obj[k] = r[i] != null ? String(r[i]) : '';
+    }
+    items.push(obj);
+  }
+  return { items, headers };
+}
+
+// Saca el username de un row procesado. Busca columnas comunes en orden.
+function _pickUsername(row) {
+  const candidates = ['username', 'user', 'usuario', 'nick', 'nombre'];
+  for (const k of candidates) {
+    if (row[k] != null && String(row[k]).trim()) {
+      return String(row[k]).replace(/^@/, '').toLowerCase().trim();
+    }
+  }
+  // Fallback: primera columna no vacia.
+  for (const k of Object.keys(row)) {
+    if (row[k] != null && String(row[k]).trim()) {
+      return String(row[k]).replace(/^@/, '').toLowerCase().trim();
+    }
+  }
+  return null;
+}
+
+// Fetcha CSV desde una URL (Google Sheets publicado-a-web tiene formato
+// docs.google.com/.../pub?output=csv). Soporta cualquier URL que devuelva
+// CSV en text/plain o text/csv. Timeout 15s, max 5MB.
+async function _fetchCsvFromUrl(url) {
+  if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (necesita http/https)');
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' al fetchear la URL');
+    const text = await r.text();
+    if (text.length > 5 * 1024 * 1024) throw new Error('CSV muy grande (max 5MB)');
+    return text;
+  } catch (e) {
+    clearTimeout(timeoutId);
+    throw e;
+  }
+}
+
+// Helper: ya tenemos _getLightningCargasCount que cuenta cargas pre-cutoff.
+// Para segmentos queremos contar cargas POST-cutoff (despues de la subida)
+// y devolver count + amount. Reutiliza jugayganaMovements igual.
+async function _getCargasPostForUser(username, sinceMs) {
+  if (!username) return { count: 0, amount: 0, hasAny: false };
+  const days = 365;
+  const startMs = Number(sinceMs) || (Date.now() - days * 24 * 3600 * 1000);
+  const endMs = Date.now();
+  const fmt = (d) => {
+    const x = new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const dd = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+  try {
+    const r = await jugayganaMovements.getUserMovements(username, {
+      startDate: fmt(startMs),
+      endDate: fmt(endMs),
+      pageSize: 500
+    });
+    if (!r || !r.success) return { count: 0, amount: 0, hasAny: false };
+    let count = 0, amount = 0;
+    for (const m of (r.movements || [])) {
+      const candidates = [m.timestamp, m.Timestamp, m.date, m.Date, m.datetime, m.fecha, m.Fecha, m.createdAt];
+      let ts = null;
+      for (const c of candidates) {
+        if (!c) continue;
+        const t = new Date(c).getTime();
+        if (isFinite(t) && t > 0) { ts = t; break; }
+      }
+      // Solo contamos cargas DESPUES del cutoff (sinceMs).
+      if (ts && ts < Number(sinceMs)) continue;
+      const type = String(m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toLowerCase();
+      let amt = 0;
+      if (m.amount !== undefined) amt = parseFloat(m.amount);
+      else if (m.Amount !== undefined) amt = parseFloat(m.Amount);
+      else if (m.value !== undefined) amt = parseFloat(m.value);
+      else if (m.Value !== undefined) amt = parseFloat(m.Value);
+      else if (m.monto !== undefined) amt = parseFloat(m.monto);
+      else if (m.Monto !== undefined) amt = parseFloat(m.Monto);
+      const isDep = type.includes('deposit') || type.includes('credit') ||
+                    type.includes('carga') || type.includes('recarga') || amt > 0;
+      if (isDep) {
+        count++;
+        amount += Math.abs(amt) || 0;
+      }
+    }
+    return { count, amount, hasAny: count > 0 };
+  } catch (e) {
+    logger.warn(`[segments] _getCargasPostForUser ${username}: ${e.message}`);
+    return { count: 0, amount: 0, hasAny: false };
+  }
+}
+
+// GET /api/admin/segments — lista resumida.
+app.get('/api/admin/segments', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const segs = await Segment.find({}, { rows: 0 }).sort({ updatedAt: -1 }).lean();
+    res.json({
+      segments: segs.map(s => ({
+        slug: s.slug,
+        name: s.name,
+        description: s.description || '',
+        kind: s.kind || 'custom',
+        userCount: (s.usernames || []).length,
+        uploadsCount: (s.uploads || []).length,
+        lastUploadAt: s.uploads && s.uploads.length > 0 ? s.uploads[s.uploads.length - 1].at : null,
+        lastUploadSource: s.uploads && s.uploads.length > 0 ? s.uploads[s.uploads.length - 1].source : null,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt
+      }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/segments: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/segments — crear nuevo segmento (vacio).
+app.post('/api/admin/segments', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim().slice(0, 120);
+    if (!name) return res.status(400).json({ error: 'Falta name' });
+    const slug = String(b.slug || name).toLowerCase().trim()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    if (!slug) return res.status(400).json({ error: 'Slug inválido' });
+    const exists = await Segment.findOne({ slug }).lean();
+    if (exists) return res.status(400).json({ error: `Ya existe un segmento con slug "${slug}".` });
+    const description = String(b.description || '').slice(0, 500);
+    const kind = String(b.kind || 'custom').slice(0, 32);
+    const seg = await Segment.create({ slug, name, description, kind, usernames: [], rows: [], uploads: [] });
+    res.json({ success: true, segment: { slug: seg.slug, name: seg.name, kind: seg.kind } });
+  } catch (err) {
+    logger.error(`/api/admin/segments POST: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/segments/:slug — borrar.
+app.delete('/api/admin/segments/:slug', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const r = await Segment.deleteOne({ slug: String(req.params.slug || '').toLowerCase() });
+    if (r.deletedCount === 0) return res.status(404).json({ error: 'Segmento no encontrado' });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/admin/segments DELETE: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/segments/:slug/upload — sube CSV (texto) o URL Sheets.
+// Body: { csv: "...", url: "https://..." }  — uno de los dos.
+// Reemplaza la lista actual y agrega entry al historial.
+app.post('/api/admin/segments/:slug/upload', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').toLowerCase();
+    const seg = await Segment.findOne({ slug });
+    if (!seg) return res.status(404).json({ error: 'Segmento no encontrado' });
+    const b = req.body || {};
+    let csvText = String(b.csv || '');
+    let source = 'file';
+    let sourceDetail = String(b.filename || '').slice(0, 500);
+    if (!csvText && b.url) {
+      try {
+        csvText = await _fetchCsvFromUrl(String(b.url));
+        source = 'sheets-url';
+        sourceDetail = String(b.url).slice(0, 500);
+      } catch (e) {
+        return res.status(400).json({ error: 'No se pudo leer la URL: ' + e.message });
+      }
+    }
+    if (!csvText) return res.status(400).json({ error: 'Pasá `csv` (texto) o `url`.' });
+    const rows = _parseCsv(csvText);
+    if (rows.length === 0) return res.status(400).json({ error: 'CSV vacío o no parseable.' });
+    const { items, headers } = _csvRowsToObjects(rows);
+    const usernamesSet = new Set();
+    const cleanRows = [];
+    for (const it of items) {
+      const u = _pickUsername(it);
+      if (!u) continue;
+      if (usernamesSet.has(u)) continue;
+      usernamesSet.add(u);
+      cleanRows.push({ ...it, username: u });
+      if (cleanRows.length >= 5000) break;
+    }
+    seg.usernames = Array.from(usernamesSet);
+    seg.rows = cleanRows;
+    seg.uploads.push({
+      at: new Date(),
+      by: (req.user && req.user.username) || 'admin',
+      source,
+      sourceDetail,
+      rowsCount: cleanRows.length
+    });
+    // Cap historial a las ultimas 50 entradas.
+    if (seg.uploads.length > 50) seg.uploads = seg.uploads.slice(-50);
+    await seg.save();
+    logger.info(`[segments] upload ${slug} source=${source} rows=${cleanRows.length} headers=[${headers.join(',')}]`);
+    res.json({
+      success: true,
+      slug,
+      rowsCount: cleanRows.length,
+      headers
+    });
+  } catch (err) {
+    logger.error(`/api/admin/segments/upload: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/segments/:slug/import-lightning — importa participantes
+// de un relampago como segmento. Body: { raffleId }.
+app.post('/api/admin/segments/:slug/import-lightning', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').toLowerCase();
+    const seg = await Segment.findOne({ slug });
+    if (!seg) return res.status(404).json({ error: 'Segmento no encontrado' });
+    const raffleId = String((req.body && req.body.raffleId) || '');
+    if (!raffleId) return res.status(400).json({ error: 'Falta raffleId' });
+    const raffle = await Raffle.findOne({ id: raffleId, raffleType: 'relampago' }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Relámpago no encontrado' });
+    const parts = await RaffleParticipation.find({ raffleId }, { username: 1, ticketNumbers: 1 }).lean();
+    const usernamesSet = new Set();
+    const cleanRows = [];
+    for (const p of parts) {
+      const u = String(p.username || '').toLowerCase().trim();
+      if (!u || usernamesSet.has(u)) continue;
+      usernamesSet.add(u);
+      cleanRows.push({
+        username: u,
+        ticketNumber: (p.ticketNumbers && p.ticketNumbers[0]) || null,
+        raffleName: raffle.name
+      });
+    }
+    seg.usernames = Array.from(usernamesSet);
+    seg.rows = cleanRows;
+    seg.uploads.push({
+      at: new Date(),
+      by: (req.user && req.user.username) || 'admin',
+      source: 'lightning',
+      sourceDetail: `${raffle.name} (${raffleId})`,
+      rowsCount: cleanRows.length
+    });
+    if (seg.uploads.length > 50) seg.uploads = seg.uploads.slice(-50);
+    await seg.save();
+    res.json({ success: true, slug, rowsCount: cleanRows.length });
+  } catch (err) {
+    logger.error(`/api/admin/segments/import-lightning: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/segments/:slug — detalle con conversion analysis.
+// Query: ?since=<ISO>  — opcional, override del cutoff (default: lastUploadAt).
+//        ?analyze=1    — si esta presente, hace el cross-reference contra
+//                        JUGAYGANA. Sino devuelve solo la lista (mas rapido).
+app.get('/api/admin/segments/:slug', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const slug = String(req.params.slug || '').toLowerCase();
+    const seg = await Segment.findOne({ slug }).lean();
+    if (!seg) return res.status(404).json({ error: 'Segmento no encontrado' });
+    const lastUploadAt = seg.uploads && seg.uploads.length > 0
+      ? seg.uploads[seg.uploads.length - 1].at
+      : null;
+    const queryCutoff = req.query.since ? new Date(req.query.since) : null;
+    const cutoffMs = queryCutoff && !isNaN(queryCutoff.getTime())
+      ? queryCutoff.getTime()
+      : (lastUploadAt ? new Date(lastUploadAt).getTime() : null);
+    const analyze = String(req.query.analyze || '') === '1';
+
+    let usersAnalyzed = [];
+    let totals = { converted: 0, totalCargasPost: 0, totalAmountPost: 0 };
+
+    if (analyze && cutoffMs) {
+      const concurrency = 5;
+      const list = (seg.rows || []).map(r => ({
+        username: r.username || _pickUsername(r) || '',
+        meta: r
+      })).filter(x => x.username);
+      for (let i = 0; i < list.length; i += concurrency) {
+        const slice = list.slice(i, i + concurrency);
+        const results = await Promise.all(slice.map(x => _getCargasPostForUser(x.username, cutoffMs)));
+        for (let j = 0; j < slice.length; j++) {
+          const r = results[j];
+          usersAnalyzed.push({
+            username: slice[j].username,
+            meta: slice[j].meta,
+            cargasPostCount: r.count,
+            cargasPostAmount: r.amount,
+            converted: r.hasAny
+          });
+          if (r.hasAny) totals.converted++;
+          totals.totalCargasPost += r.count;
+          totals.totalAmountPost += r.amount;
+        }
+      }
+    } else {
+      // Sin analyze, devolvemos lista cruda (rapido).
+      usersAnalyzed = (seg.rows || []).map(r => ({
+        username: r.username || _pickUsername(r) || '',
+        meta: r,
+        cargasPostCount: null,
+        cargasPostAmount: null,
+        converted: null
+      }));
+    }
+
+    res.json({
+      segment: {
+        slug: seg.slug,
+        name: seg.name,
+        description: seg.description || '',
+        kind: seg.kind || 'custom',
+        userCount: (seg.usernames || []).length,
+        lastUploadAt,
+        cutoffUsed: cutoffMs ? new Date(cutoffMs).toISOString() : null,
+        cutoffSource: queryCutoff && !isNaN(queryCutoff.getTime()) ? 'query' : (lastUploadAt ? 'lastUpload' : 'none')
+      },
+      analyzed: analyze && cutoffMs,
+      users: usersAnalyzed,
+      totals,
+      uploads: (seg.uploads || []).slice().reverse() // mas reciente primero
+    });
+  } catch (err) {
+    logger.error(`/api/admin/segments/:slug: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
