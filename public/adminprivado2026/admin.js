@@ -9939,11 +9939,11 @@ function _renderRafflesAdmin() {
     html += '      <div style="color:#aaa;font-size:11px;margin-top:2px;">Sorteo programado: <strong style="color:#fff;">' + drawDateStr + '</strong> · Lotería Nocturna 1° premio</div>';
     html += '    </div>';
     html += '    <div style="display:flex;gap:6px;flex-wrap:wrap;">';
-    // Boton "Force seed" solo en pagos (relampago no se seedea automatico,
-    // tiene su propio boton). Free tampoco — el cron auto-rotea los free.
+    // POLITICA: sorteos pagos deshabilitados. Solo dejamos los botones que
+    // no crean nuevas instancias (anunciar, sorteos viejos). "Force seed" y
+    // "Sorteo prueba" quedan ocultos en pagos para evitar spawnear.
     if (!isFree && !isLightning) {
-        html += '      <button type="button" onclick="forceSeedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear las instancias activas si faltan (idempotente)">🌱 Force seed</button>';
-        html += '      <button type="button" onclick="seedTestRaffle()" style="background:rgba(255,170,255,0.10);color:#ff80ff;border:1px solid rgba(255,170,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Crear un sorteo de prueba (entry $100, premio $500, 5 cupos por default) para validar el flujo completo">🧪 Sorteo prueba</button>';
+        html += '      <button type="button" disabled style="background:rgba(255,255,255,0.04);color:#666;border:1px solid rgba(255,255,255,0.10);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:not-allowed;" title="Sorteos pagos deshabilitados por política — los activos se mantienen hasta sortearse">🚫 Force seed (off)</button>';
         html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando de un sorteo activo (elegís sorteo + equipos + texto)">📣 Anunciar sorteo</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
     }
@@ -9958,6 +9958,10 @@ function _renderRafflesAdmin() {
     }
     html += '    </div>';
     html += '  </div>';
+
+    if (!isFree && !isLightning) {
+        html += '  <div style="background:rgba(255,170,0,0.08);border:1px solid rgba(255,170,0,0.40);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:11.5px;color:#ffcc66;line-height:1.5;">⚠️ <strong style="color:#ffaa00;">Sorteos pagos deshabilitados.</strong> Los activos siguen corriendo hasta sortearse normal. Cuando se llenan ya no se crean nuevos. La próxima semana arrancamos sorteos GRATIS por <strong>netwin</strong>.</div>';
+    }
 
     // KPI grid (free no recauda — mostramos costo de premios + personas)
     const kpis = isFree ? [

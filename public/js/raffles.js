@@ -634,21 +634,9 @@ VIP.raffles = (function () {
         html += '<button type="button" data-raffle-action="refresh" id="rafflesRefreshBtn" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;flex-shrink:0;" title="Forzar actualización">🔄 Refrescar</button>';
         html += '</div>';
 
-        // === PAGOS ===
-        if (paid.length > 0) {
-            html += '<div style="margin:18px 0 8px;display:flex;align-items:center;gap:8px;">';
-            html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#d4af37);"></div>';
-            html += '<h3 style="margin:0;color:#ffd700;font-size:14px;font-weight:900;letter-spacing:2px;">💰 SORTEOS PAGOS</h3>';
-            html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#d4af37,transparent);"></div></div>';
-            html += '<div style="background:rgba(255,255,255,0.03);border-left:3px solid #d4af37;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
-            html += '<strong style="color:#ffd700;">💡 Podés elegir tu/s número/s favorito/s</strong> del 1 al 100. Si no querés elegir, pedí aleatorio. Hasta 50 por compra. Si ganás, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.';
-            html += '</div>';
-            for (const r of paid) html += _renderPaidCard(r, balance);
-        }
-
-        // === GRATIS ===
+        // === GRATIS === (arriba — sorteos vigentes y proximos)
         if (free.length > 0) {
-            html += '<div style="margin:22px 0 8px;display:flex;align-items:center;gap:8px;">';
+            html += '<div style="margin:18px 0 8px;display:flex;align-items:center;gap:8px;">';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#4dabff);"></div>';
             html += '<h3 style="margin:0;color:#4dabff;font-size:14px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
@@ -656,6 +644,19 @@ VIP.raffles = (function () {
             html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> Si llegás al mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
             html += '</div>';
             for (const r of free) html += _renderFreeCard(r);
+        }
+
+        // === PAGOS === (abajo — los activos siguen corriendo hasta sortearse;
+        // no se crean nuevos. Cuando todos terminen, esta seccion desaparece.)
+        if (paid.length > 0) {
+            html += '<div style="margin:22px 0 8px;display:flex;align-items:center;gap:8px;">';
+            html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#d4af37);"></div>';
+            html += '<h3 style="margin:0;color:#ffd700;font-size:14px;font-weight:900;letter-spacing:2px;">💰 SORTEOS PAGOS</h3>';
+            html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#d4af37,transparent);"></div></div>';
+            html += '<div style="background:rgba(255,255,255,0.03);border-left:3px solid #d4af37;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
+            html += '<strong style="color:#ffd700;">💡 Podés elegir tu/s número/s favorito/s</strong> del 1 al 100. Si no querés elegir, pedí aleatorio. Hasta 50 por compra. Si ganás, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.';
+            html += '</div>';
+            for (const r of paid) html += _renderPaidCard(r, balance);
         }
 
         if (paid.length === 0 && free.length === 0 && otherDrawn.length === 0 && !heroLightning) {

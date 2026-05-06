@@ -12125,8 +12125,11 @@ async function _spawnRaffleInstance(typeCfg, instanceNumber) {
 }
 
 async function _ensureActiveRafflesSeeded() {
-  // Paid + free, en una pasada.
-  const allTypes = [...RAFFLE_TYPES, ...FREE_RAFFLE_TYPES];
+  // POLITICA: solo se seedean sorteos GRATIS. Los pagos activos se dejan
+  // correr hasta sortearse; cuando se llenan, no se respawnean (ver el
+  // bloque de cupo lleno en /buy). Los proximos sorteos van a ser todos
+  // gratis (luego: por netwin).
+  const allTypes = [...FREE_RAFFLE_TYPES];
   for (const cfg of allTypes) {
     try {
       const existing = await Raffle.findOne(
@@ -13153,16 +13156,20 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         { $set: { status: 'closed' } }
       );
       if (closeRes.modifiedCount === 1) {
-        // Buscamos config en paid Y free.
-        let cfg = RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
-        if (!cfg) cfg = FREE_RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
-        if (cfg && raffle.raffleType !== 'relampago') {
+        // POLITICA: solo respawneamos GRATIS. Los pagos cierran y listo —
+        // cuando se sortea, no se crea otra instancia. Cuando todos los
+        // pagos terminen, esa lista queda vacia para siempre (hasta que
+        // se reactive la politica desde codigo).
+        const cfg = FREE_RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
+        if (cfg) {
           try {
             await _spawnRaffleInstance(cfg, (raffle.instanceNumber || 1) + 1);
             logger.info(`[raffles] respawn ${cfg.type} #${(raffle.instanceNumber || 1) + 1}`);
           } catch (e) {
             logger.warn(`[raffles] respawn ${cfg.type}: ${e.message}`);
           }
+        } else if (raffle.raffleType !== 'relampago') {
+          logger.info(`[raffles] paid ${raffle.raffleType} llenó — NO respawn (politica: solo gratis).`);
         }
         if (raffle.raffleType === 'relampago') {
           // Auto-respawn del relampago hasta tope 3. El admin arma el N°1, el
