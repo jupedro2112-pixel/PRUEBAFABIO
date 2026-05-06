@@ -655,69 +655,24 @@ VIP.auth = (function () {
     }
 
     // ============================================================
-    // BOTÓN 🚪 LOGOUT TEMPORAL — click directo, con confirmación.
+    // LOGOUT DESHABILITADO PARA EL USUARIO FINAL.
     // ============================================================
-    function wireLogoutButton() {
-        const btn = document.getElementById('logoutBtn');
-        if (!btn) return;
-        btn.addEventListener('click', function () {
-            if (!VIP.state.currentToken) return;
-            if (window.confirm('¿Cerrar sesión y volver al login?')) {
-                handleLogout();
-            }
-        });
-    }
+    // El owner pidio: la gente NO puede salir de la app (perdian sesion
+    // y no recibian notifs). Caminos disponibles para logout SOLO via
+    // URL (admin/testing): ?logout=1 o #logout en la barra del browser.
+    // El boton 🚪 visible y el long-press en el badge del username
+    // (que disparaba el confirm "¿Cerrar sesión?") fueron desactivados.
+    function wireLogoutButton() { /* deshabilitado a proposito */ }
+    function wireDiscreteLogout() { /* deshabilitado a proposito */ }
+    // Aseguramos que el boton 🚪 quede oculto si esta en el DOM.
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', wireLogoutButton);
+        document.addEventListener('DOMContentLoaded', function () {
+            const btn = document.getElementById('logoutBtn');
+            if (btn) btn.style.display = 'none';
+        });
     } else {
-        wireLogoutButton();
-    }
-
-    // ============================================================
-    // LOGOUT MANUAL — caminos discretos para testing.
-    // El botón 🚪 está oculto a propósito (decisión vieja: evitar
-    // que los jugadores cambien de cuenta constantemente). Pero el
-    // operador necesita poder loguearse con otra cuenta para probar
-    // features. Dos atajos:
-    //   1) Long-press de 1.5s en el badge del username arriba a la
-    //      derecha → confirma → logout.
-    //   2) URL con ?logout=1 → logout instantáneo (también acepta
-    //      ?logout=now y #logout para tolerancia).
-    // ============================================================
-    function wireDiscreteLogout() {
-        const badge = document.getElementById('refundsLogoutBtn');
-        if (!badge) return;
-
-        let pressTimer = null;
-        let pressed = false;
-
-        const startPress = (e) => {
-            if (!VIP.state.currentToken) return; // no hay sesión
-            pressed = false;
-            if (pressTimer) clearTimeout(pressTimer);
-            pressTimer = setTimeout(() => {
-                pressed = true;
-                if (window.confirm('¿Cerrar sesión y volver al login?')) {
-                    handleLogout();
-                }
-            }, 1500);
-        };
-
-        const cancelPress = () => {
-            if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
-        };
-
-        // Mouse
-        badge.addEventListener('mousedown', startPress);
-        badge.addEventListener('mouseup', cancelPress);
-        badge.addEventListener('mouseleave', cancelPress);
-        // Touch
-        badge.addEventListener('touchstart', startPress, { passive: true });
-        badge.addEventListener('touchend', cancelPress);
-        badge.addEventListener('touchcancel', cancelPress);
-        // Tip visual: cursor + título
-        badge.style.cursor = 'pointer';
-        badge.title = 'Mantené presionado 1.5s para cerrar sesión';
+        const btn = document.getElementById('logoutBtn');
+        if (btn) btn.style.display = 'none';
     }
 
     // URL trigger ?logout=1 — logout inmediato sin confirmación.
