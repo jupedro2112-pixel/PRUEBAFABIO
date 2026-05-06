@@ -248,7 +248,7 @@ function securityHeaders(req, res, next) {
     "img-src 'self' data: blob: https:",
     "font-src 'self'",
     "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://fcm.googleapis.com https://firebaseinstallations.googleapis.com",
-    "frame-src 'self' https://*.firebaseapp.com https://*.google.com",
+    "frame-src 'self' https://*.firebaseapp.com https://*.google.com https://www.youtube-nocookie.com https://www.youtube.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     "media-src 'self' data: blob:"

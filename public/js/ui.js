@@ -568,7 +568,20 @@ CBU activo: ${cbuNumber}`;
             modal.innerHTML = `
                 <div class="ios-install-content" style="max-width:420px;">
                     <h3 style="margin-bottom:4px;">📱 Instalar en iPhone</h3>
-                    <p style="color:#cfcfcf;font-size:13px;margin:0 0 14px;">3 pasos rápidos. Tarda 15 segundos.</p>
+                    <p style="color:#cfcfcf;font-size:13px;margin:0 0 12px;">3 pasos rápidos. Tarda 15 segundos.</p>
+
+                    <!-- VIDEO TUTORIAL (YouTube Short, < 60s) -->
+                    <div style="position:relative;margin:0 0 14px;background:#000;border:1px solid rgba(212,175,55,0.30);border-radius:10px;overflow:hidden;">
+                        <div style="position:relative;padding-bottom:56.25%;height:0;">
+                            <iframe src="https://www.youtube-nocookie.com/embed/7pfmzNlQlhw?rel=0&modestbranding=1"
+                                    style="position:absolute;top:0;left:0;width:100%;height:100%;border:0;"
+                                    title="Cómo agregar a pantalla de inicio en iPhone"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    referrerpolicy="strict-origin-when-cross-origin"
+                                    allowfullscreen></iframe>
+                        </div>
+                        <div style="background:rgba(0,0,0,0.75);padding:6px 10px;font-size:11px;color:#cfcfcf;text-align:center;">▶️ Mirá el video o seguí los pasos abajo</div>
+                    </div>
 
                     <!-- PASO 1 -->
                     <div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:10px;">
