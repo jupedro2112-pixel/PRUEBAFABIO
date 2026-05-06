@@ -13394,8 +13394,67 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         cutoffMs = new Date(raffle.drawnAt).getTime();
         cutoffSource = 'drawnAt';
       }
-      const sourceMode = String((req.query && req.query.source) || 'live').toLowerCase();
-      if (sourceMode === 'master') {
+      const sourceMode = String((req.query && req.query.source) || 'daily').toLowerCase();
+      if (sourceMode === 'daily') {
+        // Leer cargas del CSV importado (DailyPlayerStats). El admin elige
+        // el rango from/to manualmente segun el sorteo. Si no manda from,
+        // arrancamos del createdAt del raffle. Si no manda to, usamos
+        // cutoffMs (drawnAt o ahora).
+        const fromQ = req.query.from ? new Date(req.query.from) : null;
+        const toQ = req.query.to ? new Date(req.query.to) : null;
+        const fromMs = fromQ && !isNaN(fromQ.getTime())
+          ? fromQ.getTime()
+          : (raffle.createdAt ? new Date(raffle.createdAt).getTime() : null);
+        const toMs = toQ && !isNaN(toQ.getTime())
+          ? toQ.getTime()
+          : (cutoffMs || Date.now());
+
+        const usernamesLc = parts
+          .map(p => String(p.username || '').toLowerCase().trim())
+          .filter(Boolean);
+
+        for (const u of usernamesLc) {
+          cargasByUser[u] = 0;
+          cargasAmountByUser[u] = 0;
+        }
+
+        if (usernamesLc.length > 0) {
+          // DailyPlayerStats indexa por dia UTC, asi que redondeamos los
+          // bordes a inicio/fin de dia para no perder filas que cubran el
+          // rango pedido.
+          const dayStart = new Date(fromMs);
+          dayStart.setUTCHours(0, 0, 0, 0);
+          const dayEnd = new Date(toMs);
+          dayEnd.setUTCHours(23, 59, 59, 999);
+
+          const agg = await DailyPlayerStats.aggregate([
+            {
+              $match: {
+                username: { $in: usernamesLc },
+                dateUtc: { $gte: dayStart, $lte: dayEnd }
+              }
+            },
+            {
+              $group: {
+                _id: '$username',
+                count: { $sum: '$depositCount' },
+                sum: { $sum: '$depositSum' }
+              }
+            }
+          ]);
+          for (const row of agg) {
+            cargasByUser[row._id] = row.count || 0;
+            cargasAmountByUser[row._id] = row.sum || 0;
+          }
+        }
+
+        masterUsedInfo = {
+          source: 'daily',
+          fromMs,
+          toMs,
+          rowsCount: null
+        };
+      } else if (sourceMode === 'master') {
         // Leer del segmento maestro. Range opcional from/to (over-rides cutoff).
         const master = await Segment.findOne({ isMaster: true }).lean();
         if (!master) {
@@ -13481,28 +13540,192 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         drawnAt: raffle.drawnAt
       },
       participants,
-      lightning: isLightning ? {
-        minCargas: LIGHTNING_MIN_CARGAS,
-        totalQualifying,
-        cutoff: cutoffMs ? new Date(cutoffMs).toISOString() : null,
-        cutoffSource,
-        sourceMode: masterUsedInfo ? 'master' : 'live',
-        masterUsed: masterUsedInfo,
-        cutoffNote: masterUsedInfo
-          ? ('Cargas leídas del archivo Maestro "' + (masterUsedInfo.name || masterUsedInfo.slug) + '"' +
-             (masterUsedInfo.fromMs ? ' · desde ' + new Date(masterUsedInfo.fromMs).toLocaleString('es-AR') : '') +
-             (masterUsedInfo.toMs ? ' · hasta ' + new Date(masterUsedInfo.toMs).toLocaleString('es-AR') : ''))
-          : (cutoffSource === 'query'
-            ? 'Cargas con timestamp anterior a la fecha que elegiste'
-            : (cutoffSource === 'drawnAt'
-              ? 'Cargas con timestamp anterior al draw'
-              : 'Cargas hasta ahora (sorteo aún pendiente)'))
-      } : null
+      lightning: isLightning ? (function () {
+        const effSourceMode = (masterUsedInfo && masterUsedInfo.source === 'daily')
+          ? 'daily'
+          : (masterUsedInfo ? 'master' : 'live');
+        let note;
+        if (effSourceMode === 'daily') {
+          const fromTxt = masterUsedInfo.fromMs ? new Date(masterUsedInfo.fromMs).toLocaleString('es-AR') : '—';
+          const toTxt = masterUsedInfo.toMs ? new Date(masterUsedInfo.toMs).toLocaleString('es-AR') : '—';
+          note = '📄 Cargas leídas del archivo CSV importado · desde ' + fromTxt + ' hasta ' + toTxt;
+        } else if (effSourceMode === 'master') {
+          note = 'Cargas leídas del archivo Maestro "' + (masterUsedInfo.name || masterUsedInfo.slug) + '"' +
+                 (masterUsedInfo.fromMs ? ' · desde ' + new Date(masterUsedInfo.fromMs).toLocaleString('es-AR') : '') +
+                 (masterUsedInfo.toMs ? ' · hasta ' + new Date(masterUsedInfo.toMs).toLocaleString('es-AR') : '');
+        } else if (cutoffSource === 'query') {
+          note = 'Cargas con timestamp anterior a la fecha que elegiste';
+        } else if (cutoffSource === 'drawnAt') {
+          note = 'Cargas con timestamp anterior al draw';
+        } else {
+          note = 'Cargas hasta ahora (sorteo aún pendiente)';
+        }
+        return {
+          minCargas: LIGHTNING_MIN_CARGAS,
+          totalQualifying,
+          cutoff: cutoffMs ? new Date(cutoffMs).toISOString() : null,
+          cutoffSource,
+          sourceMode: effSourceMode,
+          masterUsed: masterUsedInfo,
+          rangeFrom: masterUsedInfo && masterUsedInfo.fromMs ? new Date(masterUsedInfo.fromMs).toISOString() : null,
+          rangeTo: masterUsedInfo && masterUsedInfo.toMs ? new Date(masterUsedInfo.toMs).toISOString() : null,
+          cutoffNote: note
+        };
+      })() : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// POST /api/admin/raffles/:id/analyze-csv
+// Recibe un CSV crudo (text/plain o application/octet-stream), lo parsea
+// EN MEMORIA, cruza contra los participantes del relampago y devuelve los
+// conteos de cargas por usuario con precision horaria (filtrando por
+// timestamp del deposito, no por dia). Nada se persiste — es ad-hoc.
+// Util para sorteos cortos donde el CSV global de DailyPlayerStats no
+// tiene la granularidad suficiente.
+//
+// Query params:
+//   ?from=<ISO>  → solo cuenta deposits con timestamp >= from (default: createdAt del raffle)
+//   ?to=<ISO>    → solo cuenta deposits con timestamp <= to (default: drawnAt o ahora)
+app.post(
+  '/api/admin/raffles/:id/analyze-csv',
+  authMiddleware,
+  adminMiddleware,
+  express.text({ limit: csvImportLimitMb, type: '*/*' }),
+  async (req, res) => {
+    try {
+      const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+      if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+      if (raffle.raffleType !== 'relampago') {
+        return res.status(400).json({ error: 'Este endpoint solo aplica a sorteos relámpago.' });
+      }
+
+      const raw = req.body;
+      if (!raw || typeof raw !== 'string' || raw.length < 100) {
+        return res.status(400).json({ error: 'Archivo vacío o muy chico.' });
+      }
+
+      const parsed = _parseJugayganaCsv(raw);
+      if (!parsed.rows || parsed.rows.length === 0) {
+        return res.status(400).json({
+          error: 'El archivo no tiene filas válidas. Skipped: ' + parsed.skipped + '.'
+        });
+      }
+
+      const fromQ = req.query.from ? new Date(req.query.from) : null;
+      const toQ = req.query.to ? new Date(req.query.to) : null;
+      const fromMs = fromQ && !isNaN(fromQ.getTime())
+        ? fromQ.getTime()
+        : (raffle.createdAt ? new Date(raffle.createdAt).getTime() : 0);
+      const toMs = toQ && !isNaN(toQ.getTime())
+        ? toQ.getTime()
+        : (raffle.drawnAt ? new Date(raffle.drawnAt).getTime() : Date.now());
+
+      const parts = await RaffleParticipation.find({ raffleId: raffle.id })
+        .sort({ entryCostPaid: -1, lastBoughtAt: -1 })
+        .lean();
+
+      const spends = await RaffleSpend.find({ raffleId: raffle.id })
+        .sort({ createdAt: 1 })
+        .lean();
+      const spendsByUser = {};
+      for (const s of spends) {
+        const k = String(s.username || '').toLowerCase();
+        if (!spendsByUser[k]) spendsByUser[k] = [];
+        spendsByUser[k].push({
+          ticketNumber: s.ticketNumber,
+          amount: s.entryCost,
+          at: s.createdAt
+        });
+      }
+
+      const partSet = new Set();
+      const cargasByUser = {};
+      const cargasAmountByUser = {};
+      for (const p of parts) {
+        const ul = String(p.username || '').toLowerCase().trim();
+        if (ul) {
+          partSet.add(ul);
+          cargasByUser[ul] = 0;
+          cargasAmountByUser[ul] = 0;
+        }
+      }
+
+      // Filtramos por timestamp con precision a milisegundos (la columna
+      // es 'deposit'/'withdraw'/'bonus' del parser, ya normalizada).
+      let countedRows = 0;
+      for (const r of parsed.rows) {
+        if (r.type !== 'deposit') continue;
+        if (!partSet.has(r.username)) continue;
+        if (r.dateMs < fromMs || r.dateMs > toMs) continue;
+        cargasByUser[r.username]++;
+        cargasAmountByUser[r.username] += (r.amount || 0);
+        countedRows++;
+      }
+
+      const LIGHTNING_MIN_CARGAS = 5;
+      const participants = parts.map(p => {
+        const lower = String(p.username).toLowerCase();
+        const cargasCount = cargasByUser[lower] || 0;
+        const cargasAmount = cargasAmountByUser[lower] || 0;
+        return {
+          username: p.username,
+          cuposCount: p.cuposCount,
+          ticketNumbers: (p.ticketNumbers || []).slice().sort((a, b) => a - b),
+          entryCostPaid: p.entryCostPaid,
+          joinedAt: p.joinedAt,
+          lastBoughtAt: p.lastBoughtAt,
+          isWinner: p.isWinner,
+          cargasCount,
+          cargasAmount,
+          cargasRequired: LIGHTNING_MIN_CARGAS,
+          qualifies: cargasCount >= LIGHTNING_MIN_CARGAS,
+          purchases: spendsByUser[lower] || []
+        };
+      });
+
+      const totalQualifying = participants.filter(p => p.qualifies).length;
+
+      res.json({
+        raffle: {
+          id: raffle.id, name: raffle.name, prizeName: raffle.prizeName,
+          emoji: raffle.emoji, totalTickets: raffle.totalTickets,
+          cuposSold: raffle._ticketCounter || 0,
+          entryCost: raffle.entryCost, prizeValueARS: raffle.prizeValueARS,
+          status: raffle.status, winnerUsername: raffle.winnerUsername,
+          winningTicketNumber: raffle.winningTicketNumber,
+          drawDate: raffle.drawDate, lotteryRule: raffle.lotteryRule,
+          isFree: !!raffle.isFree, minCargasARS: raffle.minCargasARS || 0,
+          raffleType: raffle.raffleType, instanceNumber: raffle.instanceNumber,
+          weekKey: raffle.weekKey,
+          prizeClaimedAt: raffle.prizeClaimedAt,
+          drawnAt: raffle.drawnAt
+        },
+        participants,
+        lightning: {
+          minCargas: LIGHTNING_MIN_CARGAS,
+          totalQualifying,
+          cutoff: new Date(toMs).toISOString(),
+          cutoffSource: 'file',
+          sourceMode: 'file-adhoc',
+          masterUsed: { source: 'file-adhoc', fromMs, toMs, rowsCount: parsed.rows.length },
+          rangeFrom: new Date(fromMs).toISOString(),
+          rangeTo: new Date(toMs).toISOString(),
+          cutoffNote: '📁 Cargas leídas del archivo subido (' + parsed.rows.length +
+                      ' filas válidas, ' + parsed.skipped + ' skip, ' + countedRows +
+                      ' depósitos cruzaron) · desde ' +
+                      new Date(fromMs).toLocaleString('es-AR') + ' hasta ' +
+                      new Date(toMs).toLocaleString('es-AR')
+        }
+      });
+    } catch (err) {
+      logger.error(`/api/admin/raffles/:id/analyze-csv: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 // POST /api/admin/raffles/:id/draw
 // El admin carga (a) lotteryNumber: numero crudo de la Loteria Nacional

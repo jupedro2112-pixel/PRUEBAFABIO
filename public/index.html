@@ -6,6 +6,69 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 
     <!-- ============================================
+         FORZAR CHROME / SAFARI (escape de webviews in-app)
+         -----------------------------------------
+         Los webviews de FB/IG/TikTok/WhatsApp/etc rompen PWA, service
+         workers, login con Google y Firebase Messaging. Detectamos por
+         userAgent y:
+           - Android: redirigimos con intent:// para abrir Chrome.
+           - iOS: no se puede forzar (Apple), mostramos banner con
+             instrucciones (... -> "Abrir en navegador externo").
+         Corre lo antes posible para no cargar pixel/firebase al pedo.
+         Skipeable con ?noredirect=1 para QA.
+         ============================================ -->
+    <script>
+    (function () {
+        try {
+            if (/[?&]noredirect=1/.test(location.search)) return;
+            if (sessionStorage.getItem('inapp_redirect_done') === '1') return;
+
+            var ua = navigator.userAgent || '';
+            // FBAN/FBAV = Facebook, Instagram, Line, MicroMessenger = WeChat,
+            // FB_IAB = Facebook in-app browser, FB4A = FB Android, OKApp = OK,
+            // TikTok webview suele incluir 'BytedanceWebview' o 'musical_ly'.
+            var inApp = /(FBAN|FBAV|FB_IAB|FB4A|Instagram|Line|MicroMessenger|Twitter|LinkedIn|Snapchat|TikTok|musical_ly|BytedanceWebview|OKApp|Pinterest|WhatsApp)/i.test(ua);
+            if (!inApp) return;
+
+            sessionStorage.setItem('inapp_redirect_done', '1');
+
+            var isAndroid = /Android/i.test(ua);
+            var isIOS = /iPhone|iPad|iPod/i.test(ua);
+
+            if (isAndroid) {
+                // Construimos el intent:// que abre Chrome con la URL actual.
+                // Si Chrome no esta instalado, S.browser_fallback_url lo manda
+                // al navegador del sistema con la URL https original.
+                var url = location.href;
+                var host = location.host + location.pathname + location.search + location.hash;
+                var fallback = encodeURIComponent(url);
+                var intentUrl = 'intent://' + host +
+                    '#Intent;scheme=https;package=com.android.chrome;' +
+                    'S.browser_fallback_url=' + fallback + ';end';
+                location.replace(intentUrl);
+                return;
+            }
+
+            if (isIOS) {
+                // En iOS no podemos forzar nada. Mostramos un overlay claro.
+                document.addEventListener('DOMContentLoaded', function () {
+                    var d = document.createElement('div');
+                    d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,0.92);color:#fff;font-family:-apple-system,system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;';
+                    d.innerHTML =
+                        '<div style="font-size:54px;margin-bottom:12px;">🧭</div>' +
+                        '<h2 style="margin:0 0 12px 0;font-size:22px;">Abrí esta página en Safari</h2>' +
+                        '<p style="margin:0 0 18px 0;font-size:15px;line-height:1.45;max-width:340px;opacity:.92;">Para que funcione bien (notificaciones, login, depósitos) tocá el menú <b>•••</b> arriba a la derecha y elegí <b>"Abrir en Safari"</b>.</p>' +
+                        '<button id="iaClose" style="background:#fff;color:#000;border:0;border-radius:10px;padding:10px 18px;font-weight:700;font-size:14px;">Continuar igual</button>';
+                    document.body.appendChild(d);
+                    document.getElementById('iaClose').onclick = function () { d.remove(); };
+                });
+            }
+        } catch (_) { /* no romper la pagina por esto */ }
+    })();
+    </script>
+    <!-- /FORZAR CHROME -->
+
+    <!-- ============================================
          META PIXEL (Facebook / Instagram Ads)
          -----------------------------------------
          El server reemplaza {{META_PIXEL_ID}} por process.env.META_PIXEL_ID

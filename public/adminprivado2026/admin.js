@@ -10342,9 +10342,9 @@ function reanalyzeLightningParticipants(raffleId) {
         return;
     }
     const srcSel = document.getElementById('lightningSourceMode');
-    const source = srcSel ? srcSel.value : 'live';
+    const source = srcSel ? srcSel.value : 'daily';
     let extra = {};
-    if (source === 'master') {
+    if (source === 'master' || source === 'daily') {
         const fromInp = document.getElementById('lightningMasterFrom');
         const toInp = document.getElementById('lightningMasterTo');
         if (fromInp && fromInp.value) {
@@ -10357,6 +10357,51 @@ function reanalyzeLightningParticipants(raffleId) {
         }
     }
     viewRaffleParticipants(raffleId, d.toISOString(), source, extra);
+}
+
+// Sube un CSV ad-hoc al endpoint /analyze-csv del relampago. Lee fechas
+// Desde/Hasta del modal (si estan vacias el server usa createdAt..drawnAt).
+// Re-renderiza el modal con la respuesta del server.
+async function analyzeLightningWithCsv(raffleId, file) {
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) {
+        alert('El archivo supera 100 MB.');
+        return;
+    }
+    const fromInp = document.getElementById('lightningMasterFrom');
+    const toInp = document.getElementById('lightningMasterTo');
+    const params = new URLSearchParams();
+    if (fromInp && fromInp.value) {
+        const fd = new Date(fromInp.value);
+        if (!isNaN(fd.getTime())) params.set('from', fd.toISOString());
+    }
+    if (toInp && toInp.value) {
+        const td = new Date(toInp.value);
+        if (!isNaN(td.getTime())) params.set('to', td.toISOString());
+    }
+    const qs = params.toString();
+    const url = '/api/admin/raffles/' + raffleId + '/analyze-csv' + (qs ? '?' + qs : '');
+
+    document.getElementById('raffleDetailBody').innerHTML =
+        '<div style="padding:30px;text-align:center;color:#aaa;">📁 Procesando archivo... esto puede tardar 5-30s para CSVs grandes.</div>';
+    try {
+        const text = await file.text();
+        const r = await authFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: text
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            document.getElementById('raffleDetailBody').innerHTML =
+                '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        document.getElementById('raffleDetailBody').innerHTML = _renderRaffleDetail(d);
+    } catch (e) {
+        document.getElementById('raffleDetailBody').innerHTML =
+            '<div style="color:#ff8080;padding:30px;text-align:center;">Error subiendo archivo: ' + escapeHtml(e.message || '') + '</div>';
+    }
 }
 
 function closeRaffleDetailModal() {
@@ -10420,41 +10465,55 @@ function _renderRaffleDetail(d) {
             // requiere formato sin zona; usamos local del navegador.
             const cutISO = lightning.cutoff || _nextMondayDrawISO();
             const cutLocal = _isoToDatetimeLocal(cutISO);
-            const sourceMode = lightning.sourceMode || 'live';
+            const sourceMode = lightning.sourceMode || 'daily';
             const masterUsed = lightning.masterUsed || null;
+            // Defaults para Desde/Hasta del modo daily: usamos el rango que
+            // devolvio el server si vino, sino vacio (que el server resuelve
+            // a "desde createdAt del raffle hasta cutoff").
+            const fromLocal = lightning.rangeFrom ? _isoToDatetimeLocal(lightning.rangeFrom) : '';
+            const toLocal = lightning.rangeTo ? _isoToDatetimeLocal(lightning.rangeTo) : cutLocal;
+            const showRange = (sourceMode === 'master' || sourceMode === 'daily');
             html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;">';
             html += '  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;">';
 
             html += '    <div style="flex:1;min-width:160px;">';
             html += '      <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">🔌 Fuente de cargas</div>';
-            html += '      <select id="lightningSourceMode" onchange="document.getElementById(\'lightningMasterRange\').style.display = (this.value === \'master\') ? \'block\' : \'none\';" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
+            html += '      <select id="lightningSourceMode" onchange="document.getElementById(\'lightningMasterRange\').style.display = (this.value === \'master\' || this.value === \'daily\') ? \'block\' : \'none\';" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
+            html += '        <option value="daily"' + (sourceMode === 'daily' ? ' selected' : '') + '>📄 Archivo CSV importado (rápido)</option>';
             html += '        <option value="live"' + (sourceMode === 'live' ? ' selected' : '') + '>JUGAYGANA (live · más lento)</option>';
             html += '        <option value="master"' + (sourceMode === 'master' ? ' selected' : '') + '>🌟 Archivo Maestro (Drive)</option>';
             html += '      </select>';
             html += '    </div>';
 
             html += '    <div style="flex:1;min-width:200px;">';
-            html += '      <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Fecha de corte (live) / hasta (master)</div>';
+            html += '      <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Fecha de corte (live)</div>';
             html += '      <input id="lightningCutoffInput" type="datetime-local" value="' + cutLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
             html += '    </div>';
 
             html += '    <button type="button" onclick="reanalyzeLightningParticipants(' + escapeJsArg(r.id) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
+            html += '    <button type="button" onclick="document.getElementById(\'lightningCsvFile_' + escapeJsArg(r.id) + '\').click()" title="Subir un CSV específico para analizar con precisión horaria" style="background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">📁 SUBIR CSV</button>';
+            html += '    <input type="file" id="lightningCsvFile_' + escapeJsArg(r.id) + '" accept=".csv,text/csv,text/plain" style="display:none;" onchange="analyzeLightningWithCsv(' + escapeJsArg(r.id) + ', this.files[0])">';
 
             html += '  </div>';
 
-            // Range Desde/Hasta — solo visible si fuente = master.
-            html += '  <div id="lightningMasterRange" style="display:' + (sourceMode === 'master' ? 'block' : 'none') + ';margin-top:8px;padding-top:8px;border-top:1px dashed rgba(0,212,255,0.30);">';
+            // Range Desde/Hasta — visible si fuente = master o daily.
+            html += '  <div id="lightningMasterRange" style="display:' + (showRange ? 'block' : 'none') + ';margin-top:8px;padding-top:8px;border-top:1px dashed rgba(0,212,255,0.30);">';
             html += '    <div style="display:flex;flex-wrap:wrap;gap:8px;">';
-            html += '      <div style="flex:1;min-width:160px;"><div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Desde</div><input id="lightningMasterFrom" type="datetime-local" value="" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
-            html += '      <div style="flex:1;min-width:160px;"><div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Hasta</div><input id="lightningMasterTo" type="datetime-local" value="' + cutLocal + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+            html += '      <div style="flex:1;min-width:160px;"><div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Desde</div><input id="lightningMasterFrom" type="datetime-local" value="' + fromLocal + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+            html += '      <div style="flex:1;min-width:160px;"><div style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Hasta</div><input id="lightningMasterTo" type="datetime-local" value="' + toLocal + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
             html += '    </div>';
-            html += '    <div style="color:#aaa;font-size:10.5px;margin-top:5px;line-height:1.4;">Cuenta cargas (deposits) del archivo Maestro entre Desde y Hasta. Si dejás Desde vacío, cuenta todo lo anterior a Hasta.</div>';
+            html += '    <div style="color:#aaa;font-size:10.5px;margin-top:5px;line-height:1.4;">Cuenta los depósitos entre Desde y Hasta. Si dejás Desde vacío, arranca desde la creación del sorteo.</div>';
             html += '  </div>';
 
             // Notita explicativa segun modo activo.
-            const noteText = masterUsed
-                ? ('✅ Resultado leído del archivo Maestro "' + escapeHtml(masterUsed.name || masterUsed.slug || '?') + '" (' + (masterUsed.rowsCount || 0) + ' filas).')
-                : 'Modo live: pregunta a JUGAYGANA cada user (más lento, ~5-15s).';
+            let noteText;
+            if (sourceMode === 'daily') {
+                noteText = '📄 Lee del CSV que subiste en "Importar movimientos". Elegí el rango Desde/Hasta para el período del sorteo.';
+            } else if (masterUsed && masterUsed.source !== 'daily') {
+                noteText = '✅ Resultado leído del archivo Maestro "' + escapeHtml(masterUsed.name || masterUsed.slug || '?') + '" (' + (masterUsed.rowsCount || 0) + ' filas).';
+            } else {
+                noteText = 'Modo live: pregunta a JUGAYGANA cada user (más lento, ~5-15s).';
+            }
             html += '  <div style="color:#aaa;font-size:10.5px;margin-top:6px;line-height:1.4;">' + noteText + '</div>';
 
             html += '</div>';
