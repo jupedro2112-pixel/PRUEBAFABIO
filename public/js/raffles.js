@@ -1021,10 +1021,10 @@ VIP.raffles = (function () {
         if (myWin) {
             html = _renderHomeWinnerMine(myWin);
         } else if (lightning) {
-            // Hero del relampago va SOLO dentro del modal (no en el home). El
-            // home muestra el CTA verde de sorteos semanales — al tocarlo se
-            // abre el modal donde el hero del relampago queda arriba de todo.
-            html = _renderHomeDefaultCta();
+            // Cartel verde EXPANDIDO: dentro tiene el card del relampago como
+            // seccion. Asi el user ve ambos en el mismo bloque y el verde
+            // sigue siendo el unico punto de entrada al modal de sorteos.
+            html = _renderHomeGreenWithLightning(lightning, homeBalance);
         } else if (winners.length > 0) {
             html = _renderHomeWinnerOthers(winners[0]);
         } else {
@@ -1044,6 +1044,76 @@ VIP.raffles = (function () {
             '<div style="color:#fff;font-size:14px;font-weight:700;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);">$2M · $1M · $500k · $100k · ⚡ relámpago gratis</div>' +
             '<div style="background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);">👉 ENTRÁ ACÁ</div>' +
             '</div>';
+    }
+
+    // Variante del cartel verde que tiene EMBEBIDO el card del relampago como
+    // seccion. Se usa cuando hay un relampago activo: el user ve los premios
+    // semanales arriba, el card del relampago en el medio (clickeable
+    // independientemente al picker), y el CTA "VER TODOS" abajo abre el modal.
+    function _renderHomeGreenWithLightning(lightning, balance) {
+        return '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.40);position:relative;overflow:hidden;">' +
+            '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;pointer-events:none;">🎁</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 SORTEOS SEMANALES PARA CLIENTES Y PAGOS</div>' +
+            '<div style="color:#fff;font-size:13.5px;font-weight:700;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);">$2M · $1M · $500k · $100k</div>' +
+            _renderHomeLightningEmbedded(lightning, balance) +
+            '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);margin-top:10px;">👉 VER TODOS LOS SORTEOS</div>' +
+        '</div>';
+    }
+
+    // Card del relampago EMBEBIDO dentro del verde. Sin margenes ni max-width
+    // (queda al ancho del padre verde). Click directo al picker / wa.link.
+    function _renderHomeLightningEmbedded(l, balance) {
+        const sold = l.cuposSold || 0;
+        const total = l.totalTickets || 0;
+        const fillPct = total ? Math.round((sold / total) * 100) : 0;
+        const enrolled = l.myTicket != null;
+        const entryCost = Number(l.entryCost) || 0;
+        const isPaid = entryCost > 0 && !l.isFree;
+        const canAfford = !isPaid || (Number(balance) || 0) >= entryCost;
+        const linePhone = (VIP && VIP.state && VIP.state.linePhone) || '';
+        const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
+        const cargarHref = waNum ? 'https://wa.me/' + waNum : 'https://wa.link/metawin2026';
+        const showCargar = isPaid && !canAfford && l.status === 'active' && !enrolled;
+        const clickAction = showCargar
+            ? "event.stopPropagation();window.open(" + JSON.stringify(cargarHref) + ",'_blank')"
+            : ((l.status === 'active' && !enrolled)
+                ? 'event.stopPropagation();VIP.raffles && VIP.raffles.openAndPickRaffle(' + JSON.stringify(l.id) + ')'
+                : 'event.stopPropagation();VIP.raffles && VIP.raffles.open()');
+        const badgeTxt = isPaid
+            ? ('$' + _fmt(entryCost) + ' POR NÚMERO · 1 POR PERSONA')
+            : 'SIN CARGO · MÁXIMO 1 POR PERSONA';
+        const ctaLabel = isPaid
+            ? '⚡ ELEGIR MI NÚMERO ($' + _fmt(entryCost) + ')'
+            : '⚡ ELEGIR MI NÚMERO GRATIS';
+        return '<div onclick="' + clickAction + '" style="cursor:pointer;background:rgba(0,30,80,0.85);border:2px solid #ffeb3b;border-radius:10px;padding:11px;margin:0;box-shadow:0 0 12px rgba(255,235,59,0.30);position:relative;overflow:hidden;">' +
+            '<div style="position:absolute;top:-10px;right:-10px;font-size:70px;opacity:0.12;line-height:1;pointer-events:none;">⚡</div>' +
+            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;">' +
+                '<span style="background:#ffeb3b;color:#001a40;padding:2px 8px;border-radius:5px;font-size:9.5px;font-weight:900;letter-spacing:1.5px;">⚡ RELÁMPAGO' + (isPaid ? ' PAGO' : '') + '</span>' +
+                '<span style="color:#fff;font-size:9.5px;font-weight:800;letter-spacing:1px;">' + badgeTxt + '</span>' +
+            '</div>' +
+            '<div style="color:#fff;font-size:18px;font-weight:900;line-height:1.1;text-shadow:0 2px 4px rgba(0,0,0,0.50);margin:3px 0 6px;">Premio $' + _fmt(l.prizeValueARS) + '</div>' +
+            (enrolled
+                ? '<div style="background:rgba(255,235,59,0.20);border:1.5px solid #ffeb3b;border-radius:7px;padding:7px;text-align:center;color:#fff;font-size:12px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">✅ Estás anotado · Número #' + l.myTicket + '</div>'
+                : (l.status !== 'active'
+                    ? '<div style="background:rgba(0,0,0,0.45);border-radius:7px;padding:8px;text-align:center;">' +
+                        '<div style="color:#fff;font-size:12px;font-weight:900;margin-bottom:3px;">⏳ SORTEO LLENO</div>' +
+                        '<div style="color:#ffeb3b;font-size:10px;font-weight:700;line-height:1.4;">Si abrimos otro relámpago, vas a poder anotarte.</div>' +
+                      '</div>'
+                    : '<div style="height:7px;background:rgba(0,0,0,0.40);border-radius:4px;overflow:hidden;margin:3px 0;">' +
+                        '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#ffeb3b,#fff);box-shadow:0 0 10px rgba(255,235,59,0.80);"></div></div>' +
+                      '<div style="display:flex;justify-content:space-between;font-size:10.5px;color:#fff;font-weight:700;margin-bottom:5px;">' +
+                        '<span>' + sold + '/' + total + ' anotados</span>' +
+                        '<span>' + (showCargar ? '💬 CARGÁ Y ENTRÁ' : '👉 ENTRÁ Y ELEGÍ') + '</span>' +
+                      '</div>' +
+                      (showCargar
+                        ? '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200);color:#fff;border:2px solid #66ff66;border-radius:7px;padding:8px;text-align:center;font-weight:900;font-size:12px;letter-spacing:1px;margin-top:3px;box-shadow:0 2px 6px rgba(102,255,102,0.40);">' +
+                            '<div style="font-size:9.5px;color:#aaffaa;font-weight:700;margin-bottom:2px;">No tenés saldo suficiente</div>' +
+                            '<div>💬 QUIERO CARGAR</div>' +
+                          '</div>'
+                        : '<div style="background:#ffeb3b;color:#001a40;border-radius:7px;padding:8px;text-align:center;font-weight:900;font-size:12px;letter-spacing:1px;margin-top:3px;box-shadow:0 2px 6px rgba(255,235,59,0.40);">' + ctaLabel + '</div>')
+                  )
+            ) +
+        '</div>';
     }
 
     // Hero del RELAMPAGO en el HOME (no en el modal). Mas pequenio y
