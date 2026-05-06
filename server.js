@@ -13600,7 +13600,9 @@ app.post(
   '/api/admin/raffles/:id/analyze-csv',
   authMiddleware,
   adminMiddleware,
-  express.text({ limit: csvImportLimitMb, type: '*/*' }),
+  // csvImportLimitMb se declara mas abajo en el archivo (linea ~19599); usamos
+  // el string literal aca para evitar TDZ ReferenceError al boot.
+  express.text({ limit: '100mb', type: '*/*' }),
   async (req, res) => {
     try {
       const raffle = await Raffle.findOne({ id: req.params.id }).lean();
