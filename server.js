@@ -14292,19 +14292,46 @@ function _aggregateTxLog(items) {
   }));
 }
 
-// Fetcha CSV desde una URL (Google Sheets publicado-a-web tiene formato
-// docs.google.com/.../pub?output=csv). Soporta cualquier URL que devuelva
-// CSV en text/plain o text/csv. Timeout 15s, max 5MB.
+// Fetcha CSV desde una URL. Auto-convierte URLs de Google Sheets edit/view
+// al endpoint export?format=csv para que el admin pueda pegar la URL del
+// sheet directamente sin tener que "publicar a web". Funciona si el sheet
+// esta compartido como "cualquiera con el link puede ver".
+//
+// Tambien soporta:
+//   - URLs publicadas a web (.../pub?output=csv)
+//   - URLs export ya armadas (.../export?format=csv)
+//   - Cualquier URL externa que devuelva CSV directo
+//
+// Defensa: si la respuesta es HTML (sheet no compartido o URL del editor),
+// tiramos error claro en lugar de parsearlo como filas basura.
 async function _fetchCsvFromUrl(url) {
   if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (necesita http/https)');
+
+  let resolvedUrl = url;
+  const sheetMatch = url.match(/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (sheetMatch && !/[?&]format=csv/.test(url) && !/output=csv/.test(url)) {
+    const sheetId = sheetMatch[1];
+    const gidMatch = url.match(/[#?&]gid=(\d+)/);
+    const gid = gidMatch ? gidMatch[1] : '0';
+    resolvedUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
   try {
-    const r = await fetch(url, { signal: controller.signal });
+    const r = await fetch(resolvedUrl, { signal: controller.signal, redirect: 'follow' });
     clearTimeout(timeoutId);
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' al fetchear la URL');
+    if (!r.ok) {
+      throw new Error('HTTP ' + r.status + ' al fetchear (¿la planilla no es pública? Compartila como "Cualquiera con el link puede ver")');
+    }
+    const ct = String(r.headers.get('content-type') || '').toLowerCase();
     const text = await r.text();
     if (text.length > 5 * 1024 * 1024) throw new Error('CSV muy grande (max 5MB)');
+    // Si vino HTML, la URL no es CSV. Probable: sheet sin compartir publico
+    // o link del editor en otro dominio. Damos instrucciones claras.
+    if (ct.includes('text/html') || /^\s*<!doctype\s+html|^\s*<html/i.test(text)) {
+      throw new Error('La URL devolvió HTML, no CSV. Asegurate de que la planilla esté compartida como "Cualquiera con el link puede ver" — o publicala a web (Archivo → Compartir → Publicar a la web → "como CSV").');
+    }
     return text;
   } catch (e) {
     clearTimeout(timeoutId);
