@@ -11949,6 +11949,68 @@ async function _readRaffleAudienceConfig(kind) {
   }
 }
 
+// Cuenta cargas REALES de un user via jugayganaMovements.getUserMovements
+// (misma fuente que el panel de cargas del admin — Reembolsos diarios/semanales/
+// mensuales). NO usa la colection Transaction local porque ahi solo se registran
+// algunos eventos: muchos users con cargas reales en JUGAYGANA figuran con 0
+// en Transaction (bug que rompia el conteo del relampago).
+//
+// Args:
+//   username: el username del user
+//   beforeMs: opcional, si se pasa, solo cuenta cargas con timestamp < beforeMs.
+//             Para el sorteo: drawnAt. Para el live display al user: null
+//             (cuenta hasta ahora).
+//   lookbackDays: cuanto atras buscar (default 365). pageSize 500 cubre la
+//                 mayoria. Si un user tiene mas de 500 cargas en 1 año, ya
+//                 califica con creces.
+async function _getLightningCargasCount(username, beforeMs, lookbackDays) {
+  const days = Number.isFinite(lookbackDays) ? lookbackDays : 365;
+  const endMs = beforeMs ? Number(beforeMs) : Date.now();
+  const startMs = endMs - days * 24 * 3600 * 1000;
+  const fmt = (d) => {
+    const x = new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const dd = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+  try {
+    const r = await jugayganaMovements.getUserMovements(username, {
+      startDate: fmt(startMs),
+      endDate: fmt(endMs),
+      pageSize: 500
+    });
+    if (!r || !r.success) return 0;
+    let count = 0;
+    for (const m of (r.movements || [])) {
+      // Filtro por timestamp del movement si esta disponible.
+      const candidates = [m.timestamp, m.Timestamp, m.date, m.Date, m.datetime, m.fecha, m.Fecha, m.createdAt];
+      let ts = null;
+      for (const c of candidates) {
+        if (!c) continue;
+        const t = new Date(c).getTime();
+        if (isFinite(t) && t > 0) { ts = t; break; }
+      }
+      if (beforeMs && ts && ts >= Number(beforeMs)) continue;
+      const type = String(m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toLowerCase();
+      let amount = 0;
+      if (m.amount !== undefined) amount = parseFloat(m.amount);
+      else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
+      else if (m.value !== undefined) amount = parseFloat(m.value);
+      else if (m.Value !== undefined) amount = parseFloat(m.Value);
+      else if (m.monto !== undefined) amount = parseFloat(m.monto);
+      else if (m.Monto !== undefined) amount = parseFloat(m.Monto);
+      const isDep = type.includes('deposit') || type.includes('credit') ||
+                    type.includes('carga') || type.includes('recarga') || amount > 0;
+      if (isDep) count++;
+    }
+    return count;
+  } catch (e) {
+    logger.warn(`[raffles] _getLightningCargasCount ${username}: ${e.message}`);
+    return 0;
+  }
+}
+
 // Clona un relampago cerrado (status='closed') en uno nuevo activo. Mantiene
 // premio, cupos, isFree/entryCost, audiencia y todos los gates de elegibilidad
 // (requiresPaidTicket, requiresMinChargesLastWeek). instanceNumber se renumera
@@ -12438,20 +12500,14 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         weeklyDeposits = 0;
       }
     }
-    // Cargas TOTALES del user (no solo semanales) para mostrar en el hero
-    // del relampago si el user esta enrollado: "tenes X de 5 cargas — te
-    // faltan Y para reclamar". Solo lo calculamos si hay relampago visible.
+    // Cargas REALES del user (misma fuente que el panel de cargas del admin
+    // — JUGAYGANA via jugayganaMovements.getUserMovements). Antes contabamos
+    // Transaction local pero ahi muchas cargas reales no quedan registradas
+    // -> users con 1+ carga real figuraban con 0.
     let lightningCargasCount = null;
     const hasLightningVisible = raffles.some(r => r.raffleType === 'relampago');
     if (hasLightningVisible) {
-      try {
-        lightningCargasCount = await Transaction.countDocuments({
-          username: { $regex: '^' + safe + '$', $options: 'i' },
-          type: 'deposit'
-        });
-      } catch (_) {
-        lightningCargasCount = null;
-      }
+      lightningCargasCount = await _getLightningCargasCount(username, null);
     }
     const myByRaffle = {};
     for (const p of myPartsRes) myByRaffle[p.raffleId] = p;
@@ -13284,28 +13340,34 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
       });
     }
 
-    // RELAMPAGO: enriquecemos cada participant con cargas reales (deposits)
-    // hasta el drawnAt si ya se sorteo, o hasta ahora si esta vivo. Asi el
-    // admin ve cuantos califican para reclamar (>=5 cargas pre-draw).
+    // RELAMPAGO: enriquecemos cada participant con cargas REALES de JUGAYGANA
+    // (misma fuente que el panel del admin). Cutoff por default = drawnAt si
+    // ya se sorteo, o el query param ?cutoff=<ISO> si el admin paso uno
+    // (ej. para simular: "si fuera el lunes que viene, quien califica?").
+    // Sin cutoff = hasta ahora.
     const isLightning = raffle.raffleType === 'relampago';
     const LIGHTNING_MIN_CARGAS = 5;
     const cargasByUser = {};
+    let cutoffMs = null;
+    let cutoffSource = 'live';
     if (isLightning) {
-      const cutoff = raffle.drawnAt ? new Date(raffle.drawnAt) : null;
-      const promises = parts.map(async (p) => {
-        const safe = String(p.username || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const filter = {
-          username: { $regex: '^' + safe + '$', $options: 'i' },
-          type: 'deposit'
-        };
-        if (cutoff) filter.timestamp = { $lt: cutoff };
-        try {
-          cargasByUser[String(p.username).toLowerCase()] = await Transaction.countDocuments(filter);
-        } catch (_) {
-          cargasByUser[String(p.username).toLowerCase()] = 0;
+      const queryCutoff = req.query && req.query.cutoff ? new Date(req.query.cutoff) : null;
+      if (queryCutoff && !isNaN(queryCutoff.getTime())) {
+        cutoffMs = queryCutoff.getTime();
+        cutoffSource = 'query';
+      } else if (raffle.drawnAt) {
+        cutoffMs = new Date(raffle.drawnAt).getTime();
+        cutoffSource = 'drawnAt';
+      }
+      // Concurrency 5 (igual que weeklyStrategyService) para no saturar JUGAYGANA.
+      const concurrency = 5;
+      for (let i = 0; i < parts.length; i += concurrency) {
+        const slice = parts.slice(i, i + concurrency);
+        const results = await Promise.all(slice.map(p => _getLightningCargasCount(p.username, cutoffMs)));
+        for (let j = 0; j < slice.length; j++) {
+          cargasByUser[String(slice[j].username).toLowerCase()] = results[j];
         }
-      });
-      await Promise.all(promises);
+      }
     }
 
     const participants = parts.map(p => {
@@ -13349,10 +13411,13 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
       lightning: isLightning ? {
         minCargas: LIGHTNING_MIN_CARGAS,
         totalQualifying,
-        cutoff: raffle.drawnAt ? new Date(raffle.drawnAt).toISOString() : null,
-        cutoffNote: raffle.drawnAt
-          ? 'Cargas con timestamp anterior al draw'
-          : 'Cargas hasta ahora (sorteo aún pendiente)'
+        cutoff: cutoffMs ? new Date(cutoffMs).toISOString() : null,
+        cutoffSource,
+        cutoffNote: cutoffSource === 'query'
+          ? 'Cargas con timestamp anterior a la fecha que elegiste'
+          : (cutoffSource === 'drawnAt'
+            ? 'Cargas con timestamp anterior al draw'
+            : 'Cargas hasta ahora (sorteo aún pendiente)')
       } : null
     });
   } catch (err) {
@@ -13469,16 +13534,10 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     let lightningCargasCount = 0;
     if (raffle.raffleType === 'relampago') {
       const drawnAtTs = drawLock.drawnAt || new Date();
-      const safeWin = String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      try {
-        lightningCargasCount = await Transaction.countDocuments({
-          username: { $regex: '^' + safeWin + '$', $options: 'i' },
-          type: 'deposit',
-          timestamp: { $lt: drawnAtTs }
-        });
-      } catch (e) {
-        logger.warn(`[raffles] LIGHTNING cargas check fail ${winner.username}: ${e.message}`);
-      }
+      lightningCargasCount = await _getLightningCargasCount(
+        winner.username,
+        new Date(drawnAtTs).getTime()
+      );
       if (lightningCargasCount < LIGHTNING_MIN_CARGAS) {
         lightningForfeited = true;
         await Raffle.updateOne(

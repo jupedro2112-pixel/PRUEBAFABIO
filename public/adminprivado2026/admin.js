@@ -9695,7 +9695,7 @@ async function toggleHistoryDetail(weekKey) {
     if (c) c.innerHTML = _renderRafflesAdmin();
 }
 
-async function viewRaffleParticipants(id) {
+async function viewRaffleParticipants(id, cutoffISO) {
     let modal = document.getElementById('raffleDetailModal');
     if (!modal) {
         modal = document.createElement('div');
@@ -9706,13 +9706,62 @@ async function viewRaffleParticipants(id) {
         document.body.appendChild(modal);
     }
     modal.style.display = 'flex';
-    document.getElementById('raffleDetailBody').innerHTML = '<div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div>';
+    const loaderTxt = cutoffISO
+        ? '⏳ Analizando cargas hasta ' + new Date(cutoffISO).toLocaleString('es-AR') + '… (puede tardar varios segundos por persona)'
+        : '⏳ Cargando…';
+    document.getElementById('raffleDetailBody').innerHTML = '<div style="text-align:center;padding:40px;color:#888;">' + loaderTxt + '</div>';
     try {
-        const r = await authFetch('/api/admin/raffles/' + id + '/participants');
+        const url = '/api/admin/raffles/' + id + '/participants' + (cutoffISO ? '?cutoff=' + encodeURIComponent(cutoffISO) : '');
+        const r = await authFetch(url);
         const d = await r.json();
         if (!r.ok) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>'; return; }
         document.getElementById('raffleDetailBody').innerHTML = _renderRaffleDetail(d);
     } catch (e) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>'; }
+}
+
+// Devuelve el proximo lunes 21:00 ARG en ISO. Lo usamos como default del
+// date picker en el modal de detalle del relampago — el user generalmente
+// quiere simular "si fuera el lunes (sorteo Loteria Nacional Nocturna)".
+function _nextMondayDrawISO() {
+    const now = new Date();
+    const argOffset = -3 * 60; // ARG es UTC-3
+    const localOffset = now.getTimezoneOffset();
+    const diffMin = argOffset - localOffset;
+    const argNow = new Date(now.getTime() + diffMin * 60 * 1000);
+    let daysToMon = (1 - argNow.getDay() + 7) % 7;
+    if (daysToMon === 0 && argNow.getHours() >= 21) daysToMon = 7;
+    const target = new Date(argNow);
+    target.setDate(argNow.getDate() + daysToMon);
+    target.setHours(21, 0, 0, 0);
+    // De ARG-zoned a UTC real
+    return new Date(target.getTime() - diffMin * 60 * 1000).toISOString();
+}
+
+// Convierte un ISO string a el formato YYYY-MM-DDTHH:MM que requiere
+// <input type="datetime-local"> (sin zona, hora local del browser).
+function _isoToDatetimeLocal(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+           'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+// Disparado por el boton "Analizar" en el modal de detalle del relampago.
+// Lee la fecha del datetime input y refetch con cutoff.
+function reanalyzeLightningParticipants(raffleId) {
+    const inp = document.getElementById('lightningCutoffInput');
+    if (!inp || !inp.value) {
+        alert('Elegí una fecha y hora antes de analizar.');
+        return;
+    }
+    const d = new Date(inp.value);
+    if (isNaN(d.getTime())) {
+        alert('Fecha inválida.');
+        return;
+    }
+    viewRaffleParticipants(raffleId, d.toISOString());
 }
 
 function closeRaffleDetailModal() {
@@ -9770,6 +9819,20 @@ function _renderRaffleDetail(d) {
         html += '</div>';
         if (isLightning && lightning) {
             html += '<div style="background:rgba(255,235,59,0.06);border:1px dashed rgba(255,235,59,0.40);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:11px;color:#ffeb3b;line-height:1.5;">⚡ Regla relámpago: ganador necesita ≥<strong>' + lightning.minCargas + ' cargas reales</strong> con timestamp anterior al draw. ' + escapeHtml(lightning.cutoffNote || '') + '.</div>';
+            // Selector de fecha para analizar "si fuera el lunes que viene,
+            // quien califica?". Default = drawnAt si ya se sorteo, sino el
+            // proximo lunes 21:00 ARG (= 00:00 UTC del martes). Datetime-local
+            // requiere formato sin zona; usamos local del navegador.
+            const cutISO = lightning.cutoff || _nextMondayDrawISO();
+            const cutLocal = _isoToDatetimeLocal(cutISO);
+            html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">';
+            html += '  <div style="flex:1;min-width:200px;">';
+            html += '    <div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Fecha de corte</div>';
+            html += '    <input id="lightningCutoffInput" type="datetime-local" value="' + cutLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
+            html += '    <div style="color:#aaa;font-size:10.5px;margin-top:4px;line-height:1.4;">Solo cargas con timestamp <strong>anterior</strong> a esta fecha cuentan. Cambialo para simular el sorteo del lunes y ver quién va a calificar.</div>';
+            html += '  </div>';
+            html += '  <button type="button" onclick="reanalyzeLightningParticipants(' + escapeJsArg(r.id) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
+            html += '</div>';
         }
     }
 
