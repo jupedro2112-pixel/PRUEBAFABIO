@@ -9190,21 +9190,47 @@ async function importLightningPick(raffleId, raffleName) {
     } catch (e) { alert('Error de conexión'); }
 }
 
-async function viewSegment(slug, sinceISO) {
+// Estado actual del modal de segmento — usado por los filtros para refetch.
+const _segmentViewState = { slug: null, from: '', to: '', lens: 'all', topN: 50, analyze: false };
+
+async function viewSegment(slug, opts) {
+    opts = opts || {};
+    if (slug !== _segmentViewState.slug) {
+        // Slug cambio: reset filtros.
+        _segmentViewState.slug = slug;
+        _segmentViewState.from = '';
+        _segmentViewState.to = '';
+        _segmentViewState.lens = 'all';
+        _segmentViewState.topN = 50;
+        _segmentViewState.analyze = false;
+    }
+    if (opts.from != null) _segmentViewState.from = opts.from;
+    if (opts.to != null) _segmentViewState.to = opts.to;
+    if (opts.lens != null) _segmentViewState.lens = opts.lens;
+    if (opts.topN != null) _segmentViewState.topN = opts.topN;
+    if (opts.analyze != null) _segmentViewState.analyze = !!opts.analyze;
+
     let modal = document.getElementById('segmentDetailModal');
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'segmentDetailModal';
         modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;';
         modal.onclick = function (e) { if (e.target === modal) modal.style.display = 'none'; };
-        modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #00d4ff;border-radius:12px;max-width:920px;width:100%;margin:8px auto;padding:18px 16px;position:relative;"><button onclick="document.getElementById(\'segmentDetailModal\').style.display=\'none\'" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:22px;cursor:pointer;">✕</button><div id="segmentDetailBody"><div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div></div></div>';
+        modal.innerHTML = '<div style="background:linear-gradient(135deg,#001a40,#003f7a);border:2px solid #00d4ff;border-radius:12px;max-width:980px;width:100%;margin:8px auto;padding:18px 16px;position:relative;"><button onclick="document.getElementById(\'segmentDetailModal\').style.display=\'none\'" style="position:absolute;top:10px;right:14px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:20px;cursor:pointer;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;">✕</button><div id="segmentDetailBody"><div style="text-align:center;padding:40px;color:#888;">⏳ Cargando…</div></div></div>';
         document.body.appendChild(modal);
     }
     modal.style.display = 'flex';
     const body = document.getElementById('segmentDetailBody');
-    body.innerHTML = '<div style="text-align:center;padding:40px;color:#888;">' + (sinceISO ? '⏳ Analizando cargas (puede tardar varios segundos por persona)…' : '⏳ Cargando…') + '</div>';
+    body.innerHTML = '<div style="text-align:center;padding:40px;color:#888;">' + (_segmentViewState.analyze ? '⏳ Analizando cargas (puede tardar varios segundos por persona)…' : '⏳ Cargando…') + '</div>';
     try {
-        const url = '/api/admin/segments/' + encodeURIComponent(slug) + '?analyze=1' + (sinceISO ? '&since=' + encodeURIComponent(sinceISO) : '');
+        const params = new URLSearchParams();
+        if (_segmentViewState.from) params.set('from', _segmentViewState.from);
+        if (_segmentViewState.to) params.set('to', _segmentViewState.to);
+        if (_segmentViewState.lens && _segmentViewState.lens !== 'all') params.set('lens', _segmentViewState.lens);
+        if (_segmentViewState.topN && _segmentViewState.lens === 'top') params.set('topN', String(_segmentViewState.topN));
+        if (_segmentViewState.analyze) params.set('analyze', '1');
+        const qs = params.toString();
+        const url = '/api/admin/segments/' + encodeURIComponent(slug) + (qs ? '?' + qs : '');
         const r = await authFetch(url);
         const d = await r.json();
         if (!r.ok) { body.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
@@ -9212,35 +9238,94 @@ async function viewSegment(slug, sinceISO) {
     } catch (e) { body.innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>'; }
 }
 
+function applySegmentFilters() {
+    const fromInp = document.getElementById('segFilterFrom');
+    const toInp = document.getElementById('segFilterTo');
+    const lensSel = document.getElementById('segFilterLens');
+    const topInp = document.getElementById('segFilterTopN');
+    const analyzeChk = document.getElementById('segFilterAnalyze');
+    const opts = {
+        from: fromInp && fromInp.value ? new Date(fromInp.value).toISOString() : '',
+        to: toInp && toInp.value ? new Date(toInp.value).toISOString() : '',
+        lens: lensSel ? lensSel.value : 'all',
+        topN: topInp && topInp.value ? parseInt(topInp.value, 10) : 50,
+        analyze: analyzeChk ? !!analyzeChk.checked : false
+    };
+    viewSegment(_segmentViewState.slug, opts);
+}
+
+function clearSegmentFilters() {
+    _segmentViewState.from = '';
+    _segmentViewState.to = '';
+    _segmentViewState.lens = 'all';
+    _segmentViewState.topN = 50;
+    _segmentViewState.analyze = false;
+    viewSegment(_segmentViewState.slug, { from: '', to: '', lens: 'all', topN: 50, analyze: false });
+}
+
 function _renderSegmentDetail(d) {
     const s = d.segment;
     const users = d.users || [];
     const totals = d.totals || {};
     const uploads = d.uploads || [];
-    const cutoff = s.cutoffUsed ? new Date(s.cutoffUsed).toLocaleString('es-AR') : '—';
-    const cutoffLocal = s.cutoffUsed ? _isoToDatetimeLocal(s.cutoffUsed) : '';
+    const fromLocal = s.dateFrom ? _isoToDatetimeLocal(s.dateFrom) : '';
+    const toLocal = s.dateTo ? _isoToDatetimeLocal(s.dateTo) : '';
     const conv = users.length ? Math.round((totals.converted || 0) / users.length * 100) : 0;
-    let html = '<h2 style="color:#00d4ff;margin:0 0 4px;font-size:18px;">📊 ' + escapeHtml(s.name) + '</h2>';
-    html += '<div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">' + escapeHtml(s.slug) + (s.description ? ' · ' + escapeHtml(s.description) : '') + '</div>';
+    const lens = s.lensApplied || 'all';
+    const isTxLog = !!s.isTxLog;
+
+    let html = '<h2 style="color:#00d4ff;margin:0 0 4px;font-size:18px;padding-right:48px;">📊 ' + escapeHtml(s.name) + '</h2>';
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:12px;line-height:1.5;">' + escapeHtml(s.slug) + (s.description ? ' · ' + escapeHtml(s.description) : '') + (isTxLog ? ' · <strong style="color:#66ff66;">📁 Log de transacciones</strong> · ' + (s.rowsCount || 0) + ' filas' : '') + '</div>';
+
+    // FILTROS (date range + lens) — solo si es tx-log; sino son filtros casi vacios.
+    if (isTxLog) {
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:11px;margin-bottom:12px;">';
+        html += '<div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">🔎 Filtros de análisis</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;align-items:end;">';
+
+        html += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Desde</label>';
+        html += '<input id="segFilterFrom" type="datetime-local" value="' + fromLocal + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+
+        html += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Hasta</label>';
+        html += '<input id="segFilterTo" type="datetime-local" value="' + toLocal + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+
+        html += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Lente</label>';
+        html += '<select id="segFilterLens" onchange="document.getElementById(\'segFilterTopNBox\').style.display = (this.value === \'top\') ? \'block\' : \'none\';" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;">';
+        const lensOpts = [
+            ['all', 'Todos'],
+            ['top', '🏆 Top jugadores (por carga)'],
+            ['deposit', '📥 Cargaron al menos 1 vez'],
+            ['bonus', '🎁 Recibieron bonus'],
+            ['withdraw', '📤 Hicieron descarga'],
+            ['con-app', '📱 Con app instalada'],
+            ['sin-app', '📱 Sin app'],
+            ['relampago', '⚡ Participaron en relámpago']
+        ];
+        for (const [v, l] of lensOpts) {
+            html += '<option value="' + v + '"' + (lens === v ? ' selected' : '') + '>' + l + '</option>';
+        }
+        html += '</select></div>';
+
+        html += '<div id="segFilterTopNBox" style="display:' + (lens === 'top' ? 'block' : 'none') + ';"><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Top N</label>';
+        html += '<input id="segFilterTopN" type="number" min="5" max="500" value="' + (_segmentViewState.topN || 50) + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;margin-top:3px;"></div>';
+
+        html += '</div>';
+        html += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;">';
+        html += '<label style="display:flex;align-items:center;gap:6px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;"><input type="checkbox" id="segFilterAnalyze" ' + (_segmentViewState.analyze ? 'checked' : '') + '> ⚡ Cruzar con cargas reales (JUGAYGANA · más lento)</label>';
+        html += '<button type="button" onclick="applySegmentFilters()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🔍 APLICAR</button>';
+        html += '<button type="button" onclick="clearSegmentFilters()" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 12px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Limpiar</button>';
+        html += '</div>';
+        html += '</div>';
+    }
 
     // Stats
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px;">';
-    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Usuarios</div><div style="color:#fff;font-size:18px;font-weight:900;">' + users.length + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Usuarios (filtrados)</div><div style="color:#fff;font-size:18px;font-weight:900;">' + users.length + '</div></div>';
     if (d.analyzed) {
         html += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:9px 12px;"><div style="color:#aaffaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cargaron después</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + (totals.converted || 0) + '/' + users.length + ' (' + conv + '%)</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Monto cargado</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + _fmtMoney(totals.totalAmountPost || 0) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Cargas (count)</div><div style="color:#fff;font-size:18px;font-weight:900;">' + (totals.totalCargasPost || 0) + '</div></div>';
     }
-    html += '</div>';
-
-    // Cutoff selector
-    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">';
-    html += '<div style="flex:1;min-width:200px;">';
-    html += '<div style="color:#00d4ff;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📅 Cuento cargas DESDE</div>';
-    html += '<input id="segCutoffInput" type="datetime-local" value="' + cutoffLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
-    html += '<div style="color:#aaa;font-size:10.5px;margin-top:4px;line-height:1.4;">Default: fecha de la última subida (' + cutoff + '). Cambiá para evaluar otra ventana.</div>';
-    html += '</div>';
-    html += '<button type="button" onclick="reanalyzeSegment(' + escapeJsArg(s.slug) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
     html += '</div>';
 
     // Detectar si el archivo subido es un log de transacciones (las metas
@@ -9344,13 +9429,7 @@ function _renderSegmentDetail(d) {
     return html;
 }
 
-function reanalyzeSegment(slug) {
-    const inp = document.getElementById('segCutoffInput');
-    if (!inp || !inp.value) { alert('Elegí una fecha'); return; }
-    const d = new Date(inp.value);
-    if (isNaN(d.getTime())) { alert('Fecha inválida'); return; }
-    viewSegment(slug, d.toISOString());
-}
+// (reanalyzeSegment fue reemplazado por applySegmentFilters/clearSegmentFilters)
 
 // ============================================
 // CAMPAÑAS / LANDINGS (counter de /promo2k y similares)

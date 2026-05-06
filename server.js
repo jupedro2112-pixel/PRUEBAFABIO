@@ -14236,47 +14236,75 @@ function _pickUsername(row) {
   return null;
 }
 
-// Detecta si los items parecen un log de transacciones (col type + amount/account)
-// y, si lo son, agrupa por user con totales: cargas, descargas, bonos.
-// Devuelve null si NO es log de transacciones (entonces el caller usa el flow
-// normal de "lista plana de usernames").
-function _aggregateTxLog(items) {
+// Categoriza un type del CSV en deposit/withdraw/bonus/null. Reusa los mismos
+// patrones tanto al normalizar transacciones crudas como al agregar.
+function _txKind(type) {
+  const t = String(type || '').toLowerCase().trim();
+  if (/(individual_bonus|bonus|bonif|premio|gift|regalo)/.test(t)) return 'bonus';
+  if (/(deposit|carga|recarga)/.test(t)) return 'deposit';
+  if (/(withdraw|descarga|pago|extraccion|retiro)/.test(t)) return 'withdraw';
+  return null;
+}
+
+// Detecta si los items parecen un log de transacciones (col type + amount/account).
+// Si lo son, normaliza a {username, kind, amount, timeMs, team} sin agregar —
+// la agregacion se hace en runtime al pedir el detalle (asi se puede filtrar
+// por fecha o por lente). Cap 50000 para no explotar el doc de Mongo.
+function _normalizeTxLog(items) {
   if (items.length === 0) return null;
   const first = items[0];
   const hasType = 'type' in first || 'tipo' in first || 'operacion' in first;
   const hasAmount = 'account' in first || 'amount' in first || 'monto' in first || 'value' in first || 'cantidad' in first;
   if (!hasType || !hasAmount) return null;
-  const byUser = new Map();
+  const out = [];
   for (const it of items) {
     const u = _pickUsername(it);
     if (!u) continue;
-    const type = String(it.type || it.tipo || it.operacion || '').toLowerCase().trim();
+    const kind = _txKind(it.type || it.tipo || it.operacion);
     const amtRaw = it.account != null ? it.account : (it.amount != null ? it.amount : (it.monto != null ? it.monto : (it.value != null ? it.value : it.cantidad)));
     const amount = Math.abs(parseFloat(String(amtRaw || '').replace(/[^0-9.\-,]/g, '').replace(/,/g, '.'))) || 0;
     const timeRaw = it.time || it.fecha || it.date || it.timestamp || null;
-    const time = timeRaw ? new Date(timeRaw) : null;
-    if (!byUser.has(u)) {
-      byUser.set(u, {
-        username: u,
+    let timeMs = null;
+    if (timeRaw) {
+      const t = new Date(timeRaw);
+      if (!isNaN(t.getTime())) timeMs = t.getTime();
+    }
+    out.push({
+      u, kind, amount, t: timeMs,
+      team: String(it.equipo || it.team || '').trim() || undefined
+    });
+    if (out.length >= 50000) break;
+  }
+  return out;
+}
+
+// Aggrega una lista de transacciones normalizadas (output de _normalizeTxLog)
+// por usuario. Aplica filtro de fecha si se pasa fromMs/toMs. Devuelve array
+// de aggregates con totals por kind + first/last time.
+function _aggregateNormalizedTx(txs, fromMs, toMs) {
+  const byUser = new Map();
+  for (const r of txs) {
+    if (fromMs != null && r.t != null && r.t < fromMs) continue;
+    if (toMs != null && r.t != null && r.t > toMs) continue;
+    if (!byUser.has(r.u)) {
+      byUser.set(r.u, {
+        username: r.u,
+        team: r.team || '',
         depositCount: 0, depositSum: 0,
         withdrawCount: 0, withdrawSum: 0,
         bonusCount: 0, bonusSum: 0,
-        firstTime: null, lastTime: null,
-        team: it.equipo || it.team || ''
+        firstTime: null, lastTime: null
       });
     }
-    const agg = byUser.get(u);
-    if (/(deposit|carga|recarga)/.test(type)) {
-      agg.depositCount++; agg.depositSum += amount;
-    } else if (/(withdraw|descarga|pago|extraccion|retiro)/.test(type)) {
-      agg.withdrawCount++; agg.withdrawSum += amount;
-    } else if (/(bonus|bonif|premio|gift|regalo|individual_bonus)/.test(type)) {
-      agg.bonusCount++; agg.bonusSum += amount;
+    const agg = byUser.get(r.u);
+    if (r.kind === 'deposit') { agg.depositCount++; agg.depositSum += r.amount; }
+    else if (r.kind === 'withdraw') { agg.withdrawCount++; agg.withdrawSum += r.amount; }
+    else if (r.kind === 'bonus') { agg.bonusCount++; agg.bonusSum += r.amount; }
+    if (r.t != null) {
+      if (agg.firstTime == null || r.t < agg.firstTime) agg.firstTime = r.t;
+      if (agg.lastTime == null || r.t > agg.lastTime) agg.lastTime = r.t;
     }
-    if (time && !isNaN(time.getTime())) {
-      if (!agg.firstTime || time < agg.firstTime) agg.firstTime = time;
-      if (!agg.lastTime || time > agg.lastTime) agg.lastTime = time;
-    }
+    if (!agg.team && r.team) agg.team = r.team;
   }
   return Array.from(byUser.values()).map(a => ({
     username: a.username,
@@ -14287,8 +14315,8 @@ function _aggregateTxLog(items) {
     withdrawSum: a.withdrawSum,
     bonusCount: a.bonusCount,
     bonusSum: a.bonusSum,
-    firstTime: a.firstTime ? a.firstTime.toISOString() : null,
-    lastTime: a.lastTime ? a.lastTime.toISOString() : null
+    firstTime: a.firstTime ? new Date(a.firstTime).toISOString() : null,
+    lastTime: a.lastTime ? new Date(a.lastTime).toISOString() : null
   }));
 }
 
@@ -14478,14 +14506,16 @@ app.post('/api/admin/segments/:slug/upload', authMiddleware, adminMiddleware, as
     const { items, headers } = _csvRowsToObjects(rows);
 
     // Si el CSV es un log de transacciones (cols type + account/amount),
-    // agrupamos por user con totales (cargas, descargas, bonos, primera y
-    // ultima fecha). Si no, flow plano: lista de usernames sin dedupes.
-    const aggregated = _aggregateTxLog(items);
+    // guardamos las transacciones CRUDAS normalizadas (no agregadas). Asi en
+    // el detalle podemos filtrar por rango de fechas + lentes y re-agregar
+    // al toque sin re-uploadear. Si no es tx-log, flow plano (lista de
+    // usernames sin dedupes).
+    const normTxs = _normalizeTxLog(items);
     let cleanRows = [];
     let usernamesSet = new Set();
-    if (aggregated) {
-      cleanRows = aggregated.slice(0, 5000);
-      usernamesSet = new Set(cleanRows.map(r => r.username));
+    if (normTxs && normTxs.length > 0) {
+      cleanRows = normTxs;
+      usernamesSet = new Set(normTxs.map(r => r.u));
     } else {
       for (const it of items) {
         const u = _pickUsername(it);
@@ -14564,9 +14594,15 @@ app.post('/api/admin/segments/:slug/import-lightning', authMiddleware, adminMidd
 });
 
 // GET /api/admin/segments/:slug — detalle con conversion analysis.
-// Query: ?since=<ISO>  — opcional, override del cutoff (default: lastUploadAt).
-//        ?analyze=1    — si esta presente, hace el cross-reference contra
-//                        JUGAYGANA. Sino devuelve solo la lista (mas rapido).
+// Query:
+//   ?from=ISO        — filtro: solo transacciones desde esta fecha
+//   ?to=ISO          — filtro: solo transacciones hasta esta fecha
+//   ?lens=top|bonus|deposit|withdraw|sin-app|con-app|relampago|all
+//                    — filtro adicional: top jugadores, solo bonus, etc.
+//   ?topN=50         — para lens=top, cuantos mostrar (default 50)
+//   ?since=ISO       — para el "Volvió a cargar": cutoff de cargas POST
+//                      (default: max(to, lastUploadAt))
+//   ?analyze=1       — hace cross-reference contra JUGAYGANA
 app.get('/api/admin/segments/:slug', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const slug = String(req.params.slug || '').toLowerCase();
@@ -14575,10 +14611,89 @@ app.get('/api/admin/segments/:slug', authMiddleware, adminMiddleware, async (req
     const lastUploadAt = seg.uploads && seg.uploads.length > 0
       ? seg.uploads[seg.uploads.length - 1].at
       : null;
-    const queryCutoff = req.query.since ? new Date(req.query.since) : null;
-    const cutoffMs = queryCutoff && !isNaN(queryCutoff.getTime())
-      ? queryCutoff.getTime()
-      : (lastUploadAt ? new Date(lastUploadAt).getTime() : null);
+
+    // Date range filter (sobre las transacciones del archivo).
+    const fromMs = req.query.from ? new Date(req.query.from).getTime() : null;
+    const toMs = req.query.to ? new Date(req.query.to).getTime() : null;
+    const fromValid = fromMs && !isNaN(fromMs);
+    const toValid = toMs && !isNaN(toMs);
+
+    // Detectamos formato del segmento: si rows[0] tiene .u + .kind es tx-log
+    // normalizado (formato nuevo). Si tiene username es flow viejo (lista
+    // plana o agregados).
+    const rows = seg.rows || [];
+    const isTxLog = rows.length > 0 && rows[0] && rows[0].u != null && rows[0].kind != null;
+
+    // Aggregar segun el formato
+    let aggregates = [];
+    if (isTxLog) {
+      aggregates = _aggregateNormalizedTx(rows, fromValid ? fromMs : null, toValid ? toMs : null);
+    } else {
+      // Flow viejo: rows ya son aggregates (o solo usernames). Devolvemos
+      // como vienen.
+      aggregates = rows.map(r => ({
+        username: r.username || _pickUsername(r) || '',
+        team: r.team,
+        depositCount: r.depositCount, depositSum: r.depositSum,
+        withdrawCount: r.withdrawCount, withdrawSum: r.withdrawSum,
+        bonusCount: r.bonusCount, bonusSum: r.bonusSum,
+        firstTime: r.firstTime, lastTime: r.lastTime
+      })).filter(x => x.username);
+    }
+
+    // Aplicar lens (filtro adicional sobre los aggregates).
+    const lens = String(req.query.lens || 'all').toLowerCase();
+    const topN = Math.max(1, Math.min(500, parseInt(req.query.topN, 10) || 50));
+    let lensApplied = lens;
+    if (lens === 'top') {
+      aggregates.sort((a, b) => (b.depositSum || 0) - (a.depositSum || 0));
+      aggregates = aggregates.slice(0, topN);
+    } else if (lens === 'bonus') {
+      aggregates = aggregates.filter(a => (a.bonusCount || 0) > 0);
+    } else if (lens === 'deposit') {
+      aggregates = aggregates.filter(a => (a.depositCount || 0) > 0);
+    } else if (lens === 'withdraw') {
+      aggregates = aggregates.filter(a => (a.withdrawCount || 0) > 0);
+    } else if (lens === 'sin-app' || lens === 'con-app') {
+      // Cruzar contra User: fcmTokenContext='standalone' o fcmTokens.context='standalone'
+      const usernames = aggregates.map(a => a.username);
+      if (usernames.length > 0) {
+        const safeUsernames = usernames.map(u => '^' + String(u).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$');
+        const usersWithApp = await User.find({
+          username: { $in: usernames.map(u => new RegExp('^' + String(u).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')) },
+          $or: [
+            { fcmTokenContext: 'standalone' },
+            { 'fcmTokens.context': 'standalone' }
+          ]
+        }, { username: 1 }).lean();
+        const appSet = new Set(usersWithApp.map(u => String(u.username).toLowerCase()));
+        if (lens === 'con-app') aggregates = aggregates.filter(a => appSet.has(a.username.toLowerCase()));
+        else aggregates = aggregates.filter(a => !appSet.has(a.username.toLowerCase()));
+      }
+    } else if (lens === 'relampago') {
+      // Cruzar con RaffleParticipation (raffleType='relampago')
+      const usernames = aggregates.map(a => a.username);
+      if (usernames.length > 0) {
+        const lightningRaffles = await Raffle.find({ raffleType: 'relampago' }, { id: 1 }).lean();
+        const lightningIds = lightningRaffles.map(r => r.id);
+        const parts = await RaffleParticipation.find({
+          raffleId: { $in: lightningIds },
+          username: { $in: usernames.map(u => new RegExp('^' + String(u).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')) }
+        }, { username: 1 }).lean();
+        const partSet = new Set(parts.map(p => String(p.username).toLowerCase()));
+        aggregates = aggregates.filter(a => partSet.has(a.username.toLowerCase()));
+      } else {
+        aggregates = [];
+      }
+    }
+    // lens='all' (default) o cualquier otro -> no filtra.
+
+    // "Volvió a cargar" cutoff. Default: max(to, lastUploadAt).
+    const sinceCandidate = req.query.since ? new Date(req.query.since) : null;
+    let cutoffMs = sinceCandidate && !isNaN(sinceCandidate.getTime()) ? sinceCandidate.getTime() : null;
+    if (!cutoffMs) {
+      cutoffMs = toValid ? toMs : (lastUploadAt ? new Date(lastUploadAt).getTime() : null);
+    }
     const analyze = String(req.query.analyze || '') === '1';
 
     let usersAnalyzed = [];
@@ -14586,18 +14701,14 @@ app.get('/api/admin/segments/:slug', authMiddleware, adminMiddleware, async (req
 
     if (analyze && cutoffMs) {
       const concurrency = 5;
-      const list = (seg.rows || []).map(r => ({
-        username: r.username || _pickUsername(r) || '',
-        meta: r
-      })).filter(x => x.username);
-      for (let i = 0; i < list.length; i += concurrency) {
-        const slice = list.slice(i, i + concurrency);
+      for (let i = 0; i < aggregates.length; i += concurrency) {
+        const slice = aggregates.slice(i, i + concurrency);
         const results = await Promise.all(slice.map(x => _getCargasPostForUser(x.username, cutoffMs)));
         for (let j = 0; j < slice.length; j++) {
           const r = results[j];
           usersAnalyzed.push({
             username: slice[j].username,
-            meta: slice[j].meta,
+            meta: slice[j],
             cargasPostCount: r.count,
             cargasPostAmount: r.amount,
             converted: r.hasAny
@@ -14608,10 +14719,9 @@ app.get('/api/admin/segments/:slug', authMiddleware, adminMiddleware, async (req
         }
       }
     } else {
-      // Sin analyze, devolvemos lista cruda (rapido).
-      usersAnalyzed = (seg.rows || []).map(r => ({
-        username: r.username || _pickUsername(r) || '',
-        meta: r,
+      usersAnalyzed = aggregates.map(a => ({
+        username: a.username,
+        meta: a,
         cargasPostCount: null,
         cargasPostAmount: null,
         converted: null
@@ -14626,13 +14736,17 @@ app.get('/api/admin/segments/:slug', authMiddleware, adminMiddleware, async (req
         kind: seg.kind || 'custom',
         userCount: (seg.usernames || []).length,
         lastUploadAt,
+        isTxLog,
+        rowsCount: rows.length,
         cutoffUsed: cutoffMs ? new Date(cutoffMs).toISOString() : null,
-        cutoffSource: queryCutoff && !isNaN(queryCutoff.getTime()) ? 'query' : (lastUploadAt ? 'lastUpload' : 'none')
+        dateFrom: fromValid ? new Date(fromMs).toISOString() : null,
+        dateTo: toValid ? new Date(toMs).toISOString() : null,
+        lensApplied
       },
-      analyzed: analyze && cutoffMs,
+      analyzed: analyze && !!cutoffMs,
       users: usersAnalyzed,
       totals,
-      uploads: (seg.uploads || []).slice().reverse() // mas reciente primero
+      uploads: (seg.uploads || []).slice().reverse()
     });
   } catch (err) {
     logger.error(`/api/admin/segments/:slug: ${err.message}`);
