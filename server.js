@@ -13411,13 +13411,22 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
           fromMs, toMs,
           rowsCount: (master.rows || []).length
         };
-        // No hace falta concurrency — todo en memoria.
+        // Optimizacion: 1 pasada sobre master.rows en vez de N×R (donde
+        // N=participants y R=rows). Pre-construimos set de usernames
+        // participantes, despues recorremos rows UNA vez.
+        const partSet = new Set();
         for (const p of parts) {
           const ul = String(p.username || '').toLowerCase().trim();
-          if (!ul) { cargasByUser[ul] = 0; continue; }
-          const r = await _getMasterCargasForUser(master, ul, fromMs, toMs);
-          cargasByUser[ul] = r.count;
-          cargasAmountByUser[ul] = r.amount;
+          if (ul) { partSet.add(ul); cargasByUser[ul] = 0; cargasAmountByUser[ul] = 0; }
+        }
+        const rows = (master && master.rows) || [];
+        for (const r of rows) {
+          if (!r.u || r.kind !== 'deposit') continue;
+          if (!partSet.has(r.u)) continue;
+          if (fromMs != null && r.t != null && r.t < fromMs) continue;
+          if (toMs != null && r.t != null && r.t > toMs) continue;
+          cargasByUser[r.u] = (cargasByUser[r.u] || 0) + 1;
+          cargasAmountByUser[r.u] = (cargasAmountByUser[r.u] || 0) + (r.amount || 0);
         }
       } else {
         // Live (JUGAYGANA). Concurrency 5 para no saturar.

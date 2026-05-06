@@ -4727,7 +4727,7 @@ async function _calPreviewAudience(id) {
         const r = await authFetch('/api/admin/calendar/strategy/' + encodeURIComponent(wk) + '/' + encodeURIComponent(id) + '/preview?limit=300');
         const d = await r.json();
         if (!r.ok) {
-            document.getElementById('calPreviewBody').innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>';
+            document.getElementById('calPreviewBody').innerHTML = '<div style="color:#ff8080;">' + escapeHtml(d.error || 'Error') + '</div>';
             return;
         }
 
@@ -8335,7 +8335,7 @@ async function _renderAutomationHistoryTab() {
     try {
         const r = await authFetch('/api/admin/automation/history?limit=50');
         const d = await r.json();
-        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>'; return; }
+        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
         const launches = d.launches || [];
         if (launches.length === 0) {
             c.innerHTML = '<div style="text-align:center;padding:40px;color:#888;"><div style="font-size:42px;opacity:0.4;">📊</div><p>Todavía no lanzaste ninguna campaña. Andá a <strong>Analizar y lanzar</strong>.</p></div>';
@@ -8461,7 +8461,7 @@ async function _renderAutomationCopiesTab() {
     try {
         const r = await authFetch('/api/admin/automation/copies');
         const d = await r.json();
-        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + (d.error || 'Error') + '</div>'; return; }
+        if (!r.ok || !d.success) { c.innerHTML = '<div style="color:#ff8080;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
         const copies = d.copies || [];
         let html = '';
         html += '<div style="background:rgba(120,80,255,0.06);border:1px solid rgba(120,80,255,0.20);border-radius:10px;padding:12px;margin-bottom:14px;color:#bbb;font-size:12px;line-height:1.6;">';
@@ -8601,7 +8601,7 @@ async function refreshRefundReminders() {
             body: JSON.stringify({ type })
         });
         const d = await r.json();
-        if (!r.ok) { container.innerHTML = '<div style="color:#ff8080;padding:20px;">' + (d.error || 'Error') + '</div>'; return; }
+        if (!r.ok) { container.innerHTML = '<div style="color:#ff8080;padding:20px;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
 
         // Detectar si se vacio desde la ultima refresh: cuantos reclamaron mientras tanto.
         const prev = _refundRemindersPrevCount[type];
@@ -10294,7 +10294,7 @@ async function viewRaffleParticipants(id, cutoffISO, sourceMode, extra) {
         const url = '/api/admin/raffles/' + id + '/participants' + (qs ? '?' + qs : '');
         const r = await authFetch(url);
         const d = await r.json();
-        if (!r.ok) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>'; return; }
+        if (!r.ok) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
         document.getElementById('raffleDetailBody').innerHTML = _renderRaffleDetail(d);
     } catch (e) { document.getElementById('raffleDetailBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">Error de conexión</div>'; }
 }
@@ -10705,7 +10705,7 @@ async function viewLightningROI() {
         const r = await authFetch('/api/admin/raffles/lightning-roi?limit=20');
         const d = await r.json();
         if (!r.ok) {
-            document.getElementById('lightningROIBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>';
+            document.getElementById('lightningROIBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
             return;
         }
         document.getElementById('lightningROIBody').innerHTML = _renderLightningROI(d);
@@ -11239,7 +11239,7 @@ async function viewLegacyRaffles() {
         const r = await authFetch('/api/admin/raffles/legacy');
         const d = await r.json();
         if (!r.ok) {
-            document.getElementById('legacyRafflesBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + (d.error || 'Error') + '</div>';
+            document.getElementById('legacyRafflesBody').innerHTML = '<div style="color:#ff8080;padding:30px;text-align:center;">' + escapeHtml(d.error || 'Error') + '</div>';
             return;
         }
         const list = d.raffles || [];
