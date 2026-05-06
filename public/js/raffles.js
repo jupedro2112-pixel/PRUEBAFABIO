@@ -408,18 +408,28 @@ VIP.raffles = (function () {
             html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:10px;font-size:12px;color:#fff;text-align:center;font-weight:700;">' +
                 (youWon ? '🏆 ¡GANASTE EL RELÁMPAGO! Número #' + r.winningTicketNumber : '🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber) +
                 '</div>';
+        } else if (enrolled && closed) {
+            // Anotado + cupo lleno: card con su numero + aviso fuerte de
+            // requisito de actividad para reclamar + boton CARGÁ ACÁ wa.link.
+            html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;margin-bottom:10px;">';
+            html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO · CUPO LLENO</div>';
+            html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
+            html += '</div>';
+            html += _renderLightningClaimWarning();
+            html += _renderLightningCargarBtn('💬 CARGÁ ACÁ', 'Cargá para tener actividad y poder reclamar el premio');
         } else if (enrolled) {
             html += '<div style="background:rgba(255,235,59,0.20);border:2px solid #ffeb3b;border-radius:10px;padding:11px;text-align:center;">';
             html += '<div style="color:#ffeb3b;font-size:11px;font-weight:900;letter-spacing:1.5px;margin-bottom:3px;">✅ ESTÁS ANOTADO</div>';
             html += '<div style="color:#fff;font-size:22px;font-weight:900;text-shadow:0 1px 2px rgba(0,0,0,0.60);">Número #' + myNums[0] + '</div>';
             html += '</div>';
+            html += _renderLightningClaimWarning();
         } else if (closed) {
-            // Cupo lleno: aviso + upsell (proximo gratis requiere haber
-            // jugado paid). Es la idea del owner: convertir el relampago
-            // en gancho hacia los sorteos pagos.
+            // Cupo lleno y NO anotado: aviso + upsell. El nuevo relampago
+            // (auto-respawn) va a aparecer mas abajo como otro hero/card si
+            // existe. Aca solo informamos del estado.
             html += '<div style="background:rgba(0,0,0,0.45);border-radius:10px;padding:11px;text-align:center;">';
             html += '<div style="color:#fff;font-size:14px;font-weight:900;margin-bottom:6px;">⏳ SORTEO LLENO · esperá el próximo</div>';
-            html += '<div style="color:#ffeb3b;font-size:11.5px;font-weight:700;line-height:1.45;">Para participar del próximo sorteo <strong>GRATIS</strong> tenés que tener al menos <strong>1 número en algún sorteo pago</strong>.</div>';
+            html += '<div style="color:#ffeb3b;font-size:11.5px;font-weight:700;line-height:1.45;">Si abrimos otro relámpago, vas a poder anotarte ahí.</div>';
             html += '</div>';
         } else if (isPaid && !canAfford) {
             // Relampago PAGO sin saldo: redirige a WhatsApp en vez del picker.
@@ -435,22 +445,39 @@ VIP.raffles = (function () {
                 ? '⚡ ELEGIR MI NÚMERO ($' + _fmt(entryCost) + ')'
                 : '⚡ ELEGIR MI NÚMERO GRATIS';
             html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="width:100%;background:linear-gradient(135deg,#ffeb3b,#ffd700);color:#001a40;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;text-shadow:none;box-shadow:0 4px 12px rgba(255,235,59,0.40);">' + btnLabel + '</button>';
+            // Aviso prominente abajo del CTA: para que sepan ANTES de anotarse
+            // que reclamar requiere actividad. Asi nadie se anota pensando
+            // que es plata caida del cielo.
+            html += _renderLightningClaimWarning();
         }
         html += '</div>';
         return html;
     }
 
-    // Boton verde "QUIERO CARGAR" que abre WhatsApp. Reusa la linea principal
-    // del user (VIP.state.linePhone) — si no hay, fallback al wa.link de
-    // soporte. Mismo estilo que el QUIERO CARGAR del home (auth.js) para
-    // consistencia visual y para que el user lo identifique al toque.
-    function _renderLightningCargarBtn() {
+    // Aviso "para reclamar necesitas actividad". Va en el hero del relampago
+    // tanto en activo (antes de anotarse) como en cerrado (despues que se
+    // llena el cupo). El owner pidio que esto se vea muy claro.
+    function _renderLightningClaimWarning() {
+        return '<div style="background:rgba(255,170,102,0.12);border:2px dashed #ffaa66;border-radius:10px;padding:11px;margin-top:8px;font-size:12px;line-height:1.5;color:#fff;text-align:center;font-weight:700;">' +
+            '<div style="color:#ffaa66;font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">⚠️ Para reclamar el premio</div>' +
+            '<div style="color:#fff;">Necesitás <strong style="color:#ffd700;">mínimo 5 cargas</strong> y <strong style="color:#ffd700;">haber jugado con nosotros</strong>. Es <strong>EXCLUSIVO PARA CLIENTES ACTIVOS</strong> — sin actividad no se acredita el premio.</div>' +
+        '</div>';
+    }
+
+    // Boton verde wa.link que abre WhatsApp. Reusa la linea principal del
+    // user (VIP.state.linePhone) — si no hay, fallback al wa.link de soporte.
+    // El label/subtitle son customizables: por default dice QUIERO CARGAR
+    // (caso "sin saldo en pago"). En cerrado se usa "CARGÁ ACÁ" para empujar
+    // a tener actividad antes del sorteo.
+    function _renderLightningCargarBtn(label, subtitle) {
         const linePhone = (VIP && VIP.state && VIP.state.linePhone) || '';
         const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
         const href = waNum ? 'https://wa.me/' + waNum : 'https://wa.link/metawin2026';
+        const lbl = label || '💬 QUIERO CARGAR';
+        const sub = subtitle || 'No tenés saldo suficiente';
         return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" style="display:block;width:100%;background:linear-gradient(135deg,#0f4c00,#1a8200);color:#fff;text-decoration:none;text-align:center;border:2px solid #66ff66;padding:13px;border-radius:10px;font-weight:900;font-size:14.5px;letter-spacing:1px;box-shadow:0 4px 12px rgba(102,255,102,0.30);box-sizing:border-box;">' +
-            '<div style="font-size:12px;font-weight:700;color:#aaffaa;margin-bottom:3px;">No tenés saldo suficiente</div>' +
-            '<div>💬 QUIERO CARGAR</div>' +
+            '<div style="font-size:12px;font-weight:700;color:#aaffaa;margin-bottom:3px;">' + sub + '</div>' +
+            '<div>' + lbl + '</div>' +
         '</a>';
     }
 

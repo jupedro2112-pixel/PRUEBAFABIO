@@ -11949,6 +11949,78 @@ async function _readRaffleAudienceConfig(kind) {
   }
 }
 
+// Clona un relampago cerrado (status='closed') en uno nuevo activo. Mantiene
+// premio, cupos, isFree/entryCost, audiencia y todos los gates de elegibilidad
+// (requiresPaidTicket, requiresMinChargesLastWeek). instanceNumber se renumera
+// segun los relampagos creados. Usado por el auto-respawn cuando el N°1 (que
+// armo el admin) se llena -> arrancamos N°2; cuando N°2 se llena -> N°3; tope 3.
+async function _spawnLightningClone(srcRaffle) {
+  const prevCount = await Raffle.countDocuments({ raffleType: 'relampago' });
+  const drawArg = _nextMondayDraw();
+  const weekKey = _isoWeekKey(drawArg);
+  const id = uuidv4();
+  return await Raffle.create({
+    id,
+    raffleType: 'relampago',
+    instanceNumber: prevCount + 1,
+    name: srcRaffle.name,
+    prizeName: srcRaffle.prizeName,
+    description: srcRaffle.description,
+    emoji: srcRaffle.emoji || '⚡',
+    entryCost: srcRaffle.entryCost || 0,
+    totalTickets: srcRaffle.totalTickets,
+    prizeValueARS: srcRaffle.prizeValueARS,
+    _ticketCounter: 0,
+    claimedNumbers: [],
+    drawDate: drawArg,
+    weekKey,
+    status: 'active',
+    isFree: !!srcRaffle.isFree,
+    minCargasARS: srcRaffle.minCargasARS || 0,
+    requiresPaidTicket: !!srcRaffle.requiresPaidTicket,
+    audienceMode: srcRaffle.audienceMode || 'all',
+    audienceTeams: srcRaffle.audienceTeams || [],
+    audienceUsernames: srcRaffle.audienceUsernames || [],
+    requiresMinChargesLastWeek: srcRaffle.requiresMinChargesLastWeek || 0,
+    lotteryRule: srcRaffle.lotteryRule,
+    createdAt: new Date()
+  });
+}
+
+// Push a todos los participantes del relampago cerrado avisando que el cupo
+// se lleno y recordando los requisitos para reclamar el premio si ganan
+// (5 cargas + juego con nosotros). Es el momento de mas atencion: el user
+// acaba de saber que su numero esta en juego.
+async function _notifyLightningClosed(raffle) {
+  const parts = await RaffleParticipation.find({ raffleId: raffle.id }, { username: 1 }).lean();
+  if (!parts || parts.length === 0) return;
+  const seen = new Set();
+  const names = [];
+  for (const p of parts) {
+    const u = String(p.username || '').trim();
+    if (!u) continue;
+    const key = u.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(u);
+  }
+  if (names.length === 0) return;
+  const title = '⚡ ' + (raffle.name || 'RELÁMPAGO') + ' · ¡cupo lleno!';
+  const body = 'Tu número está en juego. RECORDÁ: para reclamar el premio si ganás, necesitás MÍNIMO 5 cargas y haber jugado con nosotros. Es exclusivo para clientes activos.';
+  await sendNotificationToAllUsers(
+    User,
+    title,
+    body,
+    {
+      source: 'raffle-lightning-closed',
+      raffleId: raffle.id,
+      raffleType: 'relampago'
+    },
+    { username: { $in: names } }
+  );
+  logger.info(`[raffles] LIGHTNING closed notify enviado a ${names.length} users (${raffle.id})`);
+}
+
 async function _spawnRaffleInstance(typeCfg, instanceNumber) {
   // Spawn altera el set de active raffles -> invalidar cache para que el
   // proximo /api/raffles/active vea el sorteo nuevo en seguida.
@@ -12666,14 +12738,29 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
     // el error sea claro (el unique index lo atajaria igual pero con error feo).
     if (raffle.raffleType === 'relampago') {
       const safeBuy = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // 1 cupo por persona en TODOS los relampagos abiertos (active+closed).
+      // Asi cuando el N°1 se llena y respawnea N°2, los que ya entraron al N°1
+      // no pueden entrar al N°2. Una vez que su relampago se sortea (drawn),
+      // pueden entrar al proximo.
+      const openLightnings = await Raffle.find(
+        { raffleType: 'relampago', status: { $in: ['active', 'closed'] } },
+        { id: 1, name: 1 }
+      ).lean();
+      const openLightningIds = openLightnings.map(r => r.id);
       const already = await RaffleParticipation.findOne({
-        raffleId: raffle.id,
+        raffleId: { $in: openLightningIds },
         username: { $regex: '^' + safeBuy + '$', $options: 'i' }
-      }, { ticketNumbers: 1 }).lean();
+      }, { ticketNumbers: 1, raffleId: 1 }).lean();
       if (already) {
+        const otherRaffle = openLightnings.find(r => r.id === already.raffleId);
+        const otherName = (otherRaffle && otherRaffle.name) || 'otro RELÁMPAGO';
+        const sameRaffle = already.raffleId === raffle.id;
         return res.status(400).json({
-          error: `Ya estás anotado en este RELÁMPAGO con el número #${already.ticketNumbers && already.ticketNumbers[0]}. Es 1 cupo por persona.`,
-          alreadyEnrolledNumber: already.ticketNumbers && already.ticketNumbers[0]
+          error: sameRaffle
+            ? `Ya estás anotado en este RELÁMPAGO con el número #${already.ticketNumbers && already.ticketNumbers[0]}. Es 1 cupo por persona.`
+            : `Ya estás anotado en ${otherName} con el número #${already.ticketNumbers && already.ticketNumbers[0]}. Solo se permite 1 cupo por persona en sorteos RELÁMPAGO.`,
+          alreadyEnrolledNumber: already.ticketNumbers && already.ticketNumbers[0],
+          alreadyEnrolledRaffleId: already.raffleId
         });
       }
       if (quantity > 1) {
@@ -12962,7 +13049,7 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         { $set: { status: 'closed' } }
       );
       if (closeRes.modifiedCount === 1) {
-        // Buscamos config en paid Y free. Relampago no respawnea (one-shot).
+        // Buscamos config en paid Y free.
         let cfg = RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
         if (!cfg) cfg = FREE_RAFFLE_TYPES.find(t => t.type === raffle.raffleType);
         if (cfg && raffle.raffleType !== 'relampago') {
@@ -12971,6 +13058,35 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
             logger.info(`[raffles] respawn ${cfg.type} #${(raffle.instanceNumber || 1) + 1}`);
           } catch (e) {
             logger.warn(`[raffles] respawn ${cfg.type}: ${e.message}`);
+          }
+        }
+        if (raffle.raffleType === 'relampago') {
+          // Auto-respawn del relampago hasta tope 3. El admin arma el N°1, el
+          // N°2 y N°3 los abre el sistema clonando la config (premio, cupos,
+          // gratis/pago, audiencia). Los que ya estan anotados en el cerrado
+          // NO pueden entrar al nuevo (regla de 1 cupo por persona en todos
+          // los relampagos abiertos — chequeada en el /buy).
+          try {
+            const openCount = await Raffle.countDocuments({
+              raffleType: 'relampago',
+              status: { $in: ['active', 'closed'] }
+            });
+            if (openCount < 3) {
+              await _spawnLightningClone(raffle);
+              logger.info(`[raffles] LIGHTNING auto-respawn (count=${openCount} -> ${openCount + 1})`);
+            } else {
+              logger.info(`[raffles] LIGHTNING no respawn — ya hay ${openCount} (tope 3)`);
+            }
+          } catch (e) {
+            logger.warn(`[raffles] LIGHTNING auto-respawn fail: ${e.message}`);
+          }
+          // Push a todos los participantes del que se acaba de llenar:
+          // recordatorio de que para reclamar el premio necesitan 5 cargas +
+          // juego con nosotros. Es la mecanica de "exclusivo para clientes".
+          try {
+            await _notifyLightningClosed(raffle);
+          } catch (e) {
+            logger.warn(`[raffles] LIGHTNING notify closed fail: ${e.message}`);
           }
         }
       }
@@ -13721,11 +13837,15 @@ app.post('/api/admin/raffles/:id/announce', authMiddleware, superAdminMiddleware
 // Defaults: $200.000 premio, 100 cupos, gratis.
 app.post('/api/admin/raffles/seed-lightning', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
-    const existing = await Raffle.findOne({ raffleType: 'relampago', status: { $in: ['active', 'closed'] } }).lean();
-    if (existing) {
+    // Tope: hasta 3 relampagos active+closed simultaneos. El admin arma el N°1
+    // manual y el auto-respawn (cuando uno se llena) abre los siguientes hasta
+    // llegar a 3. Si admin intenta crear cuando ya hay 3, rechazamos.
+    const openCount = await Raffle.countDocuments({ raffleType: 'relampago', status: { $in: ['active', 'closed'] } });
+    if (openCount >= 3) {
+      const existing = await Raffle.findOne({ raffleType: 'relampago', status: { $in: ['active', 'closed'] } }).sort({ createdAt: -1 }).lean();
       return res.status(400).json({
-        error: 'Ya hay un sorteo RELÁMPAGO activo o cerrado esperando sorteo. Sorteálo o cancelálo antes de crear otro.',
-        raffle: { id: existing.id, name: existing.name, status: existing.status, cuposSold: existing._ticketCounter || 0, totalTickets: existing.totalTickets }
+        error: 'Ya hay 3 sorteos RELÁMPAGO simultáneos (tope máximo). Sorteá o cancelá uno antes de crear otro.',
+        raffle: existing ? { id: existing.id, name: existing.name, status: existing.status, cuposSold: existing._ticketCounter || 0, totalTickets: existing.totalTickets } : null
       });
     }
     const b = req.body || {};
