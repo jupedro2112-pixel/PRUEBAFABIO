@@ -14236,6 +14236,62 @@ function _pickUsername(row) {
   return null;
 }
 
+// Detecta si los items parecen un log de transacciones (col type + amount/account)
+// y, si lo son, agrupa por user con totales: cargas, descargas, bonos.
+// Devuelve null si NO es log de transacciones (entonces el caller usa el flow
+// normal de "lista plana de usernames").
+function _aggregateTxLog(items) {
+  if (items.length === 0) return null;
+  const first = items[0];
+  const hasType = 'type' in first || 'tipo' in first || 'operacion' in first;
+  const hasAmount = 'account' in first || 'amount' in first || 'monto' in first || 'value' in first || 'cantidad' in first;
+  if (!hasType || !hasAmount) return null;
+  const byUser = new Map();
+  for (const it of items) {
+    const u = _pickUsername(it);
+    if (!u) continue;
+    const type = String(it.type || it.tipo || it.operacion || '').toLowerCase().trim();
+    const amtRaw = it.account != null ? it.account : (it.amount != null ? it.amount : (it.monto != null ? it.monto : (it.value != null ? it.value : it.cantidad)));
+    const amount = Math.abs(parseFloat(String(amtRaw || '').replace(/[^0-9.\-,]/g, '').replace(/,/g, '.'))) || 0;
+    const timeRaw = it.time || it.fecha || it.date || it.timestamp || null;
+    const time = timeRaw ? new Date(timeRaw) : null;
+    if (!byUser.has(u)) {
+      byUser.set(u, {
+        username: u,
+        depositCount: 0, depositSum: 0,
+        withdrawCount: 0, withdrawSum: 0,
+        bonusCount: 0, bonusSum: 0,
+        firstTime: null, lastTime: null,
+        team: it.equipo || it.team || ''
+      });
+    }
+    const agg = byUser.get(u);
+    if (/(deposit|carga|recarga)/.test(type)) {
+      agg.depositCount++; agg.depositSum += amount;
+    } else if (/(withdraw|descarga|pago|extraccion|retiro)/.test(type)) {
+      agg.withdrawCount++; agg.withdrawSum += amount;
+    } else if (/(bonus|bonif|premio|gift|regalo|individual_bonus)/.test(type)) {
+      agg.bonusCount++; agg.bonusSum += amount;
+    }
+    if (time && !isNaN(time.getTime())) {
+      if (!agg.firstTime || time < agg.firstTime) agg.firstTime = time;
+      if (!agg.lastTime || time > agg.lastTime) agg.lastTime = time;
+    }
+  }
+  return Array.from(byUser.values()).map(a => ({
+    username: a.username,
+    team: a.team || undefined,
+    depositCount: a.depositCount,
+    depositSum: a.depositSum,
+    withdrawCount: a.withdrawCount,
+    withdrawSum: a.withdrawSum,
+    bonusCount: a.bonusCount,
+    bonusSum: a.bonusSum,
+    firstTime: a.firstTime ? a.firstTime.toISOString() : null,
+    lastTime: a.lastTime ? a.lastTime.toISOString() : null
+  }));
+}
+
 // Fetcha CSV desde una URL (Google Sheets publicado-a-web tiene formato
 // docs.google.com/.../pub?output=csv). Soporta cualquier URL que devuelva
 // CSV en text/plain o text/csv. Timeout 15s, max 5MB.
@@ -14393,15 +14449,25 @@ app.post('/api/admin/segments/:slug/upload', authMiddleware, adminMiddleware, as
     const rows = _parseCsv(csvText);
     if (rows.length === 0) return res.status(400).json({ error: 'CSV vacío o no parseable.' });
     const { items, headers } = _csvRowsToObjects(rows);
-    const usernamesSet = new Set();
-    const cleanRows = [];
-    for (const it of items) {
-      const u = _pickUsername(it);
-      if (!u) continue;
-      if (usernamesSet.has(u)) continue;
-      usernamesSet.add(u);
-      cleanRows.push({ ...it, username: u });
-      if (cleanRows.length >= 5000) break;
+
+    // Si el CSV es un log de transacciones (cols type + account/amount),
+    // agrupamos por user con totales (cargas, descargas, bonos, primera y
+    // ultima fecha). Si no, flow plano: lista de usernames sin dedupes.
+    const aggregated = _aggregateTxLog(items);
+    let cleanRows = [];
+    let usernamesSet = new Set();
+    if (aggregated) {
+      cleanRows = aggregated.slice(0, 5000);
+      usernamesSet = new Set(cleanRows.map(r => r.username));
+    } else {
+      for (const it of items) {
+        const u = _pickUsername(it);
+        if (!u) continue;
+        if (usernamesSet.has(u)) continue;
+        usernamesSet.add(u);
+        cleanRows.push({ ...it, username: u });
+        if (cleanRows.length >= 5000) break;
+      }
     }
     seg.usernames = Array.from(usernamesSet);
     seg.rows = cleanRows;

@@ -9217,6 +9217,13 @@ function _renderSegmentDetail(d) {
     html += '<button type="button" onclick="reanalyzeSegment(' + escapeJsArg(s.slug) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
     html += '</div>';
 
+    // Detectar si el archivo subido es un log de transacciones (las metas
+    // tienen depositCount/withdrawCount/bonusCount). Si si, mostramos columnas
+    // adicionales con esos totales.
+    const hasTxAggregates = users.length > 0 && users.some(u =>
+        u.meta && (u.meta.depositCount != null || u.meta.withdrawCount != null || u.meta.bonusCount != null)
+    );
+
     // Tabla
     if (users.length > 0) {
         html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:55vh;overflow-y:auto;margin-bottom:14px;">';
@@ -9224,17 +9231,34 @@ function _renderSegmentDetail(d) {
         html += '<thead style="position:sticky;top:0;background:#001a40;z-index:1;"><tr style="color:#00d4ff;text-align:left;">';
         html += '<th style="padding:8px 10px;font-weight:800;">#</th>';
         html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
+        if (hasTxAggregates) {
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;" title="Cargas (deposits) en el archivo">📥 Cargas archivo</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;" title="Descargas (withdraws) en el archivo">📤 Descargas</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;" title="Bonos (individual_bonus) en el archivo">🎁 Bonos</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;" title="Última transacción en el archivo">Última</th>';
+        }
         if (d.analyzed) {
-            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Cargas POST</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:center;" title="Cargas REALES en JUGAYGANA después del cutoff">⚡ Cargas POST</th>';
             html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Monto POST</th>';
             html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Volvió</th>';
         }
         html += '</tr></thead><tbody>';
         let i = 1;
         for (const u of users) {
+            const m = u.meta || {};
             html += '<tr style="border-top:1px solid rgba(255,255,255,0.06);">';
             html += '<td style="padding:7px 10px;color:#666;font-weight:700;">' + i + '</td>';
-            html += '<td style="padding:7px 10px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + '</td>';
+            html += '<td style="padding:7px 10px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + (m.team ? '<div style="color:#888;font-weight:400;font-size:10px;">' + escapeHtml(m.team) + '</div>' : '') + '</td>';
+            if (hasTxAggregates) {
+                const dc = m.depositCount || 0, ds = m.depositSum || 0;
+                const wc = m.withdrawCount || 0, ws = m.withdrawSum || 0;
+                const bc = m.bonusCount || 0, bs = m.bonusSum || 0;
+                const last = m.lastTime ? new Date(m.lastTime).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' }) : '—';
+                html += '<td style="padding:7px 10px;text-align:center;color:' + (dc > 0 ? '#66ff66' : '#666') + ';"><div style="font-weight:800;">' + dc + '</div>' + (ds > 0 ? '<div style="font-size:10px;color:#aaa;font-weight:600;">' + _fmtMoney(ds) + '</div>' : '') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:center;color:' + (wc > 0 ? '#ff8080' : '#666') + ';"><div style="font-weight:800;">' + wc + '</div>' + (ws > 0 ? '<div style="font-size:10px;color:#aaa;font-weight:600;">' + _fmtMoney(ws) + '</div>' : '') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:center;color:' + (bc > 0 ? '#ffeb3b' : '#666') + ';"><div style="font-weight:800;">' + bc + '</div>' + (bs > 0 ? '<div style="font-size:10px;color:#aaa;font-weight:600;">' + _fmtMoney(bs) + '</div>' : '') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:center;color:#aaa;font-size:10.5px;">' + last + '</td>';
+            }
             if (d.analyzed) {
                 const c = u.cargasPostCount || 0;
                 const a = u.cargasPostAmount || 0;
@@ -9247,6 +9271,24 @@ function _renderSegmentDetail(d) {
             i++;
         }
         html += '</tbody></table></div>';
+
+        // Si hay agregados, mostramos también totales por tipo arriba.
+        if (hasTxAggregates) {
+            const tot = users.reduce((acc, u) => {
+                const m = u.meta || {};
+                acc.dc += m.depositCount || 0; acc.ds += m.depositSum || 0;
+                acc.wc += m.withdrawCount || 0; acc.ws += m.withdrawSum || 0;
+                acc.bc += m.bonusCount || 0; acc.bs += m.bonusSum || 0;
+                return acc;
+            }, { dc:0, ds:0, wc:0, ws:0, bc:0, bs:0 });
+            const totalsHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px;">' +
+                '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:9px 12px;"><div style="color:#aaffaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">📥 Cargas archivo</div><div style="color:#66ff66;font-size:16px;font-weight:900;">' + tot.dc + ' · ' + _fmtMoney(tot.ds) + '</div></div>' +
+                '<div style="background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.30);border-radius:8px;padding:9px 12px;"><div style="color:#ff8080;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">📤 Descargas archivo</div><div style="color:#ff8080;font-size:16px;font-weight:900;">' + tot.wc + ' · ' + _fmtMoney(tot.ws) + '</div></div>' +
+                '<div style="background:rgba(255,235,59,0.08);border:1px solid rgba(255,235,59,0.40);border-radius:8px;padding:9px 12px;"><div style="color:#ffeb3b;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">🎁 Bonos archivo</div><div style="color:#ffeb3b;font-size:16px;font-weight:900;">' + tot.bc + ' · ' + _fmtMoney(tot.bs) + '</div></div>' +
+            '</div>';
+            // Insertamos antes de la tabla — busco el lugar usando un marcador.
+            html = html.replace(/<div style="background:rgba\(0,0,0,0\.20\);border-radius:10px;overflow:hidden;max-height:55vh;/, totalsHtml + '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:55vh;');
+        }
     }
 
     // Historial de subidas
