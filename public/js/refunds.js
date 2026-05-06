@@ -732,15 +732,12 @@ VIP.refunds = (function () {
             return;
         }
 
-        // El owner pidio: si el user YA tiene la app instalada, no le
-        // mostramos el cartel "RECLAMAR $5000". El bono era el gancho para
-        // incentivar la instalacion — para los que ya bajaron la app no
-        // tiene sentido seguir empujandolo. (Si quisieran reclamarlo igual,
-        // se va a manejar via flujo distinto.)
-        if (isAppInstalled()) {
-            hideCard();
-            return;
-        }
+        // NOTA: antes este bloque ocultaba el card si isAppInstalled() === true,
+        // pero eso rompia el flujo: el user instalaba la app y nunca podia
+        // reclamar porque el card desaparecia. Ahora el card sigue visible
+        // en TODOS los estados (browser, app instalada fuera, dentro sin
+        // notifs, dentro con todo OK) — la logica de abajo elige el copy y
+        // el estado del boton segun la situacion.
 
         // Cargas insuficientes en la ventana: el backend exige minimo N
         // cargas en los ultimos M dias. Mostramos progreso y boton
