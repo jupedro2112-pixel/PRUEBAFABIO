@@ -460,6 +460,40 @@ VIP.raffles = (function () {
     // Aviso "para reclamar necesitas actividad". Va en el hero del relampago
     // tanto en activo (antes de anotarse) como en cerrado (despues que se
     // llena el cupo). El owner pidio que esto se vea muy claro.
+    // Mini-card de un relampago "secundario" (cerrado o sorteado) donde el
+    // user esta anotado. Va debajo del hero principal — el hero domina visual
+    // y el mini-card solo recuerda al user su numero + estado del sorteo
+    // anterior. Asi cuando se llena el N°1 y largo el N°2, el N°2 es el
+    // grande y el N°1 queda como recordatorio compacto del numero del user.
+    function _renderLightningMini(r) {
+        const myNums = r.myTicketNumbers || [];
+        const myNum = myNums[0];
+        const isDrawn = r.status === 'drawn';
+        const youWon = isDrawn && r.iAmWinner;
+        const otherWon = isDrawn && !r.iAmWinner;
+        let line, color, bg, border;
+        if (youWon) {
+            line = '🏆 ¡GANASTE! · Número #' + r.winningTicketNumber + ' · Premio $' + _fmt(r.prizeValueARS);
+            color = '#ffd700'; bg = 'rgba(255,215,0,0.10)'; border = '#ffd700';
+        } else if (otherWon) {
+            line = '🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber;
+            color = '#aaa'; bg = 'rgba(255,255,255,0.04)'; border = 'rgba(255,255,255,0.20)';
+        } else if (r.status === 'closed') {
+            line = '⏳ Tu número #' + (myNum != null ? myNum : '—') + ' · cupo lleno · esperando sorteo del lunes';
+            color = '#ffeb3b'; bg = 'rgba(255,235,59,0.08)'; border = 'rgba(255,235,59,0.40)';
+        } else {
+            line = 'Tu número #' + (myNum != null ? myNum : '—');
+            color = '#fff'; bg = 'rgba(255,255,255,0.04)'; border = 'rgba(255,255,255,0.20)';
+        }
+        return '<div data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" style="cursor:pointer;display:flex;align-items:center;gap:10px;background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:9px 11px;margin-bottom:10px;font-size:11.5px;line-height:1.4;">' +
+            '<span style="font-size:18px;line-height:1;">⚡</span>' +
+            '<div style="flex:1;min-width:0;">' +
+                '<div style="color:#888;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">' + _esc(r.name || 'RELÁMPAGO') + '</div>' +
+                '<div style="color:' + color + ';font-weight:700;">' + line + '</div>' +
+            '</div>' +
+        '</div>';
+    }
+
     // Estado de elegibilidad del USER actual: cuantas cargas tiene vs el
     // minimo (5). Va arriba del warning generico para que el user vea SU
     // numero personal. Lee de _data.lightningCargasCount (cargas totales
@@ -525,10 +559,22 @@ VIP.raffles = (function () {
         // separado en hero arriba de todo.
         const drawn = allRaffles.filter(r => r.status === 'drawn');
         const liveRaffles = allRaffles.filter(r => r.status !== 'drawn');
-        const lightning = liveRaffles.find(r => r.raffleType === 'relampago');
-        // Tambien mostrar el relampago drawn en el hero (no en la lista de drawn)
-        const lightningDrawn = drawn.find(r => r.raffleType === 'relampago');
-        const heroLightning = lightning || lightningDrawn || null;
+        // Multi-relampago: cuando hay auto-respawn, puede haber el N°1 cerrado
+        // (esperando draw) + N°2 activo (donde anotarse). Priorizamos el ACTIVO
+        // mas reciente como hero principal y los demas van como mini-cards
+        // debajo (para que el user que esta anotado en el N°1 siga viendo su
+        // numero, pero el N°2 sea el dominante).
+        const allLightnings = allRaffles.filter(r => r.raffleType === 'relampago');
+        const stOrder = { active: 0, closed: 1, drawn: 2, archived: 3, cancelled: 4 };
+        allLightnings.sort((a, b) => {
+            const sa = stOrder[a.status] != null ? stOrder[a.status] : 9;
+            const sb = stOrder[b.status] != null ? stOrder[b.status] : 9;
+            if (sa !== sb) return sa - sb;
+            // Dentro del mismo status, mas reciente primero (instanceNumber desc).
+            return (b.instanceNumber || 0) - (a.instanceNumber || 0);
+        });
+        const heroLightning = allLightnings[0] || null;
+        const otherLightnings = allLightnings.slice(1);
         const otherDrawn = drawn.filter(r => r.raffleType !== 'relampago');
         const paid = liveRaffles.filter(r => !r.isFree && r.raffleType !== 'relampago');
         const free = liveRaffles.filter(r => r.isFree && r.raffleType !== 'relampago');
@@ -542,6 +588,15 @@ VIP.raffles = (function () {
         // === HERO RELAMPAGO === (arriba de todo)
         if (heroLightning) {
             html += _renderLightningHero(heroLightning, balance);
+        }
+        // Otros relampagos (cerrados/sorteados): mini-cards debajo del hero,
+        // SOLO si el user esta anotado en alguno (para que siga viendo su
+        // numero + estado). Si no esta anotado en el cerrado, no le mostramos
+        // info que ya no puede aprovechar.
+        for (const ol of otherLightnings) {
+            const myNums = ol.myTicketNumbers || [];
+            if (myNums.length === 0 && !ol.iAmWinner) continue;
+            html += _renderLightningMini(ol);
         }
 
         // === SORTEADOS RECIENTES (compacto, arriba) ===

@@ -12676,10 +12676,18 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
     let lightning = null;
     let homeBalance = null;
     try {
-      const light = await Raffle.findOne(
+      // Cuando hay multiples relampagos abiertos (auto-respawn), priorizamos
+      // el ACTIVO (status='active') sobre el cerrado (status='closed'). Asi
+      // si el N°1 ya se lleno y largo el N°2, el hero del home muestra el
+      // N°2 (donde la gente puede anotarse) y no el N°1 cerrado. Sort:
+      // active primero, despues por createdAt desc (mas reciente).
+      const lights = await Raffle.find(
         { raffleType: 'relampago', status: { $in: ['active', 'closed'] } },
-        { id: 1, name: 1, prizeValueARS: 1, totalTickets: 1, _ticketCounter: 1, status: 1, drawDate: 1, emoji: 1, entryCost: 1, isFree: 1 }
-      ).lean();
+        { id: 1, name: 1, prizeValueARS: 1, totalTickets: 1, _ticketCounter: 1, status: 1, drawDate: 1, emoji: 1, entryCost: 1, isFree: 1, createdAt: 1, instanceNumber: 1 }
+      ).sort({ status: 1, createdAt: -1 }).limit(3).lean();
+      // Sort {status:1} pone 'active' antes que 'closed' alfabeticamente
+      // ('a' < 'c'). Tomamos el primero (preferentemente active mas reciente).
+      const light = lights[0];
       if (light) {
         const myUsername = (req.user && req.user.username) || '';
         const safeUser = String(myUsername).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
