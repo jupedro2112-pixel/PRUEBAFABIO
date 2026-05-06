@@ -740,12 +740,28 @@ VIP.auth = (function () {
                 // Refunds-only: pintar bienvenida + refrescar línea vigente
                 try { renderRefundsHomeUI(); } catch (_) { /* ignore */ }
                 refreshLinePhone();
-            } else {
+            } else if (response.status === 401 || response.status === 403) {
+                // SOLO borramos el token si el server lo rechazo explicitamente
+                // como invalido. Antes lo borrabamos en cualquier non-200, lo
+                // que tiraba al login a users con server temporalmente caido o
+                // 500 transitorio — y al re-loguear perdian el token FCM.
                 localStorage.removeItem('userToken');
+            } else {
+                // 500/502/503 o similar: NO borramos el token. Mostramos el
+                // chat screen igual con la sesion anterior y reintentamos
+                // verificar despues. Asi el user no pierde notifs por un
+                // hiccup temporal del server.
+                console.warn('verifyToken: server respondio ' + response.status + ', mantengo sesion');
+                try { VIP.ui.showChatScreen(); } catch (_) {}
+                try { renderRefundsHomeUI(); } catch (_) {}
             }
         } catch (error) {
-            console.error('Error verificando token:', error);
-            localStorage.removeItem('userToken');
+            // Network error / fetch fail: NO borrar el token. El user puede
+            // estar offline. Mostramos chat screen con la cache para que
+            // pueda usar la app y reintentamos despues.
+            console.warn('verifyToken: error de red — mantengo sesion offline', error && error.message);
+            try { VIP.ui.showChatScreen(); } catch (_) {}
+            try { renderRefundsHomeUI(); } catch (_) {}
         }
     }
 
