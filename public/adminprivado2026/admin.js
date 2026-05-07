@@ -11988,54 +11988,96 @@ function _hexToRgb(hex) {
 }
 
 // =============================================
-// ENCUESTA — seccion del admin con distribucion de respuestas
+// ENCUESTA — seccion del admin con distribucion + estrategia editable
 // =============================================
 let _ENCUESTA_CACHE = null;
+let _ENCUESTA_POLL = null;
 
 async function loadEncuesta() {
     const c = document.getElementById('encuestaContent');
     if (!c) return;
-    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando respuestas…</div>';
+    if (!_ENCUESTA_CACHE) {
+        c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando respuestas…</div>';
+    }
     try {
-        // 1) Stats agregadas
-        const statsR = await authFetch('/api/admin/users/notif-preference-stats');
+        // 3 fetches en paralelo: stats agregadas + listado de users + config de estrategia.
+        const [statsR, listR, strategyR] = await Promise.all([
+            authFetch('/api/admin/users/notif-preference-stats'),
+            authFetch('/api/admin/players/segments?period=month&segment=all&hasApp=all&limit=2000'),
+            authFetch('/api/admin/notif-strategy')
+        ]);
         const stats = statsR.ok ? await statsR.json() : null;
-
-        // 2) Listado de usuarios (reusamos /api/admin/players/segments con
-        // limit alto y filtros por defecto para tener todos con su
-        // notifPreference). Si la respuesta es muy grande, el endpoint
-        // ya cap-ea — el listado es para revisar, no para procesar bulk.
-        const listR = await authFetch('/api/admin/players/segments?period=month&segment=all&hasApp=all&limit=2000');
         const list = listR.ok ? await listR.json() : null;
+        const strategy = strategyR.ok ? await strategyR.json() : null;
 
-        _ENCUESTA_CACHE = { stats, list };
+        _ENCUESTA_CACHE = { stats, list, strategy };
         c.innerHTML = _renderEncuesta();
+
+        // Arrancar polling si no esta corriendo: refresca cada 30s para
+        // ver gente nueva entrando.
+        if (_ENCUESTA_POLL) clearInterval(_ENCUESTA_POLL);
+        _ENCUESTA_POLL = setInterval(() => {
+            const sec = document.getElementById('encuestaSection');
+            if (!sec || !sec.classList.contains('active')) {
+                clearInterval(_ENCUESTA_POLL);
+                _ENCUESTA_POLL = null;
+                return;
+            }
+            _refreshEncuestaSilent();
+        }, 30000);
     } catch (e) {
         console.error('loadEncuesta:', e);
         c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
     }
 }
 
+// Refresh silencioso sin loader, solo actualiza la lista.
+async function _refreshEncuestaSilent() {
+    try {
+        const [statsR, listR] = await Promise.all([
+            authFetch('/api/admin/users/notif-preference-stats'),
+            authFetch('/api/admin/players/segments?period=month&segment=all&hasApp=all&limit=2000')
+        ]);
+        if (statsR.ok && listR.ok) {
+            const stats = await statsR.json();
+            const list = await listR.json();
+            // Mantenemos strategy del cache (no cambia tan seguido).
+            _ENCUESTA_CACHE.stats = stats;
+            _ENCUESTA_CACHE.list = list;
+            const c = document.getElementById('encuestaContent');
+            if (c) c.innerHTML = _renderEncuesta();
+        }
+    } catch (_) { /* silencioso */ }
+}
+
 function _renderEncuesta() {
     const d = _ENCUESTA_CACHE || {};
     const stats = d.stats || { total: 0, counts: {} };
     const list = d.list || { players: [] };
+    const strategy = d.strategy || null;
     const counts = stats.counts || {};
     const total = stats.total || 0;
-    const sumPref = (counts.suave || 0) + (counts.normal || 0) + (counts.activo || 0) + (counts.opt_out || 0);
+    // En el sumatorio sumamos solo_reembolsos como "respondio" (es una
+    // respuesta valida, no es 'no quiere'). opt_out sigue contando como
+    // respondio para los users viejos.
+    const sumPref = (counts.suave || 0) + (counts.normal || 0) + (counts.activo || 0) + (counts.opt_out || 0) + (counts.solo_reembolsos || 0);
     const sinResp = total - sumPref;
 
     const pct = (n) => total ? ((n / total) * 100).toFixed(1) + '%' : '0%';
 
     let html = '';
 
-    // KPI cards
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:14px;">';
+    // ===== Estrategia editable =====
+    html += _renderStrategyEditor(strategy);
+
+    // ===== KPI cards =====
+    html += '<h3 style="color:#d4af37;font-size:13px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:1px;">📊 Distribución actual</h3>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:14px;">';
     html += _kpiCard('Total usuarios', total.toLocaleString('es-AR'), '#fff');
     html += _kpiCard('🟢 SUAVE', (counts.suave || 0).toLocaleString('es-AR') + ' · ' + pct(counts.suave || 0), '#66ff66');
     html += _kpiCard('🟡 NORMAL', (counts.normal || 0).toLocaleString('es-AR') + ' · ' + pct(counts.normal || 0), '#ffd700');
     html += _kpiCard('🔴 ACTIVO', (counts.activo || 0).toLocaleString('es-AR') + ' · ' + pct(counts.activo || 0), '#ff8c5a');
-    html += _kpiCard('🚫 OPT-OUT', (counts.opt_out || 0).toLocaleString('es-AR') + ' · ' + pct(counts.opt_out || 0), '#aaa');
+    html += _kpiCard('🔔 SOLO REEMB', ((counts.solo_reembolsos || 0) + (counts.opt_out || 0)).toLocaleString('es-AR') + ' · ' + pct((counts.solo_reembolsos || 0) + (counts.opt_out || 0)), '#00d4ff');
     html += _kpiCard('Sin responder', sinResp.toLocaleString('es-AR') + ' · ' + pct(sinResp), '#888');
     html += '</div>';
 
@@ -12047,7 +12089,8 @@ function _renderEncuesta() {
         { k: 'suave', l: '🟢 SUAVE' },
         { k: 'normal', l: '🟡 NORMAL' },
         { k: 'activo', l: '🔴 ACTIVO' },
-        { k: 'opt_out', l: '🚫 OPT-OUT' },
+        { k: 'solo_reembolsos', l: '🔔 SOLO REEMB' },
+        { k: 'opt_out', l: '🚫 OPT-OUT (legacy)' },
         { k: 'sin_responder', l: '— Sin responder' }
     ];
     const cur = (window._ENCUESTA_FILTER || 'all');
@@ -12109,14 +12152,112 @@ function _setEncuestaFilter(f) {
 // Pinta el badge de la preferencia de la encuesta de notifs en la tabla.
 function _fmtNotifPref(pref) {
     const map = {
-        suave:   { bg: 'rgba(102,255,102,0.15)', bd: '#66ff66', fg: '#66ff66', label: '🟢 SUAVE' },
-        normal:  { bg: 'rgba(255,215,0,0.15)',   bd: '#ffd700', fg: '#ffd700', label: '🟡 NORMAL' },
-        activo:  { bg: 'rgba(255,107,53,0.15)',  bd: '#ff8c5a', fg: '#ff8c5a', label: '🔴 ACTIVO' },
-        opt_out: { bg: 'rgba(255,255,255,0.04)', bd: '#888',    fg: '#888',    label: '🚫 OFF' }
+        suave:           { bg: 'rgba(102,255,102,0.15)', bd: '#66ff66', fg: '#66ff66', label: '🟢 SUAVE' },
+        normal:          { bg: 'rgba(255,215,0,0.15)',   bd: '#ffd700', fg: '#ffd700', label: '🟡 NORMAL' },
+        activo:          { bg: 'rgba(255,107,53,0.15)',  bd: '#ff8c5a', fg: '#ff8c5a', label: '🔴 ACTIVO' },
+        solo_reembolsos: { bg: 'rgba(0,212,255,0.12)',   bd: '#00d4ff', fg: '#00d4ff', label: '🔔 SOLO REEMB' },
+        opt_out:         { bg: 'rgba(255,255,255,0.04)', bd: '#888',    fg: '#888',    label: '🚫 OFF' }
     };
     if (!pref) return '<span style="color:#666;font-size:10.5px;">— sin responder</span>';
     const m = map[pref] || { bg: 'rgba(255,255,255,0.04)', bd: '#888', fg: '#888', label: String(pref) };
     return '<span style="display:inline-block;background:' + m.bg + ';border:1px solid ' + m.bd + ';color:' + m.fg + ';padding:2px 7px;border-radius:8px;font-size:10px;font-weight:800;letter-spacing:0.5px;">' + m.label + '</span>';
+}
+
+// Render del editor de estrategia mensual: 4 cards con inputs editables
+// (bonos/juegos/regalos/budget) + cap mensual + boton guardar.
+function _renderStrategyEditor(strategy) {
+    const prefs = (strategy && strategy.preferences) || {};
+    const tiers = [
+        { key: 'suave',           label: '🟢 SUAVE',         color: '#66ff66' },
+        { key: 'normal',          label: '🟡 NORMAL',        color: '#ffd700' },
+        { key: 'activo',          label: '🔴 ACTIVO',        color: '#ff8c5a' },
+        { key: 'solo_reembolsos', label: '🔔 SOLO REEMB',    color: '#00d4ff' }
+    ];
+    const monthlyCap = (strategy && strategy.monthlyCap) || 1000000;
+    const updatedAt = (strategy && strategy.updatedAt) ? new Date(strategy.updatedAt).toLocaleString('es-AR') : '—';
+    const updatedBy = (strategy && strategy.updatedBy) || '—';
+
+    let html = '';
+    html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;flex-wrap:wrap;gap:6px;">';
+    html += '    <h3 style="color:#d4af37;font-size:13px;margin:0;text-transform:uppercase;letter-spacing:1px;">⚙️ Estrategia mensual de notificaciones</h3>';
+    html += '    <div style="color:#888;font-size:10.5px;">Última actualización: ' + escapeHtml(updatedAt) + ' · por ' + escapeHtml(updatedBy) + '</div>';
+    html += '  </div>';
+    html += '  <p style="color:#bbb;font-size:11px;line-height:1.5;margin:0 0 10px;">Por cada nivel de la encuesta, definí cuántos pushes y cuánta plata por usuario al mes. Los SOLO REEMBOLSOS reciben sólo cuando hay un reembolso disponible.</p>';
+
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">';
+    for (const t of tiers) {
+        const cur = prefs[t.key] || {};
+        html += '    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(' + _hexToRgb(t.color) + ',0.40);border-radius:10px;padding:10px;">';
+        html += '      <div style="color:' + t.color + ';font-weight:900;font-size:12px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">' + t.label + '</div>';
+        html += _strategyInput('Bonos/mes',    'strat_' + t.key + '_bonos',   cur.bonos   || 0);
+        html += _strategyInput('Invitaciones a jugar/mes', 'strat_' + t.key + '_juegos', cur.juegos || 0);
+        html += _strategyInput('Regalos/mes',  'strat_' + t.key + '_regalos', cur.regalos || 0);
+        html += _strategyInput('Presupuesto $/mes por user', 'strat_' + t.key + '_budget', cur.budget || 0);
+        if (t.key === 'solo_reembolsos') {
+            html += '<div style="color:#888;font-size:10px;margin-top:4px;font-style:italic;line-height:1.4;">⚠️ Solo recibe push si hay reembolso disponible. Bonos/juegos/regalos no aplican.</div>';
+        }
+        html += '    </div>';
+    }
+    html += '  </div>';
+
+    // Cap mensual global
+    html += '  <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">';
+    html += '    <label style="color:#d4af37;font-weight:800;font-size:12px;">💰 Tope mensual global de regalos ($):</label>';
+    html += '    <input type="number" id="strat_monthlyCap" value="' + monthlyCap + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 10px;border-radius:6px;font-size:13px;width:140px;">';
+    html += '    <span style="color:#888;font-size:10.5px;">El sistema no excede este total al sumar regalos del mes.</span>';
+    html += '  </div>';
+
+    // Save
+    html += '  <div style="display:flex;gap:8px;margin-top:12px;">';
+    html += '    <button type="button" onclick="saveNotifStrategy()" id="saveStrategyBtn" style="flex:1;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR estrategia</button>';
+    html += '  </div>';
+    html += '</div>';
+
+    return html;
+}
+
+function _strategyInput(label, id, val) {
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:5px;">' +
+           '<label style="color:#bbb;font-size:11px;flex:1;">' + label + '</label>' +
+           '<input type="number" id="' + id + '" value="' + (val || 0) + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:5px;font-size:12px;width:80px;text-align:right;">' +
+           '</div>';
+}
+
+async function saveNotifStrategy() {
+    const btn = document.getElementById('saveStrategyBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando...'; }
+    const tiers = ['suave', 'normal', 'activo', 'solo_reembolsos'];
+    const preferences = {};
+    for (const t of tiers) {
+        preferences[t] = {
+            bonos:   Number((document.getElementById('strat_' + t + '_bonos')   || {}).value) || 0,
+            juegos:  Number((document.getElementById('strat_' + t + '_juegos')  || {}).value) || 0,
+            regalos: Number((document.getElementById('strat_' + t + '_regalos') || {}).value) || 0,
+            budget:  Number((document.getElementById('strat_' + t + '_budget')  || {}).value) || 0
+        };
+    }
+    const monthlyCap = Number((document.getElementById('strat_monthlyCap') || {}).value) || 0;
+    try {
+        const r = await authFetch('/api/admin/notif-strategy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferences, monthlyCap })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error guardando'), 'error');
+        } else {
+            showToast('✅ Estrategia guardada', 'success');
+            _ENCUESTA_CACHE.strategy = d;
+            const c = document.getElementById('encuestaContent');
+            if (c) c.innerHTML = _renderEncuesta();
+        }
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '💾 GUARDAR estrategia'; }
+    }
 }
 
 function _topPlayerDetail(username) {

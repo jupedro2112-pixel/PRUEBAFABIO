@@ -79,6 +79,7 @@ const {
   WeeklyCalendarPlan,
   Segment,
   MasterAnalysisSnapshot,
+  NotifStrategyConfig,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -8054,7 +8055,7 @@ async function _welcomeDepositCheck(username) {
 // User.notifPreference. La estrategia mensual de notifs (Fase 2) lee
 // este campo + el tier de comportamiento (realDeposits30d) para
 // decidir el plan personalizado de pushes.
-const _NOTIF_PREF_VALUES = ['suave', 'normal', 'activo', 'opt_out'];
+const _NOTIF_PREF_VALUES = ['suave', 'normal', 'activo', 'opt_out', 'solo_reembolsos'];
 
 app.get('/api/user/notif-preference', authMiddleware, async (req, res) => {
   try {
@@ -8101,7 +8102,7 @@ app.get('/api/admin/users/notif-preference-stats', authMiddleware, adminMiddlewa
     const agg = await User.aggregate([
       { $group: { _id: '$notifPreference', count: { $sum: 1 } } }
     ]);
-    const counts = { suave: 0, normal: 0, activo: 0, opt_out: 0, sin_responder: 0 };
+    const counts = { suave: 0, normal: 0, activo: 0, opt_out: 0, solo_reembolsos: 0, sin_responder: 0 };
     let total = 0;
     for (const row of agg) {
       total += row.count;
@@ -8111,6 +8112,75 @@ app.get('/api/admin/users/notif-preference-stats', authMiddleware, adminMiddlewa
     res.json({ total, counts });
   } catch (err) {
     logger.error(`/api/admin/users/notif-preference-stats: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// ESTRATEGIA MENSUAL DE NOTIFICACIONES (Fase 2 minima)
+// =====================================================================
+// El admin define cuantos pushes y cuanta plata por user/mes destinar a
+// cada uno de los 4 niveles. La estrategia se persiste en NotifStrategyConfig
+// (singleton key='monthly-default') y queda revision history.
+app.get('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    let cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    if (!cfg) {
+      cfg = await NotifStrategyConfig.create({ key: 'monthly-default' });
+      cfg = cfg.toObject();
+    }
+    res.json(cfg);
+  } catch (err) {
+    logger.error(`GET /api/admin/notif-strategy: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const prefs = body.preferences || {};
+    const monthlyCap = Math.max(0, Number(body.monthlyCap) || 0);
+    const sanitize = (v, allowFlags) => ({
+      bonos: Math.max(0, Number(v && v.bonos) || 0),
+      juegos: Math.max(0, Number(v && v.juegos) || 0),
+      regalos: Math.max(0, Number(v && v.regalos) || 0),
+      budget: Math.max(0, Number(v && v.budget) || 0),
+      refundsOnly: allowFlags ? !!(v && v.refundsOnly) : false
+    });
+    const update = {
+      preferences: {
+        suave: sanitize(prefs.suave, false),
+        normal: sanitize(prefs.normal, false),
+        activo: sanitize(prefs.activo, false),
+        solo_reembolsos: { ...sanitize(prefs.solo_reembolsos, true), refundsOnly: true }
+      },
+      monthlyCap,
+      updatedAt: new Date(),
+      updatedBy: (req.user && req.user.username) || 'admin'
+    };
+
+    const existing = await NotifStrategyConfig.findOne({ key: 'monthly-default' });
+    if (!existing) {
+      const created = await NotifStrategyConfig.create({
+        key: 'monthly-default',
+        ...update,
+        revisions: [{ at: new Date(), by: update.updatedBy, prefs: update.preferences, monthlyCap: update.monthlyCap }]
+      });
+      return res.json(created.toObject());
+    }
+
+    // Append revision (cap a las ultimas 50 para no inflar el doc).
+    existing.preferences = update.preferences;
+    existing.monthlyCap = update.monthlyCap;
+    existing.updatedAt = update.updatedAt;
+    existing.updatedBy = update.updatedBy;
+    existing.revisions.push({ at: new Date(), by: update.updatedBy, prefs: update.preferences, monthlyCap: update.monthlyCap });
+    if (existing.revisions.length > 50) existing.revisions = existing.revisions.slice(-50);
+    await existing.save();
+    res.json(existing.toObject());
+  } catch (err) {
+    logger.error(`POST /api/admin/notif-strategy: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
   }
 });

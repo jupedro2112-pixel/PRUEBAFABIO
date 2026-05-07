@@ -45,6 +45,7 @@ const WeeklyCalendarPlan = require('./WeeklyCalendarPlan');
 const LandingVisit = require('./LandingVisit');
 const Segment = require('./Segment');
 const MasterAnalysisSnapshot = require('./MasterAnalysisSnapshot');
+const NotifStrategyConfig = require('./NotifStrategyConfig');
 
 
 /**
@@ -462,6 +463,7 @@ module.exports = {
   LandingVisit,
   Segment,
   MasterAnalysisSnapshot,
+  NotifStrategyConfig,
 
   // Funciones de conexión
   connectDB,

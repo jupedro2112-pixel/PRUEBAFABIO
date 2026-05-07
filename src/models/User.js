@@ -324,7 +324,10 @@ const userSchema = new mongoose.Schema({
   //   opt_out  = 0 (respetamos la decision)
   notifPreference: {
     type: String,
-    enum: ['suave', 'normal', 'activo', 'opt_out'],
+    // 'opt_out' queda en el enum por compatibilidad con users que ya
+    // contestaron antes del cambio. 'solo_reembolsos' es el reemplazo
+    // semantico (recibe notifs SOLO si hay un reembolso disponible).
+    enum: ['suave', 'normal', 'activo', 'opt_out', 'solo_reembolsos'],
     default: null,
     index: true
   },
