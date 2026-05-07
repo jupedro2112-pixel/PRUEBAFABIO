@@ -12050,30 +12050,109 @@ async function _refreshEncuestaSilent() {
     } catch (_) { /* silencioso */ }
 }
 
+// _ENCUESTA_TAB controla qué hoja se muestra: 'estrategia' | 'gente' | 'roi' | 'historial'.
+// _ENCUESTA_HISTORY_CACHE guarda la última respuesta del weekly-history para no
+// repegar al backend cada switch.
+window._ENCUESTA_TAB = window._ENCUESTA_TAB || 'estrategia';
+window._ENCUESTA_HISTORY_CACHE = window._ENCUESTA_HISTORY_CACHE || null;
+
+function _setEncuestaTab(tab) {
+    window._ENCUESTA_TAB = tab;
+    const c = document.getElementById('encuestaContent');
+    if (c) c.innerHTML = _renderEncuesta();
+    // Carga lazy de la historia semanal cuando se entra por primera vez.
+    if (tab === 'historial') {
+        loadEncuestaWeeklyHistory();
+    }
+}
+
+function _renderEncuestaTabsNav(activeTab) {
+    const tabs = [
+        { k: 'estrategia', l: '📋 Estrategia' },
+        { k: 'gente',      l: '👥 Gente que se une' },
+        { k: 'roi',        l: '📊 ROI / Reacciones' },
+        { k: 'historial',  l: '📅 Historial semanal' }
+    ];
+    let html = '<div style="display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid rgba(212,175,55,0.20);margin-bottom:14px;padding-bottom:6px;">';
+    for (const t of tabs) {
+        const active = t.k === activeTab;
+        html += '<button type="button" onclick="_setEncuestaTab(\'' + t.k + '\')" style="background:' + (active ? 'linear-gradient(135deg,#d4af37,#b8941a)' : 'rgba(255,255,255,0.04)') + ';color:' + (active ? '#000' : '#ddd') + ';border:1px solid ' + (active ? '#d4af37' : 'rgba(212,175,55,0.30)') + ';padding:7px 13px;border-radius:8px;font-weight:' + (active ? '900' : '700') + ';font-size:12px;cursor:pointer;letter-spacing:0.3px;">' + t.l + '</button>';
+    }
+    html += '</div>';
+    return html;
+}
+
 function _renderEncuesta() {
     const d = _ENCUESTA_CACHE || {};
     const stats = d.stats || { total: 0, counts: {} };
-    const list = d.list || { players: [] };
-    const strategy = d.strategy || null;
     const counts = stats.counts || {};
-    const total = stats.total || 0;
     // En el sumatorio sumamos solo_reembolsos como "respondio" (es una
     // respuesta valida, no es 'no quiere'). opt_out sigue contando como
     // respondio para los users viejos.
+    const respondedTotal = (counts.suave || 0) + (counts.normal || 0) + (counts.activo || 0) + (counts.opt_out || 0) + (counts.solo_reembolsos || 0);
+
+    const tab = window._ENCUESTA_TAB || 'estrategia';
+    let html = '';
+    html += _renderEncuestaTabsNav(tab);
+    if (tab === 'estrategia')      html += _renderEncuestaTabEstrategia(d, respondedTotal);
+    else if (tab === 'gente')      html += _renderEncuestaTabGente(d, respondedTotal);
+    else if (tab === 'roi')        html += _renderEncuestaTabROI(d);
+    else if (tab === 'historial')  html += _renderEncuestaTabHistorial();
+    else                            html += _renderEncuestaTabEstrategia(d, respondedTotal);
+    return html;
+}
+
+// Tab 1: Estrategia — pregunta + editor + simulator + activar.
+function _renderEncuestaTabEstrategia(d, respondedTotal) {
+    const strategy = d.strategy || null;
+    let html = '';
+    html += _renderSurveyQuestion();
+    html += _renderStrategyEditor(strategy, respondedTotal);
+    return html;
+}
+
+// Tab 2: Gente que se va uniendo. KPI + filtros + tabla en orden cronológico
+// con el botón Regalar bono por usuario. También muestra el contador de
+// respondentes y cuánto falta para la próxima wave automática.
+function _renderEncuestaTabGente(d, respondedTotal) {
+    const stats = d.stats || { total: 0, counts: {} };
+    const list = d.list || { players: [] };
+    const counts = stats.counts || {};
+    const total = stats.total || 0;
     const sumPref = (counts.suave || 0) + (counts.normal || 0) + (counts.activo || 0) + (counts.opt_out || 0) + (counts.solo_reembolsos || 0);
     const sinResp = total - sumPref;
-
     const pct = (n) => total ? ((n / total) * 100).toFixed(1) + '%' : '0%';
+
+    const strategy = d.strategy || null;
+    const isActive = !!(strategy && strategy.isActive);
+    const threshold = (strategy && strategy.autoRepeatThreshold) || 100;
+    const lastFired = (strategy && strategy.lastAutoFiredAtRespCount) || 0;
+    const autoFireCount = (strategy && strategy.autoFireCount) || 0;
+    const nextThreshold = (Math.floor(respondedTotal / threshold) + 1) * threshold;
+    const remaining = Math.max(0, nextThreshold - respondedTotal);
 
     let html = '';
 
-    // ===== Pregunta exacta + opciones que ven los users en la PWA =====
-    html += _renderSurveyQuestion();
+    // Banner de progreso de cohortes +N
+    html += '<div style="background:linear-gradient(135deg,rgba(102,255,102,0.10),rgba(212,175,55,0.05));border:1px solid rgba(102,255,102,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    html += '<h3 style="color:#66ff66;font-size:13px;margin:0;letter-spacing:1px;text-transform:uppercase;">📈 Progreso de respuestas</h3>';
+    html += '<div style="color:#aaa;font-size:11px;">' + respondedTotal.toLocaleString('es-AR') + ' respondieron · falta ' + remaining + ' para llegar a ' + nextThreshold + '</div>';
+    html += '</div>';
+    const progressPct = Math.min(100, Math.round((respondedTotal % threshold) / threshold * 100));
+    html += '<div style="background:rgba(0,0,0,0.40);border-radius:10px;height:14px;overflow:hidden;">';
+    html += '<div style="background:linear-gradient(90deg,#66ff66,#d4af37);height:100%;width:' + progressPct + '%;transition:width 0.3s;"></div>';
+    html += '</div>';
+    if (!isActive && respondedTotal >= threshold) {
+        html += '<div style="color:#66ff66;font-size:11.5px;margin-top:8px;">✅ Llegamos a ' + threshold + ' — ya podés ver la previa y activar la estrategia desde la pestaña <strong>📋 Estrategia</strong>.</div>';
+    } else if (!isActive) {
+        html += '<div style="color:#aaa;font-size:11.5px;margin-top:8px;">🔒 Esperando ' + threshold + ' respuestas para desbloquear preview/activar la primera estrategia.</div>';
+    } else {
+        html += '<div style="color:#66ff66;font-size:11.5px;margin-top:8px;">✅ Estrategia activa · auto-waves disparadas: ' + autoFireCount + ' · última al cruzar ' + lastFired.toLocaleString('es-AR') + ' respuestas.</div>';
+    }
+    html += '</div>';
 
-    // ===== Estrategia editable =====
-    html += _renderStrategyEditor(strategy);
-
-    // ===== KPI cards =====
+    // KPIs por tier.
     html += '<h3 style="color:#d4af37;font-size:13px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:1px;">📊 Distribución actual</h3>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:14px;">';
     html += _kpiCard('Total usuarios', total.toLocaleString('es-AR'), '#fff');
@@ -12102,10 +12181,15 @@ function _renderEncuesta() {
     }
     html += '</div>';
 
-    // Tabla — SOLO los que respondieron la encuesta. Los "sin responder"
-    // quedan en los KPIs de arriba (info agregada) pero no en la lista.
+    // Tabla — orden cronológico desc (los más nuevos arriba).
     const players = list.players || [];
-    const respondedOnly = players.filter(p => !!p.notifPreference);
+    const respondedOnly = players
+        .filter(p => !!p.notifPreference)
+        .sort((a, b) => {
+            const ta = a.notifPreferenceAt ? new Date(a.notifPreferenceAt).getTime() : 0;
+            const tb = b.notifPreferenceAt ? new Date(b.notifPreferenceAt).getTime() : 0;
+            return tb - ta;
+        });
     const filtered = respondedOnly.filter(p => {
         if (cur === 'all') return true;
         return p.notifPreference === cur;
@@ -12119,8 +12203,6 @@ function _renderEncuesta() {
             html += 'No hay usuarios con ese filtro.';
         }
         html += '</div>';
-        // Igual mostramos panel de reacciones abajo (si hay data).
-        html += _renderReactionsContainer();
         return html;
     }
 
@@ -12155,9 +12237,86 @@ function _renderEncuesta() {
         idx++;
     }
     html += '</tbody></table></div>';
+    return html;
+}
 
-    // Panel de reacciones al final.
+// Tab 3: ROI / Reacciones — el contenedor de reacciones existente.
+function _renderEncuestaTabROI(d) {
+    let html = '';
+    html += '<div style="margin-bottom:10px;color:#aaa;font-size:11.5px;">Cómo está reaccionando la gente a las pushes que mandamos. Tier × cargas reales.</div>';
     html += _renderReactionsContainer();
+    return html;
+}
+
+// Tab 4: Historial semanal — pulla weekly-history y arma tabla.
+function _renderEncuestaTabHistorial() {
+    const cache = window._ENCUESTA_HISTORY_CACHE;
+    let html = '<div style="margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+    html += '<div style="color:#aaa;font-size:11.5px;">Resumen semanal: respuestas nuevas, pushes mandadas, cargas reales y ROI estimado.</div>';
+    html += '<button type="button" onclick="loadEncuestaWeeklyHistory(true)" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:5px 12px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:700;">🔄 Refrescar</button>';
+    html += '</div>';
+    html += '<div id="encuestaHistorialBox">';
+    if (!cache) {
+        html += '<div style="text-align:center;padding:30px;color:#aaa;">⏳ Cargando historial semanal…</div>';
+    } else {
+        html += _renderWeeklyHistoryTable(cache);
+    }
+    html += '</div>';
+    return html;
+}
+
+async function loadEncuestaWeeklyHistory(force) {
+    if (!force && window._ENCUESTA_HISTORY_CACHE) return;
+    try {
+        const r = await authFetch('/api/admin/encuesta/weekly-history?weeks=12');
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            const box = document.getElementById('encuestaHistorialBox');
+            if (box) box.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:11.5px;">' + escapeHtml(err.error || 'Error al cargar historial') + '</div>';
+            return;
+        }
+        const data = await r.json();
+        window._ENCUESTA_HISTORY_CACHE = data;
+        const box = document.getElementById('encuestaHistorialBox');
+        if (box) box.innerHTML = _renderWeeklyHistoryTable(data);
+    } catch (e) {
+        const box = document.getElementById('encuestaHistorialBox');
+        if (box) box.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:11.5px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function _renderWeeklyHistoryTable(d) {
+    const buckets = d.buckets || [];
+    if (buckets.length === 0) {
+        return '<div style="color:#888;text-align:center;padding:20px;">Sin datos.</div>';
+    }
+    let html = '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '<thead><tr style="color:#d4af37;text-align:left;background:rgba(212,175,55,0.10);">';
+    html += '<th style="padding:7px 9px;">Semana</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Respuestas nuevas</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Pushes</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Entregadas</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Clicks WA</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Reembolsos</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Regalos cash</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">$ regalado total</th>';
+    html += '</tr></thead><tbody>';
+    for (const b of buckets) {
+        const week = new Date(b.weekStart).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' });
+        const dlvPct = b.pushSent ? Math.round((b.pushDelivered / b.pushSent) * 100) : 0;
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:7px 9px;color:#fff;font-weight:700;">' + escapeHtml(week) + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#66ff66;font-weight:800;">' + b.newRespondents + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#fff;">' + b.pushSent + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ddd;">' + b.pushDelivered + ' <span style="color:#666;font-size:10px;">(' + dlvPct + '%)</span></td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#00d4ff;">' + (b.waClicks || 0) + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ddd;">' + b.refundsGiven + ' · $' + (b.refundsAmount || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ddd;">' + b.giveawayCount + ' · $' + (b.giveawayAmount || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ffd700;font-weight:800;">$' + (b.totalRegalado || 0).toLocaleString('es-AR') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
     return html;
 }
 
@@ -12325,7 +12484,10 @@ function _fmtNotifPref(pref) {
 
 // Render del editor de estrategia mensual: 4 cards con inputs editables
 // (bonos/juegos/regalos/budget) + cap mensual + boton guardar.
-function _renderStrategyEditor(strategy) {
+function _renderStrategyEditor(strategy, respondedTotal) {
+    const threshold = (strategy && strategy.autoRepeatThreshold) || 100;
+    const totalResponded = Number(respondedTotal) || 0;
+    const gateLocked = totalResponded < threshold;
     const prefs = (strategy && strategy.preferences) || {};
     const tiers = [
         { key: 'suave',           label: '🟢 SUAVE',         color: '#66ff66' },
@@ -12387,21 +12549,37 @@ function _renderStrategyEditor(strategy) {
     html += '    <span style="color:#888;font-size:10.5px;">Hard cap. La distribución no puede excederlo.</span>';
     html += '  </div>';
 
-    // Save + Preview + Activate
+    // Save + Preview + Activate (con gate hasta llegar a `threshold` respuestas)
     const isActive = !!(strategy && strategy.isActive);
     const activatedAt = (strategy && strategy.activatedAt) ? new Date(strategy.activatedAt).toLocaleString('es-AR') : null;
+    if (gateLocked && !isActive) {
+        html += '  <div style="background:rgba(255,215,0,0.06);border:1.5px dashed rgba(255,215,0,0.50);border-radius:10px;padding:12px;margin-top:12px;">';
+        html += '    <div style="color:#ffd700;font-weight:900;font-size:12px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">🔒 Esperando respuestas — Preview/Activar bloqueados</div>';
+        html += '    <div style="color:#bbb;font-size:11.5px;line-height:1.5;">Llevamos <strong style="color:#fff;">' + totalResponded.toLocaleString('es-AR') + '</strong> de <strong style="color:#ffd700;">' + threshold + '</strong> respuestas. Cuando lleguemos al piso podés ver la previa y activar la primera estrategia.</div>';
+        html += '    <div style="background:rgba(0,0,0,0.40);border-radius:8px;height:10px;overflow:hidden;margin-top:8px;">';
+        const pgPct = Math.min(100, Math.round((totalResponded / threshold) * 100));
+        html += '      <div style="background:linear-gradient(90deg,#66ff66,#ffd700);height:100%;width:' + pgPct + '%;"></div>';
+        html += '    </div>';
+        html += '  </div>';
+    }
     html += '  <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">';
     html += '    <button type="button" onclick="loadRecommendedDefaults()" id="loadDefaultsBtn" style="flex:1;min-width:160px;background:rgba(212,175,55,0.10);color:#ffd700;border:1px solid rgba(212,175,55,0.45);padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;" title="Rellena los inputs con los valores recomendados (matchean la Pregunta de arriba). No guarda hasta que apretes Guardar.">🔄 Cargar valores recomendados</button>';
-    html += '    <button type="button" onclick="previewNotifStrategy()" id="previewStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">👁️ VER PREVIA</button>';
+    if (gateLocked && !isActive) {
+        html += '    <button type="button" disabled style="flex:1;min-width:160px;background:rgba(157,78,221,0.20);color:#aaa;border:1px dashed rgba(157,78,221,0.40);padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:not-allowed;" title="Llegá a ' + threshold + ' respuestas para desbloquear">🔒 VER PREVIA</button>';
+    } else {
+        html += '    <button type="button" onclick="previewNotifStrategy()" id="previewStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">👁️ VER PREVIA</button>';
+    }
     html += '    <button type="button" onclick="saveNotifStrategy()" id="saveStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR estrategia</button>';
     if (isActive) {
         html += '    <button type="button" onclick="toggleNotifStrategy(false)" id="activateStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#888,#555);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">⏸️ DESACTIVAR estrategia</button>';
+    } else if (gateLocked) {
+        html += '    <button type="button" disabled style="flex:1;min-width:160px;background:rgba(102,255,102,0.20);color:#aaa;border:1px dashed rgba(102,255,102,0.40);padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:not-allowed;" title="Llegá a ' + threshold + ' respuestas para desbloquear">🔒 ACTIVAR estrategia</button>';
     } else {
         html += '    <button type="button" onclick="toggleNotifStrategy(true)" id="activateStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#66ff66,#2a8;);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">✅ ACTIVAR estrategia</button>';
     }
     html += '  </div>';
     if (isActive && activatedAt) {
-        html += '  <div style="color:#66ff66;font-size:10.5px;margin-top:6px;">✅ Activa desde ' + escapeHtml(activatedAt) + '</div>';
+        html += '  <div style="color:#66ff66;font-size:10.5px;margin-top:6px;">✅ Activa desde ' + escapeHtml(activatedAt) + ' · auto-waves disparadas: <strong>' + ((strategy && strategy.autoFireCount) || 0) + '</strong></div>';
     }
 
     // ===== TEST FIRE: probar todas las notifs en un user cada 1 min =====

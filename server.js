@@ -8197,6 +8197,102 @@ const _SURVEY_WELCOME_MESSAGES = [
   { title: '💎 Bienvenido a la familia', body: 'Tu plan de notifs ya quedó activo. Bonos, regalos y novedades — solo lo que te conviene.' }
 ];
 
+// Blueprints simples por tier para la wave automática del +100. El admin
+// puede tunearlos en otra iteración; estos son sensatos por defecto.
+const _STRATEGY_WAVE_BLUEPRINTS = {
+  suave:           { title: '🟢 Cargá hoy y te damos un 50%', body: 'Bono suave especial para vos. Tocá para usar el código.' },
+  normal:          { title: '🟡 Tu bono mensual está listo', body: 'Cargá ahora y te damos un 50% extra. Toda la app te espera.' },
+  activo:          { title: '🔴 Bono fuerte activo', body: 'Hoy es el día — cargá y te damos un 100% en tu carga. Limitado.' },
+  solo_reembolsos: { title: '💵 Reembolso disponible', body: 'Tenés un reembolso esperando. Tocá para revisarlo.' }
+};
+
+// Lock simple por instancia para evitar dobles disparos concurrentes.
+let _STRATEGY_WAVE_LOCK = false;
+
+async function fireStrategyWave({ reason, triggerCount }) {
+  if (_STRATEGY_WAVE_LOCK) {
+    logger.warn(`[STRATEGY-WAVE] omitido — lock activo (reason=${reason})`);
+    return { fired: false, reason: 'lock' };
+  }
+  _STRATEGY_WAVE_LOCK = true;
+  try {
+    // Agrupar respondentes por tier (sólo los que tienen FCM token).
+    const respondents = await User.find(
+      { notifPreference: { $exists: true, $ne: null } },
+      { username: 1, notifPreference: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+    ).lean();
+
+    const byTier = { suave: [], normal: [], activo: [], solo_reembolsos: [] };
+    for (const u of respondents) {
+      const tier = u.notifPreference;
+      if (!byTier[tier]) continue;
+      const tokens = [];
+      if (u.fcmToken) tokens.push(u.fcmToken);
+      if (Array.isArray(u.fcmTokens)) {
+        for (const t of u.fcmTokens) if (t && !tokens.includes(t)) tokens.push(t);
+      }
+      if (tokens.length > 0) {
+        byTier[tier].push({ username: u.username, tokens });
+      }
+    }
+
+    const sentBefore = new Date();
+    const tierResults = {};
+    let totalSuccess = 0, totalFailure = 0, totalUsers = 0;
+
+    for (const tier of Object.keys(byTier)) {
+      const list = byTier[tier];
+      if (list.length === 0) { tierResults[tier] = { users: 0, success: 0, failure: 0 }; continue; }
+      const bp = _STRATEGY_WAVE_BLUEPRINTS[tier] || { title: '🎁 Hay algo para vos', body: 'Tocá la app.' };
+      let success = 0, failure = 0;
+      for (const u of list) {
+        for (const tok of u.tokens) {
+          try {
+            await _sendPushToUser(tok, bp.title, bp.body, {
+              kind: 'strategy_wave_auto',
+              tier,
+              reason: String(reason || 'auto_+100')
+            });
+            success++;
+          } catch (e) {
+            failure++;
+            logger.warn(`[STRATEGY-WAVE] push fail ${u.username} (${tier}): ${e.message}`);
+          }
+        }
+      }
+      tierResults[tier] = { users: list.length, success, failure };
+      totalSuccess += success;
+      totalFailure += failure;
+      totalUsers += list.length;
+    }
+
+    // Registrar la wave en el historial para que el ROI / weekly la levante.
+    try {
+      await NotificationHistory.create({
+        id: uuidv4(),
+        type: 'plain',
+        title: `[AUTO +100] Wave estrategia · ${reason || ''}`,
+        body: `Disparada automáticamente al cruzar ${triggerCount} respondentes.`,
+        sentAt: sentBefore,
+        totalUsers,
+        successCount: totalSuccess,
+        failureCount: totalFailure,
+        audienceType: 'list',
+        audiencePrefix: null,
+        strategyType: 'auto_strategy_repeat',
+        strategyMeta: { reason: String(reason || 'auto_+100'), triggerCount, tierResults }
+      });
+    } catch (e) {
+      logger.warn(`[STRATEGY-WAVE] no se pudo grabar historial: ${e.message}`);
+    }
+
+    logger.info(`[STRATEGY-WAVE] disparada · users=${totalUsers} ok=${totalSuccess} fail=${totalFailure} reason=${reason}`);
+    return { fired: true, totalUsers, totalSuccess, totalFailure, tierResults };
+  } finally {
+    _STRATEGY_WAVE_LOCK = false;
+  }
+}
+
 app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
   try {
     const pref = String((req.body && req.body.preference) || '').toLowerCase().trim();
@@ -8238,6 +8334,45 @@ app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
       preference: updated.notifPreference,
       answeredAt: updated.notifPreferenceAt
     });
+
+    // Hook +100: si la estrategia está activa Y autoRepeat está prendido Y
+    // esta respuesta hizo cruzar un múltiplo de threshold, disparamos
+    // fireStrategyWave en background. Nunca bloquea al usuario.
+    if (isFirstAnswer) {
+      setImmediate(async () => {
+        try {
+          const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' });
+          if (!cfg || !cfg.isActive || !cfg.autoRepeatEnabled) return;
+          const threshold = cfg.autoRepeatThreshold || 100;
+          const respCount = await User.countDocuments({ notifPreference: { $exists: true, $ne: null } });
+          const lastFired = cfg.lastAutoFiredAtRespCount || 0;
+          if (respCount <= 0) return;
+          const crossedNew = Math.floor(respCount / threshold) > Math.floor(lastFired / threshold);
+          if (!crossedNew) return;
+          // Idempotencia atómica: solo fire si seguimos siendo los primeros.
+          const claimed = await NotifStrategyConfig.findOneAndUpdate(
+            {
+              key: 'monthly-default',
+              isActive: true,
+              autoRepeatEnabled: true,
+              lastAutoFiredAtRespCount: lastFired
+            },
+            {
+              $set: { lastAutoFiredAtRespCount: respCount, lastAutoFiredAt: new Date() },
+              $inc: { autoFireCount: 1 }
+            },
+            { new: true }
+          );
+          if (!claimed) {
+            logger.info(`[STRATEGY-WAVE] perdimos la carrera de auto-fire en respCount=${respCount}`);
+            return;
+          }
+          await fireStrategyWave({ reason: 'auto_+100', triggerCount: respCount });
+        } catch (e) {
+          logger.warn(`[STRATEGY-WAVE] hook +100 falló: ${e.message}`);
+        }
+      });
+    }
   } catch (err) {
     logger.error(`/api/user/notif-preference POST: ${err.message}`);
     res.status(500).json({ error: err.message || 'Error del servidor' });
@@ -8794,6 +8929,165 @@ app.post('/api/admin/encuesta/grant-bonus', authMiddleware, adminMiddleware, asy
   } catch (err) {
     logger.error(`/api/admin/encuesta/grant-bonus: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message || 'Error del servidor' });
+  }
+});
+
+// =====================================================================
+// TIMELINE — gente que se va uniendo a la encuesta (orden desc).
+// =====================================================================
+app.get('/api/admin/encuesta/timeline', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 200));
+    const respondents = await User.find(
+      { notifPreference: { $exists: true, $ne: null } },
+      { username: 1, notifPreference: 1, notifPreferenceAt: 1, team: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+    )
+      .sort({ notifPreferenceAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const items = respondents.map(u => ({
+      username: u.username,
+      preference: u.notifPreference,
+      answeredAt: u.notifPreferenceAt,
+      team: u.team || null,
+      hasApp: !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0))
+    }));
+
+    const totalRespCount = await User.countDocuments({ notifPreference: { $exists: true, $ne: null } });
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    const threshold = (cfg && cfg.autoRepeatThreshold) || 100;
+    const lastFired = (cfg && cfg.lastAutoFiredAtRespCount) || 0;
+    const nextThreshold = (Math.floor(totalRespCount / threshold) + 1) * threshold;
+    const remainingToNextWave = Math.max(0, nextThreshold - totalRespCount);
+    const isActive = !!(cfg && cfg.isActive);
+    const unlockedFirstStrategy = totalRespCount >= threshold;
+
+    res.json({
+      total: totalRespCount,
+      items,
+      threshold,
+      lastFiredAtRespCount: lastFired,
+      autoFireCount: (cfg && cfg.autoFireCount) || 0,
+      lastAutoFiredAt: (cfg && cfg.lastAutoFiredAt) || null,
+      nextThreshold,
+      remainingToNextWave,
+      isActive,
+      unlockedFirstStrategy
+    });
+  } catch (err) {
+    logger.error(`/api/admin/encuesta/timeline: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// HISTORIAL SEMANAL — agrega por semana ISO los KPI clave de la encuesta:
+//   - respuestas nuevas (User.notifPreferenceAt en la semana)
+//   - pushes enviadas (NotificationHistory.sentAt en la semana)
+//   - cargas (RefundClaim type=daily/weekly/monthly o money-giveaway claims)
+//   - $ depositado a la casa vs $ regalado
+//   - ROI estimado: ($ neto a la casa) / ($ regalado)
+// =====================================================================
+app.get('/api/admin/encuesta/weekly-history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const weeks = Math.max(1, Math.min(52, parseInt(req.query.weeks, 10) || 12));
+    const now = new Date();
+    // Inicio de semana (lunes 00:00 ARG/UTC simple — usamos UTC para no
+    // pelear con timezones; el admin lo ve en su huso pero la agregación
+    // queda consistente).
+    const weekStart = (d) => {
+      const x = new Date(d);
+      const dow = x.getUTCDay() || 7;
+      x.setUTCHours(0, 0, 0, 0);
+      x.setUTCDate(x.getUTCDate() - (dow - 1));
+      return x;
+    };
+    const thisWeek = weekStart(now);
+    const ranges = [];
+    for (let i = 0; i < weeks; i++) {
+      const start = new Date(thisWeek);
+      start.setUTCDate(start.getUTCDate() - i * 7);
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + 7);
+      ranges.push({ start, end, label: start.toISOString().slice(0, 10) });
+    }
+    const oldest = ranges[ranges.length - 1].start;
+
+    const [respondents, pushes, refunds, giveawayClaims] = await Promise.all([
+      User.find(
+        { notifPreferenceAt: { $gte: oldest } },
+        { notifPreference: 1, notifPreferenceAt: 1, _id: 0 }
+      ).lean(),
+      NotificationHistory.find(
+        { sentAt: { $gte: oldest } },
+        { sentAt: 1, successCount: 1, failureCount: 1, totalUsers: 1, type: 1, waClicks: 1, _id: 0 }
+      ).lean(),
+      RefundClaim.find(
+        { claimedAt: { $gte: oldest }, status: { $ne: 'pending_credit_failed' } },
+        { claimedAt: 1, type: 1, amount: 1, _id: 0 }
+      ).lean(),
+      MoneyGiveawayClaim.find(
+        { claimedAt: { $gte: oldest }, status: 'completed' },
+        { claimedAt: 1, amount: 1, _id: 0 }
+      ).lean()
+    ]);
+
+    const inRange = (d, r) => d && d >= r.start && d < r.end;
+
+    const buckets = ranges.map(r => {
+      const newRespByPref = { suave: 0, normal: 0, activo: 0, solo_reembolsos: 0, opt_out: 0 };
+      let newResp = 0;
+      for (const u of respondents) {
+        if (inRange(new Date(u.notifPreferenceAt), r)) {
+          newResp++;
+          const k = u.notifPreference;
+          if (newRespByPref[k] != null) newRespByPref[k]++;
+        }
+      }
+      let pushSent = 0, pushDelivered = 0, waClicks = 0;
+      for (const p of pushes) {
+        if (inRange(new Date(p.sentAt), r)) {
+          pushSent += (p.totalUsers || 0);
+          pushDelivered += (p.successCount || 0);
+          waClicks += (p.waClicks || 0);
+        }
+      }
+      let refundsGiven = 0, refundsAmount = 0;
+      for (const rf of refunds) {
+        if (inRange(new Date(rf.claimedAt), r)) {
+          refundsGiven++;
+          refundsAmount += (rf.amount || 0);
+        }
+      }
+      let giveawayCount = 0, giveawayAmount = 0;
+      for (const g of giveawayClaims) {
+        if (inRange(new Date(g.claimedAt), r)) {
+          giveawayCount++;
+          giveawayAmount += (g.amount || 0);
+        }
+      }
+      const totalRegalado = refundsAmount + giveawayAmount;
+      return {
+        weekStart: r.start.toISOString(),
+        weekLabel: r.label,
+        newRespondents: newResp,
+        newRespByPref,
+        pushSent,
+        pushDelivered,
+        waClicks,
+        refundsGiven,
+        refundsAmount,
+        giveawayCount,
+        giveawayAmount,
+        totalRegalado
+      };
+    });
+
+    res.json({ weeks: weeks, buckets });
+  } catch (err) {
+    logger.error(`/api/admin/encuesta/weekly-history: ${err.message}`);
+    res.status(500).json({ error: err.message });
   }
 });
 

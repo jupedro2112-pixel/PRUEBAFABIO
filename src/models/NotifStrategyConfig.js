@@ -67,6 +67,16 @@ const notifStrategyConfigSchema = new mongoose.Schema({
   activatedAt: { type: Date, default: null },
   activatedBy: { type: String, default: null },
 
+  // Auto-repeat por cohorte +100. Cuando isActive=true y autoRepeatEnabled,
+  // cada vez que la cantidad de users con notifPreference cruza un múltiplo
+  // de autoRepeatThreshold (default 100), disparamos fireStrategyWave una
+  // sola vez para esa cohorte. lastAutoFiredAtRespCount sirve como idempotencia.
+  autoRepeatEnabled: { type: Boolean, default: true },
+  autoRepeatThreshold: { type: Number, default: 100, min: 10, max: 10000 },
+  lastAutoFiredAt: { type: Date, default: null },
+  lastAutoFiredAtRespCount: { type: Number, default: 0 },
+  autoFireCount: { type: Number, default: 0 },
+
   // Historial de cambios (ultimos 50). Append-only.
   revisions: { type: [revisionSchema], default: [] },
 
