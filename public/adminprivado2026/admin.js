@@ -5013,10 +5013,11 @@ function _renderTeamCard(t, isExpanded) {
     const hasLines = Array.isArray(t.lines) && t.lines.length > 0;
     const arrowSym = isExpanded ? '▼' : '▶';
 
+    const teamArgEsc = JSON.stringify(t.teamName).replace(/"/g, '&quot;');
     let html = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;">';
-    // Header del equipo (clickeable si tiene líneas)
-    html += '<div onclick="toggleTeamExpand(\'' + escapeHtml(t.teamName).replace(/'/g, "\\'") + '\')" style="padding:14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;' + (hasLines ? '' : 'cursor:default;') + '">';
-    html += '<div style="flex:1;min-width:200px;">';
+    // Header del equipo
+    html += '<div style="padding:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">';
+    html += '<div onclick="toggleTeamExpand(\'' + escapeHtml(t.teamName).replace(/'/g, "\\'") + '\')" style="flex:1;min-width:200px;cursor:' + (hasLines ? 'pointer' : 'default') + ';">';
     html += '<div style="color:#ffd700;font-size:16px;font-weight:800;margin-bottom:3px;">' + (hasLines ? arrowSym + ' ' : '') + escapeHtml(t.teamName) + '</div>';
     html += '<div style="color:#888;font-size:11px;">' + (t.lines.length) + ' línea' + (t.lines.length === 1 ? '' : 's') + '</div>';
     html += '</div>';
@@ -5028,17 +5029,16 @@ function _renderTeamCard(t, isExpanded) {
     }
     html += _teamStat('Con app+notifs', fmt(t.withChannel) + ' (' + t.channelPct + '%)', '#00d4ff');
     html += _teamStat('Activos 7d', fmt(t.activeThisWeek) + ' (' + t.activePct + '%)', '#9b30ff');
+    // Botón ➕ Agregar línea SIEMPRE visible en el header del team (no
+    // requiere expandir). Es lo que la gente esperaba ver al toque.
+    html += '<button type="button" onclick="event.stopPropagation();teamLineAddNew(' + teamArgEsc + ')" title="Agregar nueva línea con archivo .xlsx" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#00d4ff,#0080ff);border:none;color:#000;border-radius:6px;cursor:pointer;white-space:nowrap;">➕ Agregar línea</button>';
     html += '</div>';
     html += '</div>';
 
     // Desglose por línea (collapsable)
     if (isExpanded && hasLines) {
-        const teamArgHdr = JSON.stringify(t.teamName).replace(/"/g, '&quot;');
         html += '<div style="border-top:1px solid rgba(255,255,255,0.08);padding:12px 14px 14px;background:rgba(0,0,0,0.20);">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">';
-        html += '  <div style="color:#aaa;font-size:11px;">Líneas del equipo (cada una con su listado)</div>';
-        html += '  <button type="button" onclick="teamLineAddNew(' + teamArgHdr + ')" style="padding:6px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#00d4ff,#0080ff);border:none;color:#000;border-radius:6px;cursor:pointer;">➕ Agregar línea con archivo</button>';
-        html += '</div>';
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Líneas del equipo (cada una con su listado)</div>';
         html += '<div style="overflow-x:auto;">';
         html += '<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:680px;">';
         html += '<thead><tr style="color:#888;text-align:left;">';
