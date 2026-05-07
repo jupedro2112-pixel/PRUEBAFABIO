@@ -292,6 +292,13 @@ function renderUserLinesSlots(slots) {
     const items = data.length > 0 ? data : [{ prefix: '', phone: '', teamName: '' }];
     container.innerHTML = items.map((s, i) => slotHtml(i, s.prefix || '', s.phone || '', s.teamName || '')).join('');
     updateAddLineButton();
+    // Hidratar el summary de cada slot (counts + última carga). Se hace
+    // después del innerHTML para que los placeholders existan en el DOM.
+    setTimeout(() => {
+        for (let i = 0; i < items.length; i++) {
+            try { refreshSlotListSummary(i); } catch (_) {}
+        }
+    }, 0);
 }
 
 function slotHtml(i, prefix, phone, teamName) {
@@ -314,10 +321,19 @@ function slotHtml(i, prefix, phone, teamName) {
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Número vigente</label>
                 <input type="text" class="user-line-phone" placeholder="+54 9 11 5555 1111" value="${escapeHtml(phone)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(212,175,55,0.25);background:rgba(0,0,0,0.5);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;width:100%;box-sizing:border-box;">
             </div>
-            <!-- Adjuntar listado .xlsx para esta línea (import-exact inline) -->
+            <!-- Lista cargada y operaciones por línea individual -->
             <div style="margin-top:6px;border-top:1px dashed rgba(0,212,255,0.20);padding-top:10px;">
+                <!-- Resumen de lo cargado en esta línea (counts + última carga) -->
+                <div id="slotListSummary-${i}" style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.18);border-radius:8px;padding:10px;margin-bottom:8px;font-size:12px;color:#bbb;">
+                    <div style="color:#888;font-size:11px;">⏳ Cargando lista de esta línea…</div>
+                </div>
+                <!-- Botones de acción para esta línea -->
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+                    <button type="button" onclick="slotShowList(${i})" id="slotShowListBtn-${i}" style="flex:1;min-width:110px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:7px;cursor:pointer;">👁 Ver lista cargada</button>
+                    <button type="button" onclick="slotDownloadCsv(${i})" id="slotDownloadCsvBtn-${i}" style="flex:1;min-width:110px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:7px;cursor:pointer;">📥 Descargar CSV</button>
+                </div>
                 <button type="button" onclick="toggleSlotImport(${i})" id="slotImportToggle-${i}" style="width:100%;background:rgba(0,212,255,0.05);border:1px dashed rgba(0,212,255,0.30);padding:9px;border-radius:7px;color:#00d4ff;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-                    📋 Adjuntar listado de usuarios para esta línea
+                    📋 Cargar/actualizar listado (.xlsx)
                 </button>
                 <div id="slotImport-${i}" style="display:none;margin-top:10px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:8px;padding:10px;">
                     <p style="margin:0 0 8px;color:#aaa;font-size:11px;line-height:1.5;">
@@ -5141,6 +5157,198 @@ async function slotImportConfirm(i) {
     showToast('✅ Lista importada', 'success');
     const btn = document.getElementById('slotImportConfirm-' + i);
     if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+    // Refrescar el summary del slot para reflejar la nueva lista cargada.
+    try { refreshSlotListSummary(i); } catch (_) {}
+}
+
+// Lee teamName + linePhone de un slot (para llamar al endpoint by-line).
+function _readSlotIdentity(i) {
+    const slot = document.querySelector(`.user-line-slot[data-slot-index="${i}"]`);
+    if (!slot) return null;
+    const team = (slot.querySelector('.user-line-team')?.value || '').trim();
+    const phone = (slot.querySelector('.user-line-phone')?.value || '').trim();
+    if (!team) return null;
+    const digits = phone.replace(/[^\d]/g, '');
+    return { team, phoneDigits: digits, linePhone: digits ? '+' + digits : '' };
+}
+
+// Hidrata el resumen "📋 Lista cargada: N usuarios · última carga..." debajo
+// de cada slot. Se llama al cargar la sección y después de cada import.
+async function refreshSlotListSummary(i) {
+    const box = document.getElementById('slotListSummary-' + i);
+    if (!box) return;
+    const id = _readSlotIdentity(i);
+    if (!id || !id.team) {
+        box.innerHTML = '<div style="color:#888;font-size:11px;">Completá el equipo y el número arriba para ver la lista cargada.</div>';
+        return;
+    }
+    box.innerHTML = '<div style="color:#888;font-size:11px;">⏳ Cargando…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', id.team);
+        if (id.linePhone) params.set('linePhone', id.linePhone);
+        params.set('limit', '1');
+        const r = await authFetch('/api/admin/user-lines/lookup-by-line?' + params.toString());
+        if (!r.ok) {
+            box.innerHTML = '<div style="color:#ff8080;font-size:11px;">Error ' + r.status + ' cargando lista</div>';
+            return;
+        }
+        const j = await r.json();
+        const total = j.totalCount || 0;
+        const reg = j.registeredCount || 0;
+        const pend = j.pendingCount || 0;
+        const last = j.lastImportAt ? new Date(j.lastImportAt) : null;
+        const lastStr = last ? last.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+        const lastBy = j.lastImportBy ? ' · por <strong style="color:#fff;">' + escapeHtml(j.lastImportBy) + '</strong>' : '';
+        let html = '';
+        if (total === 0) {
+            html += '<div style="color:#aaa;font-size:11px;">Esta línea todavía no tiene usuarios cargados. Subí un .xlsx desde el botón de abajo.</div>';
+        } else {
+            html += '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;">';
+            html += '  <span style="color:#00d4ff;font-weight:800;font-size:14px;">📋 ' + total + ' usuarios cargados</span>';
+            html += '  <span style="color:#888;font-size:10.5px;">Última carga: <strong style="color:#fff;">' + escapeHtml(lastStr) + '</strong>' + lastBy + '</span>';
+            html += '</div>';
+            html += '<div style="margin-top:5px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;">';
+            html += '  <span style="background:rgba(37,211,102,0.10);color:#25d366;padding:3px 8px;border-radius:5px;font-weight:700;">✅ ' + reg + ' registrados</span>';
+            html += '  <span style="background:rgba(255,170,68,0.10);color:#ffaa44;padding:3px 8px;border-radius:5px;font-weight:700;">⏳ ' + pend + ' pre-asignados</span>';
+            html += '</div>';
+        }
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;font-size:11px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+// Llamada por el botón 👁 Ver lista cargada — abre modal con detalle.
+async function slotShowList(i) {
+    const id = _readSlotIdentity(i);
+    if (!id || !id.team) {
+        showToast('Completá el equipo y el número arriba primero', 'error');
+        return;
+    }
+    let m = document.getElementById('slotListModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'slotListModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10005;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="slotListBody" style="background:#0f1024;border:1px solid #00d4ff;border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('slotListBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando lista…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', id.team);
+        if (id.linePhone) params.set('linePhone', id.linePhone);
+        const r = await authFetch('/api/admin/user-lines/lookup-by-line?' + params.toString());
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error ' + r.status + '</div>';
+            return;
+        }
+        const j = await r.json();
+        body.innerHTML = _renderSlotListModalHtml(j, i);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeSlotListModal() {
+    const m = document.getElementById('slotListModal');
+    if (m) m.remove();
+}
+
+function _renderSlotListModalHtml(j, slotIndex) {
+    const items = j.items || [];
+    const total = j.totalCount || 0;
+    const reg = j.registeredCount || 0;
+    const pend = j.pendingCount || 0;
+    const last = j.lastImportAt ? new Date(j.lastImportAt).toLocaleString('es-AR') : '—';
+
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
+    html += '  <h3 style="margin:0;color:#00d4ff;font-size:17px;">📋 ' + escapeHtml(j.teamName || '') + (j.linePhone ? ' · ' + escapeHtml(j.linePhone) : '') + '</h3>';
+    html += '  <button type="button" onclick="closeSlotListModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    // KPIs
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px;">';
+    html += '  <div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#00d4ff;font-size:10px;letter-spacing:1px;font-weight:700;">TOTAL</div>';
+    html += '    <div style="color:#fff;font-size:22px;font-weight:900;">' + total + '</div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#25d366;font-size:10px;letter-spacing:1px;font-weight:700;">REGISTRADOS</div>';
+    html += '    <div style="color:#fff;font-size:22px;font-weight:900;">' + reg + '</div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(255,170,68,0.08);border:1px solid rgba(255,170,68,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#ffaa44;font-size:10px;letter-spacing:1px;font-weight:700;">PRE-ASIGNADOS</div>';
+    html += '    <div style="color:#fff;font-size:22px;font-weight:900;">' + pend + '</div>';
+    html += '  </div>';
+    html += '</div>';
+
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Última carga: <strong style="color:#fff;">' + escapeHtml(last) + '</strong>' + (j.lastImportBy ? ' · por <strong style="color:#fff;">' + escapeHtml(j.lastImportBy) + '</strong>' : '') + '</div>';
+
+    if (items.length === 0) {
+        html += '<div style="text-align:center;color:#aaa;padding:20px;">Sin usuarios cargados.</div>';
+    } else {
+        html += '<div style="overflow-x:auto;max-height:50vh;overflow-y:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Usuario</th>';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estado</th>';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Cargado</th>';
+        html += '  </tr></thead><tbody>';
+        for (const it of items) {
+            const dt = it.importedAt ? new Date(it.importedAt).toLocaleDateString('es-AR') : '—';
+            html += '<tr>';
+            html += '  <td style="padding:5px 10px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.usernameOriginal || it.usernameNorm) + '</td>';
+            html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.registered ? '<span style="color:#25d366;font-weight:700;">✅ Registrado</span>' : '<span style="color:#ffaa44;font-weight:700;">⏳ Pre-asignado</span>') + '</td>';
+            html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.hasApp ? '<span style="color:#25d366;">📱 Sí</span>' : '<span style="color:#888;">—</span>') + '</td>';
+            html += '  <td style="padding:5px 10px;color:#888;font-size:10.5px;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(dt) + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        html += '</div>';
+    }
+
+    html += '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">';
+    html += '  <button type="button" onclick="slotDownloadCsv(' + slotIndex + ')" style="background:linear-gradient(135deg,#25d366,#128c4f);color:#fff;border:none;padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">📥 Descargar CSV</button>';
+    html += '  <button type="button" onclick="closeSlotListModal()" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>';
+    html += '</div>';
+
+    return html;
+}
+
+// Descarga el CSV de la línea de este slot.
+async function slotDownloadCsv(i) {
+    const id = _readSlotIdentity(i);
+    if (!id || !id.team) {
+        showToast('Completá el equipo y el número arriba primero', 'error');
+        return;
+    }
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', id.team);
+        if (id.linePhone) params.set('linePhone', id.linePhone);
+        const r = await authFetch('/api/admin/user-lines/lookup-by-line.csv?' + params.toString());
+        if (!r.ok) {
+            showToast('Error descargando CSV (' + r.status + ')', 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'linea-' + id.team.replace(/[^a-z0-9_-]/gi, '_') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+        showToast('✅ CSV descargado', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 // Versión compacta del render (vive dentro del slot, espacio limitado).

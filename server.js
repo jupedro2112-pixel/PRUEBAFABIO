@@ -6950,6 +6950,125 @@ app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, re
 // ============================================
 const USER_LINES_MAX_SLOTS = 30;
 
+// Lista de usernames asignados a UNA línea (teamName + linePhone). Sirve
+// para que el admin vea qué tiene cargado cada línea individualmente.
+// Devuelve: items + totalCount + lastImportAt + lastImportBy.
+app.get('/api/admin/user-lines/lookup-by-line', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String(req.query.teamName || '').trim();
+    const linePhone = String(req.query.linePhone || '').trim();
+    if (!teamName && !linePhone) {
+      return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
+    }
+    const filter = {};
+    if (teamName) filter.lineTeamName = teamName;
+    if (linePhone) filter.linePhone = linePhone;
+    const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit, 10) || 1000));
+
+    const totalCount = await UserLineLookup.countDocuments(filter);
+    const rows = await UserLineLookup.find(filter)
+      .sort({ importedAt: -1 })
+      .limit(limit)
+      .lean();
+
+    // Cruzamos con User para saber si cada usernameNorm ya se registró o
+    // está en pre-asignación (todavía no entró por primera vez a la app).
+    const norms = rows.map(r => r.usernameNorm).filter(Boolean);
+    const registered = norms.length > 0
+      ? await User.find(
+          { username: { $in: norms } },
+          { username: 1, fcmToken: 1, fcmTokens: 1, lastLogin: 1, _id: 0 }
+        ).lean()
+      : [];
+    const regMap = new Map(registered.map(u => [String(u.username || '').toLowerCase(), u]));
+
+    const items = rows.map(r => {
+      const u = regMap.get(String(r.usernameNorm || '').toLowerCase());
+      const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
+      return {
+        usernameNorm: r.usernameNorm,
+        usernameOriginal: r.usernameOriginal || r.usernameNorm,
+        importedAt: r.importedAt,
+        importedBy: r.importedBy,
+        registered: !!u,
+        hasApp,
+        lastLogin: u ? u.lastLogin : null
+      };
+    });
+
+    let lastImportAt = null, lastImportBy = null;
+    if (rows.length > 0) {
+      lastImportAt = rows[0].importedAt;
+      lastImportBy = rows[0].importedBy;
+    }
+
+    res.json({
+      teamName: teamName || null,
+      linePhone: linePhone || null,
+      totalCount,
+      registeredCount: items.filter(it => it.registered).length,
+      pendingCount: items.filter(it => !it.registered).length,
+      lastImportAt,
+      lastImportBy,
+      items
+    });
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/lookup-by-line: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CSV: descarga la lista completa de una línea.
+app.get('/api/admin/user-lines/lookup-by-line.csv', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String(req.query.teamName || '').trim();
+    const linePhone = String(req.query.linePhone || '').trim();
+    if (!teamName && !linePhone) {
+      return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
+    }
+    const filter = {};
+    if (teamName) filter.lineTeamName = teamName;
+    if (linePhone) filter.linePhone = linePhone;
+
+    const rows = await UserLineLookup.find(filter).sort({ importedAt: -1 }).lean();
+    const norms = rows.map(r => r.usernameNorm).filter(Boolean);
+    const registered = norms.length > 0
+      ? await User.find(
+          { username: { $in: norms } },
+          { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+        ).lean()
+      : [];
+    const regMap = new Map(registered.map(u => [String(u.username || '').toLowerCase(), u]));
+
+    const escape = (v) => {
+      const s = (v == null ? '' : String(v));
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = ['Usuario,Equipo,Linea,Estado,TieneApp,Telefono,FechaCarga'];
+    for (const r of rows) {
+      const u = regMap.get(String(r.usernameNorm || '').toLowerCase());
+      const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
+      lines.push([
+        escape(r.usernameOriginal || r.usernameNorm || ''),
+        escape(r.lineTeamName || ''),
+        escape(r.linePhone || ''),
+        escape(u ? 'Registrado' : 'Pre-asignado'),
+        escape(hasApp ? 'Si' : 'No'),
+        escape(u && u.phone ? u.phone : ''),
+        escape(r.importedAt ? new Date(r.importedAt).toISOString() : '')
+      ].join(','));
+    }
+    const csv = '﻿' + lines.join('\r\n');
+    const safe = (s) => String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="linea-${safe(teamName)}-${safe(linePhone)}-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/lookup-by-line.csv: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const config = (await getConfig('userLinesByPrefix')) || {};
