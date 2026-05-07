@@ -827,6 +827,32 @@ if (VIP.ui.isAppStandalone()) {
     if (appInstallBtn)    { appInstallBtn.classList.add('hidden'); }
 }
 
+// Cartel GRANDE de instalación — solo cuando NO está en standalone (no
+// instalado). En cuanto el user instala, queda en standalone y este card
+// nunca más se muestra. El botón llama a la misma función installApp()
+// que ya tiene los flujos paso-a-paso por plataforma.
+(function setupInstallHeroCard() {
+    const card = document.getElementById('installHeroCard');
+    if (!card) return;
+    if (VIP.ui.isAppStandalone()) {
+        card.hidden = true;
+        return;
+    }
+    card.hidden = false;
+    const btn = document.getElementById('installHeroBtn');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            try {
+                if (typeof VIP.ui.installApp === 'function') VIP.ui.installApp();
+            } catch (e) { console.warn('installApp error:', e); }
+        });
+    }
+    // Si después se dispara el evento appinstalled, ocultar el card al toque.
+    window.addEventListener('appinstalled', () => {
+        card.hidden = true;
+    });
+})();
+
 // Mobile drawer toggle
 VIP.ui.toggleDrawer = function() {
   const drawer = document.getElementById('mobileDrawer');
