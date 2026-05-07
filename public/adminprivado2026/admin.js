@@ -12249,10 +12249,11 @@ function _renderStrategyEditor(strategy) {
     html += '    <span style="color:#888;font-size:10.5px;">Hard cap. La distribución no puede excederlo.</span>';
     html += '  </div>';
 
-    // Save + Activate
+    // Save + Preview + Activate
     const isActive = !!(strategy && strategy.isActive);
     const activatedAt = (strategy && strategy.activatedAt) ? new Date(strategy.activatedAt).toLocaleString('es-AR') : null;
     html += '  <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">';
+    html += '    <button type="button" onclick="previewNotifStrategy()" id="previewStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">👁️ VER PREVIA</button>';
     html += '    <button type="button" onclick="saveNotifStrategy()" id="saveStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR estrategia</button>';
     if (isActive) {
         html += '    <button type="button" onclick="toggleNotifStrategy(false)" id="activateStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#888,#555);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">⏸️ DESACTIVAR estrategia</button>';
@@ -12365,6 +12366,172 @@ async function saveNotifStrategy() {
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = '💾 GUARDAR estrategia'; }
     }
+}
+
+// Genera la previa NO-PERSISTIDA y la muestra en un modal con la
+// distribucion real (users que respondieron, top receivers, inactivos).
+async function previewNotifStrategy() {
+    // Para que la previa refleje los inputs actuales de la pantalla aun
+    // sin guardar, primero hacemos un POST silencioso y luego un GET de
+    // preview. Si el admin todavia no toco, alcanza el GET solo.
+    const btn = document.getElementById('previewStrategyBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando previa...'; }
+
+    let m = document.getElementById('strategyPreviewModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'strategyPreviewModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10003;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="strategyPreviewBody" style="background:#1a0033;border:1px solid #9d4edd;border-radius:12px;padding:18px;max-width:880px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('strategyPreviewBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Generando previa con datos reales…</div>';
+
+    try {
+        // Persistir lo que esta en el form para que el preview lea ese estado.
+        await _saveNotifStrategyForPreview();
+        const r = await authFetch('/api/admin/notif-strategy/preview');
+        const d = await r.json();
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        body.innerHTML = _renderStrategyPreview(d);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '👁️ VER PREVIA'; }
+    }
+}
+
+function closeStrategyPreviewModal() {
+    const m = document.getElementById('strategyPreviewModal');
+    if (m) m.remove();
+}
+
+// POST silencioso que guarda lo que esta en los inputs sin notificar.
+async function _saveNotifStrategyForPreview() {
+    const tiers = ['suave', 'normal', 'activo', 'solo_reembolsos'];
+    const preferences = {};
+    for (const t of tiers) {
+        preferences[t] = {
+            bonos:   Number((document.getElementById('strat_' + t + '_bonos')   || {}).value) || 0,
+            juegos:  Number((document.getElementById('strat_' + t + '_juegos')  || {}).value) || 0,
+            regalos: Number((document.getElementById('strat_' + t + '_regalos') || {}).value) || 0,
+            budget:  Number((document.getElementById('strat_' + t + '_budget')  || {}).value) || 0
+        };
+    }
+    const monthlyCap = Number((document.getElementById('strat_monthlyCap') || {}).value) || 0;
+    const monthlyTotalToDistribute = Number((document.getElementById('strat_monthlyTotalToDistribute') || {}).value) || 0;
+    const bonusType = String((document.getElementById('strat_bonusType') || {}).value || '').trim() || 'cash';
+    try {
+        await authFetch('/api/admin/notif-strategy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preferences, monthlyCap, monthlyTotalToDistribute, bonusType })
+        });
+    } catch (_) { /* silencioso */ }
+}
+
+function _renderStrategyPreview(d) {
+    const tiers = ['suave', 'normal', 'activo', 'solo_reembolsos'];
+    const tierLabels = { suave: '🟢 SUAVE', normal: '🟡 NORMAL', activo: '🔴 ACTIVO', solo_reembolsos: '🔔 SOLO REEMB' };
+    const tierColors = { suave: '#66ff66', normal: '#ffd700', activo: '#ff8c5a', solo_reembolsos: '#00d4ff' };
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
+    html += '  <h3 style="margin:0;color:#9d4edd;font-size:18px;">👁️ Previa de estrategia · NO se guardó nada</h3>';
+    html += '  <button type="button" onclick="closeStrategyPreviewModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    // Header con totales
+    html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">';
+    html += _kpiCard('💰 Plata total a repartir', _fmtMoney(d.monthlyTotalToDistribute), '#ffd700');
+    html += _kpiCard('Usuarios que respondieron', (d.respondedTotal || 0).toLocaleString('es-AR'), '#fff');
+    const bd = d.bonusDefaults || {};
+    const tt = bd.bonus100pctTimed || {};
+    html += _kpiCard('Bono 50% al depósito', bd.bonus50pct ? '✅ activo' : '❌ off', '#66ff66');
+    html += _kpiCard('Bono 100% x ' + (tt.durationHours || 2) + 'hs', tt.enabled ? ('✅ ' + (tt.startHour || 19) + ':00–' + ((tt.startHour || 19) + (tt.durationHours || 2)) + ':00') : '❌ off', '#9d4edd');
+    html += '  </div>';
+    html += '</div>';
+
+    // Distribucion por tier
+    html += '<h4 style="color:#d4af37;font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:1px;">📊 Reparto por tier</h4>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
+    html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+    html += '<thead><tr style="color:#d4af37;text-align:left;background:rgba(212,175,55,0.10);">';
+    html += '<th style="padding:6px 8px;">Tier</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Users</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Activos</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Inactivos</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Pozo del tier</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Para activos (80%)</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Para inactivos (20%)</th>';
+    html += '</tr></thead><tbody>';
+    for (const t of tiers) {
+        const tp = (d.tierPlans && d.tierPlans[t]) || {};
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:6px 8px;color:' + tierColors[t] + ';font-weight:800;">' + tierLabels[t] + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + (tp.userCount || 0) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#66ff66;">' + (tp.activeCount || 0) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#ff8080;">' + (tp.inactiveCount || 0) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#ffd700;font-weight:800;">' + _fmtMoney(tp.tierBudget) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#66ff66;">' + _fmtMoney(tp.activeBudget) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#888;">' + _fmtMoney(tp.inactiveBudget) + ' <span style="font-size:9px;color:#666;">(NO DISP.)</span></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+
+    // Top 10 receivers
+    const top = d.topReceivers || [];
+    if (top.length > 0) {
+        html += '<h4 style="color:#66ff66;font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:1px;">🏆 Top 10 que más reciben (por pérdida + actividad)</h4>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;margin-bottom:14px;max-height:280px;overflow-y:auto;">';
+        html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#66ff66;text-align:left;background:rgba(102,255,102,0.08);"><th style="padding:6px 8px;">#</th><th style="padding:6px 8px;">Usuario</th><th style="padding:6px 8px;">Tier</th><th style="padding:6px 8px;">Estado</th><th style="padding:6px 8px;text-align:right;">Pérdida 30d</th><th style="padding:6px 8px;text-align:right;">Cargas 30d</th><th style="padding:6px 8px;text-align:right;">Asignado</th></tr></thead><tbody>';
+        for (let i = 0; i < top.length; i++) {
+            const u = top[i];
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+            html += '<td style="padding:6px 8px;color:#888;">' + (i+1) + '</td>';
+            html += '<td style="padding:6px 8px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + '</td>';
+            html += '<td style="padding:6px 8px;color:' + (tierColors[u.tier] || '#fff') + ';font-weight:800;font-size:10px;">' + (tierLabels[u.tier] || u.tier) + '</td>';
+            html += '<td style="padding:6px 8px;color:#aaa;font-size:10.5px;">' + escapeHtml(u.activityStatus || '—') + '</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#ff8080;font-weight:700;">' + _fmtMoney(u.netToHouse30d) + '</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + (u.chargesCount30d || 0) + '</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#66ff66;font-weight:900;white-space:nowrap;">' + _fmtMoney(u.assignedARS) + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+
+    // Inactivos
+    const inact = d.topInactives || [];
+    if (inact.length > 0) {
+        html += '<h4 style="color:#ff8080;font-size:12px;margin:0 0 8px;text-transform:uppercase;letter-spacing:1px;">⛔ Inactivos · plata asignada pero NO DISPONIBLE</h4>';
+        html += '<div style="background:rgba(255,128,128,0.05);border:1px solid rgba(255,128,128,0.20);border-radius:8px;overflow:hidden;margin-bottom:14px;max-height:240px;overflow-y:auto;">';
+        html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#ff8080;text-align:left;background:rgba(255,128,128,0.08);"><th style="padding:6px 8px;">Usuario</th><th style="padding:6px 8px;">Tier</th><th style="padding:6px 8px;">Estado</th><th style="padding:6px 8px;text-align:right;">Asignado</th><th style="padding:6px 8px;">Razón</th></tr></thead><tbody>';
+        for (const u of inact) {
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+            html += '<td style="padding:6px 8px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + '</td>';
+            html += '<td style="padding:6px 8px;color:' + (tierColors[u.tier] || '#fff') + ';font-weight:800;font-size:10px;">' + (tierLabels[u.tier] || u.tier) + '</td>';
+            html += '<td style="padding:6px 8px;color:#aaa;">' + escapeHtml(u.activityStatus || '—') + '</td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#ff8080;font-weight:700;">' + _fmtMoney(u.assignedARS) + '</td>';
+            html += '<td style="padding:6px 8px;color:#888;font-size:10.5px;font-style:italic;">' + escapeHtml(u.reason || '') + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+
+    // CTAs finales
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">';
+    html += '  <button type="button" onclick="closeStrategyPreviewModal()" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 16px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar previa (no guardar)</button>';
+    html += '  <button type="button" onclick="closeStrategyPreviewModal();saveNotifStrategy()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;">💾 Confirmar y GUARDAR</button>';
+    html += '</div>';
+
+    return html;
 }
 
 // Activa/desactiva la estrategia. Cuando isActive=true, el cron de

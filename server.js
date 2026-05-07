@@ -8264,6 +8264,143 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// Genera una previa NO-PERSISTIDA de como quedaria la distribucion de
+// la estrategia con el config actual + lista real de users que
+// contestaron la encuesta. NO guarda nada — el admin la mira y despues
+// decide si guarda + activa.
+//
+// Logica de reparto:
+//   - El pozo se reparte por tier segun shares fijas (10/40/50/0).
+//   - Dentro de cada tier, los users ACTIVOS reciben proporcional a
+//     sumLossToHouse (cuanto le dejaron a la casa en 30d).
+//   - Los INACTIVOS reciben monto simbolico pero quedan marcados
+//     unavailable=true ("no disponible: cliente inactivo").
+app.get('/api/admin/notif-strategy/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    let cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    if (!cfg) {
+      cfg = (await NotifStrategyConfig.create({ key: 'monthly-default' })).toObject();
+    }
+    const total = Math.max(0, Number(cfg.monthlyTotalToDistribute) || 0);
+    const tierShares = { suave: 0.10, normal: 0.40, activo: 0.50, solo_reembolsos: 0 };
+
+    // Traer users que respondieron la encuesta + su PlayerStats para tier
+    // y actividad.
+    const respondents = await User.find(
+      { notifPreference: { $in: ['suave', 'normal', 'activo', 'solo_reembolsos', 'opt_out'] } },
+      { username: 1, notifPreference: 1, _id: 0 }
+    ).lean();
+
+    const usernamesLc = respondents.map(u => String(u.username || '').toLowerCase());
+    const psRows = await PlayerStats.find(
+      { username: { $in: usernamesLc } },
+      { username: 1, netToHouse30d: 1, realDeposits30d: 1, realChargesCount30d: 1, activityStatus: 1, lastRealDepositDate: 1, _id: 0 }
+    ).lean();
+    const psByUser = {};
+    for (const p of psRows) psByUser[String(p.username || '').toLowerCase()] = p;
+
+    // Agrupar por tier.
+    const byTier = { suave: [], normal: [], activo: [], solo_reembolsos: [], opt_out: [] };
+    for (const u of respondents) {
+      const tier = u.notifPreference;
+      if (!byTier[tier]) continue;
+      const ps = psByUser[String(u.username || '').toLowerCase()] || {};
+      byTier[tier].push({
+        username: u.username,
+        netToHouse30d: ps.netToHouse30d || 0,
+        realDeposits30d: ps.realDeposits30d || 0,
+        chargesCount30d: ps.realChargesCount30d || 0,
+        activityStatus: ps.activityStatus || 'NUEVO',
+        lastRealDepositDate: ps.lastRealDepositDate || null
+      });
+    }
+
+    // Calcular plan por tier.
+    const tierPlans = {};
+    for (const tier of ['suave', 'normal', 'activo', 'solo_reembolsos']) {
+      const list = byTier[tier] || [];
+      const tierBudget = Math.round(total * (tierShares[tier] || 0));
+      const active = list.filter(u => ['ACTIVO', 'EN_RIESGO'].includes(u.activityStatus));
+      const inactive = list.filter(u => !['ACTIVO', 'EN_RIESGO'].includes(u.activityStatus));
+
+      // Reparto del tierBudget: 80% a activos por proporcion de netToHouse,
+      // 20% repartido entre inactivos como monto simbolico (NO DISPONIBLE).
+      const activeBudget = Math.round(tierBudget * 0.80);
+      const inactiveBudget = tierBudget - activeBudget;
+
+      const sumNet = active.reduce((s, u) => s + Math.max(0, u.netToHouse30d || 0), 0);
+      const activeAlloc = active.map(u => {
+        const share = sumNet > 0 ? Math.max(0, u.netToHouse30d || 0) / sumNet : (1 / Math.max(1, active.length));
+        return {
+          username: u.username,
+          tier,
+          activityStatus: u.activityStatus,
+          netToHouse30d: u.netToHouse30d,
+          chargesCount30d: u.chargesCount30d,
+          assignedARS: Math.round(activeBudget * share),
+          available: true,
+          reason: 'Cliente activo · proporcional a $ neto a la casa'
+        };
+      }).sort((a, b) => b.assignedARS - a.assignedARS);
+
+      const inactivePerUser = inactive.length > 0 ? Math.round(inactiveBudget / inactive.length) : 0;
+      const inactiveAlloc = inactive.map(u => ({
+        username: u.username,
+        tier,
+        activityStatus: u.activityStatus,
+        netToHouse30d: u.netToHouse30d,
+        chargesCount30d: u.chargesCount30d,
+        assignedARS: inactivePerUser,
+        available: false,
+        reason: 'No disponible: cliente inactivo'
+      }));
+
+      tierPlans[tier] = {
+        userCount: list.length,
+        activeCount: active.length,
+        inactiveCount: inactive.length,
+        tierBudget,
+        activeBudget,
+        inactiveBudget,
+        activeAlloc,
+        inactiveAlloc
+      };
+    }
+
+    // Top 10 globales (los que mas reciben) + inactivos top 5.
+    const allActive = [];
+    const allInactive = [];
+    for (const tier of ['suave', 'normal', 'activo']) {
+      allActive.push(...tierPlans[tier].activeAlloc);
+      allInactive.push(...tierPlans[tier].inactiveAlloc);
+    }
+    allActive.sort((a, b) => b.assignedARS - a.assignedARS);
+    allInactive.sort((a, b) => b.netToHouse30d - a.netToHouse30d);
+
+    res.json({
+      generatedAt: new Date(),
+      monthlyTotalToDistribute: total,
+      bonusDefaults: {
+        bonus50pct: !!cfg.bonus50pctEnabled,
+        bonus100pctTimed: {
+          enabled: !!cfg.bonus100pctTimedEnabled,
+          startHour: cfg.bonus100pctStartHour,
+          durationHours: cfg.bonus100pctDurationHours
+        },
+        bonusType: cfg.bonusType || 'cash'
+      },
+      tierShares,
+      tierPlans,
+      topReceivers: allActive.slice(0, 10),
+      topInactives: allInactive.slice(0, 10),
+      respondedTotal: respondents.length
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-strategy/preview: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Activa o desactiva la estrategia. Cuando isActive=true, el flag queda
 // disponible para que los crons / endpoints de auto-push lo respeten.
 app.post('/api/admin/notif-strategy/activate', authMiddleware, adminMiddleware, async (req, res) => {
