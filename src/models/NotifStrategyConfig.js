@@ -31,9 +31,14 @@ const notifStrategyConfigSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true, default: 'monthly-default', index: true },
 
   preferences: {
-    suave: { type: tierConfigSchema, default: () => ({ bonos: 2, juegos: 5, regalos: 2, budget: 1000 }) },
-    normal: { type: tierConfigSchema, default: () => ({ bonos: 4, juegos: 5, regalos: 2, budget: 1500 }) },
-    activo: { type: tierConfigSchema, default: () => ({ bonos: 6, juegos: 10, regalos: 3, budget: 2500 }) },
+    // Defaults estandar — matchean la pregunta de la encuesta:
+    //  SUAVE  = 2 bonos · 5 invitaciones · 2 regalos · presupuesto 100k/user
+    //  NORMAL = 4 bonos · 5 invitaciones · 2 regalos · presupuesto 100k/user
+    //  ACTIVO = 6 bonos · 10 invitaciones · 3 regalos · presupuesto 100k/user
+    //  SOLO_REEMBOLSOS = 0/0/0 (refundsOnly:true)
+    suave: { type: tierConfigSchema, default: () => ({ bonos: 2, juegos: 5, regalos: 2, budget: 100000 }) },
+    normal: { type: tierConfigSchema, default: () => ({ bonos: 4, juegos: 5, regalos: 2, budget: 100000 }) },
+    activo: { type: tierConfigSchema, default: () => ({ bonos: 6, juegos: 10, regalos: 3, budget: 100000 }) },
     solo_reembolsos: { type: tierConfigSchema, default: () => ({ bonos: 0, juegos: 0, regalos: 0, budget: 0, refundsOnly: true }) }
   },
 
@@ -44,7 +49,7 @@ const notifStrategyConfigSchema = new mongoose.Schema({
   // Plata total que el admin destina a regalos al mes (suma a repartir
   // entre TODOS los users no-opt). El sistema auto-calcula cuanto le
   // toca a cada uno cruzando con su tier + actividad.
-  monthlyTotalToDistribute: { type: Number, default: 2000000, min: 0 },
+  monthlyTotalToDistribute: { type: Number, default: 250000, min: 0 },
 
   // Tipo de bono que el admin quiere usar este mes. Free-form para no
   // limitar el negocio (ej: 'cash', 'free_spin', 'deposit_match', etc.)

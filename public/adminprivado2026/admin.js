@@ -12251,7 +12251,8 @@ function _renderStrategyEditor(strategy) {
     html += '    <h3 style="color:#d4af37;font-size:13px;margin:0;text-transform:uppercase;letter-spacing:1px;">⚙️ Estrategia mensual de notificaciones</h3>';
     html += '    <div style="color:#888;font-size:10.5px;">Última actualización: ' + escapeHtml(updatedAt) + ' · por ' + escapeHtml(updatedBy) + '</div>';
     html += '  </div>';
-    html += '  <p style="color:#bbb;font-size:11px;line-height:1.5;margin:0 0 10px;">Por cada nivel de la encuesta, definí cuántos pushes y cuánta plata por usuario al mes. Los SOLO REEMBOLSOS reciben sólo cuando hay un reembolso disponible.</p>';
+    html += '  <p style="color:#bbb;font-size:11px;line-height:1.5;margin:0 0 6px;">Por cada nivel de la encuesta, definí cuántos pushes y cuánta plata por usuario al mes. Los SOLO REEMBOLSOS reciben sólo cuando hay un reembolso disponible.</p>';
+    html += '  <p style="color:#66ff66;font-size:11px;line-height:1.5;margin:0 0 10px;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:6px;padding:6px 10px;">✅ <strong>Inscripción automática:</strong> los usuarios que respondan la encuesta DESPUÉS de activar la estrategia se incorporan automáticamente al plan que les corresponde. No hace falta editar nada cuando suma gente.</p>';
 
     html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">';
     for (const t of tiers) {
@@ -12298,6 +12299,7 @@ function _renderStrategyEditor(strategy) {
     const isActive = !!(strategy && strategy.isActive);
     const activatedAt = (strategy && strategy.activatedAt) ? new Date(strategy.activatedAt).toLocaleString('es-AR') : null;
     html += '  <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">';
+    html += '    <button type="button" onclick="loadRecommendedDefaults()" id="loadDefaultsBtn" style="flex:1;min-width:160px;background:rgba(212,175,55,0.10);color:#ffd700;border:1px solid rgba(212,175,55,0.45);padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;" title="Rellena los inputs con los valores recomendados (matchean la Pregunta de arriba). No guarda hasta que apretes Guardar.">🔄 Cargar valores recomendados</button>';
     html += '    <button type="button" onclick="previewNotifStrategy()" id="previewStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">👁️ VER PREVIA</button>';
     html += '    <button type="button" onclick="saveNotifStrategy()" id="saveStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR estrategia</button>';
     if (isActive) {
@@ -12590,6 +12592,36 @@ function _renderStrategyPreview(d) {
     html += '</div>';
 
     return html;
+}
+
+// Rellena los inputs del editor con los valores recomendados. NO guarda
+// nada hasta que el admin apriete GUARDAR. Los numeros matchean la
+// Pregunta de la encuesta que ve el user en la PWA.
+function loadRecommendedDefaults() {
+    const recommendations = {
+        suave:           { bonos: 2, juegos: 5,  regalos: 2, budget: 100000 },
+        normal:          { bonos: 4, juegos: 5,  regalos: 2, budget: 100000 },
+        activo:          { bonos: 6, juegos: 10, regalos: 3, budget: 100000 },
+        solo_reembolsos: { bonos: 0, juegos: 0,  regalos: 0, budget: 0 }
+    };
+    for (const tier of Object.keys(recommendations)) {
+        const r = recommendations[tier];
+        const setVal = (suffix, val) => {
+            const el = document.getElementById('strat_' + tier + '_' + suffix);
+            if (el) el.value = String(val);
+        };
+        setVal('bonos', r.bonos);
+        setVal('juegos', r.juegos);
+        setVal('regalos', r.regalos);
+        setVal('budget', r.budget);
+    }
+    const cap = document.getElementById('strat_monthlyCap');
+    if (cap) cap.value = '1000000';
+    const total = document.getElementById('strat_monthlyTotalToDistribute');
+    if (total) total.value = '250000';
+    const bt = document.getElementById('strat_bonusType');
+    if (bt && !bt.value) bt.value = 'cash';
+    showToast('🔄 Valores recomendados cargados — no guardados hasta que aprietes Guardar', 'info');
 }
 
 // Dispara el test endpoint para mandar N notifs cada 1 min al user.
