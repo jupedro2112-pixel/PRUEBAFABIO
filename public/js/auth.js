@@ -247,6 +247,18 @@ VIP.auth = (function () {
                 errorDiv.classList.add('show');
                 return;
             }
+            // Bloqueo VIP: el backend responde 403 con code 'VIP_USER'.
+            // Mostramos un overlay grande redirigiendo a VIPCARGAS y NO
+            // continuamos con el login.
+            if (response.status === 403 && data.code === 'VIP_USER') {
+                if (typeof window.showVipBlockOverlay === 'function') {
+                    window.showVipBlockOverlay(data);
+                } else {
+                    errorDiv.textContent = data.message || 'Página no disponible para usuarios VIP — usá VIPCARGAS.';
+                    errorDiv.classList.add('show');
+                }
+                return;
+            }
             if (!response.ok) {
                 const detail = data.error
                     ? data.error

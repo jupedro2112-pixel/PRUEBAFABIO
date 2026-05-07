@@ -1214,6 +1214,24 @@ function getArgentinaYesterday() {
 // ============================================
 // MIDDLEWARE DE AUTENTICACIÓN
 // ============================================
+// =====================================================================
+// BLOQUEO USUARIOS VIP — su flujo es por VIPCARGAS, no aca.
+// =====================================================================
+// Cualquier user cuyo username empieza con 'vip' (case-insensitive) NO
+// puede usar esta app. Le respondemos con 403 + redirectTo + mensaje
+// claro. Los roles admin/depositor/withdrawer estan exentos por si
+// algun staff tiene username con prefijo vip.
+const VIP_REDIRECT_URL = 'https://vipcargas.com';
+const VIP_BLOCK_RESPONSE = {
+  error: 'Esta página no está disponible para usuarios VIP.',
+  message: 'Tu reembolso está disponible solo en VIPCARGAS.',
+  code: 'VIP_USER',
+  redirectTo: VIP_REDIRECT_URL
+};
+function _isVipUser(username) {
+  return String(username || '').toLowerCase().trim().startsWith('vip');
+}
+
 const authMiddleware = async (req, res, next) => {
   // Accept token from Authorization header first; fall back to admin_api_session
   // httpOnly cookie (sent automatically by the browser for same-origin requests
@@ -1262,7 +1280,14 @@ const authMiddleware = async (req, res, next) => {
     if (user.tokenVersion && decoded.tokenVersion !== user.tokenVersion) {
       return res.status(401).json({ error: 'Sesión expirada. Por favor, vuelve a iniciar sesión.' });
     }
-    
+
+    // Bloqueo VIP: redirigimos a VIPCARGAS. Excluimos roles staff
+    // (admin/depositor/withdrawer) por si tienen username con prefijo vip.
+    const _vipExemptRoles = ['admin', 'depositor', 'withdrawer'];
+    if (_isVipUser(user.username) && !_vipExemptRoles.includes(user.role)) {
+      return res.status(403).json(VIP_BLOCK_RESPONSE);
+    }
+
     req.user = decoded;
 
     // Touch lastSeenApp en PlayerStats (fire-and-forget, no bloquea request).
@@ -1510,11 +1535,15 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'Usuario y contraseña requeridos' });
     }
-    
+
+    if (_isVipUser(username)) {
+      return res.status(403).json(VIP_BLOCK_RESPONSE);
+    }
+
     if (password.length < 6) {
       return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
     }
-    
+
     if (!phone || phone.trim().length < 8) {
       return res.status(400).json({ error: 'El número de teléfono es obligatorio (mínimo 8 dígitos)' });
     }
@@ -1688,7 +1717,12 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { username, phone, password } = req.body;
-    
+
+    if (_isVipUser(username)) {
+      return res.status(403).json(VIP_BLOCK_RESPONSE);
+    }
+
+
     if ((!username && !phone) || !password) {
       return res.status(400).json({ error: 'Usuario o teléfono, y contraseña requeridos' });
     }
@@ -2118,6 +2152,10 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
       return res.status(400).json({ error: 'Usuario requerido' });
     }
     const cleanUsername = username.trim();
+
+    if (_isVipUser(cleanUsername)) {
+      return res.status(403).json(VIP_BLOCK_RESPONSE);
+    }
 
     // Lookup rápido (max 3s). Antes del query, ensureMongoReady fuerza una
     // reconexión si el driver se quedó stuck en disconnected (pasa con blips
@@ -2947,6 +2985,10 @@ app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
     const user = await User.findOne({ phone: normalizedPhone, phoneVerified: true });
     if (!user) {
       return res.status(400).json({ error: 'Código incorrecto o expirado' });
+    }
+
+    if (_isVipUser(user.username)) {
+      return res.status(403).json(VIP_BLOCK_RESPONSE);
     }
 
     // Update last login

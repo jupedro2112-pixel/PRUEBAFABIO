@@ -4589,6 +4589,63 @@
     </div>
 
     <!-- ============================================
+         BLOQUEO VIP: overlay full-screen para usuarios cuyo username
+         empieza con 'vip'. La pagina no esta disponible para ellos —
+         su flujo es por VIPCARGAS. El overlay aparece al login fallido
+         (403 VIP_USER) y al detectar la sesion guardada con prefijo vip.
+         ============================================ -->
+    <div id="vipBlockOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#1a0033 0%,#0a0015 100%);align-items:center;justify-content:center;padding:24px;">
+      <div style="max-width:440px;width:100%;text-align:center;color:#fff;font-family:system-ui;">
+        <div style="font-size:64px;margin-bottom:14px;">🚫</div>
+        <h1 style="margin:0 0 8px;color:#ffd700;font-size:24px;font-weight:900;">Página no disponible</h1>
+        <p style="margin:0 0 16px;color:#ddd;font-size:15px;line-height:1.5;">Esta sección no es para usuarios <strong style="color:#ffd700;">VIP</strong>.</p>
+        <div style="background:rgba(212,175,55,0.10);border:1.5px solid #d4af37;border-radius:12px;padding:14px;margin-bottom:18px;">
+          <p style="margin:0;color:#fff;font-size:14px;line-height:1.5;">💎 Tu reembolso está disponible solo en <strong style="color:#ffd700;">VIPCARGAS</strong>.</p>
+        </div>
+        <a id="vipBlockGoBtn" href="https://vipcargas.com" target="_blank" rel="noopener" style="display:inline-block;background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;padding:13px 26px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:1px;text-decoration:none;box-shadow:0 4px 18px rgba(212,175,55,0.40);">🔗 IR A VIPCARGAS</a>
+      </div>
+    </div>
+    <script>
+    // Helper global: muestra el overlay y limpia cualquier sesion local.
+    window.showVipBlockOverlay = function (data) {
+      try {
+        // Limpiamos token + flags por si quedo algo cacheado.
+        localStorage.removeItem('userToken');
+        localStorage.removeItem('token');
+        sessionStorage.removeItem('userToken');
+      } catch (_) {}
+      var ov = document.getElementById('vipBlockOverlay');
+      if (ov) {
+        if (data && data.redirectTo) {
+          var btn = document.getElementById('vipBlockGoBtn');
+          if (btn) btn.href = data.redirectTo;
+        }
+        ov.style.display = 'flex';
+      }
+    };
+    // Interceptor global: si CUALQUIER fetch a /api/* devuelve 403 con
+    // code:VIP_USER, mostramos el overlay y abortamos. Cubre el caso de
+    // un user con sesion vieja que ya estaba dentro al deployar el bloqueo.
+    (function () {
+      var origFetch = window.fetch;
+      if (!origFetch) return;
+      window.fetch = function () {
+        return origFetch.apply(this, arguments).then(function (resp) {
+          if (resp && resp.status === 403) {
+            // Clonamos para no consumir el body original.
+            resp.clone().json().then(function (data) {
+              if (data && data.code === 'VIP_USER') {
+                window.showVipBlockOverlay(data);
+              }
+            }).catch(function () { /* no era JSON, ignorar */ });
+          }
+          return resp;
+        });
+      };
+    })();
+    </script>
+
+    <!-- ============================================
          ENCUESTA: preferencia de notificaciones (Fase 1).
          Modal flotante que aparece UNA VEZ al primer login
          post-deploy. El user elige tier y se guarda en User.
