@@ -21851,12 +21851,23 @@ app.get('/api/admin/stats/recovery-export.xlsx', authMiddleware, adminMiddleware
 //     (count × tier weight × state weight). Para mostrar arriba como foco.
 app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    // Una sola agregación: counts por (tier, state) y avg de realDeposits30d.
-    // El avg sirve para estimar cuánto recuperamos por jugador rescatado.
-    // Excluimos oportunistas (no se recupera con bono) e usuarios sin datos
-    // del cálculo de avgTicket — pero los seguimos contando en la matriz para
-    // que el admin los vea.
+    // Counts por (tier, state) sobre USUARIOS ÚNICOS. Antes el aggregate
+    // contaba documentos directos de PlayerStats — pero la colección puede
+    // tener múltiples docs por username (legado de cuando el unique index no
+    // estaba). Esto inflaba la matriz hasta ~5× (14k entries vs 2.7k users
+    // reales). Ahora dedupeamos primero por username (tomando el doc más
+    // reciente) y después agrupamos por (tier, state).
     const counts = await PlayerStats.aggregate([
+      { $sort: { updatedAt: -1, _id: -1 } },
+      {
+        $group: {
+          _id: '$username',
+          tier: { $first: '$tier' },
+          activityStatus: { $first: '$activityStatus' },
+          isOpportunist: { $first: '$isOpportunist' },
+          realDeposits30d: { $first: '$realDeposits30d' }
+        }
+      },
       {
         $group: {
           _id: { tier: '$tier', activityStatus: '$activityStatus' },
@@ -21973,13 +21984,25 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
       ? Number((recovery.totalRealDeposit / recovery.totalBonus).toFixed(2))
       : 0;
 
-    // Semana vs semana anterior (basado en lastRealDepositDate)
+    // Semana vs semana anterior (basado en lastRealDepositDate). Dedupe por
+    // username — mismo motivo que la matriz: PlayerStats tiene duplicados
+    // legados que inflaban este número. Contamos usernames distintos.
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 3600 * 1000);
-    const [activeThisWeek, activeLastWeek] = await Promise.all([
-      PlayerStats.countDocuments({ lastRealDepositDate: { $gte: oneWeekAgo } }),
-      PlayerStats.countDocuments({ lastRealDepositDate: { $gte: twoWeeksAgo, $lt: oneWeekAgo } })
+    const [activeThisWeekAgg, activeLastWeekAgg] = await Promise.all([
+      PlayerStats.aggregate([
+        { $match: { lastRealDepositDate: { $gte: oneWeekAgo } } },
+        { $group: { _id: '$username' } },
+        { $count: 'n' }
+      ]),
+      PlayerStats.aggregate([
+        { $match: { lastRealDepositDate: { $gte: twoWeeksAgo, $lt: oneWeekAgo } } },
+        { $group: { _id: '$username' } },
+        { $count: 'n' }
+      ])
     ]);
+    const activeThisWeek = (activeThisWeekAgg[0] && activeThisWeekAgg[0].n) || 0;
+    const activeLastWeek = (activeLastWeekAgg[0] && activeLastWeekAgg[0].n) || 0;
     const weekly = {
       activeThisWeek,
       activeLastWeek,
@@ -22039,8 +22062,79 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
       logger.warn(`/api/admin/stats/segments appNotifs error: ${e.message}`);
     }
 
+    // Breakdown app/no-app por (tier, state). Permite saber para cada celda
+    // de la matriz cuántos tienen FCM token activo (les podemos pushear) y
+    // cuántos no (hay que recontactarlos por WhatsApp). Lookup PlayerStats
+    // dedupeado → User para sacar fcmToken/fcmTokens.
+    const appBreakdownByCell = {};       // 'TIER-STATE' → { withApp, noApp }
+    try {
+      const appAgg = await PlayerStats.aggregate([
+        { $sort: { updatedAt: -1, _id: -1 } },
+        { $group: {
+            _id: '$username',
+            tier: { $first: '$tier' },
+            activityStatus: { $first: '$activityStatus' }
+        }},
+        { $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: 'username',
+            as: 'u'
+        }},
+        { $addFields: {
+            hasApp: {
+              $let: {
+                vars: { user: { $arrayElemAt: ['$u', 0] } },
+                in: {
+                  $or: [
+                    { $ne: [{ $ifNull: ['$$user.fcmToken', null] }, null] },
+                    { $gt: [{ $size: { $ifNull: ['$$user.fcmTokens', []] } }, 0] }
+                  ]
+                }
+              }
+            }
+        }},
+        { $group: {
+            _id: { tier: '$tier', activityStatus: '$activityStatus' },
+            withApp: { $sum: { $cond: ['$hasApp', 1, 0] } },
+            noApp:   { $sum: { $cond: ['$hasApp', 0, 1] } }
+        }}
+      ]);
+      for (const row of appAgg) {
+        const t = row._id.tier || 'SIN_DATOS';
+        const a = row._id.activityStatus || 'INACTIVO';
+        appBreakdownByCell[t + '-' + a] = {
+          withApp: row.withApp || 0,
+          noApp: row.noApp || 0
+        };
+      }
+      // También agregamos el conteo de app/no-app a los segmentos urgentes
+      // para que el frontend los muestre directo.
+      for (const seg of urgentSegments) {
+        const k = seg.tier + '-' + seg.state;
+        const br = appBreakdownByCell[k] || { withApp: 0, noApp: 0 };
+        // Como urgentSegments excluye oportunistas (count = total - opps)
+        // y el breakdown está sobre el total, escalamos proporcional para
+        // estimar cuántos del recuperable tienen app vs no. Es aproximado
+        // pero suficiente para guiar la acción.
+        const total = seg.countTotal || 0;
+        const recover = seg.count || 0;
+        if (total > 0) {
+          const ratio = recover / total;
+          seg.withApp = Math.round((br.withApp || 0) * ratio);
+          seg.noApp = Math.max(0, recover - seg.withApp);
+        } else {
+          seg.withApp = 0;
+          seg.noApp = 0;
+        }
+      }
+    } catch (e) {
+      logger.warn(`/api/admin/stats/segments appBreakdown error: ${e.message}`);
+    }
+
     res.json({
       matrix,
+      appBreakdownByCell,
       tierTotals,
       activityTotals,
       recovery,
@@ -22056,6 +22150,73 @@ app.get('/api/admin/stats/segments', authMiddleware, adminMiddleware, async (req
     });
   } catch (error) {
     logger.error(`/api/admin/stats/segments: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/stats/segments/whatsapp-export?tier=X&state=Y
+// Descarga CSV con los users de un segmento (tier + activityStatus) que NO
+// tienen app/notifs activas — para campaña de recontacto vía WhatsApp.
+// Columnas: equipo, usuario, telefono, ultima_carga, monto_30d.
+app.get('/api/admin/stats/segments/whatsapp-export', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const tier = String(req.query.tier || '').trim().toUpperCase();
+    const state = String(req.query.state || '').trim().toUpperCase();
+    if (!tier || !state) {
+      return res.status(400).json({ error: 'Faltan params tier y state' });
+    }
+    // Dedupe por username y filtra por (tier, state).
+    const rows = await PlayerStats.aggregate([
+      { $sort: { updatedAt: -1, _id: -1 } },
+      { $group: {
+          _id: '$username',
+          tier: { $first: '$tier' },
+          activityStatus: { $first: '$activityStatus' },
+          isOpportunist: { $first: '$isOpportunist' },
+          realDeposits30d: { $first: '$realDeposits30d' },
+          lastRealDepositDate: { $first: '$lastRealDepositDate' }
+      }},
+      { $match: { tier, activityStatus: state, isOpportunist: { $ne: true } } },
+      { $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: 'username',
+          as: 'u'
+      }},
+      { $addFields: { user: { $arrayElemAt: ['$u', 0] } } },
+      { $addFields: {
+          hasApp: {
+            $or: [
+              { $ne: [{ $ifNull: ['$user.fcmToken', null] }, null] },
+              { $gt: [{ $size: { $ifNull: ['$user.fcmTokens', []] } }, 0] }
+            ]
+          }
+      }},
+      { $match: { hasApp: false } },
+      { $sort: { realDeposits30d: -1 } }
+    ]);
+
+    const escape = (v) => {
+      const s = (v == null ? '' : String(v));
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = ['Equipo,Usuario,Telefono,UltimaCarga,Cargas30d'];
+    for (const r of rows) {
+      const u = r.user || {};
+      lines.push([
+        escape(u.lineTeamName || ''),
+        escape(r._id || ''),
+        escape(u.phone || ''),
+        escape(r.lastRealDepositDate ? new Date(r.lastRealDepositDate).toISOString() : ''),
+        escape(r.realDeposits30d || 0)
+      ].join(','));
+    }
+    const csv = '﻿' + lines.join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="recontacto-${tier}-${state}-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    logger.error(`/api/admin/stats/segments/whatsapp-export: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

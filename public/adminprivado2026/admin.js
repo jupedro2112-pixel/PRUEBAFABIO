@@ -2732,7 +2732,7 @@ async function loadSegmentsAndWeekly() {
         renderUrgentFocus(d.urgentSegments || []);
         renderWeeklyHeader(d.weekly || {});
         renderRecoveryHeader(d.recovery || {});
-        renderSegmentsMatrix(d.matrix || {}, d.tierTotals || {}, d.activityTotals || {});
+        renderSegmentsMatrix(d.matrix || {}, d.tierTotals || {}, d.activityTotals || {}, d.appBreakdownByCell || {});
         renderTierDeepDive(d);
     } catch (e) { console.warn('loadSegmentsAndWeekly', e); }
 }
@@ -2865,14 +2865,29 @@ function renderUrgentFocus(segments) {
         const $ = '$' + Number(seg.potentialRevenue || 0).toLocaleString('es-AR');
         const strategy = playbook ? playbook.strategy : 'Recuperación estándar';
         const bonusHint = playbook ? playbook.bonus : '—';
+        const withApp = Number(seg.withApp || 0);
+        const noApp = Number(seg.noApp || 0);
 
-        html += '<div style="display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.35);padding:10px 12px;border-radius:8px;border-left:3px solid #ff7f50;">';
+        html += '<div style="display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.35);padding:10px 12px;border-radius:8px;border-left:3px solid #ff7f50;flex-wrap:wrap;">';
         html += '<div style="flex:0 0 auto;background:rgba(255,127,80,0.12);color:#ff7f50;font-size:18px;font-weight:800;padding:8px 12px;border-radius:8px;min-width:64px;text-align:center;">' + (seg.count || 0) + '</div>';
-        html += '<div style="flex:1;min-width:0;">';
+        html += '<div style="flex:1;min-width:200px;">';
         html += '<div style="color:#fff;font-size:13px;font-weight:700;margin-bottom:2px;">' + escapeHtml(segLabel) + '</div>';
         html += '<div style="color:#aaa;font-size:11px;line-height:1.4;">🎯 <strong style="color:#ffd700;">' + escapeHtml(strategy) + '</strong> · ' + escapeHtml(bonusHint) + ' · ~' + $ + ' potencial</div>';
+        // Breakdown: con app (push) vs sin app (whatsapp). Útil para saber
+        // dónde mandar push directo y dónde hace falta recontactar humano.
+        html += '<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;">';
+        html += '<span style="background:rgba(37,211,102,0.10);color:#25d366;padding:3px 8px;border-radius:5px;font-weight:700;">📱 ' + withApp + ' con app</span>';
+        html += '<span style="background:rgba(255,170,0,0.10);color:#ffaa00;padding:3px 8px;border-radius:5px;font-weight:700;">💬 ' + noApp + ' sin app (WhatsApp)</span>';
         html += '</div>';
-        html += '<button onclick="openRecoveryModal(\'' + seg.tier + '\',\'' + seg.state + '\')" style="flex:0 0 auto;padding:8px 14px;background:linear-gradient(135deg,#ff7f50,#ff5050);color:#fff;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap;">📲 Push (' + (seg.count || 0) + ')</button>';
+        html += '</div>';
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+        if (withApp > 0) {
+            html += '<button onclick="openRecoveryModal(\'' + seg.tier + '\',\'' + seg.state + '\')" style="padding:8px 12px;background:linear-gradient(135deg,#ff7f50,#ff5050);color:#fff;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap;">📲 Push (' + withApp + ')</button>';
+        }
+        if (noApp > 0) {
+            html += '<button onclick="openRecoveryWhatsApp(\'' + seg.tier + '\',\'' + seg.state + '\')" style="padding:8px 12px;background:linear-gradient(135deg,#25d366,#128c4f);color:#fff;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:12px;white-space:nowrap;" title="Descargar CSV con teléfonos para campaña por WhatsApp">💬 WhatsApp (' + noApp + ')</button>';
+        }
+        html += '</div>';
         html += '</div>';
     }
     html += '</div></div>';
@@ -3007,9 +3022,10 @@ function renderRecoveryHeader(r) {
         '</div></div>';
 }
 
-function renderSegmentsMatrix(matrix, tierTotals, activityTotals) {
+function renderSegmentsMatrix(matrix, tierTotals, activityTotals, appBreakdown) {
     const el = document.getElementById('statsSegmentsMatrix');
     if (!el) return;
+    const breakdown = appBreakdown || {};
     const tiers = ['VIP', 'ORO', 'PLATA', 'BRONCE', 'NUEVO', 'SIN_DATOS'];
     const states = ['ACTIVO', 'EN_RIESGO', 'PERDIDO', 'INACTIVO', 'NUEVO'];
     const tierLabel = {VIP:'🏆 VIP', ORO:'🥇 ORO', PLATA:'🥈 PLATA', BRONCE:'🥉 BRONCE', NUEVO:'🆕 NUEVO', SIN_DATOS:'⚪ Sin datos'};
@@ -3034,12 +3050,28 @@ function renderSegmentsMatrix(matrix, tierTotals, activityTotals) {
         html += '<td style="padding:8px;color:#fff;font-weight:700;border-bottom:1px solid rgba(255,255,255,0.05);">' + tierLabel[t] + '</td>';
         for (const s of states) {
             const c = matrix[t + '-' + s] || 0;
+            const br = breakdown[t + '-' + s] || { withApp: 0, noApp: 0 };
             const isUrgent = (t === 'VIP' || t === 'ORO') && (s === 'EN_RIESGO' || s === 'PERDIDO');
             const showBtn = c > 0 && (s === 'EN_RIESGO' || s === 'PERDIDO' || s === 'INACTIVO');
             html += '<td style="padding:8px;text-align:center;background:' + cellColor[s] + ';border-bottom:1px solid rgba(255,255,255,0.05);' + (isUrgent ? 'border:2px solid #ff5050;' : '') + '">';
             html += '<div style="font-size:18px;font-weight:800;color:#fff;">' + c + '</div>';
+            // Breakdown app/no-app debajo del total
+            if (c > 0 && (br.withApp > 0 || br.noApp > 0)) {
+                html += '<div style="font-size:9.5px;color:#aaa;margin-top:2px;line-height:1.3;">';
+                html += '<span style="color:#25d366;">📱 ' + br.withApp + '</span>';
+                html += ' · ';
+                html += '<span style="color:#ffaa00;">💬 ' + br.noApp + '</span>';
+                html += '</div>';
+            }
             if (showBtn) {
-                html += '<button onclick="openRecoveryModal(\'' + t + '\',\'' + s + '\')" style="margin-top:4px;font-size:10px;padding:3px 8px;background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:4px;cursor:pointer;font-weight:600;">📲 Push</button>';
+                html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-top:4px;">';
+                if (br.withApp > 0) {
+                    html += '<button onclick="openRecoveryModal(\'' + t + '\',\'' + s + '\')" title="Mandar push a los que tienen app" style="font-size:9.5px;padding:3px 6px;background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:4px;cursor:pointer;font-weight:600;">📲</button>';
+                }
+                if (br.noApp > 0) {
+                    html += '<button onclick="openRecoveryWhatsApp(\'' + t + '\',\'' + s + '\')" title="Descargar CSV con teléfonos para WhatsApp" style="font-size:9.5px;padding:3px 6px;background:rgba(37,211,102,0.15);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:4px;cursor:pointer;font-weight:600;">💬</button>';
+                }
+                html += '</div>';
             }
             html += '</td>';
         }
@@ -3047,7 +3079,7 @@ function renderSegmentsMatrix(matrix, tierTotals, activityTotals) {
         html += '</tr>';
     }
     html += '</tbody></table>';
-    html += '<div style="margin-top:10px;color:#888;font-size:11px;">Las celdas con borde rojo (VIP/ORO en riesgo o perdidos) son las más urgentes. Tocá "📲 Push" para mandar recuperación a ese segmento (cooldown 7d por user).</div>';
+    html += '<div style="margin-top:10px;color:#888;font-size:11px;">Las celdas con borde rojo (VIP/ORO en riesgo o perdidos) son las más urgentes. <strong style="color:#25d366;">📱</strong> = con app+notifs (push directo) · <strong style="color:#ffaa00;">💬</strong> = sin app (descargar CSV para WhatsApp).</div>';
     el.innerHTML = html;
 }
 
@@ -3187,6 +3219,29 @@ function suggestStrategyFor(username, tier, status) {
     const strategy = match ? match.strategy : 'Sin recomendación';
     const why = match ? match.why : '';
     showToast('🎯 ' + username + ' (' + segKey + ')\\nEstrategia: ' + strategy + '\\nBono: ' + bonus + '\\n\\n' + why, 'info');
+}
+
+// Descarga el CSV con los users del segmento (tier+state) que NO tienen
+// app — para que el equipo arme una campaña de recontacto por WhatsApp.
+async function openRecoveryWhatsApp(tier, state) {
+    try {
+        const r = await authFetch('/api/admin/stats/segments/whatsapp-export?tier=' + encodeURIComponent(tier) + '&state=' + encodeURIComponent(state));
+        if (!r.ok) {
+            showToast('❌ Error descargando CSV (' + r.status + ')', 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'recontacto-' + tier + '-' + state + '-' + new Date().toISOString().slice(0,10) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+        showToast('✅ CSV descargado · pasalo al equipo de WhatsApp', 'success');
+    } catch (e) {
+        showToast('❌ Error: ' + (e.message || e), 'error');
+    }
 }
 
 function openRecoveryModal(tier, status) {
