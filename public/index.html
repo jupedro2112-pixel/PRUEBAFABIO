@@ -1623,6 +1623,14 @@
             display: none !important;
         }
 
+        /* Banner azul "🔄 Tocá para actualizar": el owner pidio sacarlo
+           porque ocupaba real estate prime sin aportar valor al usuario.
+           Conservamos el HTML por si algún flow llama a softRefreshHome,
+           pero el banner queda oculto. */
+        #topRefreshBanner {
+            display: none !important;
+        }
+
         /* "Total devuelto" + texto que sigue al FONDO de la pantalla.
            Antes estaba arriba; el owner pidio bajarlo. order:99 lo manda
            despues de TODO lo demas. */
