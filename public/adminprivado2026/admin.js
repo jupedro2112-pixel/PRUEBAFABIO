@@ -170,6 +170,7 @@ function showSection(sectionKey) {
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
         topEngagement: 'topEngagementSection',
+        recontact: 'recontactSection',
         topPlayers: 'topPlayersSection',
         encuesta: 'encuestaSection',
         backupPhones: 'backupPhonesSection',
@@ -221,6 +222,8 @@ function showSection(sectionKey) {
         loadWelcomeBonusReport();
     } else if (sectionKey === 'topEngagement') {
         loadStatsAll();
+    } else if (sectionKey === 'recontact') {
+        loadRecontactSection();
     } else if (sectionKey === 'topPlayers') {
         loadTopPlayers();
     } else if (sectionKey === 'encuesta') {
@@ -2550,6 +2553,261 @@ function showStatsTab(tab) {
     if (tab === 'roi') loadRoiBucket();
     if (tab === 'giveaways') loadGiveawaysHistory();
     // 'playbook' fue eliminado: ahora vive integrado en la tab 'segments'.
+}
+
+// =====================================================================
+// RECONTACTACIÓN — sección dedicada para analizar listas de inactivos y
+// armar estrategia de recuperación. Sube xlsx → análisis enriquecido →
+// CSV listo para el equipo de WhatsApp.
+// =====================================================================
+let _recontactState = { items: null, summary: null, file: null };
+
+function loadRecontactSection() {
+    const c = document.getElementById('recontactContent');
+    if (!c) return;
+    if (_recontactState.items && _recontactState.summary) {
+        c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+        _wireRecontactFilters();
+    } else {
+        c.innerHTML = _renderRecontactUploader();
+    }
+}
+
+function _renderRecontactUploader() {
+    let html = '';
+    html += '<div style="background:rgba(0,0,0,0.30);border:2px dashed rgba(0,212,255,0.40);border-radius:14px;padding:24px;text-align:center;">';
+    html += '  <div style="font-size:42px;margin-bottom:8px;">📤</div>';
+    html += '  <h3 style="color:#00d4ff;margin:0 0 8px;font-size:18px;">Subí el .xlsx con la lista a recontactar</h3>';
+    html += '  <p style="color:#bbb;font-size:12.5px;line-height:1.6;margin:0 0 14px;max-width:560px;margin-left:auto;margin-right:auto;">Una columna con usernames (admite cualquier nombre de columna, ignora encabezados). Por cada uno te decimos: tier, días sin cargar, si tiene app/notifs, equipo, teléfono, estrategia sugerida, bono y mensaje listo para WhatsApp.</p>';
+    html += '  <input type="file" id="recontactFile" accept=".xlsx,.xls" style="margin:0 auto;display:block;padding:9px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;">';
+    html += '  <button type="button" onclick="recontactAnalyze()" id="recontactAnalyzeBtn" style="margin-top:14px;padding:11px 22px;font-size:13.5px;font-weight:800;background:linear-gradient(135deg,#00d4ff,#0080ff);border:none;color:#000;border-radius:8px;cursor:pointer;letter-spacing:0.5px;">🔍 ANALIZAR LISTA</button>';
+    html += '</div>';
+    return html;
+}
+
+async function recontactAnalyze() {
+    const inp = document.getElementById('recontactFile');
+    const btn = document.getElementById('recontactAnalyzeBtn');
+    const file = inp && inp.files && inp.files[0];
+    if (!file) { showToast('Subí un archivo .xlsx primero', 'error'); return; }
+    if (file.size > 10 * 1024 * 1024) { showToast('Archivo muy grande (>10MB)', 'error'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Analizando…'; }
+    try {
+        const r = await authFetch('/api/admin/recontact/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: file
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            showToast('❌ ' + (j.error || 'Error'), 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '🔍 ANALIZAR LISTA'; }
+            return;
+        }
+        _recontactState.items = j.items || [];
+        _recontactState.summary = j.summary || {};
+        loadRecontactSection();
+        showToast('✅ ' + (j.summary.totalAnalyzed || 0) + ' usuarios analizados', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 ANALIZAR LISTA'; }
+    }
+}
+
+function recontactReset() {
+    _recontactState = { items: null, summary: null, file: null };
+    window._recontactFilters = { tier: 'all', bucket: 'all', appStatus: 'all' };
+    loadRecontactSection();
+}
+
+window._recontactFilters = window._recontactFilters || { tier: 'all', bucket: 'all', appStatus: 'all' };
+
+function _renderRecontactDashboard(summary, items) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const t = summary.tiers || {};
+    const b = summary.buckets || {};
+    const f = window._recontactFilters || { tier: 'all', bucket: 'all', appStatus: 'all' };
+
+    let html = '';
+
+    // Header con botones de acción
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">';
+    html += '  <div style="color:#00d4ff;font-weight:800;font-size:15px;">📊 Análisis de ' + fmt(summary.totalAnalyzed) + ' usuarios</div>';
+    html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '    <button type="button" onclick="recontactDownloadCsv()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:7px;cursor:pointer;">📥 Descargar CSV completo</button>';
+    html += '    <button type="button" onclick="recontactReset()" style="padding:9px 14px;font-size:12.5px;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:7px;cursor:pointer;">🔄 Subir otra lista</button>';
+    html += '  </div>';
+    html += '</div>';
+
+    // KPIs grandes
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px;">';
+    html += _kpiCard('Encontrados en base', fmt(summary.foundInDb), '#25d366', `de ${fmt(summary.totalAnalyzed)}`);
+    html += _kpiCard('No encontrados', fmt(summary.notFound), '#ff8080', 'usernames inválidos');
+    html += _kpiCard('Con app+notifs', fmt(summary.withNotifs), '#00d4ff', 'push directo');
+    html += _kpiCard('Sin app o sin notifs', fmt(summary.totalAnalyzed - summary.withNotifs), '#ffaa44', 'recontactar por WhatsApp');
+    html += _kpiCard('Bono total sugerido', '$' + fmt(summary.totalRecoverableValue || 0), '#ffd700', 'inversión recuperación');
+    html += '</div>';
+
+    // Buckets de actividad — clickables como filtro
+    html += '<div style="background:rgba(0,0,0,0.20);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '  <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Por actividad (días sin cargar) — tocá para filtrar</div>';
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;">';
+    const bucketDef = [
+        { k: 'calientes', label: '🔥 Calientes',  sub: '0-10 días',   color: '#ff5050' },
+        { k: 'enRiesgo',  label: '⚠ En riesgo',   sub: '10-20 días',  color: '#ffaa44' },
+        { k: 'perdidos',  label: '💔 Perdidos',   sub: '20-30 días',  color: '#9b30ff' },
+        { k: 'inactivos', label: '☠ Inactivos',   sub: '+30 días',    color: '#888' }
+    ];
+    for (const bk of bucketDef) {
+        const isActive = f.bucket === bk.k;
+        html += '<div onclick="_recontactFilterSet(\'bucket\',\'' + (isActive ? 'all' : bk.k) + '\')" style="cursor:pointer;background:rgba(' + _hexToRgb(bk.color) + ',0.10);border:' + (isActive ? '2px' : '1px') + ' solid ' + bk.color + ';border-radius:8px;padding:9px;">';
+        html += '  <div style="color:' + bk.color + ';font-weight:800;font-size:12px;">' + bk.label + '</div>';
+        html += '  <div style="color:#fff;font-size:22px;font-weight:900;margin-top:2px;">' + fmt(b[bk.k] || 0) + '</div>';
+        html += '  <div style="color:#888;font-size:10px;">' + bk.sub + '</div>';
+        html += '</div>';
+    }
+    html += '  </div>';
+    html += '</div>';
+
+    // Tiers — clickables como filtro
+    html += '<div style="background:rgba(0,0,0,0.20);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '  <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Por tier — tocá para filtrar</div>';
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;">';
+    const tierDef = [
+        { k: 'VIP',       label: '🏆 VIP',     color: '#ffd700' },
+        { k: 'ORO',       label: '🥇 ORO',     color: '#f7931e' },
+        { k: 'PLATA',     label: '🥈 PLATA',   color: '#c0c0c0' },
+        { k: 'BRONCE',    label: '🥉 BRONCE',  color: '#cd7f32' },
+        { k: 'NUEVO',     label: '🆕 NUEVO',   color: '#1a73e8' },
+        { k: 'SIN_DATOS', label: '⚪ Sin datos', color: '#666' }
+    ];
+    for (const td of tierDef) {
+        const isActive = f.tier === td.k;
+        html += '<div onclick="_recontactFilterSet(\'tier\',\'' + (isActive ? 'all' : td.k) + '\')" style="cursor:pointer;background:rgba(' + _hexToRgb(td.color) + ',0.10);border:' + (isActive ? '2px' : '1px') + ' solid ' + td.color + ';border-radius:8px;padding:8px;">';
+        html += '  <div style="color:' + td.color + ';font-weight:800;font-size:11.5px;">' + td.label + '</div>';
+        html += '  <div style="color:#fff;font-size:18px;font-weight:900;margin-top:2px;">' + fmt(t[td.k] || 0) + '</div>';
+        html += '</div>';
+    }
+    html += '  </div>';
+    html += '</div>';
+
+    // Filtros adicionales
+    html += '<div style="background:rgba(0,0,0,0.20);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px 12px;margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+    html += '  <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">App / Notifs:</span>';
+    const appOpts = [
+        { k: 'all', label: 'Todos' },
+        { k: 'with-notifs', label: '📱 Con app+notifs (push)' },
+        { k: 'without-app', label: '💬 Sin app (WhatsApp)' },
+        { k: 'app-no-notifs', label: '🔕 Con app pero sin notifs' }
+    ];
+    for (const o of appOpts) {
+        const active = f.appStatus === o.k;
+        html += '<button type="button" onclick="_recontactFilterSet(\'appStatus\',\'' + o.k + '\')" style="padding:5px 10px;font-size:11px;font-weight:600;background:' + (active ? 'rgba(0,212,255,0.20)' : 'rgba(255,255,255,0.04)') + ';border:1px solid ' + (active ? '#00d4ff' : 'rgba(255,255,255,0.15)') + ';color:' + (active ? '#00d4ff' : '#bbb') + ';border-radius:6px;cursor:pointer;">' + o.label + '</button>';
+    }
+    html += '</div>';
+
+    // Tabla con items filtrados
+    const filtered = _filterRecontactItems(items, f);
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">';
+    html += '    <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Mostrando ' + filtered.length + ' de ' + items.length + ' (top por prioridad)</span>';
+    html += '  </div>';
+    html += '  <div style="overflow-x:auto;max-height:60vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:980px;">';
+    html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">#</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Usuario</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tier</th>';
+    html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Días</th>';
+    html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">$ 30d</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tel</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estrategia</th>';
+    html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Bono</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Mensaje sugerido</th>';
+    html += '  </tr></thead><tbody>';
+    const tierColor = { VIP: '#ffd700', ORO: '#f7931e', PLATA: '#c0c0c0', BRONCE: '#cd7f32', NUEVO: '#1a73e8', SIN_DATOS: '#666' };
+    const bucketColor = { calientes: '#ff5050', enRiesgo: '#ffaa44', perdidos: '#9b30ff', inactivos: '#888' };
+    const max = 500; // cap visual
+    const sliced = filtered.slice(0, max);
+    for (let i = 0; i < sliced.length; i++) {
+        const it = sliced[i];
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+        html += '  <td style="padding:5px 10px;color:#888;">' + (i + 1) + '</td>';
+        html += '  <td style="padding:5px 10px;color:#fff;font-weight:600;">' + escapeHtml(it.username || '') + '</td>';
+        html += '  <td style="padding:5px 10px;color:' + (tierColor[it.tier] || '#aaa') + ';font-weight:700;">' + escapeHtml(it.tier || '—') + '</td>';
+        html += '  <td style="padding:5px 10px;text-align:right;color:' + (bucketColor[it.bucket] || '#aaa') + ';font-family:monospace;">' + (it.daysSinceLastDeposit == null ? '—' : it.daysSinceLastDeposit) + '</td>';
+        html += '  <td style="padding:5px 10px;text-align:right;color:#fff;">' + (it.deposits30d ? '$' + fmt(it.deposits30d) : '—') + '</td>';
+        html += '  <td style="padding:5px 10px;">' + (it.hasApp ? (it.hasNotifs ? '<span style="color:#25d366;">📱✓</span>' : '<span style="color:#ffaa44;">📱🔕</span>') : '<span style="color:#888;">—</span>') + '</td>';
+        html += '  <td style="padding:5px 10px;color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.phone || '—') + '</td>';
+        html += '  <td style="padding:5px 10px;color:#ffd700;font-weight:600;font-size:11px;">' + escapeHtml(it.strategy || '—') + '</td>';
+        html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;font-weight:700;">$' + fmt(it.suggestedBonus || 0) + '</td>';
+        html += '  <td style="padding:5px 10px;color:#ddd;font-size:11px;max-width:340px;">' + escapeHtml(it.suggestedMessage || '') + '</td>';
+        html += '</tr>';
+    }
+    if (filtered.length > max) {
+        html += '<tr><td colspan="10" style="padding:10px;text-align:center;color:#666;font-style:italic;">... ' + (filtered.length - max) + ' más en el CSV completo</td></tr>';
+    }
+    html += '  </tbody></table>';
+    html += '</div></div>';
+
+    return html;
+}
+
+function _kpiCard(label, value, color, sub) {
+    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 12px;">' +
+        '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">' + escapeHtml(label) + '</div>' +
+        '<div style="color:' + color + ';font-size:20px;font-weight:900;line-height:1;">' + escapeHtml(value) + '</div>' +
+        (sub ? '<div style="color:#aaa;font-size:10px;margin-top:3px;">' + escapeHtml(sub) + '</div>' : '') +
+    '</div>';
+}
+
+function _filterRecontactItems(items, filters) {
+    return items.filter(it => {
+        if (filters.tier && filters.tier !== 'all' && it.tier !== filters.tier) return false;
+        if (filters.bucket && filters.bucket !== 'all' && it.bucket !== filters.bucket) return false;
+        if (filters.appStatus === 'with-notifs' && !it.hasNotifs) return false;
+        if (filters.appStatus === 'without-app' && it.hasApp) return false;
+        if (filters.appStatus === 'app-no-notifs' && !(it.hasApp && !it.hasNotifs)) return false;
+        return true;
+    });
+}
+
+function _recontactFilterSet(key, value) {
+    if (!window._recontactFilters) window._recontactFilters = {};
+    window._recontactFilters[key] = value;
+    loadRecontactSection();
+}
+
+function _wireRecontactFilters() {
+    // No hay handlers extras por ahora — los onclicks están inline.
+}
+
+async function recontactDownloadCsv() {
+    const items = _recontactState.items || [];
+    if (items.length === 0) { showToast('No hay datos para exportar', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/recontact/export.csv', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items })
+        });
+        if (!r.ok) {
+            showToast('Error descargando CSV (' + r.status + ')', 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'recontactacion-' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+        showToast('✅ CSV descargado', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 async function loadStatsAll() {

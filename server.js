@@ -8337,6 +8337,291 @@ app.get('/api/admin/user-lines/line-activity-stats', authMiddleware, adminMiddle
   }
 });
 
+// =====================================================================
+// RECONTACTACIÓN — análisis de una lista cargada por el admin para armar
+// estrategia de recuperación de clientes inactivos.
+//
+// Recibe un .xlsx con usernames (una columna). Para cada uno:
+//   - Cruza con User (linePhone, fcmToken, fcmTokens, notifPermission, phone)
+//   - Cruza con PlayerStats (tier, lastRealDepositDate, realDeposits30d, totalDeposits)
+//   - Clasifica en bucket (calientes/en riesgo/perdidos/inactivos)
+//   - Sugiere estrategia + monto de bono según matriz tier × bucket
+//   - Marca si tiene app+notifs (target push) o no (target WhatsApp)
+//
+// Devuelve dashboard completo + items enriquecidos para tabla y CSV.
+// =====================================================================
+const RECONTACT_STRATEGY_MATRIX = {
+  VIP: {
+    calientes: { strat: 'mantener-engagement',  bonus: 5000,  msg: 'Seguís activo. Bono cortesía VIP de $X para tu próxima carga.' },
+    enRiesgo:  { strat: 'bono-personalizado',   bonus: 8000,  msg: 'Hace unos días no te vemos. Bono de $X esperándote — VIP no se pierde.' },
+    perdidos:  { strat: 'bono-fuerte-vip',      bonus: 15000, msg: 'Volvé hoy: bono PREMIUM de $X + atención prioritaria.' },
+    inactivos: { strat: '🚨 ALERTA ROJA',       bonus: 30000, msg: 'Bono ESPECIAL VIP de $X + mensaje del dueño + acceso prioritario.' }
+  },
+  ORO: {
+    calientes: { strat: 'cortesía-oro',         bonus: 2000,  msg: 'Bono ORO de $X de regalo.' },
+    enRiesgo:  { strat: 'bono-mediano',         bonus: 4000,  msg: 'Volvé y tenés $X de bono + 50% extra en cargas.' },
+    perdidos:  { strat: 'bono-grande',          bonus: 7000,  msg: 'Te extrañamos! $X de bono + 100% en tu próxima carga.' },
+    inactivos: { strat: 'bono-recuperacion',    bonus: 12000, msg: 'Bono de regreso ORO: $X + WhatsApp directo del equipo.' }
+  },
+  PLATA: {
+    calientes: { strat: 'cortesía-plata',       bonus: 1000,  msg: '$X de cortesía para que sigas tirando.' },
+    enRiesgo:  { strat: 'reactivar',            bonus: 2000,  msg: 'Bono $X — no te pierdas.' },
+    perdidos:  { strat: 'bono-mediano',         bonus: 3500,  msg: 'Vení por tu bono de $X.' },
+    inactivos: { strat: 'bono-recuperacion',    bonus: 5000,  msg: 'Bono recuperación PLATA: $X esperándote.' }
+  },
+  BRONCE: {
+    calientes: { strat: 'cortesía-bronce',      bonus: 500,   msg: '$X de bono de regreso.' },
+    enRiesgo:  { strat: 'subir-ticket',         bonus: 1000,  msg: 'Cargá $10k y te damos $X extra.' },
+    perdidos:  { strat: 'bono-minimo',          bonus: 1500,  msg: 'Bono $X mínimo de bienvenida de regreso.' },
+    inactivos: { strat: 'bono-recuperacion',    bonus: 2500,  msg: 'Bono $X — última invitación.' }
+  },
+  NUEVO: {
+    calientes: { strat: 'onboarding',           bonus: 1000,  msg: 'Bienvenido! Cargá y te damos $X de bono.' },
+    enRiesgo:  { strat: 'onboarding-suave',     bonus: 2000,  msg: 'No te conocemos todavía. Bono $X cuando arrancás.' },
+    perdidos:  { strat: 'onboarding-fuerte',    bonus: 3000,  msg: 'Bono $X especial para que te animes.' },
+    inactivos: { strat: 'last-chance',          bonus: 5000,  msg: 'Última oportunidad: $X de regalo + 50% en primera carga.' }
+  },
+  SIN_DATOS: {
+    calientes: { strat: 'datos-faltantes',      bonus: 1000,  msg: 'Bono cortesía $X.' },
+    enRiesgo:  { strat: 'datos-faltantes',      bonus: 1500,  msg: 'Bono $X de reactivación.' },
+    perdidos:  { strat: 'datos-faltantes',      bonus: 2000,  msg: 'Bono $X.' },
+    inactivos: { strat: 'datos-faltantes',      bonus: 3000,  msg: 'Bono recuperación $X.' }
+  }
+};
+
+function _recontactSuggest(tier, bucket, hasApp, hasNotifs) {
+  const tierKey = (tier || 'SIN_DATOS').toUpperCase();
+  const m = (RECONTACT_STRATEGY_MATRIX[tierKey] || RECONTACT_STRATEGY_MATRIX.SIN_DATOS)[bucket] ||
+            RECONTACT_STRATEGY_MATRIX.SIN_DATOS.inactivos;
+  const parts = [];
+  parts.push(m.msg.replace('$X', '$' + Number(m.bonus).toLocaleString('es-AR')));
+  if (!hasApp) parts.push('+ Instalá la app y te damos $2.000 extra de bono.');
+  else if (!hasNotifs) parts.push('+ Activá las notificaciones para no perderte regalos.');
+  return {
+    strategy: m.strat,
+    bonus: m.bonus,
+    message: parts.join(' '),
+    addAppOffer: !hasApp,
+    addNotifsOffer: hasApp && !hasNotifs
+  };
+}
+
+// Prioridad: combinación de tier weight + bucket weight (para ordenar lista)
+function _recontactPriority(tier, bucket, lastDeposits30d) {
+  const tw = { VIP: 100, ORO: 70, PLATA: 40, BRONCE: 20, NUEVO: 30, SIN_DATOS: 10 }[(tier || 'SIN_DATOS').toUpperCase()] || 10;
+  const bw = { calientes: 0.3, enRiesgo: 0.7, perdidos: 1.0, inactivos: 0.8 }[bucket] || 0.5;
+  return Math.round(tw * bw + (lastDeposits30d || 0) / 1000);
+}
+
+app.post(
+  '/api/admin/recontact/analyze',
+  authMiddleware,
+  adminMiddleware,
+  express.raw({ limit: '10mb', type: '*/*' }),
+  async (req, res) => {
+    let XLSX;
+    try { XLSX = require('xlsx'); }
+    catch (_) { return res.status(503).json({ error: 'Falta dependencia "xlsx"' }); }
+
+    try {
+      const buf = req.body;
+      if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
+        return res.status(400).json({ error: 'Archivo vacío o muy chico' });
+      }
+      let workbook;
+      try { workbook = XLSX.read(buf, { type: 'buffer', cellDates: false }); }
+      catch (e) { return res.status(400).json({ error: `No se pudo leer el .xlsx: ${e.message}` }); }
+
+      // Sacar usernames únicos del workbook (recorre todas las hojas, primera columna).
+      const seen = new Set();
+      const inputUsernames = [];
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: null });
+        for (const row of rows) {
+          if (!Array.isArray(row) || row.length === 0) continue;
+          const cell = row[0];
+          if (cell == null) continue;
+          const v = String(cell).trim();
+          if (!v) continue;
+          // Skip header rows típicos
+          const lower = v.toLowerCase();
+          if (lower === 'username' || lower === 'usuario' || lower === 'user') continue;
+          const norm = lower.replace(/[^a-z0-9]/g, '');
+          if (!norm || seen.has(norm)) continue;
+          seen.add(norm);
+          inputUsernames.push({ original: v, norm });
+        }
+      }
+
+      if (inputUsernames.length === 0) {
+        return res.status(400).json({ error: 'No se encontraron usernames en el archivo' });
+      }
+      if (inputUsernames.length > 50000) {
+        return res.status(413).json({ error: 'Archivo demasiado grande (>50k usernames)' });
+      }
+
+      // Lookup batch contra User y PlayerStats.
+      const norms = inputUsernames.map(u => u.norm);
+      const [users, stats] = await Promise.all([
+        User.find(
+          { username: { $in: norms } },
+          { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
+        ).lean(),
+        PlayerStats.find(
+          { username: { $in: norms } },
+          { username: 1, tier: 1, activityStatus: 1, lastRealDepositDate: 1, realDeposits30d: 1, realDeposits90d: 1, totalRealDeposits: 1, _id: 0 }
+        ).lean()
+      ]);
+      const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
+      const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+
+      const now = Date.now();
+      const DAY = 24 * 60 * 60 * 1000;
+      const items = [];
+      const summary = {
+        totalAnalyzed: inputUsernames.length,
+        foundInDb: 0, notFound: 0,
+        withApp: 0, withoutApp: 0,
+        withNotifs: 0, withoutNotifs: 0,
+        buckets: { calientes: 0, enRiesgo: 0, perdidos: 0, inactivos: 0 },
+        tiers: { VIP: 0, ORO: 0, PLATA: 0, BRONCE: 0, NUEVO: 0, SIN_DATOS: 0 },
+        totalRecoverableValue: 0,
+        sumDeposits30d: 0,
+        sumDeposits90d: 0,
+        sumTotalDeposits: 0
+      };
+
+      for (const inp of inputUsernames) {
+        const u = userMap.get(inp.norm);
+        const s = statsMap.get(inp.norm);
+        if (u) summary.foundInDb++;
+        else summary.notFound++;
+
+        const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
+        const hasNotifs = hasApp && (
+          (u && u.notifPermission === 'granted') ||
+          (u && Array.isArray(u.fcmTokens) && u.fcmTokens.some(t => t && t.notifPermission === 'granted'))
+        );
+        if (hasApp) summary.withApp++; else summary.withoutApp++;
+        if (hasNotifs) summary.withNotifs++; else summary.withoutNotifs++;
+
+        const lastDep = s && s.lastRealDepositDate ? new Date(s.lastRealDepositDate).getTime() : null;
+        let bucket = 'inactivos';
+        let daysSince = null;
+        if (lastDep) {
+          daysSince = Math.floor((now - lastDep) / DAY);
+          if (daysSince <= 10) bucket = 'calientes';
+          else if (daysSince <= 20) bucket = 'enRiesgo';
+          else if (daysSince <= 30) bucket = 'perdidos';
+          else bucket = 'inactivos';
+        }
+        summary.buckets[bucket]++;
+
+        const tier = (s && s.tier) ? String(s.tier).toUpperCase() : 'SIN_DATOS';
+        if (summary.tiers[tier] != null) summary.tiers[tier]++;
+        else summary.tiers.SIN_DATOS++;
+
+        const sugg = _recontactSuggest(tier, bucket, hasApp, hasNotifs);
+        const priority = _recontactPriority(tier, bucket, s && s.realDeposits30d);
+        summary.totalRecoverableValue += sugg.bonus;
+        summary.sumDeposits30d += (s && s.realDeposits30d) || 0;
+        summary.sumDeposits90d += (s && s.realDeposits90d) || 0;
+        summary.sumTotalDeposits += (s && s.totalRealDeposits) || 0;
+
+        items.push({
+          username: inp.original,
+          tier,
+          bucket,
+          daysSinceLastDeposit: daysSince,
+          lastDepositAt: lastDep ? new Date(lastDep).toISOString() : null,
+          deposits30d: (s && s.realDeposits30d) || 0,
+          deposits90d: (s && s.realDeposits90d) || 0,
+          totalDeposits: (s && s.totalRealDeposits) || 0,
+          team: u ? (u.lineTeamName || null) : null,
+          linePhone: u ? (u.linePhone || null) : null,
+          phone: u ? (u.phone || null) : null,
+          hasApp,
+          hasNotifs,
+          registered: !!u,
+          strategy: sugg.strategy,
+          suggestedBonus: sugg.bonus,
+          suggestedMessage: sugg.message,
+          addAppOffer: sugg.addAppOffer,
+          addNotifsOffer: sugg.addNotifsOffer,
+          priority
+        });
+      }
+
+      // Ordenar por prioridad descendente.
+      items.sort((a, b) => b.priority - a.priority);
+
+      logger.info(`[recontact/analyze] analyzed=${summary.totalAnalyzed} found=${summary.foundInDb} byBucket=${JSON.stringify(summary.buckets)} byTier=${JSON.stringify(summary.tiers)} by=${(req.user && req.user.username) || 'admin'}`);
+
+      res.json({
+        success: true,
+        summary,
+        items
+      });
+    } catch (err) {
+      logger.error(`[recontact/analyze] error: ${err.message}\n${err.stack}`);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// CSV con todos los items enriquecidos. Se manda en POST porque no podemos
+// guardar el archivo en el server — el admin manda el xlsx de nuevo y
+// recibimos el CSV directo. Así evitamos persistir state intermedio.
+app.post(
+  '/api/admin/recontact/export.csv',
+  authMiddleware,
+  adminMiddleware,
+  express.json({ limit: '20mb' }),
+  async (req, res) => {
+    try {
+      const items = (req.body && req.body.items) || [];
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'No hay items para exportar' });
+      }
+      const escape = (v) => {
+        const s = (v == null ? '' : String(v));
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      const lines = ['Prioridad,Usuario,Tier,Bucket,DiasSinCargar,Cargas30d,Cargas90d,TotalCargas,TieneApp,TieneNotifs,Equipo,Linea,Telefono,Estrategia,BonoSugerido,MensajeSugerido,OfreceApp,OfreceNotifs'];
+      for (const it of items) {
+        lines.push([
+          escape(it.priority),
+          escape(it.username),
+          escape(it.tier),
+          escape(it.bucket),
+          escape(it.daysSinceLastDeposit),
+          escape(it.deposits30d),
+          escape(it.deposits90d),
+          escape(it.totalDeposits),
+          escape(it.hasApp ? 'Si' : 'No'),
+          escape(it.hasNotifs ? 'Si' : 'No'),
+          escape(it.team || ''),
+          escape(it.linePhone || ''),
+          escape(it.phone || ''),
+          escape(it.strategy),
+          escape(it.suggestedBonus),
+          escape(it.suggestedMessage),
+          escape(it.addAppOffer ? 'Si' : 'No'),
+          escape(it.addNotifsOffer ? 'Si' : 'No')
+        ].join(','));
+      }
+      const csv = '﻿' + lines.join('\r\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="recontactacion-${new Date().toISOString().slice(0,10)}.csv"`);
+      res.send(csv);
+    } catch (err) {
+      logger.error(`[recontact/export.csv] error: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 // Cambiar el TELÉFONO de UNA línea sin afectar nada más. Actualiza User
 // y UserLineLookup. NO manda push de aviso (eso es lineDown). Útil cuando
 // el admin solo quiere corregir un número mal cargado.
