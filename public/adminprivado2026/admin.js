@@ -5067,6 +5067,7 @@ function _renderTeamCard(t, isExpanded) {
             html += '<td style="padding:8px;color:#aaa;font-size:10.5px;" id="' + rowId + '-lastfile">⏳</td>';
             // Celda Acciones
             html += '<td style="padding:6px 8px;text-align:center;white-space:nowrap;">';
+            html += '<button type="button" onclick="teamLineRename(' + teamArg + ',' + phoneArg + ')" title="Cambiar el nombre de esta línea" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(255,235,59,0.10);border:1px solid rgba(255,235,59,0.40);color:#ffeb3b;border-radius:5px;cursor:pointer;margin-right:4px;">✏️</button>';
             html += '<button type="button" onclick="teamLineUploadXlsx(' + teamArg + ',' + phoneArg + ')" title="Cargar/actualizar listado .xlsx (no rompe lo que ya está)" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:5px;cursor:pointer;margin-right:4px;">📤</button>';
             html += '<button type="button" onclick="teamLineShowList(' + teamArg + ',' + phoneArg + ')" title="Ver lista cargada" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:5px;cursor:pointer;margin-right:4px;">👁</button>';
             html += '<button type="button" onclick="teamLineShowHistory(' + teamArg + ',' + phoneArg + ')" title="Historial de cargas .xlsx" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:5px;cursor:pointer;margin-right:4px;">📅</button>';
@@ -5340,6 +5341,47 @@ async function teamLineUploadConfirm(teamName, linePhone) {
     if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
     // Refrescar Equipos (para que la celda "Último archivo" se actualice).
     setTimeout(() => { try { loadTeams(); } catch (_) {} }, 600);
+}
+
+// Renombra UNA línea (cambia la etiqueta después de "Equipo · "). NO toca
+// el linePhone ni otras líneas del equipo. Pregunta el nuevo label con prompt.
+async function teamLineRename(teamName, linePhone) {
+    if (!teamName || !linePhone) {
+        showToast('Falta team o linePhone', 'error');
+        return;
+    }
+    // Extraer label actual (parte después de " · " si existe).
+    const sepIdx = teamName.indexOf(' · ');
+    const currentLabel = sepIdx >= 0 ? teamName.slice(sepIdx + 3) : '';
+    const teamPrefix = sepIdx >= 0 ? teamName.slice(0, sepIdx) : teamName;
+    const promptMsg = 'Nuevo nombre de la línea para el equipo "' + teamPrefix + '":\n\n(Ej: "Línea 1", "Principal", "Backup". Dejá vacío para que quede solo "' + teamPrefix + '" sin sub-etiqueta.)';
+    const newLabel = prompt(promptMsg, currentLabel || '');
+    if (newLabel === null) return; // canceló
+    const trimmed = newLabel.trim();
+    if (trimmed === currentLabel) {
+        showToast('No cambió el nombre', 'info');
+        return;
+    }
+    if (trimmed.length > 32) {
+        showToast('Máximo 32 caracteres', 'error');
+        return;
+    }
+    try {
+        const r = await authFetch('/api/admin/user-lines/rename-line', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ teamName, linePhone, newLabel: trimmed })
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            showToast('❌ ' + (j.error || 'Error'), 'error');
+            return;
+        }
+        showToast('✅ Línea renombrada: "' + j.oldName + '" → "' + j.newName + '" (' + (j.usersUpdated || 0) + ' users)', 'success');
+        try { loadTeams(); } catch (_) {}
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 // Diagnóstico de una línea: muestra cuántos users están bien (en xlsx) vs

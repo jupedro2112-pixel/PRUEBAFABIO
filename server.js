@@ -8206,6 +8206,52 @@ app.post('/api/admin/user-lines/reassign-orphans', authMiddleware, adminMiddlewa
   }
 });
 
+// Renombrar UNA línea (cambiar la etiqueta después de "Equipo · ").
+// Recibe: { teamName (label completo actual, ej "Oro · Línea 1"), linePhone,
+//          newLabel (la parte después del " · " — si vacío, queda solo "Oro") }
+// Actualiza User.lineTeamName y UserLineLookup.lineTeamName en bloque.
+// NO afecta otras líneas del equipo ni el linePhone.
+app.post('/api/admin/user-lines/rename-line', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String((req.body && req.body.teamName) || '').trim();
+    const linePhone = String((req.body && req.body.linePhone) || '').trim();
+    const newLabel = String((req.body && req.body.newLabel) || '').trim().slice(0, 32);
+    if (!teamName) return res.status(400).json({ error: 'Falta teamName' });
+    if (!linePhone) return res.status(400).json({ error: 'Falta linePhone' });
+
+    // Calcular el nuevo fullLabel respetando el prefix del equipo.
+    const sepIdx = teamName.indexOf(' · ');
+    const teamPrefix = sepIdx >= 0 ? teamName.slice(0, sepIdx) : teamName;
+    const newFullLabel = newLabel ? `${teamPrefix} · ${newLabel}` : teamPrefix;
+
+    if (newFullLabel === teamName) {
+      return res.status(400).json({ error: 'El nombre nuevo es igual al actual' });
+    }
+
+    const userResult = await User.updateMany(
+      { lineTeamName: teamName, linePhone },
+      { $set: { lineTeamName: newFullLabel, lineAssignedAt: new Date(), lineAssignedBy: (req.user && req.user.username) || 'admin', lineAssignmentNote: 'Renombrado: ' + teamName + ' → ' + newFullLabel } }
+    );
+    const lookupResult = await UserLineLookup.updateMany(
+      { lineTeamName: teamName, linePhone },
+      { $set: { lineTeamName: newFullLabel } }
+    );
+
+    logger.info(`[user-lines/rename-line] "${teamName}" → "${newFullLabel}" phone=${linePhone} usersUpdated=${userResult.modifiedCount || 0} lookupUpdated=${lookupResult.modifiedCount || 0} by=${(req.user && req.user.username) || 'admin'}`);
+
+    res.json({
+      success: true,
+      oldName: teamName,
+      newName: newFullLabel,
+      usersUpdated: userResult.modifiedCount || 0,
+      lookupUpdated: lookupResult.modifiedCount || 0
+    });
+  } catch (error) {
+    logger.error(`[user-lines/rename-line] error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // Diagnóstico: para una línea específica, devuelve detalles de la asignación
 // de cada user (cuándo se asignó, source, si tiene match en xlsx). Sirve
 // para auditar si un merge dejó users en la línea correcta o si quedaron
