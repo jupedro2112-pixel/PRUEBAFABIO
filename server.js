@@ -1290,6 +1290,18 @@ const authMiddleware = async (req, res, next) => {
       return res.status(403).json(VIP_BLOCK_RESPONSE);
     }
 
+    // Bloqueo por fraude: rechazar token de cuenta flaggeada por intento
+    // de estafa (ver _isWelcomeBlockedByIp). Excluimos roles staff por
+    // las dudas, mismo criterio que VIP block.
+    if (user.fraudBlocked && !_vipExemptRoles.includes(user.role)) {
+      return res.status(403).json({
+        error: 'Usuario bloqueado por intento de estafa de bono.',
+        message: user.fraudReason || 'Cuenta bloqueada.',
+        code: 'FRAUD_BLOCKED',
+        fraudBlocked: true
+      });
+    }
+
     req.user = decoded;
 
     // Touch lastSeenApp en PlayerStats (fire-and-forget, no bloquea request).
@@ -9917,15 +9929,36 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
       }
 
       // Anti-fraude por IP: si otra cuenta ya cobró desde la misma IP,
-      // bloquear (uninstall + cuenta JUGAYGANA nueva = misma persona).
+      // FLAGGEAR la cuenta como fraud_blocked y rechazar. El próximo login
+      // de este user queda rechazado con el motivo, y cualquier claim
+      // futuro también. El acto de intentar reclamar desde una IP donde
+      // ya cobraron es la evidencia del intento de estafa.
       const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
       if (ipBlock.blocked) {
-        return res.json({
+        const fraudReason = 'Intento de reclamo de bono desde IP duplicada (cobrado previamente por ' + (ipBlock.otherUsername || '?') + ').';
+        try {
+          await User.updateOne(
+            { id: userId },
+            { $set: {
+                fraudBlocked: true,
+                fraudReason,
+                fraudBlockedAt: new Date(),
+                fraudBlockedIp: ipBlock.ip || _getClientIp(req)
+              } }
+          );
+          logger.warn(`[FRAUD-BLOCK] ${username} bloqueado por intento de reclamo duplicado de welcome bonus desde ${ipBlock.ip} (otro user previo: ${ipBlock.otherUsername})`);
+        } catch (e) {
+          logger.warn(`[FRAUD-BLOCK] no se pudo flaggear ${username}: ${e.message}`);
+        }
+        return res.status(403).json({
           success: false,
-          message: 'Ya se reclamó el bono de bienvenida desde esta conexión. El bono es por persona, no por cuenta.',
+          message: 'Usuario bloqueado por intento de estafa de bono.',
           canClaim: false,
           claimed: true,
-          blockedReason: 'duplicate_ip'
+          blockedReason: 'fraud_block',
+          fraudBlocked: true,
+          // code triggerea el overlay global #fraudBlockOverlay en la PWA
+          code: 'FRAUD_BLOCKED'
         });
       }
 

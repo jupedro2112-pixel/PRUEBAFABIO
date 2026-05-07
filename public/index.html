@@ -5161,6 +5161,8 @@
             resp.clone().json().then(function (data) {
               if (data && data.code === 'VIP_USER') {
                 window.showVipBlockOverlay(data);
+              } else if (data && data.code === 'FRAUD_BLOCKED') {
+                window.showFraudBlockOverlay(data);
               }
             }).catch(function () { /* no era JSON, ignorar */ });
           }
@@ -5168,6 +5170,36 @@
         });
       };
     })();
+    </script>
+
+    <!-- ============================================
+         BLOQUEO POR FRAUDE: overlay full-screen para usuarios cuya cuenta
+         fue flaggeada por intento de reclamo duplicado del welcome bonus
+         desde una IP donde otro usuario ya cobró. Mensaje claro: "Usuario
+         bloqueado por intento de estafa de bono".
+         ============================================ -->
+    <div id="fraudBlockOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#330000 0%,#1a0000 100%);align-items:center;justify-content:center;padding:24px;">
+      <div style="max-width:440px;width:100%;text-align:center;color:#fff;font-family:system-ui;">
+        <div style="font-size:64px;margin-bottom:14px;">🚫</div>
+        <h1 style="margin:0 0 8px;color:#ff6b6b;font-size:22px;font-weight:900;">USUARIO BLOQUEADO</h1>
+        <p style="margin:0 0 16px;color:#ddd;font-size:15px;line-height:1.5;">Por <strong style="color:#ff6b6b;">intento de estafa de bono</strong>.</p>
+        <div style="background:rgba(255,107,107,0.10);border:1.5px solid #ff6b6b;border-radius:12px;padding:14px;margin-bottom:18px;">
+          <p style="margin:0 0 6px;color:#fff;font-size:13.5px;line-height:1.5;">Detectamos que ya se reclamó el bono de bienvenida desde tu conexión bajo otra cuenta.</p>
+          <p style="margin:0;color:#aaa;font-size:12px;line-height:1.4;font-style:italic;">El bono es por persona, no por cuenta. Reclamar más de una vez se considera intento de fraude.</p>
+        </div>
+        <div style="color:#aaa;font-size:11.5px;line-height:1.5;">Si creés que es un error, contactá al soporte por WhatsApp.</div>
+      </div>
+    </div>
+    <script>
+    window.showFraudBlockOverlay = function (data) {
+      try {
+        localStorage.removeItem('userToken');
+        localStorage.removeItem('token');
+        sessionStorage.removeItem('userToken');
+      } catch (_) {}
+      var ov = document.getElementById('fraudBlockOverlay');
+      if (ov) ov.style.display = 'flex';
+    };
     </script>
 
     <!-- ============================================

@@ -333,6 +333,16 @@ const userSchema = new mongoose.Schema({
   },
   notifPreferenceAt: { type: Date, default: null },
 
+  // Fraud block: cuenta bloqueada por intento de estafa de bono.
+  // Se setea cuando intentan reclamar el welcome bonus desde una IP que
+  // ya cobró bajo otra cuenta. Cualquier login subsiguiente queda
+  // rechazado con `fraudReason` como motivo. Cualquier claim queda
+  // rechazado igual aunque tengan token viejo válido.
+  fraudBlocked: { type: Boolean, default: false, index: true },
+  fraudReason: { type: String, default: null },
+  fraudBlockedAt: { type: Date, default: null },
+  fraudBlockedIp: { type: String, default: null },
+
   // Win-back automático (estrategia de recuperación). Tier actual:
   //   0 = activo / nunca disparado
   //   1 = recibió tier1 (te extrañamos)
