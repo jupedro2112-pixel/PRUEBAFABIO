@@ -43,7 +43,9 @@ const {
   RaffleParticipation,
   RaffleSpend,
   WeeklyCalendarPlan,
-  Segment
+  Segment,
+  MasterAnalysisSnapshot,
+  NotifStrategyConfig
 } = require('../src/models');
 
 // ============================================
@@ -360,6 +362,8 @@ module.exports = {
   RaffleSpend,
   WeeklyCalendarPlan,
   Segment,
+  MasterAnalysisSnapshot,
+  NotifStrategyConfig,
   // Helpers
   getConfig,
   setConfig,
