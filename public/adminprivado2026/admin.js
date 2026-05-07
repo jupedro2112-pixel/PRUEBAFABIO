@@ -13648,7 +13648,14 @@ async function toggleNotifStrategy(activate) {
             showToast('❌ ' + (d.error || 'Error'), 'error');
             return;
         }
-        showToast('✅ Estrategia ' + (activate ? 'activa' : 'desactivada'), 'success');
+        const act = d._activation || null;
+        if (activate && act) {
+            const sch = act.scheduled || {};
+            const msg = '✅ Activa · ' + (sch.totalPushes || 0) + ' notifs programadas para ' + (sch.totalUsers || 0) + ' users';
+            showToast(msg, 'success');
+        } else {
+            showToast('✅ Estrategia ' + (activate ? 'activa' : 'desactivada') + (act && act.cancelledPending ? ' · ' + act.cancelledPending + ' cancelados' : ''), 'success');
+        }
         _ENCUESTA_CACHE.strategy = d;
         const c = document.getElementById('encuestaContent');
         if (c) c.innerHTML = _renderEncuesta();
@@ -13699,25 +13706,61 @@ function _renderStrategySchedule(d) {
     const w = d.window || { startHour: 18, endHour: 21, label: '18:00 a 21:00' };
     const tierLabels = { suave: '🟢 SUAVE', normal: '🟡 NORMAL', activo: '🔴 ACTIVO', solo_reembolsos: '🔔 SOLO REEMB' };
     const tierColors = { suave: '#66ff66', normal: '#ffd700', activo: '#ff8c5a', solo_reembolsos: '#00d4ff' };
+    const catLabels = { bonos: '🎁 Bonos', juegos: '🎰 Juegos', regalos: '💎 Regalos', otros: '📌 Otros' };
+    const catColors = { bonos: '#ffd700', juegos: '#9d4edd', regalos: '#25d366', otros: '#aaa' };
     const tc = d.tierCounts || {};
+    const cc = d.categoryCounts || {};
+    const daily = d.dailyDistribution || [];
     const items = d.items || [];
 
     let html = '';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
-    html += '  <h3 style="margin:0;color:#66ff66;font-size:18px;">📅 Calendario de envíos</h3>';
+    html += '  <h3 style="margin:0;color:#66ff66;font-size:18px;">📅 Calendario de envíos · ' + escapeHtml(d.monthKey || '') + '</h3>';
     html += '  <button type="button" onclick="closeStrategyScheduleModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    // Header con totales grandes
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px;">';
+    html += '  <div style="background:rgba(102,255,102,0.08);border:1px solid rgba(102,255,102,0.40);border-radius:10px;padding:12px;">';
+    html += '    <div style="color:#66ff66;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Total programado</div>';
+    html += '    <div style="color:#fff;font-size:24px;font-weight:900;">' + (d.pendingTotal || 0) + '</div>';
+    html += '    <div style="color:#888;font-size:10px;">notifs pendientes</div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.40);border-radius:10px;padding:12px;">';
+    html += '    <div style="color:#d4af37;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Usuarios incluidos</div>';
+    html += '    <div style="color:#fff;font-size:24px;font-weight:900;">' + (d.uniqueUsers || 0) + '</div>';
+    html += '    <div style="color:#888;font-size:10px;">distintos</div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(31,140,255,0.08);border:1px solid rgba(31,140,255,0.40);border-radius:10px;padding:12px;">';
+    html += '    <div style="color:#1f8cff;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Días con envíos</div>';
+    html += '    <div style="color:#fff;font-size:24px;font-weight:900;">' + daily.length + '</div>';
+    html += '    <div style="color:#888;font-size:10px;">del mes en curso</div>';
+    html += '  </div>';
     html += '</div>';
 
     // Ventana configurada
     html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
     html += '  <div style="color:#66ff66;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Ventana horaria</div>';
     html += '  <div style="color:#fff;font-size:18px;font-weight:800;">' + escapeHtml(w.label) + '</div>';
-    html += '  <div style="color:#bbb;font-size:11px;margin-top:4px;line-height:1.5;">Cada usuario recibe la notificación a una hora <strong>random</strong> dentro de esta ventana. Si la ventana de hoy ya pasó cuando se dispara la wave, los envíos se reprograman automáticamente para mañana.</div>';
+    html += '  <div style="color:#bbb;font-size:11px;margin-top:4px;line-height:1.5;">Cada usuario recibe sus notificaciones a horas <strong>random</strong> distintas dentro de esta ventana, repartidas en días distintos del mes.</div>';
     html += '</div>';
 
-    // Resumen por tier
+    // Desglose por categoría
+    html += '<div style="background:rgba(157,78,221,0.06);border:1px solid rgba(157,78,221,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '  <div style="color:#9d4edd;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Por categoría</div>';
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
+    for (const cat of ['bonos', 'juegos', 'regalos']) {
+        html += '    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(' + _hexToRgb(catColors[cat]) + ',0.40);border-radius:8px;padding:8px;">';
+        html += '      <div style="color:' + catColors[cat] + ';font-weight:900;font-size:11px;letter-spacing:1px;">' + catLabels[cat] + '</div>';
+        html += '      <div style="color:#fff;font-size:18px;font-weight:800;margin-top:2px;">' + (cc[cat] || 0) + '</div>';
+        html += '    </div>';
+    }
+    html += '  </div>';
+    html += '</div>';
+
+    // Desglose por tier
     html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
-    html += '  <div style="color:#d4af37;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Próximos disparos pendientes — total: ' + (d.pendingTotal || 0) + '</div>';
+    html += '  <div style="color:#d4af37;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Por tier de la encuesta</div>';
     html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;">';
     for (const t of Object.keys(tierLabels)) {
         const c = tc[t] || 0;
@@ -13735,11 +13778,31 @@ function _renderStrategySchedule(d) {
     }
     html += '</div>';
 
+    // Distribución por día (mini bar chart en HTML).
+    if (daily.length > 0) {
+        const maxCount = daily.reduce((m, x) => Math.max(m, x.count), 0);
+        html += '<div style="background:rgba(31,140,255,0.06);border:1px solid rgba(31,140,255,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+        html += '  <div style="color:#1f8cff;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Distribución por día</div>';
+        html += '  <div style="display:flex;gap:3px;align-items:flex-end;overflow-x:auto;padding-bottom:6px;">';
+        for (const day of daily) {
+            const pct = maxCount > 0 ? Math.round((day.count / maxCount) * 100) : 0;
+            const barH = Math.max(4, pct);
+            const dayLabel = day.day.slice(8); // DD
+            html += '<div title="' + escapeHtml(day.day) + ' — ' + day.count + ' notifs" style="flex:0 0 28px;display:flex;flex-direction:column;align-items:center;gap:3px;">';
+            html += '  <div style="color:#fff;font-size:10px;font-weight:700;">' + day.count + '</div>';
+            html += '  <div style="background:linear-gradient(180deg,#1f8cff,#0d47a1);width:22px;height:' + barH + 'px;border-radius:3px 3px 0 0;"></div>';
+            html += '  <div style="color:#888;font-size:9px;">' + dayLabel + '</div>';
+            html += '</div>';
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+
     // Listado detallado
     if (items.length === 0) {
         html += '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.10);border-radius:10px;">';
         html += '  Todavía no hay disparos pendientes de la estrategia.<br>';
-        html += '  <span style="color:#888;font-size:11px;">Cuando se cruce el umbral de respondentes, vas a ver acá las próximas notifs programadas.</span>';
+        html += '  <span style="color:#888;font-size:11px;">Activá la estrategia para que el calendario completo del mes quede armado.</span>';
         html += '</div>';
     } else {
         html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:8px;">';
@@ -13750,6 +13813,7 @@ function _renderStrategySchedule(d) {
         html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Hora</th>';
         html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Usuario</th>';
         html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Tier</th>';
+        html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Categoría</th>';
         html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Título</th>';
         html += '    </tr></thead><tbody>';
         for (const it of items) {
@@ -13757,10 +13821,13 @@ function _renderStrategySchedule(d) {
             const dtStr = dt ? dt.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
             const tierLbl = tierLabels[it.tier] || (it.tier || '—');
             const tierCol = tierColors[it.tier] || '#aaa';
+            const catLbl  = catLabels[it.category] || (it.category || '—');
+            const catCol  = catColors[it.category] || '#aaa';
             html += '<tr>';
             html += '  <td style="padding:5px 8px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);font-family:monospace;">' + escapeHtml(dtStr) + '</td>';
             html += '  <td style="padding:5px 8px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.targetUsername || '') + '</td>';
             html += '  <td style="padding:5px 8px;color:' + tierCol + ';border-bottom:1px solid rgba(255,255,255,0.04);font-weight:700;">' + escapeHtml(tierLbl) + '</td>';
+            html += '  <td style="padding:5px 8px;color:' + catCol + ';border-bottom:1px solid rgba(255,255,255,0.04);font-weight:700;">' + escapeHtml(catLbl) + '</td>';
             html += '  <td style="padding:5px 8px;color:#bbb;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.title || '') + '</td>';
             html += '</tr>';
         }

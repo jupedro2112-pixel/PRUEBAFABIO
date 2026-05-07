@@ -8220,8 +8220,159 @@ const _STRATEGY_WAVE_BLUEPRINTS = {
   solo_reembolsos: { title: '💵 Reembolso disponible', body: 'Tenés un reembolso esperando. Tocá para revisarlo.' }
 };
 
+// Blueprints por categoría × tier para el calendario mensual. Cada push
+// programado tiene su propia copy según qué representa: BONOS (oferta de
+// carga), JUEGOS (invitación a jugar), REGALOS (plata de regalo). El user
+// recibe las 3 categorías mezcladas en distintos días del mes.
+const _STRATEGY_CATEGORY_BLUEPRINTS = {
+  bonos: {
+    suave:  { title: '🟢 Tu bono suave del mes', body: 'Cargá hoy y te damos 50% extra. Tocá para usar el código.' },
+    normal: { title: '🟡 Bono activo para vos', body: 'Hoy hay 50% en cargas. Aprovechalo antes de que cierre.' },
+    activo: { title: '🔴 BONO 100% ACTIVO', body: 'Hoy duplicás tu carga. Tocá ahora — ventana corta.' }
+  },
+  juegos: {
+    suave:  { title: '🎮 Vení a jugar un rato', body: 'Tu plataforma te espera. Pegale una vuelta hoy.' },
+    normal: { title: '🎰 Hora de jugar', body: 'Pasá un rato y probá los juegos nuevos. Buenos ratos al toque.' },
+    activo: { title: '🔥 ¡A jugar!', body: 'Movete, los slots están pagando. Vení antes de que se acabe.' }
+  },
+  regalos: {
+    suave:  { title: '🎁 Hay un regalo para vos', body: 'Pasá por la app — te dejamos plata extra para hoy.' },
+    normal: { title: '🎁 Regalo activo', body: 'Tu regalo del mes está listo. Reclamalo dentro de la app.' },
+    activo: { title: '💎 REGALO PREMIUM', body: 'Plata de regalo cargada para vos — limitada en tiempo. Tocá ya.' }
+  }
+};
+const _STRATEGY_CATEGORIES = ['bonos', 'juegos', 'regalos'];
+
 // Lock simple por instancia para evitar dobles disparos concurrentes.
 let _STRATEGY_WAVE_LOCK = false;
+
+// Devuelve los días que quedan del mes en curso, desde HOY (inclusive) hasta
+// el último día del mes (inclusive). Cada elemento es un Date con la hora 00:00.
+function _remainingDaysOfMonth() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const today = now.getDate();
+  const days = [];
+  for (let d = today; d <= lastDay; d++) {
+    days.push(new Date(year, month, d, 0, 0, 0, 0));
+  }
+  return days;
+}
+
+// Elige `count` días distintos al azar de la lista `days`. Si count >= days.length,
+// devuelve todos los días (algunos van a tener más de un push si count > days.length).
+function _pickRandomDays(days, count) {
+  if (count <= 0) return [];
+  if (count >= days.length) {
+    // Si pedimos más pushes que días disponibles, repetimos días pero ordenados.
+    const extra = count - days.length;
+    const result = days.slice();
+    for (let i = 0; i < extra; i++) {
+      result.push(days[Math.floor(Math.random() * days.length)]);
+    }
+    return result.sort((a, b) => a.getTime() - b.getTime());
+  }
+  // Sampling sin reemplazo (Fisher-Yates parcial).
+  const pool = days.slice();
+  const picked = [];
+  for (let i = 0; i < count; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  return picked.sort((a, b) => a.getTime() - b.getTime());
+}
+
+// Genera una fecha-hora random dentro de la ventana del día dado. Si el día
+// es hoy y la ventana ya pasó, devuelve null (caller decide si saltar).
+function _randomTimeInDayWindow(dayDate, startHour, endHour) {
+  const start = new Date(dayDate);
+  start.setHours(startHour, 0, 0, 0);
+  const end = new Date(dayDate);
+  end.setHours(endHour, 0, 0, 0);
+  const now = new Date();
+  if (now >= end) return null; // ventana ya pasó este día
+  const effectiveStart = now > start ? now : start;
+  const span = end.getTime() - effectiveStart.getTime();
+  return new Date(effectiveStart.getTime() + Math.floor(Math.random() * span));
+}
+
+// Programa el calendario mensual completo para UN usuario según su tier.
+// Crea ScheduledNotifications por cada push: bonos + juegos + regalos.
+// Cada push cae un día random del mes (sin repetir si hay días suficientes)
+// y a una hora random dentro de la ventana configurada [startHour, endHour).
+//
+// Retorna: { scheduled, failed, perCategory: { bonos, juegos, regalos } }
+async function _scheduleMonthlyStrategyForUser({ user, tier, cfg, monthKey, reason }) {
+  const out = { scheduled: 0, failed: 0, perCategory: { bonos: 0, juegos: 0, regalos: 0 } };
+  if (tier === 'solo_reembolsos' || tier === 'opt_out') return out;
+  const prefs = (cfg && cfg.preferences && cfg.preferences[tier]) || {};
+  const startHour = (cfg && Number.isFinite(cfg.windowStartHour)) ? cfg.windowStartHour : 18;
+  const endHour   = (cfg && Number.isFinite(cfg.windowEndHour))   ? cfg.windowEndHour   : 21;
+  const days = _remainingDaysOfMonth();
+  if (days.length === 0) return out;
+
+  const username = String(user.username || '').toLowerCase().trim();
+  if (!username) return out;
+  const reasonStr = String(reason || 'monthly-activate');
+
+  for (const cat of _STRATEGY_CATEGORIES) {
+    const count = Math.max(0, Number(prefs[cat]) || 0);
+    if (count === 0) continue;
+    const bp = (_STRATEGY_CATEGORY_BLUEPRINTS[cat] && _STRATEGY_CATEGORY_BLUEPRINTS[cat][tier]) ||
+               { title: '🎁 Hay algo para vos', body: 'Tocá la app.' };
+    const pickedDays = _pickRandomDays(days, count);
+    for (const day of pickedDays) {
+      const when = _randomTimeInDayWindow(day, startHour, endHour);
+      if (!when) continue; // ventana del día ya pasó (caso: hoy después de endHour)
+      try {
+        await ScheduledNotification.create({
+          id: uuidv4(),
+          scheduledFor: when,
+          status: 'pending',
+          title: bp.title,
+          body: bp.body,
+          targetUsername: username,
+          audiencePrefix: null,
+          extraType: 'none',
+          createdBy: `strategy-month:${monthKey}:${tier}:${cat}:${reasonStr}`
+        });
+        out.scheduled++;
+        out.perCategory[cat]++;
+      } catch (e) {
+        out.failed++;
+        logger.warn(`[STRATEGY-MONTH] no se pudo programar ${cat} para ${username}: ${e.message}`);
+      }
+    }
+  }
+
+  return out;
+}
+
+// Cancela todos los ScheduledNotification pendientes que vengan del scheduler
+// mensual o de waves de la estrategia. Se usa antes de re-programar para
+// evitar duplicar pushes.
+async function _cancelPendingStrategyNotifications() {
+  const r = await ScheduledNotification.updateMany(
+    {
+      status: 'pending',
+      $or: [
+        { createdBy: { $regex: /^strategy-month:/ } },
+        { createdBy: { $regex: /^strategy-wave:/ } }
+      ]
+    },
+    { $set: { status: 'cancelled' } }
+  );
+  return r.modifiedCount || 0;
+}
+
+// Genera la clave del mes en curso (YYYY-MM) — sirve como tag para poder
+// distinguir el calendario de un mes vs el del próximo en el createdBy.
+function _currentMonthKey() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
 
 // Calcula la próxima ventana horaria de envío [start, end). Si la ventana
 // de hoy ya pasó (o estamos dentro de ella, en cuyo caso el rango efectivo
@@ -8399,41 +8550,36 @@ app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
       answeredAt: updated.notifPreferenceAt
     });
 
-    // Hook +100: si la estrategia está activa Y autoRepeat está prendido Y
-    // esta respuesta hizo cruzar un múltiplo de threshold, disparamos
-    // fireStrategyWave en background. Nunca bloquea al usuario.
-    if (isFirstAnswer) {
+    // Hook: si la estrategia está activa cuando el user contesta la encuesta,
+    // le programamos AHORA su calendario personal del resto del mes (bonos +
+    // juegos + regalos según su tier). Si entra a mitad de mes, recibe los
+    // pushes del mes proporcionalmente. No bloquea la respuesta del user.
+    if (isFirstAnswer && pref !== 'opt_out' && pref !== 'solo_reembolsos') {
       setImmediate(async () => {
         try {
           const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' });
-          if (!cfg || !cfg.isActive || !cfg.autoRepeatEnabled) return;
-          const threshold = cfg.autoRepeatThreshold || 100;
-          const respCount = await User.countDocuments({ notifPreference: { $exists: true, $ne: null } });
-          const lastFired = cfg.lastAutoFiredAtRespCount || 0;
-          if (respCount <= 0) return;
-          const crossedNew = Math.floor(respCount / threshold) > Math.floor(lastFired / threshold);
-          if (!crossedNew) return;
-          // Idempotencia atómica: solo fire si seguimos siendo los primeros.
-          const claimed = await NotifStrategyConfig.findOneAndUpdate(
-            {
-              key: 'monthly-default',
-              isActive: true,
-              autoRepeatEnabled: true,
-              lastAutoFiredAtRespCount: lastFired
-            },
-            {
-              $set: { lastAutoFiredAtRespCount: respCount, lastAutoFiredAt: new Date() },
-              $inc: { autoFireCount: 1 }
-            },
-            { new: true }
-          );
-          if (!claimed) {
-            logger.info(`[STRATEGY-WAVE] perdimos la carrera de auto-fire en respCount=${respCount}`);
+          if (!cfg || !cfg.isActive) return;
+          // El user tiene que tener al menos un FCM token para recibir pushes.
+          const u = await User.findOne(
+            { id: req.user.userId },
+            { username: 1, notifPreference: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+          ).lean();
+          if (!u) return;
+          const hasToken = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+          if (!hasToken) {
+            logger.info(`[STRATEGY-MONTH] ${u.username} respondió la encuesta pero no tiene FCM token — sin programar.`);
             return;
           }
-          await fireStrategyWave({ reason: 'auto_+100', triggerCount: respCount });
+          const r = await _scheduleMonthlyStrategyForUser({
+            user: u,
+            tier: u.notifPreference,
+            cfg: cfg.toObject(),
+            monthKey: _currentMonthKey(),
+            reason: 'survey-response'
+          });
+          logger.info(`[STRATEGY-MONTH] ${u.username} (${u.notifPreference}) inscripto · pushes=${r.scheduled} (bonos=${r.perCategory.bonos}, juegos=${r.perCategory.juegos}, regalos=${r.perCategory.regalos})`);
         } catch (e) {
-          logger.warn(`[STRATEGY-WAVE] hook +100 falló: ${e.message}`);
+          logger.warn(`[STRATEGY-MONTH] hook survey falló: ${e.message}`);
         }
       });
     }
@@ -8881,43 +9027,70 @@ app.post('/api/admin/notif-strategy/test-fire', authMiddleware, adminMiddleware,
 
 // Detalle del calendario de envíos: ventana configurada + lista de
 // ScheduledNotifications pendientes generadas por la estrategia + agregado
-// por tier. El admin lo abre cuando activa para ver el detalle.
+// por tier, categoría (bonos/juegos/regalos) y por día. El admin lo abre
+// cuando activa para ver el detalle.
 app.get('/api/admin/notif-strategy/schedule', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
     const startHour = (cfg && Number.isFinite(cfg.windowStartHour)) ? cfg.windowStartHour : 18;
     const endHour   = (cfg && Number.isFinite(cfg.windowEndHour))   ? cfg.windowEndHour   : 21;
 
+    // Aceptamos AMBOS prefijos: el viejo strategy-wave (auto +100) y el nuevo
+    // strategy-month (calendario completo del mes). Así el admin ve todo.
     const pending = await ScheduledNotification.find({
       status: 'pending',
-      createdBy: { $regex: /^strategy-wave:/ }
+      $or: [
+        { createdBy: { $regex: /^strategy-month:/ } },
+        { createdBy: { $regex: /^strategy-wave:/ } }
+      ]
     })
       .sort({ scheduledFor: 1 })
-      .limit(500)
       .lean();
 
-    // Agrupar por tier para el resumen.
-    const tierAgg = { suave: 0, normal: 0, activo: 0, solo_reembolsos: 0 };
+    const tierCounts = { suave: 0, normal: 0, activo: 0, solo_reembolsos: 0 };
+    const categoryCounts = { bonos: 0, juegos: 0, regalos: 0, otros: 0 };
+    const byDay = {}; // 'YYYY-MM-DD' → count
+    const uniqueUsers = new Set();
     let earliest = null, latest = null;
+
+    const parseTag = (createdBy) => {
+      // strategy-month:YYYY-MM:tier:cat:reason   (nuevo)
+      // strategy-wave:tier:reason                 (legacy)
+      const cb = String(createdBy || '');
+      let m = cb.match(/^strategy-month:[^:]+:(\w+):(\w+):(.*)$/);
+      if (m) return { tier: m[1], category: m[2], reason: m[3], scope: 'month' };
+      m = cb.match(/^strategy-wave:(\w+):(.*)$/);
+      if (m) return { tier: m[1], category: 'otros', reason: m[2], scope: 'wave' };
+      return { tier: null, category: 'otros', reason: null, scope: null };
+    };
+
     for (const p of pending) {
-      const m = String(p.createdBy || '').match(/^strategy-wave:(\w+):/);
-      const tier = m ? m[1] : null;
-      if (tier && tierAgg[tier] != null) tierAgg[tier]++;
+      const tag = parseTag(p.createdBy);
+      if (tag.tier && tierCounts[tag.tier] != null) tierCounts[tag.tier]++;
+      if (categoryCounts[tag.category] != null) categoryCounts[tag.category]++;
+      else categoryCounts.otros++;
+      if (p.targetUsername) uniqueUsers.add(p.targetUsername);
       if (p.scheduledFor) {
-        const ts = new Date(p.scheduledFor).getTime();
+        const dt = new Date(p.scheduledFor);
+        const ts = dt.getTime();
         if (earliest === null || ts < earliest) earliest = ts;
         if (latest   === null || ts > latest)   latest   = ts;
+        const dayKey = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+        byDay[dayKey] = (byDay[dayKey] || 0) + 1;
       }
     }
 
+    const dailyDistribution = Object.keys(byDay).sort().map(d => ({ day: d, count: byDay[d] }));
+
     const items = pending.slice(0, 200).map(p => {
-      const m = String(p.createdBy || '').match(/^strategy-wave:(\w+):(.*)$/);
+      const tag = parseTag(p.createdBy);
       return {
         id: p.id,
         scheduledFor: p.scheduledFor,
         targetUsername: p.targetUsername,
-        tier: m ? m[1] : null,
-        reason: m ? m[2] : null,
+        tier: tag.tier,
+        category: tag.category,
+        scope: tag.scope,
         title: p.title
       };
     });
@@ -8929,9 +9102,13 @@ app.get('/api/admin/notif-strategy/schedule', authMiddleware, adminMiddleware, a
         label: `${String(startHour).padStart(2, '0')}:00 a ${String(endHour).padStart(2, '0')}:00`
       },
       pendingTotal: pending.length,
-      tierCounts: tierAgg,
+      uniqueUsers: uniqueUsers.size,
+      tierCounts,
+      categoryCounts,
+      dailyDistribution,
       earliestAt: earliest ? new Date(earliest) : null,
       latestAt:   latest   ? new Date(latest)   : null,
+      monthKey: _currentMonthKey(),
       items
     });
   } catch (err) {
@@ -8940,8 +9117,13 @@ app.get('/api/admin/notif-strategy/schedule', authMiddleware, adminMiddleware, a
   }
 });
 
-// Activa o desactiva la estrategia. Cuando isActive=true, el flag queda
-// disponible para que los crons / endpoints de auto-push lo respeten.
+// Activa o desactiva la estrategia. Cuando isActive=true:
+//   1) Cancela cualquier push programado anterior de la estrategia (idempotencia).
+//   2) Genera el calendario mensual COMPLETO para todos los respondentes con
+//      tier suave/normal/activo y FCM token: bonos + juegos + regalos
+//      repartidos en días distintos del resto del mes, cada uno a hora
+//      random dentro de la ventana configurada (default 18-21).
+// Cuando isActive=false: cancela todos los pendientes y limpia el flag.
 app.post('/api/admin/notif-strategy/activate', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const activate = req.body && req.body.activate !== false; // default true
@@ -8951,10 +9133,60 @@ app.post('/api/admin/notif-strategy/activate', authMiddleware, adminMiddleware, 
     cfg.activatedAt = activate ? new Date() : null;
     cfg.activatedBy = activate ? ((req.user && req.user.username) || 'admin') : null;
     await cfg.save();
-    logger.info(`[NOTIF-STRATEGY] ${activate ? 'ACTIVATED' : 'DEACTIVATED'} by ${req.user && req.user.username}`);
-    res.json(cfg.toObject());
+
+    let cancelled = 0;
+    let scheduled = { totalUsers: 0, totalPushes: 0, totalFailed: 0, perTier: {}, perCategory: { bonos: 0, juegos: 0, regalos: 0 } };
+
+    if (activate) {
+      // Cancelar pendientes anteriores (re-activate idempotente).
+      cancelled = await _cancelPendingStrategyNotifications();
+
+      // Pre-programar el mes completo para todos los respondentes válidos.
+      const monthKey = _currentMonthKey();
+      const respondents = await User.find(
+        { notifPreference: { $in: ['suave', 'normal', 'activo'] } },
+        { username: 1, notifPreference: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+      ).lean();
+
+      const cfgPlain = cfg.toObject();
+      for (const u of respondents) {
+        const hasToken = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+        if (!hasToken) continue;
+        const r = await _scheduleMonthlyStrategyForUser({
+          user: u,
+          tier: u.notifPreference,
+          cfg: cfgPlain,
+          monthKey,
+          reason: 'activate'
+        });
+        scheduled.totalUsers++;
+        scheduled.totalPushes += r.scheduled;
+        scheduled.totalFailed += r.failed;
+        scheduled.perCategory.bonos   += r.perCategory.bonos;
+        scheduled.perCategory.juegos  += r.perCategory.juegos;
+        scheduled.perCategory.regalos += r.perCategory.regalos;
+        const tk = u.notifPreference;
+        if (!scheduled.perTier[tk]) scheduled.perTier[tk] = { users: 0, pushes: 0 };
+        scheduled.perTier[tk].users++;
+        scheduled.perTier[tk].pushes += r.scheduled;
+      }
+
+      logger.info(`[NOTIF-STRATEGY] ACTIVATED by ${req.user && req.user.username} · cancelled=${cancelled} usersScheduled=${scheduled.totalUsers} pushes=${scheduled.totalPushes} (bonos=${scheduled.perCategory.bonos}, juegos=${scheduled.perCategory.juegos}, regalos=${scheduled.perCategory.regalos})`);
+    } else {
+      cancelled = await _cancelPendingStrategyNotifications();
+      logger.info(`[NOTIF-STRATEGY] DEACTIVATED by ${req.user && req.user.username} · cancelled=${cancelled}`);
+    }
+
+    res.json({
+      ...cfg.toObject(),
+      _activation: {
+        activated: !!activate,
+        cancelledPending: cancelled,
+        scheduled
+      }
+    });
   } catch (err) {
-    logger.error(`POST /api/admin/notif-strategy/activate: ${err.message}`);
+    logger.error(`POST /api/admin/notif-strategy/activate: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
   }
 });
