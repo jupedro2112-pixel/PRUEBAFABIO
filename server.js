@@ -9151,6 +9151,111 @@ app.get('/api/admin/notif-strategy/schedule', authMiddleware, adminMiddleware, a
   }
 });
 
+// Cronograma semanal: para los próximos N días (default 7), devuelve día
+// por día cuántos pushes salen y a qué público (por tier y por categoría).
+// Pensado para que el admin vea "esta semana, lunes mando X bonos a Y users
+// del tier normal", "martes Z regalos a W del tier activo", etc.
+app.get('/api/admin/notif-strategy/weekly-schedule', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(30, parseInt(req.query.days, 10) || 7));
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    const startHour = (cfg && Number.isFinite(cfg.windowStartHour)) ? cfg.windowStartHour : 18;
+    const endHour   = (cfg && Number.isFinite(cfg.windowEndHour))   ? cfg.windowEndHour   : 21;
+
+    // Día actual (ART) a 00:00.
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const localNow = new Date(Date.now() - ART_OFFSET_MS);
+    const startART = new Date(localNow.getFullYear(), localNow.getMonth(), localNow.getDate(), 0, 0, 0, 0);
+    // Reconvertir a UTC sumando el offset.
+    const startUTC = new Date(startART.getTime() + ART_OFFSET_MS);
+    const endUTC = new Date(startUTC.getTime() + days * 24 * 60 * 60 * 1000);
+
+    const pending = await ScheduledNotification.find({
+      status: 'pending',
+      scheduledFor: { $gte: startUTC, $lt: endUTC },
+      $or: [
+        { createdBy: { $regex: /^strategy-month:/ } },
+        { createdBy: { $regex: /^strategy-wave:/ } }
+      ]
+    })
+      .sort({ scheduledFor: 1 })
+      .lean();
+
+    const parseTag = (createdBy) => {
+      const cb = String(createdBy || '');
+      let m = cb.match(/^strategy-month:[^:]+:(\w+):(\w+):.*$/);
+      if (m) return { tier: m[1], category: m[2] };
+      m = cb.match(/^strategy-wave:(\w+):.*$/);
+      if (m) return { tier: m[1], category: 'otros' };
+      return { tier: null, category: 'otros' };
+    };
+
+    // Inicializar buckets por día.
+    const buckets = [];
+    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    for (let i = 0; i < days; i++) {
+      const dayDate = new Date(startART.getTime() + i * 24 * 60 * 60 * 1000);
+      const key = dayDate.getFullYear() + '-' + String(dayDate.getMonth() + 1).padStart(2, '0') + '-' + String(dayDate.getDate()).padStart(2, '0');
+      buckets.push({
+        day: key,
+        dayName: dayNames[dayDate.getDay()],
+        total: 0,
+        byTier: { suave: 0, normal: 0, activo: 0, solo_reembolsos: 0 },
+        byCategory: { bonos: 0, juegos: 0, regalos: 0, otros: 0 },
+        users: new Set(),
+        firstAt: null,
+        lastAt: null
+      });
+    }
+
+    // Asignar pushes a su bucket por día (ART).
+    for (const p of pending) {
+      if (!p.scheduledFor) continue;
+      const dt = new Date(p.scheduledFor);
+      const localMs = dt.getTime() - ART_OFFSET_MS;
+      const ld = new Date(localMs);
+      const key = ld.getFullYear() + '-' + String(ld.getMonth() + 1).padStart(2, '0') + '-' + String(ld.getDate()).padStart(2, '0');
+      const b = buckets.find(x => x.day === key);
+      if (!b) continue;
+      const tag = parseTag(p.createdBy);
+      b.total++;
+      if (tag.tier && b.byTier[tag.tier] != null) b.byTier[tag.tier]++;
+      if (b.byCategory[tag.category] != null) b.byCategory[tag.category]++;
+      else b.byCategory.otros++;
+      if (p.targetUsername) b.users.add(p.targetUsername);
+      const ts = dt.getTime();
+      if (b.firstAt === null || ts < b.firstAt) b.firstAt = ts;
+      if (b.lastAt  === null || ts > b.lastAt)  b.lastAt  = ts;
+    }
+
+    // Materializar Sets como counts.
+    const result = buckets.map(b => ({
+      day: b.day,
+      dayName: b.dayName,
+      total: b.total,
+      uniqueUsers: b.users.size,
+      byTier: b.byTier,
+      byCategory: b.byCategory,
+      firstAt: b.firstAt ? new Date(b.firstAt) : null,
+      lastAt:  b.lastAt  ? new Date(b.lastAt)  : null
+    }));
+
+    res.json({
+      window: {
+        startHour,
+        endHour,
+        label: `${String(startHour).padStart(2, '0')}:00 a ${String(endHour).padStart(2, '0')}:00`
+      },
+      days: result,
+      totalPushes: result.reduce((s, b) => s + b.total, 0),
+      totalUniqueUsers: new Set(pending.map(p => p.targetUsername).filter(Boolean)).size
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-strategy/weekly-schedule: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Activa o desactiva la estrategia. Cuando isActive=true:
 //   1) Cancela cualquier push programado anterior de la estrategia (idempotencia).
 //   2) Genera el calendario mensual COMPLETO para todos los respondentes con

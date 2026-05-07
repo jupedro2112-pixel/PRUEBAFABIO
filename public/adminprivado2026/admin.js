@@ -12255,6 +12255,12 @@ function _renderEncuesta() {
     else if (tab === 'roi')        html += _renderEncuestaTabROI(d);
     else if (tab === 'historial')  html += _renderEncuestaTabHistorial();
     else                            html += _renderEncuestaTabEstrategia(d, respondedTotal);
+    // Post-render hook: hidratamos el cronograma semanal después de que el
+    // caller asigne innerHTML. setTimeout(0) garantiza que el placeholder
+    // ya esté en el DOM cuando loadWeeklySchedule busque el elemento.
+    if (tab === 'estrategia') {
+        setTimeout(() => { try { loadWeeklySchedule(7); } catch (_) {} }, 0);
+    }
     return html;
 }
 
@@ -13282,9 +13288,140 @@ function _renderStrategyEditor(strategy, respondedTotal) {
 
     html += '</div>';
 
+    // ===== CRONOGRAMA SEMANAL — placeholder, se hidrata con fetch =====
+    html += '<div id="weeklyScheduleBox" style="margin-top:14px;"></div>';
+
     // ===== SIMULADOR =====
     html += _renderStrategySimulator(strategy);
 
+    return html;
+}
+
+// Carga + renderiza el cronograma semanal de notificaciones programadas.
+// Lo dispara loadEncuesta después de pintar el editor para no bloquear el
+// render principal. Re-cargable desde el botón 🔄 del header del cronograma.
+async function loadWeeklySchedule(days) {
+    const box = document.getElementById('weeklyScheduleBox');
+    if (!box) return;
+    const d = Math.max(1, Math.min(30, parseInt(days, 10) || 7));
+    box.innerHTML = '<div style="background:rgba(0,212,255,0.04);border:1px dashed rgba(0,212,255,0.30);border-radius:10px;padding:14px;text-align:center;color:#aaa;font-size:12px;">⏳ Cargando cronograma semanal…</div>';
+    try {
+        const r = await authFetch('/api/admin/notif-strategy/weekly-schedule?days=' + d);
+        if (!r.ok) {
+            box.innerHTML = '<div style="background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.40);border-radius:10px;padding:14px;color:#ff8080;font-size:12px;">Error ' + r.status + ' cargando cronograma</div>';
+            return;
+        }
+        const data = await r.json();
+        box.innerHTML = _renderWeeklySchedule(data, d);
+    } catch (e) {
+        box.innerHTML = '<div style="background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.40);border-radius:10px;padding:14px;color:#ff8080;font-size:12px;">Error de conexión: ' + (e.message || e) + '</div>';
+    }
+}
+
+function _renderWeeklySchedule(d, currentDays) {
+    const w = d.window || { label: '18:00 a 21:00' };
+    const days = d.days || [];
+    const tierLabels  = { suave: '🟢', normal: '🟡', activo: '🔴', solo_reembolsos: '🔔' };
+    const tierColors  = { suave: '#66ff66', normal: '#ffd700', activo: '#ff8c5a', solo_reembolsos: '#00d4ff' };
+    const catLabels   = { bonos: '🎁', juegos: '🎰', regalos: '💎' };
+    const catColors   = { bonos: '#ffd700', juegos: '#9d4edd', regalos: '#25d366' };
+    const total = d.totalPushes || 0;
+    const dn = currentDays || 7;
+
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(31,140,255,0.04));border:1.5px solid rgba(0,212,255,0.45);border-radius:12px;padding:14px;">';
+
+    // Header
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+    html += '    <div>';
+    html += '      <div style="color:#00d4ff;font-weight:900;font-size:14px;letter-spacing:1px;text-transform:uppercase;">🗓️ Cronograma — próximos ' + dn + ' días</div>';
+    html += '      <div style="color:#bbb;font-size:11px;margin-top:3px;">Cómo avanza la estrategia día por día y a qué público le toca cada notif. Ventana: <strong style="color:#fff;">' + escapeHtml(w.label) + '</strong></div>';
+    html += '    </div>';
+    html += '    <div style="display:flex;gap:6px;align-items:center;">';
+    html += '      <select id="weeklyScheduleDays" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:11px;" onchange="loadWeeklySchedule(this.value)">';
+    [7, 14, 30].forEach(opt => {
+        html += '<option value="' + opt + '"' + (opt === dn ? ' selected' : '') + '>' + opt + ' días</option>';
+    });
+    html += '      </select>';
+    html += '      <button type="button" onclick="loadWeeklySchedule(document.getElementById(\'weeklyScheduleDays\').value)" title="Refrescar" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.45);padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">🔄</button>';
+    html += '    </div>';
+    html += '  </div>';
+
+    // Resumen
+    html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px 10px;margin-bottom:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:11.5px;">';
+    html += '    <span style="color:#fff;"><strong style="color:#00d4ff;">' + total + '</strong> pushes pendientes</span>';
+    html += '    <span style="color:#fff;"><strong style="color:#00d4ff;">' + (d.totalUniqueUsers || 0) + '</strong> users distintos</span>';
+    html += '    <span style="color:#888;">Pushes salen al azar dentro de la ventana de cada día</span>';
+    html += '  </div>';
+
+    // Tabla con columnas: día, total, por tier, por categoría, horarios
+    if (days.length === 0) {
+        html += '  <div style="text-align:center;color:#aaa;padding:20px;font-size:12px;">Sin datos.</div>';
+    } else {
+        html += '  <div style="overflow-x:auto;">';
+        html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:560px;">';
+        html += '    <thead><tr style="background:rgba(255,255,255,0.04);">';
+        html += '      <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Día</th>';
+        html += '      <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Pushes</th>';
+        html += '      <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Users</th>';
+        html += '      <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Público (por tier)</th>';
+        html += '      <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Categorías</th>';
+        html += '      <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Horario</th>';
+        html += '    </tr></thead><tbody>';
+        const today = new Date();
+        const todayKey = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+        for (const day of days) {
+            const isToday = day.day === todayKey;
+            const dayLbl = day.dayName + ' ' + day.day.slice(8) + '/' + day.day.slice(5, 7);
+            const rowStyle = isToday ? 'background:rgba(255,215,0,0.06);' : '';
+            html += '<tr style="' + rowStyle + '">';
+            html += '  <td style="padding:6px 10px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.05);">' + (isToday ? '<strong style="color:#ffd700;">⭐ ' + escapeHtml(dayLbl) + ' (hoy)</strong>' : escapeHtml(dayLbl)) + '</td>';
+            html += '  <td style="padding:6px 10px;text-align:right;color:#fff;font-weight:700;border-bottom:1px solid rgba(255,255,255,0.05);">' + day.total + '</td>';
+            html += '  <td style="padding:6px 10px;text-align:right;color:#bbb;border-bottom:1px solid rgba(255,255,255,0.05);">' + day.uniqueUsers + '</td>';
+            // Tier breakdown
+            html += '  <td style="padding:6px 10px;color:#bbb;border-bottom:1px solid rgba(255,255,255,0.05);font-size:11px;">';
+            const tierParts = [];
+            for (const t of ['suave', 'normal', 'activo']) {
+                const c = day.byTier[t] || 0;
+                if (c > 0) tierParts.push('<span style="color:' + tierColors[t] + ';font-weight:700;">' + tierLabels[t] + ' ' + c + '</span>');
+            }
+            html += tierParts.length > 0 ? tierParts.join(' · ') : '<span style="color:#666;">—</span>';
+            html += '  </td>';
+            // Category breakdown
+            html += '  <td style="padding:6px 10px;color:#bbb;border-bottom:1px solid rgba(255,255,255,0.05);font-size:11px;">';
+            const catParts = [];
+            for (const c of ['bonos', 'juegos', 'regalos']) {
+                const n = day.byCategory[c] || 0;
+                if (n > 0) catParts.push('<span style="color:' + catColors[c] + ';">' + catLabels[c] + ' ' + n + '</span>');
+            }
+            html += catParts.length > 0 ? catParts.join(' · ') : '<span style="color:#666;">—</span>';
+            html += '  </td>';
+            // Time range
+            const fmtTime = (iso) => {
+                if (!iso) return '—';
+                try { return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }); }
+                catch (_) { return '—'; }
+            };
+            html += '  <td style="padding:6px 10px;color:#aaa;font-family:monospace;font-size:11px;border-bottom:1px solid rgba(255,255,255,0.05);">';
+            if (day.total > 0) {
+                html += escapeHtml(fmtTime(day.firstAt)) + ' → ' + escapeHtml(fmtTime(day.lastAt));
+            } else {
+                html += '<span style="color:#666;">—</span>';
+            }
+            html += '  </td>';
+            html += '</tr>';
+        }
+        html += '  </tbody></table>';
+        html += '  </div>';
+    }
+
+    // Leyenda de iconos
+    html += '  <div style="margin-top:8px;font-size:10.5px;color:#888;line-height:1.6;">';
+    html += '    <strong style="color:#aaa;">Tier:</strong> 🟢 suave · 🟡 normal · 🔴 activo · 🔔 solo reembolsos &nbsp;·&nbsp; ';
+    html += '    <strong style="color:#aaa;">Categorías:</strong> 🎁 bonos · 🎰 juegos · 💎 regalos';
+    html += '  </div>';
+
+    html += '</div>';
     return html;
 }
 
