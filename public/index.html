@@ -1225,7 +1225,7 @@
         /* ===== OPINIONES DE LA GENTE — feed al fondo ===== */
         .reviews-feed-card {
             width: 100%;
-            max-width: 540px;
+            max-width: 920px;       /* ancho para que entren 3 columnas */
             margin: 30px auto 18px;
             padding: 14px 14px 12px;
             background: linear-gradient(135deg, rgba(212,175,55,0.10), rgba(157,78,221,0.04));
@@ -1277,18 +1277,24 @@
         .reviews-feed-summary .pct-reg  { color: #ffd700; }
         .reviews-feed-summary .pct-bad  { color: #ff8080; }
         .reviews-feed-list {
-            display: flex;
-            flex-direction: row;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
             gap: 8px;
-            align-items: flex-start;
+            align-items: start;
         }
         .reviews-col {
-            flex: 1 1 240px;
             min-width: 0;
             display: flex;
             flex-direction: column;
             gap: 5px;
+        }
+        /* Mobile (<560px): 1 columna, lista apilada como antes. La nueva
+           columna sigue arrancando cada 10 items pero visualmente se ve
+           como una sola columna larga, que es lo único que entra cómodo. */
+        @media (max-width: 559px) {
+            .reviews-feed-list {
+                grid-template-columns: 1fr;
+            }
         }
         .review-item {
             background: rgba(0,0,0,0.25);
