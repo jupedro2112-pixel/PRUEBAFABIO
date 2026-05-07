@@ -1353,6 +1353,22 @@ const adminMiddleware = (req, res, next) => {
   next();
 };
 
+// requireFullScope: rechaza tokens emitidos por /login-username-only (scope
+// 'refunds-only'). Para endpoints "sensibles" tipo cambio de contraseña o
+// modificación de perfil — el flujo username-only no debe permitir tomar
+// control de la cuenta, sólo reclamar reembolsos. Si en el futuro hay otros
+// scopes restringidos, este guard los rechaza igual.
+const requireFullScope = (req, res, next) => {
+  const scope = req.user && req.user.scope;
+  if (scope && scope !== 'full') {
+    return res.status(403).json({
+      error: 'Esta acción requiere un login completo (con contraseña).',
+      code: 'SCOPE_INSUFFICIENT'
+    });
+  }
+  next();
+};
+
 // superAdminMiddleware: solo `role === 'admin'` (excluye depositor/withdrawer).
 // Lo aplicamos a endpoints sensibles de marketing/calendar/segments/raffles
 // admin para evitar que un depositor o withdrawer pueda disparar pushes
@@ -1768,8 +1784,14 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       }
     }
 
-    // Fallback controlado si MongoDB no está disponible: solo con credenciales de env vars
+    // Fallback admin sin Mongo: APAGADO por defecto. Es un by-pass total si
+    // alguien tira Mongo abajo y conoce ADMIN_USERNAME/ADMIN_PASSWORD. Para
+    // usarlo en una emergencia real, prendelo con ENABLE_FALLBACK_ADMIN_LOGIN=1
+    // en la variable de entorno y apagalo apenas vuelva la DB.
     if (dbReadFailed) {
+      if (process.env.ENABLE_FALLBACK_ADMIN_LOGIN !== '1') {
+        return res.status(503).json({ error: 'Servicio temporalmente no disponible. Intenta más tarde.' });
+      }
       const fallbackAdminUsername = process.env.ADMIN_USERNAME;
       const fallbackAdminPassword = process.env.ADMIN_PASSWORD;
       const isAdminFallback = fallbackAdminUsername && fallbackAdminPassword &&
@@ -1783,7 +1805,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         JWT_SECRET,
         { expiresIn: '4h' }
       );
-      logger.warn(`[Login] Fallback admin login used (${fallbackAdminUsername}) - MongoDB was unavailable`);
+      logger.warn(`[Login] FALLBACK ADMIN LOGIN USED (${fallbackAdminUsername}) - MongoDB unavailable. ENABLE_FALLBACK_ADMIN_LOGIN está prendido — APAGALO apenas vuelva la DB.`);
       return res.json({
         token: fallbackToken,
         user: { id: 'fallback-admin', username: fallbackAdminUsername, role: 'admin', balance: 0, needsPasswordChange: false }
@@ -2262,10 +2284,22 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
 
     let token;
     try {
+      // Token con scope LIMITADO ('refunds-only'): permite ver y reclamar
+      // reembolsos / regalos / sorteos (la plata cae en el balance del user
+      // víctima, no del atacante), pero NO permite endpoints sensibles como
+      // cambiar contraseña, modificar el perfil o tocar cuentas. La guarda la
+      // hace requireFullScope. TTL 7d (antes 30d) para reducir ventana de
+      // explotación si un token se filtra.
       token = jwt.sign(
-        { userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
+        {
+          userId,
+          username: userObj.username,
+          role: userObj.role,
+          tokenVersion: userObj.tokenVersion ?? 0,
+          scope: 'refunds-only'
+        },
         JWT_SECRET,
-        { expiresIn: '30d' }
+        { expiresIn: '7d' }
       );
     } catch (jwtErr) {
       logger.error(`[LoginUsernameOnly] jwt.sign falló: ${jwtErr.message}`);
@@ -2667,7 +2701,7 @@ async function syncPasswordToJugaygana(user, newPassword, context) {
 }
 
 // Cambiar contraseña
-app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, res) => {
+app.post('/api/auth/change-password', authMiddleware, requireFullScope, authLimiter, async (req, res) => {
   try {
     const { currentPassword, newPassword, whatsapp, phone, otpCode, closeAllSessions } = req.body;
 
@@ -2803,7 +2837,7 @@ app.post('/api/auth/change-password', authMiddleware, authLimiter, async (req, r
 // Enviar OTP para verificar el teléfono nuevo durante un cambio de contraseña
 // (aplica tanto al cambio obligatorio del primer login como al cambio desde el perfil).
 // Reutiliza generateAndSendOTP/verifyOTP del PR #260 con un nuevo `purpose`.
-app.post('/api/auth/change-password/send-otp', authMiddleware, sensitiveLimiter, smsIpLimiter, async (req, res) => {
+app.post('/api/auth/change-password/send-otp', authMiddleware, requireFullScope, sensitiveLimiter, smsIpLimiter, async (req, res) => {
   try {
     const { phone } = req.body;
 
