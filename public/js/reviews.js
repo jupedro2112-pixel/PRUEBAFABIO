@@ -319,13 +319,19 @@ VIP.reviews = (function () {
         const PER_COL = 10;
         const renderItem = (it) => {
             const stars = _renderStars(it.stars);
-            const comment = it.comment ? _esc(it.comment) : '<span style="color:#888;font-style:italic;">(sin comentario)</span>';
+            const rawComment = it.comment || '';
+            const comment = rawComment ? _esc(rawComment) : '<span style="color:#888;font-style:italic;">—</span>';
+            // tooltip nativo con el comentario completo + fecha (para hover desktop)
             const when = _whenStr(it.updatedAt);
-            return '<div class="review-item">' +
+            const tipParts = [];
+            if (rawComment) tipParts.push(rawComment);
+            tipParts.push((it.maskedUsername || '***') + (when ? ' · ' + when : ''));
+            const title = _esc(tipParts.join(' — '));
+            return '<div class="review-item" title="' + title + '">' +
                 '<div class="item-stars">' + stars + '</div>' +
                 '<div class="item-body">' +
                   '<div class="item-comment">' + comment + '</div>' +
-                  '<div class="item-meta">' + _esc(it.maskedUsername || '***') + (when ? ' · ' + when : '') + '</div>' +
+                  '<div class="item-meta">' + _esc(it.maskedUsername || '***') + '</div>' +
                 '</div>' +
             '</div>';
         };
