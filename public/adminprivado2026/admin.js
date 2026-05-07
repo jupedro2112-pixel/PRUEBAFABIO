@@ -12351,6 +12351,23 @@ function _setAdminReviewsBucket(bucket) {
     loadAdminReviews();
 }
 
+async function deleteAdminReview(id, username) {
+    if (!id) return;
+    if (!confirm('¿Borrar la opinión de "' + (username || '') + '"? Esta acción no se puede deshacer.')) return;
+    try {
+        const r = await authFetch('/api/admin/reviews/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'No se pudo borrar'), 'error');
+            return;
+        }
+        showToast('✅ Opinión borrada', 'success');
+        loadAdminReviews();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 function _renderAdminReviewsStars(n) {
     const v = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
     let html = '';
@@ -12412,6 +12429,7 @@ function _renderAdminReviews(d) {
     html += '<th style="padding:8px 10px;font-weight:800;">📞 Teléfono</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Cuándo</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Bucket</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Acciones</th>';
     html += '</tr></thead><tbody>';
 
     for (const it of items) {
@@ -12431,6 +12449,9 @@ function _renderAdminReviews(d) {
         html += '<td style="padding:8px 10px;white-space:nowrap;">' + phoneCell + '</td>';
         html += '<td style="padding:8px 10px;color:#aaa;text-align:right;font-size:10.5px;white-space:nowrap;">' + escapeHtml(when) + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;">' + bucketLabel + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">';
+        html += '<button type="button" onclick="deleteAdminReview(' + escapeJsArg(it.id) + ',' + escapeJsArg(it.username || '') + ')" style="background:rgba(255,80,80,0.10);color:#ff6b6b;border:1px solid rgba(255,80,80,0.45);padding:4px 9px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;" title="Borrar esta opinión">🗑️ Borrar</button>';
+        html += '</td>';
         html += '</tr>';
     }
     html += '</tbody></table></div>';

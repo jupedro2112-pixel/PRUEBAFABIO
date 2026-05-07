@@ -9252,6 +9252,22 @@ app.get('/api/admin/reviews', authMiddleware, adminMiddleware, async (req, res) 
   }
 });
 
+// DELETE /api/admin/reviews/:id — borra una opinión (admin only). El user
+// dueño queda libre para volver a opinar (no recreamos el constraint).
+app.delete('/api/admin/reviews/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'id requerido' });
+    const removed = await Review.findOneAndDelete({ id }).lean();
+    if (!removed) return res.status(404).json({ error: 'Opinión no encontrada' });
+    logger.info(`[REVIEW-DELETE] ${removed.username} (${removed.stars}★) borrada por ${req.user.username}`);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/reviews: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
