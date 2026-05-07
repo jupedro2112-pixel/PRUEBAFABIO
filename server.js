@@ -7807,6 +7807,13 @@ app.post(
       const linePhone = '+' + digits;
 
       const dryRun = String(req.query.dryRun || 'true').toLowerCase() !== 'false';
+      // Modo de import:
+      //   'merge' (default, NO ROMPE lo que ya está): si un user ya tiene una
+      //     línea asignada, lo dejamos como está. Sólo asignamos los que NO
+      //     tienen línea o ya estaban en esta misma línea (re-confirma).
+      //   'overwrite': fuerza la línea para todos los del archivo, incluso
+      //     reasigna los que estaban en otro equipo.
+      const importMode = String(req.query.mode || 'merge').toLowerCase() === 'overwrite' ? 'overwrite' : 'merge';
 
       const buf = req.body;
       if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
@@ -7903,9 +7910,9 @@ app.post(
       let matched = 0;
       let alreadyOnSameLine = 0;
       let reassignedFromOtherLine = 0;
+      let keptUntouchedOtherLine = 0; // merge mode: ya asignados a otra línea
       const notFoundSample = [];
       const bulkOps = [];
-      const lookupOps = [];
 
       const now = new Date();
       const adminUsername = (req.user && req.user.username) || null;
@@ -7924,7 +7931,33 @@ app.post(
         matched++;
         if (doc.linePhone === linePhone) {
           alreadyOnSameLine++;
-        } else if (doc.linePhone) {
+          // Si está en la misma línea, lo "tocamos" igual para refrescar
+          // lineAssignedAt/By (sirve como ack de la nueva carga).
+          if (!dryRun) {
+            bulkOps.push({
+              updateOne: {
+                filter: { id: doc.id },
+                update: {
+                  $set: {
+                    linePhone,
+                    lineTeamName: fullTeamLabel,
+                    lineAssignedAt: now,
+                    lineAssignedBy: adminUsername
+                  }
+                }
+              }
+            });
+          }
+          continue;
+        }
+        if (doc.linePhone) {
+          // Ya tiene OTRA línea asignada.
+          if (importMode === 'merge') {
+            // Merge: NO TOCAR. Lo dejamos como está.
+            keptUntouchedOtherLine++;
+            continue;
+          }
+          // Overwrite: lo movemos a esta línea.
           reassignedFromOtherLine++;
         }
         if (!dryRun) {
@@ -7944,30 +7977,60 @@ app.post(
         }
       }
 
-      // UserLineLookup: persistimos TODAS las entradas del archivo (matched o
-      // no) para que un futuro registro con ese username reciba la línea sin
-      // tener que re-importar. Acá usamos normHeavy porque el helper
-      // pickLineFromLookup (login) busca con la misma normalización heavy.
+      // UserLineLookup: en MERGE no pisamos entradas que ya apunten a otra
+      // línea — solo upserteamos cuando no existe O cuando ya estaba en esta
+      // misma línea. En OVERWRITE se actualiza siempre.
+      const lookupOps = [];
       if (!dryRun) {
         for (const [lite, info] of entries) {
           if (!info.normHeavy) continue; // sin caracteres alfanuméricos: no se puede indexar
-          lookupOps.push({
-            updateOne: {
-              filter: { usernameNorm: info.normHeavy },
-              update: {
-                $set: {
-                  usernameOriginal: info.original,
-                  linePhone,
-                  lineTeamName: fullTeamLabel,
-                  prefix: '',
-                  importedAt: now,
-                  importedBy: adminUsername
+          if (importMode === 'merge') {
+            const filter = {
+              usernameNorm: info.normHeavy,
+              $or: [
+                { linePhone: { $exists: false } },
+                { linePhone: null },
+                { linePhone: '' },
+                { linePhone: linePhone }
+              ]
+            };
+            lookupOps.push({
+              updateOne: {
+                filter,
+                update: {
+                  $set: {
+                    usernameOriginal: info.original,
+                    linePhone,
+                    lineTeamName: fullTeamLabel,
+                    prefix: '',
+                    importedAt: now,
+                    importedBy: adminUsername
+                  },
+                  $setOnInsert: { usernameNorm: info.normHeavy }
                 },
-                $setOnInsert: { usernameNorm: info.normHeavy }
-              },
-              upsert: true
-            }
-          });
+                upsert: true
+              }
+            });
+          } else {
+            // overwrite: pisar sí o sí.
+            lookupOps.push({
+              updateOne: {
+                filter: { usernameNorm: info.normHeavy },
+                update: {
+                  $set: {
+                    usernameOriginal: info.original,
+                    linePhone,
+                    lineTeamName: fullTeamLabel,
+                    prefix: '',
+                    importedAt: now,
+                    importedBy: adminUsername
+                  },
+                  $setOnInsert: { usernameNorm: info.normHeavy }
+                },
+                upsert: true
+              }
+            });
+          }
         }
       }
 
@@ -7992,11 +8055,12 @@ app.post(
         }
       }
 
-      logger.info(`[user-lines/import-exact] team="${fullTeamLabel}" phone=${linePhone} dryRun=${dryRun} rows=${totalRowsRead} unique=${entries.size} matched=${matched} notFound=${entries.size - matched} by=${adminUsername}`);
+      logger.info(`[user-lines/import-exact] team="${fullTeamLabel}" phone=${linePhone} mode=${importMode} dryRun=${dryRun} rows=${totalRowsRead} unique=${entries.size} matched=${matched} notFound=${entries.size - matched} keptUntouched=${keptUntouchedOtherLine} reassigned=${reassignedFromOtherLine} by=${adminUsername}`);
 
       res.json({
         success: true,
         dryRun,
+        mode: importMode,
         teamName: fullTeamLabel,
         linePhone,
         summary: {
@@ -8005,7 +8069,8 @@ app.post(
           matched,
           notFound: entries.size - matched,
           alreadyOnSameLine,
-          reassignedFromOtherLine
+          reassignedFromOtherLine,
+          keptUntouchedOtherLine
         },
         notFoundSample,
         writeResult,
@@ -8134,6 +8199,44 @@ app.post('/api/admin/user-lines/reassign-orphans', authMiddleware, adminMiddlewa
   } catch (err) {
     logger.error(`POST reassign-orphans: ${err.message}`);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Borra TODAS las asignaciones de UNA línea específica (teamName + linePhone),
+// sin tocar otras líneas del mismo equipo. Útil para "vaciar" una línea
+// antes de cargar un archivo nuevo y que el admin no quede con sobras.
+//   - User: pone linePhone/lineTeamName a null SOLO para users de esa línea.
+//   - UserLineLookup: borra las entradas (xlsx pre-asignados) de esa línea.
+app.post('/api/admin/user-lines/clear-line', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String((req.body && req.body.teamName) || '').trim();
+    const linePhone = String((req.body && req.body.linePhone) || '').trim();
+    if (!teamName && !linePhone) {
+      return res.status(400).json({ error: 'Faltan teamName o linePhone' });
+    }
+    const userFilter = {};
+    const lookupFilter = {};
+    if (teamName)  { userFilter.lineTeamName = teamName; lookupFilter.lineTeamName = teamName; }
+    if (linePhone) { userFilter.linePhone = linePhone; lookupFilter.linePhone = linePhone; }
+
+    const userResult = await User.updateMany(
+      userFilter,
+      { $set: { linePhone: null, lineTeamName: null, lineAssignedAt: null, lineAssignedBy: null, lineAssignmentSource: null } }
+    );
+    const lookupResult = await UserLineLookup.deleteMany(lookupFilter);
+
+    logger.info(`[user-lines/clear-line] team="${teamName}" phone=${linePhone} clearedUsers=${userResult.modifiedCount || 0} deletedLookups=${lookupResult.deletedCount || 0} by=${(req.user && req.user.username) || 'admin'}`);
+
+    res.json({
+      success: true,
+      teamName: teamName || null,
+      linePhone: linePhone || null,
+      clearedUsers: userResult.modifiedCount || 0,
+      deletedLookups: lookupResult.deletedCount || 0
+    });
+  } catch (error) {
+    logger.error(`[user-lines/clear-line] error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
