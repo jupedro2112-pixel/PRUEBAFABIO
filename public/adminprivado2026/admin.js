@@ -2575,14 +2575,70 @@ function loadRecontactSection() {
 
 function _renderRecontactUploader() {
     let html = '';
-    html += '<div style="background:rgba(0,0,0,0.30);border:2px dashed rgba(0,212,255,0.40);border-radius:14px;padding:24px;text-align:center;">';
-    html += '  <div style="font-size:42px;margin-bottom:8px;">📤</div>';
-    html += '  <h3 style="color:#00d4ff;margin:0 0 8px;font-size:18px;">Subí el .xlsx con la lista a recontactar</h3>';
-    html += '  <p style="color:#bbb;font-size:12.5px;line-height:1.6;margin:0 0 14px;max-width:560px;margin-left:auto;margin-right:auto;">Una columna con usernames (admite cualquier nombre de columna, ignora encabezados). Por cada uno te decimos: tier, días sin cargar, si tiene app/notifs, equipo, teléfono, estrategia sugerida, bono y mensaje listo para WhatsApp.</p>';
-    html += '  <input type="file" id="recontactFile" accept=".xlsx,.xls" style="margin:0 auto;display:block;padding:9px;border-radius:7px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;">';
-    html += '  <button type="button" onclick="recontactAnalyze()" id="recontactAnalyzeBtn" style="margin-top:14px;padding:11px 22px;font-size:13.5px;font-weight:800;background:linear-gradient(135deg,#00d4ff,#0080ff);border:none;color:#000;border-radius:8px;cursor:pointer;letter-spacing:0.5px;">🔍 ANALIZAR LISTA</button>';
+    html += '<div id="recontactDropZone" ondragover="_recontactDragOver(event)" ondragleave="_recontactDragLeave(event)" ondrop="_recontactDrop(event)" style="background:rgba(0,212,255,0.04);border:2px dashed rgba(0,212,255,0.40);border-radius:14px;padding:34px 24px;text-align:center;transition:all 0.2s ease;">';
+    html += '  <div style="font-size:54px;margin-bottom:10px;">📤</div>';
+    html += '  <h3 style="color:#00d4ff;margin:0 0 8px;font-size:20px;">Subí el .xlsx con la lista a recontactar</h3>';
+    html += '  <p style="color:#bbb;font-size:13px;line-height:1.6;margin:0 0 16px;max-width:640px;margin-left:auto;margin-right:auto;">Detecta automáticamente columnas <strong style="color:#fff;">Type</strong> · <strong style="color:#fff;">Amount</strong> · <strong style="color:#fff;">User</strong> y agrega por usuario: <strong style="color:#25d366;">cargas</strong> (deposit), <strong style="color:#ff5050;">retiros</strong> (withdraw) y <strong style="color:#ffd700;">bonos</strong> (individual_bonus). Por cada uno te dice: tier, días sin cargar, app/notifs, teléfono, <strong style="color:#ffd700;">estrategia</strong>, <strong style="color:#25d366;">bono recomendado</strong> y mensaje WhatsApp.</p>';
+    html += '  <p style="color:#888;font-size:11.5px;margin:0 0 16px;">💡 Podés también arrastrar y soltar el archivo acá.</p>';
+    html += '  <input type="file" id="recontactFile" accept=".xlsx,.xls" onchange="_recontactFilePicked()" style="margin:0 auto 6px;display:block;padding:11px;border-radius:8px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;width:100%;max-width:380px;box-sizing:border-box;">';
+    html += '  <div id="recontactFileInfo" style="color:#aaa;font-size:11.5px;margin:8px 0;min-height:18px;"></div>';
+    html += '  <button type="button" onclick="recontactAnalyze()" id="recontactAnalyzeBtn" style="margin-top:8px;padding:13px 26px;font-size:14px;font-weight:800;background:linear-gradient(135deg,#00d4ff,#0080ff);border:none;color:#000;border-radius:9px;cursor:pointer;letter-spacing:0.5px;box-shadow:0 4px 14px rgba(0,212,255,0.35);">🔍 ANALIZAR LISTA</button>';
+    html += '  <div id="recontactProgress" style="margin-top:14px;color:#aaa;font-size:12px;display:none;"></div>';
+    html += '</div>';
+    // Tip secundario debajo del drop zone.
+    html += '<div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.20);border-radius:10px;padding:10px 14px;margin-top:12px;color:#bbb;font-size:11.5px;line-height:1.6;">';
+    html += '  💡 <strong style="color:#ffd700;">Tip:</strong> hasta 10MB / 50.000 usernames, multi-hoja. Si el header dice <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">Type</code> + <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">Amount</code> + <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">User</code> agrupa los movimientos por usuario. Si no hay header, toma la primera columna como username.';
     html += '</div>';
     return html;
+}
+
+function _recontactDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const z = document.getElementById('recontactDropZone');
+    if (z) {
+        z.style.background = 'rgba(0,212,255,0.12)';
+        z.style.borderColor = '#00d4ff';
+    }
+}
+function _recontactDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const z = document.getElementById('recontactDropZone');
+    if (z) {
+        z.style.background = 'rgba(0,212,255,0.04)';
+        z.style.borderColor = 'rgba(0,212,255,0.40)';
+    }
+}
+function _recontactDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    _recontactDragLeave(e);
+    const dt = e.dataTransfer;
+    if (!dt || !dt.files || dt.files.length === 0) return;
+    const f = dt.files[0];
+    if (!f.name.match(/\.(xlsx|xls)$/i)) {
+        showToast('Sólo .xlsx o .xls', 'error');
+        return;
+    }
+    const inp = document.getElementById('recontactFile');
+    if (inp) {
+        // Asignar el archivo al input para que recontactAnalyze lo lea.
+        const dtTrans = new DataTransfer();
+        dtTrans.items.add(f);
+        inp.files = dtTrans.files;
+        _recontactFilePicked();
+    }
+}
+
+function _recontactFilePicked() {
+    const inp = document.getElementById('recontactFile');
+    const info = document.getElementById('recontactFileInfo');
+    if (!inp || !info) return;
+    const f = inp.files && inp.files[0];
+    if (!f) { info.textContent = ''; return; }
+    const sizeKb = (f.size / 1024).toFixed(1);
+    info.innerHTML = '📄 <strong style="color:#fff;">' + escapeHtml(f.name) + '</strong> · ' + sizeKb + ' KB';
 }
 
 async function recontactAnalyze() {
@@ -2647,6 +2703,21 @@ function _renderRecontactDashboard(summary, items) {
     html += _kpiCard('Sin app o sin notifs', fmt(summary.totalAnalyzed - summary.withNotifs), '#ffaa44', 'recontactar por WhatsApp');
     html += _kpiCard('Bono total sugerido', '$' + fmt(summary.totalRecoverableValue || 0), '#ffd700', 'inversión recuperación');
     html += '</div>';
+
+    // KPIs del archivo — sólo si trajo Type/Amount/User.
+    const hasFileTx = (summary.fileTotalDeposits || 0) + (summary.fileTotalWithdraws || 0) + (summary.fileTotalBonuses || 0) > 0;
+    if (hasFileTx) {
+        const net = (summary.fileTotalDeposits || 0) - (summary.fileTotalWithdraws || 0);
+        html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.18);border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
+        html += '  <div style="color:#00d4ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">📄 Datos del archivo subido</div>';
+        html += '  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">';
+        html += _kpiCard('Total cargas',   '$' + fmt(summary.fileTotalDeposits),  '#25d366', fmt(summary.fileCountDeposits) + ' movimientos');
+        html += _kpiCard('Total retiros',  '$' + fmt(summary.fileTotalWithdraws), '#ff5050', fmt(summary.fileCountWithdraws) + ' movimientos');
+        html += _kpiCard('Total bonos',    '$' + fmt(summary.fileTotalBonuses),   '#ffd700', fmt(summary.fileCountBonuses) + ' bonificaciones');
+        html += _kpiCard('Neto (cargas - retiros)', (net < 0 ? '-$' : '$') + fmt(Math.abs(net)), net >= 0 ? '#25d366' : '#ff5050', net >= 0 ? 'saldo positivo' : 'retiraron más de lo que cargaron');
+        html += '  </div>';
+        html += '</div>';
+    }
 
     // Buckets de actividad — clickables como filtro
     html += '<div style="background:rgba(0,0,0,0.20);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;margin-bottom:12px;">';
@@ -2713,13 +2784,19 @@ function _renderRecontactDashboard(summary, items) {
     html += '    <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Mostrando ' + filtered.length + ' de ' + items.length + ' (top por prioridad)</span>';
     html += '  </div>';
     html += '  <div style="overflow-x:auto;max-height:60vh;overflow-y:auto;">';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:980px;">';
+    const minWidth = hasFileTx ? 1240 : 980;
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:' + minWidth + 'px;">';
     html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">#</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Usuario</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tier</th>';
     html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Días</th>';
     html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">$ 30d</th>';
+    if (hasFileTx) {
+        html += '    <th style="text-align:right;padding:7px 10px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);">$ Cargas (arch)</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ff5050;border-bottom:1px solid rgba(255,255,255,0.10);">$ Retiros (arch)</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ffd700;border-bottom:1px solid rgba(255,255,255,0.10);">$ Bonos (arch)</th>';
+    }
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tel</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estrategia</th>';
@@ -2738,6 +2815,11 @@ function _renderRecontactDashboard(summary, items) {
         html += '  <td style="padding:5px 10px;color:' + (tierColor[it.tier] || '#aaa') + ';font-weight:700;">' + escapeHtml(it.tier || '—') + '</td>';
         html += '  <td style="padding:5px 10px;text-align:right;color:' + (bucketColor[it.bucket] || '#aaa') + ';font-family:monospace;">' + (it.daysSinceLastDeposit == null ? '—' : it.daysSinceLastDeposit) + '</td>';
         html += '  <td style="padding:5px 10px;text-align:right;color:#fff;">' + (it.deposits30d ? '$' + fmt(it.deposits30d) : '—') + '</td>';
+        if (hasFileTx) {
+            html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;font-family:monospace;">' + (it.fileDeposits ? '$' + fmt(it.fileDeposits) : '—') + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#ff5050;font-family:monospace;">' + (it.fileWithdraws ? '$' + fmt(it.fileWithdraws) : '—') + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#ffd700;font-family:monospace;">' + (it.fileBonuses ? '$' + fmt(it.fileBonuses) : '—') + '</td>';
+        }
         html += '  <td style="padding:5px 10px;">' + (it.hasApp ? (it.hasNotifs ? '<span style="color:#25d366;">📱✓</span>' : '<span style="color:#ffaa44;">📱🔕</span>') : '<span style="color:#888;">—</span>') + '</td>';
         html += '  <td style="padding:5px 10px;color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.phone || '—') + '</td>';
         html += '  <td style="padding:5px 10px;color:#ffd700;font-weight:600;font-size:11px;">' + escapeHtml(it.strategy || '—') + '</td>';
@@ -2746,7 +2828,8 @@ function _renderRecontactDashboard(summary, items) {
         html += '</tr>';
     }
     if (filtered.length > max) {
-        html += '<tr><td colspan="10" style="padding:10px;text-align:center;color:#666;font-style:italic;">... ' + (filtered.length - max) + ' más en el CSV completo</td></tr>';
+        const colspan = hasFileTx ? 13 : 10;
+        html += '<tr><td colspan="' + colspan + '" style="padding:10px;text-align:center;color:#666;font-style:italic;">... ' + (filtered.length - max) + ' más en el CSV completo</td></tr>';
     }
     html += '  </tbody></table>';
     html += '</div></div>';

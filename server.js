@@ -8433,24 +8433,75 @@ app.post(
       catch (e) { return res.status(400).json({ error: `No se pudo leer el .xlsx: ${e.message}` }); }
 
       // Sacar usernames únicos del workbook (recorre todas las hojas, primera columna).
+      // Detectar columnas (Type / Amount / User) por header. Si no hay header
+      // claro se cae a "primera columna = username" (legacy).
+      // Soporta archivos con filas transaccionales — agrega depósitos /
+      // retiros / bonos por usuario.
+      const HEADER_TYPE = new Set(['type', 'tipo', 'movimiento']);
+      const HEADER_AMOUNT = new Set(['amount', 'monto', 'cantidad', 'importe']);
+      const HEADER_USER = new Set(['user', 'username', 'usuario']);
+      const TYPE_DEPOSIT = new Set(['deposit', 'deposito', 'depósito', 'carga']);
+      const TYPE_WITHDRAW = new Set(['withdraw', 'withdrawal', 'retiro', 'extraccion', 'extracción']);
+      const TYPE_BONUS = new Set(['individual_bonus', 'bonus', 'bonificacion', 'bonificación', 'bono']);
+
+      const fileAgg = new Map(); // norm -> { original, sumDeposits, sumWithdraws, sumBonuses, countDeposits, countWithdraws, countBonuses }
       const seen = new Set();
       const inputUsernames = [];
+
       for (const sheetName of workbook.SheetNames) {
         const sheet = workbook.Sheets[sheetName];
         const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: null });
-        for (const row of rows) {
+        if (!rows || rows.length === 0) continue;
+
+        // Detectar columnas a partir de la primera fila.
+        let colType = -1, colAmount = -1, colUser = -1;
+        const firstRow = Array.isArray(rows[0]) ? rows[0] : [];
+        for (let i = 0; i < firstRow.length; i++) {
+          const h = String(firstRow[i] == null ? '' : firstRow[i]).trim().toLowerCase();
+          if (HEADER_TYPE.has(h)) colType = i;
+          else if (HEADER_AMOUNT.has(h)) colAmount = i;
+          else if (HEADER_USER.has(h)) colUser = i;
+        }
+        const hasHeader = (colUser !== -1) || (colType !== -1) || (colAmount !== -1);
+        const userColIdx = (colUser !== -1) ? colUser : 0; // fallback: primera columna
+
+        const startRow = hasHeader ? 1 : 0;
+        for (let r = startRow; r < rows.length; r++) {
+          const row = rows[r];
           if (!Array.isArray(row) || row.length === 0) continue;
-          const cell = row[0];
-          if (cell == null) continue;
-          const v = String(cell).trim();
+
+          const userCell = row[userColIdx];
+          if (userCell == null) continue;
+          const v = String(userCell).trim();
           if (!v) continue;
-          // Skip header rows típicos
           const lower = v.toLowerCase();
-          if (lower === 'username' || lower === 'usuario' || lower === 'user') continue;
+          // En modo sin-header, ignorar headers comunes que aparezcan en col 0.
+          if (!hasHeader && (lower === 'username' || lower === 'usuario' || lower === 'user')) continue;
           const norm = lower.replace(/[^a-z0-9]/g, '');
-          if (!norm || seen.has(norm)) continue;
-          seen.add(norm);
-          inputUsernames.push({ original: v, norm });
+          if (!norm) continue;
+
+          if (!seen.has(norm)) {
+            seen.add(norm);
+            inputUsernames.push({ original: v, norm });
+            fileAgg.set(norm, {
+              original: v,
+              sumDeposits: 0, sumWithdraws: 0, sumBonuses: 0,
+              countDeposits: 0, countWithdraws: 0, countBonuses: 0
+            });
+          }
+
+          // Agregar movimiento si tenemos type+amount.
+          if (colType !== -1 && colAmount !== -1) {
+            const tRaw = String(row[colType] == null ? '' : row[colType]).trim().toLowerCase();
+            const amtRaw = row[colAmount];
+            const amt = (amtRaw == null || amtRaw === '') ? 0 : Number(String(amtRaw).replace(/[^\d.\-]/g, ''));
+            if (Number.isFinite(amt) && amt > 0) {
+              const a = fileAgg.get(norm);
+              if (TYPE_DEPOSIT.has(tRaw))      { a.sumDeposits  += amt; a.countDeposits++; }
+              else if (TYPE_WITHDRAW.has(tRaw)){ a.sumWithdraws += amt; a.countWithdraws++; }
+              else if (TYPE_BONUS.has(tRaw))   { a.sumBonuses   += amt; a.countBonuses++; }
+            }
+          }
         }
       }
 
@@ -8489,7 +8540,14 @@ app.post(
         totalRecoverableValue: 0,
         sumDeposits30d: 0,
         sumDeposits90d: 0,
-        sumTotalDeposits: 0
+        sumTotalDeposits: 0,
+        // Datos del archivo (si trae Type/Amount/User).
+        fileTotalDeposits: 0,
+        fileTotalWithdraws: 0,
+        fileTotalBonuses: 0,
+        fileCountDeposits: 0,
+        fileCountWithdraws: 0,
+        fileCountBonuses: 0
       };
 
       for (const inp of inputUsernames) {
@@ -8529,6 +8587,14 @@ app.post(
         summary.sumDeposits90d += (s && s.realDeposits90d) || 0;
         summary.sumTotalDeposits += (s && s.totalRealDeposits) || 0;
 
+        const fa = fileAgg.get(inp.norm) || { sumDeposits: 0, sumWithdraws: 0, sumBonuses: 0, countDeposits: 0, countWithdraws: 0, countBonuses: 0 };
+        summary.fileTotalDeposits  += fa.sumDeposits;
+        summary.fileTotalWithdraws += fa.sumWithdraws;
+        summary.fileTotalBonuses   += fa.sumBonuses;
+        summary.fileCountDeposits  += fa.countDeposits;
+        summary.fileCountWithdraws += fa.countWithdraws;
+        summary.fileCountBonuses   += fa.countBonuses;
+
         items.push({
           username: inp.original,
           tier,
@@ -8549,7 +8615,15 @@ app.post(
           suggestedMessage: sugg.message,
           addAppOffer: sugg.addAppOffer,
           addNotifsOffer: sugg.addNotifsOffer,
-          priority
+          priority,
+          // Agregados desde el archivo (si trae Type/Amount/User).
+          fileDeposits: fa.sumDeposits,
+          fileWithdraws: fa.sumWithdraws,
+          fileBonuses: fa.sumBonuses,
+          fileCountDeposits: fa.countDeposits,
+          fileCountWithdraws: fa.countWithdraws,
+          fileCountBonuses: fa.countBonuses,
+          fileNet: fa.sumDeposits - fa.sumWithdraws
         });
       }
 
@@ -8588,7 +8662,7 @@ app.post(
         const s = (v == null ? '' : String(v));
         return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
       };
-      const lines = ['Prioridad,Usuario,Tier,Bucket,DiasSinCargar,Cargas30d,Cargas90d,TotalCargas,TieneApp,TieneNotifs,Equipo,Linea,Telefono,Estrategia,BonoSugerido,MensajeSugerido,OfreceApp,OfreceNotifs'];
+      const lines = ['Prioridad,Usuario,Tier,Bucket,DiasSinCargar,Cargas30d,Cargas90d,TotalCargas,DepositosArchivo,RetirosArchivo,BonosArchivo,NetoArchivo,CantDepositos,CantRetiros,CantBonos,TieneApp,TieneNotifs,Equipo,Linea,Telefono,Estrategia,BonoSugerido,MensajeSugerido,OfreceApp,OfreceNotifs'];
       for (const it of items) {
         lines.push([
           escape(it.priority),
@@ -8599,6 +8673,13 @@ app.post(
           escape(it.deposits30d),
           escape(it.deposits90d),
           escape(it.totalDeposits),
+          escape(it.fileDeposits || 0),
+          escape(it.fileWithdraws || 0),
+          escape(it.fileBonuses || 0),
+          escape(it.fileNet || 0),
+          escape(it.fileCountDeposits || 0),
+          escape(it.fileCountWithdraws || 0),
+          escape(it.fileCountBonuses || 0),
           escape(it.hasApp ? 'Si' : 'No'),
           escape(it.hasNotifs ? 'Si' : 'No'),
           escape(it.team || ''),
