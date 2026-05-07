@@ -1242,6 +1242,86 @@
             color: #fff;
             order: 99;
         }
+
+        /* Backup phone card al pie del home — siempre visible para todos. */
+        .backup-phone-card {
+            width: 100%;
+            max-width: 560px;
+            margin: 14px auto 30px;
+            padding: 14px;
+            background: linear-gradient(135deg, rgba(31,140,255,0.12), rgba(13,71,161,0.06));
+            border: 1.5px solid rgba(31,140,255,0.45);
+            border-radius: 14px;
+            box-sizing: border-box;
+            color: #fff;
+            order: 100;
+        }
+        .backup-phone-card-title {
+            color: #1f8cff;
+            font-weight: 900;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+        .backup-phone-card-sub {
+            color: #ddd;
+            font-size: 12px;
+            line-height: 1.45;
+            margin-bottom: 10px;
+        }
+        .backup-phone-card-sub strong { color: #ffd700; }
+        .backup-phone-card-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .backup-phone-card-input {
+            flex: 1;
+            background: rgba(0,0,0,0.45);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 8px;
+            padding: 9px 11px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .backup-phone-card-input:focus {
+            outline: none;
+            border-color: #1f8cff;
+            box-shadow: 0 0 0 2px rgba(31,140,255,0.25);
+        }
+        .backup-phone-card-save {
+            background: linear-gradient(135deg, #25d366, #128c4f);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 9px 16px;
+            font-weight: 800;
+            font-size: 13px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .backup-phone-card-save:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .backup-phone-card-status {
+            margin-top: 8px;
+            font-size: 11.5px;
+            line-height: 1.4;
+            padding: 6px 10px;
+            border-radius: 6px;
+        }
+        .backup-phone-card-status.ok {
+            background: rgba(37,211,102,0.12);
+            color: #66e69b;
+            border: 1px solid rgba(37,211,102,0.40);
+        }
+        .backup-phone-card-status.error {
+            background: rgba(255,68,68,0.12);
+            color: #ff8a8a;
+            border: 1px solid rgba(255,68,68,0.40);
+        }
         .reviews-feed-title {
             text-align: center;
             font-size: 13.5px;
@@ -2357,22 +2437,6 @@
                     </svg>
                     SOPORTE
                 </a>
-                <!-- Backup phone chip: pill chico, JUSTO a la izquierda del
-                     username (mismo tamaño que .user-name). Importante pero
-                     NO obligatorio. Se oculta solo si ya dejó número. -->
-                <div id="backupPhoneChip" class="backup-phone-chip" hidden>
-                    <button type="button" id="backupPhoneToggle" class="backup-phone-toggle" title="Dejanos tu número por si falla la página">📞 Tu línea</button>
-                    <div id="backupPhonePopover" class="backup-phone-popover" hidden>
-                        <div class="backup-phone-title">📞 Dejá tu número (opcional)</div>
-                        <div class="backup-phone-sub">Si tenemos un problema con la página, te avisamos directo. <strong>Importante pero no obligatorio</strong> — vos decidís.</div>
-                        <input type="tel" id="backupPhoneInput" class="backup-phone-input" inputmode="tel" maxlength="20" placeholder="Ej: 1133224455">
-                        <div class="backup-phone-actions">
-                            <button type="button" id="backupPhoneCancel" class="backup-phone-cancel">Cerrar</button>
-                            <button type="button" id="backupPhoneSave" class="backup-phone-save">Guardar</button>
-                        </div>
-                        <div id="backupPhoneMsg" class="backup-phone-msg" hidden></div>
-                    </div>
-                </div>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
@@ -2613,6 +2677,19 @@
           </div>
           <div class="reviews-feed-list" id="reviewsFeedList"></div>
           <div class="reviews-feed-footer">Tu opinión es anónima para los demás — el username se muestra parcialmente.</div>
+      </div>
+
+      <!-- Backup phone card: tarjeta visible al pie de la home. SIEMPRE
+           aparece para todos los users — los que ya guardaron pueden
+           modificarlo desde el mismo botón. Importante pero NO obligatorio. -->
+      <div class="backup-phone-card" id="backupPhoneCard">
+          <div class="backup-phone-card-title">📞 Tu línea (opcional)</div>
+          <div class="backup-phone-card-sub">Dejanos tu número por si <strong>tenemos un problema con la página</strong> y queremos avisarte directo. Importante pero no obligatorio — vos decidís.</div>
+          <div class="backup-phone-card-row">
+              <input type="tel" id="backupPhoneCardInput" class="backup-phone-card-input" inputmode="tel" maxlength="20" placeholder="Ej: 1133224455">
+              <button type="button" id="backupPhoneCardSave" class="backup-phone-card-save">Guardar</button>
+          </div>
+          <div id="backupPhoneCardStatus" class="backup-phone-card-status" hidden></div>
       </div>
 
       <div class="drawer-overlay" id="drawerOverlay" onclick="VIP.ui.toggleDrawer()"></div>

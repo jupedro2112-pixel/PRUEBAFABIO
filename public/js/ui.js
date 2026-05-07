@@ -103,59 +103,35 @@ VIP.ui = (function () {
         // los "mensajes de bienvenida" iban al chat in-app que sacamos.
     }
 
-    // Chip de número de respaldo: vive en header-right, en la misma línea que
-    // el username. Si el user ya lo dejó antes, queda como ✓ (saved). Si no,
-    // muestra "📞 Tu N°" y al click despliega un popover con el input.
+    // Tarjeta de teléfono de respaldo al pie del home. SIEMPRE visible: si
+    // el user ya guardó un número, lo precarga en el input para que pueda
+    // modificarlo desde el mismo lugar. Importante pero no obligatorio.
     let _backupPhoneInited = false;
     async function setupBackupPhoneChip() {
-        const chip   = document.getElementById('backupPhoneChip');
-        const toggle = document.getElementById('backupPhoneToggle');
-        const pop    = document.getElementById('backupPhonePopover');
-        const input  = document.getElementById('backupPhoneInput');
-        const save   = document.getElementById('backupPhoneSave');
-        const cancel = document.getElementById('backupPhoneCancel');
-        const msg    = document.getElementById('backupPhoneMsg');
-        if (!chip || !toggle || !pop || !input || !save || !cancel) return;
+        const card   = document.getElementById('backupPhoneCard');
+        const input  = document.getElementById('backupPhoneCardInput');
+        const save   = document.getElementById('backupPhoneCardSave');
+        const status = document.getElementById('backupPhoneCardStatus');
+        if (!card || !input || !save) return;
 
-        const showMsg = (text, kind) => {
-            msg.textContent = text;
-            msg.className = 'backup-phone-msg ' + (kind || '');
-            msg.hidden = false;
-        };
-        const clearMsg = () => { msg.hidden = true; msg.textContent = ''; };
-        const closePop = () => { pop.hidden = true; clearMsg(); };
-        const markSaved = () => {
-            toggle.textContent = '✓ Número guardado';
-            toggle.classList.add('saved');
-            toggle.title = 'Ya nos dejaste tu número de respaldo. ¡Gracias!';
-            toggle.disabled = true;
-            closePop();
+        const showStatus = (text, kind) => {
+            if (!status) return;
+            status.textContent = text;
+            status.className = 'backup-phone-card-status ' + (kind || '');
+            status.hidden = false;
         };
 
         if (!_backupPhoneInited) {
             _backupPhoneInited = true;
-            toggle.addEventListener('click', () => {
-                if (toggle.classList.contains('saved')) return;
-                pop.hidden = !pop.hidden;
-                if (!pop.hidden) {
-                    clearMsg();
-                    setTimeout(() => { try { input.focus(); } catch (_) {} }, 30);
-                }
-            });
-            cancel.addEventListener('click', closePop);
-            document.addEventListener('click', (e) => {
-                if (pop.hidden) return;
-                if (chip.contains(e.target)) return;
-                closePop();
-            });
             save.addEventListener('click', async () => {
                 const val = (input.value || '').trim();
                 const digits = val.replace(/\D/g, '');
                 if (digits.length < 6) {
-                    showMsg('Número muy corto. Ingresá al menos 6 dígitos.', 'error');
+                    showStatus('Número muy corto. Ingresá al menos 6 dígitos.', 'error');
                     return;
                 }
                 save.disabled = true;
+                save.textContent = '⏳';
                 try {
                     const r = await fetch(`${VIP.config.API_URL}/api/user/backup-phone`, {
                         method: 'POST',
@@ -167,33 +143,38 @@ VIP.ui = (function () {
                     });
                     const data = await r.json().catch(() => ({}));
                     if (!r.ok) {
-                        showMsg(data.error || 'No se pudo guardar. Probá de nuevo.', 'error');
+                        showStatus(data.error || 'No se pudo guardar. Probá de nuevo.', 'error');
                         save.disabled = false;
+                        save.textContent = 'Guardar';
                         return;
                     }
-                    showMsg('✓ Guardado. Gracias!', 'ok');
-                    setTimeout(markSaved, 900);
-                } catch (e) {
-                    showMsg('Error de conexión. Probá de nuevo.', 'error');
+                    showStatus('✓ Número guardado. Gracias por confiar en nosotros.', 'ok');
                     save.disabled = false;
+                    save.textContent = 'Actualizar';
+                } catch (e) {
+                    showStatus('Error de conexión. Probá de nuevo.', 'error');
+                    save.disabled = false;
+                    save.textContent = 'Guardar';
                 }
             });
         }
 
-        // Chequear si ya lo dejó antes; sólo mostrar el chip si todavía no.
+        // Tarjeta SIEMPRE visible. Si ya guardó, precargamos el número y
+        // cambiamos el botón a "Actualizar" para que pueda modificarlo.
+        card.hidden = false;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/user/backup-phone`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (r.ok) {
                 const d = await r.json();
-                if (d.hasSubmitted) {
-                    chip.hidden = true;
-                    return;
+                if (d.hasSubmitted && d.phone) {
+                    input.value = d.phone;
+                    save.textContent = 'Actualizar';
+                    showStatus('✓ Tenés guardado este número. Si querés cambiarlo, editalo y tocá Actualizar.', 'ok');
                 }
             }
-        } catch (_) { /* si falla, mostramos el chip igual */ }
-        chip.hidden = false;
+        } catch (_) { /* si falla, igual la tarjeta queda visible para usar */ }
     }
 
     // ---- Layout ----
