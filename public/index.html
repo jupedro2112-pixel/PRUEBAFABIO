@@ -4589,6 +4589,131 @@
     </div>
 
     <!-- ============================================
+         ENCUESTA: preferencia de notificaciones (Fase 1).
+         Modal flotante que aparece UNA VEZ al primer login
+         post-deploy. El user elige tier y se guarda en User.
+         La estrategia mensual de notifs (Fase 2) lo usa para
+         personalizar.
+         ============================================ -->
+    <div id="notifSurveyModal" style="display:none;position:fixed;inset:0;z-index:10002;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;padding:20px;">
+      <div style="background:linear-gradient(135deg,#1a0033,#2d0052);border:1px solid #d4af37;border-radius:16px;padding:20px;max-width:440px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+        <div style="text-align:center;margin-bottom:14px;">
+          <div style="font-size:38px;line-height:1;margin-bottom:4px;">🤔</div>
+          <h2 style="margin:0;color:#ffd700;font-size:18px;font-weight:900;">¿Cuántas notificaciones querés recibir?</h2>
+          <p style="margin:6px 0 0;color:#bbb;font-size:12px;line-height:1.4;">Elegí el plan que más te conviene.<br>Lo podés cambiar después.</p>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button type="button" data-pref="suave" class="surveyOpt" style="background:linear-gradient(135deg,rgba(102,255,102,0.18),rgba(102,255,102,0.05));border:1.5px solid #66ff66;border-radius:12px;padding:12px 14px;text-align:left;cursor:pointer;color:#fff;">
+            <div style="font-weight:900;font-size:14px;color:#66ff66;letter-spacing:1px;">🟢 SUAVE</div>
+            <div style="font-size:11.5px;color:#cce4cc;margin-top:3px;line-height:1.5;">2 bonos · 5 invitaciones a jugar · 2 regalos al mes<br><span style="color:#aaa;">Para los que prefieren tranquilidad</span></div>
+          </button>
+
+          <button type="button" data-pref="normal" class="surveyOpt" style="background:linear-gradient(135deg,rgba(255,235,59,0.18),rgba(255,235,59,0.05));border:2px solid #ffd700;border-radius:12px;padding:12px 14px;text-align:left;cursor:pointer;color:#fff;position:relative;">
+            <div style="position:absolute;top:-8px;right:10px;background:#ffd700;color:#1a0033;font-size:9px;font-weight:900;padding:2px 8px;border-radius:8px;letter-spacing:1px;">RECOMENDADO</div>
+            <div style="font-weight:900;font-size:14px;color:#ffd700;letter-spacing:1px;">🟡 NORMAL</div>
+            <div style="font-size:11.5px;color:#eee;margin-top:3px;line-height:1.5;">4 bonos · 5 invitaciones a jugar · 2 regalos al mes<br><span style="color:#aaa;">Equilibrio entre estar al tanto y no saturar</span></div>
+          </button>
+
+          <button type="button" data-pref="activo" class="surveyOpt" style="background:linear-gradient(135deg,rgba(255,107,53,0.18),rgba(255,107,53,0.05));border:1.5px solid #ff6b35;border-radius:12px;padding:12px 14px;text-align:left;cursor:pointer;color:#fff;">
+            <div style="font-weight:900;font-size:14px;color:#ff8c5a;letter-spacing:1px;">🔴 ACTIVO</div>
+            <div style="font-size:11.5px;color:#ffd5c2;margin-top:3px;line-height:1.5;">6 bonos · 10 invitaciones a jugar · 3 regalos al mes<br><span style="color:#aaa;">Para los que quieren todo lo que tenemos</span></div>
+          </button>
+
+          <button type="button" data-pref="opt_out" class="surveyOpt" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.20);border-radius:12px;padding:11px 14px;text-align:left;cursor:pointer;color:#aaa;">
+            <div style="font-weight:800;font-size:13px;color:#aaa;letter-spacing:0.5px;">🚫 NO RECIBIR notificaciones</div>
+            <div style="font-size:11px;color:#888;margin-top:3px;line-height:1.4;">Igual podés entrar a la app cuando quieras.</div>
+          </button>
+        </div>
+
+        <div id="notifSurveyError" style="display:none;color:#ff8080;font-size:11px;margin-top:10px;text-align:center;"></div>
+      </div>
+    </div>
+
+    <script>
+    // Encuesta de preferencia: la mostramos una vez por user. Si ya
+    // contestaron, /api/user/notif-preference devuelve shouldShowSurvey:false.
+    // El localStorage 'notifSurveyDoneLocal' es solo un cache por device — la
+    // verdad la tiene el server.
+    (function () {
+      function getToken() {
+        try { return localStorage.getItem('token') || (window.VIP && VIP.state && VIP.state.currentToken) || null; }
+        catch (_) { return null; }
+      }
+      function getApiUrl() {
+        return (window.VIP && VIP.config && VIP.config.API_URL) || '';
+      }
+      async function maybeShowSurvey() {
+        try {
+          if (localStorage.getItem('notifSurveyDoneLocal') === '1') return;
+          const tok = getToken();
+          if (!tok) return;
+          const r = await fetch(getApiUrl() + '/api/user/notif-preference', {
+            headers: { 'Authorization': 'Bearer ' + tok }
+          });
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d.shouldShowSurvey === true) {
+            const m = document.getElementById('notifSurveyModal');
+            if (m) m.style.display = 'flex';
+          } else {
+            try { localStorage.setItem('notifSurveyDoneLocal', '1'); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+      async function savePreference(pref) {
+        const tok = getToken();
+        if (!tok) return;
+        const errEl = document.getElementById('notifSurveyError');
+        if (errEl) errEl.style.display = 'none';
+        try {
+          const r = await fetch(getApiUrl() + '/api/user/notif-preference', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preference: pref })
+          });
+          const d = await r.json();
+          if (!r.ok || !d.success) {
+            if (errEl) { errEl.textContent = d.error || 'No se pudo guardar. Reintentá.'; errEl.style.display = 'block'; }
+            return;
+          }
+          try { localStorage.setItem('notifSurveyDoneLocal', '1'); } catch (_) {}
+          const m = document.getElementById('notifSurveyModal');
+          if (m) m.style.display = 'none';
+          if (window.VIP && VIP.ui && typeof VIP.ui.showToast === 'function') {
+            VIP.ui.showToast('✅ Preferencia guardada', 'success');
+          }
+        } catch (e) {
+          if (errEl) { errEl.textContent = 'Error de conexión. Reintentá.'; errEl.style.display = 'block'; }
+        }
+      }
+      document.addEventListener('click', function (e) {
+        const btn = e.target.closest && e.target.closest('.surveyOpt');
+        if (!btn) return;
+        const pref = btn.getAttribute('data-pref');
+        if (pref) savePreference(pref);
+      });
+      // Disparamos el check al pasar a chatScreen (evento custom o polling).
+      // Como no hay un evento estandarizado, usamos un MutationObserver sobre
+      // chatScreen y disparamos cuando la clase 'hidden' se quita.
+      function watch() {
+        const cs = document.getElementById('chatScreen');
+        if (!cs) return;
+        if (!cs.classList.contains('hidden')) {
+          // Ya esta visible (post-reload con sesion guardada).
+          setTimeout(maybeShowSurvey, 1500);
+        }
+        const mo = new MutationObserver(() => {
+          if (!cs.classList.contains('hidden')) setTimeout(maybeShowSurvey, 1500);
+        });
+        mo.observe(cs, { attributes: true, attributeFilter: ['class'] });
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch);
+      else watch();
+    })();
+    </script>
+
+    <!-- ============================================
          CAMPAIGN TRACKING — pinguea /api/landings/:code/visit cuando la URL
          trae ?c=<code>. Sirve para medir cuanta gente entra desde un link de
          marketing especifico (ej: ?c=promo2k para el bono $2.000). El code

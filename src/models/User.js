@@ -311,7 +311,24 @@ const userSchema = new mongoose.Schema({
   blockedBy: {
     type: String,
     default: null
-  }
+  },
+
+  // Encuesta de preferencia de notificaciones (Fase 1).
+  // El user elige al primer login post-survey. La estrategia mensual de
+  // notifs (Fase 2) usa este campo + el tier de comportamiento del user
+  // (VIP/Standard/Casual segun realDeposits30d) para decidir cuantos
+  // bonos / invitaciones / regalos enviarle al mes.
+  //   suave    = 2 bonos · 5 invitaciones · 2 regalos/mes
+  //   normal   = 4 bonos · 5 invitaciones · 2 regalos/mes (default)
+  //   activo   = 6 bonos · 10 invitaciones · 3 regalos/mes
+  //   opt_out  = 0 (respetamos la decision)
+  notifPreference: {
+    type: String,
+    enum: ['suave', 'normal', 'activo', 'opt_out'],
+    default: null,
+    index: true
+  },
+  notifPreferenceAt: { type: Date, default: null }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

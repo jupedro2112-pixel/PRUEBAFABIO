@@ -8047,6 +8047,74 @@ async function _welcomeDepositCheck(username) {
   }
 }
 
+// =====================================================================
+// ENCUESTA DE PREFERENCIA DE NOTIFICACIONES (Fase 1)
+// =====================================================================
+// El user elige una vez al primer login post-survey. Se persiste en
+// User.notifPreference. La estrategia mensual de notifs (Fase 2) lee
+// este campo + el tier de comportamiento (realDeposits30d) para
+// decidir el plan personalizado de pushes.
+const _NOTIF_PREF_VALUES = ['suave', 'normal', 'activo', 'opt_out'];
+
+app.get('/api/user/notif-preference', authMiddleware, async (req, res) => {
+  try {
+    const u = await User.findOne({ id: req.user.userId }, { notifPreference: 1, notifPreferenceAt: 1, _id: 0 }).lean();
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json({
+      preference: u.notifPreference || null,
+      answeredAt: u.notifPreferenceAt || null,
+      shouldShowSurvey: !u.notifPreference
+    });
+  } catch (err) {
+    logger.error(`/api/user/notif-preference GET: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
+  try {
+    const pref = String((req.body && req.body.preference) || '').toLowerCase().trim();
+    if (!_NOTIF_PREF_VALUES.includes(pref)) {
+      return res.status(400).json({ error: 'Preferencia inválida. Valores: ' + _NOTIF_PREF_VALUES.join(', ') });
+    }
+    const updated = await User.findOneAndUpdate(
+      { id: req.user.userId },
+      { $set: { notifPreference: pref, notifPreferenceAt: new Date() } },
+      { new: true, projection: { notifPreference: 1, notifPreferenceAt: 1 } }
+    ).lean();
+    if (!updated) return res.status(404).json({ error: 'Usuario no encontrado' });
+    logger.info(`[SURVEY] notif-preference set ${req.user.username}=${pref}`);
+    res.json({
+      success: true,
+      preference: updated.notifPreference,
+      answeredAt: updated.notifPreferenceAt
+    });
+  } catch (err) {
+    logger.error(`/api/user/notif-preference POST: ${err.message}`);
+    res.status(500).json({ error: err.message || 'Error del servidor' });
+  }
+});
+
+// Stats agregadas para el panel admin: distribucion de respuestas.
+app.get('/api/admin/users/notif-preference-stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const agg = await User.aggregate([
+      { $group: { _id: '$notifPreference', count: { $sum: 1 } } }
+    ]);
+    const counts = { suave: 0, normal: 0, activo: 0, opt_out: 0, sin_responder: 0 };
+    let total = 0;
+    for (const row of agg) {
+      total += row.count;
+      const k = row._id || 'sin_responder';
+      if (counts[k] != null) counts[k] = row.count;
+    }
+    res.json({ total, counts });
+  } catch (err) {
+    logger.error(`/api/admin/users/notif-preference-stats: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -17929,10 +17997,10 @@ app.get('/api/admin/players/segments', authMiddleware, adminMiddleware, async (r
     const teamByNorm = {};
     for (const r of lineupRows) teamByNorm[r.usernameNorm] = r;
 
-    // 5) App + telefono + nombre real (User)
+    // 5) App + telefono + nombre real (User) + preferencia de encuesta
     const userRows = await User.find(
       { username: { $in: usernames } },
-      { username: 1, fcmToken: 1, fcmTokens: 1, phone: 1, whatsapp: 1, name: 1, createdAt: 1, _id: 0 }
+      { username: 1, fcmToken: 1, fcmTokens: 1, phone: 1, whatsapp: 1, name: 1, createdAt: 1, notifPreference: 1, notifPreferenceAt: 1, _id: 0 }
     ).lean();
     const userByName = {};
     for (const u of userRows) {
@@ -18023,7 +18091,11 @@ app.get('/api/admin/players/segments', authMiddleware, adminMiddleware, async (r
         roiPerBonus: (giv && giv.totalARS > 0) ? (ps.realDeposits30d || 0) / giv.totalARS : null,
 
         recoveryAttemptsLifetime: ps.recoveryAttemptsLifetime || 0,
-        lastRecoveryPushAt: ps.lastRecoveryPushAt
+        lastRecoveryPushAt: ps.lastRecoveryPushAt,
+
+        // Encuesta de notifs (Fase 1)
+        notifPreference: (userByName[ulow] && userByName[ulow].notifPreference) || null,
+        notifPreferenceAt: (userByName[ulow] && userByName[ulow].notifPreferenceAt) || null
       });
     }
 

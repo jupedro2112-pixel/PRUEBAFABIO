@@ -11942,6 +11942,7 @@ function _renderTopPlayers() {
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Días sin carga</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">$ neto 30d</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Bonos 30d</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">📋 Encuesta</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Acción</th>';
     html += '</tr></thead><tbody>';
 
@@ -11966,6 +11967,7 @@ function _renderTopPlayers() {
         html += '<td style="padding:8px 10px;color:' + (dni == null ? '#888' : (dni > 19 ? '#888' : (dni > 9 ? '#ff8080' : (dni > 4 ? '#ffaa66' : '#66ff66')))) + ';text-align:center;font-weight:800;">' + dniStr + '</td>';
         html += '<td style="padding:8px 10px;color:' + ((p.netToHouse30d || 0) >= 0 ? '#66ff66' : '#ff8080') + ';text-align:right;font-weight:700;white-space:nowrap;">' + _fmtMoney(p.netToHouse30d) + '</td>';
         html += '<td style="padding:8px 10px;color:#aaa;text-align:right;white-space:nowrap;">' + _fmtMoney(p.bonusGiven30d) + (p.roiPerBonus != null ? '<div style="color:#666;font-size:10px;">ROI ' + (p.roiPerBonus.toFixed(1)) + 'x</div>' : '') + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">' + _fmtNotifPref(p.notifPreference) + '</td>';
         html += '<td style="padding:6px;text-align:center;white-space:nowrap;">';
         html += '<button type="button" onclick="_topPlayerDetail(' + escapeJsArg(p.username) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer;">Ver</button>';
         html += '</td>';
@@ -11982,6 +11984,19 @@ function _hexToRgb(hex) {
     const g = parseInt(h.substring(2, 4), 16);
     const b = parseInt(h.substring(4, 6), 16);
     return r + ',' + g + ',' + b;
+}
+
+// Pinta el badge de la preferencia de la encuesta de notifs en la tabla.
+function _fmtNotifPref(pref) {
+    const map = {
+        suave:   { bg: 'rgba(102,255,102,0.15)', bd: '#66ff66', fg: '#66ff66', label: '🟢 SUAVE' },
+        normal:  { bg: 'rgba(255,215,0,0.15)',   bd: '#ffd700', fg: '#ffd700', label: '🟡 NORMAL' },
+        activo:  { bg: 'rgba(255,107,53,0.15)',  bd: '#ff8c5a', fg: '#ff8c5a', label: '🔴 ACTIVO' },
+        opt_out: { bg: 'rgba(255,255,255,0.04)', bd: '#888',    fg: '#888',    label: '🚫 OFF' }
+    };
+    if (!pref) return '<span style="color:#666;font-size:10.5px;">— sin responder</span>';
+    const m = map[pref] || { bg: 'rgba(255,255,255,0.04)', bd: '#888', fg: '#888', label: String(pref) };
+    return '<span style="display:inline-block;background:' + m.bg + ';border:1px solid ' + m.bd + ';color:' + m.fg + ';padding:2px 7px;border-radius:8px;font-size:10px;font-weight:800;letter-spacing:0.5px;">' + m.label + '</span>';
 }
 
 function _topPlayerDetail(username) {
