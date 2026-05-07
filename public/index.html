@@ -1561,7 +1561,18 @@
             margin: 0 !important;
         }
 
-        /* Bono de bienvenida abajo de los reembolsos */
+        /* Reembolsos van entre Abrir plataforma y NÚMERO PRINCIPAL.
+           userLineVigente y userCommunity originalmente tenian order:1
+           (mismo nivel que balance card) — los empujamos despues del
+           header (order:2) para que queden BAJO los reembolsos. */
+        .user-line-vigente {
+            order: 2.5 !important;
+        }
+        .user-community-vigente {
+            order: 2.6 !important;
+        }
+
+        /* Bono de bienvenida debajo de NÚMERO PRINCIPAL + comunidad */
         .welcome-bonus-card {
             order: 3 !important;
             margin-top: 8px !important;
