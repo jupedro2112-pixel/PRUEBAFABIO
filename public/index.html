@@ -2285,6 +2285,22 @@
                      admin > Número principal. Mismo tamaño que el username
                      del header-right. JS lo muestra/oculta segun la API. -->
                 <span class="team-name" id="teamName" style="display:none;"></span>
+                <!-- Backup phone chip: pill chico al lado izquierdo, mismo
+                     tamaño que el username. Importante pero NO obligatorio.
+                     Se oculta solo si el user ya dejó el número. -->
+                <div id="backupPhoneChip" class="backup-phone-chip" hidden>
+                    <button type="button" id="backupPhoneToggle" class="backup-phone-toggle" title="Dejanos tu número por si falla la página">📞 Tu línea</button>
+                    <div id="backupPhonePopover" class="backup-phone-popover" hidden>
+                        <div class="backup-phone-title">📞 Dejá tu número (opcional)</div>
+                        <div class="backup-phone-sub">Si tenemos un problema con la página, te avisamos directo. <strong>Importante pero no obligatorio</strong> — vos decidís.</div>
+                        <input type="tel" id="backupPhoneInput" class="backup-phone-input" inputmode="tel" maxlength="20" placeholder="Ej: 1133224455">
+                        <div class="backup-phone-actions">
+                            <button type="button" id="backupPhoneCancel" class="backup-phone-cancel">Cerrar</button>
+                            <button type="button" id="backupPhoneSave" class="backup-phone-save">Guardar</button>
+                        </div>
+                        <div id="backupPhoneMsg" class="backup-phone-msg" hidden></div>
+                    </div>
+                </div>
                 <div class="user-action-btns">
                     <!-- Refresh manual: full reload de la pagina. El owner pidio
                          poder forzar un actualizar chiquito desde el home cuando
@@ -2357,22 +2373,6 @@
                     </svg>
                     SOPORTE
                 </a>
-                <!-- Backup phone chip: minimizado, abre input al click. Importante
-                     pero NO obligatorio. Una vez guardado, queda como ✓ y no
-                     vuelve a pedirse. Se oculta solo si ya lo dejó. -->
-                <div id="backupPhoneChip" class="backup-phone-chip" hidden>
-                    <button type="button" id="backupPhoneToggle" class="backup-phone-toggle" title="Dejá tu número por si falla la página">📞 Tu N°</button>
-                    <div id="backupPhonePopover" class="backup-phone-popover" hidden>
-                        <div class="backup-phone-title">📞 Dejá tu número (opcional)</div>
-                        <div class="backup-phone-sub">Si tenemos un problema con la página, te avisamos directo. <strong>Importante pero no obligatorio</strong> — vos decidís.</div>
-                        <input type="tel" id="backupPhoneInput" class="backup-phone-input" inputmode="tel" maxlength="20" placeholder="Ej: 1133224455">
-                        <div class="backup-phone-actions">
-                            <button type="button" id="backupPhoneCancel" class="backup-phone-cancel">Cerrar</button>
-                            <button type="button" id="backupPhoneSave" class="backup-phone-save">Guardar</button>
-                        </div>
-                        <div id="backupPhoneMsg" class="backup-phone-msg" hidden></div>
-                    </div>
-                </div>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
@@ -2496,7 +2496,7 @@
                 <span class="review-mini-num" id="reviewMiniNum">0.0</span>
                 <span class="review-mini-count" id="reviewMiniCount">0 opiniones</span>
             </div>
-            <div class="review-mini-hint">⬇️ Abajo podés ver las reseñas de la gente</div>
+            <div class="review-mini-hint">⬇️ Abajo podés leer el comentario de la gente y el tuyo. ¡Gracias por confiar en nosotros!</div>
         </div>
 
         <!-- Refunds-only: Tu opinión nos interesa — arriba de la línea del

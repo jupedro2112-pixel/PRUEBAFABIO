@@ -741,14 +741,16 @@
     align-items: center;
 }
 
+/* Mismo tamaño/proporciones que .user-name (5px 10px / 11px / radius 12px)
+   para que quede alineado con el username del header-right. */
 .backup-phone-toggle {
     background: linear-gradient(135deg, #1f8cff 0%, #0d47a1 100%);
     color: #fff;
     border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 15px;
-    padding: 6px 12px;
+    border-radius: 12px;
+    padding: 5px 10px;
     font-weight: bold;
-    font-size: 10px;
+    font-size: 11px;
     cursor: pointer;
     white-space: nowrap;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
@@ -767,7 +769,7 @@
 .backup-phone-popover {
     position: absolute;
     top: calc(100% + 8px);
-    right: 0;
+    left: 0;
     width: 280px;
     background: rgba(15, 18, 30, 0.98);
     border: 1px solid rgba(31, 140, 255, 0.45);
@@ -867,7 +869,7 @@
 
 @media (max-width: 600px) {
     .backup-phone-popover {
-        right: -8px;
+        left: -8px;
         width: min(86vw, 300px);
     }
 }

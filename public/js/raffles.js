@@ -1180,8 +1180,8 @@ VIP.raffles = (function () {
     function _renderHomeDefaultCta() {
         return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.40);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🎁</div>' +
-            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 SORTEOS SEMANALES PARA CLIENTES Y PAGOS</div>' +
-            '<div style="color:#fff;font-size:14px;font-weight:700;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);">$2M · $1M · $500k · $100k · ⚡ relámpago gratis</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 Sorteos semanales gratis dependiendo tu actividad y sorteos pagos</div>' +
+            '<div style="color:#fff;font-size:11.5px;font-weight:600;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);opacity:0.92;">Sortea lunes nocturna · Lotería Nacional</div>' +
             '<div style="background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);">👉 ENTRÁ ACÁ</div>' +
             '</div>';
     }
@@ -1193,8 +1193,8 @@ VIP.raffles = (function () {
     function _renderHomeGreenWithLightning(lightning, balance) {
         return '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.40);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;pointer-events:none;">🎁</div>' +
-            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 SORTEOS SEMANALES PARA CLIENTES Y PAGOS</div>' +
-            '<div style="color:#fff;font-size:13.5px;font-weight:700;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);">$2M · $1M · $500k · $100k</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 Sorteos semanales gratis dependiendo tu actividad y sorteos pagos</div>' +
+            '<div style="color:#fff;font-size:11.5px;font-weight:600;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);opacity:0.92;">Sortea lunes nocturna · Lotería Nacional</div>' +
             _renderHomeLightningEmbedded(lightning, balance) +
             '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);margin-top:10px;">👉 VER TODOS LOS SORTEOS</div>' +
         '</div>';
