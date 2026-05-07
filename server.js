@@ -8244,8 +8244,17 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
       releaseRefundLock(userId, 'welcome_install');
     }
   } catch (error) {
+    // Antes devolvia solo { error: 'Error del servidor' } y el frontend
+    // mostraba "No se pudo reclamar" generico (sin diagnostico). Ahora
+    // logueamos el stack completo y devolvemos un message concreto para
+    // que el toast del user lo muestre y podamos debuggear.
+    logger.error(`[BONUS] welcome claim crash para ${req.user && req.user.username}: ${error.message}\n${error.stack}`);
     console.error('Error reclamando bono de bienvenida:', error);
-    res.status(500).json({ error: 'Error del servidor' });
+    res.status(500).json({
+      success: false,
+      message: 'Error del servidor: ' + (error.message || 'desconocido') + '. Avisanos por WhatsApp.',
+      error: error.message || 'Error del servidor'
+    });
   }
 });
 
