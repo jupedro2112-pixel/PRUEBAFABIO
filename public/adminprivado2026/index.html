@@ -113,6 +113,10 @@
                     <span>🔥</span>
                     <span>Top jugadores</span>
                 </a>
+                <a href="#" class="nav-item" data-section="encuesta">
+                    <span>📋</span>
+                    <span>Encuesta</span>
+                </a>
                 <a href="#" class="nav-item" data-section="teams">
                     <span>📊</span>
                     <span>Equipos</span>
@@ -862,6 +866,33 @@
                 </div>
                 <div id="topPlayersContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: ENCUESTA DE NOTIFICACIONES
+                 Distribucion + listado de las respuestas que dio cada
+                 user en el modal de la PWA. La preferencia define el
+                 plan mensual de notifs (Fase 2).
+                 ============================================ -->
+            <section id="encuestaSection" class="section">
+                <div class="panel-header">
+                    <h2>📋 Encuesta de notificaciones</h2>
+                    <button class="refresh-btn" onclick="loadEncuesta()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#d4af37;font-weight:700;font-size:13px;">¿Qué muestra esto?</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Cada usuario que entra a la PWA ve un modal preguntando cuántas notificaciones quiere recibir por mes. Las opciones son
+                        <strong style="color:#66ff66;">🟢 SUAVE</strong>,
+                        <strong style="color:#ffd700;">🟡 NORMAL</strong>,
+                        <strong style="color:#ff8c5a;">🔴 ACTIVO</strong> y
+                        <strong style="color:#aaa;">🚫 OPT-OUT</strong>.
+                        Esta sección muestra la distribución total + listado de quién contestó qué. La estrategia mensual usa esto como input.
+                    </p>
+                </div>
+                <div id="encuestaContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>
 

@@ -219,6 +219,8 @@ function showSection(sectionKey) {
         loadStatsAll();
     } else if (sectionKey === 'topPlayers') {
         loadTopPlayers();
+    } else if (sectionKey === 'encuesta') {
+        loadEncuesta();
     } else if (sectionKey === 'automations') {
         loadAutomations();
     } else if (sectionKey === 'automation') {
@@ -11942,7 +11944,6 @@ function _renderTopPlayers() {
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Días sin carga</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">$ neto 30d</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Bonos 30d</th>';
-    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">📋 Encuesta</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Acción</th>';
     html += '</tr></thead><tbody>';
 
@@ -11967,7 +11968,6 @@ function _renderTopPlayers() {
         html += '<td style="padding:8px 10px;color:' + (dni == null ? '#888' : (dni > 19 ? '#888' : (dni > 9 ? '#ff8080' : (dni > 4 ? '#ffaa66' : '#66ff66')))) + ';text-align:center;font-weight:800;">' + dniStr + '</td>';
         html += '<td style="padding:8px 10px;color:' + ((p.netToHouse30d || 0) >= 0 ? '#66ff66' : '#ff8080') + ';text-align:right;font-weight:700;white-space:nowrap;">' + _fmtMoney(p.netToHouse30d) + '</td>';
         html += '<td style="padding:8px 10px;color:#aaa;text-align:right;white-space:nowrap;">' + _fmtMoney(p.bonusGiven30d) + (p.roiPerBonus != null ? '<div style="color:#666;font-size:10px;">ROI ' + (p.roiPerBonus.toFixed(1)) + 'x</div>' : '') + '</td>';
-        html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">' + _fmtNotifPref(p.notifPreference) + '</td>';
         html += '<td style="padding:6px;text-align:center;white-space:nowrap;">';
         html += '<button type="button" onclick="_topPlayerDetail(' + escapeJsArg(p.username) + ')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:4px 8px;border-radius:5px;font-size:10px;cursor:pointer;">Ver</button>';
         html += '</td>';
@@ -11984,6 +11984,125 @@ function _hexToRgb(hex) {
     const g = parseInt(h.substring(2, 4), 16);
     const b = parseInt(h.substring(4, 6), 16);
     return r + ',' + g + ',' + b;
+}
+
+// =============================================
+// ENCUESTA — seccion del admin con distribucion de respuestas
+// =============================================
+let _ENCUESTA_CACHE = null;
+
+async function loadEncuesta() {
+    const c = document.getElementById('encuestaContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando respuestas…</div>';
+    try {
+        // 1) Stats agregadas
+        const statsR = await authFetch('/api/admin/users/notif-preference-stats');
+        const stats = statsR.ok ? await statsR.json() : null;
+
+        // 2) Listado de usuarios (reusamos /api/admin/players/segments con
+        // limit alto y filtros por defecto para tener todos con su
+        // notifPreference). Si la respuesta es muy grande, el endpoint
+        // ya cap-ea — el listado es para revisar, no para procesar bulk.
+        const listR = await authFetch('/api/admin/players/segments?period=month&segment=all&hasApp=all&limit=2000');
+        const list = listR.ok ? await listR.json() : null;
+
+        _ENCUESTA_CACHE = { stats, list };
+        c.innerHTML = _renderEncuesta();
+    } catch (e) {
+        console.error('loadEncuesta:', e);
+        c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function _renderEncuesta() {
+    const d = _ENCUESTA_CACHE || {};
+    const stats = d.stats || { total: 0, counts: {} };
+    const list = d.list || { players: [] };
+    const counts = stats.counts || {};
+    const total = stats.total || 0;
+    const sumPref = (counts.suave || 0) + (counts.normal || 0) + (counts.activo || 0) + (counts.opt_out || 0);
+    const sinResp = total - sumPref;
+
+    const pct = (n) => total ? ((n / total) * 100).toFixed(1) + '%' : '0%';
+
+    let html = '';
+
+    // KPI cards
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:14px;">';
+    html += _kpiCard('Total usuarios', total.toLocaleString('es-AR'), '#fff');
+    html += _kpiCard('🟢 SUAVE', (counts.suave || 0).toLocaleString('es-AR') + ' · ' + pct(counts.suave || 0), '#66ff66');
+    html += _kpiCard('🟡 NORMAL', (counts.normal || 0).toLocaleString('es-AR') + ' · ' + pct(counts.normal || 0), '#ffd700');
+    html += _kpiCard('🔴 ACTIVO', (counts.activo || 0).toLocaleString('es-AR') + ' · ' + pct(counts.activo || 0), '#ff8c5a');
+    html += _kpiCard('🚫 OPT-OUT', (counts.opt_out || 0).toLocaleString('es-AR') + ' · ' + pct(counts.opt_out || 0), '#aaa');
+    html += _kpiCard('Sin responder', sinResp.toLocaleString('es-AR') + ' · ' + pct(sinResp), '#888');
+    html += '</div>';
+
+    // Filtros
+    html += '<div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
+    html += '<span style="color:#aaa;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Ver:</span>';
+    const filters = [
+        { k: 'all', l: 'Todas' },
+        { k: 'suave', l: '🟢 SUAVE' },
+        { k: 'normal', l: '🟡 NORMAL' },
+        { k: 'activo', l: '🔴 ACTIVO' },
+        { k: 'opt_out', l: '🚫 OPT-OUT' },
+        { k: 'sin_responder', l: '— Sin responder' }
+    ];
+    const cur = (window._ENCUESTA_FILTER || 'all');
+    for (const f of filters) {
+        const active = cur === f.k;
+        html += '<button type="button" onclick="_setEncuestaFilter(\'' + f.k + '\')" style="background:' + (active ? '#d4af37' : 'rgba(255,255,255,0.06)') + ';color:' + (active ? '#000' : '#fff') + ';border:1px solid rgba(212,175,55,0.35);padding:5px 10px;border-radius:6px;font-weight:' + (active ? '900' : '700') + ';font-size:11px;cursor:pointer;">' + f.l + '</button>';
+    }
+    html += '</div>';
+
+    // Tabla
+    const players = list.players || [];
+    const filtered = players.filter(p => {
+        if (cur === 'all') return true;
+        if (cur === 'sin_responder') return !p.notifPreference;
+        return p.notifPreference === cur;
+    });
+
+    if (filtered.length === 0) {
+        html += '<div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">No hay usuarios con ese filtro.</div>';
+        return html;
+    }
+
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:65vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '<thead style="position:sticky;top:0;background:#2d0052;z-index:1;"><tr style="color:#d4af37;text-align:left;">';
+    html += '<th style="padding:8px 10px;font-weight:800;">#</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Encuesta</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Cuándo respondió</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Equipo</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">$ neto 30d</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">App</th>';
+    html += '</tr></thead><tbody>';
+
+    let idx = 1;
+    for (const p of filtered) {
+        const ans = p.notifPreferenceAt ? new Date(p.notifPreferenceAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:8px 10px;color:#666;">' + idx + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(p.username) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">' + _fmtNotifPref(p.notifPreference) + '</td>';
+        html += '<td style="padding:8px 10px;color:#aaa;text-align:right;font-size:10.5px;">' + ans + '</td>';
+        html += '<td style="padding:8px 10px;color:#ddd;font-size:10.5px;">' + (p.team ? escapeHtml(p.team) : '<span style="color:#666;">—</span>') + '</td>';
+        html += '<td style="padding:8px 10px;color:' + ((p.netToHouse30d || 0) >= 0 ? '#66ff66' : '#ff8080') + ';text-align:right;font-weight:700;white-space:nowrap;">' + _fmtMoney(p.netToHouse30d) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;">' + (p.hasApp ? '<span style="color:#66ff66;">✅</span>' : '<span style="color:#888;">❌</span>') + '</td>';
+        html += '</tr>';
+        idx++;
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
+function _setEncuestaFilter(f) {
+    window._ENCUESTA_FILTER = f;
+    const c = document.getElementById('encuestaContent');
+    if (c) c.innerHTML = _renderEncuesta();
 }
 
 // Pinta el badge de la preferencia de la encuesta de notifs en la tabla.
