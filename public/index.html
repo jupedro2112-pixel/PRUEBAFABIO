@@ -1507,11 +1507,21 @@
         }
 
         /* ============================================
-           LAYOUT V2: refunds top, bono, fila usuario+cargar+saldo,
-           abrir plataforma, sorteo abajo. Compacto en 1 pantalla.
+           LAYOUT V3: usuario+plataforma TOP, reembolsos, bono,
+           sorteo, "total devuelto" abajo de todo.
            ============================================ */
-        #chatScreen .header {
+
+        /* Saldo + plataforma ARRIBA DE TODO (con username + cargar + saldo
+           inline + boton abrir plataforma debajo) */
+        .user-balance-card {
             order: 1 !important;
+            padding: 12px 14px !important;
+            gap: 10px !important;
+        }
+
+        /* Reembolsos (3 cuadraditos en fila) abajo del balance card */
+        #chatScreen .header {
+            order: 2 !important;
             margin-top: 0 !important;
         }
         #chatScreen .header-center {
@@ -1522,7 +1532,7 @@
         #chatScreen .header-center .refund-btn {
             flex: 1 1 0 !important;
             width: auto !important;
-            min-height: 64px !important;
+            min-height: 76px !important;
             font-size: 11px !important;
             padding: 8px 4px !important;
             border-radius: 10px !important;
@@ -1533,12 +1543,15 @@
         }
         #chatScreen .header-center .refund-btn .refund-label-short {
             display: block !important;
-            font-size: 18px !important;
-            line-height: 1 !important;
-            margin-bottom: 2px !important;
+            font-size: 12px !important;
+            font-weight: 900 !important;
+            line-height: 1.1 !important;
+            letter-spacing: 0.5px !important;
+            margin-bottom: 3px !important;
+            white-space: nowrap !important;
         }
         #chatScreen .header-center .refund-btn .refund-amount {
-            font-size: 13px !important;
+            font-size: 14px !important;
             font-weight: 900 !important;
             margin: 1px 0 !important;
         }
@@ -1550,15 +1563,8 @@
 
         /* Bono de bienvenida abajo de los reembolsos */
         .welcome-bonus-card {
-            order: 2 !important;
-            margin-top: 8px !important;
-        }
-
-        /* Saldo card: nueva fila usuario | cargar | saldo */
-        .user-balance-card {
             order: 3 !important;
-            padding: 12px 14px !important;
-            gap: 10px !important;
+            margin-top: 8px !important;
         }
         .user-balance-card .balance-row-v2 {
             display: flex !important;
@@ -1607,7 +1613,7 @@
             letter-spacing: 0.5px;
         }
 
-        /* Sorteo semanal banner abajo del Abrir plataforma */
+        /* Sorteo semanal banner abajo del bono */
         #raffleWinnerHomeBanner {
             order: 4 !important;
         }
@@ -1617,15 +1623,18 @@
             display: none !important;
         }
 
-        /* Welcome message compacto para que entre todo en una pantalla */
+        /* "Total devuelto" + texto que sigue al FONDO de la pantalla.
+           Antes estaba arriba; el owner pidio bajarlo. order:99 lo manda
+           despues de TODO lo demas. */
         .refunds-welcome {
-            margin-bottom: 4px !important;
-            order: 0.5 !important;
+            order: 99 !important;
+            margin: 16px auto 8px !important;
         }
         .refunds-welcome h2 {
             font-size: 13px !important;
             margin: 4px 0 !important;
             line-height: 1.2 !important;
+            opacity: 0.85;
         }
 
     </style>
@@ -1823,19 +1832,19 @@
             <div class="header-center">
                 <button id="dailyRefundBtn" class="refund-btn daily" title="Reembolso Diario 8%">
                     <span class="refund-label-full">📅 Reembolso Diario</span>
-                    <span class="refund-label-short">📅</span>
+                    <span class="refund-label-short">📅 DIARIO</span>
                     <span class="refund-amount" id="dailyRefundAmount">$0</span>
                     <span class="refund-timer" id="dailyRefundTimer"></span>
                 </button>
                 <button id="weeklyRefundBtn" class="refund-btn weekly" title="Reembolso Semanal 5% (Lun-Mar)">
                     <span class="refund-label-full">📆 Reembolso Semanal</span>
-                    <span class="refund-label-short">📆</span>
+                    <span class="refund-label-short">📆 SEMANAL</span>
                     <span class="refund-amount" id="weeklyRefundAmount">$0</span>
                     <span class="refund-timer" id="weeklyRefundTimer"></span>
                 </button>
                 <button id="monthlyRefundBtn" class="refund-btn monthly" title="Reembolso Mensual 3% (Desde día 7)">
                     <span class="refund-label-full">🗓️ Reembolso Mensual</span>
-                    <span class="refund-label-short">🗓️</span>
+                    <span class="refund-label-short">🗓️ MENSUAL</span>
                     <span class="refund-amount" id="monthlyRefundAmount">$0</span>
                     <span class="refund-timer" id="monthlyRefundTimer"></span>
                 </button>
