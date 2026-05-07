@@ -12067,6 +12067,9 @@ function _renderEncuesta() {
 
     let html = '';
 
+    // ===== Pregunta exacta + opciones que ven los users en la PWA =====
+    html += _renderSurveyQuestion();
+
     // ===== Estrategia editable =====
     html += _renderStrategyEditor(strategy);
 
@@ -12172,6 +12175,48 @@ function _setEncuestaFilter(f) {
     if (c) c.innerHTML = _renderEncuesta();
 }
 
+// Renderiza el bloque "Pregunta + 4 opciones" tal cual la ve el user
+// en la PWA. Sirve como recordatorio al admin de que prometio cuando
+// arma la estrategia. Numeros aca SIEMPRE deben matchear con los
+// defaults del editor de estrategia abajo.
+function _renderSurveyQuestion() {
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(212,175,55,0.10),rgba(106,13,173,0.10));border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    html += '    <h3 style="color:#ffd700;font-size:14px;margin:0;font-weight:900;letter-spacing:0.5px;">📋 Pregunta que ve el usuario en la PWA</h3>';
+    html += '    <span style="color:#888;font-size:10.5px;">Si cambia esto, cambialo TAMBIÉN en el editor de estrategia.</span>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:14px;">';
+    html += '    <div style="text-align:center;margin-bottom:10px;">';
+    html += '      <div style="font-size:28px;line-height:1;margin-bottom:4px;">🤔</div>';
+    html += '      <div style="font-weight:900;font-size:15px;color:#ffd700;">¿Cuántas notificaciones querés recibir?</div>';
+    html += '      <div style="color:#bbb;font-size:11.5px;margin-top:3px;">Elegí el plan que más te conviene. Lo podés cambiar después.</div>';
+    html += '    </div>';
+    html += '    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">';
+    // 4 opciones (idem index.html)
+    html += '      <div style="background:linear-gradient(135deg,rgba(102,255,102,0.12),rgba(102,255,102,0.04));border:1.5px solid #66ff66;border-radius:10px;padding:10px;">';
+    html += '        <div style="font-weight:900;font-size:12px;color:#66ff66;letter-spacing:1px;">🟢 SUAVE</div>';
+    html += '        <div style="font-size:11px;color:#cce4cc;margin-top:3px;line-height:1.5;"><strong>2 bonos</strong> · <strong>5 invitaciones a jugar</strong> · <strong>2 regalos</strong> al mes<br><span style="color:#aaa;">Para los que prefieren tranquilidad</span></div>';
+    html += '      </div>';
+    html += '      <div style="background:linear-gradient(135deg,rgba(255,235,59,0.14),rgba(255,235,59,0.04));border:2px solid #ffd700;border-radius:10px;padding:10px;position:relative;">';
+    html += '        <div style="position:absolute;top:-8px;right:8px;background:#ffd700;color:#1a0033;font-size:9px;font-weight:900;padding:2px 7px;border-radius:7px;letter-spacing:1px;">⭐ DEFAULT</div>';
+    html += '        <div style="font-weight:900;font-size:12px;color:#ffd700;letter-spacing:1px;">🟡 NORMAL</div>';
+    html += '        <div style="font-size:11px;color:#eee;margin-top:3px;line-height:1.5;"><strong>4 bonos</strong> · <strong>5 invitaciones a jugar</strong> · <strong>2 regalos</strong> al mes<br><span style="color:#aaa;">Equilibrio entre estar al tanto y no saturar</span></div>';
+    html += '      </div>';
+    html += '      <div style="background:linear-gradient(135deg,rgba(255,107,53,0.14),rgba(255,107,53,0.04));border:1.5px solid #ff8c5a;border-radius:10px;padding:10px;">';
+    html += '        <div style="font-weight:900;font-size:12px;color:#ff8c5a;letter-spacing:1px;">🔴 ACTIVO</div>';
+    html += '        <div style="font-size:11px;color:#ffd5c2;margin-top:3px;line-height:1.5;"><strong>6 bonos</strong> · <strong>10 invitaciones a jugar</strong> · <strong>3 regalos</strong> al mes<br><span style="color:#aaa;">Para los que quieren todo lo que tenemos</span></div>';
+    html += '      </div>';
+    html += '      <div style="background:rgba(0,212,255,0.10);border:1.5px solid #00d4ff;border-radius:10px;padding:10px;">';
+    html += '        <div style="font-weight:900;font-size:12px;color:#00d4ff;letter-spacing:1px;">🔔 SOLO REEMBOLSOS</div>';
+    html += '        <div style="font-size:11px;color:#aacde8;margin-top:3px;line-height:1.5;">Recibo notificaciones <strong>solo cuando tenga un reembolso disponible</strong>.<br><span style="color:#aaa;">Para los que prefieren mínimo lo justo.</span></div>';
+    html += '      </div>';
+    html += '    </div>';
+    html += '  </div>';
+    html += '</div>';
+    return html;
+}
+
 // Pinta el badge de la preferencia de la encuesta de notifs en la tabla.
 function _fmtNotifPref(pref) {
     const map = {
@@ -12264,6 +12309,19 @@ function _renderStrategyEditor(strategy) {
     if (isActive && activatedAt) {
         html += '  <div style="color:#66ff66;font-size:10.5px;margin-top:6px;">✅ Activa desde ' + escapeHtml(activatedAt) + '</div>';
     }
+
+    // ===== TEST FIRE: probar todas las notifs en un user cada 1 min =====
+    html += '  <div style="background:rgba(255,80,80,0.06);border:1px dashed rgba(255,80,80,0.40);border-radius:8px;padding:10px;margin-top:14px;">';
+    html += '    <div style="color:#ff8080;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">🧪 Test fire — probar TODAS las notifs en un user (cada 1 min)</div>';
+    html += '    <p style="color:#aaa;font-size:11px;margin:0 0 8px;line-height:1.4;">Mete un username y le mandamos 5 pushes (bono, juga, regalo, reembolso, 100%×2hs) con 1 min de gap. El user tiene que tener la app instalada y notifs activadas. Útil para QA.</p>';
+    html += '    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+    html += '      <input type="text" id="testFireUsername" placeholder="lalodj" style="flex:1;min-width:160px;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:6px;font-size:13px;">';
+    html += '      <input type="number" id="testFireCount" value="5" min="1" max="10" style="width:90px;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:6px;font-size:13px;" title="cantidad de notifs">';
+    html += '      <button type="button" onclick="testFireNotifications()" id="testFireBtn" style="background:linear-gradient(135deg,#ff5050,#a02020);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🔥 DISPARAR TEST</button>';
+    html += '    </div>';
+    html += '    <div id="testFireResult" style="color:#aaa;font-size:11px;margin-top:6px;"></div>';
+    html += '  </div>';
+
     html += '</div>';
 
     // ===== SIMULADOR =====
@@ -12534,6 +12592,45 @@ function _renderStrategyPreview(d) {
     return html;
 }
 
+// Dispara el test endpoint para mandar N notifs cada 1 min al user.
+async function testFireNotifications() {
+    const inp = document.getElementById('testFireUsername');
+    const countInp = document.getElementById('testFireCount');
+    const result = document.getElementById('testFireResult');
+    const btn = document.getElementById('testFireBtn');
+    const username = (inp && inp.value || '').trim();
+    const count = Math.min(10, Math.max(1, Number(countInp && countInp.value) || 5));
+    if (!username) {
+        if (result) { result.style.color = '#ff8080'; result.textContent = '⚠️ Ingresá un username.'; }
+        return;
+    }
+    if (!confirm('¿Disparar ' + count + ' notifs de test a "' + username + '" cada 1 min? El user va a recibir ' + count + ' pushes seguidas.')) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Disparando...'; }
+    if (result) { result.style.color = '#aaa'; result.textContent = '⏳ Programando notifs...'; }
+    try {
+        const r = await authFetch('/api/admin/notif-strategy/test-fire', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, count })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            if (result) { result.style.color = '#ff8080'; result.textContent = '❌ ' + (d.error || 'Error'); }
+            return;
+        }
+        const lines = (d.blueprints || []).map(b => '· min ' + b.fireInMin + ': ' + b.title).join('<br>');
+        if (result) {
+            result.style.color = '#66ff66';
+            result.innerHTML = '✅ ' + escapeHtml(d.message) + '<br><span style="color:#ddd;font-size:10.5px;">' + lines + '</span>';
+        }
+        showToast('✅ Test fire programado · ' + count + ' notifs a ' + username, 'success');
+    } catch (e) {
+        if (result) { result.style.color = '#ff8080'; result.textContent = '❌ Error de conexión'; }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔥 DISPARAR TEST'; }
+    }
+}
+
 // Activa/desactiva la estrategia. Cuando isActive=true, el cron de
 // reembolsos-recordatorio respeta la preferencia 'solo_reembolsos'.
 async function toggleNotifStrategy(activate) {
@@ -12629,6 +12726,20 @@ function _topPlayerDetail(username) {
     if (!p) return;
     const last = p.lastRealDepositDate ? new Date(p.lastRealDepositDate).toLocaleString('es-AR') : 'nunca';
     const seenApp = p.lastSeenApp ? new Date(p.lastSeenApp).toLocaleString('es-AR') : 'nunca';
+    // Mapeo de preferencia de encuesta a texto legible. 'opt_out' es legacy
+    // y se trata semanticamente igual que solo_reembolsos (recibo solo
+    // cuando hay un reembolso disponible) — no es 'no quiero nada'.
+    const prefMap = {
+        suave: '🟢 SUAVE (2 bonos · 5 invitaciones · 2 regalos/mes)',
+        normal: '🟡 NORMAL (4 bonos · 5 invitaciones · 2 regalos/mes)',
+        activo: '🔴 ACTIVO (6 bonos · 10 invitaciones · 3 regalos/mes)',
+        solo_reembolsos: '🔔 SOLO REEMBOLSOS (recibe push solo cuando hay reembolso disponible)',
+        opt_out: '🔔 SOLO REEMBOLSOS (legacy)'
+    };
+    const prefAt = p.notifPreferenceAt ? new Date(p.notifPreferenceAt).toLocaleString('es-AR') : null;
+    const prefLine = p.notifPreference
+        ? '📋 Encuesta: ' + (prefMap[p.notifPreference] || p.notifPreference) + (prefAt ? ' · respondió ' + prefAt : '')
+        : '📋 Encuesta: — sin responder';
     const lines = [
         '👤 ' + p.username + (p.name ? ' (' + p.name + ')' : ''),
         '',
@@ -12636,6 +12747,7 @@ function _topPlayerDetail(username) {
         '📱 App: ' + (p.hasApp ? 'INSTALADA ✅' : 'NO instalada ❌') + ' · Última visita: ' + seenApp,
         '👥 Equipo: ' + (p.team || '—') + (p.linePhone ? ' (línea ' + p.linePhone + ')' : ''),
         '📞 Teléfono: ' + (p.phone || '—'),
+        prefLine,
         '',
         '— CARGAS REALES —',
         'Última carga: ' + last + ' (' + (p.daysSinceLastDeposit == null ? 'nunca' : p.daysSinceLastDeposit + 'd atrás') + ')',

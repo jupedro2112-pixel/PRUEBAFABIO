@@ -8401,6 +8401,87 @@ app.get('/api/admin/notif-strategy/preview', authMiddleware, adminMiddleware, as
   }
 });
 
+// =====================================================================
+// TEST FIRE — dispara todas las notifs a un user cada 1 min para QA
+// =====================================================================
+// El admin pone un username y un N (default 5) y el server le manda
+// 5 pushes seguidas (bono, juga con nosotros, regalo, recordatorio
+// reembolso, motivacional) con 1 min de gap entre cada una. Sirve para
+// validar que la app las recibe y que el copy/icono renderean bien.
+//
+// LIMITES:
+//  - Maximo 10 notifs por test (10 min total).
+//  - 1 test concurrente por user (evita pisarse).
+const _TEST_FIRE_RUNNING = new Set();
+const _TEST_FIRE_BLUEPRINTS = [
+  { kind: 'bono',     title: '🎁 Tenés un bono',         body: 'TEST: Bono 50% al próximo depósito. ¡Aprovechá!' },
+  { kind: 'juga',     title: '🎰 Jugá con nosotros',      body: 'TEST: La racha está caliente, vení a tirar unos giros.' },
+  { kind: 'regalo',   title: '💸 Regalo activo',          body: 'TEST: Tenemos un regalo de plata para vos. Pasá por la app.' },
+  { kind: 'reembolso',title: '💰 Tu reembolso te espera', body: 'TEST: No te olvides — tenés un reembolso disponible.' },
+  { kind: 'motivado', title: '⚡ Bonus 100% × 2hs',       body: 'TEST: Solo hoy 19:00–21:00, te duplicamos la carga.' },
+  { kind: 'extra',    title: '🏆 Top jugador',            body: 'TEST: Sos top de la semana, premio extra al cargar hoy.' },
+  { kind: 'sorteo',   title: '🎫 Sorteo gratis',          body: 'TEST: Tenés un número en el sorteo del lunes. ¡Suerte!' }
+];
+
+app.post('/api/admin/notif-strategy/test-fire', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ error: 'username requerido' });
+    const count = Math.min(10, Math.max(1, Number(req.body && req.body.count) || 5));
+
+    if (_TEST_FIRE_RUNNING.has(username.toLowerCase())) {
+      return res.status(409).json({ error: 'Ya hay un test corriendo para este user. Esperá ' + count + ' min.' });
+    }
+
+    const user = await User.findOne(
+      { username: { $regex: new RegExp('^' + username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
+      { username: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+    ).lean();
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado: ' + username });
+    const tokens = [];
+    if (user.fcmToken) tokens.push(user.fcmToken);
+    if (Array.isArray(user.fcmTokens)) tokens.push(...user.fcmTokens.filter(t => t && !tokens.includes(t)));
+    if (tokens.length === 0) {
+      return res.status(400).json({ error: 'El usuario no tiene FCM tokens registrados (no instaló la app o no aceptó notifs).' });
+    }
+
+    _TEST_FIRE_RUNNING.add(username.toLowerCase());
+    const blueprints = _TEST_FIRE_BLUEPRINTS.slice(0, count);
+    const startedAt = new Date();
+    logger.info(`[TEST-FIRE] iniciado para ${user.username} · ${count} notifs · cada 1 min · token(s)=${tokens.length}`);
+
+    // Disparar cada blueprint a 1 min, 2 min, 3 min... usando setTimeout.
+    // Si el server reinicia entre medio, el test se aborta — no hace falta
+    // persistir nada porque es solo QA.
+    blueprints.forEach((bp, i) => {
+      setTimeout(async () => {
+        try {
+          for (const tok of tokens) {
+            await _sendPushToUser(tok, bp.title, bp.body, { test: '1', kind: bp.kind, idx: String(i + 1) });
+          }
+          logger.info(`[TEST-FIRE] ${user.username} #${i+1}/${count} · ${bp.kind} · "${bp.title}"`);
+        } catch (e) {
+          logger.warn(`[TEST-FIRE] ${user.username} #${i+1} fallo: ${e.message}`);
+        } finally {
+          if (i === blueprints.length - 1) _TEST_FIRE_RUNNING.delete(username.toLowerCase());
+        }
+      }, (i + 1) * 60 * 1000); // 60s, 120s, 180s, ...
+    });
+
+    res.json({
+      success: true,
+      message: 'Test programado: ' + count + ' notifs a ' + user.username + ' cada 1 minuto.',
+      username: user.username,
+      count,
+      startedAt,
+      blueprints: blueprints.map((b, i) => ({ idx: i + 1, fireInMin: i + 1, ...b }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-strategy/test-fire: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Activa o desactiva la estrategia. Cuando isActive=true, el flag queda
 // disponible para que los crons / endpoints de auto-push lo respeten.
 app.post('/api/admin/notif-strategy/activate', authMiddleware, adminMiddleware, async (req, res) => {
