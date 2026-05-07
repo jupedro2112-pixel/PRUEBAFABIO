@@ -76,10 +76,55 @@ VIP.reviews = (function () {
         if (btn) btn.addEventListener('click', submitReview);
     }
 
+    let _userVoted = false;
+
     function _hideFormCard() {
         const card = _q('reviewFormCard');
         if (card) card.style.display = 'none';
+        _userVoted = true;
+        _refreshMiniSummary();
     }
+
+    function _renderMiniStars(avg) {
+        const a = Math.max(0, Math.min(5, Number(avg) || 0));
+        const full = Math.floor(a + 0.001);
+        let html = '';
+        for (let i = 1; i <= 5; i++) {
+            html += i <= full ? '★' : '<span class="empty">★</span>';
+        }
+        return html;
+    }
+
+    // Si el user ya votó, pintamos el mini resumen arriba con el agregado
+    // (avg + cantidad). Tomamos los datos del último _renderFeed para no
+    // repegar; si todavía no llamamos al feed, lo dejamos en 0 hasta que
+    // venga la respuesta.
+    function _refreshMiniSummary(feedData) {
+        const card = _q('reviewMiniSummary');
+        if (!card) return;
+        if (!_userVoted) {
+            card.hidden = true;
+            return;
+        }
+        const data = feedData || _LAST_FEED_DATA;
+        if (!data || !data.total) {
+            // Igual mostramos el card vacío — el user ya votó pero la primera
+            // pasada del feed puede tardar un toque.
+            card.hidden = false;
+            return;
+        }
+        const total = Number(data.total || 0);
+        const avg = Number(data.avgStars || 0);
+        const stars = _q('reviewMiniStars');
+        const num = _q('reviewMiniNum');
+        const count = _q('reviewMiniCount');
+        if (stars) stars.innerHTML = _renderMiniStars(avg);
+        if (num) num.textContent = avg.toFixed(1) + ' / 5';
+        if (count) count.textContent = total + ' opinion' + (total === 1 ? '' : 'es');
+        card.hidden = false;
+    }
+
+    let _LAST_FEED_DATA = null;
 
     async function loadMyReview() {
         if (!VIP.state || !VIP.state.currentToken) return;
@@ -199,6 +244,10 @@ VIP.reviews = (function () {
     }
 
     function _renderFeed(data) {
+        _LAST_FEED_DATA = data;
+        // Si el user ya votó, refrescamos el mini-resumen de arriba con el
+        // último agregado (avg + total). Es el chiquito en la línea del user.
+        _refreshMiniSummary(data);
         const summary = _q('reviewsFeedSummary');
         const list = _q('reviewsFeedList');
         const card = _q('reviewsFeedCard');

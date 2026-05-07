@@ -922,6 +922,52 @@
             color: #cfcfcf;
         }
 
+        /* ===== RESUMEN CHIQUITO — aparece después de votar ===== */
+        .review-mini-summary {
+            text-align: left;
+            width: 100%;
+            max-width: 460px;
+            margin: 0 auto 10px;
+            padding: 8px 12px;
+            background: rgba(212,175,55,0.08);
+            border: 1px solid rgba(212,175,55,0.30);
+            border-radius: 10px;
+            box-sizing: border-box;
+            color: #fff;
+            order: 0.92;
+        }
+        .review-mini-summary[hidden] { display: none; }
+        .review-mini-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .review-mini-stars {
+            color: #ffd700;
+            font-size: 16px;
+            letter-spacing: 1.5px;
+            line-height: 1;
+            text-shadow: 0 0 4px rgba(255,215,0,0.40);
+        }
+        .review-mini-stars .empty { color: #555; }
+        .review-mini-num {
+            font-size: 13px;
+            font-weight: 800;
+            color: #ffd700;
+        }
+        .review-mini-count {
+            font-size: 11px;
+            color: #ddd;
+            margin-left: auto;
+        }
+        .review-mini-hint {
+            font-size: 10.5px;
+            color: #aaa;
+            margin-top: 3px;
+            font-style: italic;
+        }
+
         /* ===== TU OPINIÓN NOS INTERESA — review form arriba del user line ===== */
         .review-form-card {
             text-align: center;
@@ -2231,6 +2277,18 @@
             <div class="giveaway-card-sub" id="giveawaySub">Tocá el botón para reclamar</div>
             <button id="giveawayBtn" type="button" class="giveaway-card-btn" onclick="VIP.refunds.handleGiveawayClick()">🎁 RECLAMAR AHORA</button>
             <div class="giveaway-card-timer" id="giveawayTimer">⏰ vence en —</div>
+        </div>
+
+        <!-- Refunds-only: Resumen chico de opiniones — aparece solo después
+             de que el user vote. Reemplaza el form para que el espacio no
+             quede vacío y se vea el agregado social-proof. -->
+        <div class="review-mini-summary" id="reviewMiniSummary" hidden>
+            <div class="review-mini-row">
+                <span class="review-mini-stars" id="reviewMiniStars">★★★★★</span>
+                <span class="review-mini-num" id="reviewMiniNum">0.0</span>
+                <span class="review-mini-count" id="reviewMiniCount">0 opiniones</span>
+            </div>
+            <div class="review-mini-hint">⬇️ Abajo podés ver las reseñas de la gente</div>
         </div>
 
         <!-- Refunds-only: Tu opinión nos interesa — arriba de la línea del
