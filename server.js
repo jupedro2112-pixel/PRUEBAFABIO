@@ -8939,7 +8939,7 @@ app.post('/api/admin/encuesta/grant-bonus', authMiddleware, adminMiddleware, asy
 // =====================================================================
 app.get('/api/admin/encuesta/timeline', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 200));
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 500));
     const respondents = await User.find(
       { notifPreference: { $exists: true, $ne: null } },
       { username: 1, notifPreference: 1, notifPreferenceAt: 1, team: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
@@ -8948,13 +8948,33 @@ app.get('/api/admin/encuesta/timeline', authMiddleware, adminMiddleware, async (
       .limit(limit)
       .lean();
 
-    const items = respondents.map(u => ({
-      username: u.username,
-      preference: u.notifPreference,
-      answeredAt: u.notifPreferenceAt,
-      team: u.team || null,
-      hasApp: !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0))
-    }));
+    // Enrich con PlayerStats (lookup batch por username) — así la tabla
+    // muestra $ neto 30d para los que tienen stats sin tener que pedir un
+    // segundo endpoint. Los users que NUNCA cargaron quedan con netToHouse30d=0.
+    const usernames = respondents.map(u => (u.username || '').toLowerCase());
+    const stats = usernames.length > 0
+      ? await PlayerStats.find(
+          { username: { $in: usernames } },
+          { username: 1, netToHouse30d: 1, realDeposits30d: 1, realChargesCount30d: 1, activityStatus: 1, _id: 0 }
+        ).lean()
+      : [];
+    const statsByUser = new Map(stats.map(s => [s.username.toLowerCase(), s]));
+
+    const items = respondents.map(u => {
+      const s = statsByUser.get((u.username || '').toLowerCase()) || {};
+      return {
+        username: u.username,
+        preference: u.notifPreference,
+        notifPreference: u.notifPreference,
+        answeredAt: u.notifPreferenceAt,
+        notifPreferenceAt: u.notifPreferenceAt,
+        team: u.team || null,
+        hasApp: !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)),
+        netToHouse30d: s.netToHouse30d || 0,
+        realDeposits30d: s.realDeposits30d || 0,
+        activityStatus: s.activityStatus || null
+      };
+    });
 
     const totalRespCount = await User.countDocuments({ notifPreference: { $exists: true, $ne: null } });
     const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();

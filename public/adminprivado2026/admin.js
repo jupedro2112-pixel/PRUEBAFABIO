@@ -12006,17 +12006,26 @@ async function loadEncuesta() {
         c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando respuestas…</div>';
     }
     try {
-        // 3 fetches en paralelo: stats agregadas + listado de users + config de estrategia.
-        const [statsR, listR, strategyR] = await Promise.all([
+        // Stats agregadas + timeline (TODOS los respondentes con netToHouse30d
+        // joineado de PlayerStats) + config de estrategia. NO usamos /players/
+        // segments porque ese filtra por actividad reciente y deja afuera a
+        // los que respondieron pero no cargaron — el contador y la lista
+        // tienen que matchear.
+        const [statsR, timelineR, strategyR] = await Promise.all([
             authFetch('/api/admin/users/notif-preference-stats'),
-            authFetch('/api/admin/players/segments?period=month&segment=all&hasApp=all&limit=2000'),
+            authFetch('/api/admin/encuesta/timeline?limit=500'),
             authFetch('/api/admin/notif-strategy')
         ]);
         const stats = statsR.ok ? await statsR.json() : null;
-        const list = listR.ok ? await listR.json() : null;
+        const timeline = timelineR.ok ? await timelineR.json() : null;
         const strategy = strategyR.ok ? await strategyR.json() : null;
 
-        _ENCUESTA_CACHE = { stats, list, strategy };
+        // Mapeamos timeline al shape que espera el render (compat con la lista
+        // que venía de segments). La key sigue siendo `list.players` para no
+        // tocar el render.
+        const list = timeline ? { players: timeline.items || [] } : null;
+
+        _ENCUESTA_CACHE = { stats, list, strategy, timeline };
         c.innerHTML = _renderEncuesta();
 
         // Arrancar polling si no esta corriendo: refresca cada 30s para
