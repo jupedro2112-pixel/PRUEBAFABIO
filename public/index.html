@@ -1569,48 +1569,15 @@
         .user-balance-card .balance-row-v2 {
             display: flex !important;
             align-items: center !important;
-            gap: 8px !important;
-            flex-wrap: nowrap !important;
-            justify-content: space-between !important;
+            justify-content: center !important;
         }
-        .user-balance-card .username-pill {
-            flex: 0 1 auto;
-            background: rgba(212,175,55,0.15);
-            border: 1px solid rgba(212,175,55,0.45);
-            color: #ffd700;
-            font-weight: 800;
-            padding: 6px 10px;
-            border-radius: 999px;
-            font-size: 12px;
-            max-width: 35%;
-            overflow: hidden;
-            white-space: nowrap;
-            text-overflow: ellipsis;
-        }
-        .user-balance-card .cargar-cta {
-            flex: 1 1 auto;
-            background: linear-gradient(135deg,#25d366,#128c7e);
-            color: #fff;
-            border: none;
-            padding: 9px 8px;
-            border-radius: 10px;
-            font-weight: 800;
-            font-size: 12px;
-            cursor: pointer;
-            text-decoration: none;
-            text-align: center;
-            white-space: nowrap;
-            box-shadow: 0 2px 8px rgba(37,211,102,0.30);
-        }
-        .user-balance-card .cargar-cta:active { transform: scale(0.98); }
         .user-balance-card .balance-amount-inline {
-            flex: 0 0 auto;
-            font-size: 17px;
+            font-size: clamp(22px, 7vw, 32px);
             font-weight: 900;
             color: #00ff99;
             font-family: monospace;
             text-shadow: 0 1px 4px rgba(0,255,153,0.30);
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
         }
 
         /* Sorteo semanal banner abajo del bono */
@@ -1618,10 +1585,8 @@
             order: 4 !important;
         }
 
-        /* Username badge legacy oculto — username ahora vive en la balance row */
-        #refundsLogoutBtn {
-            display: none !important;
-        }
+        /* Username badge fijo arriba a la derecha (vuelve al diseño previo
+           porque el balance card ahora muestra solo el monto centrado). */
 
         /* Banner azul "🔄 Tocá para actualizar": el owner pidio sacarlo
            porque ocupaba real estate prime sin aportar valor al usuario.
@@ -1938,12 +1903,12 @@
         </div>
 
         <!-- Refunds-only: Saldo + acceso a la plataforma JUGAYGANA.
-             Layout v2: fila con username + boton "QUIERO CARGAR" + saldo,
-             y abajo el boton "Abrir plataforma" full width. -->
+             Layout v3.1: monto del saldo CENTRADO solo, sin username ni
+             cargar (el username vuelve al badge fijo arriba a la derecha,
+             el "QUIERO CARGAR" queda solo en NÚMERO PRINCIPAL). Abajo el
+             boton "Abrir plataforma" full width. -->
         <div id="userBalanceCard" class="user-balance-card">
             <div class="balance-row-v2">
-                <span class="username-pill" id="balanceUsernamePill">@usuario</span>
-                <a class="cargar-cta" id="cargarCtaBtn" href="https://wa.link/metawin2026" target="_blank" rel="noopener noreferrer">💸 QUIERO CARGAR</a>
                 <span class="balance-amount-inline" id="userBalanceAmount">$0</span>
             </div>
             <button id="goToPlatformBtn" type="button" class="platform-btn-cta">
