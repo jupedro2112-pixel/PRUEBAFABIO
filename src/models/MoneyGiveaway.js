@@ -51,7 +51,7 @@ const moneyGiveawaySchema = new mongoose.Schema({
   //   null            = legacy (pre-feature, asume manual)
   strategySource: {
     type: String,
-    enum: ['auto-strategy', 'auto-rule', 'manual', null],
+    enum: ['auto-strategy', 'auto-rule', 'manual', 'individual_grant', null],
     default: 'manual',
     index: true
   },

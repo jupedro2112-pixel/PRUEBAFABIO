@@ -8654,6 +8654,149 @@ app.get('/api/admin/notif-strategy/reactions', authMiddleware, adminMiddleware, 
   }
 });
 
+// =====================================================================
+// REGALAR BONO DESDE ENCUESTA (per-user grant)
+// =====================================================================
+// El admin, mirando la lista de respuestas de la encuesta, le regala a un
+// usuario un bono individual. Tres tipos:
+//   - 'cod50'  → promo-alert per-user con código COD50  (50% en cargas)
+//   - 'cod100' → promo-alert per-user con código COD100 (100% en cargas)
+//   - 'cash'   → MoneyGiveaway con audienceWhitelist=[user] y monto fijo
+// La PWA ya sabe pintar ambos:
+//   - applyPromoAlertIfActive() reemplaza el botón QUIERO CARGAR por la
+//     CTA del promo (con el código y el wa.link pre-cargado).
+//   - renderGiveawayCard() pinta la card RECLAMAR con el monto cash.
+// =====================================================================
+app.post('/api/admin/encuesta/grant-bonus', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede regalar bonos.' });
+    }
+    const { username, type, amount, durationHours } = req.body || {};
+    const u = String(username || '').trim().toLowerCase();
+    const t = String(type || '').trim().toLowerCase();
+    const amt = Number(amount);
+    const hrs = Number(durationHours) > 0 ? Math.min(168, Number(durationHours)) : 24;
+    if (!u) return res.status(400).json({ error: 'Username requerido' });
+    if (!['cod50', 'cod100', 'cash'].includes(t)) {
+      return res.status(400).json({ error: 'Tipo inválido (cod50, cod100, cash)' });
+    }
+    if (!isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'Monto inválido' });
+    }
+
+    // Confirmar que el usuario existe.
+    const target = await User.findOne({ username: u }, { id: 1, username: 1, fcmToken: 1, fcmTokens: 1 }).lean();
+    if (!target) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    if (t === 'cash') {
+      // Cap de seguridad por user.
+      if (amt > GIVEAWAY_MAX_AMOUNT_PER_USER) {
+        return res.status(400).json({ error: `Monto excede el tope de seguridad ($${GIVEAWAY_MAX_AMOUNT_PER_USER.toLocaleString('es-AR')})` });
+      }
+      // Cerrar otros giveaways individuales activos del MISMO user para no
+      // acumular varios al mismo tiempo (sería confuso para el user).
+      await MoneyGiveaway.updateMany(
+        { status: 'active', strategySource: 'individual_grant', audienceWhitelist: u },
+        { $set: { status: 'cancelled' } }
+      );
+
+      const g = await MoneyGiveaway.create({
+        id: uuidv4(),
+        amount: amt,
+        totalBudget: amt,
+        maxClaims: 1,
+        expiresAt: new Date(Date.now() + hrs * 3600 * 1000),
+        createdBy: req.user.username || null,
+        prefix: null,
+        notificationHistoryId: null,
+        requireZeroBalance: false,
+        strategySource: 'individual_grant',
+        audienceWhitelist: [u],
+        status: 'active'
+      });
+
+      // Push para que se entere ya.
+      const tokens = [];
+      if (target.fcmToken) tokens.push(target.fcmToken);
+      if (Array.isArray(target.fcmTokens)) {
+        for (const tk of target.fcmTokens) if (tk && !tokens.includes(tk)) tokens.push(tk);
+      }
+      if (tokens.length > 0) {
+        const title = `🎁 Te regalamos $${amt.toLocaleString('es-AR')}`;
+        const body = 'Tocá la app para reclamarlo antes de que se venza.';
+        Promise.all(tokens.map(tk =>
+          _sendPushToUser(tk, title, body, { kind: 'individual_grant_cash', giveawayId: g.id })
+            .catch(e => logger.warn(`[GRANT/cash] push fail ${u}: ${e.message}`))
+        )).catch(() => {});
+      }
+
+      logger.info(`[GRANT] cash $${amt} → ${u} por ${req.user.username} · ${hrs}h`);
+      return res.json({ success: true, type: 'cash', amount: amt, giveawayId: g.id, expiresAt: g.expiresAt });
+    }
+
+    // Promo-alert per-user (cod50 / cod100). Guardamos en TIER_PROMOS_KEY
+    // como una entrada más con audienceWhitelist=[u]. _resolveActivePromoForUser
+    // ya itera ese array y devuelve la primera entrada que matchee.
+    const codeNorm = t === 'cod50' ? 'COD50' : 'COD100';
+    const pct = t === 'cod50' ? 50 : 100;
+    const message = `🎁 Cargás $${amt.toLocaleString('es-AR')} y te damos un ${pct}% extra. Pedí el código ${codeNorm}.`;
+    const now = new Date();
+    const expires = new Date(now.getTime() + hrs * 3600 * 1000);
+    const promo = {
+      id: uuidv4(),
+      message,
+      code: codeNorm,
+      expiresAt: expires.toISOString(),
+      createdAt: now.toISOString(),
+      createdBy: req.user.username || null,
+      prefix: null,
+      audienceWhitelist: [u],
+      kind: 'individual_grant',
+      grantAmount: amt,
+      grantPct: pct,
+      notificationHistoryId: null
+    };
+    const arr = (await getConfig(TIER_PROMOS_KEY, [])) || [];
+    // Limpiar expirados y otros grants individuales del mismo user antes
+    // de pushear el nuevo (un user solo tiene un bono individual activo
+    // a la vez — pisamos el anterior).
+    const nowMs = Date.now();
+    const cleaned = arr.filter(p => {
+      if (!p || !p.expiresAt) return false;
+      const exp = new Date(p.expiresAt).getTime();
+      if (!isFinite(exp) || exp <= nowMs) return false;
+      const isSameUserGrant = p.kind === 'individual_grant'
+        && Array.isArray(p.audienceWhitelist)
+        && p.audienceWhitelist.some(x => String(x).toLowerCase() === u);
+      return !isSameUserGrant;
+    });
+    cleaned.push(promo);
+    await setConfig(TIER_PROMOS_KEY, cleaned);
+
+    // Push para que el user vuelva ya.
+    const tokens = [];
+    if (target.fcmToken) tokens.push(target.fcmToken);
+    if (Array.isArray(target.fcmTokens)) {
+      for (const tk of target.fcmTokens) if (tk && !tokens.includes(tk)) tokens.push(tk);
+    }
+    if (tokens.length > 0) {
+      const title = `🎁 Bono ${pct}% activo`;
+      const body = `Cargá $${amt.toLocaleString('es-AR')} y te damos ${pct}% más. Tocá para usarlo.`;
+      Promise.all(tokens.map(tk =>
+        _sendPushToUser(tk, title, body, { kind: 'individual_grant_promo', code: codeNorm })
+          .catch(e => logger.warn(`[GRANT/promo] push fail ${u}: ${e.message}`))
+      )).catch(() => {});
+    }
+
+    logger.info(`[GRANT] ${codeNorm} $${amt} → ${u} por ${req.user.username} · ${hrs}h`);
+    res.json({ success: true, type: t, amount: amt, code: codeNorm, expiresAt: promo.expiresAt });
+  } catch (err) {
+    logger.error(`/api/admin/encuesta/grant-bonus: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message || 'Error del servidor' });
+  }
+});
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;

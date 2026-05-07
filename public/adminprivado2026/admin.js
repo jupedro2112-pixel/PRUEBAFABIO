@@ -12134,6 +12134,7 @@ function _renderEncuesta() {
     html += '<th style="padding:8px 10px;font-weight:800;">Equipo</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">$ neto 30d</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">App</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Regalar</th>';
     html += '</tr></thead><tbody>';
 
     let idx = 1;
@@ -12147,6 +12148,9 @@ function _renderEncuesta() {
         html += '<td style="padding:8px 10px;color:#ddd;font-size:10.5px;">' + (p.team ? escapeHtml(p.team) : '<span style="color:#666;">—</span>') + '</td>';
         html += '<td style="padding:8px 10px;color:' + ((p.netToHouse30d || 0) >= 0 ? '#66ff66' : '#ff8080') + ';text-align:right;font-weight:700;white-space:nowrap;">' + _fmtMoney(p.netToHouse30d) + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;">' + (p.hasApp ? '<span style="color:#66ff66;">✅</span>' : '<span style="color:#888;">❌</span>') + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">';
+        html += '<button type="button" onclick="openGrantBonusModal(' + escapeJsArg(p.username) + ')" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:4px 9px;border-radius:6px;font-weight:900;font-size:10.5px;cursor:pointer;letter-spacing:0.3px;">🎁 Regalar</button>';
+        html += '</td>';
         html += '</tr>';
         idx++;
     }
@@ -12215,6 +12219,94 @@ function _renderSurveyQuestion() {
     html += '  </div>';
     html += '</div>';
     return html;
+}
+
+// Modal de "Regalar bono" lanzado desde cada fila de la encuesta.
+// 3 tipos: COD50 (50% en cargas) · COD100 (100% en cargas) · CASH (regalo de plata).
+function openGrantBonusModal(username) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.id = 'grantBonusOverlay';
+    overlay.innerHTML =
+        '<div style="background:#1a0033;border:2px solid #d4af37;border-radius:14px;max-width:440px;width:100%;padding:18px;color:#fff;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+                '<h3 style="color:#ffd700;margin:0;font-size:15px;letter-spacing:1px;">🎁 Regalar bono a ' + escapeHtml(username) + '</h3>' +
+                '<button type="button" onclick="closeGrantBonusModal()" style="background:transparent;color:#aaa;border:none;font-size:18px;cursor:pointer;">✕</button>' +
+            '</div>' +
+            '<p style="color:#bbb;font-size:11.5px;margin:0 0 12px;line-height:1.5;">Elegí el tipo de bono. Va a aparecer al instante en la app del usuario.</p>' +
+            '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                '<label style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1.5px solid rgba(255,215,0,0.30);padding:10px;border-radius:8px;cursor:pointer;">' +
+                    '<input type="radio" name="grantType" value="cod50" checked>' +
+                    '<span style="flex:1;"><strong style="color:#ffd700;">🟡 Bono 50%</strong> · cód <strong>COD50</strong> en wa.link</span>' +
+                '</label>' +
+                '<label style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1.5px solid rgba(255,107,53,0.30);padding:10px;border-radius:8px;cursor:pointer;">' +
+                    '<input type="radio" name="grantType" value="cod100">' +
+                    '<span style="flex:1;"><strong style="color:#ff8c5a;">🔴 Bono 100%</strong> · cód <strong>COD100</strong> en wa.link</span>' +
+                '</label>' +
+                '<label style="display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.04);border:1.5px solid rgba(102,255,102,0.30);padding:10px;border-radius:8px;cursor:pointer;">' +
+                    '<input type="radio" name="grantType" value="cash">' +
+                    '<span style="flex:1;"><strong style="color:#66ff66;">💵 Regalo de plata</strong> · botón "RECLAMAR" auto en la app</span>' +
+                '</label>' +
+            '</div>' +
+            '<div style="margin-top:12px;">' +
+                '<label style="color:#aaa;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Monto (ARS)</label>' +
+                '<input type="number" id="grantAmount" min="100" step="100" value="2000" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.30);color:#fff;padding:9px;border-radius:6px;font-size:14px;font-weight:800;margin-top:4px;">' +
+                '<div style="color:#888;font-size:10.5px;margin-top:4px;">Para 50%/100% es el monto base sugerido (ej. 2.000). Para cash es la plata exacta a regalar.</div>' +
+            '</div>' +
+            '<div style="margin-top:10px;">' +
+                '<label style="color:#aaa;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;">Vence en (horas)</label>' +
+                '<input type="number" id="grantHours" min="1" max="168" step="1" value="24" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.30);color:#fff;padding:9px;border-radius:6px;font-size:14px;font-weight:800;margin-top:4px;">' +
+            '</div>' +
+            '<div id="grantBonusResult" style="margin-top:10px;font-size:11.5px;min-height:18px;"></div>' +
+            '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                '<button type="button" onclick="closeGrantBonusModal()" style="flex:1;background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Cancelar</button>' +
+                '<button type="button" id="grantBonusSubmit" onclick="submitGrantBonus(' + escapeJsArg(username) + ')" style="flex:2;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🎁 ENVIAR BONO</button>' +
+            '</div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+}
+
+function closeGrantBonusModal() {
+    const o = document.getElementById('grantBonusOverlay');
+    if (o) o.remove();
+}
+
+async function submitGrantBonus(username) {
+    const radios = document.querySelectorAll('input[name="grantType"]');
+    let type = 'cod50';
+    for (const r of radios) if (r.checked) { type = r.value; break; }
+    const amount = Number((document.getElementById('grantAmount') || {}).value || 0);
+    const hours = Number((document.getElementById('grantHours') || {}).value || 24);
+    const result = document.getElementById('grantBonusResult');
+    const btn = document.getElementById('grantBonusSubmit');
+    if (!isFinite(amount) || amount <= 0) {
+        if (result) { result.style.color = '#ff8080'; result.textContent = '⚠️ Monto inválido.'; }
+        return;
+    }
+    if (!confirm('¿Mandar este bono a ' + username + '? Le va a llegar push y se le activa en la app.')) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando...'; }
+    if (result) { result.style.color = '#aaa'; result.textContent = '⏳ Enviando...'; }
+    try {
+        const r = await authFetch('/api/admin/encuesta/grant-bonus', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, type, amount, durationHours: hours })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            if (result) { result.style.color = '#ff8080'; result.textContent = '❌ ' + (d.error || 'Error'); }
+            if (btn) { btn.disabled = false; btn.textContent = '🎁 ENVIAR BONO'; }
+            return;
+        }
+        const tipoTxt = type === 'cash'
+            ? ('regalo de plata $' + amount.toLocaleString('es-AR'))
+            : ('bono ' + (type === 'cod50' ? '50%' : '100%') + ' (cód ' + d.code + ') sobre carga de $' + amount.toLocaleString('es-AR'));
+        showToast('✅ ' + tipoTxt + ' enviado a ' + username, 'success');
+        closeGrantBonusModal();
+    } catch (e) {
+        if (result) { result.style.color = '#ff8080'; result.textContent = '❌ Error de conexión'; }
+        if (btn) { btn.disabled = false; btn.textContent = '🎁 ENVIAR BONO'; }
+    }
 }
 
 // Pinta el badge de la preferencia de la encuesta de notifs en la tabla.
