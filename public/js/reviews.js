@@ -316,7 +316,7 @@ VIP.reviews = (function () {
         }
         _feedFetching = true;
         try {
-            const r = await fetch(`${VIP.config.API_URL}/api/reviews/feed?limit=30`, {
+            const r = await fetch(`${VIP.config.API_URL}/api/reviews/feed?limit=60`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (!r.ok) return;
@@ -376,9 +376,8 @@ VIP.reviews = (function () {
             else starsOnly.push(it);
         }
 
-        // Chunk en columnas de 10 (max 30 items = 3 columnas en desktop, en
-        // mobile cada columna toma todo el ancho y queda apilado).
-        const PER_COL = 10;
+        // Chunk en columnas (en desktop arma N columnas, en mobile apila).
+        const PER_COL = 12;
         const renderItem = (it) => {
             const stars = _renderStars(it.stars);
             const rawComment = it.comment || '';
