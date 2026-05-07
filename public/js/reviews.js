@@ -15,7 +15,7 @@ VIP.reviews = (function () {
     // Comentario por defecto cuando el user no escribe nada. Si lo deja
     // así, queda como 5 estrellas en el feed. Apenas hace focus en el
     // textarea para escribir, se limpia para que arranque con sus palabras.
-    const STAR_DEFAULT = '★★★★★';
+    const STAR_DEFAULT = '5 estrellas';
 
     function _q(id) { return document.getElementById(id); }
 
@@ -358,8 +358,8 @@ VIP.reviews = (function () {
         const renderItem = (it) => {
             const stars = _renderStars(it.stars);
             const rawComment = it.comment || '';
-            // Reviews sin comentario se muestran como ★★★★★ (no como "—").
-            const comment = rawComment ? _esc(rawComment) : '<span style="color:#ffd700;font-weight:700;">★★★★★</span>';
+            // Reviews sin comentario se muestran como "5 estrellas" en dorado.
+            const comment = rawComment ? _esc(rawComment) : '<span style="color:#ffd700;font-weight:700;">5 estrellas</span>';
             // tooltip nativo con el comentario completo + fecha (para hover desktop)
             const when = _whenStr(it.updatedAt);
             const tipParts = [];
