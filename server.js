@@ -8145,19 +8145,52 @@ app.get('/api/user/notif-preference', authMiddleware, async (req, res) => {
   }
 });
 
+// Welcome push: al responder la encuesta, el user queda inscripto en
+// la estrategia automaticamente. Le mandamos un push de bienvenida
+// agradeciendo y avisando que recibira sus bonos.
+const _SURVEY_WELCOME_MESSAGES = [
+  { title: '🎉 ¡Bienvenido!', body: 'Gracias por sumarte. Configuramos tus notifs personalizadas. Te van a llegar bonos exclusivos.' },
+  { title: '🙏 ¡Sos parte!', body: 'Gracias por estar con nosotros. Desde hoy te llegan los mejores bonos directo al saldo.' },
+  { title: '✨ Listo, sos parte', body: 'Te esperan bonos del 50% en tus cargas + 1 bono del 100% al mes. Vamos a por más.' },
+  { title: '💎 Bienvenido a la familia', body: 'Tu plan de notifs ya quedó activo. Bonos, regalos y novedades — solo lo que te conviene.' }
+];
+
 app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
   try {
     const pref = String((req.body && req.body.preference) || '').toLowerCase().trim();
     if (!_NOTIF_PREF_VALUES.includes(pref)) {
       return res.status(400).json({ error: 'Preferencia inválida. Valores: ' + _NOTIF_PREF_VALUES.join(', ') });
     }
+    // Detectar si es PRIMERA respuesta — solo en ese caso mandamos welcome.
+    const before = await User.findOne({ id: req.user.userId }, { notifPreference: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }).lean();
+    const isFirstAnswer = !before || !before.notifPreference;
+
     const updated = await User.findOneAndUpdate(
       { id: req.user.userId },
       { $set: { notifPreference: pref, notifPreferenceAt: new Date() } },
       { new: true, projection: { notifPreference: 1, notifPreferenceAt: 1 } }
     ).lean();
     if (!updated) return res.status(404).json({ error: 'Usuario no encontrado' });
-    logger.info(`[SURVEY] notif-preference set ${req.user.username}=${pref}`);
+    logger.info(`[SURVEY] notif-preference set ${req.user.username}=${pref} (firstAnswer=${isFirstAnswer})`);
+
+    // Welcome push (best effort, no bloquea la response).
+    if (isFirstAnswer && before && pref !== 'opt_out') {
+      const tokens = [];
+      if (before.fcmToken) tokens.push(before.fcmToken);
+      if (Array.isArray(before.fcmTokens)) tokens.push(...before.fcmTokens.filter(t => t && !tokens.includes(t)));
+      if (tokens.length > 0) {
+        const msg = _SURVEY_WELCOME_MESSAGES[Math.floor(Math.random() * _SURVEY_WELCOME_MESSAGES.length)];
+        Promise.all(tokens.map(t =>
+          _sendPushToUser(t, msg.title, msg.body, { kind: 'survey_welcome', preference: pref })
+            .catch(e => logger.warn(`[SURVEY] welcome push fail ${req.user.username}: ${e.message}`))
+        )).then(() => {
+          logger.info(`[SURVEY] welcome push enviado a ${req.user.username} · ${tokens.length} token(s)`);
+        });
+      } else {
+        logger.info(`[SURVEY] ${req.user.username} respondio pero no tiene FCM tokens — sin welcome push.`);
+      }
+    }
+
     res.json({
       success: true,
       preference: updated.notifPreference,
@@ -8328,20 +8361,26 @@ app.get('/api/admin/notif-strategy/preview', authMiddleware, adminMiddleware, as
       const activeBudget = Math.round(tierBudget * 0.80);
       const inactiveBudget = tierBudget - activeBudget;
 
-      const sumNet = active.reduce((s, u) => s + Math.max(0, u.netToHouse30d || 0), 0);
-      const activeAlloc = active.map(u => {
-        const share = sumNet > 0 ? Math.max(0, u.netToHouse30d || 0) / sumNet : (1 / Math.max(1, active.length));
-        return {
-          username: u.username,
-          tier,
-          activityStatus: u.activityStatus,
-          netToHouse30d: u.netToHouse30d,
-          chargesCount30d: u.chargesCount30d,
-          assignedARS: Math.round(activeBudget * share),
-          available: true,
-          reason: 'Cliente activo · proporcional a $ neto a la casa'
-        };
-      }).sort((a, b) => b.assignedARS - a.assignedARS);
+      // Distribucion con multiplicador "top player = 3x" pedido por owner:
+      //   - Cada user activo arranca con baseline 1.
+      //   - Suma hasta +2 segun su netToHouse normalizado contra el max
+      //     del tier (top player = +2 = total 3x; user con 0 perdida = 1x).
+      // Esto premia mas plata a quien mas le dejo a la casa, sin dejar
+      // a nadie sin recibir nada.
+      const maxNet = active.reduce((m, u) => Math.max(m, Math.max(0, u.netToHouse30d || 0)), 0);
+      const weights = active.map(u => 1 + (maxNet > 0 ? 2 * (Math.max(0, u.netToHouse30d || 0) / maxNet) : 0));
+      const sumWeights = weights.reduce((s, w) => s + w, 0) || 1;
+      const activeAlloc = active.map((u, i) => ({
+        username: u.username,
+        tier,
+        activityStatus: u.activityStatus,
+        netToHouse30d: u.netToHouse30d,
+        chargesCount30d: u.chargesCount30d,
+        assignedARS: Math.round(activeBudget * (weights[i] / sumWeights)),
+        multiplier: weights[i],
+        available: true,
+        reason: weights[i] >= 2.5 ? 'Top player · 3× el resto' : 'Cliente activo · proporcional a actividad'
+      })).sort((a, b) => b.assignedARS - a.assignedARS);
 
       const inactivePerUser = inactive.length > 0 ? Math.round(inactiveBudget / inactive.length) : 0;
       const inactiveAlloc = inactive.map(u => ({

@@ -12620,7 +12620,7 @@ function loadRecommendedDefaults() {
     const total = document.getElementById('strat_monthlyTotalToDistribute');
     if (total) total.value = '250000';
     const bt = document.getElementById('strat_bonusType');
-    if (bt && !bt.value) bt.value = 'cash';
+    if (bt) bt.value = '50% en cargas + 1× 100% al mes';
     showToast('🔄 Valores recomendados cargados — no guardados hasta que aprietes Guardar', 'info');
 }
 

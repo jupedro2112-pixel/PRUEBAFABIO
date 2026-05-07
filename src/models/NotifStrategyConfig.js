@@ -52,8 +52,8 @@ const notifStrategyConfigSchema = new mongoose.Schema({
   monthlyTotalToDistribute: { type: Number, default: 250000, min: 0 },
 
   // Tipo de bono que el admin quiere usar este mes. Free-form para no
-  // limitar el negocio (ej: 'cash', 'free_spin', 'deposit_match', etc.)
-  bonusType: { type: String, default: 'cash', maxlength: 64 },
+  // limitar el negocio. Default standard: 50% en cargas + 1 vez 100%/mes.
+  bonusType: { type: String, default: '50% en cargas + 1× 100% al mes', maxlength: 120 },
 
   // Defaults de los 2 bonos clasicos sugeridos por el owner.
   bonus50pctEnabled: { type: Boolean, default: true },
