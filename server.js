@@ -932,6 +932,79 @@ async function _runFcmPrune(reason) {
 setTimeout(() => { _runFcmPrune('startup-delayed'); }, 5 * 60 * 1000);
 setInterval(() => { _runFcmPrune('cron-24h'); }, FCM_PRUNE_INTERVAL_MS);
 
+// =====================================================================
+// CRON: RECORDATORIO DIARIO PARA "SOLO REEMBOLSOS"
+// =====================================================================
+// Logica: para los users que eligieron solo_reembolsos en la encuesta,
+// chequeamos si tienen reembolso DISPONIBLE (diario / semanal / mensual)
+// que NO reclamaron, y mandamos UNA push diaria recordandoselo. Mensaje
+// rotativo para no saturar.
+//
+// IMPORTANTE: arranca como DRY-RUN (loggea sin enviar) hasta que el
+// admin active explicitamente la estrategia en el panel y verifique los
+// mensajes. Asi evitamos disparar pushes masivas sin querer al deployar.
+//
+// Mensajes rotativos: indexamos por dia del mes para que cambien.
+const _SOLO_REEMBOLSOS_MESSAGES = [
+  '💰 No te olvides: tenés un reembolso disponible para reclamar.',
+  '⏰ Tu reembolso te está esperando — pasá por la app y reclamalo.',
+  '🎁 Recordatorio: hoy podés cobrar tu reembolso. No lo dejes pasar.',
+  '💸 Hay plata tuya esperando: tu reembolso disponible. Reclamalo en 1 click.',
+  '🔔 Avisa la encuesta: tenés reembolso. Pasá rápido y agarralo.',
+  '⚡ Reembolso listo. Te llevás tu plata si entrás hoy.',
+  '🪙 No te olvides — tu reembolso está disponible.'
+];
+
+async function _runSoloReembolsosReminder(reason) {
+  try {
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    if (!cfg || !cfg.isActive) {
+      logger.info(`[SOLO_REEMB] (${reason}) estrategia no activa — skip.`);
+      return;
+    }
+    const dryRun = process.env.SOLO_REEMB_DRY_RUN !== '0'; // default DRY-RUN
+    const targets = await User.find(
+      { notifPreference: { $in: ['solo_reembolsos', 'opt_out'] } },
+      { id: 1, username: 1, _id: 0 }
+    ).lean();
+    if (targets.length === 0) {
+      logger.info(`[SOLO_REEMB] (${reason}) 0 targets.`);
+      return;
+    }
+    const now = new Date();
+    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+    const weekStart = new Date(now); weekStart.setDate(now.getDate() - 7);
+    const monthStart = new Date(now); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+
+    let withRefund = 0;
+    const msgIdx = now.getDate() % _SOLO_REEMBOLSOS_MESSAGES.length;
+    const message = _SOLO_REEMBOLSOS_MESSAGES[msgIdx];
+    for (const u of targets) {
+      // Tiene reembolso pendiente si NO reclamo daily hoy / weekly esta
+      // semana / monthly este mes — y existe la posibilidad real (eso es
+      // mas dificil de chequear sin ir a JUGAYGANA, asi que por ahora
+      // contamos como pendiente al que NO tiene RefundClaim reciente).
+      const claimedRecently = await RefundClaim.findOne({
+        username: u.username,
+        type: { $in: ['daily', 'weekly', 'monthly'] },
+        claimedAt: { $gte: todayStart }
+      }).lean();
+      if (claimedRecently) continue; // ya reclamo hoy
+      withRefund++;
+      if (dryRun) continue;
+      // TODO: integrar con el helper de push FCM existente.
+      //   await sendPushToUser(u.id, { title: '💰 Reembolso', body: message });
+    }
+    logger.info(`[SOLO_REEMB] (${reason}) ${withRefund}/${targets.length} elegibles · msg="${message.slice(0, 40)}..." · dryRun=${dryRun}`);
+  } catch (e) {
+    logger.error(`[SOLO_REEMB] (${reason}) error: ${e.message}`);
+  }
+}
+// Primera corrida 10 min post-boot, despues 1x al dia (a las 11:00 AM-ish
+// segun cuando boote el server — mejorar con cron real si hace falta).
+setTimeout(() => { _runSoloReembolsosReminder('startup-delayed'); }, 10 * 60 * 1000);
+setInterval(() => { _runSoloReembolsosReminder('cron-24h'); }, 24 * 60 * 60 * 1000);
+
 // Helper: dado un receiverId y un mensaje de chat, dispara push FCM si el user
 // tiene tokens registrados. Usado por: (a) usuarios offline (canal directo
 // fallido) y (b) usuarios "online" cuyo socket directo no acusó recibo en 3s
@@ -8141,6 +8214,8 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
     const body = req.body || {};
     const prefs = body.preferences || {};
     const monthlyCap = Math.max(0, Number(body.monthlyCap) || 0);
+    const monthlyTotalToDistribute = Math.max(0, Number(body.monthlyTotalToDistribute) || 0);
+    const bonusType = String(body.bonusType || 'cash').slice(0, 64);
     const sanitize = (v, allowFlags) => ({
       bonos: Math.max(0, Number(v && v.bonos) || 0),
       juegos: Math.max(0, Number(v && v.juegos) || 0),
@@ -8156,6 +8231,8 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
         solo_reembolsos: { ...sanitize(prefs.solo_reembolsos, true), refundsOnly: true }
       },
       monthlyCap,
+      monthlyTotalToDistribute,
+      bonusType,
       updatedAt: new Date(),
       updatedBy: (req.user && req.user.username) || 'admin'
     };
@@ -8173,6 +8250,8 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
     // Append revision (cap a las ultimas 50 para no inflar el doc).
     existing.preferences = update.preferences;
     existing.monthlyCap = update.monthlyCap;
+    existing.monthlyTotalToDistribute = update.monthlyTotalToDistribute;
+    existing.bonusType = update.bonusType;
     existing.updatedAt = update.updatedAt;
     existing.updatedBy = update.updatedBy;
     existing.revisions.push({ at: new Date(), by: update.updatedBy, prefs: update.preferences, monthlyCap: update.monthlyCap });
@@ -8181,6 +8260,97 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
     res.json(existing.toObject());
   } catch (err) {
     logger.error(`POST /api/admin/notif-strategy: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Activa o desactiva la estrategia. Cuando isActive=true, el flag queda
+// disponible para que los crons / endpoints de auto-push lo respeten.
+app.post('/api/admin/notif-strategy/activate', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const activate = req.body && req.body.activate !== false; // default true
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' });
+    if (!cfg) return res.status(404).json({ error: 'Estrategia no configurada todavía. Guardá primero.' });
+    cfg.isActive = !!activate;
+    cfg.activatedAt = activate ? new Date() : null;
+    cfg.activatedBy = activate ? ((req.user && req.user.username) || 'admin') : null;
+    await cfg.save();
+    logger.info(`[NOTIF-STRATEGY] ${activate ? 'ACTIVATED' : 'DEACTIVATED'} by ${req.user && req.user.username}`);
+    res.json(cfg.toObject());
+  } catch (err) {
+    logger.error(`POST /api/admin/notif-strategy/activate: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reporte de reaccion: cruza NotificationHistory contra User.notifPreference
+// para ver, por tier, cuantas pushes mandamos en los ultimos 30d, cuantas
+// se entregaron y cual fue el engagement (open/click si existe en el doc).
+app.get('/api/admin/notif-strategy/reactions', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(90, Number(req.query.days) || 30));
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+
+    // 1) Map username → notifPreference.
+    const users = await User.find({ notifPreference: { $ne: null } }, { username: 1, notifPreference: 1, _id: 0 }).lean();
+    const prefByUser = {};
+    for (const u of users) prefByUser[String(u.username || '').toLowerCase()] = u.notifPreference;
+
+    // 2) Pushes en la ventana.
+    const NotificationHistory = require('./src/models').NotificationHistory;
+    const histories = await NotificationHistory.find(
+      { createdAt: { $gte: since } },
+      { username: 1, status: 1, createdAt: 1, _id: 0 }
+    ).lean();
+
+    // 3) Aggregate por tier.
+    const buckets = { suave: { sent: 0, delivered: 0, failed: 0 },
+                       normal: { sent: 0, delivered: 0, failed: 0 },
+                       activo: { sent: 0, delivered: 0, failed: 0 },
+                       solo_reembolsos: { sent: 0, delivered: 0, failed: 0 },
+                       opt_out: { sent: 0, delivered: 0, failed: 0 },
+                       sin_responder: { sent: 0, delivered: 0, failed: 0 } };
+    for (const h of histories) {
+      const u = String(h.username || '').toLowerCase();
+      const tier = prefByUser[u] || 'sin_responder';
+      const b = buckets[tier];
+      if (!b) continue;
+      b.sent++;
+      const st = String(h.status || '').toLowerCase();
+      if (st.includes('deliver') || st.includes('sent') || st === 'success') b.delivered++;
+      else if (st.includes('fail') || st === 'error') b.failed++;
+    }
+
+    // 4) Conversiones rough: cargas reales POST-push por tier.
+    // Aproximacion: contamos users que tuvieron al menos 1 deposito en el
+    // periodo en DailyPlayerStats.
+    const usernames = users.map(u => String(u.username || '').toLowerCase());
+    const sinceDay = new Date(since); sinceDay.setUTCHours(0, 0, 0, 0);
+    const depAgg = await DailyPlayerStats.aggregate([
+      { $match: { username: { $in: usernames }, dateUtc: { $gte: sinceDay }, depositCount: { $gt: 0 } } },
+      { $group: { _id: '$username', count: { $sum: '$depositCount' }, sum: { $sum: '$depositSum' } } }
+    ]);
+    const depByUser = {};
+    for (const d of depAgg) depByUser[d._id] = d;
+    const conversions = { suave: { users: 0, deposits: 0, sum: 0 },
+                           normal: { users: 0, deposits: 0, sum: 0 },
+                           activo: { users: 0, deposits: 0, sum: 0 },
+                           solo_reembolsos: { users: 0, deposits: 0, sum: 0 },
+                           opt_out: { users: 0, deposits: 0, sum: 0 } };
+    for (const u of users) {
+      const pr = u.notifPreference;
+      if (!conversions[pr]) continue;
+      const d = depByUser[String(u.username || '').toLowerCase()];
+      if (d) {
+        conversions[pr].users++;
+        conversions[pr].deposits += d.count || 0;
+        conversions[pr].sum += d.sum || 0;
+      }
+    }
+
+    res.json({ days, since, buckets, conversions, totalUsers: users.length });
+  } catch (err) {
+    logger.error(`/api/admin/notif-strategy/reactions: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

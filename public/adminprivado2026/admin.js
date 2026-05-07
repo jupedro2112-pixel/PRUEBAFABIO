@@ -12085,13 +12085,12 @@ function _renderEncuesta() {
     html += '<div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
     html += '<span style="color:#aaa;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Ver:</span>';
     const filters = [
-        { k: 'all', l: 'Todas' },
+        { k: 'all', l: 'Todas las respuestas' },
         { k: 'suave', l: '🟢 SUAVE' },
         { k: 'normal', l: '🟡 NORMAL' },
         { k: 'activo', l: '🔴 ACTIVO' },
         { k: 'solo_reembolsos', l: '🔔 SOLO REEMB' },
-        { k: 'opt_out', l: '🚫 OPT-OUT (legacy)' },
-        { k: 'sin_responder', l: '— Sin responder' }
+        { k: 'opt_out', l: '🚫 OPT-OUT (legacy)' }
     ];
     const cur = (window._ENCUESTA_FILTER || 'all');
     for (const f of filters) {
@@ -12100,16 +12099,25 @@ function _renderEncuesta() {
     }
     html += '</div>';
 
-    // Tabla
+    // Tabla — SOLO los que respondieron la encuesta. Los "sin responder"
+    // quedan en los KPIs de arriba (info agregada) pero no en la lista.
     const players = list.players || [];
-    const filtered = players.filter(p => {
+    const respondedOnly = players.filter(p => !!p.notifPreference);
+    const filtered = respondedOnly.filter(p => {
         if (cur === 'all') return true;
-        if (cur === 'sin_responder') return !p.notifPreference;
         return p.notifPreference === cur;
     });
 
     if (filtered.length === 0) {
-        html += '<div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">No hay usuarios con ese filtro.</div>';
+        html += '<div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">';
+        if (respondedOnly.length === 0) {
+            html += 'Todavía nadie respondió la encuesta. La gente la verá la primera vez que entre a la PWA.';
+        } else {
+            html += 'No hay usuarios con ese filtro.';
+        }
+        html += '</div>';
+        // Igual mostramos panel de reacciones abajo (si hay data).
+        html += _renderReactionsContainer();
         return html;
     }
 
@@ -12140,6 +12148,21 @@ function _renderEncuesta() {
         idx++;
     }
     html += '</tbody></table></div>';
+
+    // Panel de reacciones al final.
+    html += _renderReactionsContainer();
+    return html;
+}
+
+function _renderReactionsContainer() {
+    let html = '';
+    html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-top:14px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 4px;text-transform:uppercase;letter-spacing:1px;">📈 Reporte de reacción · cómo va respondiendo la gente</h3>';
+    html += '  <p style="color:#aaa;font-size:11px;margin:0 0 8px;">Cruzamos pushes enviadas con cargas reales en el período para ver qué tier convierte mejor.</p>';
+    html += '  <div id="reactionsReportBox" style="margin-top:6px;">';
+    html += '    <div style="text-align:center;padding:16px;color:#aaa;font-size:11.5px;"><button type="button" onclick="loadReactionsReport()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:6px;font-size:12px;cursor:pointer;font-weight:700;">📈 Cargar reporte de reacciones</button></div>';
+    html += '  </div>';
+    html += '</div>';
     return html;
 }
 
@@ -12201,19 +12224,101 @@ function _renderStrategyEditor(strategy) {
     }
     html += '  </div>';
 
-    // Cap mensual global
-    html += '  <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">';
-    html += '    <label style="color:#d4af37;font-weight:800;font-size:12px;">💰 Tope mensual global de regalos ($):</label>';
-    html += '    <input type="number" id="strat_monthlyCap" value="' + monthlyCap + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 10px;border-radius:6px;font-size:13px;width:140px;">';
-    html += '    <span style="color:#888;font-size:10.5px;">El sistema no excede este total al sumar regalos del mes.</span>';
+    // ===== Lo que el admin completa: tipo de bono + plata total =====
+    const bonusType = (strategy && strategy.bonusType) || 'cash';
+    const monthlyTotalToDistribute = (strategy && strategy.monthlyTotalToDistribute) || 1000000;
+    html += '  <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-top:12px;">';
+    html += '    <div style="color:#00d4ff;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">🎁 Lo que vos completás del mes</div>';
+    html += '    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">';
+    html += '      <div style="flex:1;min-width:180px;">';
+    html += '        <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;">Tipo de bono</label>';
+    html += '        <input type="text" id="strat_bonusType" value="' + escapeHtml(bonusType) + '" placeholder="cash / free_spin / deposit_match" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;">';
+    html += '      </div>';
+    html += '      <div style="flex:1;min-width:180px;">';
+    html += '        <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;">💰 Plata total a regalar ($/mes)</label>';
+    html += '        <input type="number" id="strat_monthlyTotalToDistribute" value="' + monthlyTotalToDistribute + '" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;">';
+    html += '      </div>';
+    html += '    </div>';
+    html += '    <div style="color:#888;font-size:10.5px;margin-top:6px;">El sistema reparte esta plata entre los participantes según su tier (VIP 50% · STD 35% · Casual 15%).</div>';
     html += '  </div>';
 
-    // Save
-    html += '  <div style="display:flex;gap:8px;margin-top:12px;">';
-    html += '    <button type="button" onclick="saveNotifStrategy()" id="saveStrategyBtn" style="flex:1;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR estrategia</button>';
+    // Cap mensual global
+    html += '  <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap;">';
+    html += '    <label style="color:#d4af37;font-weight:800;font-size:12px;">💰 Tope técnico de regalos ($):</label>';
+    html += '    <input type="number" id="strat_monthlyCap" value="' + monthlyCap + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 10px;border-radius:6px;font-size:13px;width:140px;">';
+    html += '    <span style="color:#888;font-size:10.5px;">Hard cap. La distribución no puede excederlo.</span>';
     html += '  </div>';
+
+    // Save + Activate
+    const isActive = !!(strategy && strategy.isActive);
+    const activatedAt = (strategy && strategy.activatedAt) ? new Date(strategy.activatedAt).toLocaleString('es-AR') : null;
+    html += '  <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">';
+    html += '    <button type="button" onclick="saveNotifStrategy()" id="saveStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR estrategia</button>';
+    if (isActive) {
+        html += '    <button type="button" onclick="toggleNotifStrategy(false)" id="activateStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#888,#555);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">⏸️ DESACTIVAR estrategia</button>';
+    } else {
+        html += '    <button type="button" onclick="toggleNotifStrategy(true)" id="activateStrategyBtn" style="flex:1;min-width:160px;background:linear-gradient(135deg,#66ff66,#2a8;);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">✅ ACTIVAR estrategia</button>';
+    }
+    html += '  </div>';
+    if (isActive && activatedAt) {
+        html += '  <div style="color:#66ff66;font-size:10.5px;margin-top:6px;">✅ Activa desde ' + escapeHtml(activatedAt) + '</div>';
+    }
     html += '</div>';
 
+    // ===== SIMULADOR =====
+    html += _renderStrategySimulator(strategy);
+
+    return html;
+}
+
+// Simulador con N personas por tier para mostrar reparto.
+function _renderStrategySimulator(strategy) {
+    if (!strategy) return '';
+    const prefs = strategy.preferences || {};
+    const total = Number(strategy.monthlyTotalToDistribute) || 0;
+    const bonusType = strategy.bonusType || 'cash';
+
+    // Ejemplo con 100 personas en cada tier (los opt y solo_reembolsos
+    // no reciben regalos en esta cuenta).
+    const N = 100;
+    const tiers = [
+        { key: 'suave',           label: '🟢 SUAVE',         color: '#66ff66', share: 0.10 },
+        { key: 'normal',          label: '🟡 NORMAL',        color: '#ffd700', share: 0.40 },
+        { key: 'activo',          label: '🔴 ACTIVO',        color: '#ff8c5a', share: 0.50 },
+        { key: 'solo_reembolsos', label: '🔔 SOLO REEMB',    color: '#00d4ff', share: 0.00 }
+    ];
+
+    let html = '';
+    html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 4px;text-transform:uppercase;letter-spacing:1px;">🎯 Simulador · 100 personas en cada tier</h3>';
+    html += '  <p style="color:#aaa;font-size:11px;margin:0 0 10px;line-height:1.5;">Suponé que tenés 100 personas en cada nivel. Esto es lo que le llegaría a cada una al mes con la config actual. La plata total ($' + total.toLocaleString('es-AR') + ') se reparte por tier según su peso.</p>';
+
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">';
+    for (const t of tiers) {
+        const cur = prefs[t.key] || {};
+        const tierTotalShare = Math.round(total * t.share);
+        const perUser = N > 0 ? Math.round(tierTotalShare / N) : 0;
+        const totalPushes = (cur.bonos || 0) + (cur.juegos || 0) + (cur.regalos || 0);
+        html += '    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(' + _hexToRgb(t.color) + ',0.40);border-radius:10px;padding:10px;">';
+        html += '      <div style="color:' + t.color + ';font-weight:900;font-size:12px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">' + t.label + ' · ' + N + ' users</div>';
+        if (t.key === 'solo_reembolsos') {
+            html += '      <div style="color:#aaa;font-size:11px;line-height:1.5;font-style:italic;">Solo reciben push si tienen un reembolso disponible. No reciben bonos ni regalos en esta distribución.</div>';
+        } else {
+            html += '      <div style="font-size:11.5px;color:#ddd;line-height:1.7;">';
+            html += '        ▸ <strong style="color:#fff;">' + (cur.bonos || 0) + '</strong> bonos al mes<br>';
+            html += '        ▸ <strong style="color:#fff;">' + (cur.juegos || 0) + '</strong> invitaciones a jugar<br>';
+            html += '        ▸ <strong style="color:#fff;">' + (cur.regalos || 0) + '</strong> regalos<br>';
+            html += '        <span style="color:#888;font-size:10px;">(' + totalPushes + ' pushes/mes c/u)</span>';
+            html += '      </div>';
+            html += '      <div style="margin-top:8px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.10);font-size:11px;color:#bbb;">';
+            html += '        Reparto del pozo: <strong style="color:' + t.color + ';">' + Math.round(t.share * 100) + '%</strong> = $' + tierTotalShare.toLocaleString('es-AR');
+            html += '        <div style="color:#aaa;font-size:10.5px;margin-top:2px;">≈ <strong>$' + perUser.toLocaleString('es-AR') + '</strong>/user · tipo: <strong style="color:#ffd700;">' + escapeHtml(bonusType) + '</strong></div>';
+            html += '      </div>';
+        }
+        html += '    </div>';
+    }
+    html += '  </div>';
+    html += '</div>';
     return html;
 }
 
@@ -12238,11 +12343,13 @@ async function saveNotifStrategy() {
         };
     }
     const monthlyCap = Number((document.getElementById('strat_monthlyCap') || {}).value) || 0;
+    const monthlyTotalToDistribute = Number((document.getElementById('strat_monthlyTotalToDistribute') || {}).value) || 0;
+    const bonusType = String((document.getElementById('strat_bonusType') || {}).value || '').trim() || 'cash';
     try {
         const r = await authFetch('/api/admin/notif-strategy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ preferences, monthlyCap })
+            body: JSON.stringify({ preferences, monthlyCap, monthlyTotalToDistribute, bonusType })
         });
         const d = await r.json();
         if (!r.ok) {
@@ -12258,6 +12365,94 @@ async function saveNotifStrategy() {
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = '💾 GUARDAR estrategia'; }
     }
+}
+
+// Activa/desactiva la estrategia. Cuando isActive=true, el cron de
+// reembolsos-recordatorio respeta la preferencia 'solo_reembolsos'.
+async function toggleNotifStrategy(activate) {
+    const verb = activate ? 'ACTIVAR' : 'DESACTIVAR';
+    if (!confirm('¿' + verb + ' la estrategia? ' + (activate
+        ? 'Los crons mensuales y los recordatorios diarios de reembolso van a empezar a respetar esta config.'
+        : 'Los pushes auto-programados van a quedar pausados.'))) return;
+    try {
+        const r = await authFetch('/api/admin/notif-strategy/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activate: !!activate })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error'), 'error');
+            return;
+        }
+        showToast('✅ Estrategia ' + (activate ? 'activa' : 'desactivada'), 'success');
+        _ENCUESTA_CACHE.strategy = d;
+        const c = document.getElementById('encuestaContent');
+        if (c) c.innerHTML = _renderEncuesta();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+// Reporte de reaccion: pegamos al endpoint y renderizamos al final del
+// panel. Lo recargamos solo on-demand (boton "🔄 Refrescar reacciones").
+async function loadReactionsReport() {
+    const cont = document.getElementById('reactionsReportBox');
+    if (!cont) return;
+    cont.innerHTML = '<div style="padding:14px;text-align:center;color:#aaa;font-size:11.5px;">⏳ Cargando reacciones de los últimos 30 días…</div>';
+    try {
+        const r = await authFetch('/api/admin/notif-strategy/reactions?days=30');
+        const d = await r.json();
+        if (!r.ok) {
+            cont.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:11.5px;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        cont.innerHTML = _renderReactionsReport(d);
+    } catch (e) {
+        cont.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:11.5px;">Error de conexión</div>';
+    }
+}
+
+function _renderReactionsReport(d) {
+    const tiers = [
+        { k: 'suave',           l: '🟢 SUAVE',         color: '#66ff66' },
+        { k: 'normal',          l: '🟡 NORMAL',        color: '#ffd700' },
+        { k: 'activo',          l: '🔴 ACTIVO',        color: '#ff8c5a' },
+        { k: 'solo_reembolsos', l: '🔔 SOLO REEMB',    color: '#00d4ff' }
+    ];
+    let html = '';
+    html += '<div style="font-size:11px;color:#aaa;margin-bottom:8px;">Pushes enviadas y conversiones de los últimos ' + (d.days || 30) + ' días, agrupadas por tier de la encuesta.</div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;overflow:hidden;">';
+    html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+    html += '<thead><tr style="color:#d4af37;text-align:left;background:rgba(212,175,55,0.10);">';
+    html += '<th style="padding:6px 8px;">Tier</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Pushes</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Entregadas</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Fallidas</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Cargas (período)</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">Users que cargaron</th>';
+    html += '<th style="padding:6px 8px;text-align:right;">$ depositado</th>';
+    html += '</tr></thead><tbody>';
+    for (const t of tiers) {
+        const b = (d.buckets && d.buckets[t.k]) || { sent: 0, delivered: 0, failed: 0 };
+        const c = (d.conversions && d.conversions[t.k]) || { users: 0, deposits: 0, sum: 0 };
+        const dlvPct = b.sent ? Math.round((b.delivered / b.sent) * 100) : 0;
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:6px 8px;color:' + t.color + ';font-weight:800;">' + t.l + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + b.sent + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#66ff66;">' + b.delivered + ' <span style="color:#666;font-size:10px;">(' + dlvPct + '%)</span></td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#ff8080;">' + b.failed + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + c.deposits + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;">' + c.users + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#ffd700;font-weight:800;white-space:nowrap;">' + _fmtMoney(c.sum) + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:#888;font-size:10.5px;">';
+    html += '<span>Total users con respuesta: ' + (d.totalUsers || 0).toLocaleString('es-AR') + '</span>';
+    html += '<button type="button" onclick="loadReactionsReport()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:4px 10px;border-radius:5px;font-size:11px;cursor:pointer;font-weight:700;">🔄 Refrescar</button>';
+    html += '</div>';
+    return html;
 }
 
 function _topPlayerDetail(username) {

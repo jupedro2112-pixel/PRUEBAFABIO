@@ -41,6 +41,21 @@ const notifStrategyConfigSchema = new mongoose.Schema({
   // user no debe exceder esto). El admin elige.
   monthlyCap: { type: Number, default: 1000000, min: 0 },
 
+  // Plata total que el admin destina a regalos al mes (suma a repartir
+  // entre TODOS los users no-opt). El sistema auto-calcula cuanto le
+  // toca a cada uno cruzando con su tier.
+  monthlyTotalToDistribute: { type: Number, default: 1000000, min: 0 },
+
+  // Tipo de bono que el admin quiere usar este mes. Free-form para no
+  // limitar el negocio (ej: 'cash', 'free_spin', 'deposit_match', etc.)
+  bonusType: { type: String, default: 'cash', maxlength: 64 },
+
+  // Estrategia activa: si true, los pushes auto-programados respetan
+  // este config. Si false, queda como borrador.
+  isActive: { type: Boolean, default: false },
+  activatedAt: { type: Date, default: null },
+  activatedBy: { type: String, default: null },
+
   // Historial de cambios (ultimos 50). Append-only.
   revisions: { type: [revisionSchema], default: [] },
 
