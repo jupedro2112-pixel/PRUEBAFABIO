@@ -80,6 +80,7 @@ const {
   Segment,
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
+  Review,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -9087,6 +9088,157 @@ app.get('/api/admin/encuesta/weekly-history', authMiddleware, adminMiddleware, a
     res.json({ weeks: weeks, buckets });
   } catch (err) {
     logger.error(`/api/admin/encuesta/weekly-history: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// REVIEWS — opiniones de usuarios (1 por user, 1-5★, comentario ≤ 100ch).
+// Categorización: 1-2★ malo · 3★ regular · 4-5★ bueno.
+// =====================================================================
+function _maskUsername(u) {
+  const s = String(u || '');
+  if (!s) return '***';
+  // Mostrar el último 20% (mínimo 1, máximo 6 chars), el resto con *.
+  const visibleChars = Math.max(1, Math.min(6, Math.ceil(s.length * 0.20)));
+  const hiddenChars = s.length - visibleChars;
+  return '*'.repeat(hiddenChars) + s.slice(hiddenChars);
+}
+function _bucketOf(stars) {
+  const n = Number(stars) || 0;
+  if (n >= 4) return 'bueno';
+  if (n === 3) return 'regular';
+  return 'malo';
+}
+
+// POST /api/reviews — el user crea o actualiza su review (upsert por userId).
+app.post('/api/reviews', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const stars = Math.round(Number((req.body && req.body.stars) || 0));
+    const comment = String((req.body && req.body.comment) || '').trim().slice(0, 100);
+    if (!isFinite(stars) || stars < 1 || stars > 5) {
+      return res.status(400).json({ error: 'Estrellas inválidas (1-5)' });
+    }
+    const now = new Date();
+    const existing = await Review.findOne({ userId }).lean();
+    let saved;
+    if (existing) {
+      saved = await Review.findOneAndUpdate(
+        { userId },
+        { $set: { stars, comment, username, updatedAt: now } },
+        { new: true }
+      ).lean();
+    } else {
+      saved = await Review.create({
+        id: uuidv4(),
+        userId,
+        username,
+        stars,
+        comment,
+        createdAt: now,
+        updatedAt: now
+      });
+      saved = saved.toObject ? saved.toObject() : saved;
+    }
+    res.json({
+      success: true,
+      review: {
+        stars: saved.stars,
+        comment: saved.comment || '',
+        updatedAt: saved.updatedAt
+      }
+    });
+  } catch (err) {
+    logger.error(`POST /api/reviews: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reviews/mine — devuelve la review propia (si existe).
+app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
+  try {
+    const r = await Review.findOne({ userId: req.user.userId }).lean();
+    if (!r) return res.json({ review: null });
+    res.json({
+      review: {
+        stars: r.stars,
+        comment: r.comment || '',
+        updatedAt: r.updatedAt
+      }
+    });
+  } catch (err) {
+    logger.error(`GET /api/reviews/mine: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reviews/feed — feed público (los usernames vienen enmascarados).
+// Devuelve también el promedio + cantidad por bucket.
+app.get('/api/reviews/feed', authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
+    const all = await Review.find({}, { stars: 1, comment: 1, username: 1, updatedAt: 1, _id: 0 })
+      .sort({ updatedAt: -1 })
+      .limit(500)
+      .lean();
+    const total = all.length;
+    const sumStars = all.reduce((acc, r) => acc + (r.stars || 0), 0);
+    const avgStars = total > 0 ? (sumStars / total) : 0;
+    const counts = { bueno: 0, regular: 0, malo: 0 };
+    for (const r of all) counts[_bucketOf(r.stars)]++;
+    const list = all.slice(0, limit).map(r => ({
+      stars: r.stars,
+      comment: r.comment || '',
+      maskedUsername: _maskUsername(r.username),
+      updatedAt: r.updatedAt
+    }));
+    res.json({ total, avgStars, counts, items: list });
+  } catch (err) {
+    logger.error(`GET /api/reviews/feed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/reviews — lista admin con username completo + filtro.
+app.get('/api/admin/reviews', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const bucket = String(req.query.bucket || 'all').toLowerCase();
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 200));
+    const filter = {};
+    if (bucket === 'bueno')         filter.stars = { $gte: 4 };
+    else if (bucket === 'regular')  filter.stars = 3;
+    else if (bucket === 'malo')     filter.stars = { $lte: 2 };
+
+    const all = await Review.find({}, { stars: 1, _id: 0 }).lean();
+    const total = all.length;
+    const sumStars = all.reduce((acc, r) => acc + (r.stars || 0), 0);
+    const avgStars = total > 0 ? (sumStars / total) : 0;
+    const counts = { bueno: 0, regular: 0, malo: 0 };
+    for (const r of all) counts[_bucketOf(r.stars)]++;
+
+    const items = await Review.find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(limit)
+      .lean();
+
+    res.json({
+      total,
+      avgStars,
+      counts,
+      items: items.map(r => ({
+        id: r.id,
+        username: r.username,
+        stars: r.stars,
+        comment: r.comment || '',
+        bucket: _bucketOf(r.stars),
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt
+      }))
+    });
+  } catch (err) {
+    logger.error(`GET /api/admin/reviews: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

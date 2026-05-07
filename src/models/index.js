@@ -46,6 +46,7 @@ const LandingVisit = require('./LandingVisit');
 const Segment = require('./Segment');
 const MasterAnalysisSnapshot = require('./MasterAnalysisSnapshot');
 const NotifStrategyConfig = require('./NotifStrategyConfig');
+const Review = require('./Review');
 
 
 /**
@@ -464,6 +465,7 @@ module.exports = {
   Segment,
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
+  Review,
 
   // Funciones de conexión
   connectDB,

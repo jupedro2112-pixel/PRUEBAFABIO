@@ -286,6 +286,9 @@ VIP.auth = (function () {
 
             VIP.ui.showChatScreen();
             VIP.refunds.loadRefundStatus();
+            // Inicializar el sistema de opiniones (carga la review propia +
+            // el feed publico al fondo del home).
+            try { if (VIP.reviews && typeof VIP.reviews.init === 'function') VIP.reviews.init(); } catch (_) { /* ignore */ }
             // Resolver el nombre del equipo apenas entra. El login solo
             // devuelve linePhone — para el teamName completo (con prioridad
             // User.lineTeamName > UserLineLookup > prefix-config), llamamos
@@ -748,6 +751,7 @@ VIP.auth = (function () {
 
                 VIP.ui.showChatScreen();
                 VIP.refunds.loadRefundStatus();
+                try { if (VIP.reviews && typeof VIP.reviews.init === 'function') VIP.reviews.init(); } catch (_) { /* ignore */ }
 
                 // Refunds-only: pintar bienvenida + refrescar línea vigente
                 try { renderRefundsHomeUI(); } catch (_) { /* ignore */ }

@@ -45,7 +45,8 @@ const {
   WeeklyCalendarPlan,
   Segment,
   MasterAnalysisSnapshot,
-  NotifStrategyConfig
+  NotifStrategyConfig,
+  Review
 } = require('../src/models');
 
 // ============================================
@@ -364,6 +365,7 @@ module.exports = {
   Segment,
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
+  Review,
   // Helpers
   getConfig,
   setConfig,

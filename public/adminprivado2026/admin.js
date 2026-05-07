@@ -172,6 +172,7 @@ function showSection(sectionKey) {
         topEngagement: 'topEngagementSection',
         topPlayers: 'topPlayersSection',
         encuesta: 'encuestaSection',
+        reviews: 'reviewsSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
@@ -222,6 +223,8 @@ function showSection(sectionKey) {
         loadTopPlayers();
     } else if (sectionKey === 'encuesta') {
         loadEncuesta();
+    } else if (sectionKey === 'reviews') {
+        loadAdminReviews();
     } else if (sectionKey === 'automations') {
         loadAutomations();
     } else if (sectionKey === 'automation') {
@@ -12317,6 +12320,117 @@ function _renderWeeklyHistoryTable(d) {
         html += '</tr>';
     }
     html += '</tbody></table></div>';
+    return html;
+}
+
+// =============================================
+// REVIEWS — opiniones de usuarios (admin con username completo + filtros)
+// =============================================
+let _ADMIN_REVIEWS_BUCKET = 'all';
+
+async function loadAdminReviews() {
+    const c = document.getElementById('reviewsAdminContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando opiniones…</div>';
+    try {
+        const r = await authFetch('/api/admin/reviews?bucket=' + _ADMIN_REVIEWS_BUCKET + '&limit=300');
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(err.error || '') + '</div>';
+            return;
+        }
+        const data = await r.json();
+        c.innerHTML = _renderAdminReviews(data);
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function _setAdminReviewsBucket(bucket) {
+    _ADMIN_REVIEWS_BUCKET = bucket;
+    loadAdminReviews();
+}
+
+function _renderAdminReviewsStars(n) {
+    const v = Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+    let html = '';
+    for (let i = 1; i <= 5; i++) {
+        html += i <= v
+            ? '<span style="color:#ffd700;">★</span>'
+            : '<span style="color:#444;">★</span>';
+    }
+    return html;
+}
+
+function _renderAdminReviews(d) {
+    const total = Number(d.total || 0);
+    const avg = Number(d.avgStars || 0);
+    const counts = d.counts || {};
+    const items = Array.isArray(d.items) ? d.items : [];
+    const pct = (n) => total > 0 ? ((n / total) * 100).toFixed(1) + '%' : '0%';
+    const bucket = _ADMIN_REVIEWS_BUCKET;
+
+    let html = '';
+
+    // KPI cards
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:14px;">';
+    html += _kpiCard('Total opiniones', total.toLocaleString('es-AR'), '#fff');
+    html += _kpiCard('Promedio', avg.toFixed(2) + ' / 5', '#ffd700');
+    html += _kpiCard('😊 Bueno (4-5★)', (counts.bueno || 0) + ' · ' + pct(counts.bueno || 0), '#66ff66');
+    html += _kpiCard('😐 Regular (3★)', (counts.regular || 0) + ' · ' + pct(counts.regular || 0), '#ffd700');
+    html += _kpiCard('😟 Malo (1-2★)', (counts.malo || 0) + ' · ' + pct(counts.malo || 0), '#ff8080');
+    html += '</div>';
+
+    // Filter buttons
+    const filters = [
+        { k: 'all',     l: 'Todas' },
+        { k: 'bueno',   l: '😊 Bueno (4-5★)',   color: '#66ff66' },
+        { k: 'regular', l: '😐 Regular (3★)',   color: '#ffd700' },
+        { k: 'malo',    l: '😟 Malo (1-2★)',    color: '#ff8080' }
+    ];
+    html += '<div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
+    html += '<span style="color:#aaa;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-right:4px;">Filtrar:</span>';
+    for (const f of filters) {
+        const active = f.k === bucket;
+        const c = f.color || '#d4af37';
+        html += '<button type="button" onclick="_setAdminReviewsBucket(\'' + f.k + '\')" style="background:' + (active ? c : 'rgba(255,255,255,0.06)') + ';color:' + (active ? '#000' : '#fff') + ';border:1px solid ' + c + '55;padding:5px 11px;border-radius:6px;font-weight:' + (active ? '900' : '700') + ';font-size:11px;cursor:pointer;">' + f.l + '</button>';
+    }
+    html += '</div>';
+
+    if (items.length === 0) {
+        html += '<div style="text-align:center;padding:40px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">No hay opiniones con ese filtro.</div>';
+        return html;
+    }
+
+    // Tabla
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;max-height:65vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead style="position:sticky;top:0;background:#2d0052;z-index:1;"><tr style="color:#d4af37;text-align:left;">';
+    html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Estrellas</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">Comentario</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Cuándo</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Bucket</th>';
+    html += '</tr></thead><tbody>';
+
+    for (const it of items) {
+        const when = it.updatedAt
+            ? new Date(it.updatedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' })
+            : '—';
+        const bucketLabel = it.bucket === 'bueno' ? '<span style="color:#66ff66;font-weight:800;">😊 BUENO</span>'
+            : it.bucket === 'regular' ? '<span style="color:#ffd700;font-weight:800;">😐 REGULAR</span>'
+            : '<span style="color:#ff8080;font-weight:800;">😟 MALO</span>';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(it.username || '') + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;letter-spacing:2px;">' + _renderAdminReviewsStars(it.stars) + '</td>';
+        html += '<td style="padding:8px 10px;color:#ddd;line-height:1.4;">' + (it.comment ? escapeHtml(it.comment) : '<span style="color:#666;font-style:italic;">(sin comentario)</span>') + '</td>';
+        html += '<td style="padding:8px 10px;color:#aaa;text-align:right;font-size:10.5px;white-space:nowrap;">' + escapeHtml(when) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;">' + bucketLabel + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+
+    html += '<div style="color:#888;font-size:10.5px;margin-top:8px;text-align:center;">Mostrando ' + items.length + ' de ' + total + ' opiniones · ' + (bucket === 'all' ? 'todos los buckets' : bucket) + '</div>';
     return html;
 }
 

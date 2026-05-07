@@ -922,6 +922,203 @@
             color: #cfcfcf;
         }
 
+        /* ===== TU OPINIÓN NOS INTERESA — review form arriba del user line ===== */
+        .review-form-card {
+            text-align: center;
+            width: 100%;
+            max-width: 460px;
+            margin: 0 auto 14px;
+            padding: 14px 16px;
+            background: linear-gradient(135deg, rgba(157,78,221,0.18), rgba(157,78,221,0.04));
+            border: 1.5px solid rgba(157,78,221,0.50);
+            border-radius: 14px;
+            box-sizing: border-box;
+            box-shadow: 0 4px 16px rgba(157,78,221,0.10);
+            color: #fff;
+            order: 0.95;
+        }
+        .review-form-title {
+            font-size: 13px;
+            font-weight: 900;
+            letter-spacing: 1.2px;
+            color: #d4af37;
+            margin-bottom: 6px;
+        }
+        .review-form-sub {
+            font-size: 11.5px;
+            color: #ddd;
+            line-height: 1.45;
+            margin-bottom: 10px;
+        }
+        .review-stars {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            margin-bottom: 10px;
+        }
+        .review-star {
+            font-size: 28px;
+            color: #555;
+            cursor: pointer;
+            transition: transform 0.15s, color 0.15s;
+            user-select: none;
+            line-height: 1;
+        }
+        .review-star.active,
+        .review-star.hover {
+            color: #ffd700;
+            text-shadow: 0 0 6px rgba(255,215,0,0.50);
+        }
+        .review-star:active {
+            transform: scale(1.20);
+        }
+        #reviewCommentInput {
+            width: 100%;
+            background: rgba(0,0,0,0.40);
+            border: 1px solid rgba(255,255,255,0.20);
+            color: #fff;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 13px;
+            font-family: inherit;
+            box-sizing: border-box;
+            resize: vertical;
+            min-height: 48px;
+        }
+        #reviewCommentInput:focus {
+            outline: none;
+            border-color: #ffd700;
+        }
+        .review-char-count {
+            text-align: right;
+            font-size: 10.5px;
+            color: #888;
+            margin-top: 3px;
+            margin-bottom: 8px;
+        }
+        #reviewSubmitBtn {
+            width: 100%;
+            background: linear-gradient(135deg, #ffd700, #d4af37);
+            color: #1a0033;
+            border: none;
+            padding: 10px;
+            border-radius: 10px;
+            font-weight: 900;
+            font-size: 13.5px;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            box-shadow: 0 3px 10px rgba(212,175,55,0.30);
+        }
+        #reviewSubmitBtn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .review-submit-msg {
+            margin-top: 8px;
+            font-size: 12px;
+            min-height: 16px;
+        }
+
+        /* ===== OPINIONES DE LA GENTE — feed al fondo ===== */
+        .reviews-feed-card {
+            width: 100%;
+            max-width: 540px;
+            margin: 30px auto 18px;
+            padding: 14px 14px 12px;
+            background: linear-gradient(135deg, rgba(212,175,55,0.10), rgba(157,78,221,0.04));
+            border: 1.5px solid rgba(212,175,55,0.40);
+            border-radius: 14px;
+            box-sizing: border-box;
+            color: #fff;
+            order: 99;
+        }
+        .reviews-feed-title {
+            text-align: center;
+            font-size: 13.5px;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+            color: #ffd700;
+            margin-bottom: 10px;
+        }
+        .reviews-feed-summary {
+            background: rgba(0,0,0,0.30);
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        .reviews-feed-summary .avg-stars {
+            font-size: 30px;
+            letter-spacing: 3px;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+        .reviews-feed-summary .avg-stars .filled { color: #ffd700; text-shadow: 0 0 6px rgba(255,215,0,0.45); }
+        .reviews-feed-summary .avg-stars .empty  { color: #444; }
+        .reviews-feed-summary .avg-num {
+            font-size: 14px;
+            font-weight: 800;
+            color: #ddd;
+            margin-bottom: 8px;
+        }
+        .reviews-feed-summary .pct-row {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 11.5px;
+        }
+        .reviews-feed-summary .pct-row span { font-weight: 700; }
+        .reviews-feed-summary .pct-good { color: #66ff66; }
+        .reviews-feed-summary .pct-reg  { color: #ffd700; }
+        .reviews-feed-summary .pct-bad  { color: #ff8080; }
+        .reviews-feed-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .review-item {
+            background: rgba(0,0,0,0.25);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            padding: 7px 10px;
+            font-size: 11.5px;
+            line-height: 1.4;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .review-item .item-stars {
+            color: #ffd700;
+            font-size: 12px;
+            letter-spacing: 1px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .review-item .item-stars .empty { color: #444; }
+        .review-item .item-body {
+            flex: 1;
+            min-width: 0;
+        }
+        .review-item .item-comment {
+            color: #eee;
+            word-break: break-word;
+        }
+        .review-item .item-meta {
+            color: #888;
+            font-size: 10px;
+            margin-top: 2px;
+            font-style: italic;
+        }
+        .reviews-feed-footer {
+            text-align: center;
+            color: #888;
+            font-size: 10.5px;
+            margin-top: 10px;
+            font-style: italic;
+        }
+
         /* Bloque "Unite a la comunidad" — mismo estilo que .user-line-vigente
            pero con paleta verde-WhatsApp para diferenciarlo del numero. */
         .user-community-vigente {
@@ -1963,6 +2160,26 @@
             <div class="giveaway-card-timer" id="giveawayTimer">⏰ vence en —</div>
         </div>
 
+        <!-- Refunds-only: Tu opinión nos interesa — arriba de la línea del
+             usuario (lado izquierdo en desktop, full-width en mobile). 5
+             estrellas + comentario máx 100 chars. 1 opinión por user (upsert).
+             Ayuda a mejorar el servicio. -->
+        <div class="review-form-card" id="reviewFormCard">
+            <div class="review-form-title">⭐ TU OPINIÓN NOS INTERESA</div>
+            <div class="review-form-sub">Escribinos lo que quieras de nuestro servicio — si te gusta, si hay algo para mejorar o lo que quieras. <strong style="color:#ffd700;">Todo lo malo o innovador que opines nos ayuda a mejorar.</strong></div>
+            <div class="review-stars" id="reviewStarsRow">
+                <span class="review-star" data-v="1">★</span>
+                <span class="review-star" data-v="2">★</span>
+                <span class="review-star" data-v="3">★</span>
+                <span class="review-star" data-v="4">★</span>
+                <span class="review-star" data-v="5">★</span>
+            </div>
+            <textarea id="reviewCommentInput" maxlength="100" rows="2" placeholder="Tu comentario (máximo 100 caracteres)"></textarea>
+            <div class="review-char-count"><span id="reviewCharCount">0</span>/100</div>
+            <button type="button" id="reviewSubmitBtn">📨 Enviar opinión</button>
+            <div id="reviewSubmitMsg" class="review-submit-msg"></div>
+        </div>
+
         <!-- Refunds-only: Número principal vigente -->
         <div class="user-line-vigente" id="userLineVigenteBox">
             <span class="line-label">📞 NÚMERO PRINCIPAL</span>
@@ -2040,6 +2257,18 @@
                 <button id="notifBlockedModalClose" style="width:100%; background:#d4af37; color:#000; border:none; border-radius:10px; padding:12px; font-weight:700; font-size:.95rem; cursor:pointer;">Entendido</button>
             </div>
         </div>
+
+      <!-- Refunds-only: Bloque de opiniones de la gente — al fondo del home.
+           Arriba el promedio en estrellas + porcentajes bueno/regular/malo;
+           abajo la lista chica encuadrada con el username enmascarado al 80%. -->
+      <div class="reviews-feed-card" id="reviewsFeedCard">
+          <div class="reviews-feed-title">💬 OPINIONES DE LA GENTE</div>
+          <div class="reviews-feed-summary" id="reviewsFeedSummary">
+              <div style="text-align:center;color:#aaa;font-size:12px;padding:8px;">⏳ Cargando…</div>
+          </div>
+          <div class="reviews-feed-list" id="reviewsFeedList"></div>
+          <div class="reviews-feed-footer">Tu opinión es anónima para los demás — el username se muestra parcialmente.</div>
+      </div>
 
       <div class="drawer-overlay" id="drawerOverlay" onclick="VIP.ui.toggleDrawer()"></div>
       <div class="mobile-drawer" id="mobileDrawer">
@@ -2704,6 +2933,7 @@
     <script src="/js/socket.js" defer></script>
     <script src="/js/chat.js" defer></script>
     <script src="/js/refunds.js" defer></script>
+    <script src="/js/reviews.js" defer></script>
     <script src="/js/raffles.js" defer></script>
     <script src="/js/fire.js" defer></script>
     <script src="/js/notifications.js" defer></script>

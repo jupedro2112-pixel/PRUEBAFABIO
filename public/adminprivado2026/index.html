@@ -156,6 +156,12 @@
                     <span>Detalles app usuarios</span>
                 </a>
 
+                <div class="nav-section-title">💬 Feedback</div>
+                <a href="#" class="nav-item" data-section="reviews">
+                    <span>💬</span>
+                    <span>Opiniones</span>
+                </a>
+
                 <div class="nav-section-title">❓ Ayuda</div>
                 <a href="#" class="nav-item" data-section="help">
                     <span>❓</span>
@@ -880,6 +886,31 @@
                     </p>
                 </div>
                 <div id="encuestaContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: OPINIONES (REVIEWS) — feedback de usuarios
+                 con username completo y filtro por bucket
+                 (bueno 4-5★ · regular 3★ · malo 1-2★)
+                 ============================================ -->
+            <section id="reviewsSection" class="section">
+                <div class="panel-header">
+                    <h2>💬 Opiniones de usuarios</h2>
+                    <button class="refresh-btn" onclick="loadAdminReviews()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(157,78,221,0.06);border:1px solid rgba(157,78,221,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 4px;color:#b48bff;font-weight:700;font-size:13px;">¿Qué muestra esto?</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Reviews que los usuarios dejaron en el home de la PWA (1 por user, hasta 100 caracteres).
+                        Categorización: <strong style="color:#66ff66;">4-5★ BUENO</strong>,
+                        <strong style="color:#ffd700;">3★ REGULAR</strong>,
+                        <strong style="color:#ff8080;">1-2★ MALO</strong>.
+                        Filtrá por bucket para identificar qué hay que mejorar.
+                    </p>
+                </div>
+                <div id="reviewsAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>
