@@ -242,12 +242,12 @@ function securityHeaders(req, res, next) {
   // connect-src incluye wss: para Socket.IO WebSocket y dominios Firebase necesarios.
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com https://cdn.jsdelivr.net https://unpkg.com",
-    "script-src-elem 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com https://cdn.jsdelivr.net https://unpkg.com",
+    "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com https://cdn.jsdelivr.net https://unpkg.com https://connect.facebook.net",
+    "script-src-elem 'self' 'unsafe-inline' https://www.gstatic.com https://www.google.com https://apis.google.com https://cdn.jsdelivr.net https://unpkg.com https://connect.facebook.net",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self'",
-    "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://fcm.googleapis.com https://firebaseinstallations.googleapis.com",
+    "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://fcm.googleapis.com https://firebaseinstallations.googleapis.com https://www.facebook.com https://connect.facebook.net",
     "frame-src 'self' https://*.firebaseapp.com https://*.google.com https://www.youtube-nocookie.com https://www.youtube.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
@@ -13746,7 +13746,14 @@ app.get('/api/admin/raffles/:id/user-detail', authMiddleware, adminMiddleware, a
   try {
     const raffle = await Raffle.findOne({ id: req.params.id }).lean();
     if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
-    const usernameRaw = String(req.query.username || '').trim();
+    // Hardening: req.query.username puede ser array u objeto si el cliente
+    // arma ?username[]=a&username[]=b o ?username[$ne]=null. Rechazamos
+    // explicitamente cualquier cosa que no sea string. Cap a 64 chars para
+    // evitar DoS regex con inputs gigantes.
+    if (typeof req.query.username !== 'string') {
+      return res.status(400).json({ error: 'username debe ser string.' });
+    }
+    const usernameRaw = req.query.username.trim().slice(0, 64);
     if (!usernameRaw) return res.status(400).json({ error: 'username requerido.' });
     const username = usernameRaw.toLowerCase();
 

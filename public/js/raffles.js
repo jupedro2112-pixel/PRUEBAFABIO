@@ -661,7 +661,7 @@ VIP.raffles = (function () {
 
         if (paid.length === 0 && free.length === 0 && otherDrawn.length === 0 && !heroLightning) {
             html += '<div style="text-align:center;color:#aaa;padding:30px 0;">No hay sorteos disponibles en este momento.</div>';
-        } else if (paid.length === 0 && free.length === 0 && !lightning) {
+        } else if (paid.length === 0 && free.length === 0 && !heroLightning) {
             // Hay drawn pero no hay activos: mensaje claro de "vuelve pronto"
             html += '<div style="text-align:center;color:#aaa;padding:18px 0;font-size:12px;">Los próximos sorteos arrancan en breve. Volvé en unos minutos 🎲</div>';
         }

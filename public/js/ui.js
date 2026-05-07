@@ -190,7 +190,10 @@ VIP.ui = (function () {
     }
 
     function updateBalanceDisplay(balance) {
-        const balanceElement = document.getElementById('userBalance');
+        // Layout v3 cambio el id a 'userBalanceAmount'. Mantenemos fallback a
+        // 'userBalance' por compat con vistas viejas/modales que aun lo usen.
+        const balanceElement = document.getElementById('userBalanceAmount') ||
+                               document.getElementById('userBalance');
         if (balanceElement) {
             balanceElement.textContent = `$${balance.toLocaleString()}`;
         }

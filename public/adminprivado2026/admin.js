@@ -10692,9 +10692,14 @@ function _renderRaffleDetail(d) {
             html += '      <input id="lightningCutoffInput" type="datetime-local" value="' + cutLocal + '" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;width:100%;box-sizing:border-box;">';
             html += '    </div>';
 
+            // safeId: sanitizado para usar como sufijo de un id HTML.
+            // escapeJsArg agregaria comillas literales ("quot") al id —
+            // technically funcionaba con getElementById pero rompia
+            // querySelector y era frágil. Forzamos solo alfanumérico+_-
+            const safeId = String(r.id).replace(/[^a-zA-Z0-9_-]/g, '');
             html += '    <button type="button" onclick="reanalyzeLightningParticipants(' + escapeJsArg(r.id) + ')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">🔍 ANALIZAR</button>';
-            html += '    <button type="button" onclick="document.getElementById(\'lightningCsvFile_' + escapeJsArg(r.id) + '\').click()" title="Subir un CSV específico para analizar con precisión horaria" style="background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">📁 SUBIR CSV</button>';
-            html += '    <input type="file" id="lightningCsvFile_' + escapeJsArg(r.id) + '" accept=".csv,text/csv,text/plain" style="display:none;" onchange="analyzeLightningWithCsv(' + escapeJsArg(r.id) + ', this.files[0])">';
+            html += '    <button type="button" onclick="document.getElementById(\'lightningCsvFile_' + safeId + '\').click()" title="Subir un CSV específico para analizar con precisión horaria" style="background:linear-gradient(135deg,#9d4edd,#6a0dad);color:#fff;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;white-space:nowrap;">📁 SUBIR CSV</button>';
+            html += '    <input type="file" id="lightningCsvFile_' + safeId + '" accept=".csv,text/csv,text/plain" style="display:none;" onchange="analyzeLightningWithCsv(' + escapeJsArg(r.id) + ', this.files[0])">';
 
             html += '  </div>';
 
