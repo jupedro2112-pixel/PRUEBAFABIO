@@ -9776,6 +9776,43 @@ app.get('/api/admin/winback/history', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// Helper anti-fraude: chequea si el TELÉFONO del user ya tiene asociado
+// un welcome bonus desde otra cuenta. Esto atrapa el caso "uninstall +
+// nueva cuenta JUGAYGANA con el mismo número para reclamar de nuevo".
+// Devuelve { blocked: true, claim, otherUsername } si bloquea.
+async function _isWelcomeBlockedByPhone(userId, username) {
+  try {
+    const me = await User.findOne({ id: userId }, { phone: 1, _id: 0 }).lean();
+    const phone = me && me.phone ? String(me.phone).replace(/[^\d]/g, '') : '';
+    if (!phone || phone.length < 8) return { blocked: false };
+    // Buscar otros users (excluyendo este) con el mismo teléfono normalizado.
+    // Mongoose no normaliza automáticamente — para tolerar formatos viejos
+    // hacemos un find con el phone tal cual está y otra pasada normalizando
+    // al vuelo.
+    const candidates = await User.find(
+      { phone: { $exists: true, $ne: null, $ne: '' }, id: { $ne: userId } },
+      { id: 1, username: 1, phone: 1, _id: 0 }
+    ).lean();
+    const sameNumber = candidates.filter(u => {
+      const p = String(u.phone || '').replace(/[^\d]/g, '');
+      return p && p === phone;
+    });
+    if (sameNumber.length === 0) return { blocked: false };
+    const otherIds = sameNumber.map(u => u.id);
+    const otherUsernames = sameNumber.map(u => u.username);
+    const claim = await RefundClaim.findOne({
+      type: 'welcome_install',
+      $or: [{ userId: { $in: otherIds } }, { username: { $in: otherUsernames } }]
+    }).lean();
+    if (!claim) return { blocked: false };
+    logger.warn(`[BONUS] welcome — bloqueado por teléfono compartido. ${username} comparte tel con ${claim.username} que ya reclamó.`);
+    return { blocked: true, otherUsername: claim.username, claimedAt: claim.claimedAt };
+  } catch (e) {
+    logger.warn(`[BONUS] _isWelcomeBlockedByPhone error: ${e.message}`);
+    return { blocked: false }; // fail-open para no romper el flujo legítimo
+  }
+}
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -9792,6 +9829,25 @@ app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
         claimed: true,
         claimedAt: claim.claimedAt || null,
         status: claim.status || null,
+        eligible: false,
+        notEnoughDeposits: false,
+        depositCount: 0,
+        requiredDeposits: WELCOME_BONUS_MIN_DEPOSITS,
+        windowDays: WELCOME_BONUS_DEPOSIT_WINDOW_DAYS
+      });
+    }
+
+    // Pre-check: bloqueo por teléfono compartido (cuenta nueva con mismo tel
+    // que ya cobró el bono). Lo marcamos como `claimed:true` para que el
+    // botón en la PWA no muestre el bono — el user ve el card sin botón.
+    const phoneBlock = await _isWelcomeBlockedByPhone(userId, username);
+    if (phoneBlock.blocked) {
+      return res.json({
+        amount: WELCOME_BONUS_AMOUNT,
+        claimed: true,
+        claimedAt: phoneBlock.claimedAt || null,
+        status: 'blocked_duplicate_phone',
+        blockedReason: 'duplicate_phone',
         eligible: false,
         notEnoughDeposits: false,
         depositCount: 0,
@@ -9865,6 +9921,20 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
           message: 'Ya reclamaste tu bono de bienvenida.',
           canClaim: false,
           claimed: true
+        });
+      }
+
+      // Anti-fraude: bloqueo por teléfono compartido. Si OTRA cuenta con el
+      // mismo número ya cobró el bono, este intento no puede acreditar
+      // plata — es la misma persona reinstalando con cuenta nueva.
+      const phoneBlock = await _isWelcomeBlockedByPhone(userId, username);
+      if (phoneBlock.blocked) {
+        return res.json({
+          success: false,
+          message: 'Detectamos que ya reclamaste el bono de bienvenida desde otra cuenta. El bono es por persona, no por cuenta.',
+          canClaim: false,
+          claimed: true,
+          blockedReason: 'duplicate_phone'
         });
       }
 
