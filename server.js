@@ -8413,19 +8413,191 @@ function _recontactPriority(tier, bucket, lastDeposits30d) {
   return Math.round(tw * bw + (lastDeposits30d || 0) / 1000);
 }
 
+// Hace el cruce contra User+PlayerStats y arma la respuesta enriquecida
+// a partir de un array ya pre-agregado en el cliente (admin v2).
+async function _recontactAnalyzeFromJSON(req, res) {
+  try {
+    const body = req.body || {};
+    const usersIn = Array.isArray(body.users) ? body.users : null;
+    if (!usersIn || usersIn.length === 0) {
+      return res.status(400).json({ error: 'Payload vacío (no hay users)' });
+    }
+    if (usersIn.length > 50000) {
+      return res.status(413).json({ error: `Demasiados usernames (${usersIn.length}, máx 50.000)` });
+    }
+
+    const fileAgg = new Map();
+    const inputUsernames = [];
+    const seen = new Set();
+    for (const u of usersIn) {
+      const orig = String(u && u.username != null ? u.username : '').trim();
+      if (!orig) continue;
+      const norm = orig.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!norm || seen.has(norm)) continue;
+      seen.add(norm);
+      inputUsernames.push({ original: orig, norm });
+      fileAgg.set(norm, {
+        original: orig,
+        sumDeposits:   Number(u.sumDeposits)   || 0,
+        sumWithdraws:  Number(u.sumWithdraws)  || 0,
+        sumBonuses:    Number(u.sumBonuses)    || 0,
+        countDeposits: Number(u.countDeposits) || 0,
+        countWithdraws:Number(u.countWithdraws)|| 0,
+        countBonuses:  Number(u.countBonuses)  || 0
+      });
+    }
+
+    if (inputUsernames.length === 0) {
+      return res.status(400).json({ error: 'No se encontraron usernames válidos' });
+    }
+
+    const norms = inputUsernames.map(x => x.norm);
+    const [users, stats] = await Promise.all([
+      User.find(
+        { username: { $in: norms } },
+        { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
+      ).lean(),
+      PlayerStats.find(
+        { username: { $in: norms } },
+        { username: 1, tier: 1, activityStatus: 1, lastRealDepositDate: 1, realDeposits30d: 1, realDeposits90d: 1, totalRealDeposits: 1, _id: 0 }
+      ).lean()
+    ]);
+    const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
+    const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const items = [];
+    const summary = {
+      totalAnalyzed: inputUsernames.length,
+      foundInDb: 0, notFound: 0,
+      withApp: 0, withoutApp: 0,
+      withNotifs: 0, withoutNotifs: 0,
+      buckets: { calientes: 0, enRiesgo: 0, perdidos: 0, inactivos: 0 },
+      tiers: { VIP: 0, ORO: 0, PLATA: 0, BRONCE: 0, NUEVO: 0, SIN_DATOS: 0 },
+      totalRecoverableValue: 0,
+      sumDeposits30d: 0, sumDeposits90d: 0, sumTotalDeposits: 0,
+      fileTotalDeposits: 0, fileTotalWithdraws: 0, fileTotalBonuses: 0,
+      fileCountDeposits: 0, fileCountWithdraws: 0, fileCountBonuses: 0
+    };
+
+    for (const inp of inputUsernames) {
+      const u = userMap.get(inp.norm);
+      const s = statsMap.get(inp.norm);
+      if (u) summary.foundInDb++; else summary.notFound++;
+
+      const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
+      const hasNotifs = hasApp && (
+        (u && u.notifPermission === 'granted') ||
+        (u && Array.isArray(u.fcmTokens) && u.fcmTokens.some(t => t && t.notifPermission === 'granted'))
+      );
+      if (hasApp) summary.withApp++; else summary.withoutApp++;
+      if (hasNotifs) summary.withNotifs++; else summary.withoutNotifs++;
+
+      const lastDep = s && s.lastRealDepositDate ? new Date(s.lastRealDepositDate).getTime() : null;
+      let bucket = 'inactivos';
+      let daysSince = null;
+      if (lastDep) {
+        daysSince = Math.floor((now - lastDep) / DAY);
+        if (daysSince <= 10) bucket = 'calientes';
+        else if (daysSince <= 20) bucket = 'enRiesgo';
+        else if (daysSince <= 30) bucket = 'perdidos';
+        else bucket = 'inactivos';
+      }
+      summary.buckets[bucket]++;
+
+      const tier = (s && s.tier) ? String(s.tier).toUpperCase() : 'SIN_DATOS';
+      if (summary.tiers[tier] != null) summary.tiers[tier]++;
+      else summary.tiers.SIN_DATOS++;
+
+      const sugg = _recontactSuggest(tier, bucket, hasApp, hasNotifs);
+      const priority = _recontactPriority(tier, bucket, s && s.realDeposits30d);
+      summary.totalRecoverableValue += sugg.bonus;
+      summary.sumDeposits30d += (s && s.realDeposits30d) || 0;
+      summary.sumDeposits90d += (s && s.realDeposits90d) || 0;
+      summary.sumTotalDeposits += (s && s.totalRealDeposits) || 0;
+
+      const fa = fileAgg.get(inp.norm);
+      summary.fileTotalDeposits  += fa.sumDeposits;
+      summary.fileTotalWithdraws += fa.sumWithdraws;
+      summary.fileTotalBonuses   += fa.sumBonuses;
+      summary.fileCountDeposits  += fa.countDeposits;
+      summary.fileCountWithdraws += fa.countWithdraws;
+      summary.fileCountBonuses   += fa.countBonuses;
+
+      items.push({
+        username: inp.original,
+        tier, bucket,
+        daysSinceLastDeposit: daysSince,
+        lastDepositAt: lastDep ? new Date(lastDep).toISOString() : null,
+        deposits30d: (s && s.realDeposits30d) || 0,
+        deposits90d: (s && s.realDeposits90d) || 0,
+        totalDeposits: (s && s.totalRealDeposits) || 0,
+        team: u ? (u.lineTeamName || null) : null,
+        linePhone: u ? (u.linePhone || null) : null,
+        phone: u ? (u.phone || null) : null,
+        hasApp, hasNotifs,
+        registered: !!u,
+        strategy: sugg.strategy,
+        suggestedBonus: sugg.bonus,
+        suggestedMessage: sugg.message,
+        addAppOffer: sugg.addAppOffer,
+        addNotifsOffer: sugg.addNotifsOffer,
+        priority,
+        fileDeposits: fa.sumDeposits,
+        fileWithdraws: fa.sumWithdraws,
+        fileBonuses: fa.sumBonuses,
+        fileCountDeposits: fa.countDeposits,
+        fileCountWithdraws: fa.countWithdraws,
+        fileCountBonuses: fa.countBonuses,
+        fileNet: fa.sumDeposits - fa.sumWithdraws
+      });
+    }
+
+    items.sort((a, b) => b.priority - a.priority);
+    logger.info(`[recontact/analyze v2] analyzed=${summary.totalAnalyzed} found=${summary.foundInDb} byBucket=${JSON.stringify(summary.buckets)} byTier=${JSON.stringify(summary.tiers)} by=${(req.user && req.user.username) || 'admin'}`);
+    return res.json({ success: true, summary, items });
+  } catch (err) {
+    logger.error(`[recontact/analyze v2] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// Helper: arma express middleware que parsea raw o JSON según content-type.
+// El cliente moderno (admin v2) parsea el .xlsx en el browser y manda JSON
+// pre-agregado — evita timeouts/502 con archivos grandes. El raw legacy
+// queda como fallback por si alguien sube un archivo del modo viejo.
+const _recontactBodyParser = (req, res, next) => {
+  const ct = (req.headers['content-type'] || '').toLowerCase();
+  if (ct.includes('application/json')) {
+    return express.json({ limit: '20mb' })(req, res, next);
+  }
+  return express.raw({ limit: '25mb', type: '*/*' })(req, res, next);
+};
+
 app.post(
   '/api/admin/recontact/analyze',
   authMiddleware,
   adminMiddleware,
-  express.raw({ limit: '25mb', type: '*/*' }),
+  _recontactBodyParser,
   async (req, res) => {
-    let XLSX;
-    try { XLSX = require('xlsx'); }
-    catch (_) { return res.status(503).json({ error: 'Falta dependencia "xlsx"' }); }
-
     try {
+      const ct = (req.headers['content-type'] || '').toLowerCase();
+      logger.info(`[recontact/analyze] received contentType=${ct} contentLength=${req.headers['content-length']}`);
+
+      // Modo NUEVO: el cliente ya parseó el .xlsx en el browser y manda JSON
+      // pre-agregado: { version: 2, users: [{ username, sumDeposits, ... }], totalRows }.
+      if (ct.includes('application/json')) {
+        return _recontactAnalyzeFromJSON(req, res);
+      }
+
+      // Modo LEGACY: raw .xlsx (queda como fallback para clientes viejos).
+      let XLSX;
+      try { XLSX = require('xlsx'); }
+      catch (_) { return res.status(503).json({ error: 'Falta dependencia "xlsx"' }); }
+
       const buf = req.body;
-      logger.info(`[recontact/analyze] received body bufType=${typeof buf} isBuffer=${Buffer.isBuffer(buf)} length=${buf && buf.length ? buf.length : 0} contentType=${req.headers['content-type']} contentLength=${req.headers['content-length']}`);
+      logger.info(`[recontact/analyze legacy] bufType=${typeof buf} isBuffer=${Buffer.isBuffer(buf)} length=${buf && buf.length ? buf.length : 0}`);
       if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
         return res.status(400).json({ error: `Archivo vacío o muy chico (recibido ${buf && buf.length ? buf.length : 0} bytes). Probá subir el archivo de nuevo.` });
       }

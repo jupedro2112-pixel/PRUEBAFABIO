@@ -2641,34 +2641,126 @@ function _recontactFilePicked() {
     info.innerHTML = '📄 <strong style="color:#fff;">' + escapeHtml(f.name) + '</strong> · ' + sizeKb + ' KB';
 }
 
+// Parsea el .xlsx EN EL NAVEGADOR usando SheetJS, agrega por usuario,
+// y manda al server sólo el JSON resultante (mucho más liviano que el binario).
+// Esto evita timeouts/502 con archivos grandes.
+async function _recontactParseLocally(file, onProgress) {
+    if (typeof XLSX === 'undefined') {
+        throw new Error('Librería XLSX no cargada (probá refrescar la página)');
+    }
+    onProgress && onProgress('📖 Leyendo archivo…');
+    const buf = await file.arrayBuffer();
+    onProgress && onProgress('🔍 Parseando hojas…');
+    const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+
+    const HEADER_TYPE = new Set(['type', 'tipo', 'movimiento']);
+    const HEADER_AMOUNT = new Set(['amount', 'monto', 'cantidad', 'importe']);
+    const HEADER_USER = new Set(['user', 'username', 'usuario']);
+    const TYPE_DEPOSIT = new Set(['deposit', 'deposito', 'depósito', 'carga']);
+    const TYPE_WITHDRAW = new Set(['withdraw', 'withdrawal', 'retiro', 'extraccion', 'extracción']);
+    const TYPE_BONUS = new Set(['individual_bonus', 'bonus', 'bonificacion', 'bonificación', 'bono']);
+
+    const agg = new Map();
+    let totalRows = 0;
+
+    for (const sheetName of wb.SheetNames) {
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: null });
+        if (!rows || rows.length === 0) continue;
+
+        let colType = -1, colAmount = -1, colUser = -1;
+        const firstRow = Array.isArray(rows[0]) ? rows[0] : [];
+        for (let i = 0; i < firstRow.length; i++) {
+            const h = String(firstRow[i] == null ? '' : firstRow[i]).trim().toLowerCase();
+            if (HEADER_TYPE.has(h)) colType = i;
+            else if (HEADER_AMOUNT.has(h)) colAmount = i;
+            else if (HEADER_USER.has(h)) colUser = i;
+        }
+        const hasHeader = (colUser !== -1) || (colType !== -1) || (colAmount !== -1);
+        const userColIdx = (colUser !== -1) ? colUser : 0;
+        const startRow = hasHeader ? 1 : 0;
+
+        for (let r = startRow; r < rows.length; r++) {
+            const row = rows[r];
+            if (!Array.isArray(row) || row.length === 0) continue;
+            const userCell = row[userColIdx];
+            if (userCell == null) continue;
+            const v = String(userCell).trim();
+            if (!v) continue;
+            const lower = v.toLowerCase();
+            if (!hasHeader && (lower === 'username' || lower === 'usuario' || lower === 'user')) continue;
+            const norm = lower.replace(/[^a-z0-9]/g, '');
+            if (!norm) continue;
+
+            let a = agg.get(norm);
+            if (!a) {
+                a = {
+                    username: v,
+                    sumDeposits: 0, sumWithdraws: 0, sumBonuses: 0,
+                    countDeposits: 0, countWithdraws: 0, countBonuses: 0
+                };
+                agg.set(norm, a);
+            }
+
+            if (colType !== -1 && colAmount !== -1) {
+                const tRaw = String(row[colType] == null ? '' : row[colType]).trim().toLowerCase();
+                const amtRaw = row[colAmount];
+                const amt = (amtRaw == null || amtRaw === '') ? 0 : Number(String(amtRaw).replace(/[^\d.\-]/g, ''));
+                if (Number.isFinite(amt) && amt > 0) {
+                    if (TYPE_DEPOSIT.has(tRaw))      { a.sumDeposits  += amt; a.countDeposits++; }
+                    else if (TYPE_WITHDRAW.has(tRaw)){ a.sumWithdraws += amt; a.countWithdraws++; }
+                    else if (TYPE_BONUS.has(tRaw))   { a.sumBonuses   += amt; a.countBonuses++; }
+                }
+            }
+            totalRows++;
+        }
+    }
+
+    const users = Array.from(agg.values());
+    return { users, totalRows };
+}
+
 async function recontactAnalyze() {
     const inp = document.getElementById('recontactFile');
     const btn = document.getElementById('recontactAnalyzeBtn');
     const progress = document.getElementById('recontactProgress');
     const file = inp && inp.files && inp.files[0];
     if (!file) { showToast('Subí un archivo .xlsx primero', 'error'); return; }
-    if (file.size > 25 * 1024 * 1024) { showToast('Archivo muy grande (>25MB)', 'error'); return; }
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Analizando…'; }
-    if (progress) {
-        progress.style.display = 'block';
-        progress.textContent = '⏳ Subiendo ' + (file.size / 1024 / 1024).toFixed(1) + ' MB y procesando… (puede tardar 30-60s con archivos grandes)';
-    }
+    if (file.size > 50 * 1024 * 1024) { showToast('Archivo muy grande (>50MB)', 'error'); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando…'; }
+    const setProg = (msg) => {
+        if (progress) { progress.style.display = 'block'; progress.textContent = msg; }
+    };
     const restoreBtn = () => {
         if (btn) { btn.disabled = false; btn.textContent = '🔍 ANALIZAR LISTA'; }
         if (progress) { progress.style.display = 'none'; }
     };
     try {
+        // 1) Parsear el .xlsx en el navegador (ahorra ancho de banda + memoria del server)
+        setProg('📖 Parseando ' + (file.size / 1024 / 1024).toFixed(1) + ' MB localmente…');
+        const parsed = await _recontactParseLocally(file, setProg);
+        if (!parsed.users || parsed.users.length === 0) {
+            showToast('❌ No encontré usernames en el archivo', 'error');
+            restoreBtn();
+            return;
+        }
+        if (parsed.users.length > 50000) {
+            showToast('❌ Demasiados usernames (' + parsed.users.length + ', máx 50.000). Partí el archivo en dos.', 'error');
+            restoreBtn();
+            return;
+        }
+
+        // 2) Enviar al server SÓLO el JSON agregado (típicamente <1MB)
+        setProg('📡 Enviando ' + parsed.users.length.toLocaleString('es-AR') + ' usuarios al server…');
         const r = await authFetch('/api/admin/recontact/analyze', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: file
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version: 2, users: parsed.users, totalRows: parsed.totalRows })
         });
-        // Leer como texto para poder dar un mensaje de error útil
-        // incluso cuando el body viene vacío, HTML, o cortado.
         let raw = '';
         try { raw = await r.text(); } catch (_) { raw = ''; }
         if (!raw) {
-            showToast('❌ Server respondió vacío (status ' + r.status + '). El archivo puede ser muy grande o haber timeouteado. Probá uno más chico o partilo.', 'error');
+            showToast('❌ Server respondió vacío (status ' + r.status + ')', 'error');
             restoreBtn();
             return;
         }
@@ -2690,7 +2782,7 @@ async function recontactAnalyze() {
         loadRecontactSection();
         showToast('✅ ' + (j.summary.totalAnalyzed || 0) + ' usuarios analizados', 'success');
     } catch (e) {
-        showToast('Error de red: ' + (e.message || e), 'error');
+        showToast('Error: ' + (e.message || e), 'error');
         restoreBtn();
     }
 }
