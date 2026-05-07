@@ -12046,19 +12046,24 @@ async function loadEncuesta() {
     }
 }
 
-// Refresh silencioso sin loader, solo actualiza la lista.
+// Refresh silencioso sin loader, solo actualiza la lista. Usa el mismo
+// endpoint que loadEncuesta (/encuesta/timeline) para que la lista no se
+// reduzca al subset filtrado por actividad — antes pegaba a /players/
+// segments?period=month y a los 30s la tabla se vaciaba a los 7 activos.
 async function _refreshEncuestaSilent() {
     try {
-        const [statsR, listR] = await Promise.all([
+        const [statsR, timelineR] = await Promise.all([
             authFetch('/api/admin/users/notif-preference-stats'),
-            authFetch('/api/admin/players/segments?period=month&segment=all&hasApp=all&limit=2000')
+            authFetch('/api/admin/encuesta/timeline?limit=500')
         ]);
-        if (statsR.ok && listR.ok) {
+        if (statsR.ok && timelineR.ok) {
             const stats = await statsR.json();
-            const list = await listR.json();
+            const timeline = await timelineR.json();
+            const list = { players: (timeline && timeline.items) || [] };
             // Mantenemos strategy del cache (no cambia tan seguido).
             _ENCUESTA_CACHE.stats = stats;
             _ENCUESTA_CACHE.list = list;
+            _ENCUESTA_CACHE.timeline = timeline;
             const c = document.getElementById('encuestaContent');
             if (c) c.innerHTML = _renderEncuesta();
         }
