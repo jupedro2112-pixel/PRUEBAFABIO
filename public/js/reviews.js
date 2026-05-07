@@ -63,6 +63,11 @@ VIP.reviews = (function () {
         if (btn) btn.addEventListener('click', submitReview);
     }
 
+    function _hideFormCard() {
+        const card = _q('reviewFormCard');
+        if (card) card.style.display = 'none';
+    }
+
     async function loadMyReview() {
         if (!VIP.state || !VIP.state.currentToken) return;
         try {
@@ -71,17 +76,9 @@ VIP.reviews = (function () {
             });
             if (!r.ok) return;
             const data = await r.json();
+            // 1 opinión por user: si ya votó, ocultar el form para siempre.
             if (data && data.review) {
-                _selectedStars = Number(data.review.stars) || 0;
-                _paintStarsRow(_selectedStars);
-                const ta = _q('reviewCommentInput');
-                if (ta) {
-                    ta.value = data.review.comment || '';
-                    const cnt = _q('reviewCharCount');
-                    if (cnt) cnt.textContent = String(ta.value.length);
-                }
-                const btn = _q('reviewSubmitBtn');
-                if (btn) btn.textContent = '✏️ Actualizar mi opinión';
+                _hideFormCard();
             }
             _myReviewLoaded = true;
         } catch (_) { /* ignore */ }
@@ -109,13 +106,20 @@ VIP.reviews = (function () {
             });
             const data = await r.json();
             if (!r.ok) {
+                // Si ya votó (caso de tab vieja o doble-submit), ocultar form igual.
+                if (data && data.alreadyReviewed) {
+                    if (msg) { msg.style.color = '#ffd700'; msg.textContent = 'Ya habías enviado tu opinión. ¡Gracias!'; }
+                    setTimeout(_hideFormCard, 1500);
+                    loadFeed();
+                    return;
+                }
                 if (msg) { msg.style.color = '#ff8080'; msg.textContent = '❌ ' + (data.error || 'Error'); }
                 if (btn) { btn.disabled = false; btn.textContent = '📨 Enviar opinión'; }
                 return;
             }
             if (msg) { msg.style.color = '#66ff66'; msg.textContent = '✅ ¡Gracias! Tu opinión nos ayuda a mejorar.'; }
-            if (btn) { btn.disabled = false; btn.textContent = '✏️ Actualizar mi opinión'; }
-            // Refrescar el feed para que aparezca/actualice nuestra opinion abajo.
+            // Cierra el form después de un momento — solo se vota una vez.
+            setTimeout(_hideFormCard, 1800);
             loadFeed();
         } catch (e) {
             if (msg) { msg.style.color = '#ff8080'; msg.textContent = '❌ Error de conexión'; }

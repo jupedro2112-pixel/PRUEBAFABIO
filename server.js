@@ -9111,7 +9111,7 @@ function _bucketOf(stars) {
   return 'malo';
 }
 
-// POST /api/reviews — el user crea o actualiza su review (upsert por userId).
+// POST /api/reviews — el user crea su review (1 sola vez, no se puede editar).
 app.post('/api/reviews', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -9121,16 +9121,14 @@ app.post('/api/reviews', authMiddleware, async (req, res) => {
     if (!isFinite(stars) || stars < 1 || stars > 5) {
       return res.status(400).json({ error: 'Estrellas inválidas (1-5)' });
     }
-    const now = new Date();
+    // 1 review por user — si ya votó, no permitir más.
     const existing = await Review.findOne({ userId }).lean();
-    let saved;
     if (existing) {
-      saved = await Review.findOneAndUpdate(
-        { userId },
-        { $set: { stars, comment, username, updatedAt: now } },
-        { new: true }
-      ).lean();
-    } else {
+      return res.status(409).json({ error: 'Ya enviaste tu opinión. Solo se permite una por usuario.', alreadyReviewed: true });
+    }
+    const now = new Date();
+    let saved;
+    try {
       saved = await Review.create({
         id: uuidv4(),
         userId,
@@ -9141,6 +9139,12 @@ app.post('/api/reviews', authMiddleware, async (req, res) => {
         updatedAt: now
       });
       saved = saved.toObject ? saved.toObject() : saved;
+    } catch (e) {
+      // Race: otro POST simultáneo creó la review primero (unique index).
+      if (e && e.code === 11000) {
+        return res.status(409).json({ error: 'Ya enviaste tu opinión.', alreadyReviewed: true });
+      }
+      throw e;
     }
     res.json({
       success: true,
