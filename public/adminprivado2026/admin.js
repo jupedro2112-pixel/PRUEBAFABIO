@@ -341,6 +341,15 @@ function slotHtml(i, prefix, phone, teamName) {
                         Subí un .xlsx con una columna de usernames. El sistema asigna el número de arriba a esos usuarios. Si un usuario todavía no se registró, queda pre-asignado y recibe la línea cuando entre por primera vez.
                     </p>
                     <input type="file" id="slotImportFile-${i}" accept=".xlsx,.xls" style="width:100%;padding:7px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:12px;box-sizing:border-box;margin-bottom:8px;">
+                    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:6px;padding:8px;margin-bottom:8px;">
+                        <div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Modo</div>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#25d366;font-weight:600;">
+                            <input type="radio" name="slotImportMode-${i}" value="merge" checked> 🛡 Seguro · no rompe asignaciones de otras líneas
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#ffaa44;font-weight:600;margin-top:3px;">
+                            <input type="radio" name="slotImportMode-${i}" value="overwrite"> 📌 Ordenar · reasigna a esta línea aunque estén en otra
+                        </label>
+                    </div>
                     <div style="display:flex;gap:6px;">
                         <button type="button" onclick="slotImportPreview(${i})" style="flex:1;padding:9px;font-size:12px;font-weight:700;background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:6px;cursor:pointer;">👁 Vista previa</button>
                         <button type="button" id="slotImportConfirm-${i}" onclick="slotImportConfirm(${i})" disabled style="flex:1;padding:9px;font-size:12px;font-weight:700;background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:6px;cursor:not-allowed;opacity:0.5;">✅ Confirmar</button>
@@ -5223,6 +5232,24 @@ function teamLineUploadXlsx(teamName, linePhone) {
     html += '</div>';
     html += '<p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">Subí un .xlsx con UNA columna de usernames. El sistema asigna ese número a esos usuarios. Si un usuario todavía no se registró, queda pre-asignado y recibe la línea cuando entre por primera vez.</p>';
     html += '<input type="file" id="teamLineUploadFile" accept=".xlsx,.xls" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;margin-bottom:10px;">';
+    // Selector de modo (merge vs overwrite/ordenar).
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin-bottom:10px;">';
+    html += '  <div style="color:#aaa;font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Modo de carga</div>';
+    html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;background:rgba(37,211,102,0.06);">';
+    html += '    <input type="radio" name="teamLineUploadMode" value="merge" checked style="margin-top:3px;cursor:pointer;">';
+    html += '    <div>';
+    html += '      <div style="color:#25d366;font-size:12.5px;font-weight:700;">🛡 Modo seguro (no rompe)</div>';
+    html += '      <div style="color:#aaa;font-size:10.5px;line-height:1.4;">Si un usuario ya está asignado a OTRA línea, lo dejamos donde está. Solo asigna a los que están libres o ya están en esta misma línea.</div>';
+    html += '    </div>';
+    html += '  </label>';
+    html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;margin-top:4px;background:rgba(255,170,68,0.06);">';
+    html += '    <input type="radio" name="teamLineUploadMode" value="overwrite" style="margin-top:3px;cursor:pointer;">';
+    html += '    <div>';
+    html += '      <div style="color:#ffaa44;font-size:12.5px;font-weight:700;">📌 Modo ordenar (reasigna)</div>';
+    html += '      <div style="color:#aaa;font-size:10.5px;line-height:1.4;">Mueve a TODOS los del archivo a esta línea, aunque ya estén en otra. Útil para corregir asignaciones que cayeron mal por prefijo automático.</div>';
+    html += '    </div>';
+    html += '  </label>';
+    html += '</div>';
     html += '<div style="display:flex;gap:6px;">';
     html += '  <button type="button" onclick="teamLineUploadPreview(' + safeTeam + ',' + safePhone + ')" style="flex:1;padding:10px;font-size:13px;font-weight:700;background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:7px;cursor:pointer;">👁 Vista previa</button>';
     html += '  <button type="button" id="teamLineUploadConfirmBtn" onclick="teamLineUploadConfirm(' + safeTeam + ',' + safePhone + ')" disabled style="flex:1;padding:10px;font-size:13px;font-weight:700;background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:7px;cursor:not-allowed;opacity:0.5;">✅ Confirmar</button>';
@@ -5256,11 +5283,14 @@ async function _sendTeamLineUpload(teamName, linePhone, dryRun) {
         showToast('Teléfono inválido para esta línea', 'error');
         return null;
     }
+    // Leer modo del radio (default merge si no hay selección).
+    const modeRadio = document.querySelector('input[name="teamLineUploadMode"]:checked');
+    const mode = (modeRadio && modeRadio.value === 'overwrite') ? 'overwrite' : 'merge';
     const params = new URLSearchParams();
     params.set('teamName', teamName);
     params.set('linePhone', '+' + digits);
     params.set('dryRun', dryRun ? 'true' : 'false');
-    params.set('mode', 'merge'); // no rompe lo que ya está en otras líneas
+    params.set('mode', mode);
     try {
         const r = await authFetch('/api/admin/user-lines/import-exact?' + params.toString(), {
             method: 'POST',
@@ -5370,7 +5400,18 @@ function teamLineAddNew(teamName) {
     html += '<input type="text" id="teamLineAddNewPhone" placeholder="+54 9 11 5555 1111" style="width:100%;padding:9px 11px;border-radius:7px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#ffd700;font-size:14px;font-weight:700;font-family:monospace;letter-spacing:1px;box-sizing:border-box;margin-bottom:10px;">';
     html += '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;">Archivo .xlsx con usernames</label>';
     html += '<input type="file" id="teamLineAddNewFile" accept=".xlsx,.xls" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;margin-bottom:10px;">';
-    html += '<p style="color:#aaa;font-size:11.5px;line-height:1.5;margin:0 0 10px;">El archivo se cargará en <strong>modo MERGE</strong>: los usuarios que ya estén en otra línea NO se tocan, sólo se asignan los que están libres.</p>';
+    // Selector de modo
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:10px;margin-bottom:10px;">';
+    html += '  <div style="color:#aaa;font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Modo de carga</div>';
+    html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;background:rgba(37,211,102,0.06);">';
+    html += '    <input type="radio" name="teamLineAddNewMode" value="merge" checked style="margin-top:3px;cursor:pointer;">';
+    html += '    <div><div style="color:#25d366;font-size:12.5px;font-weight:700;">🛡 Modo seguro</div><div style="color:#aaa;font-size:10.5px;">No toca users que ya estén en otra línea.</div></div>';
+    html += '  </label>';
+    html += '  <label style="display:flex;align-items:flex-start;gap:8px;padding:6px;cursor:pointer;border-radius:6px;margin-top:4px;background:rgba(255,170,68,0.06);">';
+    html += '    <input type="radio" name="teamLineAddNewMode" value="overwrite" style="margin-top:3px;cursor:pointer;">';
+    html += '    <div><div style="color:#ffaa44;font-size:12.5px;font-weight:700;">📌 Modo ordenar</div><div style="color:#aaa;font-size:10.5px;">Reasigna también a los que estén en otra línea.</div></div>';
+    html += '  </label>';
+    html += '</div>';
     html += '<div style="display:flex;gap:6px;">';
     html += '  <button type="button" onclick="teamLineAddNewSubmit(' + safeTeam + ')" style="flex:1;padding:10px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:7px;cursor:pointer;">📤 Subir archivo</button>';
     html += '</div>';
@@ -5395,11 +5436,14 @@ async function teamLineAddNewSubmit(teamName) {
     if (!file) { showToast('Subí un archivo .xlsx', 'error'); return; }
     if (file.size > 10 * 1024 * 1024) { showToast('Archivo muy grande (>10MB)', 'error'); return; }
     if (out) out.innerHTML = '<div style="color:#aaa;font-size:12px;">⏳ Subiendo archivo…</div>';
+    // Leer modo del radio
+    const modeRadio = document.querySelector('input[name="teamLineAddNewMode"]:checked');
+    const mode = (modeRadio && modeRadio.value === 'overwrite') ? 'overwrite' : 'merge';
     const params = new URLSearchParams();
     params.set('teamName', teamName);
     params.set('linePhone', '+' + digits);
     params.set('dryRun', 'false');
-    params.set('mode', 'merge');
+    params.set('mode', mode);
     try {
         const r = await authFetch('/api/admin/user-lines/import-exact?' + params.toString(), {
             method: 'POST',
@@ -5480,11 +5524,14 @@ async function _sendSlotImport(i, dryRun) {
     if (!data) return null;
     _slotImportLastFile[i] = data.file;
 
+    // Leer modo del radio del slot (default merge).
+    const modeRadio = document.querySelector('input[name="slotImportMode-' + i + '"]:checked');
+    const mode = (modeRadio && modeRadio.value === 'overwrite') ? 'overwrite' : 'merge';
     const params = new URLSearchParams();
     params.set('teamName', data.team);
     params.set('linePhone', '+' + data.phone);
     params.set('dryRun', dryRun ? 'true' : 'false');
-    params.set('mode', 'merge'); // no rompe asignaciones de otras líneas
+    params.set('mode', mode);
 
     try {
         const r = await authFetch('/api/admin/user-lines/import-exact?' + params.toString(), {
