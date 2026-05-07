@@ -61,6 +61,14 @@ const notifStrategyConfigSchema = new mongoose.Schema({
   bonus100pctStartHour: { type: Number, default: 19, min: 0, max: 23 },
   bonus100pctDurationHours: { type: Number, default: 2, min: 1, max: 24 },
 
+  // Ventana horaria de envío de las waves de la estrategia. Cuando una
+  // wave se dispara (auto +100 o test fire), cada user recibe el push
+  // a una hora RANDOM dentro de [windowStartHour, windowEndHour). Si la
+  // ventana de hoy ya pasó (now >= endHour), se reprograma para mañana.
+  // Default 18-21hs (3 horas de ventana, ratos de tráfico alto).
+  windowStartHour: { type: Number, default: 18, min: 0, max: 23 },
+  windowEndHour: { type: Number, default: 21, min: 1, max: 24 },
+
   // Estrategia activa: si true, los pushes auto-programados respetan
   // este config. Si false, queda como borrador.
   isActive: { type: Boolean, default: false },

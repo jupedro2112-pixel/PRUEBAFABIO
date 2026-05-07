@@ -8223,6 +8223,34 @@ const _STRATEGY_WAVE_BLUEPRINTS = {
 // Lock simple por instancia para evitar dobles disparos concurrentes.
 let _STRATEGY_WAVE_LOCK = false;
 
+// Calcula la próxima ventana horaria de envío [start, end). Si la ventana
+// de hoy ya pasó (o estamos dentro de ella, en cuyo caso el rango efectivo
+// se acorta a [now, end)), devuelve esa. Si ya pasó el endHour, devuelve la
+// ventana de mañana.
+function _computeStrategyWindow(startHour, endHour) {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(startHour, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(endHour, 0, 0, 0);
+  if (now >= end) {
+    // Ventana de hoy ya pasó — usamos la de mañana.
+    start.setDate(start.getDate() + 1);
+    end.setDate(end.getDate() + 1);
+    return { start, end, isToday: false };
+  }
+  // Si estamos antes del start, mantenemos start. Si estamos dentro de la
+  // ventana, achicamos para no programar pushes en el pasado.
+  const effectiveStart = now > start ? now : start;
+  return { start: effectiveStart, end, isToday: true };
+}
+
+// Genera un timestamp random dentro de [start, end).
+function _randomTimeInWindow(start, end) {
+  const span = end.getTime() - start.getTime();
+  return new Date(start.getTime() + Math.floor(Math.random() * span));
+}
+
 async function fireStrategyWave({ reason, triggerCount }) {
   if (_STRATEGY_WAVE_LOCK) {
     logger.warn(`[STRATEGY-WAVE] omitido — lock activo (reason=${reason})`);
@@ -8230,6 +8258,12 @@ async function fireStrategyWave({ reason, triggerCount }) {
   }
   _STRATEGY_WAVE_LOCK = true;
   try {
+    // Levantar config para tomar la ventana horaria configurada (default 18-21).
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    const startHour = (cfg && Number.isFinite(cfg.windowStartHour)) ? cfg.windowStartHour : 18;
+    const endHour   = (cfg && Number.isFinite(cfg.windowEndHour))   ? cfg.windowEndHour   : 21;
+    const { start: winStart, end: winEnd, isToday } = _computeStrategyWindow(startHour, endHour);
+
     // Agrupar respondentes por tier (sólo los que tienen FCM token).
     const respondents = await User.find(
       { notifPreference: { $exists: true, $ne: null } },
@@ -8240,43 +8274,43 @@ async function fireStrategyWave({ reason, triggerCount }) {
     for (const u of respondents) {
       const tier = u.notifPreference;
       if (!byTier[tier]) continue;
-      const tokens = [];
-      if (u.fcmToken) tokens.push(u.fcmToken);
-      if (Array.isArray(u.fcmTokens)) {
-        for (const t of u.fcmTokens) if (t && !tokens.includes(t)) tokens.push(t);
-      }
-      if (tokens.length > 0) {
-        byTier[tier].push({ username: u.username, tokens });
-      }
+      const hasToken = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      if (hasToken) byTier[tier].push({ username: u.username });
     }
 
-    const sentBefore = new Date();
+    // Programar 1 ScheduledNotification por user, a una hora random dentro
+    // de la ventana. El worker (_runScheduledNotifications) las dispara cada 60s.
     const tierResults = {};
-    let totalSuccess = 0, totalFailure = 0, totalUsers = 0;
+    let totalScheduled = 0, totalFailed = 0, totalUsers = 0;
+    const reasonStr = String(reason || 'auto_+100');
 
     for (const tier of Object.keys(byTier)) {
       const list = byTier[tier];
-      if (list.length === 0) { tierResults[tier] = { users: 0, success: 0, failure: 0 }; continue; }
+      if (list.length === 0) { tierResults[tier] = { users: 0, scheduled: 0, failed: 0 }; continue; }
       const bp = _STRATEGY_WAVE_BLUEPRINTS[tier] || { title: '🎁 Hay algo para vos', body: 'Tocá la app.' };
-      let success = 0, failure = 0;
+      let scheduled = 0, failed = 0;
       for (const u of list) {
-        for (const tok of u.tokens) {
-          try {
-            await _sendPushToUser(tok, bp.title, bp.body, {
-              kind: 'strategy_wave_auto',
-              tier,
-              reason: String(reason || 'auto_+100')
-            });
-            success++;
-          } catch (e) {
-            failure++;
-            logger.warn(`[STRATEGY-WAVE] push fail ${u.username} (${tier}): ${e.message}`);
-          }
+        try {
+          await ScheduledNotification.create({
+            id: uuidv4(),
+            scheduledFor: _randomTimeInWindow(winStart, winEnd),
+            status: 'pending',
+            title: bp.title,
+            body: bp.body,
+            targetUsername: String(u.username).toLowerCase().trim(),
+            audiencePrefix: null,
+            extraType: 'none',
+            createdBy: `strategy-wave:${tier}:${reasonStr}`
+          });
+          scheduled++;
+        } catch (e) {
+          failed++;
+          logger.warn(`[STRATEGY-WAVE] no se pudo programar push ${u.username} (${tier}): ${e.message}`);
         }
       }
-      tierResults[tier] = { users: list.length, success, failure };
-      totalSuccess += success;
-      totalFailure += failure;
+      tierResults[tier] = { users: list.length, scheduled, failed };
+      totalScheduled += scheduled;
+      totalFailed += failed;
       totalUsers += list.length;
     }
 
@@ -8285,23 +8319,39 @@ async function fireStrategyWave({ reason, triggerCount }) {
       await NotificationHistory.create({
         id: uuidv4(),
         type: 'plain',
-        title: `[AUTO +100] Wave estrategia · ${reason || ''}`,
-        body: `Disparada automáticamente al cruzar ${triggerCount} respondentes.`,
-        sentAt: sentBefore,
+        title: `[AUTO +100] Wave estrategia · ${reasonStr}`,
+        body: `Disparada automáticamente al cruzar ${triggerCount} respondentes. Pushes programados al azar entre ${String(startHour).padStart(2,'0')}:00 y ${String(endHour).padStart(2,'0')}:00 ${isToday ? '(hoy)' : '(mañana)'}.`,
+        sentAt: new Date(),
         totalUsers,
-        successCount: totalSuccess,
-        failureCount: totalFailure,
+        successCount: totalScheduled,
+        failureCount: totalFailed,
         audienceType: 'list',
         audiencePrefix: null,
         strategyType: 'auto_strategy_repeat',
-        strategyMeta: { reason: String(reason || 'auto_+100'), triggerCount, tierResults }
+        strategyMeta: {
+          reason: reasonStr,
+          triggerCount,
+          tierResults,
+          windowStartHour: startHour,
+          windowEndHour: endHour,
+          windowStart: winStart,
+          windowEnd: winEnd,
+          isToday
+        }
       });
     } catch (e) {
       logger.warn(`[STRATEGY-WAVE] no se pudo grabar historial: ${e.message}`);
     }
 
-    logger.info(`[STRATEGY-WAVE] disparada · users=${totalUsers} ok=${totalSuccess} fail=${totalFailure} reason=${reason}`);
-    return { fired: true, totalUsers, totalSuccess, totalFailure, tierResults };
+    logger.info(`[STRATEGY-WAVE] programada · users=${totalUsers} sched=${totalScheduled} fail=${totalFailed} ventana=${startHour}-${endHour}h ${isToday ? 'hoy' : 'mañana'} reason=${reasonStr}`);
+    return {
+      fired: true,
+      totalUsers,
+      totalScheduled,
+      totalFailed,
+      tierResults,
+      window: { startHour, endHour, start: winStart, end: winEnd, isToday }
+    };
   } finally {
     _STRATEGY_WAVE_LOCK = false;
   }
@@ -8544,6 +8594,15 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
     const monthlyCap = Math.max(0, Number(body.monthlyCap) || 0);
     const monthlyTotalToDistribute = Math.max(0, Number(body.monthlyTotalToDistribute) || 0);
     const bonusType = String(body.bonusType || 'cash').slice(0, 64);
+    // Ventana horaria de envío. Default 18-21. Validamos que start < end y
+    // ambos en rango [0, 24].
+    let windowStartHour = Math.max(0, Math.min(23, parseInt(body.windowStartHour, 10)));
+    let windowEndHour   = Math.max(1, Math.min(24, parseInt(body.windowEndHour, 10)));
+    if (!Number.isFinite(windowStartHour)) windowStartHour = 18;
+    if (!Number.isFinite(windowEndHour))   windowEndHour   = 21;
+    if (windowEndHour <= windowStartHour) {
+      return res.status(400).json({ error: 'La hora de fin debe ser mayor que la de inicio.' });
+    }
     const sanitize = (v, allowFlags) => ({
       bonos: Math.max(0, Number(v && v.bonos) || 0),
       juegos: Math.max(0, Number(v && v.juegos) || 0),
@@ -8561,6 +8620,8 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
       monthlyCap,
       monthlyTotalToDistribute,
       bonusType,
+      windowStartHour,
+      windowEndHour,
       updatedAt: new Date(),
       updatedBy: (req.user && req.user.username) || 'admin'
     };
@@ -8580,6 +8641,8 @@ app.post('/api/admin/notif-strategy', authMiddleware, adminMiddleware, async (re
     existing.monthlyCap = update.monthlyCap;
     existing.monthlyTotalToDistribute = update.monthlyTotalToDistribute;
     existing.bonusType = update.bonusType;
+    existing.windowStartHour = update.windowStartHour;
+    existing.windowEndHour = update.windowEndHour;
     existing.updatedAt = update.updatedAt;
     existing.updatedBy = update.updatedBy;
     existing.revisions.push({ at: new Date(), by: update.updatedBy, prefs: update.preferences, monthlyCap: update.monthlyCap });
@@ -8812,6 +8875,67 @@ app.post('/api/admin/notif-strategy/test-fire', authMiddleware, adminMiddleware,
     });
   } catch (err) {
     logger.error(`/api/admin/notif-strategy/test-fire: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Detalle del calendario de envíos: ventana configurada + lista de
+// ScheduledNotifications pendientes generadas por la estrategia + agregado
+// por tier. El admin lo abre cuando activa para ver el detalle.
+app.get('/api/admin/notif-strategy/schedule', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    const startHour = (cfg && Number.isFinite(cfg.windowStartHour)) ? cfg.windowStartHour : 18;
+    const endHour   = (cfg && Number.isFinite(cfg.windowEndHour))   ? cfg.windowEndHour   : 21;
+
+    const pending = await ScheduledNotification.find({
+      status: 'pending',
+      createdBy: { $regex: /^strategy-wave:/ }
+    })
+      .sort({ scheduledFor: 1 })
+      .limit(500)
+      .lean();
+
+    // Agrupar por tier para el resumen.
+    const tierAgg = { suave: 0, normal: 0, activo: 0, solo_reembolsos: 0 };
+    let earliest = null, latest = null;
+    for (const p of pending) {
+      const m = String(p.createdBy || '').match(/^strategy-wave:(\w+):/);
+      const tier = m ? m[1] : null;
+      if (tier && tierAgg[tier] != null) tierAgg[tier]++;
+      if (p.scheduledFor) {
+        const ts = new Date(p.scheduledFor).getTime();
+        if (earliest === null || ts < earliest) earliest = ts;
+        if (latest   === null || ts > latest)   latest   = ts;
+      }
+    }
+
+    const items = pending.slice(0, 200).map(p => {
+      const m = String(p.createdBy || '').match(/^strategy-wave:(\w+):(.*)$/);
+      return {
+        id: p.id,
+        scheduledFor: p.scheduledFor,
+        targetUsername: p.targetUsername,
+        tier: m ? m[1] : null,
+        reason: m ? m[2] : null,
+        title: p.title
+      };
+    });
+
+    res.json({
+      window: {
+        startHour,
+        endHour,
+        label: `${String(startHour).padStart(2, '0')}:00 a ${String(endHour).padStart(2, '0')}:00`
+      },
+      pendingTotal: pending.length,
+      tierCounts: tierAgg,
+      earliestAt: earliest ? new Date(earliest) : null,
+      latestAt:   latest   ? new Date(latest)   : null,
+      items
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-strategy/schedule: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

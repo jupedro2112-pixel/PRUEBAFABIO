@@ -13212,6 +13212,24 @@ function _renderStrategyEditor(strategy, respondedTotal) {
     html += '    <span style="color:#888;font-size:10.5px;">Hard cap. La distribución no puede excederlo.</span>';
     html += '  </div>';
 
+    // Ventana horaria de envío. Cada user recibe el push a una hora random
+    // dentro de [start, end). Default 18-21.
+    const windowStartHour = (strategy && Number.isFinite(strategy.windowStartHour)) ? strategy.windowStartHour : 18;
+    const windowEndHour   = (strategy && Number.isFinite(strategy.windowEndHour))   ? strategy.windowEndHour   : 21;
+    html += '  <div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:10px;margin-top:10px;">';
+    html += '    <div style="color:#66ff66;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">📅 Ventana horaria de envío</div>';
+    html += '    <p style="color:#bbb;font-size:11px;line-height:1.5;margin:0 0 8px;">Cada user recibe la notificación a una hora <strong>random</strong> dentro de esta ventana. Si la ventana de hoy ya pasó cuando se dispara la wave, se reprograma para mañana.</p>';
+    html += '    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
+    html += '      <label style="color:#ddd;font-size:12px;">Desde</label>';
+    html += '      <input type="number" id="strat_windowStartHour" value="' + windowStartHour + '" min="0" max="23" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 8px;border-radius:6px;font-size:13px;width:70px;">';
+    html += '      <span style="color:#888;font-size:11px;">hs</span>';
+    html += '      <label style="color:#ddd;font-size:12px;">Hasta</label>';
+    html += '      <input type="number" id="strat_windowEndHour" value="' + windowEndHour + '" min="1" max="24" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 8px;border-radius:6px;font-size:13px;width:70px;">';
+    html += '      <span style="color:#888;font-size:11px;">hs</span>';
+    html += '      <span id="strat_windowPreview" style="color:#66ff66;font-size:11px;font-weight:700;margin-left:6px;">' + String(windowStartHour).padStart(2,'0') + ':00 a ' + String(windowEndHour).padStart(2,'0') + ':00</span>';
+    html += '    </div>';
+    html += '  </div>';
+
     // Save + Preview + Activate (con gate hasta llegar a `threshold` respuestas)
     const isActive = !!(strategy && strategy.isActive);
     const activatedAt = (strategy && strategy.activatedAt) ? new Date(strategy.activatedAt).toLocaleString('es-AR') : null;
@@ -13244,6 +13262,11 @@ function _renderStrategyEditor(strategy, respondedTotal) {
     if (isActive && activatedAt) {
         html += '  <div style="color:#66ff66;font-size:10.5px;margin-top:6px;">✅ Activa desde ' + escapeHtml(activatedAt) + ' · auto-waves disparadas: <strong>' + ((strategy && strategy.autoFireCount) || 0) + '</strong></div>';
     }
+    // Botón para abrir el modal de calendario en cualquier momento.
+    html += '  <div style="margin-top:8px;">';
+    html += '    <button type="button" onclick="openStrategySchedule()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.45);padding:7px 12px;border-radius:6px;font-weight:700;font-size:11.5px;cursor:pointer;">📅 Ver calendario de envíos</button>';
+    html += '    <span style="color:#888;font-size:10.5px;margin-left:6px;">Ventana horaria + próximos disparos pendientes</span>';
+    html += '  </div>';
 
     // ===== TEST FIRE: probar todas las notifs en un user cada 1 min =====
     html += '  <div style="background:rgba(255,80,80,0.06);border:1px dashed rgba(255,80,80,0.40);border-radius:8px;padding:10px;margin-top:14px;">';
@@ -13339,11 +13362,13 @@ async function saveNotifStrategy() {
     const monthlyCap = Number((document.getElementById('strat_monthlyCap') || {}).value) || 0;
     const monthlyTotalToDistribute = Number((document.getElementById('strat_monthlyTotalToDistribute') || {}).value) || 0;
     const bonusType = String((document.getElementById('strat_bonusType') || {}).value || '').trim() || 'cash';
+    const windowStartHour = Number((document.getElementById('strat_windowStartHour') || {}).value);
+    const windowEndHour   = Number((document.getElementById('strat_windowEndHour')   || {}).value);
     try {
         const r = await authFetch('/api/admin/notif-strategy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ preferences, monthlyCap, monthlyTotalToDistribute, bonusType })
+            body: JSON.stringify({ preferences, monthlyCap, monthlyTotalToDistribute, bonusType, windowStartHour, windowEndHour })
         });
         const d = await r.json();
         if (!r.ok) {
@@ -13419,11 +13444,13 @@ async function _saveNotifStrategyForPreview() {
     const monthlyCap = Number((document.getElementById('strat_monthlyCap') || {}).value) || 0;
     const monthlyTotalToDistribute = Number((document.getElementById('strat_monthlyTotalToDistribute') || {}).value) || 0;
     const bonusType = String((document.getElementById('strat_bonusType') || {}).value || '').trim() || 'cash';
+    const windowStartHour = Number((document.getElementById('strat_windowStartHour') || {}).value);
+    const windowEndHour   = Number((document.getElementById('strat_windowEndHour')   || {}).value);
     try {
         await authFetch('/api/admin/notif-strategy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ preferences, monthlyCap, monthlyTotalToDistribute, bonusType })
+            body: JSON.stringify({ preferences, monthlyCap, monthlyTotalToDistribute, bonusType, windowStartHour, windowEndHour })
         });
     } catch (_) { /* silencioso */ }
 }
@@ -13554,7 +13581,14 @@ function loadRecommendedDefaults() {
     if (total) total.value = '250000';
     const bt = document.getElementById('strat_bonusType');
     if (bt) bt.value = '50% en cargas + 1× 100% al mes';
-    showToast('🔄 Valores recomendados cargados — no guardados hasta que aprietes Guardar', 'info');
+    // Ventana horaria recomendada: 18-21hs (3hs de pico de tráfico).
+    const wStart = document.getElementById('strat_windowStartHour');
+    const wEnd   = document.getElementById('strat_windowEndHour');
+    const wPrev  = document.getElementById('strat_windowPreview');
+    if (wStart) wStart.value = '18';
+    if (wEnd)   wEnd.value   = '21';
+    if (wPrev)  wPrev.textContent = '18:00 a 21:00';
+    showToast('🔄 Valores recomendados cargados (ventana 18:00–21:00) — no guardados hasta que aprietes Guardar', 'info');
 }
 
 // Dispara el test endpoint para mandar N notifs cada 1 min al user.
@@ -13618,9 +13652,129 @@ async function toggleNotifStrategy(activate) {
         _ENCUESTA_CACHE.strategy = d;
         const c = document.getElementById('encuestaContent');
         if (c) c.innerHTML = _renderEncuesta();
+        // Al activar, mostrar modal con el detalle del calendario configurado:
+        // ventana horaria, próximos disparos pendientes y resumen por tier.
+        if (activate) {
+            try { await openStrategySchedule(); } catch (_) {}
+        }
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
+}
+
+// Modal con el detalle del calendario de envíos. Se abre solo después de
+// activar (toggleNotifStrategy(true)) o manualmente desde el botón
+// "📅 Ver calendario de envíos" del editor.
+async function openStrategySchedule() {
+    let m = document.getElementById('strategyScheduleModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'strategyScheduleModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10004;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="strategyScheduleBody" style="background:#0f1024;border:1px solid #66ff66;border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('strategyScheduleBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando calendario…</div>';
+    try {
+        const r = await authFetch('/api/admin/notif-strategy/schedule');
+        const d = await r.json();
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        body.innerHTML = _renderStrategySchedule(d);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeStrategyScheduleModal() {
+    const m = document.getElementById('strategyScheduleModal');
+    if (m) m.remove();
+}
+
+function _renderStrategySchedule(d) {
+    const w = d.window || { startHour: 18, endHour: 21, label: '18:00 a 21:00' };
+    const tierLabels = { suave: '🟢 SUAVE', normal: '🟡 NORMAL', activo: '🔴 ACTIVO', solo_reembolsos: '🔔 SOLO REEMB' };
+    const tierColors = { suave: '#66ff66', normal: '#ffd700', activo: '#ff8c5a', solo_reembolsos: '#00d4ff' };
+    const tc = d.tierCounts || {};
+    const items = d.items || [];
+
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
+    html += '  <h3 style="margin:0;color:#66ff66;font-size:18px;">📅 Calendario de envíos</h3>';
+    html += '  <button type="button" onclick="closeStrategyScheduleModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    // Ventana configurada
+    html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '  <div style="color:#66ff66;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;">Ventana horaria</div>';
+    html += '  <div style="color:#fff;font-size:18px;font-weight:800;">' + escapeHtml(w.label) + '</div>';
+    html += '  <div style="color:#bbb;font-size:11px;margin-top:4px;line-height:1.5;">Cada usuario recibe la notificación a una hora <strong>random</strong> dentro de esta ventana. Si la ventana de hoy ya pasó cuando se dispara la wave, los envíos se reprograman automáticamente para mañana.</div>';
+    html += '</div>';
+
+    // Resumen por tier
+    html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '  <div style="color:#d4af37;font-weight:900;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Próximos disparos pendientes — total: ' + (d.pendingTotal || 0) + '</div>';
+    html += '  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;">';
+    for (const t of Object.keys(tierLabels)) {
+        const c = tc[t] || 0;
+        html += '    <div style="background:rgba(0,0,0,0.30);border:1px solid rgba(' + _hexToRgb(tierColors[t]) + ',0.40);border-radius:8px;padding:8px;">';
+        html += '      <div style="color:' + tierColors[t] + ';font-weight:900;font-size:11px;letter-spacing:1px;">' + tierLabels[t] + '</div>';
+        html += '      <div style="color:#fff;font-size:18px;font-weight:800;margin-top:2px;">' + c + '</div>';
+        html += '      <div style="color:#888;font-size:10px;">notifs pendientes</div>';
+        html += '    </div>';
+    }
+    html += '  </div>';
+    if (d.earliestAt && d.latestAt) {
+        const e1 = new Date(d.earliestAt).toLocaleString('es-AR');
+        const e2 = new Date(d.latestAt).toLocaleString('es-AR');
+        html += '  <div style="color:#bbb;font-size:11px;margin-top:8px;line-height:1.5;">Primer envío: <strong style="color:#fff;">' + escapeHtml(e1) + '</strong> · Último: <strong style="color:#fff;">' + escapeHtml(e2) + '</strong></div>';
+    }
+    html += '</div>';
+
+    // Listado detallado
+    if (items.length === 0) {
+        html += '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.10);border-radius:10px;">';
+        html += '  Todavía no hay disparos pendientes de la estrategia.<br>';
+        html += '  <span style="color:#888;font-size:11px;">Cuando se cruce el umbral de respondentes, vas a ver acá las próximas notifs programadas.</span>';
+        html += '</div>';
+    } else {
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:8px;">';
+        html += '  <div style="color:#bbb;font-size:11px;margin-bottom:8px;padding:0 4px;">Ordenado por hora de envío. Mostrando hasta 200 de ' + (d.pendingTotal || 0) + '.</div>';
+        html += '  <div style="overflow-x:auto;">';
+        html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '    <thead><tr style="background:rgba(255,255,255,0.04);">';
+        html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Hora</th>';
+        html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Usuario</th>';
+        html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Tier</th>';
+        html += '      <th style="text-align:left;padding:6px 8px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Título</th>';
+        html += '    </tr></thead><tbody>';
+        for (const it of items) {
+            const dt = it.scheduledFor ? new Date(it.scheduledFor) : null;
+            const dtStr = dt ? dt.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+            const tierLbl = tierLabels[it.tier] || (it.tier || '—');
+            const tierCol = tierColors[it.tier] || '#aaa';
+            html += '<tr>';
+            html += '  <td style="padding:5px 8px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);font-family:monospace;">' + escapeHtml(dtStr) + '</td>';
+            html += '  <td style="padding:5px 8px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.targetUsername || '') + '</td>';
+            html += '  <td style="padding:5px 8px;color:' + tierCol + ';border-bottom:1px solid rgba(255,255,255,0.04);font-weight:700;">' + escapeHtml(tierLbl) + '</td>';
+            html += '  <td style="padding:5px 8px;color:#bbb;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.title || '') + '</td>';
+            html += '</tr>';
+        }
+        html += '  </tbody></table>';
+        html += '  </div>';
+        html += '</div>';
+    }
+
+    html += '<div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">';
+    html += '  <button type="button" onclick="openStrategySchedule()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.45);padding:8px 14px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">🔄 Refrescar</button>';
+    html += '  <button type="button" onclick="closeStrategyScheduleModal()" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 14px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>';
+    html += '</div>';
+
+    return html;
 }
 
 // Reporte de reaccion: pegamos al endpoint y renderizamos al final del
