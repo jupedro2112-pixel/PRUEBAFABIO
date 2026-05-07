@@ -12,10 +12,17 @@ VIP.reviews = (function () {
     let _selectedStars = 0;
     let _myReviewLoaded = false;
     let _feedPollId = null;
-    // Comentario por defecto cuando el user no escribe nada. Si lo deja
-    // así, queda como 5 estrellas en el feed. Apenas hace focus en el
-    // textarea para escribir, se limpia para que arranque con sus palabras.
-    const STAR_DEFAULT = '5 estrellas';
+    // Comentario por defecto: matchea con las estrellas que el user tocó.
+    // 5 estrellas → "5 estrellas", 4 → "4 estrellas", etc. Si todavía no
+    // tocó ninguna, default "5 estrellas". Apenas el user hace focus en el
+    // textarea, se limpia para que arranque con sus propias palabras.
+    function _defaultCommentForStars(n) {
+        const v = Math.max(1, Math.min(5, Number(n) || 5));
+        return v + ' estrellas';
+    }
+    function _isDefaultComment(s) {
+        return /^[1-5] estrellas$/.test(String(s || '').trim());
+    }
 
     function _q(id) { return document.getElementById(id); }
 
@@ -40,11 +47,21 @@ VIP.reviews = (function () {
         if (_wireFormOnce._wired) return;
         _wireFormOnce._wired = true;
 
+        const ta = _q('reviewCommentInput');
+        const cnt = _q('reviewCharCount');
+
         const stars = document.querySelectorAll('#reviewStarsRow .review-star');
         stars.forEach(st => {
             st.addEventListener('click', () => {
                 _selectedStars = Number(st.getAttribute('data-v'));
                 _paintStarsRow(_selectedStars);
+                // Si el comentario es vacío o aún tiene el default ("N
+                // estrellas"), lo actualizamos para que matchee la cantidad
+                // que tocó el user. Si ya escribió algo propio, no tocamos.
+                if (ta && (ta.value === '' || _isDefaultComment(ta.value))) {
+                    ta.value = _defaultCommentForStars(_selectedStars);
+                    if (cnt) cnt.textContent = String(ta.value.length);
+                }
             });
             st.addEventListener('mouseenter', () => {
                 _hoverStarsRow(Number(st.getAttribute('data-v')));
@@ -55,18 +72,15 @@ VIP.reviews = (function () {
             });
         });
 
-        const ta = _q('reviewCommentInput');
-        const cnt = _q('reviewCharCount');
-        // Default "★★★★★": si el user no escribe nada, el comentario queda
-        // como 5 estrellas (no como vacío). Apenas hace focus para escribir,
-        // se limpia para que arranque con sus propias palabras.
+        // Default inicial "5 estrellas". Apenas el user hace focus para
+        // escribir, se limpia para que arranque con sus palabras.
         if (ta && !ta.value) {
-            ta.value = STAR_DEFAULT;
+            ta.value = _defaultCommentForStars(5);
             if (cnt) cnt.textContent = String(ta.value.length);
         }
         if (ta) {
             ta.addEventListener('focus', () => {
-                if (ta.value === STAR_DEFAULT) {
+                if (_isDefaultComment(ta.value)) {
                     ta.value = '';
                     if (cnt) cnt.textContent = '0';
                 }
@@ -188,9 +202,9 @@ VIP.reviews = (function () {
         }
         const ta = _q('reviewCommentInput');
         let comment = ((ta && ta.value) || '').trim().slice(0, 100);
-        // Si dejó el campo vacío (no escribió o borró todo), enviamos las 5
-        // estrellas por default para que en el feed quede como ★★★★★.
-        if (!comment) comment = STAR_DEFAULT;
+        // Si dejó el campo vacío (no escribió o borró todo), enviamos
+        // "{N} estrellas" matcheando las que tocó. Default 5 si no tocó.
+        if (!comment) comment = _defaultCommentForStars(_selectedStars || 5);
         const phoneInp = _q('reviewPhoneInput');
         const phoneRow = _q('reviewPhoneRow');
         const phoneVisible = phoneRow && !phoneRow.hidden;
@@ -358,9 +372,9 @@ VIP.reviews = (function () {
         const renderItem = (it) => {
             const stars = _renderStars(it.stars);
             const rawComment = it.comment || '';
-            // Reviews sin comentario se muestran como "5 estrellas" en blanco
-            // (mismo estilo que el resto de los comentarios — sin color especial).
-            const comment = _esc(rawComment || '5 estrellas');
+            // Reviews sin comentario muestran "{N} estrellas" matcheando el
+            // puntaje del review (5 → "5 estrellas", 4 → "4 estrellas", etc.).
+            const comment = _esc(rawComment || _defaultCommentForStars(it.stars));
             // tooltip nativo con el comentario completo + fecha (para hover desktop)
             const when = _whenStr(it.updatedAt);
             const tipParts = [];

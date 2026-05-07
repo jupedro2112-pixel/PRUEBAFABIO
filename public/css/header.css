@@ -769,7 +769,7 @@
 .backup-phone-popover {
     position: absolute;
     top: calc(100% + 8px);
-    left: 0;
+    right: 0;
     width: 280px;
     background: rgba(15, 18, 30, 0.98);
     border: 1px solid rgba(31, 140, 255, 0.45);
@@ -869,7 +869,7 @@
 
 @media (max-width: 600px) {
     .backup-phone-popover {
-        left: -8px;
+        right: -8px;
         width: min(86vw, 300px);
     }
 }
