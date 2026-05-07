@@ -8206,6 +8206,137 @@ app.post('/api/admin/user-lines/reassign-orphans', authMiddleware, adminMiddlewa
   }
 });
 
+// Estadísticas de actividad por línea: clasifica los users de UNA línea
+// (xlsx + auto-asignados) en buckets según días desde la última carga real
+// (PlayerStats.lastRealDepositDate). Buckets:
+//   🔥 calientes  : 0-10 días
+//   ⚠ en riesgo  : 10-20 días
+//   💔 perdidos   : 20-30 días
+//   ☠ inactivos  : +30 días o nunca cargó
+app.get('/api/admin/user-lines/line-activity-stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String(req.query.teamName || '').trim();
+    const linePhone = String(req.query.linePhone || '').trim();
+    if (!teamName && !linePhone) {
+      return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
+    }
+
+    // 1) Junto la lista de usernames únicos: UserLineLookup (xlsx) + User asignados.
+    const lookupFilter = {};
+    if (teamName) lookupFilter.lineTeamName = teamName;
+    if (linePhone) lookupFilter.linePhone = linePhone;
+    const lookupRows = await UserLineLookup.find(lookupFilter, { usernameNorm: 1, usernameOriginal: 1, _id: 0 }).lean();
+
+    const userFilter = {};
+    if (teamName) userFilter.lineTeamName = teamName;
+    if (linePhone) userFilter.linePhone = linePhone;
+    const userRows = await User.find(userFilter, { username: 1, lastLogin: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }).lean();
+
+    // Set de usernames únicos (lowercase para match con PlayerStats).
+    const allUsernames = new Set();
+    const meta = new Map(); // username -> { fromXlsx, hasUser, hasApp, lastLogin, displayName }
+    for (const r of lookupRows) {
+      const k = String(r.usernameNorm || '').toLowerCase();
+      if (!k) continue;
+      allUsernames.add(k);
+      meta.set(k, {
+        fromXlsx: true,
+        hasUser: false,
+        hasApp: false,
+        lastLogin: null,
+        displayName: r.usernameOriginal || r.usernameNorm
+      });
+    }
+    for (const u of userRows) {
+      const k = String(u.username || '').toLowerCase();
+      if (!k) continue;
+      allUsernames.add(k);
+      const hasApp = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      const cur = meta.get(k) || { fromXlsx: false, displayName: u.username };
+      cur.hasUser = true;
+      cur.hasApp = hasApp;
+      cur.lastLogin = u.lastLogin || null;
+      meta.set(k, cur);
+    }
+
+    // 2) PlayerStats para cada uno.
+    const usernamesArr = Array.from(allUsernames);
+    const stats = usernamesArr.length > 0
+      ? await PlayerStats.find(
+          { username: { $in: usernamesArr } },
+          { username: 1, lastRealDepositDate: 1, realDeposits30d: 1, _id: 0 }
+        ).lean()
+      : [];
+    const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+
+    // 3) Bucketize.
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    const buckets = {
+      calientes:  { label: '🔥 Calientes (0-10 días)',  rangeMin: 0,  rangeMax: 10,    items: [] },
+      enRiesgo:   { label: '⚠ En riesgo (10-20 días)',  rangeMin: 10, rangeMax: 20,    items: [] },
+      perdidos:   { label: '💔 Perdidos (20-30 días)',  rangeMin: 20, rangeMax: 30,    items: [] },
+      inactivos:  { label: '☠ Inactivos (+30 días)',    rangeMin: 30, rangeMax: 99999, items: [] }
+    };
+    let neverDeposited = 0;
+    let totalDeposit30d = 0;
+
+    for (const username of usernamesArr) {
+      const m = meta.get(username) || { displayName: username };
+      const s = statsMap.get(username);
+      const lastDep = s && s.lastRealDepositDate ? new Date(s.lastRealDepositDate).getTime() : null;
+      let bucket = 'inactivos';
+      let daysSince = null;
+      if (lastDep) {
+        daysSince = Math.floor((now - lastDep) / DAY);
+        if (daysSince <= 10) bucket = 'calientes';
+        else if (daysSince <= 20) bucket = 'enRiesgo';
+        else if (daysSince <= 30) bucket = 'perdidos';
+        else bucket = 'inactivos';
+      } else {
+        neverDeposited++;
+      }
+      const item = {
+        username: m.displayName || username,
+        daysSince,
+        lastDepositAt: lastDep ? new Date(lastDep) : null,
+        deposits30d: (s && s.realDeposits30d) || 0,
+        hasApp: !!m.hasApp,
+        registered: !!m.hasUser,
+        fromXlsx: !!m.fromXlsx
+      };
+      buckets[bucket].items.push(item);
+      totalDeposit30d += item.deposits30d || 0;
+    }
+
+    // Ordenar items dentro de cada bucket: más recientes primero (calientes), más viejos primero (resto).
+    for (const k of Object.keys(buckets)) {
+      buckets[k].items.sort((a, b) => {
+        const ta = a.lastDepositAt ? a.lastDepositAt.getTime() : 0;
+        const tb = b.lastDepositAt ? b.lastDepositAt.getTime() : 0;
+        return tb - ta;
+      });
+    }
+
+    res.json({
+      teamName: teamName || null,
+      linePhone: linePhone || null,
+      totalUsers: usernamesArr.length,
+      neverDeposited,
+      totalDeposit30d,
+      buckets: {
+        calientes:  { label: buckets.calientes.label,  count: buckets.calientes.items.length,  items: buckets.calientes.items.slice(0, 200) },
+        enRiesgo:   { label: buckets.enRiesgo.label,   count: buckets.enRiesgo.items.length,   items: buckets.enRiesgo.items.slice(0, 200) },
+        perdidos:   { label: buckets.perdidos.label,   count: buckets.perdidos.items.length,   items: buckets.perdidos.items.slice(0, 200) },
+        inactivos:  { label: buckets.inactivos.label,  count: buckets.inactivos.items.length,  items: buckets.inactivos.items.slice(0, 200) }
+      }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/line-activity-stats: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Renombrar UNA línea (cambiar la etiqueta después de "Equipo · ").
 // Recibe: { teamName (label completo actual, ej "Oro · Línea 1"), linePhone,
 //          newLabel (la parte después del " · " — si vacío, queda solo "Oro") }

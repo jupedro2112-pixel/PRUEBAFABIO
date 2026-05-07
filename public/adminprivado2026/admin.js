@@ -5072,6 +5072,7 @@ function _renderTeamCard(t, isExpanded) {
             html += '<button type="button" onclick="teamLineShowList(' + teamArg + ',' + phoneArg + ')" title="Ver lista cargada" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:5px;cursor:pointer;margin-right:4px;">👁</button>';
             html += '<button type="button" onclick="teamLineShowHistory(' + teamArg + ',' + phoneArg + ')" title="Historial de cargas .xlsx" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:5px;cursor:pointer;margin-right:4px;">📅</button>';
             html += '<button type="button" onclick="teamLineDownloadCsv(' + teamArg + ',' + phoneArg + ')" title="Descargar CSV" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:5px;cursor:pointer;margin-right:4px;">📥</button>';
+            html += '<button type="button" onclick="teamLineActivityStats(' + teamArg + ',' + phoneArg + ')" title="Estadísticas de actividad: calientes, en riesgo, perdidos, inactivos" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(0,255,136,0.10);border:1px solid rgba(0,255,136,0.40);color:#25d366;border-radius:5px;cursor:pointer;margin-right:4px;">📊</button>';
             html += '<button type="button" onclick="teamLineDiagnose(' + teamArg + ',' + phoneArg + ')" title="Diagnosticar esta línea (verifica que los users estén bien asignados)" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(255,170,68,0.10);border:1px solid rgba(255,170,68,0.40);color:#ffaa44;border-radius:5px;cursor:pointer;margin-right:4px;">🔍</button>';
             html += '<button type="button" onclick="teamLineClearAndReload(' + teamArg + ',' + phoneArg + ')" title="Borrar carga actual de esta línea (sólo de esta línea, no toca otras)" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.40);color:#ff8080;border-radius:5px;cursor:pointer;">🗑</button>';
             html += '</td>';
@@ -5341,6 +5342,124 @@ async function teamLineUploadConfirm(teamName, linePhone) {
     if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
     // Refrescar Equipos (para que la celda "Último archivo" se actualice).
     setTimeout(() => { try { loadTeams(); } catch (_) {} }, 600);
+}
+
+// Estadísticas de actividad por línea: clasifica los users del archivo en
+// 4 buckets según días desde la última carga real (calientes / en riesgo /
+// perdidos / inactivos). Muestra modal con tabs.
+async function teamLineActivityStats(teamName, linePhone) {
+    if (!teamName) return;
+    let m = document.getElementById('teamLineActivityModal');
+    if (m) m.remove();
+    m = document.createElement('div');
+    m.id = 'teamLineActivityModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:10010;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+    m.innerHTML = '<div id="teamLineActivityBody" style="background:#0f1024;border:1px solid #25d366;border-radius:12px;padding:18px;max-width:820px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+    document.body.appendChild(m);
+    const body = document.getElementById('teamLineActivityBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando estadísticas…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        const r = await authFetch('/api/admin/user-lines/line-activity-stats?' + params.toString());
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error ' + r.status + '</div>';
+            return;
+        }
+        const j = await r.json();
+        body.innerHTML = _renderActivityStatsHtml(j, teamName, linePhone);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeTeamLineActivityModal() {
+    const m = document.getElementById('teamLineActivityModal');
+    if (m) m.remove();
+}
+
+window._teamLineActivityTab = 'calientes';
+function _setTeamLineActivityTab(tab, j, teamName, linePhone) {
+    window._teamLineActivityTab = tab;
+    const body = document.getElementById('teamLineActivityBody');
+    if (body) body.innerHTML = _renderActivityStatsHtml(j, teamName, linePhone);
+}
+
+function _renderActivityStatsHtml(j, teamName, linePhone) {
+    const total = j.totalUsers || 0;
+    const buckets = j.buckets || {};
+    const colors = {
+        calientes:  { bg: 'rgba(255,80,80,0.12)',  border: '#ff5050', text: '#ff5050' },
+        enRiesgo:   { bg: 'rgba(255,170,68,0.12)', border: '#ffaa44', text: '#ffaa44' },
+        perdidos:   { bg: 'rgba(157,78,221,0.12)', border: '#9b30ff', text: '#c89bff' },
+        inactivos:  { bg: 'rgba(120,120,120,0.12)',border: '#888',    text: '#bbb' }
+    };
+    const tab = window._teamLineActivityTab || 'calientes';
+
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
+    html += '  <h3 style="margin:0;color:#25d366;font-size:17px;">📊 Actividad · ' + escapeHtml(teamName) + (linePhone ? ' · ' + escapeHtml(linePhone) : '') + '</h3>';
+    html += '  <button type="button" onclick="closeTeamLineActivityModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    // Resumen + 4 cards de bucket
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px;">';
+    for (const k of ['calientes', 'enRiesgo', 'perdidos', 'inactivos']) {
+        const b = buckets[k] || { label: k, count: 0 };
+        const c = colors[k];
+        const pct = total > 0 ? Math.round((b.count / total) * 100) : 0;
+        const isActive = tab === k;
+        const jArg = JSON.stringify(j).replace(/"/g, '&quot;');
+        const teamArg = JSON.stringify(teamName).replace(/"/g, '&quot;');
+        const phoneArg = JSON.stringify(linePhone || '').replace(/"/g, '&quot;');
+        html += '<div onclick="_setTeamLineActivityTab(\'' + k + '\', ' + jArg + ',' + teamArg + ',' + phoneArg + ')" style="cursor:pointer;background:' + c.bg + ';border:' + (isActive ? '2px' : '1px') + ' solid ' + c.border + ';border-radius:10px;padding:10px;">';
+        html += '  <div style="color:' + c.text + ';font-size:11px;font-weight:700;letter-spacing:0.5px;">' + escapeHtml(b.label) + '</div>';
+        html += '  <div style="color:#fff;font-size:24px;font-weight:900;margin-top:3px;">' + b.count + '</div>';
+        html += '  <div style="color:#888;font-size:10.5px;">' + pct + '% del total</div>';
+        html += '</div>';
+    }
+    html += '</div>';
+
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:11.5px;color:#bbb;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;">';
+    html += '  <span>Total únicos: <strong style="color:#fff;">' + total + '</strong></span>';
+    html += '  <span>Nunca cargaron: <strong style="color:#ff8080;">' + (j.neverDeposited || 0) + '</strong></span>';
+    html += '  <span>Cargas 30d (suma): <strong style="color:#25d366;">$' + Number(j.totalDeposit30d || 0).toLocaleString('es-AR') + '</strong></span>';
+    html += '</div>';
+
+    // Tabla del bucket activo
+    const activeBucket = buckets[tab] || { items: [], label: tab };
+    const items = activeBucket.items || [];
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px;">';
+    html += '  <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">' + escapeHtml(activeBucket.label) + ' · mostrando ' + items.length + ' de ' + activeBucket.count + '</div>';
+    if (items.length === 0) {
+        html += '<div style="text-align:center;color:#666;padding:24px;">Sin usuarios en este bucket.</div>';
+    } else {
+        html += '<div style="overflow-x:auto;max-height:48vh;overflow-y:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Usuario</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Días</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Cargas 30d</th>';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estado</th>';
+        html += '  </tr></thead><tbody>';
+        for (const it of items) {
+            const days = it.daysSince === null ? '—' : it.daysSince;
+            html += '<tr>';
+            html += '  <td style="padding:5px 10px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.username || '') + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#bbb;border-bottom:1px solid rgba(255,255,255,0.04);font-family:monospace;">' + days + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.deposits30d ? '$' + Number(it.deposits30d).toLocaleString('es-AR') : '—') + '</td>';
+            html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.hasApp ? '<span style="color:#25d366;">📱</span>' : '<span style="color:#888;">—</span>') + '</td>';
+            html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.registered ? '<span style="color:#25d366;">✅ Reg.</span>' : '<span style="color:#ffaa44;">⏳ Pre-asig.</span>') + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    return html;
 }
 
 // Renombra UNA línea (cambia la etiqueta después de "Equipo · "). NO toca
