@@ -12,6 +12,10 @@ VIP.reviews = (function () {
     let _selectedStars = 0;
     let _myReviewLoaded = false;
     let _feedPollId = null;
+    // Comentario por defecto cuando el user no escribe nada. Si lo deja
+    // así, queda como 5 estrellas en el feed. Apenas hace focus en el
+    // textarea para escribir, se limpia para que arranque con sus palabras.
+    const STAR_DEFAULT = '★★★★★';
 
     function _q(id) { return document.getElementById(id); }
 
@@ -53,6 +57,21 @@ VIP.reviews = (function () {
 
         const ta = _q('reviewCommentInput');
         const cnt = _q('reviewCharCount');
+        // Default "★★★★★": si el user no escribe nada, el comentario queda
+        // como 5 estrellas (no como vacío). Apenas hace focus para escribir,
+        // se limpia para que arranque con sus propias palabras.
+        if (ta && !ta.value) {
+            ta.value = STAR_DEFAULT;
+            if (cnt) cnt.textContent = String(ta.value.length);
+        }
+        if (ta) {
+            ta.addEventListener('focus', () => {
+                if (ta.value === STAR_DEFAULT) {
+                    ta.value = '';
+                    if (cnt) cnt.textContent = '0';
+                }
+            }, { once: false });
+        }
         if (ta && cnt) {
             ta.addEventListener('input', () => {
                 cnt.textContent = String(ta.value.length);
@@ -87,10 +106,18 @@ VIP.reviews = (function () {
 
     function _renderMiniStars(avg) {
         const a = Math.max(0, Math.min(5, Number(avg) || 0));
-        const full = Math.floor(a + 0.001);
+        const full = Math.floor(a);
+        const frac = a - full;
+        // 4.5 → 4 estrellas llenas + 1 media. 4.8 → 5 llenas (round-up).
+        // 4.1 → 4 llenas (sin media). Umbral medio: [0.25, 0.75).
+        const roundUp = frac >= 0.75;
+        const half = !roundUp && frac >= 0.25;
+        const totalFull = roundUp ? full + 1 : full;
         let html = '';
         for (let i = 1; i <= 5; i++) {
-            html += i <= full ? '★' : '<span class="empty">★</span>';
+            if (i <= totalFull) html += '★';
+            else if (i === totalFull + 1 && half) html += '<span class="half">★</span>';
+            else html += '<span class="empty">★</span>';
         }
         return html;
     }
@@ -160,7 +187,10 @@ VIP.reviews = (function () {
             return;
         }
         const ta = _q('reviewCommentInput');
-        const comment = ((ta && ta.value) || '').trim().slice(0, 100);
+        let comment = ((ta && ta.value) || '').trim().slice(0, 100);
+        // Si dejó el campo vacío (no escribió o borró todo), enviamos las 5
+        // estrellas por default para que en el feed quede como ★★★★★.
+        if (!comment) comment = STAR_DEFAULT;
         const phoneInp = _q('reviewPhoneInput');
         const phoneRow = _q('reviewPhoneRow');
         const phoneVisible = phoneRow && !phoneRow.hidden;
@@ -211,9 +241,17 @@ VIP.reviews = (function () {
     function _renderAvgStars(avg) {
         const a = Math.max(0, Math.min(5, Number(avg) || 0));
         const full = Math.floor(a);
+        const frac = a - full;
+        // Misma logica que mini-stars: 4.5 → 4 llenas + 1 media (la quinta
+        // queda partida al 50% en dorado). 4.8 redondea para arriba; 4.1 deja
+        // la quinta vacía.
+        const roundUp = frac >= 0.75;
+        const half = !roundUp && frac >= 0.25;
+        const totalFull = roundUp ? full + 1 : full;
         let html = '';
         for (let i = 1; i <= 5; i++) {
-            if (i <= full) html += '<span class="filled">★</span>';
+            if (i <= totalFull) html += '<span class="filled">★</span>';
+            else if (i === totalFull + 1 && half) html += '<span class="half">★</span>';
             else html += '<span class="empty">★</span>';
         }
         return html;
@@ -320,7 +358,8 @@ VIP.reviews = (function () {
         const renderItem = (it) => {
             const stars = _renderStars(it.stars);
             const rawComment = it.comment || '';
-            const comment = rawComment ? _esc(rawComment) : '<span style="color:#888;font-style:italic;">—</span>';
+            // Reviews sin comentario se muestran como ★★★★★ (no como "—").
+            const comment = rawComment ? _esc(rawComment) : '<span style="color:#ffd700;font-weight:700;">★★★★★</span>';
             // tooltip nativo con el comentario completo + fecha (para hover desktop)
             const when = _whenStr(it.updatedAt);
             const tipParts = [];
