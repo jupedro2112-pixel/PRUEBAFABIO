@@ -44,6 +44,7 @@ const RaffleSpend = require('./RaffleSpend');
 const WeeklyCalendarPlan = require('./WeeklyCalendarPlan');
 const LandingVisit = require('./LandingVisit');
 const Segment = require('./Segment');
+const MasterAnalysisSnapshot = require('./MasterAnalysisSnapshot');
 
 
 /**
@@ -460,6 +461,7 @@ module.exports = {
   WeeklyCalendarPlan,
   LandingVisit,
   Segment,
+  MasterAnalysisSnapshot,
 
   // Funciones de conexión
   connectDB,

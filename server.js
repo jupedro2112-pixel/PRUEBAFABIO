@@ -78,6 +78,7 @@ const {
   RaffleSpend,
   WeeklyCalendarPlan,
   Segment,
+  MasterAnalysisSnapshot,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -13943,6 +13944,230 @@ app.get('/api/admin/raffles/:id/verify-cargas', authMiddleware, adminMiddleware,
   } catch (err) {
     logger.error(`/api/admin/raffles/:id/verify-cargas: ${err.message}`);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// MASTER ANALYSIS
+// =====================================================================
+// Analisis ad-hoc del Segment maestro (isMaster:true) para distintas
+// secciones del admin. El admin aprieta "📊 Analizar con Maestro" en una
+// seccion → corre el analisis correspondiente, persiste un snapshot en
+// MasterAnalysisSnapshot y devuelve el snapshot + historial previo para
+// poder ver evolucion entre uploads del archivo maestro.
+//
+// Secciones soportadas:
+//   - top_jugadores: top N por monto cargado
+//   - top_stats: totales globales (deposits/withdraws/bonuses/neto)
+//   - recuperacion: usuarios por estado (activo/en_riesgo/perdido/inactivo)
+//   - automatizaciones: cuantos users matchean cada regla activa hoy
+//   - relampago: stats de cada relampago activo cruzados contra master
+// =====================================================================
+
+const _MASTER_ANALYSIS_SECTIONS = ['relampago', 'top_jugadores', 'top_stats', 'recuperacion', 'automatizaciones'];
+
+// Calcula el analisis pedido leyendo del Segment maestro. Devuelve un
+// objeto con la data + meta (rowsAnalyzed, lastUploadAt). Si no hay
+// master configurado, tira error.
+async function _runMasterAnalysis(section, opts = {}) {
+  const master = await Segment.findOne({ isMaster: true }).lean();
+  if (!master) {
+    throw new Error('No hay segmento marcado como Maestro. Configurá uno en Segmentos.');
+  }
+  const rows = (master.rows || []);
+  const fromMs = opts.fromMs || null;
+  const toMs = opts.toMs || null;
+
+  const filteredRows = rows.filter(r => {
+    if (!r) return false;
+    if (fromMs != null && r.t != null && r.t < fromMs) return false;
+    if (toMs != null && r.t != null && r.t > toMs) return false;
+    return true;
+  });
+
+  const lastUploadAt = (master.uploads && master.uploads.length > 0)
+    ? master.uploads[master.uploads.length - 1].at
+    : master.updatedAt;
+
+  let data;
+  if (section === 'top_jugadores') {
+    // Agrupar por usuario, sumar deposits.
+    const byUser = {};
+    for (const r of filteredRows) {
+      if (!r.u || r.kind !== 'deposit') continue;
+      const u = String(r.u).toLowerCase();
+      if (!byUser[u]) byUser[u] = { username: u, count: 0, sum: 0, lastAt: 0 };
+      byUser[u].count++;
+      byUser[u].sum += (r.amount || 0);
+      if (r.t && r.t > byUser[u].lastAt) byUser[u].lastAt = r.t;
+    }
+    const top = Object.values(byUser).sort((a, b) => b.sum - a.sum).slice(0, 50);
+    data = {
+      totalUsers: Object.keys(byUser).length,
+      totalDepositsSum: top.reduce((s, x) => s + x.sum, 0),
+      top
+    };
+  } else if (section === 'top_stats') {
+    let depCount = 0, depSum = 0, witCount = 0, witSum = 0, bonCount = 0, bonSum = 0;
+    const usersDep = new Set(), usersWit = new Set();
+    for (const r of filteredRows) {
+      if (!r.u) continue;
+      if (r.kind === 'deposit') { depCount++; depSum += (r.amount || 0); usersDep.add(r.u); }
+      else if (r.kind === 'withdraw') { witCount++; witSum += (r.amount || 0); usersWit.add(r.u); }
+      else if (r.kind === 'bonus') { bonCount++; bonSum += (r.amount || 0); }
+    }
+    data = {
+      deposits: { count: depCount, sum: depSum, uniqueUsers: usersDep.size },
+      withdraws: { count: witCount, sum: witSum, uniqueUsers: usersWit.size },
+      bonuses: { count: bonCount, sum: bonSum },
+      netToHouse: depSum - witSum - bonSum
+    };
+  } else if (section === 'recuperacion') {
+    // Estado por user segun dias desde ultima carga real (deposit) en el
+    // master. Activo <7d, en_riesgo 7-14d, perdido 14-30d, inactivo >30d.
+    const now = Date.now();
+    const lastByUser = {};
+    for (const r of filteredRows) {
+      if (!r.u || r.kind !== 'deposit') continue;
+      const u = String(r.u).toLowerCase();
+      if (!lastByUser[u] || (r.t && r.t > lastByUser[u])) lastByUser[u] = r.t || 0;
+    }
+    const buckets = { activo: 0, en_riesgo: 0, perdido: 0, inactivo: 0 };
+    const usersByBucket = { activo: [], en_riesgo: [], perdido: [], inactivo: [] };
+    for (const u of Object.keys(lastByUser)) {
+      const days = (now - (lastByUser[u] || 0)) / (24 * 3600 * 1000);
+      let b;
+      if (days < 7) b = 'activo';
+      else if (days < 14) b = 'en_riesgo';
+      else if (days < 30) b = 'perdido';
+      else b = 'inactivo';
+      buckets[b]++;
+      if (usersByBucket[b].length < 200) usersByBucket[b].push({ username: u, daysSince: Math.round(days) });
+    }
+    data = { totalUsers: Object.keys(lastByUser).length, buckets, samples: usersByBucket };
+  } else if (section === 'automatizaciones') {
+    // Para cada regla activa, contar cuantos users matchearian su criterio
+    // basico (cargas en ventana). Es una aproximacion — el sistema real
+    // de NotificationRule tiene mas filtros (audience, equipo, etc.).
+    const rules = await NotificationRule.find({ isActive: true }).lean().catch(() => []);
+    const now = Date.now();
+    // Pre-armar por usuario: cantidad de cargas en 7d, 14d, 30d.
+    const stats = {};
+    for (const r of filteredRows) {
+      if (!r.u || r.kind !== 'deposit') continue;
+      const u = String(r.u).toLowerCase();
+      if (!stats[u]) stats[u] = { d7: 0, d14: 0, d30: 0, lastAt: 0 };
+      const ageDays = (now - (r.t || 0)) / (24 * 3600 * 1000);
+      if (ageDays <= 7) stats[u].d7++;
+      if (ageDays <= 14) stats[u].d14++;
+      if (ageDays <= 30) stats[u].d30++;
+      if (r.t && r.t > stats[u].lastAt) stats[u].lastAt = r.t;
+    }
+    const ruleResults = rules.map(rule => {
+      const minCharges = Number(rule.minChargesLastDays || 0);
+      const windowDays = Number(rule.minChargesLastDaysWindow || 30);
+      const bucket = windowDays <= 7 ? 'd7' : (windowDays <= 14 ? 'd14' : 'd30');
+      let matches = 0;
+      for (const u of Object.keys(stats)) if (stats[u][bucket] >= minCharges) matches++;
+      return {
+        id: rule.id || String(rule._id),
+        name: rule.name || rule.title || '(sin nombre)',
+        minCharges, windowDays, matches
+      };
+    });
+    data = { totalRules: rules.length, totalUsersInMaster: Object.keys(stats).length, rules: ruleResults };
+  } else if (section === 'relampago') {
+    // Stats de relampagos activos cruzando contra el master.
+    const raffles = await Raffle.find({ raffleType: 'relampago', status: { $in: ['active', 'closed'] } }).lean();
+    const cargasByUser = {};
+    for (const r of filteredRows) {
+      if (!r.u || r.kind !== 'deposit') continue;
+      const u = String(r.u).toLowerCase();
+      cargasByUser[u] = (cargasByUser[u] || 0) + 1;
+    }
+    const out = [];
+    for (const raffle of raffles) {
+      const parts = await RaffleParticipation.find({ raffleId: raffle.id }).lean();
+      let qualifying = 0, total = parts.length;
+      for (const p of parts) {
+        const c = cargasByUser[String(p.username || '').toLowerCase()] || 0;
+        if (c >= 5) qualifying++;
+      }
+      out.push({ id: raffle.id, name: raffle.name, status: raffle.status, total, qualifying });
+    }
+    data = { rafflesCount: out.length, raffles: out };
+  } else {
+    throw new Error('Seccion no soportada: ' + section);
+  }
+
+  return {
+    section,
+    masterSlug: master.slug,
+    masterUploadAt: lastUploadAt,
+    rangeFrom: fromMs ? new Date(fromMs) : null,
+    rangeTo: toMs ? new Date(toMs) : null,
+    rowsAnalyzed: filteredRows.length,
+    data
+  };
+}
+
+// POST /api/admin/master-analysis/:section
+// Corre el analisis fresco, persiste snapshot, devuelve { snapshot, history }.
+app.post('/api/admin/master-analysis/:section', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const section = String(req.params.section || '').toLowerCase();
+    if (!_MASTER_ANALYSIS_SECTIONS.includes(section)) {
+      return res.status(400).json({ error: 'Seccion invalida. Validas: ' + _MASTER_ANALYSIS_SECTIONS.join(', ') });
+    }
+    const fromQ = req.query.from ? new Date(req.query.from) : null;
+    const toQ = req.query.to ? new Date(req.query.to) : null;
+    const fromMs = fromQ && !isNaN(fromQ.getTime()) ? fromQ.getTime() : null;
+    const toMs = toQ && !isNaN(toQ.getTime()) ? toQ.getTime() : null;
+
+    const result = await _runMasterAnalysis(section, { fromMs, toMs });
+
+    const snapshot = await MasterAnalysisSnapshot.create({
+      section,
+      ranAt: new Date(),
+      ranBy: (req.user && req.user.username) || 'admin',
+      masterSlug: result.masterSlug,
+      masterUploadAt: result.masterUploadAt,
+      rangeFrom: result.rangeFrom,
+      rangeTo: result.rangeTo,
+      rowsAnalyzed: result.rowsAnalyzed,
+      data: result.data
+    });
+
+    // Historial: ultimos 10 snapshots de la seccion (excluyendo el recien creado).
+    const history = await MasterAnalysisSnapshot.find({
+      section,
+      _id: { $ne: snapshot._id }
+    }).sort({ ranAt: -1 }).limit(10).lean();
+
+    res.json({ snapshot: snapshot.toObject(), history });
+  } catch (err) {
+    logger.error(`/api/admin/master-analysis/${req.params.section}: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message || 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/master-analysis/:section
+// Devuelve el snapshot mas reciente + historial (para que el modal cargue
+// la ultima foto sin tener que re-analizar).
+app.get('/api/admin/master-analysis/:section', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const section = String(req.params.section || '').toLowerCase();
+    if (!_MASTER_ANALYSIS_SECTIONS.includes(section)) {
+      return res.status(400).json({ error: 'Seccion invalida.' });
+    }
+    const all = await MasterAnalysisSnapshot.find({ section }).sort({ ranAt: -1 }).limit(11).lean();
+    if (all.length === 0) {
+      return res.json({ snapshot: null, history: [] });
+    }
+    res.json({ snapshot: all[0], history: all.slice(1) });
+  } catch (err) {
+    logger.error(`GET /api/admin/master-analysis/${req.params.section}: ${err.message}`);
+    res.status(500).json({ error: err.message || 'Error del servidor' });
   }
 });
 

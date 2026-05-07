@@ -10413,6 +10413,200 @@ function closeRaffleDetailModal() {
     if (modal) modal.style.display = 'none';
 }
 
+// =============================================
+// MASTER ANALYSIS — modal generico para 5 secciones
+// =============================================
+const _MASTER_LABELS = {
+    relampago: '⚡ Relámpago',
+    top_jugadores: '🏆 Top Jugadores',
+    top_stats: '📊 Top Estadísticas',
+    recuperacion: '💔 Recuperación de Clientes',
+    automatizaciones: '🤖 Automatizaciones'
+};
+
+// Abre el modal del analisis maestro. Carga el snapshot mas reciente
+// (GET) y permite re-analizar (POST) — cada apretada del boton "Actualizar"
+// genera un snapshot nuevo y aparece en el historial.
+async function openMasterAnalysisModal(section) {
+    const label = _MASTER_LABELS[section] || section;
+    let m = document.getElementById('masterAnalysisModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'masterAnalysisModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.70);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="masterAnalysisBody" style="background:#1a0033;border:1px solid #00d4ff;border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:90vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('masterAnalysisBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">📊 Cargando ' + label + '...</div>';
+
+    try {
+        const r = await authFetch('/api/admin/master-analysis/' + encodeURIComponent(section));
+        const d = await r.json();
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        body.innerHTML = _renderMasterAnalysis(section, d.snapshot, d.history || []);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeMasterAnalysisModal() {
+    const m = document.getElementById('masterAnalysisModal');
+    if (m) m.remove();
+}
+
+// Re-analiza (POST) y refresca el modal con el snapshot nuevo + historial.
+async function rerunMasterAnalysis(section) {
+    const body = document.getElementById('masterAnalysisBody');
+    if (body) body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⚙️ Analizando archivo Maestro... (puede tardar 5-15s)</div>';
+    try {
+        const r = await authFetch('/api/admin/master-analysis/' + encodeURIComponent(section), { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        body.innerHTML = _renderMasterAnalysis(section, d.snapshot, d.history || []);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function _renderMasterAnalysis(section, snapshot, history) {
+    const label = _MASTER_LABELS[section] || section;
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:10px;">';
+    html += '  <h3 style="margin:0;color:#00d4ff;font-size:18px;">📊 ' + label + ' · análisis del Maestro</h3>';
+    html += '  <button type="button" onclick="closeMasterAnalysisModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    if (!snapshot) {
+        html += '<div style="background:rgba(255,235,59,0.10);border:1px solid #ffeb3b;border-radius:8px;padding:14px;color:#ffeb3b;font-size:13px;line-height:1.5;margin-bottom:12px;">Todavía no corriste un análisis para esta sección.</div>';
+        html += '<button type="button" onclick="rerunMasterAnalysis(\'' + section + '\')" style="width:100%;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:12px 14px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">🔍 ANALIZAR AHORA</button>';
+        return html;
+    }
+
+    // Meta del snapshot actual.
+    const ran = new Date(snapshot.ranAt).toLocaleString('es-AR');
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;font-size:11.5px;color:#aaa;line-height:1.55;">';
+    html += '  <strong style="color:#00d4ff;">Última actualización:</strong> ' + ran + (snapshot.ranBy ? ' · por <strong>' + escapeHtml(snapshot.ranBy) + '</strong>' : '') + '<br>';
+    html += '  <strong style="color:#00d4ff;">Filas analizadas:</strong> ' + (snapshot.rowsAnalyzed || 0).toLocaleString('es-AR') + ' · <strong>Maestro:</strong> ' + escapeHtml(snapshot.masterSlug || '?');
+    html += '</div>';
+
+    html += _renderMasterAnalysisData(section, snapshot.data);
+
+    // Boton actualizar
+    html += '<div style="display:flex;gap:8px;margin:12px 0;">';
+    html += '  <button type="button" onclick="rerunMasterAnalysis(\'' + section + '\')" style="flex:1;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:11px 14px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">🔄 ACTUALIZAR análisis</button>';
+    html += '</div>';
+
+    // Historial
+    if (history && history.length > 0) {
+        html += '<details style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.10);padding-top:10px;">';
+        html += '  <summary style="color:#aaa;cursor:pointer;font-size:11.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;padding:6px 0;">📚 Historial (' + history.length + ' snapshots anteriores)</summary>';
+        html += '  <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">';
+        for (const h of history) {
+            const hran = new Date(h.ranAt).toLocaleString('es-AR');
+            const summary = _summarizeMasterData(section, h.data);
+            html += '    <div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px 10px;font-size:11px;color:#ddd;">';
+            html += '      <div style="color:#888;font-size:10px;">' + hran + ' · por ' + escapeHtml(h.ranBy || 'admin') + ' · ' + (h.rowsAnalyzed || 0).toLocaleString('es-AR') + ' filas</div>';
+            html += '      <div style="margin-top:3px;">' + summary + '</div>';
+            html += '    </div>';
+        }
+        html += '  </div>';
+        html += '</details>';
+    }
+
+    return html;
+}
+
+function _renderMasterAnalysisData(section, data) {
+    if (!data) return '<div style="color:#888;font-style:italic;">Sin datos.</div>';
+    let html = '';
+    if (section === 'top_stats') {
+        const d = data.deposits || {}, w = data.withdraws || {}, b = data.bonuses || {};
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;">';
+        html += _kpiCard('💰 Depósitos', d.count + ' x ' + _fmtMoney(d.sum) + ' (' + (d.uniqueUsers||0) + ' users)', '#66ff66');
+        html += _kpiCard('💸 Retiros', w.count + ' x ' + _fmtMoney(w.sum) + ' (' + (w.uniqueUsers||0) + ' users)', '#ff8080');
+        html += _kpiCard('🎁 Bonos', b.count + ' x ' + _fmtMoney(b.sum), '#ffaa66');
+        html += _kpiCard('Neto a la casa', _fmtMoney(data.netToHouse), data.netToHouse >= 0 ? '#66ff66' : '#ff8080');
+        html += '</div>';
+    } else if (section === 'top_jugadores') {
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">Total: ' + (data.totalUsers||0) + ' jugadores · ' + _fmtMoney(data.totalDepositsSum||0) + ' (top 50 mostrados)</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;max-height:380px;overflow-y:auto;">';
+        html += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#00d4ff;text-align:left;"><th style="padding:5px;">#</th><th style="padding:5px;">Usuario</th><th style="padding:5px;text-align:center;">Cargas</th><th style="padding:5px;text-align:right;">Total</th></tr></thead><tbody>';
+        const top = data.top || [];
+        for (let i = 0; i < top.length; i++) {
+            const x = top[i];
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);"><td style="padding:5px;color:#888;">' + (i+1) + '</td><td style="padding:5px;color:#fff;font-weight:700;">' + escapeHtml(x.username) + '</td><td style="padding:5px;text-align:center;color:#66ff66;font-weight:700;">' + x.count + '</td><td style="padding:5px;text-align:right;color:#ffd700;font-weight:800;">' + _fmtMoney(x.sum) + '</td></tr>';
+        }
+        html += '</tbody></table></div>';
+    } else if (section === 'recuperacion') {
+        const b = data.buckets || {};
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">Total: ' + (data.totalUsers||0) + ' jugadores con cargas en el archivo</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">';
+        html += _kpiCard('🟢 Activos (<7d)', String(b.activo||0), '#66ff66');
+        html += _kpiCard('🟡 En riesgo (7-14d)', String(b.en_riesgo||0), '#ffeb3b');
+        html += _kpiCard('🟠 Perdidos (14-30d)', String(b.perdido||0), '#ffaa66');
+        html += _kpiCard('🔴 Inactivos (>30d)', String(b.inactivo||0), '#ff8080');
+        html += '</div>';
+        const samples = data.samples || {};
+        if (samples.en_riesgo && samples.en_riesgo.length > 0) {
+            html += '<details style="margin-top:10px;"><summary style="color:#ffeb3b;cursor:pointer;font-size:11.5px;font-weight:700;">Ver muestra de "en riesgo" (' + samples.en_riesgo.length + ')</summary>';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;margin-top:6px;font-size:11px;color:#ddd;max-height:200px;overflow-y:auto;">';
+            for (const u of samples.en_riesgo) {
+                html += '<div style="padding:3px 5px;border-bottom:1px solid rgba(255,255,255,0.05);">' + escapeHtml(u.username) + ' · ' + u.daysSince + 'd';
+            }
+            html += '</div></details>';
+        }
+    } else if (section === 'automatizaciones') {
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">' + (data.totalRules||0) + ' reglas activas · ' + (data.totalUsersInMaster||0) + ' jugadores únicos en el maestro</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;max-height:340px;overflow-y:auto;">';
+        html += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#00d4ff;text-align:left;"><th style="padding:5px;">Regla</th><th style="padding:5px;text-align:center;">Mín. cargas</th><th style="padding:5px;text-align:center;">Ventana</th><th style="padding:5px;text-align:right;">Matchea</th></tr></thead><tbody>';
+        for (const r of (data.rules || [])) {
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);"><td style="padding:5px;color:#fff;">' + escapeHtml(r.name) + '</td><td style="padding:5px;text-align:center;">' + r.minCharges + '</td><td style="padding:5px;text-align:center;">' + r.windowDays + 'd</td><td style="padding:5px;text-align:right;color:#66ff66;font-weight:800;">' + r.matches + '</td></tr>';
+        }
+        html += '</tbody></table></div>';
+    } else if (section === 'relampago') {
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">' + (data.rafflesCount||0) + ' relámpagos activos/cerrados</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;">';
+        html += '<table style="width:100%;font-size:12px;border-collapse:collapse;">';
+        html += '<thead><tr style="color:#ffeb3b;text-align:left;"><th style="padding:5px;">Sorteo</th><th style="padding:5px;">Estado</th><th style="padding:5px;text-align:center;">Particip.</th><th style="padding:5px;text-align:right;">Califican (≥5 cargas)</th></tr></thead><tbody>';
+        for (const r of (data.raffles || [])) {
+            const pct = r.total ? Math.round((r.qualifying / r.total) * 100) : 0;
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);"><td style="padding:5px;color:#fff;">' + escapeHtml(r.name) + '</td><td style="padding:5px;color:#aaa;">' + r.status + '</td><td style="padding:5px;text-align:center;">' + r.total + '</td><td style="padding:5px;text-align:right;color:#66ff66;font-weight:800;">' + r.qualifying + '/' + r.total + ' (' + pct + '%)</td></tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+    return html;
+}
+
+// Resumen de 1 linea de un snapshot historico (texto compacto).
+function _summarizeMasterData(section, data) {
+    if (!data) return '—';
+    if (section === 'top_stats') return 'Dep ' + _fmtMoney(data.deposits && data.deposits.sum) + ' · Ret ' + _fmtMoney(data.withdraws && data.withdraws.sum) + ' · Neto ' + _fmtMoney(data.netToHouse);
+    if (section === 'top_jugadores') return (data.totalUsers||0) + ' users · ' + _fmtMoney(data.totalDepositsSum);
+    if (section === 'recuperacion') {
+        const b = data.buckets || {};
+        return '🟢' + (b.activo||0) + ' · 🟡' + (b.en_riesgo||0) + ' · 🟠' + (b.perdido||0) + ' · 🔴' + (b.inactivo||0);
+    }
+    if (section === 'automatizaciones') return (data.totalRules||0) + ' reglas · ' + (data.totalUsersInMaster||0) + ' users';
+    if (section === 'relampago') return (data.rafflesCount||0) + ' relámpagos';
+    return '—';
+}
+
+function _kpiCard(label, val, color) {
+    return '<div style="background:rgba(0,0,0,0.35);border-radius:8px;padding:9px 10px;border:1px solid rgba(255,255,255,0.08);">' +
+           '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">' + label + '</div>' +
+           '<div style="color:' + color + ';font-size:14px;font-weight:900;margin-top:2px;">' + val + '</div></div>';
+}
+
 // LUPA por fila — pide detalle al server (CSV daily + LIVE) y muestra
 // un mini modal flotante con la comparacion + breakdown por dia.
 async function openLightningUserDetail(raffleId, username) {
