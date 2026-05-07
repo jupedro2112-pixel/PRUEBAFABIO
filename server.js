@@ -7073,6 +7073,121 @@ app.get('/api/admin/user-lines/lookup-by-line', authMiddleware, adminMiddleware,
   }
 });
 
+// Historial de cargas .xlsx por línea. Cada upload deja todas las filas con
+// el MISMO importedAt, así que agrupando por (importedAt, importedBy)
+// reconstruimos cada "sesión de carga" como si fuera un archivo separado.
+app.get('/api/admin/user-lines/import-history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String(req.query.teamName || '').trim();
+    const linePhone = String(req.query.linePhone || '').trim();
+    if (!teamName && !linePhone) {
+      return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
+    }
+    const match = {};
+    if (teamName) match.lineTeamName = teamName;
+    if (linePhone) match.linePhone = linePhone;
+
+    // Agrupar por (importedAt, importedBy). Como las cargas masivas usan el
+    // MISMO Date para todos los rows del archivo, esto separa cada upload.
+    // Toleramos jitter de 1 segundo agrupando por timestamp en segundos.
+    const sessions = await UserLineLookup.aggregate([
+      { $match: match },
+      { $project: {
+          usernameNorm: 1,
+          usernameOriginal: 1,
+          lineTeamName: 1,
+          linePhone: 1,
+          importedAt: 1,
+          importedBy: 1,
+          // Truncar a segundo para tolerar jitter de ms entre rows del mismo bulk.
+          importedAtSec: {
+            $dateToString: {
+              format: '%Y-%m-%dT%H:%M:%S',
+              date: '$importedAt'
+            }
+          }
+      }},
+      { $group: {
+          _id: { ts: '$importedAtSec', by: '$importedBy' },
+          count: { $sum: 1 },
+          importedAt: { $first: '$importedAt' },
+          importedBy: { $first: '$importedBy' },
+          team: { $first: '$lineTeamName' },
+          line: { $first: '$linePhone' },
+          sampleUsers: { $push: { $ifNull: ['$usernameOriginal', '$usernameNorm'] } }
+      }},
+      { $sort: { importedAt: -1 } },
+      { $limit: 100 }
+    ]);
+
+    const sessionsOut = sessions.map((s, idx) => ({
+      id: 'session-' + idx,
+      importedAt: s.importedAt,
+      importedBy: s.importedBy,
+      team: s.team,
+      line: s.line,
+      count: s.count,
+      // Hasta 8 sample usernames para preview en el modal sin descargar todo.
+      sampleUsernames: (s.sampleUsers || []).slice(0, 8)
+    }));
+
+    res.json({
+      teamName: teamName || null,
+      linePhone: linePhone || null,
+      totalSessions: sessionsOut.length,
+      totalUsers: sessionsOut.reduce((sum, s) => sum + (s.count || 0), 0),
+      sessions: sessionsOut
+    });
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/import-history: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CSV de UNA sesión de carga histórica (filtra por importedAt exacto).
+app.get('/api/admin/user-lines/import-history.csv', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String(req.query.teamName || '').trim();
+    const linePhone = String(req.query.linePhone || '').trim();
+    const importedAtStr = String(req.query.importedAt || '').trim();
+    if (!importedAtStr) return res.status(400).json({ error: 'Falta param importedAt' });
+    const importedAtDate = new Date(importedAtStr);
+    if (isNaN(importedAtDate.getTime())) return res.status(400).json({ error: 'importedAt inválido' });
+
+    // Tolerancia de 1s para juntar todos los rows del mismo bulk.
+    const lo = new Date(importedAtDate.getTime() - 1000);
+    const hi = new Date(importedAtDate.getTime() + 1000);
+    const filter = { importedAt: { $gte: lo, $lt: hi } };
+    if (teamName) filter.lineTeamName = teamName;
+    if (linePhone) filter.linePhone = linePhone;
+
+    const rows = await UserLineLookup.find(filter).lean();
+    const escape = (v) => {
+      const s = (v == null ? '' : String(v));
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = ['Usuario,Equipo,Linea,FechaCarga,CargadoPor'];
+    for (const r of rows) {
+      lines.push([
+        escape(r.usernameOriginal || r.usernameNorm || ''),
+        escape(r.lineTeamName || ''),
+        escape(r.linePhone || ''),
+        escape(r.importedAt ? new Date(r.importedAt).toISOString() : ''),
+        escape(r.importedBy || '')
+      ].join(','));
+    }
+    const csv = '﻿' + lines.join('\r\n');
+    const safe = (s) => String(s || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dateTag = importedAtDate.toISOString().slice(0, 19).replace(/[:.]/g, '-');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="carga-${safe(teamName)}-${dateTag}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/import-history.csv: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // CSV: lista completa de una línea (xlsx pre-asignados + users registrados).
 app.get('/api/admin/user-lines/lookup-by-line.csv', authMiddleware, adminMiddleware, async (req, res) => {
   try {

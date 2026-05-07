@@ -329,8 +329,9 @@ function slotHtml(i, prefix, phone, teamName) {
                 </div>
                 <!-- Botones de acción para esta línea -->
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-                    <button type="button" onclick="slotShowList(${i})" id="slotShowListBtn-${i}" style="flex:1;min-width:110px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:7px;cursor:pointer;">👁 Ver lista cargada</button>
-                    <button type="button" onclick="slotDownloadCsv(${i})" id="slotDownloadCsvBtn-${i}" style="flex:1;min-width:110px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:7px;cursor:pointer;">📥 Descargar CSV</button>
+                    <button type="button" onclick="slotShowList(${i})" id="slotShowListBtn-${i}" style="flex:1;min-width:100px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:7px;cursor:pointer;">👁 Ver lista</button>
+                    <button type="button" onclick="slotShowHistory(${i})" id="slotShowHistoryBtn-${i}" style="flex:1;min-width:100px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:7px;cursor:pointer;">📅 Historial</button>
+                    <button type="button" onclick="slotDownloadCsv(${i})" id="slotDownloadCsvBtn-${i}" style="flex:1;min-width:100px;padding:8px;font-size:11.5px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:7px;cursor:pointer;">📥 CSV</button>
                 </div>
                 <button type="button" onclick="toggleSlotImport(${i})" id="slotImportToggle-${i}" style="width:100%;background:rgba(0,212,255,0.05);border:1px dashed rgba(0,212,255,0.30);padding:9px;border-radius:7px;color:#00d4ff;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
                     📋 Cargar/actualizar listado (.xlsx)
@@ -5340,6 +5341,117 @@ function _renderSlotListModalHtml(j, slotIndex) {
     html += '</div>';
 
     return html;
+}
+
+// Modal con el historial de cargas .xlsx para esta línea. Cada upload
+// queda como una "sesión" separada (todas las filas del mismo bulk
+// comparten importedAt). El admin ve cuándo cargó cada archivo, cuántos
+// usuarios trajo y puede descargar el CSV de esa carga puntual.
+async function slotShowHistory(i) {
+    const id = _readSlotIdentity(i);
+    if (!id || !id.team) {
+        showToast('Completá el equipo y el número arriba primero', 'error');
+        return;
+    }
+    let m = document.getElementById('slotHistoryModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'slotHistoryModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10006;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="slotHistoryBody" style="background:#0f1024;border:1px solid #ffd700;border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('slotHistoryBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando historial…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', id.team);
+        if (id.linePhone) params.set('linePhone', id.linePhone);
+        const r = await authFetch('/api/admin/user-lines/import-history?' + params.toString());
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error ' + r.status + '</div>';
+            return;
+        }
+        const j = await r.json();
+        body.innerHTML = _renderSlotHistoryHtml(j, id);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeSlotHistoryModal() {
+    const m = document.getElementById('slotHistoryModal');
+    if (m) m.remove();
+}
+
+function _renderSlotHistoryHtml(j, id) {
+    const sessions = j.sessions || [];
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
+    html += '  <h3 style="margin:0;color:#ffd700;font-size:17px;">📅 Historial de cargas · ' + escapeHtml(j.teamName || '') + (j.linePhone ? ' · ' + escapeHtml(j.linePhone) : '') + '</h3>';
+    html += '  <button type="button" onclick="closeSlotHistoryModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:10px;margin-bottom:12px;">';
+    html += '  <div style="color:#ffd700;font-weight:800;font-size:13px;">' + (j.totalSessions || 0) + ' archivos cargados · ' + (j.totalUsers || 0) + ' usuarios totales</div>';
+    html += '  <div style="color:#aaa;font-size:11px;margin-top:3px;">Cada fila es UN archivo .xlsx que cargaste (agrupado por timestamp). Tocá CSV para descargar SOLO los users de esa carga puntual.</div>';
+    html += '</div>';
+
+    if (sessions.length === 0) {
+        html += '<div style="text-align:center;color:#aaa;padding:30px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.10);border-radius:10px;">Esta línea todavía no tiene cargas .xlsx registradas.</div>';
+    } else {
+        html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+        for (const s of sessions) {
+            const dt = s.importedAt ? new Date(s.importedAt) : null;
+            const dtStr = dt ? dt.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+            const isoForUrl = dt ? dt.toISOString() : '';
+            const sample = (s.sampleUsernames || []).slice(0, 5).join(', ') + ((s.sampleUsernames || []).length > 5 ? ', …' : '');
+            html += '<div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+            html += '  <div style="background:rgba(212,175,55,0.15);color:#ffd700;font-weight:800;font-size:18px;padding:8px 14px;border-radius:8px;min-width:70px;text-align:center;">' + (s.count || 0) + '</div>';
+            html += '  <div style="flex:1;min-width:180px;">';
+            html += '    <div style="color:#fff;font-weight:700;font-size:13px;">📅 ' + escapeHtml(dtStr) + '</div>';
+            html += '    <div style="color:#aaa;font-size:11px;margin-top:2px;">' + (s.importedBy ? 'por <strong style="color:#fff;">' + escapeHtml(s.importedBy) + '</strong> · ' : '') + 'usuarios: ' + escapeHtml(sample || '—') + '</div>';
+            html += '  </div>';
+            html += '  <button type="button" onclick="slotDownloadHistorySession(' + JSON.stringify(j.teamName).replace(/"/g, '&quot;') + ',' + JSON.stringify(j.linePhone || '').replace(/"/g, '&quot;') + ',' + JSON.stringify(isoForUrl).replace(/"/g, '&quot;') + ')" style="padding:7px 12px;background:linear-gradient(135deg,#25d366,#128c4f);color:#fff;border:none;border-radius:6px;font-size:11.5px;font-weight:700;cursor:pointer;">📥 CSV de esta carga</button>';
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+
+    html += '<div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">';
+    html += '  <button type="button" onclick="closeSlotHistoryModal()" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>';
+    html += '</div>';
+
+    return html;
+}
+
+// Descarga el CSV de UNA sesión histórica de carga (filtrada por importedAt).
+async function slotDownloadHistorySession(teamName, linePhone, importedAtIso) {
+    if (!teamName || !importedAtIso) return;
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        params.set('importedAt', importedAtIso);
+        const r = await authFetch('/api/admin/user-lines/import-history.csv?' + params.toString());
+        if (!r.ok) {
+            showToast('Error descargando CSV (' + r.status + ')', 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const dateTag = importedAtIso.slice(0, 19).replace(/[:.]/g, '-');
+        a.download = 'carga-' + teamName.replace(/[^a-z0-9_-]/gi, '_') + '-' + dateTag + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+        showToast('✅ CSV de la carga descargado', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 // Descarga el CSV de la línea de este slot.
