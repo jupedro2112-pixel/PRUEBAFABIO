@@ -8245,15 +8245,6 @@ const _SURVEY_WELCOME_MESSAGES = [
   { title: '💎 Bienvenido a la familia', body: 'Tu plan de notifs ya quedó activo. Bonos, regalos y novedades — solo lo que te conviene.' }
 ];
 
-// Blueprints simples por tier para la wave automática del +100. El admin
-// puede tunearlos en otra iteración; estos son sensatos por defecto.
-const _STRATEGY_WAVE_BLUEPRINTS = {
-  suave:           { title: '🟢 Cargá hoy y te damos un 50%', body: 'Bono suave especial para vos. Tocá para usar el código.' },
-  normal:          { title: '🟡 Tu bono mensual está listo', body: 'Cargá ahora y te damos un 50% extra. Toda la app te espera.' },
-  activo:          { title: '🔴 Bono fuerte activo', body: 'Hoy es el día — cargá y te damos un 100% en tu carga. Limitado.' },
-  solo_reembolsos: { title: '💵 Reembolso disponible', body: 'Tenés un reembolso esperando. Tocá para revisarlo.' }
-};
-
 // Blueprints por categoría × tier para el calendario mensual. Cada push
 // programado tiene su propia copy según qué representa: BONOS (oferta de
 // carga), JUEGOS (invitación a jugar), REGALOS (plata de regalo). El user
@@ -8276,9 +8267,6 @@ const _STRATEGY_CATEGORY_BLUEPRINTS = {
   }
 };
 const _STRATEGY_CATEGORIES = ['bonos', 'juegos', 'regalos'];
-
-// Lock simple por instancia para evitar dobles disparos concurrentes.
-let _STRATEGY_WAVE_LOCK = false;
 
 // Devuelve los días que quedan del mes en curso, desde HOY (inclusive) hasta
 // el último día del mes (inclusive). Cada elemento es un Date con la hora 00:00.
@@ -8406,140 +8394,6 @@ async function _cancelPendingStrategyNotifications() {
 function _currentMonthKey() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-}
-
-// Calcula la próxima ventana horaria de envío [start, end). Si la ventana
-// de hoy ya pasó (o estamos dentro de ella, en cuyo caso el rango efectivo
-// se acorta a [now, end)), devuelve esa. Si ya pasó el endHour, devuelve la
-// ventana de mañana.
-function _computeStrategyWindow(startHour, endHour) {
-  const now = new Date();
-  const start = new Date(now);
-  start.setHours(startHour, 0, 0, 0);
-  const end = new Date(now);
-  end.setHours(endHour, 0, 0, 0);
-  if (now >= end) {
-    // Ventana de hoy ya pasó — usamos la de mañana.
-    start.setDate(start.getDate() + 1);
-    end.setDate(end.getDate() + 1);
-    return { start, end, isToday: false };
-  }
-  // Si estamos antes del start, mantenemos start. Si estamos dentro de la
-  // ventana, achicamos para no programar pushes en el pasado.
-  const effectiveStart = now > start ? now : start;
-  return { start: effectiveStart, end, isToday: true };
-}
-
-// Genera un timestamp random dentro de [start, end).
-function _randomTimeInWindow(start, end) {
-  const span = end.getTime() - start.getTime();
-  return new Date(start.getTime() + Math.floor(Math.random() * span));
-}
-
-async function fireStrategyWave({ reason, triggerCount }) {
-  if (_STRATEGY_WAVE_LOCK) {
-    logger.warn(`[STRATEGY-WAVE] omitido — lock activo (reason=${reason})`);
-    return { fired: false, reason: 'lock' };
-  }
-  _STRATEGY_WAVE_LOCK = true;
-  try {
-    // Levantar config para tomar la ventana horaria configurada (default 18-21).
-    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
-    const startHour = (cfg && Number.isFinite(cfg.windowStartHour)) ? cfg.windowStartHour : 18;
-    const endHour   = (cfg && Number.isFinite(cfg.windowEndHour))   ? cfg.windowEndHour   : 21;
-    const { start: winStart, end: winEnd, isToday } = _computeStrategyWindow(startHour, endHour);
-
-    // Agrupar respondentes por tier (sólo los que tienen FCM token).
-    const respondents = await User.find(
-      { notifPreference: { $exists: true, $ne: null } },
-      { username: 1, notifPreference: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
-    ).lean();
-
-    const byTier = { suave: [], normal: [], activo: [], solo_reembolsos: [] };
-    for (const u of respondents) {
-      const tier = u.notifPreference;
-      if (!byTier[tier]) continue;
-      const hasToken = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
-      if (hasToken) byTier[tier].push({ username: u.username });
-    }
-
-    // Programar 1 ScheduledNotification por user, a una hora random dentro
-    // de la ventana. El worker (_runScheduledNotifications) las dispara cada 60s.
-    const tierResults = {};
-    let totalScheduled = 0, totalFailed = 0, totalUsers = 0;
-    const reasonStr = String(reason || 'auto_+100');
-
-    for (const tier of Object.keys(byTier)) {
-      const list = byTier[tier];
-      if (list.length === 0) { tierResults[tier] = { users: 0, scheduled: 0, failed: 0 }; continue; }
-      const bp = _STRATEGY_WAVE_BLUEPRINTS[tier] || { title: '🎁 Hay algo para vos', body: 'Tocá la app.' };
-      let scheduled = 0, failed = 0;
-      for (const u of list) {
-        try {
-          await ScheduledNotification.create({
-            id: uuidv4(),
-            scheduledFor: _randomTimeInWindow(winStart, winEnd),
-            status: 'pending',
-            title: bp.title,
-            body: bp.body,
-            targetUsername: String(u.username).toLowerCase().trim(),
-            audiencePrefix: null,
-            extraType: 'none',
-            createdBy: `strategy-wave:${tier}:${reasonStr}`
-          });
-          scheduled++;
-        } catch (e) {
-          failed++;
-          logger.warn(`[STRATEGY-WAVE] no se pudo programar push ${u.username} (${tier}): ${e.message}`);
-        }
-      }
-      tierResults[tier] = { users: list.length, scheduled, failed };
-      totalScheduled += scheduled;
-      totalFailed += failed;
-      totalUsers += list.length;
-    }
-
-    // Registrar la wave en el historial para que el ROI / weekly la levante.
-    try {
-      await NotificationHistory.create({
-        id: uuidv4(),
-        type: 'plain',
-        title: `[AUTO +100] Wave estrategia · ${reasonStr}`,
-        body: `Disparada automáticamente al cruzar ${triggerCount} respondentes. Pushes programados al azar entre ${String(startHour).padStart(2,'0')}:00 y ${String(endHour).padStart(2,'0')}:00 ${isToday ? '(hoy)' : '(mañana)'}.`,
-        sentAt: new Date(),
-        totalUsers,
-        successCount: totalScheduled,
-        failureCount: totalFailed,
-        audienceType: 'list',
-        audiencePrefix: null,
-        strategyType: 'auto_strategy_repeat',
-        strategyMeta: {
-          reason: reasonStr,
-          triggerCount,
-          tierResults,
-          windowStartHour: startHour,
-          windowEndHour: endHour,
-          windowStart: winStart,
-          windowEnd: winEnd,
-          isToday
-        }
-      });
-    } catch (e) {
-      logger.warn(`[STRATEGY-WAVE] no se pudo grabar historial: ${e.message}`);
-    }
-
-    logger.info(`[STRATEGY-WAVE] programada · users=${totalUsers} sched=${totalScheduled} fail=${totalFailed} ventana=${startHour}-${endHour}h ${isToday ? 'hoy' : 'mañana'} reason=${reasonStr}`);
-    return {
-      fired: true,
-      totalUsers,
-      totalScheduled,
-      totalFailed,
-      tierResults,
-      window: { startHour, endHour, start: winStart, end: winEnd, isToday }
-    };
-  } finally {
-    _STRATEGY_WAVE_LOCK = false;
-  }
 }
 
 app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
@@ -12779,6 +12633,23 @@ async function _executeScheduledNotification(sched) {
     });
   }
 }
+// Limpieza one-shot al boot: cancelar notifs pendientes del sistema viejo
+// (strategy-wave:*) que ya no se usa. Si quedan en cola desde antes del
+// switch al calendario mensual, el worker las dispararía con copys viejos.
+setTimeout(async () => {
+  try {
+    const r = await ScheduledNotification.updateMany(
+      { status: 'pending', createdBy: { $regex: /^strategy-wave:/ } },
+      { $set: { status: 'cancelled' } }
+    );
+    if (r.modifiedCount > 0) {
+      logger.info(`[BOOT] Canceladas ${r.modifiedCount} notifs pendientes del sistema viejo (strategy-wave:*).`);
+    }
+  } catch (e) {
+    logger.warn(`[BOOT] No se pudo limpiar pendientes legacy: ${e.message}`);
+  }
+}, 5 * 1000);
+
 // Arrancar el scheduler 30s despues del boot y correr cada 60s.
 setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
