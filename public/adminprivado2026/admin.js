@@ -5312,7 +5312,10 @@ function _renderTeamCard(t, isExpanded) {
             const ln = t.lines[lnIdx];
             const channelPct = ln.count > 0 ? Math.round((ln.withChannel / ln.count) * 100) : 0;
             const activePct = ln.count > 0 ? Math.round((ln.activeThisWeek / ln.count) * 100) : 0;
-            const teamArg  = JSON.stringify(t.teamName).replace(/"/g, '&quot;');
+            // teamArg DEBE ser el fullLabel ("Argentum · 2") para que el
+            // filtro en User/UserLineLookup matchee — antes pasaba el prefix
+            // ("Argentum") y los updates resultaban en 0 docs modificados.
+            const teamArg  = JSON.stringify(ln.fullLabel || t.teamName).replace(/"/g, '&quot;');
             const phoneArg = JSON.stringify(ln.linePhone || '').replace(/"/g, '&quot;');
             const rowId = 'teamLineRow-' + lnIdx + '-' + (t.teamName + (ln.linePhone || '')).replace(/[^a-z0-9]/gi, '_');
             html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);" id="' + rowId + '">';
