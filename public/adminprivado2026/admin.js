@@ -171,6 +171,7 @@ function showSection(sectionKey) {
         welcomebonus: 'welcomebonusSection',
         topEngagement: 'topEngagementSection',
         topPlayers: 'topPlayersSection',
+        encuesta: 'encuestaSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
         automations: 'automationsSection',
