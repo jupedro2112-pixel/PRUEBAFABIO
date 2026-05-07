@@ -231,16 +231,49 @@ VIP.reviews = (function () {
         } catch (_) { return ''; }
     }
 
-    async function loadFeed() {
+    // Cache simple en sessionStorage para no repegar al backend cada vez
+    // que el user abre la app. TTL corto para que no se desactualice mucho.
+    const _FEED_CACHE_KEY = 'vipReviewsFeedCache:v1';
+    const _FEED_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+    function _readFeedCache() {
+        try {
+            const raw = sessionStorage.getItem(_FEED_CACHE_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || !parsed.ts || (Date.now() - parsed.ts) > _FEED_CACHE_TTL_MS) return null;
+            return parsed.data;
+        } catch (_) { return null; }
+    }
+    function _writeFeedCache(data) {
+        try {
+            sessionStorage.setItem(_FEED_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+        } catch (_) {}
+    }
+
+    let _feedFetching = false;
+    async function loadFeed(force) {
         if (!VIP.state || !VIP.state.currentToken) return;
+        if (_feedFetching) return;
+        // Cache hit: pintamos de inmediato sin pegarle al backend.
+        if (!force) {
+            const cached = _readFeedCache();
+            if (cached) {
+                _renderFeed(cached);
+                return;
+            }
+        }
+        _feedFetching = true;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/reviews/feed?limit=30`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (!r.ok) return;
             const data = await r.json();
+            _writeFeedCache(data);
             _renderFeed(data);
-        } catch (_) { /* ignore */ }
+        } catch (_) { /* ignore */ } finally {
+            _feedFetching = false;
+        }
     }
 
     function _renderFeed(data) {
@@ -281,31 +314,78 @@ VIP.reviews = (function () {
             list.innerHTML = '<div style="color:#aaa;font-size:11.5px;text-align:center;padding:6px;">Sin comentarios públicos.</div>';
             return;
         }
-        let html = '';
-        for (const it of items) {
+        // Chunk en columnas de 10 (max 30 items = 3 columnas en desktop, en
+        // mobile cada columna toma todo el ancho y queda apilado).
+        const PER_COL = 10;
+        const renderItem = (it) => {
             const stars = _renderStars(it.stars);
             const comment = it.comment ? _esc(it.comment) : '<span style="color:#888;font-style:italic;">(sin comentario)</span>';
             const when = _whenStr(it.updatedAt);
-            html += '<div class="review-item">';
-            html += '  <div class="item-stars">' + stars + '</div>';
-            html += '  <div class="item-body">';
-            html += '    <div class="item-comment">' + comment + '</div>';
-            html += '    <div class="item-meta">' + _esc(it.maskedUsername || '***') + (when ? ' · ' + when : '') + '</div>';
-            html += '  </div>';
-            html += '</div>';
+            return '<div class="review-item">' +
+                '<div class="item-stars">' + stars + '</div>' +
+                '<div class="item-body">' +
+                  '<div class="item-comment">' + comment + '</div>' +
+                  '<div class="item-meta">' + _esc(it.maskedUsername || '***') + (when ? ' · ' + when : '') + '</div>' +
+                '</div>' +
+            '</div>';
+        };
+        const cols = [];
+        for (let i = 0; i < items.length; i += PER_COL) {
+            const slice = items.slice(i, i + PER_COL);
+            cols.push('<div class="reviews-col">' + slice.map(renderItem).join('') + '</div>');
         }
-        list.innerHTML = html;
+        list.innerHTML = cols.join('');
+    }
+
+    let _feedObserver = null;
+    let _visibilityListenerWired = false;
+
+    function _setupLazyFeedObserver() {
+        const card = _q('reviewsFeedCard');
+        if (!card || !('IntersectionObserver' in window)) {
+            // Fallback: si no soporta IO, cargar directo (pero sin polling).
+            loadFeed();
+            return;
+        }
+        if (_feedObserver) _feedObserver.disconnect();
+        _feedObserver = new IntersectionObserver((entries) => {
+            for (const e of entries) {
+                if (e.isIntersecting) {
+                    loadFeed();
+                    _feedObserver.disconnect();
+                    _feedObserver = null;
+                    break;
+                }
+            }
+        }, { rootMargin: '200px 0px' }); // pre-carga 200px antes de entrar al viewport
+        _feedObserver.observe(card);
+    }
+
+    function _wireVisibilityRefreshOnce() {
+        if (_visibilityListenerWired) return;
+        _visibilityListenerWired = true;
+        let _lastFetchAt = 0;
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState !== 'visible') return;
+            // Solo si pasaron al menos 5 min desde la última pegada, refrescamos.
+            if (Date.now() - _lastFetchAt < _FEED_CACHE_TTL_MS) return;
+            _lastFetchAt = Date.now();
+            // Force=true: ignora la cache (que justamente está vencida).
+            loadFeed(true);
+        });
     }
 
     function init() {
         _wireFormOnce();
         loadMyReview();
-        loadFeed();
-        // Refresco cada 90s para ver opiniones nuevas sin recargar.
-        if (_feedPollId) clearInterval(_feedPollId);
-        _feedPollId = setInterval(() => {
-            if (document.visibilityState === 'visible') loadFeed();
-        }, 90000);
+        // Lazy load del feed: solo cuando el card entra al viewport.
+        // Pintamos cache en cuanto está disponible para no dejar el bloque vacío.
+        const cached = _readFeedCache();
+        if (cached) _renderFeed(cached);
+        _setupLazyFeedObserver();
+        _wireVisibilityRefreshOnce();
+        // Limpiamos polling viejo si existía de una sesión previa.
+        if (_feedPollId) { clearInterval(_feedPollId); _feedPollId = null; }
     }
 
     return { init, loadMyReview, loadFeed, submitReview };

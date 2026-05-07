@@ -1194,19 +1194,36 @@
         .reviews-feed-summary .pct-bad  { color: #ff8080; }
         .reviews-feed-list {
             display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: flex-start;
+        }
+        .reviews-col {
+            flex: 1 1 240px;
+            min-width: 0;
+            display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 5px;
         }
         .review-item {
             background: rgba(0,0,0,0.25);
             border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 8px;
-            padding: 7px 10px;
-            font-size: 11.5px;
-            line-height: 1.4;
+            border-radius: 7px;
+            padding: 5px 8px;
+            font-size: 11px;
+            line-height: 1.35;
             display: flex;
             align-items: flex-start;
-            gap: 8px;
+            gap: 6px;
+            contain: content;
+        }
+        .review-item .item-comment {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            word-break: break-word;
         }
         .review-item .item-stars {
             color: #ffd700;
