@@ -558,6 +558,18 @@ VIP.auth = (function () {
         }, 60 * 1000);
     }
 
+    // Polling de la línea vigente cada 5 minutos: si el admin cambia la
+    // línea/equipo del user (xlsx upload, clear, reasignación), el user se
+    // entera sin tener que recargar la página. Sólo si la pestaña está
+    // visible y hay sesión.
+    if (!window._linePollId) {
+        window._linePollId = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            if (!VIP.state || !VIP.state.currentToken) return;
+            try { refreshLinePhone(); } catch (_) {}
+        }, 5 * 60 * 1000);
+    }
+
     // Refrescar línea vigente + link de comunidad con el token actual (sirve tras reload).
     async function refreshLinePhone() {
         try {

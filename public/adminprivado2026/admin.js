@@ -5071,6 +5071,7 @@ function _renderTeamCard(t, isExpanded) {
             html += '<button type="button" onclick="teamLineShowList(' + teamArg + ',' + phoneArg + ')" title="Ver lista cargada" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:5px;cursor:pointer;margin-right:4px;">👁</button>';
             html += '<button type="button" onclick="teamLineShowHistory(' + teamArg + ',' + phoneArg + ')" title="Historial de cargas .xlsx" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:5px;cursor:pointer;margin-right:4px;">📅</button>';
             html += '<button type="button" onclick="teamLineDownloadCsv(' + teamArg + ',' + phoneArg + ')" title="Descargar CSV" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:5px;cursor:pointer;margin-right:4px;">📥</button>';
+            html += '<button type="button" onclick="teamLineDiagnose(' + teamArg + ',' + phoneArg + ')" title="Diagnosticar esta línea (verifica que los users estén bien asignados)" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(255,170,68,0.10);border:1px solid rgba(255,170,68,0.40);color:#ffaa44;border-radius:5px;cursor:pointer;margin-right:4px;">🔍</button>';
             html += '<button type="button" onclick="teamLineClearAndReload(' + teamArg + ',' + phoneArg + ')" title="Borrar carga actual de esta línea (sólo de esta línea, no toca otras)" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.40);color:#ff8080;border-radius:5px;cursor:pointer;">🗑</button>';
             html += '</td>';
             html += '</tr>';
@@ -5339,6 +5340,128 @@ async function teamLineUploadConfirm(teamName, linePhone) {
     if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
     // Refrescar Equipos (para que la celda "Último archivo" se actualice).
     setTimeout(() => { try { loadTeams(); } catch (_) {} }, 600);
+}
+
+// Diagnóstico de una línea: muestra cuántos users están bien (en xlsx) vs
+// cuántos cayeron por otra vía (prefix-fallback, manual). Ayuda a verificar
+// que después de un import no quedaron users mal asignados.
+async function teamLineDiagnose(teamName, linePhone) {
+    if (!teamName) return;
+    let m = document.getElementById('teamLineDiagnoseModal');
+    if (m) m.remove();
+    m = document.createElement('div');
+    m.id = 'teamLineDiagnoseModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:10009;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+    m.innerHTML = '<div id="teamLineDiagnoseBody" style="background:#0f1024;border:1px solid #ffaa44;border-radius:12px;padding:18px;max-width:640px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+    document.body.appendChild(m);
+    const body = document.getElementById('teamLineDiagnoseBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Diagnosticando línea…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        const r = await authFetch('/api/admin/user-lines/diagnose-line?' + params.toString());
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error ' + r.status + '</div>';
+            return;
+        }
+        const j = await r.json();
+        body.innerHTML = _renderDiagnoseHtml(j, teamName, linePhone);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function closeTeamLineDiagnoseModal() {
+    const m = document.getElementById('teamLineDiagnoseModal');
+    if (m) m.remove();
+}
+
+function _renderDiagnoseHtml(j, teamName, linePhone) {
+    const total = j.totalUsers || 0;
+    const inXlsx = j.inXlsx || 0;
+    const notInXlsx = j.notInXlsx || 0;
+    const bySource = j.bySource || {};
+    const sample = j.sampleNotInXlsx || [];
+    const matchPct = total > 0 ? Math.round((inXlsx / total) * 100) : 0;
+    const sourceLabel = (s) => {
+        if (s === 'drive-import') return '📋 xlsx (drive-import)';
+        if (s === 'lookup') return '🔗 lookup';
+        if (s === 'prefix-fallback') return '⚙️ prefix automático';
+        if (s === 'general-default') return '🌐 default genérico';
+        if (s === 'admin-manual') return '✋ asignación manual';
+        return s || '—';
+    };
+
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:14px;">';
+    html += '  <h3 style="margin:0;color:#ffaa44;font-size:17px;">🔍 Diagnóstico · ' + escapeHtml(teamName) + (linePhone ? ' · ' + escapeHtml(linePhone) : '') + '</h3>';
+    html += '  <button type="button" onclick="closeTeamLineDiagnoseModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+
+    // KPIs
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px;">';
+    html += '  <div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#00d4ff;font-size:10px;letter-spacing:1px;font-weight:700;">TOTAL ASIGNADOS</div>';
+    html += '    <div style="color:#fff;font-size:22px;font-weight:900;">' + total + '</div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(37,211,102,0.08);border:1px solid rgba(37,211,102,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#25d366;font-size:10px;letter-spacing:1px;font-weight:700;">EN XLSX (MATCH)</div>';
+    html += '    <div style="color:#fff;font-size:22px;font-weight:900;">' + inXlsx + ' <span style="font-size:13px;color:#888;">(' + matchPct + '%)</span></div>';
+    html += '  </div>';
+    html += '  <div style="background:rgba(255,170,68,0.08);border:1px solid rgba(255,170,68,0.40);border-radius:8px;padding:10px;">';
+    html += '    <div style="color:#ffaa44;font-size:10px;letter-spacing:1px;font-weight:700;">FUERA DE XLSX</div>';
+    html += '    <div style="color:#fff;font-size:22px;font-weight:900;">' + notInXlsx + '</div>';
+    html += '  </div>';
+    html += '</div>';
+
+    // Veredicto
+    html += '<div style="background:' + (notInXlsx === 0 ? 'rgba(37,211,102,0.06)' : 'rgba(255,170,68,0.06)') + ';border:1px solid ' + (notInXlsx === 0 ? 'rgba(37,211,102,0.40)' : 'rgba(255,170,68,0.40)') + ';border-radius:8px;padding:10px;margin-bottom:14px;">';
+    if (total === 0) {
+        html += '<div style="color:#aaa;font-size:13px;">Esta línea no tiene users asignados.</div>';
+    } else if (notInXlsx === 0) {
+        html += '<div style="color:#25d366;font-weight:700;font-size:13px;">✅ Todo limpio.</div>';
+        html += '<div style="color:#aaa;font-size:11.5px;margin-top:3px;">Todos los ' + total + ' users de esta línea están en el xlsx cargado.</div>';
+    } else {
+        html += '<div style="color:#ffaa44;font-weight:700;font-size:13px;">⚠ ' + notInXlsx + ' users no están en el xlsx.</div>';
+        html += '<div style="color:#aaa;font-size:11.5px;margin-top:3px;line-height:1.4;">Estos users cayeron en esta línea por otra vía (prefijo automático, asignación manual, etc.). Si querés "ordenarlos", subí un xlsx con todos los users que correspondan a esta línea en <strong>modo Ordenar</strong>.</div>';
+    }
+    html += '</div>';
+
+    // Por origen
+    if (Object.keys(bySource).length > 0) {
+        html += '<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;margin-bottom:14px;">';
+        html += '  <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Origen de la asignación</div>';
+        html += '  <div style="display:flex;flex-direction:column;gap:4px;">';
+        const sources = Object.keys(bySource).sort((a, b) => bySource[b] - bySource[a]);
+        for (const s of sources) {
+            const c = bySource[s];
+            const pct = total > 0 ? Math.round((c / total) * 100) : 0;
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">';
+            html += '  <span style="color:#fff;">' + escapeHtml(sourceLabel(s)) + '</span>';
+            html += '  <span style="color:#aaa;font-family:monospace;">' + c + ' <span style="color:#666;">(' + pct + '%)</span></span>';
+            html += '</div>';
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+
+    // Sample users fuera de xlsx
+    if (sample.length > 0) {
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;">';
+        html += '  <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Muestra · users FUERA del xlsx (primeros ' + sample.length + ')</div>';
+        html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '    <thead><tr style="color:#888;text-align:left;"><th style="padding:5px;">Usuario</th><th style="padding:5px;">Origen</th><th style="padding:5px;">Asignado</th></tr></thead><tbody>';
+        for (const it of sample) {
+            const dt = it.lineAssignedAt ? new Date(it.lineAssignedAt).toLocaleDateString('es-AR') : '—';
+            html += '<tr><td style="padding:5px;color:#fff;">' + escapeHtml(it.username || '') + '</td><td style="padding:5px;color:#bbb;">' + escapeHtml(sourceLabel(it.source)) + '</td><td style="padding:5px;color:#888;">' + escapeHtml(dt) + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        html += '</div>';
+    }
+
+    return html;
 }
 
 // Borra TODA la carga actual de UNA línea (no toca otras líneas) y opcionalmente
