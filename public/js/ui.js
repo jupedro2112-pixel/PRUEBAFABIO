@@ -834,7 +834,9 @@ if (VIP.ui.isAppStandalone()) {
 (function setupInstallHeroCard() {
     const card = document.getElementById('installHeroCard');
     if (!card) return;
-    if (VIP.ui.isAppStandalone()) {
+    let alreadyInstalled = false;
+    try { alreadyInstalled = localStorage.getItem('vipAppInstalled') === '1'; } catch (_) {}
+    if (VIP.ui.isAppStandalone() || alreadyInstalled) {
         card.hidden = true;
         return;
     }
