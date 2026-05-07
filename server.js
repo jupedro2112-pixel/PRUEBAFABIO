@@ -8417,7 +8417,7 @@ app.post(
   '/api/admin/recontact/analyze',
   authMiddleware,
   adminMiddleware,
-  express.raw({ limit: '10mb', type: '*/*' }),
+  express.raw({ limit: '25mb', type: '*/*' }),
   async (req, res) => {
     let XLSX;
     try { XLSX = require('xlsx'); }
@@ -8425,8 +8425,9 @@ app.post(
 
     try {
       const buf = req.body;
+      logger.info(`[recontact/analyze] received body bufType=${typeof buf} isBuffer=${Buffer.isBuffer(buf)} length=${buf && buf.length ? buf.length : 0} contentType=${req.headers['content-type']} contentLength=${req.headers['content-length']}`);
       if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
-        return res.status(400).json({ error: 'Archivo vacío o muy chico' });
+        return res.status(400).json({ error: `Archivo vacío o muy chico (recibido ${buf && buf.length ? buf.length : 0} bytes). Probá subir el archivo de nuevo.` });
       }
       let workbook;
       try { workbook = XLSX.read(buf, { type: 'buffer', cellDates: false }); }

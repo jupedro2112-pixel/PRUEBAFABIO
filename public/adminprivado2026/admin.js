@@ -2587,7 +2587,7 @@ function _renderRecontactUploader() {
     html += '</div>';
     // Tip secundario debajo del drop zone.
     html += '<div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.20);border-radius:10px;padding:10px 14px;margin-top:12px;color:#bbb;font-size:11.5px;line-height:1.6;">';
-    html += '  💡 <strong style="color:#ffd700;">Tip:</strong> hasta 10MB / 50.000 usernames, multi-hoja. Si el header dice <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">Type</code> + <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">Amount</code> + <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">User</code> agrupa los movimientos por usuario. Si no hay header, toma la primera columna como username.';
+    html += '  💡 <strong style="color:#ffd700;">Tip:</strong> hasta 25MB / 50.000 usernames, multi-hoja. Si el header dice <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">Type</code> + <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">Amount</code> + <code style="background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:3px;color:#00d4ff;">User</code> agrupa los movimientos por usuario. Si no hay header, toma la primera columna como username.';
     html += '</div>';
     return html;
 }
@@ -2644,20 +2644,45 @@ function _recontactFilePicked() {
 async function recontactAnalyze() {
     const inp = document.getElementById('recontactFile');
     const btn = document.getElementById('recontactAnalyzeBtn');
+    const progress = document.getElementById('recontactProgress');
     const file = inp && inp.files && inp.files[0];
     if (!file) { showToast('Subí un archivo .xlsx primero', 'error'); return; }
-    if (file.size > 10 * 1024 * 1024) { showToast('Archivo muy grande (>10MB)', 'error'); return; }
+    if (file.size > 25 * 1024 * 1024) { showToast('Archivo muy grande (>25MB)', 'error'); return; }
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Analizando…'; }
+    if (progress) {
+        progress.style.display = 'block';
+        progress.textContent = '⏳ Subiendo ' + (file.size / 1024 / 1024).toFixed(1) + ' MB y procesando… (puede tardar 30-60s con archivos grandes)';
+    }
+    const restoreBtn = () => {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 ANALIZAR LISTA'; }
+        if (progress) { progress.style.display = 'none'; }
+    };
     try {
         const r = await authFetch('/api/admin/recontact/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/octet-stream' },
             body: file
         });
-        const j = await r.json();
+        // Leer como texto para poder dar un mensaje de error útil
+        // incluso cuando el body viene vacío, HTML, o cortado.
+        let raw = '';
+        try { raw = await r.text(); } catch (_) { raw = ''; }
+        if (!raw) {
+            showToast('❌ Server respondió vacío (status ' + r.status + '). El archivo puede ser muy grande o haber timeouteado. Probá uno más chico o partilo.', 'error');
+            restoreBtn();
+            return;
+        }
+        let j;
+        try { j = JSON.parse(raw); }
+        catch (_) {
+            const peek = raw.slice(0, 200).replace(/<[^>]+>/g, ' ').trim();
+            showToast('❌ Respuesta inesperada (status ' + r.status + '): ' + (peek || 'sin texto'), 'error');
+            restoreBtn();
+            return;
+        }
         if (!r.ok || !j.success) {
-            showToast('❌ ' + (j.error || 'Error'), 'error');
-            if (btn) { btn.disabled = false; btn.textContent = '🔍 ANALIZAR LISTA'; }
+            showToast('❌ ' + (j.error || 'Error ' + r.status), 'error');
+            restoreBtn();
             return;
         }
         _recontactState.items = j.items || [];
@@ -2665,8 +2690,8 @@ async function recontactAnalyze() {
         loadRecontactSection();
         showToast('✅ ' + (j.summary.totalAnalyzed || 0) + ' usuarios analizados', 'success');
     } catch (e) {
-        showToast('Error: ' + (e.message || e), 'error');
-        if (btn) { btn.disabled = false; btn.textContent = '🔍 ANALIZAR LISTA'; }
+        showToast('Error de red: ' + (e.message || e), 'error');
+        restoreBtn();
     }
 }
 
