@@ -5053,6 +5053,7 @@ function _renderTeamCard(t, isExpanded) {
             html += '<td style="padding:8px;color:#aaa;font-size:10.5px;" id="' + rowId + '-lastfile">⏳</td>';
             // Celda Acciones
             html += '<td style="padding:6px 8px;text-align:center;white-space:nowrap;">';
+            html += '<button type="button" onclick="teamLineUploadXlsx(' + teamArg + ',' + phoneArg + ')" title="Cargar/actualizar listado .xlsx" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:5px;cursor:pointer;margin-right:4px;">📤</button>';
             html += '<button type="button" onclick="teamLineShowList(' + teamArg + ',' + phoneArg + ')" title="Ver lista cargada" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:5px;cursor:pointer;margin-right:4px;">👁</button>';
             html += '<button type="button" onclick="teamLineShowHistory(' + teamArg + ',' + phoneArg + ')" title="Historial de cargas .xlsx" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:5px;cursor:pointer;margin-right:4px;">📅</button>';
             html += '<button type="button" onclick="teamLineDownloadCsv(' + teamArg + ',' + phoneArg + ')" title="Descargar CSV" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:5px;cursor:pointer;">📥</button>';
@@ -5183,6 +5184,124 @@ async function teamLineShowHistory(teamName, linePhone) {
     } catch (e) {
         body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
     }
+}
+
+// Modal "📤 Cargar .xlsx" — sube un archivo asociado a esta línea (team+phone).
+// Reutiliza el endpoint /api/admin/user-lines/import-exact que ya existe.
+let _teamLineUploadFile = null;
+function teamLineUploadXlsx(teamName, linePhone) {
+    if (!teamName || !linePhone) {
+        showToast('Esta línea no tiene teléfono configurado — no se puede asociar archivo', 'error');
+        return;
+    }
+    _teamLineUploadFile = null;
+    let m = document.getElementById('teamLineUploadModal');
+    if (m) m.remove();
+    m = document.createElement('div');
+    m.id = 'teamLineUploadModal';
+    m.style.cssText = 'position:fixed;inset:0;z-index:10007;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+    m.innerHTML = '<div id="teamLineUploadBody" style="background:#0f1024;border:1px solid #00d4ff;border-radius:12px;padding:18px;max-width:560px;width:100%;color:#fff;font-family:system-ui;"></div>';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+    document.body.appendChild(m);
+    const body = document.getElementById('teamLineUploadBody');
+    const safeTeam  = JSON.stringify(teamName).replace(/"/g, '&quot;');
+    const safePhone = JSON.stringify(linePhone).replace(/"/g, '&quot;');
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:10px;margin-bottom:12px;">';
+    html += '  <h3 style="margin:0;color:#00d4ff;font-size:17px;">📤 Cargar listado .xlsx</h3>';
+    html += '  <button type="button" onclick="closeTeamLineUploadModal()" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.45);padding:5px 10px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">✕ Cerrar</button>';
+    html += '</div>';
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:12px;">';
+    html += '  <div style="color:#00d4ff;font-weight:700;font-size:13px;">Equipo: <strong style="color:#fff;">' + escapeHtml(teamName) + '</strong></div>';
+    html += '  <div style="color:#00d4ff;font-weight:700;font-size:13px;margin-top:3px;">Línea: <strong style="color:#ffd700;font-family:monospace;">' + escapeHtml(linePhone) + '</strong></div>';
+    html += '</div>';
+    html += '<p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">Subí un .xlsx con UNA columna de usernames. El sistema asigna ese número a esos usuarios. Si un usuario todavía no se registró, queda pre-asignado y recibe la línea cuando entre por primera vez.</p>';
+    html += '<input type="file" id="teamLineUploadFile" accept=".xlsx,.xls" style="width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;margin-bottom:10px;">';
+    html += '<div style="display:flex;gap:6px;">';
+    html += '  <button type="button" onclick="teamLineUploadPreview(' + safeTeam + ',' + safePhone + ')" style="flex:1;padding:10px;font-size:13px;font-weight:700;background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:7px;cursor:pointer;">👁 Vista previa</button>';
+    html += '  <button type="button" id="teamLineUploadConfirmBtn" onclick="teamLineUploadConfirm(' + safeTeam + ',' + safePhone + ')" disabled style="flex:1;padding:10px;font-size:13px;font-weight:700;background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:7px;cursor:not-allowed;opacity:0.5;">✅ Confirmar</button>';
+    html += '</div>';
+    html += '<div id="teamLineUploadResult" style="margin-top:12px;"></div>';
+    body.innerHTML = html;
+    // Wire change del input para guardar el archivo en variable local
+    const inp = document.getElementById('teamLineUploadFile');
+    if (inp) inp.addEventListener('change', () => {
+        _teamLineUploadFile = inp.files && inp.files[0] || null;
+    });
+}
+
+function closeTeamLineUploadModal() {
+    const m = document.getElementById('teamLineUploadModal');
+    if (m) m.remove();
+    _teamLineUploadFile = null;
+}
+
+async function _sendTeamLineUpload(teamName, linePhone, dryRun) {
+    if (!_teamLineUploadFile) {
+        showToast('Subí un archivo primero', 'error');
+        return null;
+    }
+    if (_teamLineUploadFile.size > 10 * 1024 * 1024) {
+        showToast('Archivo muy grande (>10MB)', 'error');
+        return null;
+    }
+    const digits = String(linePhone).replace(/[^\d]/g, '');
+    if (digits.length < 7) {
+        showToast('Teléfono inválido para esta línea', 'error');
+        return null;
+    }
+    const params = new URLSearchParams();
+    params.set('teamName', teamName);
+    params.set('linePhone', '+' + digits);
+    params.set('dryRun', dryRun ? 'true' : 'false');
+    try {
+        const r = await authFetch('/api/admin/user-lines/import-exact?' + params.toString(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: _teamLineUploadFile
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            const msg = (j && j.error) || ('HTTP ' + r.status);
+            showToast('Error: ' + msg, 'error');
+            return null;
+        }
+        return j;
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+        return null;
+    }
+}
+
+async function teamLineUploadPreview(teamName, linePhone) {
+    const out = document.getElementById('teamLineUploadResult');
+    if (out) out.innerHTML = '<div style="color:#aaa;font-size:12px;">⏳ Procesando archivo…</div>';
+    const j = await _sendTeamLineUpload(teamName, linePhone, true);
+    const btn = document.getElementById('teamLineUploadConfirmBtn');
+    if (!j) {
+        if (out) out.innerHTML = '';
+        if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+        return;
+    }
+    if (out) out.innerHTML = _renderSlotImportResultHtml(j, true);
+    if (btn) { btn.disabled = false; btn.style.cursor = 'pointer'; btn.style.opacity = '1'; }
+}
+
+async function teamLineUploadConfirm(teamName, linePhone) {
+    if (!confirm('¿Confirmás la importación de esta lista a la línea ' + linePhone + '?')) return;
+    const out = document.getElementById('teamLineUploadResult');
+    if (out) out.innerHTML = '<div style="color:#aaa;font-size:12px;">⏳ Escribiendo en la DB…</div>';
+    const j = await _sendTeamLineUpload(teamName, linePhone, false);
+    if (!j) {
+        if (out) out.innerHTML = '';
+        return;
+    }
+    if (out) out.innerHTML = _renderSlotImportResultHtml(j, false);
+    showToast('✅ Lista importada', 'success');
+    const btn = document.getElementById('teamLineUploadConfirmBtn');
+    if (btn) { btn.disabled = true; btn.style.cursor = 'not-allowed'; btn.style.opacity = '0.5'; }
+    // Refrescar Equipos (para que la celda "Último archivo" se actualice).
+    setTimeout(() => { try { loadTeams(); } catch (_) {} }, 600);
 }
 
 // Descarga CSV directamente con team + phone (sin pasar por slot index).
