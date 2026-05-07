@@ -6910,6 +6910,175 @@ function _helpBlocks() {
             ].join('')
         },
         {
+            anchor: 'help-encuesta-estrategia',
+            icon: '📋',
+            title: 'Encuesta — estrategia mensual, ventana horaria y calendario completo',
+            body: [
+                '<p>La sección <strong>📋 Encuesta</strong> tiene <em>4 pestañas</em>: <strong>Estrategia</strong>, <strong>Gente que se une</strong>, <strong>ROI / Reacciones</strong>, <strong>Historial semanal</strong>. La pestaña principal es <strong>Estrategia</strong>: ahí configurás qué notifs salen, a quién y cuándo.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">1) Cómo funciona el modal de la encuesta</h4>',
+                '<p>Cuando un user entra a la PWA por primera vez (después de instalarla), le aparece un modal preguntando qué tipo de notifs quiere recibir. Las opciones son:</p>',
+                '<ul>',
+                '<li>🟢 <strong>SUAVE</strong>: 2 bonos · 5 invitaciones a jugar · 2 regalos al mes.</li>',
+                '<li>🟡 <strong>NORMAL</strong>: 4 bonos · 5 invitaciones · 2 regalos.</li>',
+                '<li>🔴 <strong>ACTIVO</strong>: 6 bonos · 10 invitaciones · 3 regalos.</li>',
+                '<li>🔔 <strong>SOLO REEMB</strong>: solo si hay reembolso disponible (no recibe nada extra).</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:16px;">2) Editor de estrategia (lo que vos completás)</h4>',
+                '<p>En la pestaña <strong>Estrategia</strong> editás:</p>',
+                '<ul>',
+                '<li><strong>Cantidades por tier</strong>: cuántos <em>bonos / juegos / regalos</em> al mes recibe cada tier. Tocá <strong>"🔄 Cargar valores recomendados"</strong> y te llena con defaults sensatos.</li>',
+                '<li><strong>Tipo de bono</strong>: free-form (ej. "50% en cargas + 1× 100% al mes").</li>',
+                '<li><strong>Plata total a regalar/mes</strong>: pozo que se reparte según tier (VIP 50% · STD 35% · Casual 15%).</li>',
+                '<li><strong>Tope técnico de regalos</strong>: hard cap. La distribución no puede excederlo.</li>',
+                '<li><strong>📅 Ventana horaria de envío</strong> (cuadro verde): hora de inicio y fin (default <strong>18:00 a 21:00</strong>). Cada notif sale a una hora <em>random</em> dentro de esta ventana — los users no reciben todos al mismo tiempo.</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:16px;">3) Botones del editor</h4>',
+                '<ul>',
+                '<li>🔄 <strong>Cargar valores recomendados</strong>: rellena con defaults (incluye 18-21hs). NO guarda, hay que apretar Guardar.</li>',
+                '<li>👁️ <strong>VER PREVIA</strong>: abre un modal con simulación NO persistida — ves cuánto le tocaría a cada tier con la config actual sin afectar nada.</li>',
+                '<li>💾 <strong>GUARDAR estrategia</strong>: persiste cambios pero no activa todavía. Mientras esté inactiva, los crons no respetan la config.</li>',
+                '<li>✅ <strong>ACTIVAR estrategia</strong> (verde): persiste + dispara la programación masiva del mes (ver punto 4).</li>',
+                '<li>📅 <strong>Ver calendario de envíos</strong>: abre el modal con la foto del calendario actual (ver punto 5).</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:16px;">4) Qué pasa cuando apretás ACTIVAR</h4>',
+                '<p>Esto es lo importante. Al activar:</p>',
+                '<ol>',
+                '<li>Se <strong>cancelan</strong> todos los pushes pendientes de la estrategia anterior (idempotente: re-activar no duplica).</li>',
+                '<li>Para <strong>cada user</strong> con tier <em>suave/normal/activo</em> y FCM token registrado:',
+                '<ul>',
+                '<li>Se le programan <strong>N pushes de bonos</strong> (según cantidad del tier) en N días distintos del resto del mes.</li>',
+                '<li>Se le programan <strong>N pushes de juegos</strong> en otros N días.</li>',
+                '<li>Se le programan <strong>N pushes de regalos</strong> en otros N días.</li>',
+                '<li>Cada uno cae a una hora <strong>random</strong> dentro de la ventana 18-21.</li>',
+                '</ul></li>',
+                '<li>Los push los dispara un worker en background cada 60s — vos no tenés que estar prendido.</li>',
+                '</ol>',
+                '<p style="background:rgba(102,255,102,0.06);border-left:3px solid #66ff66;padding:10px 12px;margin-top:10px;border-radius:6px;"><strong style="color:#66ff66;">Inscripción automática:</strong> los users que respondan la encuesta DESPUÉS de activar se inscriben solos en el plan que les corresponde (le programamos su mes individual). No hace falta tocar nada cuando se suma gente.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">5) Modal "📅 Calendario de envíos"</h4>',
+                '<p>Aparece automáticamente cuando activás, y también desde el botón <em>"📅 Ver calendario de envíos"</em>. Muestra:</p>',
+                '<ul>',
+                '<li>Header con tarjetas grandes: <strong>total programado</strong>, <strong>users incluidos</strong>, <strong>días con envíos</strong>.</li>',
+                '<li><strong>Ventana horaria</strong> configurada.</li>',
+                '<li><strong>Por categoría</strong>: cuántos 🎁 bonos, 🎰 juegos, 💎 regalos en total.</li>',
+                '<li><strong>Por tier</strong>: cuántas notifs van a 🟢/🟡/🔴/🔔.</li>',
+                '<li><strong>Distribución por día</strong>: mini gráfico de barras día a día del mes.</li>',
+                '<li><strong>Tabla detallada</strong> (hasta 200): hora exacta, usuario, tier, categoría, título.</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:16px;">6) 🗓️ Cronograma semanal (NUEVO)</h4>',
+                '<p>Debajo del editor de estrategia hay una tarjeta azul <strong>"🗓️ Cronograma — próximos 7 días"</strong>. Es la <em>foto día por día</em> de cómo avanza la semana:</p>',
+                '<ul>',
+                '<li><strong>Selector de rango</strong>: 7 / 14 / 30 días.</li>',
+                '<li><strong>Resumen</strong>: total pushes pendientes en el rango + users distintos.</li>',
+                '<li><strong>Tabla</strong> con una fila por día:',
+                '<ul>',
+                '<li><em>Día</em>: nombre + fecha (el día actual está resaltado en dorado con ⭐).</li>',
+                '<li><em>Pushes</em>: cuántas notifs salen ese día.</li>',
+                '<li><em>Users</em>: cuántas personas distintas reciben.</li>',
+                '<li><em>Público (por tier)</em>: 🟢 N · 🟡 N · 🔴 N — quién recibe cada día.</li>',
+                '<li><em>Categorías</em>: 🎁 bonos · 🎰 juegos · 💎 regalos — qué tipo de mensaje.</li>',
+                '<li><em>Horario</em>: primera hora → última hora del día.</li>',
+                '</ul></li>',
+                '</ul>',
+                '<p>Sirve para que de un vistazo veas <strong>cómo avanza la estrategia esta semana</strong> sin entrar al modal grande del calendario.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">7) Test fire (cuadro rojo)</h4>',
+                '<p>Caja roja "🧪 Test fire": ingresás un username y le mandamos 5 pushes de prueba (cada 1 minuto). Útil para QA — confirmá que el user tiene app instalada y notifs activadas antes de testear.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">8) Pestaña Gente que se une</h4>',
+                '<p>Lista cronológica de quién respondió la encuesta y qué eligió. Filtros por tier + opciones de regalar bono individual.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">9) Pestaña ROI / Reacciones</h4>',
+                '<p>Muestra de los últimos 30 días, agrupado por tier: cuántos pushes salieron, cuántos llegaron, cuántos clickearon. Te dice si vale la pena la estrategia.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">10) Pestaña Historial semanal</h4>',
+                '<p>KPI por semana ISO: respondentes nuevos, pushes enviados, plata distribuida. Histórico para detectar tendencias mes a mes.</p>',
+
+                '<p style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;padding:10px 12px;margin-top:14px;border-radius:6px;"><strong style="color:#ffc850;">Importante:</strong> si modificás la estrategia y la <strong>re-activás</strong>, se cancelan los pushes pendientes y se regenera todo desde cero. Si <strong>desactivás</strong>, se cancelan también — no quedan colgados pushes viejos.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-backup-phones',
+            icon: '📞',
+            title: 'Números de respaldo — base de datos privada con clave',
+            body: [
+                '<p>Los users pueden dejar un número de teléfono <strong>opcional</strong> desde la home (tarjeta azul "📞 Tu línea (opcional)" al pie del feed). Sirve para tener una <em>vía paralela</em> si la página falla y queremos avisarles directo.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Cómo lo ven los users (en la home)</h4>',
+                '<ul>',
+                '<li>Tarjeta visible al pie de la home, debajo de "💬 OPINIONES DE LA GENTE".</li>',
+                '<li>Texto: "Si tenemos un problema con la página, te avisamos directo. <em>Importante pero no obligatorio</em>".</li>',
+                '<li>Input + botón <strong>Guardar</strong>. Una vez guardado, <em>el botón cambia a "Actualizar"</em> y muestra "✓ Tenés guardado este número" — pueden modificarlo cuando quieran.</li>',
+                '<li><strong>NO se exige</strong>: si no quieren dar el número, no pasa nada. La tarjeta queda visible para que la usen cuando se les ocurra.</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Cómo accedés vos al listado (admin)</h4>',
+                '<ol>',
+                '<li>En el menú izquierdo del admin → <strong>📞 Números de respaldo</strong> (debajo de "Encuesta").</li>',
+                '<li>Te aparece una pantalla bloqueada que pide <strong>PIN 1818</strong> para entrar.</li>',
+                '<li>Una vez desbloqueado: tabla con <strong>Equipo / Usuario / Teléfono / Fecha</strong>.</li>',
+                '<li>Botón verde <strong>"⬇️ Descargar CSV"</strong> arriba a la derecha — baja un Excel con esas 4 columnas + fecha de carga.</li>',
+                '<li>Botón <strong>🔄</strong> al lado del título para refrescar.</li>',
+                '</ol>',
+
+                '<h4 style="color:#fff;margin-top:14px;">CSV que se descarga</h4>',
+                '<p>Nombre del archivo: <code>numeros-respaldo-YYYY-MM-DD.csv</code>. Columnas:</p>',
+                '<ul>',
+                '<li><strong>Equipo</strong>: el equipo del user (de la asignación de línea).</li>',
+                '<li><strong>Usuario</strong>: el username de JUGAYGANA.</li>',
+                '<li><strong>Telefono</strong>: el número que dejó (sin formato, solo dígitos).</li>',
+                '<li><strong>Fecha</strong>: cuándo lo cargó (ISO 8601).</li>',
+                '</ul>',
+                '<p>Encoding UTF-8 con BOM (lo abre Excel sin romper acentos).</p>',
+
+                '<p style="background:rgba(255,80,80,0.06);border-left:3px solid #ff5050;padding:10px 12px;margin-top:14px;border-radius:6px;"><strong style="color:#ff5050;">Sobre el PIN 1818:</strong> el PIN es <em>solo del lado cliente</em>, así que cualquier admin con consola puede saltarlo. El endpoint detrás ya está protegido por <code>authMiddleware + adminMiddleware</code>, o sea, hace falta sesión admin para acceder. El PIN es un freno extra contra clicks accidentales, no una cerradura real. Si querés bloqueo de verdad, hay que hacer 2FA (ver opción de seguridad pendiente).</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-opiniones',
+            icon: '💬',
+            title: 'Opiniones de la gente — feed con texto y solo estrellas',
+            body: [
+                '<p>En la home, debajo del CTA verde de sorteos, hay <strong>2 bloques de opiniones</strong>:</p>',
+                '<ol>',
+                '<li><strong>Card del form</strong>: el user vota 1-5 estrellas + escribe (max 100 chars) + opcionalmente deja un teléfono privado para que lo contacten si tiene un problema.</li>',
+                '<li><strong>Feed al pie</strong>: lista pública de las opiniones de los demás (con username enmascarado al 80%). Se muestra <em>arriba el promedio</em> + porcentajes BUENO/REGULAR/MALO + lista detallada.</li>',
+                '</ol>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Default del comentario (matchea las estrellas)</h4>',
+                '<p>Si el user toca <strong>3 estrellas</strong>, el textarea se autocompleta con "<em>3 estrellas</em>". Toca 4 → "<em>4 estrellas</em>". Etc.</p>',
+                '<p>Apenas el user hace click en el textarea para escribir, el default se borra y arranca con sus propias palabras. Si se va sin tocar, queda como "<em>{N} estrellas</em>" en el feed (en blanco, no en dorado).</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Promedio con media estrella</h4>',
+                '<p>Antes <strong>4.5 mostraba 4 estrellas</strong> (truncado). Ahora muestra <strong>4 estrellas + media</strong> (gradient mitad dorada / mitad gris). Reglas:</p>',
+                '<ul>',
+                '<li>≥ 0.75 fracción → redondea para arriba (4.8 = 5 estrellas).</li>',
+                '<li>0.25 a 0.75 fracción → media estrella (4.5 = 4 + ½).</li>',
+                '<li>&lt; 0.25 fracción → no hay media (4.1 = 4).</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Feed separado en 2 bloques (NUEVO)</h4>',
+                '<p>El feed ahora <strong>prioriza los comentarios con texto real</strong>:</p>',
+                '<ol>',
+                '<li><strong>Arriba</strong>: opiniones que dejaron un texto propio (no es default "N estrellas"). Cards normales en 3 columnas.</li>',
+                '<li><strong>Divisor dorado</strong>: "⭐ Solo estrellas (N)" con el conteo.</li>',
+                '<li><strong>Abajo</strong>: opiniones que solo dejaron puntaje sin escribir. Cards mini compactas en grid (auto-fill 140px) — ocupan poco espacio para no estorbar al scroll.</li>',
+                '</ol>',
+                '<p>Si querés esconder los "solo estrellas" del público (que el feed muestre solo los que escribieron), avisame.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Click expande el comentario</h4>',
+                '<p>Cada card del feed se puede tocar y se expande mostrando el comentario completo (en mobile, donde no hay hover, esto es clave porque los textos quedan cortados con elipsis). Tocás de nuevo y vuelve al estado chico.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">Donde lo mirás vos (admin)</h4>',
+                '<p>Sección <strong>⭐ Reseñas</strong> en el admin: ves todas las opiniones con texto completo, estrellas, fecha, username (sin mask). Sirve para detectar quejas, mejoras, y posibles regalos a clientes que tienen una mala experiencia.</p>'
+            ].join('')
+        },
+        {
             anchor: 'help-glossary',
             icon: '📚',
             title: 'Glosario de términos',
@@ -6929,6 +7098,10 @@ function _helpBlocks() {
                 '<dt style="color:#00d4ff;font-weight:700;">prefix</dt><dd>Las primeras letras del username que indican a qué línea/equipo pertenece (ej: <code>oro_</code>).</dd>',
                 '<dt style="color:#00d4ff;font-weight:700;">huérfano</dt><dd>User sin línea asignada.</dd>',
                 '<dt style="color:#00d4ff;font-weight:700;">strategySource</dt><dd>Origen de un giveaway: <code>auto-strategy</code> (motor semanal), <code>auto-rule</code> (regla aprobada), <code>manual</code> (admin desde panel).</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">ventana horaria</dt><dd>Rango de horas dentro del cual se distribuyen las notifs de la estrategia (default 18:00 a 21:00). Cada user recibe a una hora <em>random</em> dentro de esa ventana.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">scheduledFor</dt><dd>Timestamp futuro de un push programado. Un worker en background los dispara cada 60s cuando llega su hora.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">backup phone</dt><dd>Número de respaldo opcional que el user deja en la home. Sirve para tener una vía paralela si la página falla.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">categorías</dt><dd>Tipos de push de la estrategia: 🎁 <strong>bonos</strong> (ofertas de carga), 🎰 <strong>juegos</strong> (invitación a jugar), 💎 <strong>regalos</strong> (plata directa).</dd>',
                 '</dl>'
             ].join('')
         }
