@@ -1488,6 +1488,52 @@
             font-style: italic;
         }
 
+        /* Bloque "Solo estrellas" — apartado debajo de los comentarios reales.
+           Más compacto, sólo estrellas + username, en grid para que entren muchos. */
+        .reviews-stars-only-divider {
+            margin: 14px 0 8px;
+            padding: 6px 10px;
+            color: #ffd700;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            border-top: 1px dashed rgba(212,175,55,0.30);
+            border-bottom: 1px dashed rgba(212,175,55,0.30);
+            background: rgba(212,175,55,0.04);
+            text-align: center;
+        }
+        .reviews-stars-only-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 4px;
+        }
+        .review-item-mini {
+            background: rgba(0,0,0,0.18);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 4px;
+            padding: 3px 6px;
+            font-size: 10px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            min-width: 0;
+        }
+        .review-item-mini .mini-stars {
+            color: #ffd700;
+            font-size: 9.5px;
+            letter-spacing: 0.3px;
+            flex-shrink: 0;
+        }
+        .review-item-mini .mini-stars .empty { color: #444; }
+        .review-item-mini .mini-user {
+            color: #888;
+            font-style: italic;
+            font-size: 9.5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         /* Bloque "Unite a la comunidad" — mismo estilo que .user-line-vigente
            pero con paleta verde-WhatsApp para diferenciarlo del numero. */
         .user-community-vigente {

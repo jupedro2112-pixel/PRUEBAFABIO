@@ -366,6 +366,16 @@ VIP.reviews = (function () {
             list.innerHTML = '<div style="color:#aaa;font-size:11.5px;text-align:center;padding:6px;">Sin comentarios públicos.</div>';
             return;
         }
+        // Separar: arriba van los reviews con texto REAL (no default), y
+        // abajo, en bloque aparte y más chico, los que dejaron solo estrellas.
+        const withComment = [];
+        const starsOnly   = [];
+        for (const it of items) {
+            const c = (it.comment || '').trim();
+            if (c && !_isDefaultComment(c)) withComment.push(it);
+            else starsOnly.push(it);
+        }
+
         // Chunk en columnas de 10 (max 30 items = 3 columnas en desktop, en
         // mobile cada columna toma todo el ancho y queda apilado).
         const PER_COL = 10;
@@ -389,12 +399,31 @@ VIP.reviews = (function () {
                 '</div>' +
             '</div>';
         };
-        const cols = [];
-        for (let i = 0; i < items.length; i += PER_COL) {
-            const slice = items.slice(i, i + PER_COL);
-            cols.push('<div class="reviews-col">' + slice.map(renderItem).join('') + '</div>');
+        // Item compacto para el bloque "solo estrellas" (más chico, en grid).
+        const renderStarsOnly = (it) => {
+            const stars = _renderStars(it.stars);
+            return '<div class="review-item-mini" title="' + _esc(it.maskedUsername || '***') + '">' +
+                '<span class="mini-stars">' + stars + '</span>' +
+                '<span class="mini-user">' + _esc(it.maskedUsername || '***') + '</span>' +
+            '</div>';
+        };
+
+        let html = '';
+        if (withComment.length > 0) {
+            const cols = [];
+            for (let i = 0; i < withComment.length; i += PER_COL) {
+                const slice = withComment.slice(i, i + PER_COL);
+                cols.push('<div class="reviews-col">' + slice.map(renderItem).join('') + '</div>');
+            }
+            html += cols.join('');
+        } else {
+            html += '<div style="color:#aaa;font-size:11.5px;text-align:center;padding:6px;">Todavía nadie escribió un comentario con texto.</div>';
         }
-        list.innerHTML = cols.join('');
+        if (starsOnly.length > 0) {
+            html += '<div class="reviews-stars-only-divider">⭐ Solo estrellas (' + starsOnly.length + ')</div>';
+            html += '<div class="reviews-stars-only-grid">' + starsOnly.map(renderStarsOnly).join('') + '</div>';
+        }
+        list.innerHTML = html;
         _wireFeedClickToExpand(list);
     }
 
