@@ -5025,26 +5025,49 @@ function _renderTeamCard(t, isExpanded) {
     // Desglose por línea (collapsable)
     if (isExpanded && hasLines) {
         html += '<div style="border-top:1px solid rgba(255,255,255,0.08);padding:12px 14px 14px;background:rgba(0,0,0,0.20);">';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '<div style="overflow-x:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:680px;">';
         html += '<thead><tr style="color:#888;text-align:left;">';
         html += '<th style="padding:6px 8px;font-weight:600;">Línea</th>';
         html += '<th style="padding:6px 8px;font-weight:600;">Teléfono</th>';
         html += '<th style="padding:6px 8px;font-weight:600;text-align:right;">Usuarios</th>';
         html += '<th style="padding:6px 8px;font-weight:600;text-align:right;">Con canal</th>';
         html += '<th style="padding:6px 8px;font-weight:600;text-align:right;">Activos 7d</th>';
+        html += '<th style="padding:6px 8px;font-weight:600;">Último archivo</th>';
+        html += '<th style="padding:6px 8px;font-weight:600;text-align:center;">Acciones</th>';
         html += '</tr></thead><tbody>';
-        for (const ln of t.lines) {
+        for (let lnIdx = 0; lnIdx < t.lines.length; lnIdx++) {
+            const ln = t.lines[lnIdx];
             const channelPct = ln.count > 0 ? Math.round((ln.withChannel / ln.count) * 100) : 0;
             const activePct = ln.count > 0 ? Math.round((ln.activeThisWeek / ln.count) * 100) : 0;
-            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+            const teamArg  = JSON.stringify(t.teamName).replace(/"/g, '&quot;');
+            const phoneArg = JSON.stringify(ln.linePhone || '').replace(/"/g, '&quot;');
+            const rowId = 'teamLineRow-' + lnIdx + '-' + (t.teamName + (ln.linePhone || '')).replace(/[^a-z0-9]/gi, '_');
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);" id="' + rowId + '">';
             html += '<td style="padding:8px;color:#fff;">' + escapeHtml(ln.fullLabel) + '</td>';
             html += '<td style="padding:8px;color:#ffd700;font-family:monospace;font-size:11px;">' + escapeHtml(ln.linePhone || '—') + '</td>';
             html += '<td style="padding:8px;color:#fff;text-align:right;font-weight:700;">' + fmt(ln.count) + '</td>';
             html += '<td style="padding:8px;color:#00d4ff;text-align:right;">' + fmt(ln.withChannel) + ' <span style="color:#666;font-size:10px;">(' + channelPct + '%)</span></td>';
             html += '<td style="padding:8px;color:#9b30ff;text-align:right;">' + fmt(ln.activeThisWeek) + ' <span style="color:#666;font-size:10px;">(' + activePct + '%)</span></td>';
+            // Celda "Último archivo" — se hidrata async después del render.
+            html += '<td style="padding:8px;color:#aaa;font-size:10.5px;" id="' + rowId + '-lastfile">⏳</td>';
+            // Celda Acciones
+            html += '<td style="padding:6px 8px;text-align:center;white-space:nowrap;">';
+            html += '<button type="button" onclick="teamLineShowList(' + teamArg + ',' + phoneArg + ')" title="Ver lista cargada" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:5px;cursor:pointer;margin-right:4px;">👁</button>';
+            html += '<button type="button" onclick="teamLineShowHistory(' + teamArg + ',' + phoneArg + ')" title="Historial de cargas .xlsx" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:5px;cursor:pointer;margin-right:4px;">📅</button>';
+            html += '<button type="button" onclick="teamLineDownloadCsv(' + teamArg + ',' + phoneArg + ')" title="Descargar CSV" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.40);color:#25d366;border-radius:5px;cursor:pointer;">📥</button>';
+            html += '</td>';
             html += '</tr>';
         }
-        html += '</tbody></table></div>';
+        html += '</tbody></table></div></div>';
+        // Hidratar las celdas de "Último archivo" después del render.
+        setTimeout(() => {
+            for (let lnIdx = 0; lnIdx < t.lines.length; lnIdx++) {
+                const ln = t.lines[lnIdx];
+                const cellId = 'teamLineRow-' + lnIdx + '-' + (t.teamName + (ln.linePhone || '')).replace(/[^a-z0-9]/gi, '_') + '-lastfile';
+                _hydrateTeamLineLastFile(cellId, t.teamName, ln.linePhone || '');
+            }
+        }, 0);
     }
 
     html += '</div>';
@@ -5062,6 +5085,130 @@ function toggleTeamExpand(teamName) {
     if (_teamsExpanded.has(teamName)) _teamsExpanded.delete(teamName);
     else _teamsExpanded.add(teamName);
     if (_teamsCache) _renderTeamsList(_teamsCache);
+}
+
+// =====================================================================
+// Acciones por línea desde la sección Equipos. Reusan los mismos modales
+// y endpoints que la sección "Números vigentes".
+// =====================================================================
+
+// Hidrata la celda "Último archivo" de cada fila de línea. Tira un fetch
+// chico al endpoint de history y muestra fecha + count del último upload.
+async function _hydrateTeamLineLastFile(cellId, teamName, linePhone) {
+    const cell = document.getElementById(cellId);
+    if (!cell) return;
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        const r = await authFetch('/api/admin/user-lines/import-history?' + params.toString());
+        if (!r.ok) { cell.textContent = '—'; return; }
+        const j = await r.json();
+        const sessions = j.sessions || [];
+        if (sessions.length === 0) {
+            cell.innerHTML = '<span style="color:#666;">Sin .xlsx</span>';
+            return;
+        }
+        const last = sessions[0];
+        const dt = last.importedAt ? new Date(last.importedAt) : null;
+        const dtStr = dt ? dt.toLocaleDateString('es-AR') : '—';
+        cell.innerHTML = '<span style="color:#ffd700;font-weight:700;">📋 ' + (last.count || 0) + '</span><br><span style="color:#888;font-size:10px;">' + escapeHtml(dtStr) + (sessions.length > 1 ? ' · +' + (sessions.length - 1) + ' antes' : '') + '</span>';
+    } catch (_) {
+        cell.textContent = '—';
+    }
+}
+
+// Modal "👁 Ver lista" — equivalente a slotShowList pero recibe team+phone directos.
+async function teamLineShowList(teamName, linePhone) {
+    if (!teamName) return;
+    let m = document.getElementById('slotListModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'slotListModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10005;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="slotListBody" style="background:#0f1024;border:1px solid #00d4ff;border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('slotListBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando lista…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        const r = await authFetch('/api/admin/user-lines/lookup-by-line?' + params.toString());
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error ' + r.status + '</div>';
+            return;
+        }
+        const j = await r.json();
+        // _renderSlotListModalHtml espera un slotIndex para CSV; le pasamos -1
+        // y reemplazamos el botón en el HTML para usar teamLineDownloadCsv.
+        let html = _renderSlotListModalHtml(j, -1);
+        // Reemplazo del botón CSV para que funcione sin slot index.
+        const safeTeam  = JSON.stringify(teamName).replace(/"/g, '&quot;');
+        const safePhone = JSON.stringify(linePhone || '').replace(/"/g, '&quot;');
+        html = html.replace(/onclick="slotDownloadCsv\(-1\)"/g, 'onclick="teamLineDownloadCsv(' + safeTeam + ',' + safePhone + ')"');
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+// Modal "📅 Historial" — reusa el mismo modal/render que slotShowHistory.
+async function teamLineShowHistory(teamName, linePhone) {
+    if (!teamName) return;
+    let m = document.getElementById('slotHistoryModal');
+    if (!m) {
+        m = document.createElement('div');
+        m.id = 'slotHistoryModal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:10006;background:rgba(0,0,0,0.78);display:flex;align-items:center;justify-content:center;padding:20px;';
+        m.innerHTML = '<div id="slotHistoryBody" style="background:#0f1024;border:1px solid #ffd700;border-radius:12px;padding:18px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;color:#fff;font-family:system-ui;"></div>';
+        m.onclick = (e) => { if (e.target === m) m.remove(); };
+        document.body.appendChild(m);
+    }
+    const body = document.getElementById('slotHistoryBody');
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando historial…</div>';
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        const r = await authFetch('/api/admin/user-lines/import-history?' + params.toString());
+        if (!r.ok) {
+            body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error ' + r.status + '</div>';
+            return;
+        }
+        const j = await r.json();
+        body.innerHTML = _renderSlotHistoryHtml(j, { team: teamName, linePhone });
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+// Descarga CSV directamente con team + phone (sin pasar por slot index).
+async function teamLineDownloadCsv(teamName, linePhone) {
+    if (!teamName) return;
+    try {
+        const params = new URLSearchParams();
+        params.set('teamName', teamName);
+        if (linePhone) params.set('linePhone', linePhone);
+        const r = await authFetch('/api/admin/user-lines/lookup-by-line.csv?' + params.toString());
+        if (!r.ok) {
+            showToast('Error descargando CSV (' + r.status + ')', 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'linea-' + teamName.replace(/[^a-z0-9_-]/gi, '_') + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+        showToast('✅ CSV descargado', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 // =====================================================================
