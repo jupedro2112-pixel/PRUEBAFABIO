@@ -8913,6 +8913,173 @@ app.post(
   }
 );
 
+// XLSX multi-hoja: una hoja por bucket (Calientes / En riesgo / Perdidos /
+// Inactivos), una hoja con los que tienen app+notifs (push directo), una
+// con los que no tienen app (WhatsApp), más una de Resumen. Cada hoja trae
+// columnas detalladas con equipo + línea WhatsApp para derivar.
+app.post(
+  '/api/admin/recontact/export.xlsx',
+  authMiddleware,
+  adminMiddleware,
+  express.json({ limit: '20mb' }),
+  async (req, res) => {
+    let XLSX;
+    try { XLSX = require('xlsx'); }
+    catch (_) { return res.status(503).json({ error: 'Falta dependencia "xlsx"' }); }
+
+    try {
+      const items = (req.body && req.body.items) || [];
+      const summary = (req.body && req.body.summary) || {};
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'No hay items para exportar' });
+      }
+
+      const fmtNum = (n) => Number(n || 0);
+      const yesNo = (v) => v ? 'Si' : 'No';
+
+      // Columnas standard que van en cada hoja de detalle.
+      const buildRow = (it) => ({
+        Prioridad: fmtNum(it.priority),
+        Usuario: it.username || '',
+        Tier: it.tier || '',
+        Bucket: it.bucket || '',
+        DiasSinCargar: it.daysSinceLastDeposit == null ? '' : Number(it.daysSinceLastDeposit),
+        Cargas30d: fmtNum(it.deposits30d),
+        Cargas90d: fmtNum(it.deposits90d),
+        TotalCargas: fmtNum(it.totalDeposits),
+        // Datos del archivo subido
+        ArchCargas: fmtNum(it.fileDeposits),
+        ArchRetiros: fmtNum(it.fileWithdraws),
+        ArchBonos: fmtNum(it.fileBonuses),
+        ArchNeto: fmtNum(it.fileNet),
+        CantCargas: fmtNum(it.fileCountDeposits),
+        CantRetiros: fmtNum(it.fileCountWithdraws),
+        CantBonos: fmtNum(it.fileCountBonuses),
+        // App/notifs
+        TieneApp: yesNo(it.hasApp),
+        TieneNotifs: yesNo(it.hasNotifs),
+        // Equipo + línea (de Equipos / UserLineLookup)
+        Equipo: it.team || '',
+        LineaWhatsApp: it.linePhone || '',
+        TelCliente: it.phone || '',
+        // Estrategia
+        Estrategia: it.strategy || '',
+        BonoSugerido: fmtNum(it.suggestedBonus),
+        MensajeSugerido: it.suggestedMessage || '',
+        OfreceApp: yesNo(it.addAppOffer),
+        OfreceNotifs: yesNo(it.addNotifsOffer)
+      });
+
+      // Particionar por bucket y por app status.
+      const byBucket = { calientes: [], enRiesgo: [], perdidos: [], inactivos: [] };
+      const conAppNotifs = [];
+      const conAppSinNotifs = [];
+      const sinApp = [];
+      const sinLineaAsignada = [];
+      for (const it of items) {
+        const b = it.bucket || 'inactivos';
+        if (byBucket[b]) byBucket[b].push(it);
+        if (it.hasApp && it.hasNotifs) conAppNotifs.push(it);
+        else if (it.hasApp && !it.hasNotifs) conAppSinNotifs.push(it);
+        else sinApp.push(it);
+        if (!it.team && !it.linePhone) sinLineaAsignada.push(it);
+      }
+
+      const wb = XLSX.utils.book_new();
+
+      // Helper: agrega una hoja con headers en bold y autosize aproximado.
+      const addSheet = (name, rows, leadingInfo) => {
+        const data = [];
+        if (leadingInfo && leadingInfo.length) {
+          for (const r of leadingInfo) data.push(r);
+          data.push([]); // separador
+        }
+        if (rows.length === 0) {
+          data.push(['(sin items en esta categoría)']);
+          const sheet = XLSX.utils.aoa_to_sheet(data);
+          XLSX.utils.book_append_sheet(wb, sheet, name.slice(0, 31));
+          return;
+        }
+        const headers = Object.keys(rows[0]);
+        data.push(headers);
+        for (const r of rows) data.push(headers.map(h => r[h]));
+        const sheet = XLSX.utils.aoa_to_sheet(data);
+        // Anchos aprox por columna (chars).
+        const colWidths = headers.map(h => {
+          let max = h.length;
+          for (const r of rows) {
+            const v = r[h] == null ? '' : String(r[h]);
+            if (v.length > max) max = v.length;
+          }
+          return { wch: Math.min(Math.max(max + 1, 8), 60) };
+        });
+        sheet['!cols'] = colWidths;
+        XLSX.utils.book_append_sheet(wb, sheet, name.slice(0, 31));
+      };
+
+      // 1) Resumen
+      const resumen = [
+        ['RECONTACTACIÓN — Resumen general', ''],
+        ['Generado', new Date().toLocaleString('es-AR')],
+        ['', ''],
+        ['Total analizados', items.length],
+        ['Encontrados en base', summary.foundInDb || 0],
+        ['No encontrados', summary.notFound || 0],
+        ['', ''],
+        ['Con app + notifs (push directo)', conAppNotifs.length],
+        ['Con app pero sin notifs', conAppSinNotifs.length],
+        ['Sin app (solo WhatsApp)', sinApp.length],
+        ['Sin línea asignada', sinLineaAsignada.length],
+        ['', ''],
+        ['Por bucket de actividad', ''],
+        ['🔥 Calientes (0-10 días)', byBucket.calientes.length],
+        ['⚠ En riesgo (10-20 días)', byBucket.enRiesgo.length],
+        ['💔 Perdidos (20-30 días)', byBucket.perdidos.length],
+        ['☠ Inactivos (+30 días)', byBucket.inactivos.length],
+        ['', ''],
+        ['Datos del archivo subido', ''],
+        ['Total cargas', summary.fileTotalDeposits || 0],
+        ['Total retiros', summary.fileTotalWithdraws || 0],
+        ['Total bonos', summary.fileTotalBonuses || 0],
+        ['Cantidad cargas', summary.fileCountDeposits || 0],
+        ['Cantidad retiros', summary.fileCountWithdraws || 0],
+        ['Cantidad bonos', summary.fileCountBonuses || 0],
+        ['', ''],
+        ['Bono total sugerido', summary.totalRecoverableValue || 0]
+      ];
+      const resSheet = XLSX.utils.aoa_to_sheet(resumen);
+      resSheet['!cols'] = [{ wch: 38 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, resSheet, '📋 Resumen');
+
+      // 2) Hojas por bucket
+      addSheet('🔥 Calientes (0-10d)', byBucket.calientes.map(buildRow));
+      addSheet('⚠ En riesgo (10-20d)', byBucket.enRiesgo.map(buildRow));
+      addSheet('💔 Perdidos (20-30d)', byBucket.perdidos.map(buildRow));
+      addSheet('☠ Inactivos (+30d)', byBucket.inactivos.map(buildRow));
+
+      // 3) Hojas por estado de app
+      addSheet('📱 Con app+notifs (PUSH)', conAppNotifs.map(buildRow));
+      addSheet('🔕 Con app sin notifs', conAppSinNotifs.map(buildRow));
+      addSheet('💬 Sin app (WhatsApp)', sinApp.map(buildRow));
+
+      // 4) Hoja de los que no tienen línea asignada (huérfanos del archivo).
+      addSheet('⚠ Sin línea asignada', sinLineaAsignada.map(buildRow));
+
+      // 5) Hoja "Todos" con el universo completo, ordenado por prioridad.
+      addSheet('🌐 Todos (por prioridad)', items.map(buildRow));
+
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      const filename = `recontactacion-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buf);
+    } catch (err) {
+      logger.error(`[recontact/export.xlsx] error: ${err.message}\n${err.stack}`);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 // Cambiar el TELÉFONO de UNA línea sin afectar nada más. Actualiza User
 // y UserLineLookup. NO manda push de aviso (eso es lineDown). Útil cuando
 // el admin solo quiere corregir un número mal cargado.

@@ -2807,7 +2807,8 @@ function _renderRecontactDashboard(summary, items) {
     html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">';
     html += '  <div style="color:#00d4ff;font-weight:800;font-size:15px;">📊 Análisis de ' + fmt(summary.totalAnalyzed) + ' usuarios</div>';
     html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
-    html += '    <button type="button" onclick="recontactDownloadCsv()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:7px;cursor:pointer;">📥 Descargar CSV completo</button>';
+    html += '    <button type="button" onclick="recontactDownloadXlsx()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:7px;cursor:pointer;" title="XLSX con varias hojas: una por bucket, una por estado de app, resumen, y todos por prioridad">📊 XLSX por hojas</button>';
+    html += '    <button type="button" onclick="recontactDownloadCsv()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:7px;cursor:pointer;">📥 CSV simple</button>';
     html += '    <button type="button" onclick="recontactReset()" style="padding:9px 14px;font-size:12.5px;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:7px;cursor:pointer;">🔄 Subir otra lista</button>';
     html += '  </div>';
     html += '</div>';
@@ -2893,6 +2894,11 @@ function _renderRecontactDashboard(summary, items) {
         html += '<button type="button" onclick="_recontactFilterSet(\'appStatus\',\'' + o.k + '\')" style="padding:5px 10px;font-size:11px;font-weight:600;background:' + (active ? 'rgba(0,212,255,0.20)' : 'rgba(255,255,255,0.04)') + ';border:1px solid ' + (active ? '#00d4ff' : 'rgba(255,255,255,0.15)') + ';color:' + (active ? '#00d4ff' : '#bbb') + ';border-radius:6px;cursor:pointer;">' + o.label + '</button>';
     }
     html += '</div>';
+
+    // ====== PANORAMA: matriz bucket × estado de app ======
+    // Te dice cuántos hay en cada combinación + cuánto monto del archivo, y
+    // cada celda es clickable para filtrar la tabla de abajo.
+    html += _renderRecontactPanorama(items, f);
 
     // Tabla con items filtrados
     const filtered = _filterRecontactItems(items, f);
@@ -2990,6 +2996,207 @@ function _recontactFilterSet(key, value) {
 
 function _wireRecontactFilters() {
     // No hay handlers extras por ahora — los onclicks están inline.
+}
+
+// Matriz panorama: bucket de actividad × estado de app/notifs.
+// Cada celda muestra cantidad + suma de cargas del archivo (si las hay) y
+// es clickable para filtrar la tabla. La fila "Sin línea asignada" debajo
+// te avisa cuántos no tienen equipo/línea para derivar al WhatsApp.
+function _renderRecontactPanorama(items, currentFilters) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    // Agrupar
+    const buckets = ['calientes', 'enRiesgo', 'perdidos', 'inactivos'];
+    const bucketDef = {
+        calientes: { label: '🔥 Calientes',   sub: '0-10 días',   color: '#ff5050' },
+        enRiesgo:  { label: '⚠ En riesgo',    sub: '10-20 días',  color: '#ffaa44' },
+        perdidos:  { label: '💔 Perdidos',    sub: '20-30 días',  color: '#9b30ff' },
+        inactivos: { label: '☠ Inactivos',    sub: '+30 días',    color: '#888' }
+    };
+    const cols = [
+        { k: 'with-notifs',   label: '📱 Push directo',  sub: 'app+notifs',     color: '#25d366' },
+        { k: 'app-no-notifs', label: '🔕 App sin notifs', sub: 'reactivar',      color: '#ffaa44' },
+        { k: 'without-app',   label: '💬 Sin app (WA)',  sub: 'WhatsApp',       color: '#00d4ff' }
+    ];
+
+    // matriz[bucket][col.k] = { count, sumCargas, sumNeto, sinLinea }
+    const matrix = {};
+    for (const b of buckets) {
+        matrix[b] = {};
+        for (const c of cols) matrix[b][c.k] = { count: 0, sumCargas: 0, sumNeto: 0, sinLinea: 0 };
+    }
+    let sinLineaTotal = 0, sinLineaSinApp = 0;
+    const rowTotals = {};
+    const colTotals = {};
+    for (const c of cols) colTotals[c.k] = { count: 0, sumCargas: 0, sumNeto: 0, sinLinea: 0 };
+    for (const b of buckets) rowTotals[b] = { count: 0, sumCargas: 0, sumNeto: 0, sinLinea: 0 };
+    let grandTotal = { count: 0, sumCargas: 0, sumNeto: 0, sinLinea: 0 };
+
+    const colKeyFor = (it) => {
+        if (it.hasApp && it.hasNotifs) return 'with-notifs';
+        if (it.hasApp && !it.hasNotifs) return 'app-no-notifs';
+        return 'without-app';
+    };
+
+    for (const it of items) {
+        const b = buckets.includes(it.bucket) ? it.bucket : 'inactivos';
+        const ck = colKeyFor(it);
+        const cell = matrix[b][ck];
+        cell.count++;
+        cell.sumCargas += Number(it.fileDeposits || 0);
+        cell.sumNeto   += Number(it.fileNet || 0);
+        const noLine = !it.team && !it.linePhone;
+        if (noLine) cell.sinLinea++;
+        rowTotals[b].count++;
+        rowTotals[b].sumCargas += Number(it.fileDeposits || 0);
+        rowTotals[b].sumNeto += Number(it.fileNet || 0);
+        if (noLine) rowTotals[b].sinLinea++;
+        colTotals[ck].count++;
+        colTotals[ck].sumCargas += Number(it.fileDeposits || 0);
+        colTotals[ck].sumNeto += Number(it.fileNet || 0);
+        if (noLine) colTotals[ck].sinLinea++;
+        grandTotal.count++;
+        grandTotal.sumCargas += Number(it.fileDeposits || 0);
+        grandTotal.sumNeto += Number(it.fileNet || 0);
+        if (noLine) {
+            grandTotal.sinLinea++;
+            sinLineaTotal++;
+            if (!it.hasApp) sinLineaSinApp++;
+        }
+    }
+
+    const hasFileTx = grandTotal.sumCargas > 0;
+    const hasSinLinea = sinLineaTotal > 0;
+    const f = currentFilters || { tier: 'all', bucket: 'all', appStatus: 'all' };
+
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(0,128,255,0.04));border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:14px;margin-bottom:14px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
+    html += '<div><div style="color:#00d4ff;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;">📊 PANORAMA — bucket × estado de app</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-top:2px;">Tocá una celda para filtrar la tabla de abajo. Filas = días sin cargar · Columnas = canal disponible.</div></div>';
+    if (f.bucket !== 'all' || f.appStatus !== 'all') {
+        html += '<button type="button" onclick="_recontactFilterClear()" style="padding:5px 10px;font-size:11px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:6px;cursor:pointer;">✕ Limpiar filtro</button>';
+    }
+    html += '</div>';
+
+    html += '<div style="overflow-x:auto;">';
+    html += '<table style="width:100%;border-collapse:separate;border-spacing:4px;font-size:11.5px;min-width:680px;">';
+    // Header row
+    html += '<thead><tr>';
+    html += '<th style="padding:6px;text-align:left;color:#888;font-weight:600;font-size:10.5px;letter-spacing:0.5px;"></th>';
+    for (const c of cols) {
+        html += '<th style="padding:6px 8px;text-align:center;color:' + c.color + ';font-weight:800;font-size:11.5px;background:rgba(255,255,255,0.02);border-radius:6px;">' + c.label + '<br><span style="color:#888;font-size:9.5px;font-weight:400;">' + c.sub + '</span></th>';
+    }
+    html += '<th style="padding:6px 8px;text-align:center;color:#fff;font-weight:800;font-size:11.5px;background:rgba(255,255,255,0.06);border-radius:6px;">TOTAL</th>';
+    html += '</tr></thead>';
+    html += '<tbody>';
+    for (const b of buckets) {
+        const bd = bucketDef[b];
+        html += '<tr>';
+        html += '<td style="padding:6px 8px;color:' + bd.color + ';font-weight:800;background:rgba(255,255,255,0.02);border-radius:6px;">' + bd.label + '<br><span style="color:#888;font-size:9.5px;font-weight:400;">' + bd.sub + '</span></td>';
+        for (const c of cols) {
+            const cell = matrix[b][c.k];
+            const isActive = f.bucket === b && f.appStatus === c.k;
+            const dim = (f.bucket !== 'all' && f.bucket !== b) || (f.appStatus !== 'all' && f.appStatus !== c.k);
+            const bg = isActive ? 'rgba(255,215,0,0.12)' : (cell.count === 0 ? 'rgba(0,0,0,0.20)' : 'rgba(' + _hexToRgb(c.color) + ',0.08)');
+            const border = isActive ? '2px solid #ffd700' : '1px solid rgba(255,255,255,0.06)';
+            const opac = dim ? '0.45' : '1';
+            html += '<td onclick="_recontactSetCellFilter(\'' + b + '\',\'' + c.k + '\')" style="cursor:pointer;padding:8px;text-align:center;background:' + bg + ';border:' + border + ';border-radius:6px;opacity:' + opac + ';transition:all 0.15s ease;" title="Filtrar a ' + bd.label + ' + ' + c.label + '">';
+            html += '<div style="color:#fff;font-size:18px;font-weight:900;line-height:1;">' + fmt(cell.count) + '</div>';
+            if (hasFileTx && cell.sumCargas > 0) {
+                html += '<div style="color:#25d366;font-size:10px;margin-top:3px;font-family:monospace;">$' + fmt(cell.sumCargas) + '</div>';
+            }
+            if (cell.sinLinea > 0) {
+                html += '<div style="color:#ff8080;font-size:9.5px;margin-top:2px;">⚠ ' + cell.sinLinea + ' sin línea</div>';
+            }
+            html += '</td>';
+        }
+        // Total fila
+        const rt = rowTotals[b];
+        html += '<td style="padding:8px;text-align:center;background:rgba(255,255,255,0.06);border-radius:6px;">';
+        html += '<div style="color:#fff;font-size:18px;font-weight:900;line-height:1;">' + fmt(rt.count) + '</div>';
+        if (hasFileTx && rt.sumCargas > 0) html += '<div style="color:#25d366;font-size:10px;margin-top:3px;font-family:monospace;">$' + fmt(rt.sumCargas) + '</div>';
+        if (rt.sinLinea > 0) html += '<div style="color:#ff8080;font-size:9.5px;margin-top:2px;">⚠ ' + rt.sinLinea + '</div>';
+        html += '</td>';
+        html += '</tr>';
+    }
+    // Total row
+    html += '<tr>';
+    html += '<td style="padding:8px;text-align:left;color:#fff;font-weight:800;font-size:12px;background:rgba(255,255,255,0.06);border-radius:6px;">TOTAL</td>';
+    for (const c of cols) {
+        const ct = colTotals[c.k];
+        html += '<td style="padding:8px;text-align:center;background:rgba(255,255,255,0.06);border-radius:6px;">';
+        html += '<div style="color:#fff;font-size:18px;font-weight:900;line-height:1;">' + fmt(ct.count) + '</div>';
+        if (hasFileTx && ct.sumCargas > 0) html += '<div style="color:#25d366;font-size:10px;margin-top:3px;font-family:monospace;">$' + fmt(ct.sumCargas) + '</div>';
+        if (ct.sinLinea > 0) html += '<div style="color:#ff8080;font-size:9.5px;margin-top:2px;">⚠ ' + ct.sinLinea + '</div>';
+        html += '</td>';
+    }
+    html += '<td style="padding:8px;text-align:center;background:linear-gradient(135deg,rgba(255,215,0,0.18),rgba(0,212,255,0.10));border:1px solid rgba(255,215,0,0.40);border-radius:6px;">';
+    html += '<div style="color:#ffd700;font-size:18px;font-weight:900;line-height:1;">' + fmt(grandTotal.count) + '</div>';
+    if (hasFileTx && grandTotal.sumCargas > 0) html += '<div style="color:#25d366;font-size:10px;margin-top:3px;font-family:monospace;">$' + fmt(grandTotal.sumCargas) + '</div>';
+    if (grandTotal.sinLinea > 0) html += '<div style="color:#ff8080;font-size:9.5px;margin-top:2px;">⚠ ' + grandTotal.sinLinea + ' sin línea</div>';
+    html += '</td>';
+    html += '</tr>';
+    html += '</tbody></table>';
+    html += '</div>'; // overflow-x
+
+    if (hasSinLinea) {
+        html += '<div style="margin-top:10px;padding:8px 12px;background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.30);border-radius:8px;color:#ffb0b0;font-size:11.5px;line-height:1.5;">';
+        html += '⚠ <strong>' + fmt(sinLineaTotal) + '</strong> usuario' + (sinLineaTotal === 1 ? '' : 's') + ' del archivo no tiene' + (sinLineaTotal === 1 ? '' : 'n') + ' línea asignada (no aparece' + (sinLineaTotal === 1 ? '' : 'n') + ' en Equipos). De esos, <strong>' + fmt(sinLineaSinApp) + '</strong> tampoco tiene' + (sinLineaSinApp === 1 ? '' : 'n') + ' app — son los más complicados de recontactar. Revisá la hoja "⚠ Sin línea asignada" del XLSX o cargalos en el equipo correspondiente desde 📊 Equipos.';
+        html += '</div>';
+    }
+    html += '</div>'; // panorama card
+
+    return html;
+}
+
+function _recontactSetCellFilter(bucket, appStatus) {
+    if (!window._recontactFilters) window._recontactFilters = {};
+    // Toggle: si ya está activa esa celda, quitar filtro.
+    const f = window._recontactFilters;
+    if (f.bucket === bucket && f.appStatus === appStatus) {
+        f.bucket = 'all';
+        f.appStatus = 'all';
+    } else {
+        f.bucket = bucket;
+        f.appStatus = appStatus;
+    }
+    loadRecontactSection();
+}
+
+function _recontactFilterClear() {
+    window._recontactFilters = { tier: 'all', bucket: 'all', appStatus: 'all' };
+    loadRecontactSection();
+}
+
+async function recontactDownloadXlsx() {
+    const items = _recontactState.items || [];
+    const summary = _recontactState.summary || {};
+    if (items.length === 0) { showToast('No hay datos para exportar', 'error'); return; }
+    showToast('⏳ Generando XLSX por hojas…', 'info');
+    try {
+        const r = await authFetch('/api/admin/recontact/export.xlsx', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items, summary })
+        });
+        if (!r.ok) {
+            let msg = 'Error ' + r.status;
+            try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (_) {}
+            showToast('❌ ' + msg, 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'recontactacion-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+        showToast('✅ XLSX descargado', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 async function recontactDownloadCsv() {
