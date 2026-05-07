@@ -101,7 +101,17 @@ VIP.reviews = (function () {
         const msg = _q('reviewSubmitMsg');
         const btn = _q('reviewSubmitBtn');
         if (!_selectedStars || _selectedStars < 1 || _selectedStars > 5) {
-            if (msg) { msg.style.color = '#ff8080'; msg.textContent = '⚠️ Elegí cuántas estrellas darnos.'; }
+            // Forzar elección de estrellas: shake animation + scroll + msg en rojo.
+            const row = _q('reviewStarsRow');
+            if (row) {
+                row.classList.remove('invalid');
+                // Reflow para reiniciar la animación si ya estaba aplicada.
+                void row.offsetWidth;
+                row.classList.add('invalid');
+                try { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+                setTimeout(() => row.classList.remove('invalid'), 1200);
+            }
+            if (msg) { msg.style.color = '#ff6b6b'; msg.textContent = '⚠️ Elegí primero las estrellas — ¿cuánto nos puntuás de 1 a 5?'; }
             return;
         }
         const ta = _q('reviewCommentInput');

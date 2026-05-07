@@ -950,11 +950,39 @@
             line-height: 1.45;
             margin-bottom: 10px;
         }
+        .review-stars-label {
+            font-size: 11px;
+            color: #ddd;
+            margin-bottom: 4px;
+            text-align: center;
+            letter-spacing: 0.4px;
+            font-weight: 700;
+        }
+        .review-required {
+            color: #ff6b6b;
+            font-size: 10.5px;
+            margin-left: 4px;
+            font-weight: 800;
+            font-style: italic;
+        }
         .review-stars {
             display: flex;
             justify-content: center;
             gap: 4px;
             margin-bottom: 10px;
+        }
+        .review-stars.invalid {
+            animation: review-shake 0.45s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        .review-stars.invalid .review-star:not(.active) {
+            color: #ff6b6b;
+            text-shadow: 0 0 8px rgba(255,107,107,0.55);
+        }
+        @keyframes review-shake {
+            10%, 90% { transform: translateX(-2px); }
+            20%, 80% { transform: translateX(4px); }
+            30%, 50%, 70% { transform: translateX(-7px); }
+            40%, 60% { transform: translateX(7px); }
         }
         .review-star {
             font-size: 28px;
@@ -2212,6 +2240,7 @@
         <div class="review-form-card" id="reviewFormCard">
             <div class="review-form-title">⭐ TU OPINIÓN NOS INTERESA</div>
             <div class="review-form-sub">Escribinos lo que quieras de nuestro servicio — si te gusta, si hay algo para mejorar o lo que quieras. <strong style="color:#ffd700;">Todo lo malo o innovador que opines nos ayuda a mejorar.</strong></div>
+            <div class="review-stars-label">Tu puntaje <span class="review-required">*obligatorio</span></div>
             <div class="review-stars" id="reviewStarsRow">
                 <span class="review-star" data-v="1">★</span>
                 <span class="review-star" data-v="2">★</span>
