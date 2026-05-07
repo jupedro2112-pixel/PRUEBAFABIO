@@ -9776,6 +9776,37 @@ app.get('/api/admin/winback/history', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// Anti-fraude: extrae la IP del cliente normalizada. Express ya tiene
+// 'trust proxy' = 1, así que req.ip viene de X-Forwarded-For.
+// Normalizamos IPv6-mapped-IPv4 (::ffff:1.2.3.4 → 1.2.3.4).
+function _getClientIp(req) {
+  let ip = req.ip || (req.socket && req.socket.remoteAddress) || '';
+  if (typeof ip !== 'string') return '';
+  ip = ip.trim();
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return ip.slice(0, 60);
+}
+
+// Si esta IP ya cobró el welcome bonus desde otra cuenta, bloquear.
+async function _isWelcomeBlockedByIp(userId, username, req) {
+  try {
+    const ip = _getClientIp(req);
+    if (!ip) return { blocked: false };
+    const prior = await RefundClaim.findOne({
+      type: 'welcome_install',
+      clientIp: ip,
+      userId: { $ne: userId },
+      username: { $ne: username }
+    }).lean();
+    if (!prior) return { blocked: false };
+    logger.warn(`[BONUS] welcome bloqueado por IP duplicada. ${username} (${ip}) — ya cobró ${prior.username}`);
+    return { blocked: true, otherUsername: prior.username, claimedAt: prior.claimedAt, ip };
+  } catch (e) {
+    logger.warn(`[BONUS] _isWelcomeBlockedByIp error: ${e.message}`);
+    return { blocked: false };
+  }
+}
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -9792,6 +9823,23 @@ app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
         claimed: true,
         claimedAt: claim.claimedAt || null,
         status: claim.status || null,
+        eligible: false,
+        notEnoughDeposits: false,
+        depositCount: 0,
+        requiredDeposits: WELCOME_BONUS_MIN_DEPOSITS,
+        windowDays: WELCOME_BONUS_DEPOSIT_WINDOW_DAYS
+      });
+    }
+
+    // Bloqueo por IP duplicada — cuenta JUGAYGANA nueva pero mismo router.
+    const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
+    if (ipBlock.blocked) {
+      return res.json({
+        amount: WELCOME_BONUS_AMOUNT,
+        claimed: true,
+        claimedAt: ipBlock.claimedAt || null,
+        status: 'blocked_duplicate_ip',
+        blockedReason: 'duplicate_ip',
         eligible: false,
         notEnoughDeposits: false,
         depositCount: 0,
@@ -9868,6 +9916,19 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
         });
       }
 
+      // Anti-fraude por IP: si otra cuenta ya cobró desde la misma IP,
+      // bloquear (uninstall + cuenta JUGAYGANA nueva = misma persona).
+      const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
+      if (ipBlock.blocked) {
+        return res.json({
+          success: false,
+          message: 'Ya se reclamó el bono de bienvenida desde esta conexión. El bono es por persona, no por cuenta.',
+          canClaim: false,
+          claimed: true,
+          blockedReason: 'duplicate_ip'
+        });
+      }
+
       // Crear el claim con status='pending' explicito. Si el proceso muere
       // entre el create y el credit, queda como 'pending' y el admin lo
       // detecta facilmente filtrando RefundClaim {type:'welcome_install',
@@ -9885,7 +9946,8 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
           period: 'Bono de bienvenida',
           periodKey,
           status: 'pending',
-          claimedAt: new Date()
+          claimedAt: new Date(),
+          clientIp: _getClientIp(req)
         });
       } catch (e) {
         if (e && e.code === 11000) {

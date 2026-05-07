@@ -106,7 +106,12 @@ const refundClaimSchema = new mongoose.Schema({
   chargesAfterClaim: { type: Number, default: 0, min: 0 },
   chargesAfterClaimAmount: { type: Number, default: 0, min: 0 },
   lastChargeAfterClaimAt: { type: Date, default: null },
-  chargesAfterClaimCheckedAt: { type: Date, default: null }
+  chargesAfterClaimCheckedAt: { type: Date, default: null },
+
+  // IP del cliente al momento del claim. Se usa para anti-fraude del welcome
+  // bonus: bloqueamos múltiples claims desde la misma IP (uninstall +
+  // reinstall + cuenta JUGAYGANA nueva → mismo router/red).
+  clientIp: { type: String, default: null, index: true }
 }, {
   timestamps: true
 });
