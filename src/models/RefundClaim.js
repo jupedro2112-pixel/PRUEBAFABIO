@@ -83,7 +83,12 @@ const refundClaimSchema = new mongoose.Schema({
   // marcar 'completed' si si aplico).
   status: {
     type: String,
-    enum: ['completed', 'pending_credit_failed'],
+    // 'pending'              → claim creado, credit a JUGAYGANA en vuelo
+    //                          (estado intermedio del welcome bonus claim).
+    // 'completed'            → credit aplicado y confirmado.
+    // 'pending_credit_failed'→ credit fallo o no se pudo confirmar; el admin
+    //                          debe reconciliar manualmente contra JUGAYGANA.
+    enum: ['pending', 'completed', 'pending_credit_failed'],
     default: 'completed',
     index: true
   },
