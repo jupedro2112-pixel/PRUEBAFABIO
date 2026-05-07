@@ -7942,7 +7942,9 @@ app.post(
                     linePhone,
                     lineTeamName: fullTeamLabel,
                     lineAssignedAt: now,
-                    lineAssignedBy: adminUsername
+                    lineAssignedBy: adminUsername,
+                    lineAssignmentSource: 'drive-import',
+                    lineAssignmentNote: 'Cargado desde xlsx (' + (importMode === 'overwrite' ? 'ordenar' : 'merge') + ')'
                   }
                 }
               }
@@ -7969,7 +7971,9 @@ app.post(
                   linePhone,
                   lineTeamName: fullTeamLabel,
                   lineAssignedAt: now,
-                  lineAssignedBy: adminUsername
+                  lineAssignedBy: adminUsername,
+                  lineAssignmentSource: 'drive-import',
+                  lineAssignmentNote: 'Cargado desde xlsx (' + (importMode === 'overwrite' ? 'ordenar' : 'merge') + ')'
                 }
               }
             }
@@ -8198,6 +8202,65 @@ app.post('/api/admin/user-lines/reassign-orphans', authMiddleware, adminMiddlewa
     });
   } catch (err) {
     logger.error(`POST reassign-orphans: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Diagnóstico: para una línea específica, devuelve detalles de la asignación
+// de cada user (cuándo se asignó, source, si tiene match en xlsx). Sirve
+// para auditar si un merge dejó users en la línea correcta o si quedaron
+// huérfanos / mal asignados.
+app.get('/api/admin/user-lines/diagnose-line', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String(req.query.teamName || '').trim();
+    const linePhone = String(req.query.linePhone || '').trim();
+    if (!teamName && !linePhone) {
+      return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
+    }
+
+    const userFilter = {};
+    if (teamName) userFilter.lineTeamName = teamName;
+    if (linePhone) userFilter.linePhone = linePhone;
+    const users = await User.find(
+      userFilter,
+      { username: 1, linePhone: 1, lineTeamName: 1, lineAssignedAt: 1, lineAssignedBy: 1, lineAssignmentSource: 1, _id: 0 }
+    ).limit(2000).lean();
+
+    // Usernames del UserLineLookup para esta línea (los del xlsx).
+    const lookupFilter = {};
+    if (teamName) lookupFilter.lineTeamName = teamName;
+    if (linePhone) lookupFilter.linePhone = linePhone;
+    const lookup = await UserLineLookup.find(lookupFilter).select('usernameNorm').lean();
+    const xlsxSet = new Set(lookup.map(l => String(l.usernameNorm || '').toLowerCase()));
+
+    // Bucketizar
+    const bySource = {};
+    let inXlsx = 0, notInXlsx = 0;
+    for (const u of users) {
+      const src = u.lineAssignmentSource || 'unknown';
+      bySource[src] = (bySource[src] || 0) + 1;
+      if (xlsxSet.has(String(u.username || '').toLowerCase())) inXlsx++;
+      else notInXlsx++;
+    }
+
+    res.json({
+      teamName: teamName || null,
+      linePhone: linePhone || null,
+      totalUsers: users.length,
+      inXlsx,           // users en User asignados a esta línea Y en el xlsx → match perfecto
+      notInXlsx,        // users en User asignados a esta línea PERO NO en el xlsx → cayeron por otro mecanismo
+      bySource,         // breakdown por source: drive-import, lookup, prefix-fallback, etc.
+      sampleNotInXlsx: users
+        .filter(u => !xlsxSet.has(String(u.username || '').toLowerCase()))
+        .slice(0, 20)
+        .map(u => ({
+          username: u.username,
+          lineAssignedAt: u.lineAssignedAt,
+          source: u.lineAssignmentSource || null
+        }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/user-lines/diagnose-line: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
