@@ -8452,7 +8452,7 @@ async function _recontactAnalyzeFromJSON(req, res) {
     }
 
     const norms = inputUsernames.map(x => x.norm);
-    const [users, stats] = await Promise.all([
+    const [users, stats, lookups] = await Promise.all([
       User.find(
         { username: { $in: norms } },
         { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
@@ -8460,10 +8460,18 @@ async function _recontactAnalyzeFromJSON(req, res) {
       PlayerStats.find(
         { username: { $in: norms } },
         { username: 1, tier: 1, activityStatus: 1, lastRealDepositDate: 1, realDeposits30d: 1, realDeposits90d: 1, totalRealDeposits: 1, _id: 0 }
+      ).lean(),
+      // Pre-asignaciones de equipos cargadas por xlsx — resuelve línea
+      // incluso para users que no están registrados o que tienen User
+      // sin lineTeamName/linePhone seteados.
+      UserLineLookup.find(
+        { usernameNorm: { $in: norms } },
+        { usernameNorm: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
       ).lean()
     ]);
     const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
     const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+    const lookupMap = new Map(lookups.map(l => [String(l.usernameNorm || '').toLowerCase(), l]));
 
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
@@ -8486,10 +8494,18 @@ async function _recontactAnalyzeFromJSON(req, res) {
       const s = statsMap.get(inp.norm);
       if (u) summary.foundInDb++; else summary.notFound++;
 
-      const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
-      const hasNotifs = hasApp && (
-        (u && u.notifPermission === 'granted') ||
-        (u && Array.isArray(u.fcmTokens) && u.fcmTokens.some(t => t && t.notifPermission === 'granted'))
+      // Mismo criterio que el reporte de Bono $5.000 app:
+      // hasApp = token con context=standalone (PWA real instalada).
+      // hasNotifs = al menos un token con notifPermission=granted.
+      const tokens = (u && Array.isArray(u.fcmTokens)) ? u.fcmTokens : [];
+      const standaloneTokens = tokens.filter(t => t && t.context === 'standalone');
+      const hasApp = !!u && (
+        u.fcmTokenContext === 'standalone' ||
+        standaloneTokens.length > 0
+      );
+      const hasNotifs = !!u && (
+        u.notifPermission === 'granted' ||
+        tokens.some(t => t && t.notifPermission === 'granted')
       );
       if (hasApp) summary.withApp++; else summary.withoutApp++;
       if (hasNotifs) summary.withNotifs++; else summary.withoutNotifs++;
@@ -8525,6 +8541,9 @@ async function _recontactAnalyzeFromJSON(req, res) {
       summary.fileCountWithdraws += fa.countWithdraws;
       summary.fileCountBonuses   += fa.countBonuses;
 
+      const ll = lookupMap.get(inp.norm);
+      const team = (u && u.lineTeamName) || (ll && ll.lineTeamName) || null;
+      const linePhone = (u && u.linePhone) || (ll && ll.linePhone) || null;
       items.push({
         username: inp.original,
         tier, bucket,
@@ -8533,8 +8552,8 @@ async function _recontactAnalyzeFromJSON(req, res) {
         deposits30d: (s && s.realDeposits30d) || 0,
         deposits90d: (s && s.realDeposits90d) || 0,
         totalDeposits: (s && s.totalRealDeposits) || 0,
-        team: u ? (u.lineTeamName || null) : null,
-        linePhone: u ? (u.linePhone || null) : null,
+        team,
+        linePhone,
         phone: u ? (u.phone || null) : null,
         hasApp, hasNotifs,
         registered: !!u,
@@ -8685,9 +8704,11 @@ app.post(
         return res.status(413).json({ error: 'Archivo demasiado grande (>50k usernames)' });
       }
 
-      // Lookup batch contra User y PlayerStats.
+      // Lookup batch contra User, PlayerStats y UserLineLookup (este último
+      // resuelve la línea/equipo de pre-asignaciones cargadas por xlsx
+      // aunque la persona no esté registrada ni tenga User.lineTeamName).
       const norms = inputUsernames.map(u => u.norm);
-      const [users, stats] = await Promise.all([
+      const [users, stats, lookups] = await Promise.all([
         User.find(
           { username: { $in: norms } },
           { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
@@ -8695,10 +8716,15 @@ app.post(
         PlayerStats.find(
           { username: { $in: norms } },
           { username: 1, tier: 1, activityStatus: 1, lastRealDepositDate: 1, realDeposits30d: 1, realDeposits90d: 1, totalRealDeposits: 1, _id: 0 }
+        ).lean(),
+        UserLineLookup.find(
+          { usernameNorm: { $in: norms } },
+          { usernameNorm: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
         ).lean()
       ]);
       const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
       const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+      const lookupMap = new Map(lookups.map(l => [String(l.usernameNorm || '').toLowerCase(), l]));
 
       const now = Date.now();
       const DAY = 24 * 60 * 60 * 1000;
@@ -8729,10 +8755,18 @@ app.post(
         if (u) summary.foundInDb++;
         else summary.notFound++;
 
-        const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
-        const hasNotifs = hasApp && (
-          (u && u.notifPermission === 'granted') ||
-          (u && Array.isArray(u.fcmTokens) && u.fcmTokens.some(t => t && t.notifPermission === 'granted'))
+        // Mismo criterio que el reporte de Bono $5.000 app:
+        // hasApp = token con context=standalone (PWA real instalada).
+        // hasNotifs = al menos un token con notifPermission=granted.
+        const tokens = (u && Array.isArray(u.fcmTokens)) ? u.fcmTokens : [];
+        const standaloneTokens = tokens.filter(t => t && t.context === 'standalone');
+        const hasApp = !!u && (
+          u.fcmTokenContext === 'standalone' ||
+          standaloneTokens.length > 0
+        );
+        const hasNotifs = !!u && (
+          u.notifPermission === 'granted' ||
+          tokens.some(t => t && t.notifPermission === 'granted')
         );
         if (hasApp) summary.withApp++; else summary.withoutApp++;
         if (hasNotifs) summary.withNotifs++; else summary.withoutNotifs++;
@@ -8768,6 +8802,9 @@ app.post(
         summary.fileCountWithdraws += fa.countWithdraws;
         summary.fileCountBonuses   += fa.countBonuses;
 
+        const ll = lookupMap.get(inp.norm);
+        const team = (u && u.lineTeamName) || (ll && ll.lineTeamName) || null;
+        const linePhone = (u && u.linePhone) || (ll && ll.linePhone) || null;
         items.push({
           username: inp.original,
           tier,
@@ -8777,8 +8814,8 @@ app.post(
           deposits30d: (s && s.realDeposits30d) || 0,
           deposits90d: (s && s.realDeposits90d) || 0,
           totalDeposits: (s && s.totalRealDeposits) || 0,
-          team: u ? (u.lineTeamName || null) : null,
-          linePhone: u ? (u.linePhone || null) : null,
+          team,
+          linePhone,
           phone: u ? (u.phone || null) : null,
           hasApp,
           hasNotifs,

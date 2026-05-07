@@ -2910,12 +2910,13 @@ function _renderRecontactDashboard(summary, items) {
     html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Días</th>';
     html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">$ 30d</th>';
     if (hasFileTx) {
-        html += '    <th style="text-align:right;padding:7px 10px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);">$ Cargas (arch)</th>';
-        html += '    <th style="text-align:right;padding:7px 10px;color:#ff5050;border-bottom:1px solid rgba(255,255,255,0.10);">$ Retiros (arch)</th>';
-        html += '    <th style="text-align:right;padding:7px 10px;color:#ffd700;border-bottom:1px solid rgba(255,255,255,0.10);">$ Bonos (arch)</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);" title="$ total y cantidad de cargas en el archivo">$ Cargas (arch) · #</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ff5050;border-bottom:1px solid rgba(255,255,255,0.10);" title="$ total y cantidad de retiros en el archivo">$ Retiros (arch) · #</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ffd700;border-bottom:1px solid rgba(255,255,255,0.10);" title="$ total y cantidad de bonos en el archivo">$ Bonos (arch) · #</th>';
     }
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
-    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tel</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);" title="Equipo asignado y número de línea WhatsApp">Equipo · Línea</th>';
+    html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tel cliente</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estrategia</th>';
     html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Bono</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Mensaje sugerido</th>';
@@ -2933,11 +2934,19 @@ function _renderRecontactDashboard(summary, items) {
         html += '  <td style="padding:5px 10px;text-align:right;color:' + (bucketColor[it.bucket] || '#aaa') + ';font-family:monospace;">' + (it.daysSinceLastDeposit == null ? '—' : it.daysSinceLastDeposit) + '</td>';
         html += '  <td style="padding:5px 10px;text-align:right;color:#fff;">' + (it.deposits30d ? '$' + fmt(it.deposits30d) : '—') + '</td>';
         if (hasFileTx) {
-            html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;font-family:monospace;">' + (it.fileDeposits ? '$' + fmt(it.fileDeposits) : '—') + '</td>';
-            html += '  <td style="padding:5px 10px;text-align:right;color:#ff5050;font-family:monospace;">' + (it.fileWithdraws ? '$' + fmt(it.fileWithdraws) : '—') + '</td>';
-            html += '  <td style="padding:5px 10px;text-align:right;color:#ffd700;font-family:monospace;">' + (it.fileBonuses ? '$' + fmt(it.fileBonuses) : '—') + '</td>';
+            const cd = it.fileCountDeposits || 0;
+            const cw = it.fileCountWithdraws || 0;
+            const cb = it.fileCountBonuses || 0;
+            html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;font-family:monospace;">' + (it.fileDeposits ? '$' + fmt(it.fileDeposits) + ' <span style="color:#888;">· ' + cd + '</span>' : '—') + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#ff5050;font-family:monospace;">' + (it.fileWithdraws ? '$' + fmt(it.fileWithdraws) + ' <span style="color:#888;">· ' + cw + '</span>' : '—') + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#ffd700;font-family:monospace;">' + (it.fileBonuses ? '$' + fmt(it.fileBonuses) + ' <span style="color:#888;">· ' + cb + '</span>' : '—') + '</td>';
         }
         html += '  <td style="padding:5px 10px;">' + (it.hasApp ? (it.hasNotifs ? '<span style="color:#25d366;">📱✓</span>' : '<span style="color:#ffaa44;">📱🔕</span>') : '<span style="color:#888;">—</span>') + '</td>';
+        // Equipo + línea en una sola celda — sale de User O del UserLineLookup pre-cargado.
+        const teamLineParts = [];
+        if (it.team) teamLineParts.push('<span style="color:#fff;font-weight:600;">' + escapeHtml(it.team) + '</span>');
+        if (it.linePhone) teamLineParts.push('<span style="color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.linePhone) + '</span>');
+        html += '  <td style="padding:5px 10px;font-size:10.5px;">' + (teamLineParts.length ? teamLineParts.join('<br>') : '<span style="color:#666;">sin línea</span>') + '</td>';
         html += '  <td style="padding:5px 10px;color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.phone || '—') + '</td>';
         html += '  <td style="padding:5px 10px;color:#ffd700;font-weight:600;font-size:11px;">' + escapeHtml(it.strategy || '—') + '</td>';
         html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;font-weight:700;">$' + fmt(it.suggestedBonus || 0) + '</td>';
@@ -2945,7 +2954,7 @@ function _renderRecontactDashboard(summary, items) {
         html += '</tr>';
     }
     if (filtered.length > max) {
-        const colspan = hasFileTx ? 13 : 10;
+        const colspan = hasFileTx ? 14 : 11;
         html += '<tr><td colspan="' + colspan + '" style="padding:10px;text-align:center;color:#666;font-style:italic;">... ' + (filtered.length - max) + ' más en el CSV completo</td></tr>';
     }
     html += '  </tbody></table>';
