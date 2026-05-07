@@ -59,6 +59,10 @@
                     <span>📋</span>
                     <span>Encuesta</span>
                 </a>
+                <a href="#" class="nav-item" data-section="backupPhones">
+                    <span>📞</span>
+                    <span>Números de respaldo</span>
+                </a>
                 <a href="#" class="nav-item" data-section="winback">
                     <span>🔄</span>
                     <span>Win-back automático</span>
@@ -890,6 +894,23 @@
                     </p>
                 </div>
                 <div id="encuestaContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: NÚMEROS DE RESPALDO
+                 Lista de usuarios que dejaron un número de contacto desde
+                 el chip "📞 Tu N°" en la home. Sirve para tener una vía
+                 paralela si la página falla. Acceso protegido por PIN
+                 (1818) en el cliente — sólo el dueño la abre.
+                 ============================================ -->
+            <section id="backupPhonesSection" class="section">
+                <div class="panel-header">
+                    <h2>📞 Números de respaldo</h2>
+                    <button class="refresh-btn" id="backupPhonesRefreshBtn" title="Refrescar" style="display:none;">🔄</button>
+                </div>
+                <div id="backupPhonesContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

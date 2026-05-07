@@ -172,6 +172,7 @@ function showSection(sectionKey) {
         topEngagement: 'topEngagementSection',
         topPlayers: 'topPlayersSection',
         encuesta: 'encuestaSection',
+        backupPhones: 'backupPhonesSection',
         winback: 'winbackSection',
         reviews: 'reviewsSection',
         notifs: 'notifsSection',
@@ -224,6 +225,8 @@ function showSection(sectionKey) {
         loadTopPlayers();
     } else if (sectionKey === 'encuesta') {
         loadEncuesta();
+    } else if (sectionKey === 'backupPhones') {
+        loadBackupPhonesGate();
     } else if (sectionKey === 'winback') {
         loadWinback();
     } else if (sectionKey === 'reviews') {
@@ -11991,6 +11994,139 @@ function _hexToRgb(hex) {
     const g = parseInt(h.substring(2, 4), 16);
     const b = parseInt(h.substring(4, 6), 16);
     return r + ',' + g + ',' + b;
+}
+
+// =============================================
+// NUMEROS DE RESPALDO — listado de usuarios que dejaron telefono de contacto
+// desde el chip "📞 Tu N°" en la home. Acceso protegido por PIN (1818) en
+// el cliente — el dueño no quiere que cualquier admin vea la lista.
+// =============================================
+let _BACKUP_PHONES_UNLOCKED = false;
+let _BACKUP_PHONES_CACHE = null;
+
+function loadBackupPhonesGate() {
+    const c = document.getElementById('backupPhonesContent');
+    const refreshBtn = document.getElementById('backupPhonesRefreshBtn');
+    if (!c) return;
+    if (_BACKUP_PHONES_UNLOCKED) {
+        if (refreshBtn) {
+            refreshBtn.style.display = '';
+            refreshBtn.onclick = () => { _BACKUP_PHONES_CACHE = null; loadBackupPhonesData(); };
+        }
+        loadBackupPhonesData();
+        return;
+    }
+    if (refreshBtn) refreshBtn.style.display = 'none';
+    let html = '';
+    html += '<div style="max-width:380px;margin:30px auto;background:rgba(31,140,255,0.06);border:1px solid rgba(31,140,255,0.40);border-radius:10px;padding:18px;">';
+    html += '  <div style="font-size:14px;color:#1f8cff;font-weight:700;margin-bottom:6px;">🔒 Sección protegida</div>';
+    html += '  <div style="font-size:12px;color:#bbb;line-height:1.5;margin-bottom:12px;">Esta sección requiere PIN para abrirse. Sólo el dueño tiene acceso a los números.</div>';
+    html += '  <input id="backupPhonesPin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" autocomplete="off" style="width:100%;background:rgba(0,0,0,0.45);color:#fff;border:1px solid rgba(255,255,255,0.18);padding:9px 11px;border-radius:6px;font-size:14px;letter-spacing:6px;text-align:center;box-sizing:border-box;margin-bottom:10px;">';
+    html += '  <button id="backupPhonesPinBtn" type="button" style="width:100%;background:linear-gradient(135deg,#1f8cff 0%,#0d47a1 100%);color:#fff;border:none;padding:9px 12px;border-radius:6px;font-weight:700;font-size:13px;cursor:pointer;">Desbloquear</button>';
+    html += '  <div id="backupPhonesPinError" style="margin-top:8px;font-size:11px;color:#ff8a8a;display:none;">PIN incorrecto.</div>';
+    html += '</div>';
+    c.innerHTML = html;
+    const pinInput = document.getElementById('backupPhonesPin');
+    const pinBtn = document.getElementById('backupPhonesPinBtn');
+    const pinErr = document.getElementById('backupPhonesPinError');
+    const tryUnlock = () => {
+        const v = String((pinInput && pinInput.value) || '').trim();
+        if (v === '1818') {
+            _BACKUP_PHONES_UNLOCKED = true;
+            if (pinErr) pinErr.style.display = 'none';
+            loadBackupPhonesGate();
+        } else {
+            if (pinErr) pinErr.style.display = '';
+            if (pinInput) { pinInput.value = ''; pinInput.focus(); }
+        }
+    };
+    if (pinBtn) pinBtn.addEventListener('click', tryUnlock);
+    if (pinInput) {
+        pinInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+        setTimeout(() => { try { pinInput.focus(); } catch (_) {} }, 30);
+    }
+}
+
+async function loadBackupPhonesData() {
+    const c = document.getElementById('backupPhonesContent');
+    if (!c) return;
+    if (!_BACKUP_PHONES_CACHE) {
+        c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando números…</div>';
+    }
+    try {
+        const r = await authFetch('/api/admin/backup-phones?limit=5000');
+        if (!r.ok) {
+            c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#ff8a8a;">Error: ' + r.status + '</div>';
+            return;
+        }
+        const d = await r.json();
+        _BACKUP_PHONES_CACHE = d;
+        renderBackupPhones(d);
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#ff8a8a;">Error de conexión: ' + (e.message || e) + '</div>';
+    }
+}
+
+function renderBackupPhones(d) {
+    const c = document.getElementById('backupPhonesContent');
+    if (!c) return;
+    const items = (d && d.items) || [];
+    let html = '';
+    html += '<div style="background:rgba(31,140,255,0.06);border:1px solid rgba(31,140,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
+    html += '  <div>';
+    html += '    <div style="color:#1f8cff;font-weight:700;font-size:13px;margin-bottom:4px;">Total registrado: ' + items.length + '</div>';
+    html += '    <div style="color:#bbb;font-size:11px;line-height:1.5;">Usuarios que dejaron su número de respaldo desde el chip de la home. Ordenado por más reciente.</div>';
+    html += '  </div>';
+    html += '  <button id="backupPhonesCsvBtn" type="button" style="background:linear-gradient(135deg,#25d366 0%,#128c4f 100%);color:#fff;border:none;padding:9px 14px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;">⬇️ Descargar CSV</button>';
+    html += '</div>';
+    if (items.length === 0) {
+        html += '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">Todavía nadie dejó número de respaldo.</div>';
+    } else {
+        html += '<div style="overflow-x:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+        html += '  <thead><tr style="background:rgba(255,255,255,0.04);">';
+        html += '    <th style="text-align:left;padding:8px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Equipo</th>';
+        html += '    <th style="text-align:left;padding:8px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Usuario</th>';
+        html += '    <th style="text-align:left;padding:8px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Teléfono</th>';
+        html += '    <th style="text-align:left;padding:8px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.08);">Fecha</th>';
+        html += '  </tr></thead>';
+        html += '  <tbody>';
+        for (const it of items) {
+            const dt = it.submittedAt ? new Date(it.submittedAt) : null;
+            const dtStr = dt ? dt.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '';
+            html += '<tr>';
+            html += '  <td style="padding:7px 10px;color:#ccc;border-bottom:1px solid rgba(255,255,255,0.05);">' + escapeHtml(it.team || '—') + '</td>';
+            html += '  <td style="padding:7px 10px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.05);">' + escapeHtml(it.username || '') + '</td>';
+            html += '  <td style="padding:7px 10px;color:#66e69b;font-weight:700;border-bottom:1px solid rgba(255,255,255,0.05);font-family:monospace;">' + escapeHtml(it.phone || '') + '</td>';
+            html += '  <td style="padding:7px 10px;color:#999;border-bottom:1px solid rgba(255,255,255,0.05);font-size:11px;">' + escapeHtml(dtStr) + '</td>';
+            html += '</tr>';
+        }
+        html += '  </tbody></table>';
+        html += '</div>';
+    }
+    c.innerHTML = html;
+    const csvBtn = document.getElementById('backupPhonesCsvBtn');
+    if (csvBtn) csvBtn.addEventListener('click', downloadBackupPhonesCsv);
+}
+
+async function downloadBackupPhonesCsv() {
+    try {
+        const r = await authFetch('/api/admin/backup-phones.csv');
+        if (!r.ok) {
+            alert('No se pudo descargar el CSV (HTTP ' + r.status + ')');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'numeros-respaldo-' + (new Date().toISOString().slice(0, 10)) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+    } catch (e) {
+        alert('Error descargando CSV: ' + (e.message || e));
+    }
 }
 
 // =============================================

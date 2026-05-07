@@ -2323,6 +2323,22 @@
                     </svg>
                     SOPORTE
                 </a>
+                <!-- Backup phone chip: minimizado, abre input al click. Importante
+                     pero NO obligatorio. Una vez guardado, queda como ✓ y no
+                     vuelve a pedirse. Se oculta solo si ya lo dejó. -->
+                <div id="backupPhoneChip" class="backup-phone-chip" hidden>
+                    <button type="button" id="backupPhoneToggle" class="backup-phone-toggle" title="Dejá tu número por si falla la página">📞 Tu N°</button>
+                    <div id="backupPhonePopover" class="backup-phone-popover" hidden>
+                        <div class="backup-phone-title">📞 Dejá tu número (opcional)</div>
+                        <div class="backup-phone-sub">Si tenemos un problema con la página, te avisamos directo. <strong>Importante pero no obligatorio</strong> — vos decidís.</div>
+                        <input type="tel" id="backupPhoneInput" class="backup-phone-input" inputmode="tel" maxlength="20" placeholder="Ej: 1133224455">
+                        <div class="backup-phone-actions">
+                            <button type="button" id="backupPhoneCancel" class="backup-phone-cancel">Cerrar</button>
+                            <button type="button" id="backupPhoneSave" class="backup-phone-save">Guardar</button>
+                        </div>
+                        <div id="backupPhoneMsg" class="backup-phone-msg" hidden></div>
+                    </div>
+                </div>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>

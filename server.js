@@ -8414,6 +8414,110 @@ app.get('/api/admin/users/notif-preference-stats', authMiddleware, adminMiddlewa
 });
 
 // =====================================================================
+// BACKUP CONTACT PHONE — número de respaldo que el user deja en la home.
+// Se usa para tenerlo en una base aparte por si la página falla y hay que
+// avisarle por otra vía. No es obligatorio. No se valida con OTP.
+// =====================================================================
+app.get('/api/user/backup-phone', authMiddleware, async (req, res) => {
+  try {
+    const u = await User.findOne(
+      { id: req.user.userId },
+      { backupContactPhone: 1, backupContactPhoneAt: 1, _id: 0 }
+    ).lean();
+    res.json({
+      phone: (u && u.backupContactPhone) || null,
+      submittedAt: (u && u.backupContactPhoneAt) || null,
+      hasSubmitted: !!(u && u.backupContactPhone)
+    });
+  } catch (err) {
+    logger.error(`/api/user/backup-phone GET: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/user/backup-phone', authMiddleware, async (req, res) => {
+  try {
+    const raw = String((req.body && req.body.phone) || '').trim();
+    const cleaned = raw.replace(/[^\d+]/g, '');
+    const digits = cleaned.replace(/\D/g, '');
+    if (digits.length < 6 || digits.length > 20) {
+      return res.status(400).json({ error: 'Número inválido. Ingresá entre 6 y 20 dígitos.' });
+    }
+    const updated = await User.findOneAndUpdate(
+      { id: req.user.userId },
+      { $set: { backupContactPhone: cleaned, backupContactPhoneAt: new Date() } },
+      { new: true, projection: { backupContactPhone: 1, backupContactPhoneAt: 1 } }
+    ).lean();
+    if (!updated) return res.status(404).json({ error: 'Usuario no encontrado' });
+    logger.info(`[BACKUP-PHONE] ${req.user.username} guardó número de respaldo`);
+    res.json({
+      success: true,
+      phone: updated.backupContactPhone,
+      submittedAt: updated.backupContactPhoneAt
+    });
+  } catch (err) {
+    logger.error(`/api/user/backup-phone POST: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Listado para el panel admin: usuario, equipo y número de respaldo.
+app.get('/api/admin/backup-phones', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(5000, parseInt(req.query.limit, 10) || 2000));
+    const rows = await User.find(
+      { backupContactPhone: { $exists: true, $ne: null, $nin: [''] } },
+      { username: 1, backupContactPhone: 1, backupContactPhoneAt: 1, lineTeamName: 1, _id: 0 }
+    )
+      .sort({ backupContactPhoneAt: -1 })
+      .limit(limit)
+      .lean();
+    const items = rows.map(r => ({
+      username: r.username,
+      team: r.lineTeamName || null,
+      phone: r.backupContactPhone,
+      submittedAt: r.backupContactPhoneAt
+    }));
+    res.json({ total: items.length, items });
+  } catch (err) {
+    logger.error(`/api/admin/backup-phones: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CSV: equipo, usuario, teléfono. Para descargar el listado completo.
+app.get('/api/admin/backup-phones.csv', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const rows = await User.find(
+      { backupContactPhone: { $exists: true, $ne: null, $nin: [''] } },
+      { username: 1, backupContactPhone: 1, backupContactPhoneAt: 1, lineTeamName: 1, _id: 0 }
+    )
+      .sort({ backupContactPhoneAt: -1 })
+      .lean();
+    const escape = (v) => {
+      const s = (v == null ? '' : String(v));
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = ['Equipo,Usuario,Telefono,Fecha'];
+    for (const r of rows) {
+      lines.push([
+        escape(r.lineTeamName || ''),
+        escape(r.username || ''),
+        escape(r.backupContactPhone || ''),
+        escape(r.backupContactPhoneAt ? new Date(r.backupContactPhoneAt).toISOString() : '')
+      ].join(','));
+    }
+    const csv = '﻿' + lines.join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="numeros-respaldo.csv"');
+    res.send(csv);
+  } catch (err) {
+    logger.error(`/api/admin/backup-phones.csv: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
 // ESTRATEGIA MENSUAL DE NOTIFICACIONES (Fase 2 minima)
 // =====================================================================
 // El admin define cuantos pushes y cuanta plata por user/mes destinar a

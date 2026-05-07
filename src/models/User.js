@@ -351,7 +351,13 @@ const userSchema = new mongoose.Schema({
   //   4 = cooldown (no mandar más)
   // Si el user carga, vuelve a 0.
   winbackTier: { type: Number, default: 0, min: 0, max: 4, index: true },
-  winbackLastSentAt: { type: Date, default: null, index: true }
+  winbackLastSentAt: { type: Date, default: null, index: true },
+
+  // Número de contacto de respaldo: lo deja el user en el chip "📞 Tu N°"
+  // de la home. Sirve para tener una vía paralela si la página falla y
+  // queremos avisarle. NO se valida con OTP — el user lo escribe libre.
+  backupContactPhone: { type: String, default: null, trim: true },
+  backupContactPhoneAt: { type: Date, default: null }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },
