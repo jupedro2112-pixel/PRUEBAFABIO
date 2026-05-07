@@ -81,6 +81,7 @@ const {
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
   Review,
+  WinbackStrategyConfig,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -9264,6 +9265,493 @@ app.delete('/api/admin/reviews/:id', authMiddleware, adminMiddleware, async (req
     res.json({ success: true });
   } catch (err) {
     logger.error(`DELETE /api/admin/reviews: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
+// WIN-BACK AUTOMÁTICO (estrategia de recuperación)
+// Cron horario: si isActive, escanea PlayerStats.lastRealDepositDate y
+// dispara push escalonado en 3 tiers según días sin cargar.
+// Cada wave reutiliza la infra existente:
+//   - Tier 1: solo push (FCM directo)
+//   - Tier 2: MoneyGiveaway con audienceWhitelist=[user]
+//   - Tier 3: promo-alert per-user con código COD<pct>
+// Se graba 1 fila en RecoveryPush por cada send (sentBy='cron-winback').
+// El outcome resolver existente (en _refreshPendingRecoveryOutcomes) ya
+// se encarga de marcar recovered/opportunist/no_response sin tocar nada.
+// =====================================================================
+let _WINBACK_TICK_RUNNING = false;
+
+function _winbackTierForDays(days, cfg) {
+  if (days >= cfg.tier4Days) return 4;        // cooldown
+  if (days >= cfg.tier3Days) return 3;
+  if (days >= cfg.tier2Days) return 2;
+  if (days >= cfg.tier1Days) return 1;
+  return 0;
+}
+
+async function _fireWinbackForUser(user, tier, cfg, opts = {}) {
+  const username = (user.username || '').toLowerCase();
+  const userId = user.id || user.userId;
+  if (!username || !userId) return { fired: false, reason: 'no-user-id' };
+
+  const tokens = [];
+  if (user.fcmToken) tokens.push(user.fcmToken);
+  if (Array.isArray(user.fcmTokens)) {
+    for (const t of user.fcmTokens) if (t && !tokens.includes(t)) tokens.push(t);
+  }
+  if (tokens.length === 0) return { fired: false, reason: 'no-tokens' };
+
+  const msg = tier === 1 ? cfg.tier1Message
+            : tier === 2 ? cfg.tier2Message
+            : tier === 3 ? cfg.tier3Message
+            : null;
+  if (!msg || !msg.title) return { fired: false, reason: 'no-msg' };
+
+  // Setup bono según tier (antes del push para que cuando el user toque
+  // ya tenga lo que necesita listo).
+  let bonusType = 'none', bonusAmount = 0;
+  let promoCode = null, giveawayId = null;
+  const now = new Date();
+  try {
+    if (tier === 2 && cfg.tier2BonusAmount > 0) {
+      // Cerrar otros giveaways individuales activos del mismo user.
+      await MoneyGiveaway.updateMany(
+        { status: 'active', strategySource: 'individual_grant', audienceWhitelist: username },
+        { $set: { status: 'cancelled' } }
+      );
+      const g = await MoneyGiveaway.create({
+        id: uuidv4(),
+        amount: cfg.tier2BonusAmount,
+        totalBudget: cfg.tier2BonusAmount,
+        maxClaims: 1,
+        expiresAt: new Date(now.getTime() + cfg.tier2DurationHours * 3600 * 1000),
+        createdBy: 'cron-winback',
+        prefix: null,
+        notificationHistoryId: null,
+        requireZeroBalance: false,
+        strategySource: 'individual_grant',
+        audienceWhitelist: [username],
+        status: 'active'
+      });
+      bonusType = 'giveaway';
+      bonusAmount = cfg.tier2BonusAmount;
+      giveawayId = g.id;
+    } else if (tier === 3 && cfg.tier3BonusPct > 0) {
+      promoCode = 'COD' + Math.round(cfg.tier3BonusPct);
+      const promoMessage = `🎁 Cargás $${cfg.tier3SuggestedAmount.toLocaleString('es-AR')} y te damos un ${cfg.tier3BonusPct}% extra. Pedí el código ${promoCode}.`;
+      const promo = {
+        id: uuidv4(),
+        message: promoMessage,
+        code: promoCode,
+        expiresAt: new Date(now.getTime() + cfg.tier3DurationHours * 3600 * 1000).toISOString(),
+        createdAt: now.toISOString(),
+        createdBy: 'cron-winback',
+        prefix: null,
+        audienceWhitelist: [username],
+        kind: 'winback_grant',
+        grantAmount: cfg.tier3SuggestedAmount,
+        grantPct: cfg.tier3BonusPct,
+        notificationHistoryId: null
+      };
+      const arr = (await getConfig(TIER_PROMOS_KEY, [])) || [];
+      const nowMs = Date.now();
+      const cleaned = arr.filter(p => {
+        if (!p || !p.expiresAt) return false;
+        const exp = new Date(p.expiresAt).getTime();
+        if (!isFinite(exp) || exp <= nowMs) return false;
+        const sameUser = Array.isArray(p.audienceWhitelist)
+          && p.audienceWhitelist.some(x => String(x).toLowerCase() === username)
+          && (p.kind === 'individual_grant' || p.kind === 'winback_grant');
+        return !sameUser;
+      });
+      cleaned.push(promo);
+      await setConfig(TIER_PROMOS_KEY, cleaned);
+      bonusType = 'promo';
+      bonusAmount = cfg.tier3SuggestedAmount;
+    }
+
+    // Push.
+    let pushOk = false;
+    for (const tok of tokens) {
+      try {
+        await _sendPushToUser(tok, msg.title, msg.body, {
+          kind: 'winback_auto',
+          tier: String(tier),
+          promoCode: promoCode || '',
+          giveawayId: giveawayId || ''
+        });
+        pushOk = true;
+      } catch (e) {
+        logger.warn(`[WINBACK] push fail ${username} t${tier}: ${e.message}`);
+      }
+    }
+    if (!pushOk && !opts.dryRun) {
+      logger.warn(`[WINBACK] ${username} t${tier} sin push exitoso`);
+    }
+
+    // Audit row en RecoveryPush para que el outcome resolver lo levante.
+    try {
+      await RecoveryPush.create({
+        username,
+        segmentAtSend: null,
+        tierAtSend: null,
+        activityStatusAtSend: null,
+        bonusAmount,
+        bonusType,
+        notificationHistoryId: null,
+        campaignBatchId: 'winback-auto-' + new Date().toISOString().slice(0, 10),
+        sentAt: now,
+        sentBy: 'cron-winback'
+      });
+    } catch (e) {
+      logger.warn(`[WINBACK] no se pudo grabar RecoveryPush: ${e.message}`);
+    }
+
+    return { fired: true, bonusType, bonusAmount, promoCode, giveawayId };
+  } catch (e) {
+    logger.warn(`[WINBACK] _fireWinbackForUser ${username} t${tier} error: ${e.message}`);
+    return { fired: false, reason: 'error', error: e.message };
+  }
+}
+
+// Tick del cron — si ya hay uno corriendo, sale. Default OFF.
+async function winbackCronTick(opts = {}) {
+  if (_WINBACK_TICK_RUNNING) return { skipped: true, reason: 'already-running' };
+  _WINBACK_TICK_RUNNING = true;
+  const startedAt = new Date();
+  try {
+    const cfg = await WinbackStrategyConfig.findOne({ key: 'winback-default' });
+    if (!cfg) {
+      // Crear singleton con defaults la primera vez.
+      await WinbackStrategyConfig.create({ key: 'winback-default' });
+      return { skipped: true, reason: 'no-config-created' };
+    }
+    if (!cfg.isActive && !opts.force) {
+      return { skipped: true, reason: 'disabled' };
+    }
+
+    const now = Date.now();
+    const cutoffMin = now - cfg.tier1Days * 86400000;
+    const cutoffMax = now - 0;
+
+    // Pull users con stats donde lastRealDepositDate < cutoffMin (≥ tier1).
+    // Limit alto pero ordenado por días-más-viejos primero (tier3 antes que tier1).
+    const stats = await PlayerStats.find({
+      lastRealDepositDate: { $exists: true, $ne: null, $lt: new Date(cutoffMin) }
+    }, { username: 1, lastRealDepositDate: 1, isOpportunist: 1, _id: 0 })
+      .sort({ lastRealDepositDate: 1 })
+      .limit(2000)
+      .lean();
+
+    // Pull users matching para conseguir fcm + winbackTier.
+    const usernames = stats.map(s => s.username);
+    if (usernames.length === 0) {
+      cfg.lastCronRunAt = startedAt;
+      cfg.lastCronOutcome = { skipped: 'no-users-matched', startedAt };
+      await cfg.save();
+      return { skipped: true, reason: 'no-users-matched' };
+    }
+    const users = await User.find(
+      { username: { $in: usernames } },
+      { id: 1, username: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
+    ).lean();
+    const userByName = new Map(users.map(u => [u.username.toLowerCase(), u]));
+
+    // Caps diarios.
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const sentTodayByTier = await RecoveryPush.aggregate([
+      { $match: { sentBy: 'cron-winback', sentAt: { $gte: todayStart } } },
+      { $group: { _id: '$bonusType', count: { $sum: 1 } } }
+    ]);
+    let tier2SentToday = 0, tier3SentToday = 0;
+    for (const row of sentTodayByTier) {
+      if (row._id === 'giveaway') tier2SentToday = row.count;
+      else if (row._id === 'promo') tier3SentToday = row.count;
+    }
+
+    const result = { tier1: 0, tier2: 0, tier3: 0, skipped_cap: 0, skipped_recent: 0, skipped_no_user: 0, skipped_no_tokens: 0, skipped_filter: 0, errors: 0 };
+
+    for (const s of stats) {
+      const days = Math.floor((now - new Date(s.lastRealDepositDate).getTime()) / 86400000);
+      const targetTier = _winbackTierForDays(days, cfg);
+      if (targetTier === 0 || targetTier === 4) {
+        // 0 = no aplicable, 4 = cooldown (no mandar más).
+        if (targetTier === 4) {
+          // Marcar tier 4 sin mandar nada para que no escale más.
+          await User.updateOne(
+            { username: s.username, winbackTier: { $lt: 4 } },
+            { $set: { winbackTier: 4, winbackLastSentAt: new Date() } }
+          );
+        }
+        continue;
+      }
+      const u = userByName.get(s.username.toLowerCase());
+      if (!u) { result.skipped_no_user++; continue; }
+      // Filtros.
+      if (cfg.onlySurveyResponders && !u.notifPreference) { result.skipped_filter++; continue; }
+      if (cfg.excludeOpportunists && s.isOpportunist) { result.skipped_filter++; continue; }
+      // Idempotencia: solo si tier nuevo > tier actual.
+      if ((u.winbackTier || 0) >= targetTier) continue;
+      // Anti-spam: 24h mínimo entre mandadas.
+      if (u.winbackLastSentAt && (now - new Date(u.winbackLastSentAt).getTime()) < 24 * 3600 * 1000) {
+        result.skipped_recent++;
+        continue;
+      }
+      // Daily caps.
+      if (targetTier === 2 && tier2SentToday >= cfg.dailyCapTier2) { result.skipped_cap++; continue; }
+      if (targetTier === 3 && tier3SentToday >= cfg.dailyCapTier3) { result.skipped_cap++; continue; }
+
+      // Claim atómico: solo escala si seguimos en el tier viejo.
+      const claimed = await User.findOneAndUpdate(
+        {
+          username: s.username,
+          $or: [{ winbackTier: { $lt: targetTier } }, { winbackTier: { $exists: false } }]
+        },
+        { $set: { winbackTier: targetTier, winbackLastSentAt: new Date() } },
+        { new: true }
+      );
+      if (!claimed) continue;
+
+      // Fire.
+      const r = await _fireWinbackForUser(u, targetTier, cfg, opts);
+      if (r.fired) {
+        result['tier' + targetTier]++;
+        if (targetTier === 2) tier2SentToday++;
+        if (targetTier === 3) tier3SentToday++;
+      } else {
+        if (r.reason === 'no-tokens') result.skipped_no_tokens++;
+        else result.errors++;
+      }
+    }
+
+    // Stats agregadas.
+    cfg.totalSentByTier.tier1 = (cfg.totalSentByTier.tier1 || 0) + result.tier1;
+    cfg.totalSentByTier.tier2 = (cfg.totalSentByTier.tier2 || 0) + result.tier2;
+    cfg.totalSentByTier.tier3 = (cfg.totalSentByTier.tier3 || 0) + result.tier3;
+    cfg.lastCronRunAt = startedAt;
+    cfg.lastCronOutcome = { ...result, startedAt, durationMs: Date.now() - startedAt.getTime() };
+    await cfg.save();
+
+    logger.info(`[WINBACK] tick · t1=${result.tier1} t2=${result.tier2} t3=${result.tier3} skipped(cap=${result.skipped_cap},recent=${result.skipped_recent},filter=${result.skipped_filter},notok=${result.skipped_no_tokens})`);
+    return result;
+  } catch (err) {
+    logger.error(`[WINBACK] tick error: ${err.message}\n${err.stack}`);
+    return { error: err.message };
+  } finally {
+    _WINBACK_TICK_RUNNING = false;
+  }
+}
+
+// Cron: cada 60 min (no-op si isActive=false). El primer tick ocurre 5 min
+// después del boot del server para no chocar con otros crons del start.
+setTimeout(() => {
+  winbackCronTick().catch(err => logger.warn(`[WINBACK] first tick: ${err.message}`));
+  setInterval(() => {
+    winbackCronTick().catch(err => logger.warn(`[WINBACK] tick interval: ${err.message}`));
+  }, 60 * 60 * 1000).unref();
+}, 5 * 60 * 1000);
+
+// Reset winback tier cuando el user vuelve a cargar — hook en el outcome
+// resolver no es necesario porque _refreshPendingRecoveryOutcomes ya lo
+// hace por su cuenta. Pero igual vamos a resetear cada 6h como red de
+// seguridad: cualquier user con realDepositMade reciente y winbackTier>0
+// lo bajamos a 0.
+async function _resetWinbackTierForReturners() {
+  try {
+    const since = new Date(Date.now() - 7 * 86400000);
+    const recent = await PlayerStats.find(
+      { lastRealDepositDate: { $gte: since } },
+      { username: 1, _id: 0 }
+    ).lean();
+    if (recent.length === 0) return;
+    const usernames = recent.map(s => s.username);
+    const r = await User.updateMany(
+      { username: { $in: usernames }, winbackTier: { $gt: 0 } },
+      { $set: { winbackTier: 0, winbackLastSentAt: null } }
+    );
+    if (r.modifiedCount > 0) {
+      logger.info(`[WINBACK] reset tier para ${r.modifiedCount} returners`);
+    }
+  } catch (e) {
+    logger.warn(`[WINBACK] reset returners falló: ${e.message}`);
+  }
+}
+setTimeout(() => {
+  _resetWinbackTierForReturners().catch(() => {});
+  setInterval(() => _resetWinbackTierForReturners().catch(() => {}), 6 * 3600 * 1000).unref();
+}, 8 * 60 * 1000);
+
+// ===== ADMIN ENDPOINTS WIN-BACK =====
+app.get('/api/admin/winback', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    let cfg = await WinbackStrategyConfig.findOne({ key: 'winback-default' }).lean();
+    if (!cfg) cfg = (await WinbackStrategyConfig.create({ key: 'winback-default' })).toObject();
+    res.json(cfg);
+  } catch (err) {
+    logger.error(`GET /api/admin/winback: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/winback', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const body = req.body || {};
+    const $set = { updatedAt: new Date(), updatedBy: req.user.username || 'admin' };
+    const allowed = [
+      'tier1Days','tier2Days','tier3Days','tier4Days',
+      'tier1Message','tier2Message','tier3Message',
+      'tier2BonusAmount','tier2DurationHours',
+      'tier3BonusPct','tier3SuggestedAmount','tier3DurationHours',
+      'onlySurveyResponders','excludeOpportunists',
+      'dailyCapTier2','dailyCapTier3'
+    ];
+    for (const k of allowed) {
+      if (body[k] !== undefined) $set[k] = body[k];
+    }
+    const cfg = await WinbackStrategyConfig.findOneAndUpdate(
+      { key: 'winback-default' },
+      { $set, $setOnInsert: { key: 'winback-default' } },
+      { new: true, upsert: true }
+    );
+    res.json(cfg.toObject ? cfg.toObject() : cfg);
+  } catch (err) {
+    logger.error(`POST /api/admin/winback: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/winback/activate', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const activate = req.body && req.body.activate !== false;
+    const cfg = await WinbackStrategyConfig.findOne({ key: 'winback-default' });
+    if (!cfg) return res.status(404).json({ error: 'Configurá primero la estrategia' });
+    cfg.isActive = !!activate;
+    cfg.activatedAt = activate ? new Date() : null;
+    cfg.activatedBy = activate ? (req.user.username || 'admin') : null;
+    await cfg.save();
+    logger.info(`[WINBACK] ${activate ? 'ACTIVATED' : 'DEACTIVATED'} by ${req.user.username}`);
+    res.json(cfg.toObject());
+  } catch (err) {
+    logger.error(`POST /api/admin/winback/activate: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/winback/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    let cfg = await WinbackStrategyConfig.findOne({ key: 'winback-default' }).lean();
+    if (!cfg) cfg = (await WinbackStrategyConfig.create({ key: 'winback-default' })).toObject();
+
+    const now = Date.now();
+    const cutoff = new Date(now - cfg.tier1Days * 86400000);
+    const stats = await PlayerStats.find({
+      lastRealDepositDate: { $exists: true, $ne: null, $lt: cutoff }
+    }, { username: 1, lastRealDepositDate: 1, isOpportunist: 1, _id: 0 }).lean();
+
+    const usernames = stats.map(s => s.username);
+    const users = usernames.length > 0 ? await User.find(
+      { username: { $in: usernames } },
+      { username: 1, winbackTier: 1, fcmToken: 1, fcmTokens: 1, notifPreference: 1, _id: 0 }
+    ).lean() : [];
+    const uMap = new Map(users.map(u => [u.username.toLowerCase(), u]));
+
+    const buckets = { tier1: [], tier2: [], tier3: [], tier4: [], skipped_filter: 0, skipped_already: 0, skipped_no_token: 0 };
+    for (const s of stats) {
+      const days = Math.floor((now - new Date(s.lastRealDepositDate).getTime()) / 86400000);
+      const target = _winbackTierForDays(days, cfg);
+      if (target === 0) continue;
+      const u = uMap.get(s.username.toLowerCase());
+      const hasTokens = u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      if (cfg.onlySurveyResponders && (!u || !u.notifPreference)) { buckets.skipped_filter++; continue; }
+      if (cfg.excludeOpportunists && s.isOpportunist) { buckets.skipped_filter++; continue; }
+      if (u && (u.winbackTier || 0) >= target) { buckets.skipped_already++; continue; }
+      if (target !== 4 && !hasTokens) { buckets.skipped_no_token++; continue; }
+      const row = { username: s.username, days, hasTokens: !!hasTokens };
+      buckets['tier' + target].push(row);
+    }
+
+    res.json({
+      cfg,
+      counts: {
+        tier1: buckets.tier1.length,
+        tier2: buckets.tier2.length,
+        tier3: buckets.tier3.length,
+        tier4: buckets.tier4.length,
+        skipped_filter: buckets.skipped_filter,
+        skipped_already: buckets.skipped_already,
+        skipped_no_token: buckets.skipped_no_token
+      },
+      // Sample para el panel admin (máx 15 por tier).
+      samples: {
+        tier1: buckets.tier1.slice(0, 15),
+        tier2: buckets.tier2.slice(0, 15),
+        tier3: buckets.tier3.slice(0, 15)
+      }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/winback/preview: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/winback/test-fire-once', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const r = await winbackCronTick({ force: true });
+    res.json({ success: true, result: r });
+  } catch (err) {
+    logger.error(`/api/admin/winback/test-fire-once: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/winback/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));
+    const since = new Date(Date.now() - days * 86400000);
+    const items = await RecoveryPush.find({ sentBy: 'cron-winback', sentAt: { $gte: since } })
+      .sort({ sentAt: -1 })
+      .limit(500)
+      .lean();
+
+    // Por tier (lo deducimos del bonusType + bonusAmount).
+    // tier1 = bonusType 'none', tier2 = 'giveaway', tier3 = 'promo'.
+    const byTier = { tier1: { sent: 0, recovered: 0, opportunist: 0, no_response: 0, pending: 0, deposited: 0 },
+                     tier2: { sent: 0, recovered: 0, opportunist: 0, no_response: 0, pending: 0, deposited: 0 },
+                     tier3: { sent: 0, recovered: 0, opportunist: 0, no_response: 0, pending: 0, deposited: 0 } };
+    for (const it of items) {
+      const tier = it.bonusType === 'none' ? 'tier1'
+                : it.bonusType === 'giveaway' ? 'tier2'
+                : it.bonusType === 'promo' ? 'tier3'
+                : null;
+      if (!tier) continue;
+      byTier[tier].sent++;
+      const oc = it.outcome || 'pending';
+      if (byTier[tier][oc] != null) byTier[tier][oc]++;
+      if (it.realDepositMade) byTier[tier].deposited += (it.realDepositAmount || 0);
+    }
+
+    res.json({
+      days,
+      total: items.length,
+      byTier,
+      items: items.slice(0, 100).map(it => ({
+        username: it.username,
+        sentAt: it.sentAt,
+        bonusType: it.bonusType,
+        bonusAmount: it.bonusAmount,
+        outcome: it.outcome,
+        bonusClaimed: !!it.bonusClaimed,
+        realDepositMade: !!it.realDepositMade,
+        realDepositAmount: it.realDepositAmount || 0
+      }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/winback/history: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

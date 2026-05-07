@@ -47,6 +47,7 @@ const Segment = require('./Segment');
 const MasterAnalysisSnapshot = require('./MasterAnalysisSnapshot');
 const NotifStrategyConfig = require('./NotifStrategyConfig');
 const Review = require('./Review');
+const WinbackStrategyConfig = require('./WinbackStrategyConfig');
 
 
 /**
@@ -466,6 +467,7 @@ module.exports = {
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
   Review,
+  WinbackStrategyConfig,
 
   // Funciones de conexión
   connectDB,

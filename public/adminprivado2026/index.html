@@ -59,6 +59,10 @@
                     <span>📋</span>
                     <span>Encuesta</span>
                 </a>
+                <a href="#" class="nav-item" data-section="winback">
+                    <span>🔄</span>
+                    <span>Win-back automático</span>
+                </a>
                 <a href="#" class="nav-item" data-section="topPlayers">
                     <span>🔥</span>
                     <span>Top jugadores</span>
@@ -887,6 +891,32 @@
                 </div>
                 <div id="encuestaContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: WIN-BACK AUTOMÁTICO — recuperación
+                 escalonada en 3 tiers según días sin cargar.
+                 Cron horario, idempotente con User.winbackTier.
+                 Default OFF: el admin revisa la config y prende.
+                 ============================================ -->
+            <section id="winbackSection" class="section">
+                <div class="panel-header">
+                    <h2>🔄 Win-back automático</h2>
+                    <button class="refresh-btn" onclick="loadWinback()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 4px;color:#66ff66;font-weight:700;font-size:13px;">¿Qué hace?</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Cron horario que detecta usuarios que dejaron de cargar y les manda push escalonado:
+                        <strong style="color:#9d4edd;">Tier 1</strong> "te extrañamos" sin bono ·
+                        <strong style="color:#ffd700;">Tier 2</strong> regalo cash $X ·
+                        <strong style="color:#ff8c5a;">Tier 3</strong> COD100 (bono 100%).
+                        Si el user vuelve a cargar, su tier se resetea automáticamente. Cada send queda en el historial con outcome (recovered / opportunist / no_response).
+                    </p>
+                </div>
+                <div id="winbackContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando configuración…</div>
                 </div>
             </section>
 

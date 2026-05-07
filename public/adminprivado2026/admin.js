@@ -172,6 +172,7 @@ function showSection(sectionKey) {
         topEngagement: 'topEngagementSection',
         topPlayers: 'topPlayersSection',
         encuesta: 'encuestaSection',
+        winback: 'winbackSection',
         reviews: 'reviewsSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
@@ -223,6 +224,8 @@ function showSection(sectionKey) {
         loadTopPlayers();
     } else if (sectionKey === 'encuesta') {
         loadEncuesta();
+    } else if (sectionKey === 'winback') {
+        loadWinback();
     } else if (sectionKey === 'reviews') {
         loadAdminReviews();
     } else if (sectionKey === 'automations') {
@@ -12458,6 +12461,376 @@ function _renderAdminReviews(d) {
 
     html += '<div style="color:#888;font-size:10.5px;margin-top:8px;text-align:center;">Mostrando ' + items.length + ' de ' + total + ' opiniones · ' + (bucket === 'all' ? 'todos los buckets' : bucket) + '</div>';
     return html;
+}
+
+// =============================================
+// WIN-BACK AUTOMÁTICO — admin section
+// =============================================
+let _WINBACK_CACHE = null;
+window._WINBACK_TAB = window._WINBACK_TAB || 'config';
+
+async function loadWinback() {
+    const c = document.getElementById('winbackContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/winback');
+        if (!r.ok) {
+            const e = await r.json().catch(() => ({}));
+            c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error: ' + escapeHtml(e.error || '') + '</div>';
+            return;
+        }
+        const cfg = await r.json();
+        _WINBACK_CACHE = { cfg, preview: null, history: null };
+        c.innerHTML = _renderWinback();
+        // Lazy load preview/history al entrar a esas tabs.
+        if (window._WINBACK_TAB === 'preview') loadWinbackPreview();
+        if (window._WINBACK_TAB === 'history') loadWinbackHistory();
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:20px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function _setWinbackTab(tab) {
+    window._WINBACK_TAB = tab;
+    const c = document.getElementById('winbackContent');
+    if (c) c.innerHTML = _renderWinback();
+    if (tab === 'preview') loadWinbackPreview();
+    if (tab === 'history') loadWinbackHistory();
+}
+
+function _renderWinback() {
+    const d = _WINBACK_CACHE || {};
+    const cfg = d.cfg || {};
+    const tab = window._WINBACK_TAB || 'config';
+    let html = '';
+    // Banner de estado.
+    const isActive = !!cfg.isActive;
+    const lastRun = cfg.lastCronRunAt ? new Date(cfg.lastCronRunAt).toLocaleString('es-AR') : 'nunca';
+    html += '<div style="background:' + (isActive ? 'rgba(102,255,102,0.10)' : 'rgba(255,80,80,0.06)') + ';border:1px solid ' + (isActive ? 'rgba(102,255,102,0.40)' : 'rgba(255,80,80,0.30)') + ';border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">';
+    html += '<div>';
+    html += '<div style="color:' + (isActive ? '#66ff66' : '#ff8080') + ';font-weight:900;font-size:14px;letter-spacing:1px;">' + (isActive ? '✅ ACTIVO' : '⏸️ PAUSADO') + '</div>';
+    html += '<div style="color:#aaa;font-size:11px;margin-top:2px;">Última corrida del cron: ' + escapeHtml(lastRun) + ' · Total enviadas: t1=' + ((cfg.totalSentByTier && cfg.totalSentByTier.tier1) || 0) + ' t2=' + ((cfg.totalSentByTier && cfg.totalSentByTier.tier2) || 0) + ' t3=' + ((cfg.totalSentByTier && cfg.totalSentByTier.tier3) || 0) + '</div>';
+    html += '</div>';
+    if (isActive) {
+        html += '<button type="button" onclick="toggleWinback(false)" style="background:linear-gradient(135deg,#888,#555);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-weight:900;font-size:12px;cursor:pointer;">⏸️ DESACTIVAR</button>';
+    } else {
+        html += '<button type="button" onclick="toggleWinback(true)" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 16px;border-radius:8px;font-weight:900;font-size:12px;cursor:pointer;">▶️ ACTIVAR</button>';
+    }
+    html += '</div>';
+
+    // Tabs nav.
+    const tabs = [
+        { k: 'config',  l: '⚙️ Configuración' },
+        { k: 'preview', l: '👁️ Vista previa' },
+        { k: 'history', l: '📊 Historial' }
+    ];
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid rgba(212,175,55,0.20);margin-bottom:14px;padding-bottom:6px;">';
+    for (const t of tabs) {
+        const active = t.k === tab;
+        html += '<button type="button" onclick="_setWinbackTab(\'' + t.k + '\')" style="background:' + (active ? 'linear-gradient(135deg,#d4af37,#b8941a)' : 'rgba(255,255,255,0.04)') + ';color:' + (active ? '#000' : '#ddd') + ';border:1px solid ' + (active ? '#d4af37' : 'rgba(212,175,55,0.30)') + ';padding:7px 13px;border-radius:8px;font-weight:' + (active ? '900' : '700') + ';font-size:12px;cursor:pointer;letter-spacing:0.3px;">' + t.l + '</button>';
+    }
+    html += '</div>';
+
+    if (tab === 'config')       html += _renderWinbackConfig(cfg);
+    else if (tab === 'preview') html += _renderWinbackPreview(d.preview);
+    else if (tab === 'history') html += _renderWinbackHistory(d.history);
+    return html;
+}
+
+function _renderWinbackConfig(cfg) {
+    const m1 = cfg.tier1Message || {}, m2 = cfg.tier2Message || {}, m3 = cfg.tier3Message || {};
+    let html = '';
+
+    // Tier 1
+    html += '<div style="background:rgba(157,78,221,0.06);border:1px solid rgba(157,78,221,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<h3 style="color:#b48bff;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🟣 TIER 1 — TE EXTRAÑAMOS (sin bono)</h3>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Días sin cargar para disparar:</label>';
+    html += '<input type="number" id="wb_tier1Days" value="' + (cfg.tier1Days || 7) + '" min="3" max="30" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '</div>';
+    html += '<input type="text" id="wb_tier1Title" value="' + escapeHtml(m1.title || '') + '" maxlength="80" placeholder="Título del push" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px;">';
+    html += '<textarea id="wb_tier1Body" maxlength="200" rows="2" placeholder="Cuerpo del push" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;">' + escapeHtml(m1.body || '') + '</textarea>';
+    html += '</div>';
+
+    // Tier 2
+    html += '<div style="background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<h3 style="color:#ffd700;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🟡 TIER 2 — REGALO CASH</h3>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Días sin cargar:</label>';
+    html += '<input type="number" id="wb_tier2Days" value="' + (cfg.tier2Days || 14) + '" min="7" max="45" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Monto regalo $:</label>';
+    html += '<input type="number" id="wb_tier2BonusAmount" value="' + (cfg.tier2BonusAmount || 1000) + '" min="0" max="50000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:90px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Vence en horas:</label>';
+    html += '<input type="number" id="wb_tier2DurationHours" value="' + (cfg.tier2DurationHours || 48) + '" min="6" max="168" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Cap diario:</label>';
+    html += '<input type="number" id="wb_dailyCapTier2" value="' + (cfg.dailyCapTier2 || 50) + '" min="0" max="5000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '</div>';
+    html += '<input type="text" id="wb_tier2Title" value="' + escapeHtml(m2.title || '') + '" maxlength="80" placeholder="Título" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px;">';
+    html += '<textarea id="wb_tier2Body" maxlength="200" rows="2" placeholder="Cuerpo" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;">' + escapeHtml(m2.body || '') + '</textarea>';
+    html += '</div>';
+
+    // Tier 3
+    html += '<div style="background:rgba(255,107,53,0.06);border:1px solid rgba(255,107,53,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<h3 style="color:#ff8c5a;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🔴 TIER 3 — BONO % EN CARGAS (cod50/cod100)</h3>';
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Días sin cargar:</label>';
+    html += '<input type="number" id="wb_tier3Days" value="' + (cfg.tier3Days || 30) + '" min="14" max="90" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">% bono:</label>';
+    html += '<input type="number" id="wb_tier3BonusPct" value="' + (cfg.tier3BonusPct || 100) + '" min="25" max="200" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">$ sugerido:</label>';
+    html += '<input type="number" id="wb_tier3SuggestedAmount" value="' + (cfg.tier3SuggestedAmount || 2000) + '" min="500" max="100000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:90px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Vence horas:</label>';
+    html += '<input type="number" id="wb_tier3DurationHours" value="' + (cfg.tier3DurationHours || 72) + '" min="12" max="168" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Cap diario:</label>';
+    html += '<input type="number" id="wb_dailyCapTier3" value="' + (cfg.dailyCapTier3 || 100) + '" min="0" max="5000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '</div>';
+    html += '<input type="text" id="wb_tier3Title" value="' + escapeHtml(m3.title || '') + '" maxlength="80" placeholder="Título" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px;">';
+    html += '<textarea id="wb_tier3Body" maxlength="200" rows="2" placeholder="Cuerpo" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;">' + escapeHtml(m3.body || '') + '</textarea>';
+    html += '</div>';
+
+    // Tier 4 cooldown
+    html += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.20);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<h3 style="color:#888;margin:0 0 6px;font-size:13px;letter-spacing:1px;">⏸️ TIER 4 — COOLDOWN (no mandar más)</h3>';
+    html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+    html += '<label style="color:#bbb;font-size:11px;">Días sin cargar para entrar al cooldown:</label>';
+    html += '<input type="number" id="wb_tier4Days" value="' + (cfg.tier4Days || 60) + '" min="30" max="365" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<span style="color:#888;font-size:10.5px;">Después de este umbral se considera lost user, no spamear.</span>';
+    html += '</div>';
+    html += '</div>';
+
+    // Filtros.
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<h3 style="color:#00d4ff;margin:0 0 8px;font-size:12px;letter-spacing:1px;">🎯 FILTROS</h3>';
+    html += '<label style="display:block;color:#ddd;font-size:12px;margin-bottom:6px;cursor:pointer;"><input type="checkbox" id="wb_onlySurveyResponders" ' + (cfg.onlySurveyResponders ? 'checked' : '') + '> Solo a usuarios que respondieron la encuesta</label>';
+    html += '<label style="display:block;color:#ddd;font-size:12px;cursor:pointer;"><input type="checkbox" id="wb_excludeOpportunists" ' + (cfg.excludeOpportunists ? 'checked' : '') + '> Excluir oportunistas (reclaman bonos sin cargar)</label>';
+    html += '</div>';
+
+    // Botones.
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '<button type="button" onclick="saveWinback()" style="flex:1;min-width:160px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;">💾 GUARDAR cambios</button>';
+    html += '<button type="button" onclick="testFireWinback()" style="flex:1;min-width:160px;background:linear-gradient(135deg,#ff8c5a,#cc6633);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;" title="Dispara una pasada del cron AHORA (respeta isActive=false → solo simula).">🧪 Disparar wave de prueba</button>';
+    html += '</div>';
+
+    return html;
+}
+
+function _renderWinbackPreview(p) {
+    if (!p) {
+        return '<div style="text-align:center;padding:30px;color:#aaa;font-size:11.5px;">⏳ Cargando vista previa…</div>';
+    }
+    const c = p.counts || {};
+    let html = '';
+    html += '<div style="margin-bottom:10px;color:#aaa;font-size:11.5px;">Cuántos usuarios cumplirían cada tier en la próxima corrida del cron (con la config actual). No se manda nada — es solo simulación.</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:12px;">';
+    html += _kpiCard('🟣 Tier 1', (c.tier1 || 0).toLocaleString('es-AR'), '#b48bff');
+    html += _kpiCard('🟡 Tier 2', (c.tier2 || 0).toLocaleString('es-AR'), '#ffd700');
+    html += _kpiCard('🔴 Tier 3', (c.tier3 || 0).toLocaleString('es-AR'), '#ff8c5a');
+    html += _kpiCard('⏸️ Tier 4 cooldown', (c.tier4 || 0).toLocaleString('es-AR'), '#888');
+    html += _kpiCard('Filtrados', (c.skipped_filter || 0).toLocaleString('es-AR'), '#888');
+    html += _kpiCard('Ya enviado', (c.skipped_already || 0).toLocaleString('es-AR'), '#888');
+    html += _kpiCard('Sin token FCM', (c.skipped_no_token || 0).toLocaleString('es-AR'), '#ff8080');
+    html += '</div>';
+    // Sample lists.
+    const samples = p.samples || {};
+    const tiers = [
+        { k: 'tier1', l: '🟣 Tier 1 — te extrañamos', color: '#b48bff' },
+        { k: 'tier2', l: '🟡 Tier 2 — regalo cash', color: '#ffd700' },
+        { k: 'tier3', l: '🔴 Tier 3 — cod' + ((p.cfg && p.cfg.tier3BonusPct) || 100), color: '#ff8c5a' }
+    ];
+    for (const t of tiers) {
+        const list = samples[t.k] || [];
+        if (list.length === 0) continue;
+        html += '<div style="background:rgba(0,0,0,0.20);border:1px solid ' + t.color + '30;border-radius:8px;padding:10px;margin-bottom:8px;">';
+        html += '<div style="color:' + t.color + ';font-weight:900;font-size:11.5px;letter-spacing:1px;margin-bottom:6px;">' + t.l + ' — primeros ' + list.length + '</div>';
+        html += '<div style="font-size:11px;color:#ddd;">';
+        html += list.map(u => '<span style="display:inline-block;background:rgba(255,255,255,0.05);padding:3px 7px;margin:2px;border-radius:5px;">' + escapeHtml(u.username) + ' <span style="color:#888;">(' + u.days + 'd' + (u.hasTokens ? '' : ' · sin app') + ')</span></span>').join('');
+        html += '</div></div>';
+    }
+    return html;
+}
+
+function _renderWinbackHistory(h) {
+    if (!h) {
+        return '<div style="text-align:center;padding:30px;color:#aaa;font-size:11.5px;">⏳ Cargando historial…</div>';
+    }
+    const t = h.byTier || {};
+    let html = '';
+    html += '<div style="margin-bottom:10px;color:#aaa;font-size:11.5px;">Cómo reacciona la gente a cada wave en los últimos ' + (h.days || 30) + ' días. <strong style="color:#66ff66;">Recovered</strong> = volvió y cargó · <strong style="color:#ffd700;">Opportunist</strong> = reclamó bono pero no cargó · <strong style="color:#888;">No response</strong> = no hizo nada (después de 14 días).</div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead><tr style="color:#d4af37;background:rgba(212,175,55,0.10);text-align:left;">';
+    html += '<th style="padding:7px 9px;">Tier</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Enviadas</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">✅ Recovered</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">⚠️ Oportunista</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">❌ No response</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">⏳ Pending</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">$ depositado</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">% recuperación</th>';
+    html += '</tr></thead><tbody>';
+    const labels = { tier1: '🟣 Tier 1', tier2: '🟡 Tier 2', tier3: '🔴 Tier 3' };
+    for (const k of ['tier1','tier2','tier3']) {
+        const r = t[k] || { sent: 0, recovered: 0, opportunist: 0, no_response: 0, pending: 0, deposited: 0 };
+        const recPct = r.sent ? ((r.recovered / r.sent) * 100).toFixed(1) + '%' : '0%';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:7px 9px;font-weight:800;">' + labels[k] + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#fff;">' + r.sent + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#66ff66;font-weight:800;">' + r.recovered + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ffd700;">' + r.opportunist + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#888;">' + r.no_response + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#aaa;">' + r.pending + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ffd700;font-weight:800;">$' + (r.deposited || 0).toLocaleString('es-AR') + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#fff;font-weight:800;">' + recPct + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+
+    // Lista detallada (últimos 100).
+    const items = h.items || [];
+    if (items.length === 0) {
+        html += '<div style="text-align:center;padding:30px;color:#888;background:rgba(255,255,255,0.03);border-radius:10px;">Todavía no hay envíos. Activá la estrategia para que el cron empiece a mandar.</div>';
+        return html;
+    }
+    html += '<h3 style="color:#d4af37;font-size:12px;margin:14px 0 6px;letter-spacing:1px;">ÚLTIMOS ENVÍOS</h3>';
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;overflow:hidden;max-height:55vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '<thead style="position:sticky;top:0;background:#2d0052;"><tr style="color:#d4af37;text-align:left;">';
+    html += '<th style="padding:7px 9px;">Usuario</th>';
+    html += '<th style="padding:7px 9px;">Tier</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Cuándo</th>';
+    html += '<th style="padding:7px 9px;text-align:center;">Outcome</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Bono</th>';
+    html += '<th style="padding:7px 9px;text-align:right;">Cargó</th>';
+    html += '</tr></thead><tbody>';
+    for (const it of items) {
+        const tierLbl = it.bonusType === 'none' ? '🟣 1' : it.bonusType === 'giveaway' ? '🟡 2' : it.bonusType === 'promo' ? '🔴 3' : '?';
+        const when = it.sentAt ? new Date(it.sentAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+        const outcomeColor = it.outcome === 'recovered' ? '#66ff66' : it.outcome === 'opportunist' ? '#ffd700' : it.outcome === 'no_response' ? '#888' : '#aaa';
+        const outcomeLbl = it.outcome === 'recovered' ? '✅ recovered' : it.outcome === 'opportunist' ? '⚠️ oportunista' : it.outcome === 'no_response' ? '❌ no resp' : '⏳ pending';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:7px 9px;color:#fff;font-weight:700;">' + escapeHtml(it.username) + '</td>';
+        html += '<td style="padding:7px 9px;color:#fff;">' + tierLbl + '</td>';
+        html += '<td style="padding:7px 9px;color:#aaa;text-align:right;font-size:10.5px;white-space:nowrap;">' + escapeHtml(when) + '</td>';
+        html += '<td style="padding:7px 9px;text-align:center;color:' + outcomeColor + ';font-weight:800;font-size:10.5px;">' + outcomeLbl + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:#ddd;">' + (it.bonusAmount > 0 ? '$' + it.bonusAmount.toLocaleString('es-AR') : '—') + '</td>';
+        html += '<td style="padding:7px 9px;text-align:right;color:' + (it.realDepositMade ? '#66ff66' : '#888') + ';font-weight:' + (it.realDepositMade ? '800' : '400') + ';">' + (it.realDepositMade ? '$' + (it.realDepositAmount || 0).toLocaleString('es-AR') : '—') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
+async function loadWinbackPreview() {
+    try {
+        const r = await authFetch('/api/admin/winback/preview');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!_WINBACK_CACHE) _WINBACK_CACHE = {};
+        _WINBACK_CACHE.preview = d;
+        const c = document.getElementById('winbackContent');
+        if (c) c.innerHTML = _renderWinback();
+    } catch (_) { /* ignore */ }
+}
+
+async function loadWinbackHistory() {
+    try {
+        const r = await authFetch('/api/admin/winback/history?days=30');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!_WINBACK_CACHE) _WINBACK_CACHE = {};
+        _WINBACK_CACHE.history = d;
+        const c = document.getElementById('winbackContent');
+        if (c) c.innerHTML = _renderWinback();
+    } catch (_) { /* ignore */ }
+}
+
+async function saveWinback() {
+    const get = (id) => (document.getElementById(id) || {}).value;
+    const getNum = (id) => Number(get(id));
+    const getChk = (id) => !!(document.getElementById(id) || {}).checked;
+    const body = {
+        tier1Days: getNum('wb_tier1Days'),
+        tier2Days: getNum('wb_tier2Days'),
+        tier3Days: getNum('wb_tier3Days'),
+        tier4Days: getNum('wb_tier4Days'),
+        tier1Message: { title: get('wb_tier1Title') || '', body: get('wb_tier1Body') || '' },
+        tier2Message: { title: get('wb_tier2Title') || '', body: get('wb_tier2Body') || '' },
+        tier3Message: { title: get('wb_tier3Title') || '', body: get('wb_tier3Body') || '' },
+        tier2BonusAmount: getNum('wb_tier2BonusAmount'),
+        tier2DurationHours: getNum('wb_tier2DurationHours'),
+        tier3BonusPct: getNum('wb_tier3BonusPct'),
+        tier3SuggestedAmount: getNum('wb_tier3SuggestedAmount'),
+        tier3DurationHours: getNum('wb_tier3DurationHours'),
+        onlySurveyResponders: getChk('wb_onlySurveyResponders'),
+        excludeOpportunists: getChk('wb_excludeOpportunists'),
+        dailyCapTier2: getNum('wb_dailyCapTier2'),
+        dailyCapTier3: getNum('wb_dailyCapTier3')
+    };
+    try {
+        const r = await authFetch('/api/admin/winback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error al guardar'), 'error');
+            return;
+        }
+        _WINBACK_CACHE.cfg = d;
+        showToast('✅ Configuración guardada', 'success');
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function toggleWinback(activate) {
+    const verb = activate ? 'ACTIVAR' : 'DESACTIVAR';
+    if (!confirm('¿' + verb + ' la estrategia win-back? ' + (activate
+        ? 'El cron va a empezar a mandar pushes/regalos de forma automática a usuarios inactivos según la config.'
+        : 'Las pushes auto-programadas quedan pausadas.'))) return;
+    try {
+        const r = await authFetch('/api/admin/winback/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activate: !!activate })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error'), 'error');
+            return;
+        }
+        _WINBACK_CACHE.cfg = d;
+        showToast('✅ Win-back ' + (activate ? 'activo' : 'desactivado'), 'success');
+        const c = document.getElementById('winbackContent');
+        if (c) c.innerHTML = _renderWinback();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function testFireWinback() {
+    if (!confirm('¿Disparar una pasada del cron AHORA?\n\nSi la estrategia está pausada esto va a forzar el envío real igual. ¿Seguro?')) return;
+    showToast('⏳ Disparando wave...', 'info');
+    try {
+        const r = await authFetch('/api/admin/winback/test-fire-once', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error'), 'error');
+            return;
+        }
+        const res = d.result || {};
+        const lines = ['✅ Wave disparada'];
+        if (res.tier1 != null) lines.push('Tier 1: ' + res.tier1);
+        if (res.tier2 != null) lines.push('Tier 2: ' + res.tier2);
+        if (res.tier3 != null) lines.push('Tier 3: ' + res.tier3);
+        if (res.skipped) lines.push(res.skipped);
+        showToast(lines.join(' · '), 'success');
+        loadWinback();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 function _renderReactionsContainer() {

@@ -331,7 +331,17 @@ const userSchema = new mongoose.Schema({
     default: null,
     index: true
   },
-  notifPreferenceAt: { type: Date, default: null }
+  notifPreferenceAt: { type: Date, default: null },
+
+  // Win-back automático (estrategia de recuperación). Tier actual:
+  //   0 = activo / nunca disparado
+  //   1 = recibió tier1 (te extrañamos)
+  //   2 = recibió tier2 (regalo cash)
+  //   3 = recibió tier3 (cod100)
+  //   4 = cooldown (no mandar más)
+  // Si el user carga, vuelve a 0.
+  winbackTier: { type: Number, default: 0, min: 0, max: 4, index: true },
+  winbackLastSentAt: { type: Date, default: null, index: true }
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

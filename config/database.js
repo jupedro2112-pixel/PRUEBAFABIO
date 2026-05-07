@@ -46,7 +46,8 @@ const {
   Segment,
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
-  Review
+  Review,
+  WinbackStrategyConfig
 } = require('../src/models');
 
 // ============================================
@@ -366,6 +367,7 @@ module.exports = {
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
   Review,
+  WinbackStrategyConfig,
   // Helpers
   getConfig,
   setConfig,
