@@ -358,8 +358,9 @@ VIP.reviews = (function () {
         const renderItem = (it) => {
             const stars = _renderStars(it.stars);
             const rawComment = it.comment || '';
-            // Reviews sin comentario se muestran como "5 estrellas" en dorado.
-            const comment = rawComment ? _esc(rawComment) : '<span style="color:#ffd700;font-weight:700;">5 estrellas</span>';
+            // Reviews sin comentario se muestran como "5 estrellas" en blanco
+            // (mismo estilo que el resto de los comentarios — sin color especial).
+            const comment = _esc(rawComment || '5 estrellas');
             // tooltip nativo con el comentario completo + fecha (para hover desktop)
             const when = _whenStr(it.updatedAt);
             const tipParts = [];
