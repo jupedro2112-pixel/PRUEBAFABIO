@@ -380,6 +380,21 @@ VIP.reviews = (function () {
             cols.push('<div class="reviews-col">' + slice.map(renderItem).join('') + '</div>');
         }
         list.innerHTML = cols.join('');
+        _wireFeedClickToExpand(list);
+    }
+
+    // Click → expand/collapse del review-item para ver el comentario completo
+    // sin tener que pasar el mouse por encima (en mobile no hay hover). Bind
+    // delegado para que sirva con cualquier re-render del feed.
+    let _feedExpandWired = false;
+    function _wireFeedClickToExpand(list) {
+        if (_feedExpandWired || !list) return;
+        _feedExpandWired = true;
+        list.addEventListener('click', (e) => {
+            const item = e.target && e.target.closest && e.target.closest('.review-item');
+            if (!item || !list.contains(item)) return;
+            item.classList.toggle('expanded');
+        });
     }
 
     let _feedObserver = null;
