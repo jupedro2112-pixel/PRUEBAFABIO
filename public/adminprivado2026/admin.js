@@ -5067,6 +5067,7 @@ function _renderTeamCard(t, isExpanded) {
             html += '<td style="padding:8px;color:#aaa;font-size:10.5px;" id="' + rowId + '-lastfile">⏳</td>';
             // Celda Acciones
             html += '<td style="padding:6px 8px;text-align:center;white-space:nowrap;">';
+            html += '<button type="button" onclick="teamLineChangePhone(' + teamArg + ',' + phoneArg + ')" title="Cambiar el número de teléfono de esta línea" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;border-radius:5px;cursor:pointer;margin-right:4px;">📞</button>';
             html += '<button type="button" onclick="teamLineRename(' + teamArg + ',' + phoneArg + ')" title="Cambiar el nombre de esta línea" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(255,235,59,0.10);border:1px solid rgba(255,235,59,0.40);color:#ffeb3b;border-radius:5px;cursor:pointer;margin-right:4px;">✏️</button>';
             html += '<button type="button" onclick="teamLineUploadXlsx(' + teamArg + ',' + phoneArg + ')" title="Cargar/actualizar listado .xlsx (no rompe lo que ya está)" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:5px;cursor:pointer;margin-right:4px;">📤</button>';
             html += '<button type="button" onclick="teamLineShowList(' + teamArg + ',' + phoneArg + ')" title="Ver lista cargada" style="padding:4px 8px;font-size:11px;font-weight:700;background:rgba(157,78,221,0.10);border:1px solid rgba(157,78,221,0.40);color:#c89bff;border-radius:5px;cursor:pointer;margin-right:4px;">👁</button>';
@@ -5460,6 +5461,38 @@ function _renderActivityStatsHtml(j, teamName, linePhone) {
     html += '</div>';
 
     return html;
+}
+
+// Cambiar el teléfono de UNA línea (sin afectar otras líneas ni mandar push).
+async function teamLineChangePhone(teamName, oldPhone) {
+    if (!teamName || !oldPhone) {
+        showToast('Falta team o phone', 'error');
+        return;
+    }
+    const newPhone = prompt('Nuevo número de teléfono para "' + teamName + '"\n\nActual: ' + oldPhone + '\n\nIngresá el nuevo (con o sin "+"):', oldPhone);
+    if (newPhone === null) return;
+    const trimmed = newPhone.trim();
+    const digits = trimmed.replace(/[^\d]/g, '');
+    if (digits.length < 7) { showToast('Número inválido (mínimo 7 dígitos)', 'error'); return; }
+    const newClean = '+' + digits;
+    if (newClean === oldPhone) { showToast('El número nuevo es igual al actual', 'info'); return; }
+    if (!confirm('¿Confirmás cambiar la línea?\n\nDe:  ' + oldPhone + '\nA:   ' + newClean + '\n\nEsto actualiza a TODOS los users asignados a esta línea. Otras líneas y otros equipos NO se tocan.')) return;
+    try {
+        const r = await authFetch('/api/admin/user-lines/change-phone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ teamName, oldPhone, newPhone: newClean })
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            showToast('❌ ' + (j.error || 'Error'), 'error');
+            return;
+        }
+        showToast('✅ Línea actualizada: ' + (j.usersUpdated || 0) + ' users + ' + (j.lookupUpdated || 0) + ' pre-asignados', 'success');
+        try { loadTeams(); } catch (_) {}
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 // Renombra UNA línea (cambia la etiqueta después de "Equipo · "). NO toca

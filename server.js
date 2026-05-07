@@ -8337,6 +8337,51 @@ app.get('/api/admin/user-lines/line-activity-stats', authMiddleware, adminMiddle
   }
 });
 
+// Cambiar el TELÉFONO de UNA línea sin afectar nada más. Actualiza User
+// y UserLineLookup. NO manda push de aviso (eso es lineDown). Útil cuando
+// el admin solo quiere corregir un número mal cargado.
+app.post('/api/admin/user-lines/change-phone', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teamName = String((req.body && req.body.teamName) || '').trim();
+    const oldPhone = String((req.body && req.body.oldPhone) || '').trim();
+    const newPhoneRaw = String((req.body && req.body.newPhone) || '').trim();
+    if (!teamName || !oldPhone || !newPhoneRaw) {
+      return res.status(400).json({ error: 'Faltan teamName / oldPhone / newPhone' });
+    }
+    const digits = newPhoneRaw.replace(/[^\d]/g, '');
+    if (digits.length < 7 || digits.length > 18) {
+      return res.status(400).json({ error: `newPhone inválido (${digits.length} dígitos)` });
+    }
+    const newPhone = '+' + digits;
+    if (newPhone === oldPhone) {
+      return res.status(400).json({ error: 'El número nuevo es igual al actual' });
+    }
+
+    const userResult = await User.updateMany(
+      { lineTeamName: teamName, linePhone: oldPhone },
+      { $set: { linePhone: newPhone, lineAssignedAt: new Date(), lineAssignedBy: (req.user && req.user.username) || 'admin', lineAssignmentNote: 'Phone cambiado: ' + oldPhone + ' → ' + newPhone } }
+    );
+    const lookupResult = await UserLineLookup.updateMany(
+      { lineTeamName: teamName, linePhone: oldPhone },
+      { $set: { linePhone: newPhone } }
+    );
+
+    logger.info(`[user-lines/change-phone] team="${teamName}" ${oldPhone} → ${newPhone} usersUpdated=${userResult.modifiedCount || 0} lookupUpdated=${lookupResult.modifiedCount || 0} by=${(req.user && req.user.username) || 'admin'}`);
+
+    res.json({
+      success: true,
+      teamName,
+      oldPhone,
+      newPhone,
+      usersUpdated: userResult.modifiedCount || 0,
+      lookupUpdated: lookupResult.modifiedCount || 0
+    });
+  } catch (error) {
+    logger.error(`[user-lines/change-phone] error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // Renombrar UNA línea (cambiar la etiqueta después de "Equipo · ").
 // Recibe: { teamName (label completo actual, ej "Oro · Línea 1"), linePhone,
 //          newLabel (la parte después del " · " — si vacío, queda solo "Oro") }
