@@ -92,11 +92,7 @@ VIP.ui = (function () {
     function showChatScreen() {
         document.getElementById('loginScreen').classList.add('hidden');
         document.getElementById('chatScreen').classList.remove('hidden');
-        const uname = VIP.state.currentUser?.username || 'Usuario';
-        document.getElementById('currentUser').textContent = uname;
-        // Layout v2: pill de usuario en la balance row.
-        const balancePill = document.getElementById('balanceUsernamePill');
-        if (balancePill) balancePill.textContent = '@' + uname;
+        document.getElementById('currentUser').textContent = VIP.state.currentUser?.username || 'Usuario';
 
         adjustLayout();
         syncBalance();

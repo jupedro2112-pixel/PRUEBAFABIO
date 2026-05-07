@@ -16,12 +16,14 @@
 const mongoose = require('mongoose');
 
 const dailyPlayerStatsSchema = new mongoose.Schema({
-  username: { type: String, required: true, lowercase: true, trim: true, index: true },
+  // El index del username viene del compound unique mas abajo — no declaramos
+  // index:true aca para evitar el warning de Mongoose "Duplicate schema index".
+  username: { type: String, required: true, lowercase: true, trim: true },
 
   // Fecha (solo dia, sin hora) en UTC. Lo guardamos como Date a las 00:00 UTC
   // para que las queries por rango ($gte/$lt) funcionen y unique index
-  // sirva para idempotencia.
-  dateUtc: { type: Date, required: true, index: true },
+  // sirva para idempotencia. El index explicito para cleanup va al final.
+  dateUtc: { type: Date, required: true },
 
   // Aggregados del dia
   depositCount: { type: Number, default: 0 },
