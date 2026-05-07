@@ -15,6 +15,9 @@ const reviewSchema = new mongoose.Schema({
   username:  { type: String, required: true, index: true },
   stars:     { type: Number, required: true, min: 1, max: 5 },
   comment:   { type: String, default: '', maxlength: 100 },
+  // Telefono opcional para que el admin lo recontacte. PRIVADO: nunca
+  // se devuelve en /api/reviews/feed, solo en /api/admin/reviews.
+  contactPhone: { type: String, default: '', maxlength: 25 },
   createdAt: { type: Date, default: Date.now, index: true },
   updatedAt: { type: Date, default: Date.now }
 }, { timestamps: false });

@@ -12409,6 +12409,7 @@ function _renderAdminReviews(d) {
     html += '<th style="padding:8px 10px;font-weight:800;">Usuario</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Estrellas</th>';
     html += '<th style="padding:8px 10px;font-weight:800;">Comentario</th>';
+    html += '<th style="padding:8px 10px;font-weight:800;">📞 Teléfono</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Cuándo</th>';
     html += '<th style="padding:8px 10px;font-weight:800;text-align:center;">Bucket</th>';
     html += '</tr></thead><tbody>';
@@ -12420,10 +12421,14 @@ function _renderAdminReviews(d) {
         const bucketLabel = it.bucket === 'bueno' ? '<span style="color:#66ff66;font-weight:800;">😊 BUENO</span>'
             : it.bucket === 'regular' ? '<span style="color:#ffd700;font-weight:800;">😐 REGULAR</span>'
             : '<span style="color:#ff8080;font-weight:800;">😟 MALO</span>';
+        const phoneCell = it.contactPhone
+            ? ('<a href="https://wa.me/' + encodeURIComponent(it.contactPhone.replace(/[^\d+]/g, '').replace(/^\+/, '')) + '" target="_blank" rel="noopener noreferrer" style="color:#25d366;font-weight:800;text-decoration:none;font-family:monospace;">' + escapeHtml(it.contactPhone) + '</a>')
+            : '<span style="color:#555;font-style:italic;">—</span>';
         html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
         html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(it.username || '') + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;letter-spacing:2px;">' + _renderAdminReviewsStars(it.stars) + '</td>';
         html += '<td style="padding:8px 10px;color:#ddd;line-height:1.4;">' + (it.comment ? escapeHtml(it.comment) : '<span style="color:#666;font-style:italic;">(sin comentario)</span>') + '</td>';
+        html += '<td style="padding:8px 10px;white-space:nowrap;">' + phoneCell + '</td>';
         html += '<td style="padding:8px 10px;color:#aaa;text-align:right;font-size:10.5px;white-space:nowrap;">' + escapeHtml(when) + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;">' + bucketLabel + '</td>';
         html += '</tr>';

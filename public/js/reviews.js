@@ -59,6 +59,19 @@ VIP.reviews = (function () {
             });
         }
 
+        // Toggle "Agregar número": esconde el botón y muestra el input. Una vez
+        // expandido queda así (no ofrece volver a colapsar — feature mínima).
+        const phoneToggle = _q('reviewPhoneToggle');
+        const phoneRow = _q('reviewPhoneRow');
+        if (phoneToggle && phoneRow) {
+            phoneToggle.addEventListener('click', () => {
+                phoneRow.hidden = false;
+                phoneToggle.style.display = 'none';
+                const inp = _q('reviewPhoneInput');
+                if (inp) inp.focus();
+            });
+        }
+
         const btn = _q('reviewSubmitBtn');
         if (btn) btn.addEventListener('click', submitReview);
     }
@@ -93,6 +106,10 @@ VIP.reviews = (function () {
         }
         const ta = _q('reviewCommentInput');
         const comment = ((ta && ta.value) || '').trim().slice(0, 100);
+        const phoneInp = _q('reviewPhoneInput');
+        const phoneRow = _q('reviewPhoneRow');
+        const phoneVisible = phoneRow && !phoneRow.hidden;
+        const contactPhone = (phoneVisible && phoneInp) ? (phoneInp.value || '').trim() : '';
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando…'; }
         if (msg) { msg.style.color = '#aaa'; msg.textContent = '⏳ Enviando…'; }
         try {
@@ -102,7 +119,7 @@ VIP.reviews = (function () {
                     'Authorization': `Bearer ${VIP.state.currentToken}`,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ stars: _selectedStars, comment })
+                body: JSON.stringify({ stars: _selectedStars, comment, contactPhone })
             });
             const data = await r.json();
             if (!r.ok) {

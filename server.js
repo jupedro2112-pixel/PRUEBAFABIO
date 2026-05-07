@@ -9118,6 +9118,9 @@ app.post('/api/reviews', authMiddleware, async (req, res) => {
     const username = req.user.username;
     const stars = Math.round(Number((req.body && req.body.stars) || 0));
     const comment = String((req.body && req.body.comment) || '').trim().slice(0, 100);
+    // Teléfono opcional — solo dígitos, +, espacios y guiones. Truncado a 25.
+    const contactPhone = String((req.body && req.body.contactPhone) || '')
+      .trim().replace(/[^\d+\-\s()]/g, '').slice(0, 25);
     if (!isFinite(stars) || stars < 1 || stars > 5) {
       return res.status(400).json({ error: 'Estrellas inválidas (1-5)' });
     }
@@ -9135,6 +9138,7 @@ app.post('/api/reviews', authMiddleware, async (req, res) => {
         username,
         stars,
         comment,
+        contactPhone,
         createdAt: now,
         updatedAt: now
       });
@@ -9236,6 +9240,7 @@ app.get('/api/admin/reviews', authMiddleware, adminMiddleware, async (req, res) 
         username: r.username,
         stars: r.stars,
         comment: r.comment || '',
+        contactPhone: r.contactPhone || '',
         bucket: _bucketOf(r.stars),
         createdAt: r.createdAt,
         updatedAt: r.updatedAt
