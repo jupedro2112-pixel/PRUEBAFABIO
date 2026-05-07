@@ -6950,9 +6950,14 @@ app.put('/api/admin/config/cbu', authMiddleware, adminMiddleware, async (req, re
 // ============================================
 const USER_LINES_MAX_SLOTS = 30;
 
-// Lista de usernames asignados a UNA línea (teamName + linePhone). Sirve
-// para que el admin vea qué tiene cargado cada línea individualmente.
-// Devuelve: items + totalCount + lastImportAt + lastImportBy.
+// Lista de usernames asignados a UNA línea (teamName + linePhone). Junta
+// dos fuentes para mostrar TODOS los usuarios de la línea sin importar de
+// dónde vinieron:
+//   1) UserLineLookup — los del .xlsx (pre-asignados o registrados después)
+//   2) User.lineTeamName/linePhone — todos los users registrados con esa
+//      línea asignada (incluye los que cayeron por prefix-fallback automático,
+//      no por xlsx).
+// Mergeo por username y devuelvo la unión deduplicada.
 app.get('/api/admin/user-lines/lookup-by-line', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const teamName = String(req.query.teamName || '').trim();
@@ -6960,65 +6965,115 @@ app.get('/api/admin/user-lines/lookup-by-line', authMiddleware, adminMiddleware,
     if (!teamName && !linePhone) {
       return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
     }
-    const filter = {};
-    if (teamName) filter.lineTeamName = teamName;
-    if (linePhone) filter.linePhone = linePhone;
-    const limit = Math.max(1, Math.min(2000, parseInt(req.query.limit, 10) || 1000));
+    const limit = Math.max(1, Math.min(5000, parseInt(req.query.limit, 10) || 2000));
 
-    const totalCount = await UserLineLookup.countDocuments(filter);
-    const rows = await UserLineLookup.find(filter)
+    // 1) Pre-asignaciones por xlsx (UserLineLookup).
+    const lookupFilter = {};
+    if (teamName) lookupFilter.lineTeamName = teamName;
+    if (linePhone) lookupFilter.linePhone = linePhone;
+    const lookupRows = await UserLineLookup.find(lookupFilter)
       .sort({ importedAt: -1 })
       .limit(limit)
       .lean();
 
-    // Cruzamos con User para saber si cada usernameNorm ya se registró o
-    // está en pre-asignación (todavía no entró por primera vez a la app).
-    const norms = rows.map(r => r.usernameNorm).filter(Boolean);
-    const registered = norms.length > 0
-      ? await User.find(
-          { username: { $in: norms } },
-          { username: 1, fcmToken: 1, fcmTokens: 1, lastLogin: 1, _id: 0 }
-        ).lean()
-      : [];
-    const regMap = new Map(registered.map(u => [String(u.username || '').toLowerCase(), u]));
+    // 2) Users registrados con esa línea asignada (User.lineTeamName/linePhone).
+    const userFilter = {};
+    if (teamName) userFilter.lineTeamName = teamName;
+    if (linePhone) userFilter.linePhone = linePhone;
+    const userRows = await User.find(
+      userFilter,
+      { username: 1, lineTeamName: 1, linePhone: 1, lineAssignedAt: 1, lineAssignmentSource: 1, fcmToken: 1, fcmTokens: 1, lastLogin: 1, phone: 1, _id: 0 }
+    ).limit(limit).lean();
 
-    const items = rows.map(r => {
-      const u = regMap.get(String(r.usernameNorm || '').toLowerCase());
-      const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
-      return {
+    // Merge por username (lowercase). UserLineLookup es la fuente de
+    // "pre-asignado", User es "registrado".
+    const byKey = new Map();
+    for (const r of lookupRows) {
+      const k = String(r.usernameNorm || '').toLowerCase();
+      if (!k) continue;
+      byKey.set(k, {
         usernameNorm: r.usernameNorm,
         usernameOriginal: r.usernameOriginal || r.usernameNorm,
+        source: 'xlsx-pending',
         importedAt: r.importedAt,
         importedBy: r.importedBy,
-        registered: !!u,
-        hasApp,
-        lastLogin: u ? u.lastLogin : null
-      };
+        registered: false,
+        hasApp: false,
+        lastLogin: null,
+        phone: null,
+        lineAssignmentSource: null
+      });
+    }
+    for (const u of userRows) {
+      const k = String(u.username || '').toLowerCase();
+      if (!k) continue;
+      const hasApp = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      const existing = byKey.get(k);
+      if (existing) {
+        // Estaba en xlsx Y además se registró → marcamos registered y enriquecemos.
+        existing.registered = true;
+        existing.hasApp = hasApp;
+        existing.lastLogin = u.lastLogin || null;
+        existing.phone = u.phone || null;
+        existing.lineAssignmentSource = u.lineAssignmentSource || existing.lineAssignmentSource;
+        existing.source = 'xlsx-registered';
+      } else {
+        // No estaba en xlsx → vino por prefix-fallback / auto / manual.
+        byKey.set(k, {
+          usernameNorm: u.username,
+          usernameOriginal: u.username,
+          source: u.lineAssignmentSource ? ('user-' + u.lineAssignmentSource) : 'user-auto',
+          importedAt: u.lineAssignedAt || null,
+          importedBy: null,
+          registered: true,
+          hasApp,
+          lastLogin: u.lastLogin || null,
+          phone: u.phone || null,
+          lineAssignmentSource: u.lineAssignmentSource || null
+        });
+      }
+    }
+
+    const items = Array.from(byKey.values());
+    // Ordenar: registrados primero, después pre-asignados; dentro de cada grupo, por fecha desc.
+    items.sort((a, b) => {
+      if (a.registered !== b.registered) return a.registered ? -1 : 1;
+      const ta = a.importedAt ? new Date(a.importedAt).getTime() : 0;
+      const tb = b.importedAt ? new Date(b.importedAt).getTime() : 0;
+      return tb - ta;
     });
 
+    const totalCount = items.length;
+    const registeredCount = items.filter(it => it.registered).length;
+    const pendingCount = totalCount - registeredCount;
+    const xlsxCount = items.filter(it => it.source === 'xlsx-pending' || it.source === 'xlsx-registered').length;
+    const autoCount = items.filter(it => it.source && it.source.startsWith('user-')).length;
+
     let lastImportAt = null, lastImportBy = null;
-    if (rows.length > 0) {
-      lastImportAt = rows[0].importedAt;
-      lastImportBy = rows[0].importedBy;
+    if (lookupRows.length > 0) {
+      lastImportAt = lookupRows[0].importedAt;
+      lastImportBy = lookupRows[0].importedBy;
     }
 
     res.json({
       teamName: teamName || null,
       linePhone: linePhone || null,
       totalCount,
-      registeredCount: items.filter(it => it.registered).length,
-      pendingCount: items.filter(it => !it.registered).length,
+      registeredCount,
+      pendingCount,
+      xlsxCount,
+      autoCount,
       lastImportAt,
       lastImportBy,
       items
     });
   } catch (err) {
-    logger.error(`/api/admin/user-lines/lookup-by-line: ${err.message}`);
+    logger.error(`/api/admin/user-lines/lookup-by-line: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// CSV: descarga la lista completa de una línea.
+// CSV: lista completa de una línea (xlsx pre-asignados + users registrados).
 app.get('/api/admin/user-lines/lookup-by-line.csv', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const teamName = String(req.query.teamName || '').trim();
@@ -7026,36 +7081,73 @@ app.get('/api/admin/user-lines/lookup-by-line.csv', authMiddleware, adminMiddlew
     if (!teamName && !linePhone) {
       return res.status(400).json({ error: 'Faltan params teamName o linePhone' });
     }
-    const filter = {};
-    if (teamName) filter.lineTeamName = teamName;
-    if (linePhone) filter.linePhone = linePhone;
 
-    const rows = await UserLineLookup.find(filter).sort({ importedAt: -1 }).lean();
-    const norms = rows.map(r => r.usernameNorm).filter(Boolean);
-    const registered = norms.length > 0
-      ? await User.find(
-          { username: { $in: norms } },
-          { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
-        ).lean()
-      : [];
-    const regMap = new Map(registered.map(u => [String(u.username || '').toLowerCase(), u]));
+    const lookupFilter = {};
+    if (teamName) lookupFilter.lineTeamName = teamName;
+    if (linePhone) lookupFilter.linePhone = linePhone;
+    const lookupRows = await UserLineLookup.find(lookupFilter).sort({ importedAt: -1 }).lean();
+
+    const userFilter = {};
+    if (teamName) userFilter.lineTeamName = teamName;
+    if (linePhone) userFilter.linePhone = linePhone;
+    const userRows = await User.find(
+      userFilter,
+      { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, lineAssignedAt: 1, lineAssignmentSource: 1, _id: 0 }
+    ).lean();
+
+    const byKey = new Map();
+    for (const r of lookupRows) {
+      const k = String(r.usernameNorm || '').toLowerCase();
+      if (!k) continue;
+      byKey.set(k, {
+        username: r.usernameOriginal || r.usernameNorm,
+        team: r.lineTeamName || teamName,
+        line: r.linePhone || linePhone,
+        registered: false,
+        hasApp: false,
+        phone: '',
+        source: 'xlsx',
+        importedAt: r.importedAt
+      });
+    }
+    for (const u of userRows) {
+      const k = String(u.username || '').toLowerCase();
+      if (!k) continue;
+      const hasApp = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      const existing = byKey.get(k);
+      if (existing) {
+        existing.registered = true;
+        existing.hasApp = hasApp;
+        existing.phone = u.phone || '';
+      } else {
+        byKey.set(k, {
+          username: u.username,
+          team: teamName,
+          line: linePhone,
+          registered: true,
+          hasApp,
+          phone: u.phone || '',
+          source: u.lineAssignmentSource || 'auto',
+          importedAt: u.lineAssignedAt || null
+        });
+      }
+    }
 
     const escape = (v) => {
       const s = (v == null ? '' : String(v));
       return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const lines = ['Usuario,Equipo,Linea,Estado,TieneApp,Telefono,FechaCarga'];
-    for (const r of rows) {
-      const u = regMap.get(String(r.usernameNorm || '').toLowerCase());
-      const hasApp = !!(u && (u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0)));
+    const lines = ['Usuario,Equipo,Linea,Estado,TieneApp,Telefono,Origen,FechaCarga'];
+    for (const it of byKey.values()) {
       lines.push([
-        escape(r.usernameOriginal || r.usernameNorm || ''),
-        escape(r.lineTeamName || ''),
-        escape(r.linePhone || ''),
-        escape(u ? 'Registrado' : 'Pre-asignado'),
-        escape(hasApp ? 'Si' : 'No'),
-        escape(u && u.phone ? u.phone : ''),
-        escape(r.importedAt ? new Date(r.importedAt).toISOString() : '')
+        escape(it.username || ''),
+        escape(it.team || ''),
+        escape(it.line || ''),
+        escape(it.registered ? 'Registrado' : 'Pre-asignado'),
+        escape(it.hasApp ? 'Si' : 'No'),
+        escape(it.phone || ''),
+        escape(it.source || ''),
+        escape(it.importedAt ? new Date(it.importedAt).toISOString() : '')
       ].join(','));
     }
     const csv = '﻿' + lines.join('\r\n');

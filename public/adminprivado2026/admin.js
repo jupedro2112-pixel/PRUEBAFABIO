@@ -5197,20 +5197,32 @@ async function refreshSlotListSummary(i) {
         const total = j.totalCount || 0;
         const reg = j.registeredCount || 0;
         const pend = j.pendingCount || 0;
+        const xlsxCount = j.xlsxCount || 0;
+        const autoCount = j.autoCount || 0;
         const last = j.lastImportAt ? new Date(j.lastImportAt) : null;
         const lastStr = last ? last.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
         const lastBy = j.lastImportBy ? ' · por <strong style="color:#fff;">' + escapeHtml(j.lastImportBy) + '</strong>' : '';
         let html = '';
         if (total === 0) {
-            html += '<div style="color:#aaa;font-size:11px;">Esta línea todavía no tiene usuarios cargados. Subí un .xlsx desde el botón de abajo.</div>';
+            html += '<div style="color:#aaa;font-size:11px;">Esta línea todavía no tiene usuarios. Pueden venir desde xlsx (subí abajo) o asignarse automáticamente cuando un user con el prefijo se registre.</div>';
         } else {
             html += '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;align-items:baseline;">';
-            html += '  <span style="color:#00d4ff;font-weight:800;font-size:14px;">📋 ' + total + ' usuarios cargados</span>';
-            html += '  <span style="color:#888;font-size:10.5px;">Última carga: <strong style="color:#fff;">' + escapeHtml(lastStr) + '</strong>' + lastBy + '</span>';
+            html += '  <span style="color:#00d4ff;font-weight:800;font-size:14px;">📋 ' + total + ' usuarios en esta línea</span>';
+            if (xlsxCount > 0) {
+                html += '  <span style="color:#888;font-size:10.5px;">Última carga xlsx: <strong style="color:#fff;">' + escapeHtml(lastStr) + '</strong>' + lastBy + '</span>';
+            }
             html += '</div>';
-            html += '<div style="margin-top:5px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;">';
+            html += '<div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;font-size:11px;">';
             html += '  <span style="background:rgba(37,211,102,0.10);color:#25d366;padding:3px 8px;border-radius:5px;font-weight:700;">✅ ' + reg + ' registrados</span>';
-            html += '  <span style="background:rgba(255,170,68,0.10);color:#ffaa44;padding:3px 8px;border-radius:5px;font-weight:700;">⏳ ' + pend + ' pre-asignados</span>';
+            if (pend > 0) {
+                html += '  <span style="background:rgba(255,170,68,0.10);color:#ffaa44;padding:3px 8px;border-radius:5px;font-weight:700;">⏳ ' + pend + ' pre-asignados</span>';
+            }
+            if (xlsxCount > 0) {
+                html += '  <span style="background:rgba(0,212,255,0.10);color:#00d4ff;padding:3px 8px;border-radius:5px;font-weight:700;">📋 ' + xlsxCount + ' por xlsx</span>';
+            }
+            if (autoCount > 0) {
+                html += '  <span style="background:rgba(157,78,221,0.10);color:#c89bff;padding:3px 8px;border-radius:5px;font-weight:700;">⚙️ ' + autoCount + ' auto (prefijo)</span>';
+            }
             html += '</div>';
         }
         box.innerHTML = html;
@@ -5298,14 +5310,23 @@ function _renderSlotListModalHtml(j, slotIndex) {
         html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Usuario</th>';
         html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estado</th>';
         html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Origen</th>';
         html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Cargado</th>';
         html += '  </tr></thead><tbody>';
+        const sourceLabel = (s) => {
+            if (!s) return '—';
+            if (s === 'xlsx-pending') return '<span style="color:#00d4ff;">📋 xlsx (pendiente)</span>';
+            if (s === 'xlsx-registered') return '<span style="color:#00d4ff;">📋 xlsx</span>';
+            if (s.startsWith('user-')) return '<span style="color:#c89bff;">⚙️ ' + escapeHtml(s.replace('user-','')) + '</span>';
+            return '<span style="color:#888;">' + escapeHtml(s) + '</span>';
+        };
         for (const it of items) {
             const dt = it.importedAt ? new Date(it.importedAt).toLocaleDateString('es-AR') : '—';
             html += '<tr>';
             html += '  <td style="padding:5px 10px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(it.usernameOriginal || it.usernameNorm) + '</td>';
             html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.registered ? '<span style="color:#25d366;font-weight:700;">✅ Registrado</span>' : '<span style="color:#ffaa44;font-weight:700;">⏳ Pre-asignado</span>') + '</td>';
             html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);">' + (it.hasApp ? '<span style="color:#25d366;">📱 Sí</span>' : '<span style="color:#888;">—</span>') + '</td>';
+            html += '  <td style="padding:5px 10px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:10.5px;">' + sourceLabel(it.source) + '</td>';
             html += '  <td style="padding:5px 10px;color:#888;font-size:10.5px;border-bottom:1px solid rgba(255,255,255,0.04);">' + escapeHtml(dt) + '</td>';
             html += '</tr>';
         }
