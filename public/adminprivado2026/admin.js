@@ -3346,7 +3346,7 @@ function _renderRecontactDashboard(summary, items) {
     }
     html += '    </select>';
     html += '    <span style="color:#bbb;font-size:11.5px;"><strong style="color:#fff;">' + filteredCount + '</strong> con filtros actuales</span>';
-    html += '    <button type="button" onclick="recontactDownloadSimple()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name + phone + linea + equipo (listo para WhatsApp)">📞 Lista simple</button>';
+    html += '    <button type="button" onclick="recontactDownloadSimple()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name + phone + linea + equipo (listo para WhatsApp)">📞 Contacto + phone</button>';
     html += '    <button type="button" onclick="recontactDownloadDetailed()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name, phone, linea, equipo, mensaje sugerido, rango (días), carga, descarga, diferencia, bono sugerido y app/notifs">📋 Lista detallada</button>';
     html += '    <button type="button" onclick="recontactDownloadXlsxByTeam()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#5a1aaa);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="XLSX con una hoja por equipo + resumen al inicio. Respeta los filtros actuales.">📊 XLSX por equipos</button>';
     html += '  </div>';
@@ -3498,6 +3498,21 @@ function _renderRecontactHistoryStandalone(history) {
     return html;
 }
 
+// Calcula duración legible: "3 d 4 h" / "12 h" / "45 min"
+function _recontactFormatDuration(ms) {
+    if (ms == null || ms < 0) return '';
+    const min = Math.round(ms / 60000);
+    if (min < 60) return min + ' min';
+    const h = Math.floor(min / 60);
+    if (h < 24) {
+        const remMin = min - h * 60;
+        return h + ' h' + (remMin > 0 ? ' ' + remMin + ' min' : '');
+    }
+    const d = Math.floor(h / 24);
+    const remH = h - d * 24;
+    return d + ' d' + (remH > 0 ? ' ' + remH + ' h' : '');
+}
+
 // Tabla del historial: una fila por snapshot, con deltas entre snapshots.
 function _renderRecontactHistoryTable(history) {
     const fmt = n => Number(n || 0).toLocaleString('es-AR');
@@ -3510,9 +3525,10 @@ function _renderRecontactHistoryTable(history) {
     };
     let html = '';
     html += '<div style="overflow-x:auto;max-height:260px;overflow-y:auto;">';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:740px;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:820px;">';
     html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
     html += '    <th style="text-align:left;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Cuándo</th>';
+    html += '    <th style="text-align:left;padding:6px 8px;color:#66ff66;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="Tiempo que estuvo activo este análisis hasta ser reemplazado por el siguiente">⏱ Vigente</th>';
     html += '    <th style="text-align:left;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Archivo</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Total</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#ff5050;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="0-10 días sin cargar">🔥 Cal.</th>';
@@ -3528,6 +3544,7 @@ function _renderRecontactHistoryTable(history) {
     for (let i = 0; i < history.length; i++) {
         const s = history[i];
         const prev = history[i + 1] || null; // siguiente en la lista = más viejo
+        const next = i > 0 ? history[i - 1] : null; // anterior en la lista = más reciente que este
         const dt = new Date(s.at);
         const dateStr = dt.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
         const rel = _recontactRelTime(s.at);
@@ -3535,8 +3552,17 @@ function _renderRecontactHistoryTable(history) {
         const b  = s.buckets || {};
         const pb = prev ? (prev.buckets || {}) : {};
         const isFirst = i === 0;
+        // Duración: si hay un análisis posterior, fue desde s.at hasta next.at.
+        // Si es el más reciente (i===0), está vigente hasta ahora.
+        const endTime = next ? next.at : Date.now();
+        const durationMs = endTime - s.at;
+        const durationStr = _recontactFormatDuration(durationMs);
+        const durationCell = isFirst
+            ? '<span style="color:#66ff66;font-weight:700;">' + durationStr + '</span><br><span style="color:#66ff66;font-size:9.5px;">● ACTUAL</span>'
+            : '<span style="color:#bbb;">' + durationStr + '</span>';
         html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);' + (isFirst ? 'background:rgba(102,255,102,0.04);' : '') + '">';
         html += '  <td style="padding:5px 8px;color:#fff;font-size:10.5px;">' + dateStr + '<br><span style="color:#888;font-size:9.5px;">' + rel + '</span></td>';
+        html += '  <td style="padding:5px 8px;font-size:10.5px;">' + durationCell + '</td>';
         html += '  <td style="padding:5px 8px;color:#bbb;font-size:10.5px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(s.label || '') + '">' + escapeHtml(s.label ? (s.label.length > 22 ? s.label.slice(0, 22) + '…' : s.label) : '(sin nombre)') + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#fff;font-weight:700;">' + fmt(s.totalAnalyzed) + delta(s.totalAnalyzed, prev && prev.totalAnalyzed) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#ff5050;">' + fmt(b.calientes || 0) + delta(b.calientes, pb.calientes) + '</td>';
