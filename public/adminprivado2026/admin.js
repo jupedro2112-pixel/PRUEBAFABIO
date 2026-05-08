@@ -2795,7 +2795,7 @@ function loadRecontactSection() {
         }
     }).catch(() => {});
 
-    _recontactLoadCache().then(cache => {
+    _recontactLoadCache().then(async cache => {
         try { document.getElementById('recontactCacheProbe')?.remove(); } catch (_) {}
         if (!cache) return;
         // Si hay items y summary, hidratar dashboard.
@@ -2805,6 +2805,8 @@ function loadRecontactSection() {
             _recontactState.fileLabel = cache.fileLabel || '';
             _recontactState.savedAt = cache.savedAt;
             _recontactState.savedByUsername = cache.savedByUsername || '';
+            // Refrescar tags Callbell antes de renderizar (puede haber cambios desde otro admin).
+            await _recontactHydrateCallbellTags(_recontactState.items);
             c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
             _wireRecontactFilters();
             return;
@@ -2813,6 +2815,89 @@ function loadRecontactSection() {
         try { document.getElementById('recontactCacheProbe')?.remove(); } catch (_) {}
         console.warn('[recontact] loadCache fail', e);
     });
+}
+
+// Hidrata cada item con su estado de tags Callbell (etiqueta/wa/respuesta).
+async function _recontactHydrateCallbellTags(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    try {
+        const usernames = items.map(it => it.username).filter(Boolean);
+        // chunk por las dudas
+        const chunkSize = 5000;
+        const tagMap = {};
+        for (let i = 0; i < usernames.length; i += chunkSize) {
+            const chunk = usernames.slice(i, i + chunkSize);
+            const r = await authFetch('/api/admin/callbell/tags-by-usernames', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ usernames: chunk })
+            });
+            if (!r.ok) continue;
+            const j = await r.json();
+            Object.assign(tagMap, j.tags || {});
+        }
+        for (const it of items) {
+            const norm = String(it.username || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const t = tagMap[norm];
+            if (t) {
+                it.cbEtiqueta = !!(t.etiqueta && t.etiqueta.tagged);
+                it.cbWa       = !!(t.wa && t.wa.tagged);
+                it.cbResp     = (t.respuesta && t.respuesta.status) || null; // 'instalo' | 'no_contesto' | null
+                it.cbConvertedAt = t.convertedAt || null;
+                it.cbHadAppAtFirstTag = !!t.hadAppAtFirstTag;
+            } else {
+                it.cbEtiqueta = false;
+                it.cbWa = false;
+                it.cbResp = null;
+                it.cbConvertedAt = null;
+                it.cbHadAppAtFirstTag = false;
+            }
+        }
+    } catch (e) {
+        console.warn('[recontact] hydrate Callbell tags fail', e);
+    }
+}
+
+// Toggle de un tag desde la tabla. La función actualiza el server, el state
+// local en memoria, y refresca SÓLO la fila para no recargar todo.
+async function _recontactToggleTag(username, action, currentSet, bucket, tier) {
+    const newSet = !currentSet;
+    try {
+        const r = await authFetch('/api/admin/callbell/tag', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username, action, set: newSet,
+                bucket: bucket || '',
+                tier: tier || '',
+                analysisLabel: (_recontactState && _recontactState.fileLabel) || ''
+            })
+        });
+        if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            showToast('❌ ' + (j.error || ('Error ' + r.status)), 'error');
+            return;
+        }
+        // Actualizar item local
+        const it = (_recontactState.items || []).find(x => x.username === username);
+        if (it) {
+            if (action === 'etiqueta') it.cbEtiqueta = newSet;
+            else if (action === 'wa') it.cbWa = newSet;
+            else if (action === 'instalo') {
+                it.cbResp = newSet ? 'instalo' : null;
+            } else if (action === 'no_contesto') {
+                it.cbResp = newSet ? 'no_contesto' : null;
+            }
+        }
+        // Re-render del dashboard preservando filtros
+        const c = document.getElementById('recontactContent');
+        if (c) {
+            c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+            _wireRecontactFilters();
+        }
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 function _renderRecontactUploader() {
@@ -3023,6 +3108,8 @@ async function recontactAnalyze() {
         _recontactState.summary = j.summary || {};
         _recontactState.fileLabel = (file && file.name) || '';
         _recontactState.savedAt = Date.now();
+        // Hidratar tags Callbell desde el server (etiqueta/wa/respuesta)
+        await _recontactHydrateCallbellTags(_recontactState.items);
         // Guardar en cache IDB (7 días) + push al historial localStorage.
         // El save se hace en background — no bloqueamos la UI.
         _recontactSaveCache(_recontactState.items, _recontactState.summary, _recontactState.fileLabel)
@@ -3261,9 +3348,10 @@ async function loadAppUsers() {
     if (!c) return;
     c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Consultando base…</div>';
     try {
-        const [statsR, histR] = await Promise.all([
+        const [statsR, histR, cbR] = await Promise.all([
             authFetch('/api/admin/app-users/stats'),
-            authFetch('/api/admin/app-users/history?days=60')
+            authFetch('/api/admin/app-users/history?days=60'),
+            authFetch('/api/admin/callbell/report?days=30')
         ]);
         if (!statsR.ok) {
             const j = await statsR.json().catch(() => ({}));
@@ -3272,7 +3360,9 @@ async function loadAppUsers() {
         }
         const data = await statsR.json();
         const histJson = histR.ok ? await histR.json() : { history: [] };
+        const cbJson = cbR.ok ? await cbR.json() : { totals: {}, daily: [] };
         data._history = (histJson && histJson.history) || [];
+        data._callbell = cbJson || {};
         c.innerHTML = _renderAppUsersDashboard(data);
     } catch (e) {
         c.innerHTML = '<div style="padding:20px;color:#ff8080;">❌ ' + (e.message || e) + '</div>';
@@ -3297,6 +3387,62 @@ function _renderAppUsersDashboard(data) {
     html += '</div>';
 
     html += '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Generado: ' + new Date(data.generatedAt).toLocaleString('es-AR') + '. Criterio: token con <code style="color:#00d4ff;">context=standalone</code> (PWA real instalada).</div>';
+
+    // === Atribución Callbell ===
+    const cb = data._callbell || {};
+    const cbTotals = cb.totals || {};
+    const cbAttrib = data.callbellAttribution || {};
+    if ((cbTotals.totalTagged || 0) > 0 || (cbAttrib.total || 0) > 0) {
+        html += '<details open style="background:rgba(155,48,255,0.05);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:0;margin-bottom:14px;overflow:hidden;">';
+        html += '  <summary style="cursor:pointer;padding:10px 14px;background:rgba(155,48,255,0.08);list-style:none;display:flex;justify-content:space-between;align-items:center;">';
+        html += '    <span style="color:#9b30ff;font-weight:800;font-size:13px;letter-spacing:0.5px;">📞 ATRIBUCIÓN CALLBELL — etiqueta WhatsApp → instalación de app</span>';
+        html += '    <span style="color:#888;font-size:10.5px;">tocá para abrir/cerrar ▾</span>';
+        html += '  </summary>';
+        html += '  <div style="padding:12px 14px;">';
+
+        // KPIs Callbell
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px;">';
+        html += _kpiCardLite('🏷 Total etiquetados', fmt(cbTotals.totalTagged || 0), '#9b30ff', 'Marcados en Callbell');
+        html += _kpiCardLite('📤 WA enviado', fmt(cbTotals.totalWA || 0), '#25d366', 'Mensaje mandado');
+        html += _kpiCardLite('✅ Instaló (manual)', fmt(cbTotals.totalInstalo || 0), '#7cffb3', 'Confirmado por agente');
+        html += _kpiCardLite('✕ No contestó', fmt(cbTotals.totalNoContesto || 0), '#ff8080', 'Sin respuesta');
+        html += _kpiCardLite('📱 Convirtieron a app', fmt(cbAttrib.total || 0), '#00d4ff', (cbTotals.conversionRatePct || 0) + '% de etiquetados');
+        html += '</div>';
+
+        // Tabla diaria
+        const daily = (cb.daily || []).slice().sort((a, b) => (b.dayKey || '').localeCompare(a.dayKey || ''));
+        if (daily.length > 0) {
+            html += '<div style="color:#aaa;font-size:11px;margin-bottom:6px;">Reporte diario · últimos ' + (cb.windowDays || 30) + ' días</div>';
+            html += '<div style="overflow-x:auto;max-height:300px;overflow-y:auto;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:540px;">';
+            html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+            html += '    <th style="text-align:left;padding:6px 10px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Día</th>';
+            html += '    <th style="text-align:right;padding:6px 10px;color:#9b30ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">🏷 Etiq</th>';
+            html += '    <th style="text-align:right;padding:6px 10px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">📤 WA</th>';
+            html += '    <th style="text-align:right;padding:6px 10px;color:#7cffb3;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">✅ Instaló</th>';
+            html += '    <th style="text-align:right;padding:6px 10px;color:#ff8080;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">✕ NoCont</th>';
+            html += '    <th style="text-align:right;padding:6px 10px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">📱 Auto</th>';
+            html += '  </tr></thead><tbody>';
+            for (const d of daily) {
+                html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+                html += '  <td style="padding:5px 10px;color:#fff;font-weight:600;">' + escapeHtml(d.dayKey || '') + '</td>';
+                html += '  <td style="padding:5px 10px;text-align:right;color:#9b30ff;">' + fmt(d.etiquetados || 0) + '</td>';
+                html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;">' + fmt(d.wa || 0) + '</td>';
+                html += '  <td style="padding:5px 10px;text-align:right;color:#7cffb3;font-weight:700;">' + fmt(d.instalo || 0) + '</td>';
+                html += '  <td style="padding:5px 10px;text-align:right;color:#ff8080;">' + fmt(d.noContesto || 0) + '</td>';
+                html += '  <td style="padding:5px 10px;text-align:right;color:#00d4ff;">' + fmt(d.convertedAuto || 0) + '</td>';
+                html += '</tr>';
+            }
+            html += '  </tbody></table>';
+            html += '</div>';
+            html += '<div style="color:#888;font-size:10.5px;margin-top:6px;">📱 Auto = detectados con app DESPUÉS de la etiqueta (sin que el agente confirme manualmente). ✅ Instaló = el agente tildó manualmente desde la sección de Recontactación.</div>';
+        } else {
+            html += '<div style="color:#aaa;font-size:11.5px;text-align:center;padding:14px;">Todavía no hay etiquetas Callbell registradas.</div>';
+        }
+
+        html += '  </div>';
+        html += '</details>';
+    }
 
     // === Evolución día por día ===
     const hist = (data._history || []).slice().sort((a, b) => (b.dayKey || '').localeCompare(a.dayKey || ''));
@@ -3543,6 +3689,29 @@ function _renderRecontactDashboard(summary, items) {
     }
     html += '</div>';
 
+    // === Resumen Callbell — etiquetas tildadas en este análisis ===
+    let cbEtiq = 0, cbWa = 0, cbInst = 0, cbNoCont = 0, cbAppDespues = 0;
+    for (const it of items) {
+        if (it.cbEtiqueta) cbEtiq++;
+        if (it.cbWa) cbWa++;
+        if (it.cbResp === 'instalo') cbInst++;
+        if (it.cbResp === 'no_contesto') cbNoCont++;
+        if (it.cbConvertedAt && !it.cbHadAppAtFirstTag) cbAppDespues++;
+    }
+    if (cbEtiq + cbWa + cbInst + cbNoCont + cbAppDespues > 0) {
+        const fmtN = n => Number(n || 0).toLocaleString('es-AR');
+        html += '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.06),rgba(124,255,179,0.04));border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
+        html += '  <div style="color:#9b30ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;font-weight:700;">📞 Tracking Callbell — sobre los items del archivo</div>';
+        html += '  <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#bbb;">';
+        html += '    <span>🏷 Etiquetados: <strong style="color:#9b30ff;">' + fmtN(cbEtiq) + '</strong></span>';
+        html += '    <span>📤 WhatsApp enviado: <strong style="color:#25d366;">' + fmtN(cbWa) + '</strong></span>';
+        html += '    <span>✅ Instaló (manual): <strong style="color:#7cffb3;">' + fmtN(cbInst) + '</strong></span>';
+        html += '    <span>✕ No contestó: <strong style="color:#ff8080;">' + fmtN(cbNoCont) + '</strong></span>';
+        if (cbAppDespues > 0) html += '    <span>📱 Detectados con app después de etiquetar: <strong style="color:#00d4ff;">' + fmtN(cbAppDespues) + '</strong></span>';
+        html += '  </div>';
+        html += '</div>';
+    }
+
     // === Filtro por línea + descargas filtradas ===
     const lineOpts = _recontactBuildLineOptions(items);
     const filteredCount = _filterRecontactItems(items, f).length;
@@ -3575,7 +3744,7 @@ function _renderRecontactDashboard(summary, items) {
     html += '    <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Mostrando ' + filtered.length + ' de ' + items.length + ' (top por prioridad)</span>';
     html += '  </div>';
     html += '  <div style="overflow-x:auto;max-height:60vh;overflow-y:auto;">';
-    const minWidth = hasFileTx ? 1240 : 980;
+    const minWidth = hasFileTx ? 1480 : 1220;
     html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:' + minWidth + 'px;">';
     html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">#</th>';
@@ -3591,6 +3760,10 @@ function _renderRecontactDashboard(summary, items) {
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">App</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);" title="Equipo asignado y número de línea WhatsApp">Equipo · Línea</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Tel cliente</th>';
+    html += '    <th style="text-align:center;padding:7px 6px;color:#9b30ff;border-bottom:1px solid rgba(255,255,255,0.10);" title="Etiquetado en Callbell para recontactar">🏷 Etiq</th>';
+    html += '    <th style="text-align:center;padding:7px 6px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);" title="WhatsApp ya enviado">📤 WA</th>';
+    html += '    <th style="text-align:center;padding:7px 6px;color:#7cffb3;border-bottom:1px solid rgba(255,255,255,0.10);" title="Confirmar manualmente que el cliente instaló la app">✅ Inst</th>';
+    html += '    <th style="text-align:center;padding:7px 6px;color:#ff8080;border-bottom:1px solid rgba(255,255,255,0.10);" title="Confirmar que el cliente no contestó">✕ NoCont</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Estrategia</th>';
     html += '    <th style="text-align:right;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Bono</th>';
     html += '    <th style="text-align:left;padding:7px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Mensaje sugerido</th>';
@@ -3622,13 +3795,29 @@ function _renderRecontactDashboard(summary, items) {
         if (it.linePhone) teamLineParts.push('<span style="color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.linePhone) + '</span>');
         html += '  <td style="padding:5px 10px;font-size:10.5px;">' + (teamLineParts.length ? teamLineParts.join('<br>') : '<span style="color:#666;">sin línea</span>') + '</td>';
         html += '  <td style="padding:5px 10px;color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.phone || '—') + '</td>';
+        // 4 checkboxes Callbell — etiqueta, wa, instalo, no_contesto
+        const userArg = JSON.stringify(it.username || '');
+        const buckArg = JSON.stringify(it.bucket || '');
+        const tierArg = JSON.stringify(it.tier || '');
+        const cbBox = (action, isOn, color) => {
+            const onCheck = !!isOn;
+            return '<td style="padding:4px 6px;text-align:center;">'
+                + '<input type="checkbox" ' + (onCheck ? 'checked' : '')
+                + ' onchange="_recontactToggleTag(' + userArg + ',\'' + action + '\',' + (onCheck ? 'true' : 'false') + ',' + buckArg + ',' + tierArg + ')"'
+                + ' style="cursor:pointer;width:16px;height:16px;accent-color:' + color + ';">'
+                + '</td>';
+        };
+        html += cbBox('etiqueta', it.cbEtiqueta, '#9b30ff');
+        html += cbBox('wa', it.cbWa, '#25d366');
+        html += cbBox('instalo', it.cbResp === 'instalo', '#7cffb3');
+        html += cbBox('no_contesto', it.cbResp === 'no_contesto', '#ff8080');
         html += '  <td style="padding:5px 10px;color:#ffd700;font-weight:600;font-size:11px;">' + escapeHtml(it.strategy || '—') + '</td>';
         html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;font-weight:700;">$' + fmt(it.suggestedBonus || 0) + '</td>';
         html += '  <td style="padding:5px 10px;color:#ddd;font-size:11px;max-width:340px;">' + escapeHtml(it.suggestedMessage || '') + '</td>';
         html += '</tr>';
     }
     if (filtered.length > max) {
-        const colspan = hasFileTx ? 14 : 11;
+        const colspan = hasFileTx ? 18 : 15;
         html += '<tr><td colspan="' + colspan + '" style="padding:10px;text-align:center;color:#666;font-style:italic;">... ' + (filtered.length - max) + ' más en el CSV completo</td></tr>';
     }
     html += '  </tbody></table>';

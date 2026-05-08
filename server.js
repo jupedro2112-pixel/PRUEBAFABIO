@@ -85,6 +85,7 @@ const {
   RecontactAnalysis,
   RecontactHistory,
   AppUsersDailySnapshot,
+  CallbellTag,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -9188,6 +9189,25 @@ app.get('/api/admin/app-users/stats', authMiddleware, adminMiddleware, async (re
     ]);
     const platforms = platformAgg.map(p => ({ platform: p._id || 'desconocido', count: p.count }));
 
+    // Atribución Callbell — cuántos usuarios CON app fueron etiquetados antes
+    // y se convirtieron (no tenían app al momento del tag y ahora sí).
+    let callbellAttribution = { total: 0, manualConfirmed: 0, autoDetected: 0 };
+    try {
+      const cbConverted = await CallbellTag.countDocuments({
+        convertedAt: { $ne: null }, hadAppAtFirstTag: { $ne: true }
+      });
+      const cbManual = await CallbellTag.countDocuments({
+        convertedAt: { $ne: null }, hadAppAtFirstTag: { $ne: true }, convertedBy: 'manual'
+      });
+      callbellAttribution = {
+        total: cbConverted,
+        manualConfirmed: cbManual,
+        autoDetected: cbConverted - cbManual
+      };
+    } catch (cbErr) {
+      logger.warn(`[app-users/stats] callbell attribution fail: ${cbErr.message}`);
+    }
+
     // Aprovechamos el cómputo para upsertear el snapshot del día (oportunístico).
     // Si nadie entra hoy a la sección, igual lo captura el cron diario abajo.
     try {
@@ -9219,7 +9239,8 @@ app.get('/api/admin/app-users/stats', authMiddleware, adminMiddleware, async (re
         sinApp: totalUsers - withApp
       },
       byTeam: teamRows,
-      platforms
+      platforms,
+      callbellAttribution
     });
   } catch (err) {
     logger.error(`[app-users/stats] error: ${err.message}\n${err.stack}`);
@@ -9244,6 +9265,214 @@ setInterval(async () => {
     logger.warn(`[app-users/cron] error: ${err.message}`);
   }
 }, 60 * 60 * 1000).unref(); // cada hora
+
+// ============================================
+// CALLBELL TAGS — tracking de etiqueta WhatsApp → conversión a app
+// ============================================
+function _normUsername(s) {
+  return String(s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Helper: chequea si un user tiene app instalada (token standalone).
+async function _userHasStandaloneApp(usernameNorm) {
+  const u = await User.findOne(
+    { username: usernameNorm },
+    { fcmTokenContext: 1, fcmTokens: 1, _id: 0 }
+  ).lean();
+  if (!u) return false;
+  if (u.fcmTokenContext === 'standalone') return true;
+  return Array.isArray(u.fcmTokens) && u.fcmTokens.some(t => t && t.context === 'standalone');
+}
+
+// POST /api/admin/callbell/tag
+// Toggle de un flag (etiqueta | wa) o set de respuesta (instalo | no_contesto).
+// body: { username, action: 'etiqueta'|'wa'|'instalo'|'no_contesto', set: true|false,
+//         bucket, tier, analysisLabel }
+app.post('/api/admin/callbell/tag', authMiddleware, adminMiddleware, express.json({ limit: '50kb' }), async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    const action = String((req.body && req.body.action) || '').trim();
+    const set = !!(req.body && req.body.set);
+    const bucket = String((req.body && req.body.bucket) || '').trim();
+    const tier = String((req.body && req.body.tier) || '').trim();
+    const analysisLabel = String((req.body && req.body.analysisLabel) || '').trim().slice(0, 200);
+    if (!username) return res.status(400).json({ error: 'username requerido' });
+    if (!['etiqueta', 'wa', 'instalo', 'no_contesto'].includes(action)) {
+      return res.status(400).json({ error: 'action inválida' });
+    }
+    const norm = _normUsername(username);
+    if (!norm) return res.status(400).json({ error: 'username inválido' });
+    const adminUser = (req.user && req.user.username) || 'admin';
+
+    let doc = await CallbellTag.findOne({ usernameNorm: norm });
+    const isNew = !doc;
+    if (!doc) doc = new CallbellTag({ usernameNorm: norm, username });
+
+    const now = new Date();
+    if (action === 'etiqueta' || action === 'wa') {
+      doc[action].tagged = set;
+      if (set) {
+        doc[action].taggedAt = now;
+        doc[action].taggedBy = adminUser;
+        doc[action].fromBucket = bucket || doc[action].fromBucket || '';
+        doc[action].fromTier = tier || doc[action].fromTier || '';
+        doc[action].analysisLabel = analysisLabel || doc[action].analysisLabel || '';
+      }
+      // Si es la primera vez que se etiqueta cualquier flag, snapshot del estado de app.
+      const justGotFirstTag = (action === 'etiqueta' || action === 'wa') && set && !doc.firstTaggedAt;
+      if (justGotFirstTag) {
+        doc.firstTaggedAt = now;
+        doc.hadAppAtFirstTag = await _userHasStandaloneApp(norm);
+      }
+    } else if (action === 'instalo' || action === 'no_contesto') {
+      // Mutuamente excluyentes: setear instalo desmarca no_contesto y viceversa.
+      // set=false → limpiar el campo.
+      if (set) {
+        doc.respuesta.status = action;
+        doc.respuesta.markedAt = now;
+        doc.respuesta.markedBy = adminUser;
+        // Si marca "instalo" manualmente, también persistimos convertedAt
+        // (si todavía no hadAppAtFirstTag).
+        if (action === 'instalo' && !doc.convertedAt && !doc.hadAppAtFirstTag) {
+          doc.convertedAt = now;
+          doc.convertedBy = 'manual';
+        }
+      } else {
+        doc.respuesta.status = null;
+        doc.respuesta.markedAt = undefined;
+        doc.respuesta.markedBy = undefined;
+      }
+    }
+
+    await doc.save();
+    return res.json({ success: true, tag: doc.toObject() });
+  } catch (err) {
+    logger.error(`[callbell/tag] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/callbell/tags-by-usernames — batch lookup
+// body: { usernames: [...] } → returns { tags: { norm: {etiqueta, wa, respuesta, convertedAt, hadAppAtFirstTag} } }
+app.post('/api/admin/callbell/tags-by-usernames', authMiddleware, adminMiddleware, express.json({ limit: '5mb' }), async (req, res) => {
+  try {
+    const usernames = Array.isArray(req.body && req.body.usernames) ? req.body.usernames : [];
+    if (usernames.length === 0) return res.json({ tags: {} });
+    if (usernames.length > 60000) return res.status(413).json({ error: 'Demasiados usernames' });
+    const norms = usernames.map(_normUsername).filter(Boolean);
+    const docs = await CallbellTag.find(
+      { usernameNorm: { $in: norms } },
+      { usernameNorm: 1, etiqueta: 1, wa: 1, respuesta: 1, convertedAt: 1, hadAppAtFirstTag: 1, firstTaggedAt: 1, _id: 0 }
+    ).lean();
+    const map = {};
+    for (const d of docs) map[d.usernameNorm] = d;
+    return res.json({ tags: map });
+  } catch (err) {
+    logger.error(`[callbell/tags-by-usernames] error: ${err.message}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/callbell/report?days=30
+// Reporte diario: por día, cuántos etiquetados / WA enviados / convertidos
+// (manual o auto) / sin respuesta. También conversion rate global.
+app.get('/api/admin/callbell/report', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(180, Math.max(1, parseInt(req.query.days, 10) || 30));
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+    // Auto-detección: para los etiquetados sin convertedAt y sin hadAppAtFirstTag,
+    // chequear si ahora tienen app y setear convertedAt.
+    const candidates = await CallbellTag.find({
+      $or: [{ 'etiqueta.tagged': true }, { 'wa.tagged': true }],
+      hadAppAtFirstTag: { $ne: true },
+      convertedAt: null
+    }, { usernameNorm: 1, _id: 1 }).lean();
+    if (candidates.length > 0) {
+      const norms = candidates.map(c => c.usernameNorm);
+      // Buscar quiénes tienen standalone token ahora
+      const usersWithApp = await User.find(
+        {
+          username: { $in: norms },
+          $or: [
+            { fcmTokenContext: 'standalone' },
+            { 'fcmTokens.context': 'standalone' }
+          ]
+        },
+        { username: 1, _id: 0 }
+      ).lean();
+      const convertedNorms = usersWithApp.map(u => String(u.username || '').toLowerCase());
+      if (convertedNorms.length > 0) {
+        await CallbellTag.updateMany(
+          { usernameNorm: { $in: convertedNorms }, convertedAt: null },
+          { $set: { convertedAt: new Date(), convertedBy: 'auto' } }
+        );
+        logger.info(`[callbell/report] auto-conversion: ${convertedNorms.length} users marcados como convertidos`);
+      }
+    }
+
+    // Totales globales
+    const [totalTagged, totalWA, totalConverted, totalNoContesto, totalInstalo] = await Promise.all([
+      CallbellTag.countDocuments({ 'etiqueta.tagged': true }),
+      CallbellTag.countDocuments({ 'wa.tagged': true }),
+      CallbellTag.countDocuments({ convertedAt: { $ne: null } }),
+      CallbellTag.countDocuments({ 'respuesta.status': 'no_contesto' }),
+      CallbellTag.countDocuments({ 'respuesta.status': 'instalo' })
+    ]);
+
+    // Daily breakdown — agregamos por día (ART) los eventos.
+    const tagDocs = await CallbellTag.find({
+      $or: [
+        { 'etiqueta.taggedAt': { $gte: cutoff } },
+        { 'wa.taggedAt': { $gte: cutoff } },
+        { 'respuesta.markedAt': { $gte: cutoff } },
+        { convertedAt: { $gte: cutoff } }
+      ]
+    }, {
+      'etiqueta.taggedAt': 1, 'wa.taggedAt': 1, 'respuesta': 1,
+      convertedAt: 1, hadAppAtFirstTag: 1, _id: 0
+    }).lean();
+
+    const dayKeyOf = (d) => {
+      if (!d) return null;
+      const ms = new Date(d).getTime() - 3 * 60 * 60 * 1000;
+      return new Date(ms).toISOString().slice(0, 10);
+    };
+    const byDay = new Map();
+    const ensure = (k) => {
+      if (!byDay.has(k)) byDay.set(k, { dayKey: k, etiquetados: 0, wa: 0, instalo: 0, noContesto: 0, convertedAuto: 0 });
+      return byDay.get(k);
+    };
+    for (const d of tagDocs) {
+      const ke = dayKeyOf(d.etiqueta && d.etiqueta.taggedAt);
+      if (ke) ensure(ke).etiquetados++;
+      const kw = dayKeyOf(d.wa && d.wa.taggedAt);
+      if (kw) ensure(kw).wa++;
+      const kr = dayKeyOf(d.respuesta && d.respuesta.markedAt);
+      if (kr && d.respuesta.status === 'instalo') ensure(kr).instalo++;
+      if (kr && d.respuesta.status === 'no_contesto') ensure(kr).noContesto++;
+      const kc = dayKeyOf(d.convertedAt);
+      if (kc && !d.hadAppAtFirstTag) ensure(kc).convertedAuto++;
+    }
+    const dailyArr = Array.from(byDay.values()).sort((a, b) => b.dayKey.localeCompare(a.dayKey));
+
+    return res.json({
+      totals: {
+        totalTagged,
+        totalWA,
+        totalConverted,
+        totalInstalo,
+        totalNoContesto,
+        conversionRatePct: totalTagged > 0 ? +(100 * totalConverted / totalTagged).toFixed(2) : 0
+      },
+      daily: dailyArr,
+      windowDays: days
+    });
+  } catch (err) {
+    logger.error(`[callbell/report] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // CSV con todos los items enriquecidos. Se manda en POST porque no podemos
 // guardar el archivo en el server — el admin manda el xlsx de nuevo y

@@ -50,7 +50,8 @@ const {
   WinbackStrategyConfig,
   RecontactAnalysis,
   RecontactHistory,
-  AppUsersDailySnapshot
+  AppUsersDailySnapshot,
+  CallbellTag
 } = require('../src/models');
 
 // ============================================
@@ -374,6 +375,7 @@ module.exports = {
   RecontactAnalysis,
   RecontactHistory,
   AppUsersDailySnapshot,
+  CallbellTag,
   // Helpers
   getConfig,
   setConfig,

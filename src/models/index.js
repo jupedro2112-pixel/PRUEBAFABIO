@@ -51,6 +51,7 @@ const WinbackStrategyConfig = require('./WinbackStrategyConfig');
 const RecontactAnalysis = require('./RecontactAnalysis');
 const RecontactHistory = require('./RecontactHistory');
 const AppUsersDailySnapshot = require('./AppUsersDailySnapshot');
+const CallbellTag = require('./CallbellTag');
 
 
 /**
@@ -474,6 +475,7 @@ module.exports = {
   RecontactAnalysis,
   RecontactHistory,
   AppUsersDailySnapshot,
+  CallbellTag,
 
   // Funciones de conexión
   connectDB,
