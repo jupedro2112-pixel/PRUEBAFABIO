@@ -2568,18 +2568,77 @@ const RECONTACT_HISTORY_KEY = 'vipRecontactHistory_v1';
 const RECONTACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
 const RECONTACT_HISTORY_MAX = 20;
 
-function _recontactSaveCache(items, summary, fileLabel) {
+// ===== Cache en IndexedDB (los items pueden ser MB y localStorage no aguanta) =====
+const RECONTACT_IDB_NAME = 'vipRecontact';
+const RECONTACT_IDB_VERSION = 1;
+const RECONTACT_IDB_STORE = 'cache';
+
+function _recontactOpenIDB() {
+    return new Promise((resolve, reject) => {
+        if (typeof indexedDB === 'undefined') return reject(new Error('IndexedDB no disponible'));
+        const req = indexedDB.open(RECONTACT_IDB_NAME, RECONTACT_IDB_VERSION);
+        req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(RECONTACT_IDB_STORE)) {
+                db.createObjectStore(RECONTACT_IDB_STORE);
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        req.onblocked = () => reject(new Error('IDB blocked'));
+    });
+}
+
+async function _recontactSaveCache(items, summary, fileLabel) {
     try {
+        // Limpiar legacy localStorage si quedó algo de antes.
+        try { localStorage.removeItem(RECONTACT_CACHE_KEY); } catch (_) {}
+        const db = await _recontactOpenIDB();
         const payload = {
             savedAt: Date.now(),
             fileLabel: fileLabel || '',
             items: items || [],
             summary: summary || {}
         };
-        localStorage.setItem(RECONTACT_CACHE_KEY, JSON.stringify(payload));
-    } catch (e) { console.warn('[recontact] cache save fail', e); }
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(RECONTACT_IDB_STORE, 'readwrite');
+            tx.objectStore(RECONTACT_IDB_STORE).put(payload, 'lastAnalysis');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        try { db.close(); } catch (_) {}
+    } catch (e) {
+        console.warn('[recontact] IDB save fail', e);
+        // Fallback: intentar guardar SOLO el summary en localStorage (sin items)
+        // para que al menos el banner aparezca al volver.
+        try {
+            const slim = { savedAt: Date.now(), fileLabel: fileLabel || '', items: null, summary: summary || {}, _itemsDropped: true };
+            localStorage.setItem(RECONTACT_CACHE_KEY, JSON.stringify(slim));
+        } catch (_) {}
+    }
 }
-function _recontactLoadCache() {
+
+async function _recontactLoadCache() {
+    // 1) Intentar IDB
+    try {
+        const db = await _recontactOpenIDB();
+        const p = await new Promise((resolve) => {
+            const tx = db.transaction(RECONTACT_IDB_STORE, 'readonly');
+            const req = tx.objectStore(RECONTACT_IDB_STORE).get('lastAnalysis');
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+        });
+        try { db.close(); } catch (_) {}
+        if (p && p.savedAt) {
+            if (Date.now() - p.savedAt > RECONTACT_CACHE_TTL_MS) {
+                _recontactClearCache();
+                return null;
+            }
+            return p;
+        }
+    } catch (e) { console.warn('[recontact] IDB load fail', e); }
+
+    // 2) Fallback localStorage (legacy o slim)
     try {
         const raw = localStorage.getItem(RECONTACT_CACHE_KEY);
         if (!raw) return null;
@@ -2592,8 +2651,19 @@ function _recontactLoadCache() {
         return p;
     } catch (_) { return null; }
 }
-function _recontactClearCache() {
+
+async function _recontactClearCache() {
     try { localStorage.removeItem(RECONTACT_CACHE_KEY); } catch (_) {}
+    try {
+        const db = await _recontactOpenIDB();
+        await new Promise((resolve) => {
+            const tx = db.transaction(RECONTACT_IDB_STORE, 'readwrite');
+            tx.objectStore(RECONTACT_IDB_STORE).delete('lastAnalysis');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => resolve();
+        });
+        try { db.close(); } catch (_) {}
+    } catch (_) {}
 }
 function _recontactPushHistorySnapshot(items, summary, fileLabel) {
     try {
@@ -2653,27 +2723,53 @@ function _recontactRelTime(ms) {
 function loadRecontactSection() {
     const c = document.getElementById('recontactContent');
     if (!c) return;
-    // Hidratar de cache si no hay state actual y todavía está vigente.
-    if (!_recontactState.items || !_recontactState.summary) {
-        const cache = _recontactLoadCache();
-        if (cache && cache.items && cache.summary) {
+
+    // Si ya hay state en memoria (mismo session), renderizar al toque.
+    if (_recontactState.items && _recontactState.summary) {
+        c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+        _wireRecontactFilters();
+        return;
+    }
+
+    // Mostrar uploader (con loader chiquito mientras revisamos IDB)
+    c.innerHTML = _renderRecontactUploader();
+    const history = _recontactLoadHistory();
+    if (history.length > 0) {
+        c.innerHTML += _renderRecontactHistoryStandalone(history);
+    }
+
+    // Loader visible un instante mientras revisa IDB
+    const probe = document.createElement('div');
+    probe.id = 'recontactCacheProbe';
+    probe.style.cssText = 'position:absolute;top:8px;right:14px;color:#888;font-size:11px;';
+    probe.textContent = '🔍 Buscando análisis previo…';
+    if (c.firstChild) c.insertBefore(probe, c.firstChild);
+
+    _recontactLoadCache().then(cache => {
+        try { document.getElementById('recontactCacheProbe')?.remove(); } catch (_) {}
+        if (!cache) return;
+        // Si hay items y summary, hidratar dashboard.
+        if (cache.items && cache.summary) {
             _recontactState.items = cache.items;
             _recontactState.summary = cache.summary;
             _recontactState.fileLabel = cache.fileLabel || '';
             _recontactState.savedAt = cache.savedAt;
+            c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+            _wireRecontactFilters();
+            return;
         }
-    }
-    if (_recontactState.items && _recontactState.summary) {
-        c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
-        _wireRecontactFilters();
-    } else {
-        c.innerHTML = _renderRecontactUploader();
-        // Si hay historial pero no hay cache (expiró o se limpió), mostralo abajo
-        const history = _recontactLoadHistory();
-        if (history.length > 0) {
-            c.innerHTML += _renderRecontactHistoryStandalone(history);
+        // Cache "slim" (solo summary porque IDB falló) — no podemos rehidratar
+        // el dashboard pero al menos avisamos.
+        if (cache._itemsDropped && cache.summary) {
+            const banner = document.createElement('div');
+            banner.style.cssText = 'background:rgba(255,170,68,0.06);border:1px solid rgba(255,170,68,0.30);border-radius:8px;padding:10px 14px;margin-bottom:10px;color:#ffaa44;font-size:12px;';
+            banner.textContent = '⚠ Hubo un análisis previo (' + (cache.fileLabel || 'archivo') + ') hace ' + _recontactRelTime(cache.savedAt) + ' pero no se pudo guardar el detalle. Subí el archivo de nuevo para verlo.';
+            if (c.firstChild) c.insertBefore(banner, c.firstChild);
         }
-    }
+    }).catch(e => {
+        try { document.getElementById('recontactCacheProbe')?.remove(); } catch (_) {}
+        console.warn('[recontact] loadCache fail', e);
+    });
 }
 
 function _renderRecontactUploader() {
@@ -2884,11 +2980,13 @@ async function recontactAnalyze() {
         _recontactState.summary = j.summary || {};
         _recontactState.fileLabel = (file && file.name) || '';
         _recontactState.savedAt = Date.now();
-        // Guardar en cache (7 días) + push al historial.
-        _recontactSaveCache(_recontactState.items, _recontactState.summary, _recontactState.fileLabel);
+        // Guardar en cache IDB (7 días) + push al historial localStorage.
+        // El save se hace en background — no bloqueamos la UI.
+        _recontactSaveCache(_recontactState.items, _recontactState.summary, _recontactState.fileLabel)
+            .catch(e => console.warn('[recontact] save fail', e));
         _recontactPushHistorySnapshot(_recontactState.items, _recontactState.summary, _recontactState.fileLabel);
         loadRecontactSection();
-        showToast('✅ ' + (j.summary.totalAnalyzed || 0) + ' usuarios analizados', 'success');
+        showToast('✅ ' + (j.summary.totalAnalyzed || 0) + ' usuarios analizados (queda guardado por 7 días)', 'success');
     } catch (e) {
         showToast('Error: ' + (e.message || e), 'error');
         restoreBtn();
@@ -2897,8 +2995,8 @@ async function recontactAnalyze() {
 
 function recontactReset() {
     _recontactState = { items: null, summary: null, file: null, fileLabel: '', savedAt: null };
-    _recontactClearCache();
-    window._recontactFilters = { tier: 'all', bucket: 'all', appStatus: 'all' };
+    _recontactClearCache().catch(() => {});
+    window._recontactFilters = { tier: 'all', bucket: 'all', appStatus: 'all', line: 'all' };
     loadRecontactSection();
 }
 
