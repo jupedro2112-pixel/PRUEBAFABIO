@@ -1417,7 +1417,12 @@ async function revalidateThenReload(which) {
 // en pending_credit_failed. Llama al endpoint de retry y refresca la tabla.
 async function retryWelcomeBonusCredit(username) {
     if (!username) return;
-    if (!confirm('¿Reintentar acreditar el bono de bienvenida a "' + username + '"?\n\nSi JUGAYGANA acepta, se le suman los $5.000 al saldo.')) return;
+    const msg = '¿Reintentar acreditar el bono de bienvenida a "' + username + '"?\n\n' +
+        '⚠ ANTES de reintentar verificá en JUGAYGANA que el bono $5.000 NO esté ya acreditado:\n' +
+        '   • Si el bono original falló de verdad → reintentar es seguro.\n' +
+        '   • Si JUGAYGANA dice que ya cargó pero nuestro sistema lo marca como FALLÓ → vas a doble-cobrar.\n\n' +
+        '¿Confirmás?';
+    if (!confirm(msg)) return;
     try {
         const r = await authFetch('/api/admin/reports/welcome-bonus/retry-credit', {
             method: 'POST',
