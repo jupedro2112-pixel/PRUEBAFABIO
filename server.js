@@ -9474,6 +9474,199 @@ app.post(
 // Cambiar el TELÉFONO de UNA línea sin afectar nada más. Actualiza User
 // y UserLineLookup. NO manda push de aviso (eso es lineDown). Útil cuando
 // el admin solo quiere corregir un número mal cargado.
+// ============================================
+// UNIFICAR EQUIPOS / LÍNEAS — preview + execute
+// ============================================
+// Permite mergear dos lineTeamName en uno solo. Útil cuando se cargaron
+// dos veces el mismo equipo con nombres ligeramente distintos
+// (ej: "Argentum" y "Argentum 1") y los queremos unificar.
+//
+// Mode "preview" (default): hace un análisis sin tocar nada — devuelve
+// totales por lado, overlap (usernames duplicados), y para los
+// duplicados dice cuántos tienen app en uno, en el otro, o en ambos.
+//
+// Mode "execute": hace el merge real. Updatea User.lineTeamName y
+// UserLineLookup.lineTeamName desde "from" hacia "to". Para los
+// duplicados: el doc del lado "from" se elimina y el del lado "to"
+// se mantiene (asumiendo que es la versión correcta). NO toca FCM
+// tokens, schedules ni nada que dispare notifs — sólo cambia el label
+// del equipo.
+app.post('/api/admin/teams/merge', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const from = String((req.body && req.body.from) || '').trim();
+    const to = String((req.body && req.body.to) || '').trim();
+    const mode = String((req.body && req.body.mode) || 'preview').toLowerCase();
+    if (!from || !to) return res.status(400).json({ error: 'Faltan from y to' });
+    if (from === to) return res.status(400).json({ error: 'from y to son iguales' });
+    if (!['preview', 'execute'].includes(mode)) return res.status(400).json({ error: 'mode inválido' });
+
+    // 1) Sacar usernames de cada lado en User y UserLineLookup
+    const [usersFrom, usersTo, lookupFrom, lookupTo] = await Promise.all([
+      User.find({ lineTeamName: from }, { username: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, _id: 0 }).lean(),
+      User.find({ lineTeamName: to },   { username: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, _id: 0 }).lean(),
+      UserLineLookup.find({ lineTeamName: from }, { usernameNorm: 1, _id: 0 }).lean(),
+      UserLineLookup.find({ lineTeamName: to },   { usernameNorm: 1, _id: 0 }).lean()
+    ]);
+
+    const fromSet = new Set(usersFrom.map(u => String(u.username || '').toLowerCase()));
+    const toSet   = new Set(usersTo.map(u => String(u.username || '').toLowerCase()));
+    const overlap = [...fromSet].filter(u => toSet.has(u));
+
+    // Contar app en cada lado.
+    const isStandalone = (u) => {
+      if (!u) return false;
+      if (u.fcmTokenContext === 'standalone') return true;
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      return tokens.some(t => t && t.context === 'standalone');
+    };
+    const isGranted = (u) => {
+      if (!u) return false;
+      if (u.notifPermission === 'granted') return true;
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      return tokens.some(t => t && t.notifPermission === 'granted');
+    };
+
+    const fromMap = new Map(usersFrom.map(u => [String(u.username || '').toLowerCase(), u]));
+    const toMap   = new Map(usersTo.map(u => [String(u.username || '').toLowerCase(), u]));
+
+    let fromWithApp = 0, toWithApp = 0;
+    let fromWithBoth = 0, toWithBoth = 0;
+    for (const u of usersFrom) {
+      const a = isStandalone(u);
+      const b = isGranted(u);
+      if (a) fromWithApp++;
+      if (a && b) fromWithBoth++;
+    }
+    for (const u of usersTo) {
+      const a = isStandalone(u);
+      const b = isGranted(u);
+      if (a) toWithApp++;
+      if (a && b) toWithBoth++;
+    }
+
+    // De los duplicados: quiénes tienen app en uno, otro, o ambos.
+    let dupAppOnlyFrom = 0, dupAppOnlyTo = 0, dupAppBoth = 0, dupAppNeither = 0;
+    const dupSamples = [];
+    for (const username of overlap) {
+      const a = isStandalone(fromMap.get(username));
+      const b = isStandalone(toMap.get(username));
+      if (a && b) dupAppBoth++;
+      else if (a) dupAppOnlyFrom++;
+      else if (b) dupAppOnlyTo++;
+      else dupAppNeither++;
+      if (dupSamples.length < 25) dupSamples.push({ username, appFrom: a, appTo: b });
+    }
+
+    const lookupFromSet = new Set(lookupFrom.map(l => l.usernameNorm));
+    const lookupToSet   = new Set(lookupTo.map(l => l.usernameNorm));
+    const lookupOverlap = [...lookupFromSet].filter(u => lookupToSet.has(u));
+
+    // Después del merge: cuántos únicos quedan
+    const unionUsers = new Set([...fromSet, ...toSet]);
+    const unionLookup = new Set([...lookupFromSet, ...lookupToSet]);
+
+    const summary = {
+      from, to, mode,
+      sideFrom: {
+        userDocs: usersFrom.length,
+        lookupDocs: lookupFrom.length,
+        withApp: fromWithApp,
+        withBoth: fromWithBoth
+      },
+      sideTo: {
+        userDocs: usersTo.length,
+        lookupDocs: lookupTo.length,
+        withApp: toWithApp,
+        withBoth: toWithBoth
+      },
+      duplicatesUsers: overlap.length,
+      duplicatesLookup: lookupOverlap.length,
+      duplicatesAppBreakdown: {
+        appBothSides: dupAppBoth,
+        appOnlyFrom: dupAppOnlyFrom,
+        appOnlyTo: dupAppOnlyTo,
+        appNeither: dupAppNeither
+      },
+      afterMerge: {
+        uniqueUsers: unionUsers.size,
+        uniqueLookup: unionLookup.size
+      },
+      dupSamples
+    };
+
+    if (mode === 'preview') {
+      return res.json({ success: true, preview: true, summary });
+    }
+
+    // === EXECUTE ===
+    // 1) En User: para los duplicados, eliminamos el doc del lado "from"
+    //    (mantenemos el "to" porque es el destino canónico). Para los
+    //    no-duplicados de "from", actualizamos lineTeamName a "to".
+    const overlapSet = new Set(overlap);
+    const onlyFromUsers = [...fromSet].filter(u => !overlapSet.has(u));
+    let userUpdatedCount = 0, userDeletedDupCount = 0;
+
+    if (onlyFromUsers.length > 0) {
+      const r = await User.updateMany(
+        { lineTeamName: from, username: { $in: onlyFromUsers } },
+        {
+          $set: {
+            lineTeamName: to,
+            lineAssignedAt: new Date(),
+            lineAssignedBy: (req.user && req.user.username) || 'admin',
+            lineAssignmentNote: `Merge equipo: "${from}" → "${to}"`
+          }
+        }
+      );
+      userUpdatedCount = r.modifiedCount || 0;
+    }
+    if (overlap.length > 0) {
+      // Borramos el lado "from" de los duplicados (el "to" gana).
+      const r = await User.deleteMany({
+        lineTeamName: from,
+        username: { $in: overlap }
+      });
+      userDeletedDupCount = r.deletedCount || 0;
+    }
+
+    // 2) UserLineLookup: misma lógica.
+    const lookupOverlapSet = new Set(lookupOverlap);
+    const onlyFromLookup = [...lookupFromSet].filter(u => !lookupOverlapSet.has(u));
+    let lookupUpdatedCount = 0, lookupDeletedDupCount = 0;
+    if (onlyFromLookup.length > 0) {
+      const r = await UserLineLookup.updateMany(
+        { lineTeamName: from, usernameNorm: { $in: onlyFromLookup } },
+        { $set: { lineTeamName: to } }
+      );
+      lookupUpdatedCount = r.modifiedCount || 0;
+    }
+    if (lookupOverlap.length > 0) {
+      const r = await UserLineLookup.deleteMany({
+        lineTeamName: from,
+        usernameNorm: { $in: lookupOverlap }
+      });
+      lookupDeletedDupCount = r.deletedCount || 0;
+    }
+
+    logger.info(`[teams/merge] from="${from}" to="${to}" by=${(req.user && req.user.username) || 'admin'} userUpdated=${userUpdatedCount} userDeletedDup=${userDeletedDupCount} lookupUpdated=${lookupUpdatedCount} lookupDeletedDup=${lookupDeletedDupCount}`);
+
+    return res.json({
+      success: true,
+      preview: false,
+      summary,
+      executed: {
+        userDocsRenamedFromTo: userUpdatedCount,
+        userDocsDeletedDup: userDeletedDupCount,
+        lookupDocsRenamedFromTo: lookupUpdatedCount,
+        lookupDocsDeletedDup: lookupDeletedDupCount
+      }
+    });
+  } catch (err) {
+    logger.error(`[teams/merge] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/admin/user-lines/change-phone', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const teamName = String((req.body && req.body.teamName) || '').trim();

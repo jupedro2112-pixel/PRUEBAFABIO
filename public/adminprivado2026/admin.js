@@ -6465,13 +6465,195 @@ function _renderTeamsList(j) {
         return;
     }
 
-    let html = '<div style="display:flex;flex-direction:column;gap:10px;">';
+    // Botón de unificar equipos
+    let html = '<div style="display:flex;justify-content:flex-end;margin-bottom:10px;">';
+    html += '  <button type="button" onclick="openMergeTeamsModal()" style="padding:8px 14px;font-size:12px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;border-radius:7px;cursor:pointer;" title="Unificar 2 equipos/líneas en uno (con preview de duplicados antes)">🔀 Unificar 2 equipos / líneas</button>';
+    html += '</div>';
+
+    html += '<div style="display:flex;flex-direction:column;gap:10px;">';
     for (const t of teams) {
         const isExpanded = _teamsExpanded.has(t.teamName);
         html += _renderTeamCard(t, isExpanded);
     }
     html += '</div>';
     el.innerHTML = html;
+}
+
+// ============ Unificar equipos / líneas ============
+function openMergeTeamsModal() {
+    const existing = document.getElementById('mergeTeamsModal');
+    if (existing) existing.remove();
+
+    // Recolectar todas las labels existentes (teamName + fullLabel de líneas)
+    const labels = new Set();
+    if (_teamsCache && Array.isArray(_teamsCache.teams)) {
+        for (const t of _teamsCache.teams) {
+            if (t.teamName) labels.add(t.teamName);
+            for (const ln of (t.lines || [])) {
+                if (ln.fullLabel) labels.add(ln.fullLabel);
+            }
+        }
+    }
+    const sortedLabels = Array.from(labels).sort();
+
+    let html = '';
+    html += '<div id="mergeTeamsModal" style="position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;padding:14px;">';
+    html += '  <div style="background:#0f1729;border:1px solid rgba(155,48,255,0.40);border-radius:12px;padding:18px;max-width:680px;width:100%;max-height:90vh;overflow:auto;">';
+    html += '    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    html += '      <h3 style="color:#9b30ff;margin:0;font-size:17px;">🔀 Unificar 2 equipos / líneas</h3>';
+    html += '      <button type="button" onclick="document.getElementById(\'mergeTeamsModal\').remove()" style="background:none;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;">×</button>';
+    html += '    </div>';
+    html += '    <div style="color:#bbb;font-size:12px;line-height:1.6;margin-bottom:14px;">Pasa los usuarios del equipo/línea de la <strong>izquierda (FROM)</strong> al de la <strong>derecha (TO)</strong>. Si hay duplicados (mismo username en ambos), se mantiene la versión del lado TO y se elimina la del FROM. NO afecta FCM tokens, schedules de notifs ni ninguna otra cosa — sólo cambia el label del equipo.</div>';
+
+    html += '    <div style="display:grid;grid-template-columns:1fr 30px 1fr;gap:8px;align-items:end;margin-bottom:12px;">';
+    html += '      <div>';
+    html += '        <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">FROM (los que pasan)</label>';
+    html += '        <input list="mergeTeamLabels" id="mergeFrom" placeholder="ej: Argentum" style="width:100%;padding:9px;background:rgba(0,0,0,0.45);color:#fff;border:1px solid rgba(255,255,255,0.18);border-radius:7px;font-size:13px;box-sizing:border-box;">';
+    html += '      </div>';
+    html += '      <div style="text-align:center;color:#9b30ff;font-size:24px;padding-bottom:8px;">→</div>';
+    html += '      <div>';
+    html += '        <label style="display:block;color:#aaa;font-size:11px;margin-bottom:4px;">TO (destino canónico)</label>';
+    html += '        <input list="mergeTeamLabels" id="mergeTo" placeholder="ej: Argentum 1" style="width:100%;padding:9px;background:rgba(0,0,0,0.45);color:#fff;border:1px solid rgba(255,255,255,0.18);border-radius:7px;font-size:13px;box-sizing:border-box;">';
+    html += '      </div>';
+    html += '    </div>';
+    html += '    <datalist id="mergeTeamLabels">';
+    for (const l of sortedLabels) html += '<option value="' + escapeHtml(l) + '">';
+    html += '    </datalist>';
+
+    html += '    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+    html += '      <button type="button" onclick="runMergeTeamsPreview()" id="mergePreviewBtn" style="padding:9px 14px;font-size:12px;font-weight:700;background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);border-radius:7px;cursor:pointer;">🔍 Preview (sin tocar nada)</button>';
+    html += '      <button type="button" id="mergeExecuteBtn" disabled onclick="runMergeTeamsExecute()" style="padding:9px 14px;font-size:12px;font-weight:700;background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid rgba(102,255,102,0.40);border-radius:7px;cursor:pointer;opacity:0.4;" title="Hacé preview primero">✅ Ejecutar merge</button>';
+    html += '    </div>';
+
+    html += '    <div id="mergeTeamsResult" style="min-height:30px;color:#aaa;font-size:12px;"></div>';
+    html += '  </div>';
+    html += '</div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function runMergeTeamsPreview() {
+    const from = (document.getElementById('mergeFrom').value || '').trim();
+    const to = (document.getElementById('mergeTo').value || '').trim();
+    const result = document.getElementById('mergeTeamsResult');
+    const previewBtn = document.getElementById('mergePreviewBtn');
+    const execBtn = document.getElementById('mergeExecuteBtn');
+    if (!from || !to) { result.innerHTML = '<span style="color:#ff8080;">Completá FROM y TO</span>'; return; }
+    if (from === to)  { result.innerHTML = '<span style="color:#ff8080;">FROM y TO no pueden ser iguales</span>'; return; }
+
+    if (previewBtn) { previewBtn.disabled = true; previewBtn.textContent = '⏳ Analizando…'; }
+    try {
+        const r = await authFetch('/api/admin/teams/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from, to, mode: 'preview' })
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            result.innerHTML = '<span style="color:#ff8080;">❌ ' + (j.error || ('Error ' + r.status)) + '</span>';
+            if (previewBtn) { previewBtn.disabled = false; previewBtn.textContent = '🔍 Preview (sin tocar nada)'; }
+            return;
+        }
+        result.innerHTML = _renderMergePreview(j.summary);
+        // Habilitar botón de ejecutar
+        if (execBtn) {
+            execBtn.disabled = false;
+            execBtn.style.opacity = '1';
+            execBtn.dataset.from = from;
+            execBtn.dataset.to = to;
+        }
+    } catch (e) {
+        result.innerHTML = '<span style="color:#ff8080;">❌ ' + (e.message || e) + '</span>';
+    } finally {
+        if (previewBtn) { previewBtn.disabled = false; previewBtn.textContent = '🔍 Preview (sin tocar nada)'; }
+    }
+}
+
+function _renderMergePreview(s) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let h = '';
+    h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;">';
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">';
+    h += '  <div style="background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.30);border-radius:6px;padding:8px;">';
+    h += '    <div style="color:#ff8080;font-weight:700;font-size:11px;">FROM: ' + escapeHtml(s.from) + '</div>';
+    h += '    <div style="color:#fff;font-size:13px;margin-top:3px;">' + fmt(s.sideFrom.userDocs) + ' usuarios · ' + fmt(s.sideFrom.lookupDocs) + ' pre-asignados</div>';
+    h += '    <div style="color:#7cffb3;font-size:11px;margin-top:2px;">📱 ' + fmt(s.sideFrom.withApp) + ' con app · ✅ ' + fmt(s.sideFrom.withBoth) + ' push directo</div>';
+    h += '  </div>';
+    h += '  <div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:6px;padding:8px;">';
+    h += '    <div style="color:#66ff66;font-weight:700;font-size:11px;">TO: ' + escapeHtml(s.to) + '</div>';
+    h += '    <div style="color:#fff;font-size:13px;margin-top:3px;">' + fmt(s.sideTo.userDocs) + ' usuarios · ' + fmt(s.sideTo.lookupDocs) + ' pre-asignados</div>';
+    h += '    <div style="color:#7cffb3;font-size:11px;margin-top:2px;">📱 ' + fmt(s.sideTo.withApp) + ' con app · ✅ ' + fmt(s.sideTo.withBoth) + ' push directo</div>';
+    h += '  </div>';
+    h += '</div>';
+
+    h += '<div style="background:rgba(255,200,80,0.06);border:1px solid rgba(255,200,80,0.30);border-radius:6px;padding:8px;margin-bottom:8px;">';
+    h += '<div style="color:#ffc850;font-weight:700;font-size:12px;">⚠ Duplicados (mismo username en ambos)</div>';
+    h += '<div style="color:#fff;font-size:13px;margin-top:3px;">' + fmt(s.duplicatesUsers) + ' usuarios · ' + fmt(s.duplicatesLookup) + ' pre-asignados</div>';
+    if (s.duplicatesUsers > 0) {
+        const ab = s.duplicatesAppBreakdown || {};
+        h += '<div style="color:#bbb;font-size:11px;margin-top:6px;line-height:1.6;">';
+        h += '📱 Tienen app en <strong style="color:#7cffb3;">ambos lados:</strong> ' + fmt(ab.appBothSides) + ' · ';
+        h += 'sólo en FROM: ' + fmt(ab.appOnlyFrom) + ' · ';
+        h += 'sólo en TO: ' + fmt(ab.appOnlyTo) + ' · ';
+        h += 'en ninguno: ' + fmt(ab.appNeither);
+        h += '</div>';
+        if (Array.isArray(s.dupSamples) && s.dupSamples.length > 0) {
+            h += '<details style="margin-top:8px;"><summary style="cursor:pointer;color:#aaa;font-size:11px;">Ver primeros ' + s.dupSamples.length + ' duplicados</summary>';
+            h += '<div style="font-family:monospace;font-size:10.5px;color:#bbb;margin-top:4px;line-height:1.5;">';
+            for (const d of s.dupSamples) {
+                h += escapeHtml(d.username) + ' — app FROM: ' + (d.appFrom ? '✓' : '—') + ' · app TO: ' + (d.appTo ? '✓' : '—') + '<br>';
+            }
+            h += '</div></details>';
+        }
+    }
+    h += '</div>';
+
+    h += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:6px;padding:8px;">';
+    h += '<div style="color:#00d4ff;font-weight:700;font-size:12px;">📊 Resultado después del merge</div>';
+    h += '<div style="color:#fff;font-size:14px;margin-top:3px;font-weight:700;">' + fmt(s.afterMerge.uniqueUsers) + ' usuarios únicos · ' + fmt(s.afterMerge.uniqueLookup) + ' pre-asignados únicos</div>';
+    h += '<div style="color:#aaa;font-size:11px;margin-top:3px;">Todo va a quedar bajo el label "<strong style="color:#fff;">' + escapeHtml(s.to) + '</strong>".</div>';
+    h += '</div>';
+
+    h += '</div>';
+    return h;
+}
+
+async function runMergeTeamsExecute() {
+    const execBtn = document.getElementById('mergeExecuteBtn');
+    const from = execBtn && execBtn.dataset.from;
+    const to = execBtn && execBtn.dataset.to;
+    const result = document.getElementById('mergeTeamsResult');
+    if (!from || !to) { showToast('Hacé preview primero', 'error'); return; }
+    if (!confirm(`¿Confirmás el merge?\n\n"${from}" → "${to}"\n\nLos duplicados se eliminan del lado FROM.`)) return;
+
+    if (execBtn) { execBtn.disabled = true; execBtn.textContent = '⏳ Ejecutando…'; }
+    try {
+        const r = await authFetch('/api/admin/teams/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from, to, mode: 'execute' })
+        });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            result.innerHTML += '<div style="color:#ff8080;margin-top:10px;">❌ ' + (j.error || ('Error ' + r.status)) + '</div>';
+            if (execBtn) { execBtn.disabled = false; execBtn.textContent = '✅ Ejecutar merge'; }
+            return;
+        }
+        const e = j.executed || {};
+        const fmt = n => Number(n || 0).toLocaleString('es-AR');
+        result.innerHTML += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:6px;padding:10px;margin-top:10px;color:#66ff66;font-size:12px;">';
+        result.innerHTML += '✅ <strong>Merge completado</strong><br>';
+        result.innerHTML += '  • ' + fmt(e.userDocsRenamedFromTo) + ' usuarios renombrados de FROM → TO<br>';
+        result.innerHTML += '  • ' + fmt(e.userDocsDeletedDup) + ' duplicados eliminados del lado FROM<br>';
+        result.innerHTML += '  • ' + fmt(e.lookupDocsRenamedFromTo) + ' pre-asignados renombrados<br>';
+        result.innerHTML += '  • ' + fmt(e.lookupDocsDeletedDup) + ' pre-asignados duplicados eliminados';
+        result.innerHTML += '</div>';
+        showToast('✅ Merge completado', 'success');
+        // Refrescar la sección de equipos
+        setTimeout(() => { try { loadTeams(); } catch (_) {} }, 800);
+    } catch (e) {
+        result.innerHTML += '<div style="color:#ff8080;margin-top:10px;">❌ ' + (e.message || e) + '</div>';
+        if (execBtn) { execBtn.disabled = false; execBtn.textContent = '✅ Ejecutar merge'; }
+    }
 }
 
 function _renderTeamCard(t, isExpanded) {
