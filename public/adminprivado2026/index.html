@@ -81,6 +81,10 @@
                     <span>🎯</span>
                     <span><strong>Recontactación</strong> <span style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;letter-spacing:0.5px;">NUEVO</span></span>
                 </a>
+                <a href="#" class="nav-item" data-section="appUsers" style="background:rgba(0,212,255,0.04);border-left:3px solid #00d4ff;">
+                    <span>📱</span>
+                    <span><strong>Usuarios con app</strong></span>
+                </a>
 
                 <div class="nav-section-title">💸 Reembolsos</div>
                 <a href="#" class="nav-item" data-section="reportDaily">
@@ -772,6 +776,25 @@
                     </p>
                 </div>
                 <div id="recontactContent" style="min-height:200px;"></div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: USUARIOS CON APP — conteo real toda la base
+                 ============================================ -->
+            <section id="appUsersSection" class="section">
+                <div class="panel-header">
+                    <h2>📱 Usuarios con app</h2>
+                    <button class="refresh-btn" onclick="loadAppUsers()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">📱 Cuántas personas tienen la app instalada en TODA la base</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Conteo real cruzado contra los <strong>tokens FCM standalone</strong> (PWA realmente instalada como app, no browser). Mismo criterio que usa el reporte de <strong>Bono $5.000 app</strong> y <strong>Recontactación</strong>, así los números cuadran. Incluye breakdown por equipo y plataforma (Android / iOS).
+                    </p>
+                </div>
+                <div id="appUsersContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
             </section>
 
             <!-- ============================================

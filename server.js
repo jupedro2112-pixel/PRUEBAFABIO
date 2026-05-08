@@ -9013,6 +9013,127 @@ app.delete('/api/admin/recontact/history', authMiddleware, adminMiddleware, asyn
   }
 });
 
+// ============================================
+// USUARIOS CON APP — conteo real sobre toda la base
+// ============================================
+// Cuenta exacta de cuántos usuarios tienen la PWA instalada (token con
+// context=standalone) y cuántos también tienen notifs activas. Usa el
+// MISMO criterio que el reporte de Bono $5.000 app y Recontactación,
+// para que los números cuadren entre secciones.
+app.get('/api/admin/app-users/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const HAS_APP_QUERY = {
+      $or: [
+        { fcmTokenContext: 'standalone' },
+        { 'fcmTokens.context': 'standalone' }
+      ]
+    };
+    const HAS_NOTIFS_QUERY = {
+      $or: [
+        { notifPermission: 'granted' },
+        { 'fcmTokens.notifPermission': 'granted' }
+      ]
+    };
+    const HAS_BOTH_QUERY = {
+      $and: [HAS_APP_QUERY, HAS_NOTIFS_QUERY]
+    };
+    const HAS_APP_NO_NOTIFS_QUERY = {
+      $and: [HAS_APP_QUERY, { $nor: [HAS_NOTIFS_QUERY] }]
+    };
+
+    const [totalUsers, withApp, withNotifs, withBoth, withAppNoNotifs] = await Promise.all([
+      User.countDocuments({}),
+      User.countDocuments(HAS_APP_QUERY),
+      User.countDocuments(HAS_NOTIFS_QUERY),
+      User.countDocuments(HAS_BOTH_QUERY),
+      User.countDocuments(HAS_APP_NO_NOTIFS_QUERY)
+    ]);
+
+    // Breakdown por equipo (lineTeamName) — sólo de los que tienen app.
+    const byTeam = await User.aggregate([
+      { $match: HAS_APP_QUERY },
+      {
+        $group: {
+          _id: '$lineTeamName',
+          withApp: { $sum: 1 },
+          withBoth: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $eq: ['$notifPermission', 'granted'] },
+                    {
+                      $gt: [
+                        {
+                          $size: {
+                            $filter: {
+                              input: { $ifNull: ['$fcmTokens', []] },
+                              as: 't',
+                              cond: { $eq: ['$$t.notifPermission', 'granted'] }
+                            }
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  ]
+                },
+                1, 0
+              ]
+            }
+          }
+        }
+      },
+      { $sort: { withApp: -1 } }
+    ]);
+
+    // Misma agregación sobre TODOS los users (con o sin app) por equipo,
+    // para tener el "total registrados por equipo" como denominador.
+    const totalByTeam = await User.aggregate([
+      { $group: { _id: '$lineTeamName', total: { $sum: 1 } } }
+    ]);
+    const totalByTeamMap = new Map(totalByTeam.map(t => [t._id || '', t.total]));
+
+    const teamRows = byTeam.map(t => ({
+      team: t._id || '(sin equipo)',
+      withApp: t.withApp,
+      withBoth: t.withBoth,
+      withAppNoNotifs: t.withApp - t.withBoth,
+      totalRegistered: totalByTeamMap.get(t._id || '') || 0,
+      pctOfTeam: (totalByTeamMap.get(t._id || '') || 0) > 0
+        ? Math.round((t.withApp / (totalByTeamMap.get(t._id || '') || 1)) * 1000) / 10
+        : 0
+    }));
+
+    // Plataformas (Android / iOS / desktop) de los tokens standalone.
+    const platformAgg = await User.aggregate([
+      { $match: HAS_APP_QUERY },
+      { $unwind: '$fcmTokens' },
+      { $match: { 'fcmTokens.context': 'standalone' } },
+      { $group: { _id: '$fcmTokens.platform', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    const platforms = platformAgg.map(p => ({ platform: p._id || 'desconocido', count: p.count }));
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      totals: {
+        totalUsers,
+        withApp,
+        withNotifs,
+        withBoth,
+        withAppNoNotifs,
+        sinApp: totalUsers - withApp
+      },
+      byTeam: teamRows,
+      platforms
+    });
+  } catch (err) {
+    logger.error(`[app-users/stats] error: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // CSV con todos los items enriquecidos. Se manda en POST porque no podemos
 // guardar el archivo en el server — el admin manda el xlsx de nuevo y
 // recibimos el CSV directo. Así evitamos persistir state intermedio.

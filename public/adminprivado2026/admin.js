@@ -170,6 +170,7 @@ function showSection(sectionKey) {
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
         recontact: 'recontactSection',
+        appUsers: 'appUsersSection',
         encuesta: 'encuestaSection',
         backupPhones: 'backupPhonesSection',
         winback: 'winbackSection',
@@ -219,6 +220,8 @@ function showSection(sectionKey) {
         loadWelcomeBonusReport();
     } else if (sectionKey === 'recontact') {
         loadRecontactSection();
+    } else if (sectionKey === 'appUsers') {
+        loadAppUsers();
     } else if (sectionKey === 'encuesta') {
         loadEncuesta();
     } else if (sectionKey === 'backupPhones') {
@@ -3248,6 +3251,103 @@ function recontactDownloadXlsxByTeam() {
     a.click();
     setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
     showToast('✅ XLSX descargado · ' + teams.length + ' hoja' + (teams.length === 1 ? '' : 's') + ' (' + items.length + ' filas)', 'success');
+}
+
+// ============================================
+// 📱 USUARIOS CON APP — conteo real sobre toda la base
+// ============================================
+async function loadAppUsers() {
+    const c = document.getElementById('appUsersContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Consultando base…</div>';
+    try {
+        const r = await authFetch('/api/admin/app-users/stats');
+        if (!r.ok) {
+            const j = await r.json().catch(() => ({}));
+            c.innerHTML = '<div style="padding:20px;color:#ff8080;">❌ ' + (j.error || ('Error ' + r.status)) + '</div>';
+            return;
+        }
+        const data = await r.json();
+        c.innerHTML = _renderAppUsersDashboard(data);
+    } catch (e) {
+        c.innerHTML = '<div style="padding:20px;color:#ff8080;">❌ ' + (e.message || e) + '</div>';
+    }
+}
+
+function _renderAppUsersDashboard(data) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const t = data.totals || {};
+    const total = t.totalUsers || 0;
+    const pct = (n) => total > 0 ? ((n / total) * 100).toFixed(1) + '%' : '0%';
+    let html = '';
+
+    // KPIs grandes
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px;">';
+    html += _kpiCardLite('Total registrados', fmt(total), '#fff', 'usuarios en la base');
+    html += _kpiCardLite('Con app instalada', fmt(t.withApp), '#7cffb3', pct(t.withApp) + ' de la base');
+    html += _kpiCardLite('Con notifs activas', fmt(t.withNotifs), '#25d366', pct(t.withNotifs) + ' de la base');
+    html += _kpiCardLite('Push directo (app+notifs)', fmt(t.withBoth), '#00d4ff', pct(t.withBoth) + ' de la base');
+    html += _kpiCardLite('Con app sin notifs', fmt(t.withAppNoNotifs), '#ffaa44', 'reactivar');
+    html += _kpiCardLite('Sin app', fmt(t.sinApp), '#888', pct(t.sinApp) + ' (WhatsApp)');
+    html += '</div>';
+
+    html += '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Generado: ' + new Date(data.generatedAt).toLocaleString('es-AR') + '. Criterio: token con <code style="color:#00d4ff;">context=standalone</code> (PWA real instalada).</div>';
+
+    // Plataformas
+    const plats = data.platforms || [];
+    if (plats.length > 0) {
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:12px;margin-bottom:14px;">';
+        html += '  <div style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Plataformas (tokens standalone)</div>';
+        html += '  <div style="display:flex;gap:10px;flex-wrap:wrap;">';
+        for (const p of plats) {
+            html += '<div style="background:rgba(255,255,255,0.04);padding:8px 14px;border-radius:8px;">';
+            html += '<div style="color:#fff;font-weight:700;">' + escapeHtml(p.platform) + '</div>';
+            html += '<div style="color:#7cffb3;font-size:18px;font-weight:900;">' + fmt(p.count) + '</div>';
+            html += '</div>';
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+
+    // Tabla por equipo
+    const teams = data.byTeam || [];
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:10px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    html += '    <span style="color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Por equipo · ' + teams.length + ' equipos con users con app</span>';
+    html += '  </div>';
+    html += '  <div style="overflow-x:auto;max-height:60vh;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:680px;">';
+    html += '<thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+    html += '  <th style="text-align:left;padding:8px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">Equipo</th>';
+    html += '  <th style="text-align:right;padding:8px 10px;color:#7cffb3;border-bottom:1px solid rgba(255,255,255,0.10);">Con app</th>';
+    html += '  <th style="text-align:right;padding:8px 10px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);">Push directo</th>';
+    html += '  <th style="text-align:right;padding:8px 10px;color:#ffaa44;border-bottom:1px solid rgba(255,255,255,0.10);">App sin notifs</th>';
+    html += '  <th style="text-align:right;padding:8px 10px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);">Total registrados</th>';
+    html += '  <th style="text-align:right;padding:8px 10px;color:#ddd;border-bottom:1px solid rgba(255,255,255,0.10);">% del equipo con app</th>';
+    html += '</tr></thead><tbody>';
+    for (const t of teams) {
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+        html += '  <td style="padding:7px 10px;color:#fff;font-weight:600;">' + escapeHtml(t.team) + '</td>';
+        html += '  <td style="padding:7px 10px;text-align:right;color:#7cffb3;font-weight:700;">' + fmt(t.withApp) + '</td>';
+        html += '  <td style="padding:7px 10px;text-align:right;color:#00d4ff;">' + fmt(t.withBoth) + '</td>';
+        html += '  <td style="padding:7px 10px;text-align:right;color:#ffaa44;">' + fmt(t.withAppNoNotifs) + '</td>';
+        html += '  <td style="padding:7px 10px;text-align:right;color:#bbb;">' + fmt(t.totalRegistered) + '</td>';
+        html += '  <td style="padding:7px 10px;text-align:right;color:#fff;font-weight:600;">' + (t.pctOfTeam || 0) + '%</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    html += '  </div>';
+    html += '</div>';
+
+    return html;
+}
+
+function _kpiCardLite(label, value, color, sub) {
+    return '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;">' +
+        '<div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">' + escapeHtml(label) + '</div>' +
+        '<div style="color:' + color + ';font-size:24px;font-weight:900;line-height:1;">' + escapeHtml(value) + '</div>' +
+        (sub ? '<div style="color:#aaa;font-size:10.5px;margin-top:4px;">' + escapeHtml(sub) + '</div>' : '') +
+    '</div>';
 }
 
 function _recontactDescribeFilters() {
