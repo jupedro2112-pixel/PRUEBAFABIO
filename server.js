@@ -860,6 +860,12 @@ app.use('/adminprivado2026/', adminHostCheck, (req, res) => {
   res.status(404).send('Not found');
 });
 
+// Alias amigable: /recontactacion → /adminprivado2026/?only=recontact.
+// Pasa por el mismo adminHostCheck (sólo se sirve desde el dominio admin).
+app.get(['/recontactacion', '/recontactacion/'], adminHostCheck, (req, res) => {
+  res.redirect(302, '/adminprivado2026/?only=recontact');
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',
   index: false,
