@@ -2902,7 +2902,104 @@ function recontactReset() {
     loadRecontactSection();
 }
 
-window._recontactFilters = window._recontactFilters || { tier: 'all', bucket: 'all', appStatus: 'all' };
+window._recontactFilters = window._recontactFilters || { tier: 'all', bucket: 'all', appStatus: 'all', line: 'all' };
+
+function _recontactBuildLineOptions(items) {
+    const map = new Map();
+    let noLine = 0;
+    for (const it of items) {
+        if (!it.team && !it.linePhone) { noLine++; continue; }
+        const key = (it.team || '') + '||' + (it.linePhone || '');
+        const cur = map.get(key);
+        if (cur) cur.count++;
+        else map.set(key, { team: it.team || '', linePhone: it.linePhone || '', count: 1 });
+    }
+    const opts = [];
+    const sorted = Array.from(map.entries()).sort((a, b) => b[1].count - a[1].count);
+    for (const [key, v] of sorted) {
+        const lbl = (v.team || '(sin equipo)') + (v.linePhone ? ' · ' + v.linePhone : '') + ' (' + v.count + ')';
+        opts.push({ key, label: lbl });
+    }
+    if (noLine > 0) opts.push({ key: 'no-line', label: '⚠ Sin línea asignada (' + noLine + ')' });
+    return opts;
+}
+
+function _bucketLabelForExport(b) {
+    return ({ calientes: '0-10 dias', enRiesgo: '10-20 dias', perdidos: '20-30 dias', inactivos: '+30 dias' })[b] || (b || '');
+}
+
+function _csvEscape(v) {
+    const s = (v == null ? '' : String(v));
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function _downloadCsvLocal(filename, lines) {
+    const csv = '﻿' + lines.join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+}
+
+function _recontactCurrentSuffix() {
+    const f = window._recontactFilters || {};
+    const parts = [];
+    if (f.bucket && f.bucket !== 'all') parts.push(f.bucket);
+    if (f.tier && f.tier !== 'all') parts.push(f.tier);
+    if (f.appStatus && f.appStatus !== 'all') parts.push(f.appStatus);
+    if (f.line && f.line !== 'all') parts.push('linea');
+    return parts.length ? '-' + parts.join('-') : '';
+}
+
+// Lista SIMPLE: name + phone (cliente). Respeta los filtros activos.
+function recontactDownloadSimple() {
+    const items = _filterRecontactItems(_recontactState.items || [], window._recontactFilters || {});
+    if (!items.length) { showToast('Sin items con los filtros actuales', 'info'); return; }
+    const lines = ['name,phone'];
+    let withPhone = 0;
+    for (const it of items) {
+        if (!it.phone) continue;
+        lines.push(_csvEscape(it.username) + ',' + _csvEscape(it.phone));
+        withPhone++;
+    }
+    if (withPhone === 0) { showToast('Ninguno con teléfono en este filtro', 'info'); return; }
+    _downloadCsvLocal('recontactacion-simple' + _recontactCurrentSuffix() + '-' + new Date().toISOString().slice(0,10) + '.csv', lines);
+    showToast('✅ ' + withPhone + ' contactos exportados (' + (items.length - withPhone) + ' sin teléfono)', 'success');
+}
+
+// Lista DETALLADA: name, phone, mensaje, rango, carga, descarga, diferencia.
+function recontactDownloadDetailed() {
+    const items = _filterRecontactItems(_recontactState.items || [], window._recontactFilters || {});
+    if (!items.length) { showToast('Sin items con los filtros actuales', 'info'); return; }
+    const lines = ['name,phone,mensaje,rango,carga,descarga,diferencia'];
+    let withPhone = 0;
+    for (const it of items) {
+        if (!it.phone) continue;
+        lines.push([
+            _csvEscape(it.username),
+            _csvEscape(it.phone),
+            _csvEscape(it.suggestedMessage || ''),
+            _csvEscape(_bucketLabelForExport(it.bucket)),
+            _csvEscape(Number(it.fileDeposits || 0)),
+            _csvEscape(Number(it.fileWithdraws || 0)),
+            _csvEscape(Number(it.fileNet || 0))
+        ].join(','));
+        withPhone++;
+    }
+    if (withPhone === 0) { showToast('Ninguno con teléfono en este filtro', 'info'); return; }
+    _downloadCsvLocal('recontactacion-detallado' + _recontactCurrentSuffix() + '-' + new Date().toISOString().slice(0,10) + '.csv', lines);
+    showToast('✅ ' + withPhone + ' contactos exportados (' + (items.length - withPhone) + ' sin teléfono)', 'success');
+}
+
+function _recontactSetLineFilter(val) {
+    if (!window._recontactFilters) window._recontactFilters = {};
+    window._recontactFilters.line = val || 'all';
+    loadRecontactSection();
+}
 
 function _renderRecontactDashboard(summary, items) {
     const fmt = n => Number(n || 0).toLocaleString('es-AR');
@@ -3020,6 +3117,25 @@ function _renderRecontactDashboard(summary, items) {
     }
     html += '</div>';
 
+    // === Filtro por línea + descargas filtradas ===
+    const lineOpts = _recontactBuildLineOptions(items);
+    const filteredCount = _filterRecontactItems(items, f).length;
+    html += '<div style="background:linear-gradient(135deg,rgba(37,211,102,0.06),rgba(0,212,255,0.04));border:1px solid rgba(37,211,102,0.30);border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
+    html += '  <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;">';
+    html += '    <span style="color:#25d366;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;">📞 Filtrar por línea + descargar:</span>';
+    html += '    <select id="recontactLineSelect" onchange="_recontactSetLineFilter(this.value)" style="padding:6px 8px;font-size:12px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.18);color:#fff;border-radius:6px;min-width:200px;">';
+    html += '      <option value="all"' + (f.line === 'all' ? ' selected' : '') + '>TODAS las líneas (' + items.length + ')</option>';
+    for (const o of lineOpts) {
+        html += '      <option value="' + escapeHtml(o.key) + '"' + (f.line === o.key ? ' selected' : '') + '>' + escapeHtml(o.label) + '</option>';
+    }
+    html += '    </select>';
+    html += '    <span style="color:#bbb;font-size:11.5px;"><strong style="color:#fff;">' + filteredCount + '</strong> con filtros actuales</span>';
+    html += '    <button type="button" onclick="recontactDownloadSimple()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name + phone (lista lista para WhatsApp)">📞 Lista simple</button>';
+    html += '    <button type="button" onclick="recontactDownloadDetailed()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name, phone, mensaje sugerido, rango (días), carga, descarga, diferencia">📋 Lista detallada</button>';
+    html += '  </div>';
+    html += '  <div style="color:#888;font-size:10.5px;margin-top:6px;line-height:1.5;">Las descargas respetan TODOS los filtros activos (panorama, tier, app/notifs, línea). Los que no tienen teléfono se excluyen automáticamente.</div>';
+    html += '</div>';
+
     // ====== PANORAMA: matriz bucket × estado de app ======
     // Te dice cuántos hay en cada combinación + cuánto monto del archivo, y
     // cada celda es clickable para filtrar la tabla de abajo.
@@ -3109,6 +3225,14 @@ function _filterRecontactItems(items, filters) {
         if (filters.appStatus === 'with-notifs' && !it.hasNotifs) return false;
         if (filters.appStatus === 'without-app' && it.hasApp) return false;
         if (filters.appStatus === 'app-no-notifs' && !(it.hasApp && !it.hasNotifs)) return false;
+        if (filters.line && filters.line !== 'all') {
+            if (filters.line === 'no-line') {
+                if (it.team || it.linePhone) return false;
+            } else {
+                const key = (it.team || '') + '||' + (it.linePhone || '');
+                if (key !== filters.line) return false;
+            }
+        }
         return true;
     });
 }
