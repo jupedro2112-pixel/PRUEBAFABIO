@@ -8,6 +8,38 @@
     <title>Panel Admin · Sala de Juegos</title>
     <link rel="stylesheet" href="/adminprivado2026/admin.css">
     <link rel="manifest" href="/adminprivado2026/manifest.json">
+    <style>
+        /* Modo "vista reducida" — activo cuando la URL trae ?only=<seccion>.
+           Oculta el sidebar y el área queda full-width, así el link se puede
+           compartir con otros admins para que vean SÓLO esa sección. */
+        html.admin-only-mode .sidebar { display: none !important; }
+        html.admin-only-mode .main-content,
+        html.admin-only-mode .content,
+        html.admin-only-mode .app-main { margin-left: 0 !important; width: 100% !important; }
+        html.admin-only-mode .app { grid-template-columns: 1fr !important; }
+        html.admin-only-mode .only-mode-banner {
+            display: flex; align-items: center; justify-content: space-between;
+            background: linear-gradient(135deg, rgba(0,212,255,0.10), rgba(0,128,255,0.06));
+            border-bottom: 1px solid rgba(0,212,255,0.30);
+            padding: 8px 14px; color: #00d4ff;
+            font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+        }
+        html:not(.admin-only-mode) .only-mode-banner { display: none !important; }
+    </style>
+    <script>
+        // Detectar ?only=<sectionKey> y aplicar el modo vista reducida ANTES
+        // de que se pinte la página, para evitar el flash del sidebar.
+        (function() {
+            try {
+                const params = new URLSearchParams(location.search);
+                const only = params.get('only');
+                if (only) {
+                    document.documentElement.classList.add('admin-only-mode');
+                    document.documentElement.dataset.onlySection = only;
+                }
+            } catch (_) {}
+        })();
+    </script>
 </head>
 <body>
     <!-- Login Screen -->

@@ -149,6 +149,14 @@ function showApp() {
     document.getElementById('app').classList.remove('hidden');
     const nameEl = document.getElementById('adminName');
     if (nameEl) nameEl.textContent = (currentAdmin && currentAdmin.username) || 'Admin';
+
+    // Modo "vista reducida" (?only=<sectionKey>): saltar a esa sección y nada más.
+    const onlySection = document.documentElement.dataset.onlySection;
+    if (onlySection) {
+        try { showSection(onlySection); } catch (_) {}
+        return;
+    }
+
     // Cargar la sección por defecto
     loadUserLines();
 }
@@ -2858,10 +2866,63 @@ async function _recontactHydrateCallbellTags(items) {
     }
 }
 
-// Toggle de un tag desde la tabla. La función actualiza el server, el state
-// local en memoria, y refresca SÓLO la fila para no recargar todo.
-async function _recontactToggleTag(username, action, currentSet, bucket, tier) {
-    const newSet = !currentSet;
+// Pending changes — tildes que el usuario hizo pero todavía no están
+// confirmadas en el server (porque se cayó la red o porque manualmente
+// quiere mandar todos juntos). El botón "💾 Guardar cambios" los flushea.
+window._recontactPendingTags = window._recontactPendingTags || {};
+
+// Aplica el cambio LOCAL al item (state en memoria) y marca como pending.
+// El auto-save al server se dispara en background; si falla, el item queda
+// en pending y el botón "Guardar cambios" muestra el contador para reintentar.
+function _recontactApplyTagChangeLocal(username, action, newSet) {
+    const it = (_recontactState.items || []).find(x => x.username === username);
+    if (!it) return;
+    if (action === 'etiqueta') it.cbEtiqueta = newSet;
+    else if (action === 'wa') it.cbWa = newSet;
+    else if (action === 'instalo') it.cbResp = newSet ? 'instalo' : null;
+    else if (action === 'no_contesto') it.cbResp = newSet ? 'no_contesto' : null;
+    if (!window._recontactPendingTags[username]) window._recontactPendingTags[username] = {};
+    window._recontactPendingTags[username][action] = newSet;
+    _updateRecontactSaveButton();
+}
+
+// Saca un tag del pending list (luego de save exitoso).
+function _recontactClearPending(username, action) {
+    if (window._recontactPendingTags[username]) {
+        delete window._recontactPendingTags[username][action];
+        if (Object.keys(window._recontactPendingTags[username]).length === 0) {
+            delete window._recontactPendingTags[username];
+        }
+    }
+    _updateRecontactSaveButton();
+}
+
+// Cuenta los cambios pendientes y refresca el badge del botón "Guardar".
+function _updateRecontactSaveButton() {
+    const btn = document.getElementById('recontactSaveAllBtn');
+    if (!btn) return;
+    let count = 0;
+    for (const u in window._recontactPendingTags) {
+        count += Object.keys(window._recontactPendingTags[u]).length;
+    }
+    if (count === 0) {
+        btn.disabled = true;
+        btn.style.opacity = '0.55';
+        btn.textContent = '💾 Cambios guardados';
+        btn.style.background = 'rgba(102,255,102,0.10)';
+        btn.style.color = '#66ff66';
+    } else {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        btn.textContent = '💾 Guardar cambios (' + count + ')';
+        btn.style.background = 'linear-gradient(135deg,#ff5050,#aa1a1a)';
+        btn.style.color = '#fff';
+    }
+}
+
+// Envía un cambio individual al server. Si falla, lo deja en pending para
+// que el botón "Guardar cambios" lo reintente.
+async function _recontactPushTag(username, action, newSet, bucket, tier) {
     try {
         const r = await authFetch('/api/admin/callbell/tag', {
             method: 'POST',
@@ -2875,29 +2936,89 @@ async function _recontactToggleTag(username, action, currentSet, bucket, tier) {
         });
         if (!r.ok) {
             const j = await r.json().catch(() => ({}));
-            showToast('❌ ' + (j.error || ('Error ' + r.status)), 'error');
-            return;
+            console.warn('[callbell] push fail:', j.error || r.status, username, action);
+            return false;
         }
-        // Actualizar item local
+        _recontactClearPending(username, action);
+        return true;
+    } catch (e) {
+        console.warn('[callbell] push exception:', e);
+        return false;
+    }
+}
+
+// Botón "💾 Guardar cambios": flushea TODOS los pending al server en paralelo.
+// Los que fallan quedan en pending para reintentar.
+async function recontactSaveAllTags() {
+    const pending = Object.entries(window._recontactPendingTags || {});
+    if (pending.length === 0) {
+        showToast('No hay cambios por guardar', 'info');
+        return;
+    }
+    const btn = document.getElementById('recontactSaveAllBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando…'; }
+
+    const tasks = [];
+    for (const [username, actions] of pending) {
+        const it = (_recontactState.items || []).find(x => x.username === username);
+        const bucket = it ? (it.bucket || '') : '';
+        const tier = it ? (it.tier || '') : '';
+        for (const action in actions) {
+            const newSet = actions[action];
+            tasks.push(_recontactPushTag(username, action, newSet, bucket, tier));
+        }
+    }
+    const results = await Promise.all(tasks);
+    const okCount = results.filter(Boolean).length;
+    const failCount = results.length - okCount;
+    if (failCount === 0) {
+        showToast('✅ ' + okCount + ' cambios guardados', 'success');
+    } else {
+        showToast('⚠ ' + okCount + ' guardados · ' + failCount + ' con error (probá de nuevo)', 'error');
+    }
+    _updateRecontactSaveButton();
+}
+
+// Wire del event listener delegado para los checkboxes Callbell. Se llama
+// desde _wireRecontactFilters() después de cada re-render de la tabla.
+function _wireRecontactCallbellCheckboxes() {
+    const c = document.getElementById('recontactContent');
+    if (!c) return;
+    if (c.dataset.cbWired === '1') return;
+    c.dataset.cbWired = '1';
+    c.addEventListener('change', (e) => {
+        const t = e.target;
+        if (!t || !t.classList || !t.classList.contains('cb-callbell-toggle')) return;
+        const username = t.dataset.user || '';
+        const action = t.dataset.action || '';
+        const newSet = !!t.checked;
+        if (!username || !action) return;
+        // 1) Aplicar local + marcar pending + actualizar botón.
+        _recontactApplyTagChangeLocal(username, action, newSet);
+        // 2) Si tildaste "instalo" desmarcar "no_contesto" en local (mutuamente excluyentes).
         const it = (_recontactState.items || []).find(x => x.username === username);
         if (it) {
-            if (action === 'etiqueta') it.cbEtiqueta = newSet;
-            else if (action === 'wa') it.cbWa = newSet;
-            else if (action === 'instalo') {
-                it.cbResp = newSet ? 'instalo' : null;
-            } else if (action === 'no_contesto') {
-                it.cbResp = newSet ? 'no_contesto' : null;
+            if (action === 'instalo' && newSet && it.cbResp === 'no_contesto') {
+                _recontactApplyTagChangeLocal(username, 'no_contesto', false);
+            } else if (action === 'no_contesto' && newSet && it.cbResp === 'instalo') {
+                _recontactApplyTagChangeLocal(username, 'instalo', false);
             }
         }
-        // Re-render del dashboard preservando filtros
-        const c = document.getElementById('recontactContent');
-        if (c) {
-            c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+        // 3) Disparar auto-save en background (no bloquea UI).
+        const bucket = it ? (it.bucket || '') : '';
+        const tier = it ? (it.tier || '') : '';
+        _recontactPushTag(username, action, newSet, bucket, tier).then(ok => {
+            // Si fue exitoso quedó out of pending; si no, sigue pending y el
+            // user puede usar el botón "Guardar cambios" para reintentar.
+            if (ok) _updateRecontactSaveButton();
+        });
+        // 4) Re-render para reflejar mutual exclusion visualmente.
+        const cont = document.getElementById('recontactContent');
+        if (cont) {
+            cont.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
             _wireRecontactFilters();
         }
-    } catch (e) {
-        showToast('Error: ' + (e.message || e), 'error');
-    }
+    });
 }
 
 function _renderRecontactUploader() {
@@ -3601,6 +3722,7 @@ function _renderRecontactDashboard(summary, items) {
     html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">';
     html += '  <div style="color:#00d4ff;font-weight:800;font-size:15px;">📊 Análisis de ' + fmt(summary.totalAnalyzed) + ' usuarios</div>';
     html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '    <button type="button" id="recontactSaveAllBtn" onclick="recontactSaveAllTags()" disabled style="padding:9px 16px;font-size:12.5px;font-weight:700;background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);color:#66ff66;border-radius:7px;cursor:pointer;opacity:0.55;" title="Reintentar guardar todos los tildes pendientes (se autoguardan en cada click; este botón es para reintentar si algo falló)">💾 Cambios guardados</button>';
     html += '    <button type="button" onclick="recontactDownloadXlsx()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:7px;cursor:pointer;" title="XLSX con varias hojas: una por bucket, una por estado de app, resumen, y todos por prioridad">📊 XLSX por hojas</button>';
     html += '    <button type="button" onclick="recontactDownloadCsv()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:7px;cursor:pointer;">📥 CSV simple</button>';
     html += '    <button type="button" onclick="recontactReset()" style="padding:9px 14px;font-size:12.5px;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:7px;cursor:pointer;">🔄 Subir otra lista</button>';
@@ -3795,15 +3917,15 @@ function _renderRecontactDashboard(summary, items) {
         if (it.linePhone) teamLineParts.push('<span style="color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.linePhone) + '</span>');
         html += '  <td style="padding:5px 10px;font-size:10.5px;">' + (teamLineParts.length ? teamLineParts.join('<br>') : '<span style="color:#666;">sin línea</span>') + '</td>';
         html += '  <td style="padding:5px 10px;color:#bbb;font-family:monospace;font-size:10.5px;">' + escapeHtml(it.phone || '—') + '</td>';
-        // 4 checkboxes Callbell — etiqueta, wa, instalo, no_contesto
-        const userArg = JSON.stringify(it.username || '');
-        const buckArg = JSON.stringify(it.bucket || '');
-        const tierArg = JSON.stringify(it.tier || '');
+        // 4 checkboxes Callbell — etiqueta, wa, instalo, no_contesto.
+        // Usamos data-* + delegación para evitar bugs de escape en HTML inline.
+        const userAttr = String(it.username || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         const cbBox = (action, isOn, color) => {
             const onCheck = !!isOn;
             return '<td style="padding:4px 6px;text-align:center;">'
-                + '<input type="checkbox" ' + (onCheck ? 'checked' : '')
-                + ' onchange="_recontactToggleTag(' + userArg + ',\'' + action + '\',' + (onCheck ? 'true' : 'false') + ',' + buckArg + ',' + tierArg + ')"'
+                + '<input type="checkbox" class="cb-callbell-toggle"'
+                + ' data-user="' + userAttr + '" data-action="' + action + '"'
+                + (onCheck ? ' checked' : '')
                 + ' style="cursor:pointer;width:16px;height:16px;accent-color:' + color + ';">'
                 + '</td>';
         };
@@ -3860,7 +3982,12 @@ function _recontactFilterSet(key, value) {
 }
 
 function _wireRecontactFilters() {
-    // No hay handlers extras por ahora — los onclicks están inline.
+    // Cada vez que se re-renderiza el dashboard, re-conectar los listeners de
+    // los checkboxes Callbell. La función chequea si ya estaban conectados.
+    const c = document.getElementById('recontactContent');
+    if (c) c.dataset.cbWired = ''; // forzar re-wire después de innerHTML
+    _wireRecontactCallbellCheckboxes();
+    _updateRecontactSaveButton();
 }
 
 // Tarjeta de historial — se muestra en el dashboard (tras hidratar de cache)
