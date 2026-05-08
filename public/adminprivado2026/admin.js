@@ -2955,44 +2955,171 @@ function _recontactCurrentSuffix() {
     return parts.length ? '-' + parts.join('-') : '';
 }
 
-// Lista SIMPLE: name + phone (cliente). Respeta los filtros activos.
+// Helper: el "phone" para WhatsApp es preferentemente el del cliente (it.phone),
+// pero si el cliente no está registrado solo tenemos el de la línea asignada
+// del equipo (it.linePhone). Si tampoco hay nada, queda vacío.
+function _recontactBestPhone(it) {
+    return it.phone || it.linePhone || '';
+}
+
+// Lista SIMPLE: name + phone + linea + equipo. Respeta los filtros activos.
 function recontactDownloadSimple() {
     const items = _filterRecontactItems(_recontactState.items || [], window._recontactFilters || {});
     if (!items.length) { showToast('Sin items con los filtros actuales', 'info'); return; }
-    const lines = ['name,phone'];
-    let withPhone = 0;
+    const lines = ['name,phone,linea,equipo'];
+    let exported = 0, sinNada = 0;
     for (const it of items) {
-        if (!it.phone) continue;
-        lines.push(_csvEscape(it.username) + ',' + _csvEscape(it.phone));
-        withPhone++;
+        const phone = _recontactBestPhone(it);
+        const linea = it.linePhone || '';
+        const equipo = it.team || '';
+        if (!phone && !linea && !equipo) { sinNada++; }
+        lines.push([
+            _csvEscape(it.username),
+            _csvEscape(phone),
+            _csvEscape(linea),
+            _csvEscape(equipo)
+        ].join(','));
+        exported++;
     }
-    if (withPhone === 0) { showToast('Ninguno con teléfono en este filtro', 'info'); return; }
     _downloadCsvLocal('recontactacion-simple' + _recontactCurrentSuffix() + '-' + new Date().toISOString().slice(0,10) + '.csv', lines);
-    showToast('✅ ' + withPhone + ' contactos exportados (' + (items.length - withPhone) + ' sin teléfono)', 'success');
+    const noteParts = ['✅ ' + exported + ' filas exportadas'];
+    if (sinNada > 0) noteParts.push('(' + sinNada + ' sin teléfono ni línea)');
+    showToast(noteParts.join(' '), 'success');
 }
 
-// Lista DETALLADA: name, phone, mensaje, rango, carga, descarga, diferencia.
+// Lista DETALLADA: name, phone, linea, equipo, mensaje, rango, carga, descarga, diferencia.
 function recontactDownloadDetailed() {
     const items = _filterRecontactItems(_recontactState.items || [], window._recontactFilters || {});
     if (!items.length) { showToast('Sin items con los filtros actuales', 'info'); return; }
-    const lines = ['name,phone,mensaje,rango,carga,descarga,diferencia'];
-    let withPhone = 0;
+    const lines = ['name,phone,linea,equipo,mensaje,rango,carga,descarga,diferencia,bono_sugerido,tiene_app,tiene_notifs'];
+    let exported = 0;
     for (const it of items) {
-        if (!it.phone) continue;
+        const phone = _recontactBestPhone(it);
         lines.push([
             _csvEscape(it.username),
-            _csvEscape(it.phone),
+            _csvEscape(phone),
+            _csvEscape(it.linePhone || ''),
+            _csvEscape(it.team || ''),
             _csvEscape(it.suggestedMessage || ''),
             _csvEscape(_bucketLabelForExport(it.bucket)),
             _csvEscape(Number(it.fileDeposits || 0)),
             _csvEscape(Number(it.fileWithdraws || 0)),
-            _csvEscape(Number(it.fileNet || 0))
+            _csvEscape(Number(it.fileNet || 0)),
+            _csvEscape(Number(it.suggestedBonus || 0)),
+            _csvEscape(it.hasApp ? 'Si' : 'No'),
+            _csvEscape(it.hasNotifs ? 'Si' : 'No')
         ].join(','));
-        withPhone++;
+        exported++;
     }
-    if (withPhone === 0) { showToast('Ninguno con teléfono en este filtro', 'info'); return; }
     _downloadCsvLocal('recontactacion-detallado' + _recontactCurrentSuffix() + '-' + new Date().toISOString().slice(0,10) + '.csv', lines);
-    showToast('✅ ' + withPhone + ' contactos exportados (' + (items.length - withPhone) + ' sin teléfono)', 'success');
+    showToast('✅ ' + exported + ' filas exportadas', 'success');
+}
+
+// XLSX con UNA hoja por equipo (los items se agrupan por it.team) — respeta
+// filtros activos. Sirve cuando seleccionás (por ej.) "En riesgo" en el
+// panorama y querés ver/distribuir el corte separado por equipo en un solo
+// archivo. Si no hay equipo, va a una hoja "(Sin equipo)".
+function recontactDownloadXlsxByTeam() {
+    if (typeof XLSX === 'undefined') { showToast('Librería XLSX no cargada — refrescá la página', 'error'); return; }
+    const items = _filterRecontactItems(_recontactState.items || [], window._recontactFilters || {});
+    if (!items.length) { showToast('Sin items con los filtros actuales', 'info'); return; }
+
+    // Agrupar por equipo
+    const byTeam = new Map();
+    for (const it of items) {
+        const t = it.team || '(Sin equipo)';
+        if (!byTeam.has(t)) byTeam.set(t, []);
+        byTeam.get(t).push(it);
+    }
+    // Ordenar equipos por cantidad descendente
+    const teams = Array.from(byTeam.entries()).sort((a, b) => b[1].length - a[1].length);
+
+    const wb = XLSX.utils.book_new();
+    const fmt = n => Number(n || 0);
+
+    // Hoja Resumen primera
+    const resumen = [
+        ['RECONTACTACIÓN — Resumen por equipo'],
+        ['Generado', new Date().toLocaleString('es-AR')],
+        ['Filtros activos', _recontactDescribeFilters()],
+        [''],
+        ['Equipo', 'Cantidad', 'Con app', 'Push directo', 'Sin app', 'Sin línea', '$ Cargas (arch)', '$ Retiros (arch)', '$ Neto']
+    ];
+    let totCount = 0, totConApp = 0, totPush = 0, totSinApp = 0, totSinLinea = 0;
+    let totCargas = 0, totRetiros = 0, totNeto = 0;
+    for (const [team, list] of teams) {
+        let conApp = 0, push = 0, sinApp = 0, sinLinea = 0;
+        let cargas = 0, retiros = 0, neto = 0;
+        for (const it of list) {
+            if (it.hasApp) conApp++;
+            if (it.hasApp && it.hasNotifs) push++;
+            if (!it.hasApp) sinApp++;
+            if (!it.team && !it.linePhone) sinLinea++;
+            cargas += Number(it.fileDeposits || 0);
+            retiros += Number(it.fileWithdraws || 0);
+            neto += Number(it.fileNet || 0);
+        }
+        resumen.push([team, list.length, conApp, push, sinApp, sinLinea, cargas, retiros, neto]);
+        totCount += list.length; totConApp += conApp; totPush += push; totSinApp += sinApp; totSinLinea += sinLinea;
+        totCargas += cargas; totRetiros += retiros; totNeto += neto;
+    }
+    resumen.push(['TOTAL', totCount, totConApp, totPush, totSinApp, totSinLinea, totCargas, totRetiros, totNeto]);
+    const resSheet = XLSX.utils.aoa_to_sheet(resumen);
+    resSheet['!cols'] = [{ wch: 26 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, resSheet, '📋 Resumen');
+
+    // Una hoja por equipo
+    for (const [team, list] of teams) {
+        const headers = ['name', 'phone', 'linea', 'equipo', 'mensaje', 'rango', 'carga', 'descarga', 'diferencia', 'bono_sugerido', 'tiene_app', 'tiene_notifs', 'tier'];
+        const data = [headers];
+        for (const it of list) {
+            data.push([
+                it.username || '',
+                _recontactBestPhone(it),
+                it.linePhone || '',
+                it.team || '',
+                it.suggestedMessage || '',
+                _bucketLabelForExport(it.bucket),
+                fmt(it.fileDeposits),
+                fmt(it.fileWithdraws),
+                fmt(it.fileNet),
+                fmt(it.suggestedBonus),
+                it.hasApp ? 'Si' : 'No',
+                it.hasNotifs ? 'Si' : 'No',
+                it.tier || ''
+            ]);
+        }
+        const sheet = XLSX.utils.aoa_to_sheet(data);
+        sheet['!cols'] = [
+            { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 50 },
+            { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+            { wch: 9 },  { wch: 11 }, { wch: 10 }
+        ];
+        // Truncar nombre de hoja a 31 chars (límite Excel) y sanitizar
+        const safeName = String(team).replace(/[\\/?*[\]:]/g, '_').slice(0, 31) || 'Equipo';
+        XLSX.utils.book_append_sheet(wb, sheet, safeName);
+    }
+
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'recontactacion-equipos' + _recontactCurrentSuffix() + '-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (_) {} }, 1500);
+    showToast('✅ XLSX descargado · ' + teams.length + ' hoja' + (teams.length === 1 ? '' : 's') + ' (' + items.length + ' filas)', 'success');
+}
+
+function _recontactDescribeFilters() {
+    const f = window._recontactFilters || {};
+    const parts = [];
+    if (f.bucket && f.bucket !== 'all') parts.push('bucket=' + f.bucket);
+    if (f.tier && f.tier !== 'all') parts.push('tier=' + f.tier);
+    if (f.appStatus && f.appStatus !== 'all') parts.push('app=' + f.appStatus);
+    if (f.line && f.line !== 'all') parts.push('linea=' + f.line);
+    return parts.length ? parts.join(' · ') : 'todos';
 }
 
 function _recontactSetLineFilter(val) {
@@ -3130,10 +3257,11 @@ function _renderRecontactDashboard(summary, items) {
     }
     html += '    </select>';
     html += '    <span style="color:#bbb;font-size:11.5px;"><strong style="color:#fff;">' + filteredCount + '</strong> con filtros actuales</span>';
-    html += '    <button type="button" onclick="recontactDownloadSimple()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name + phone (lista lista para WhatsApp)">📞 Lista simple</button>';
-    html += '    <button type="button" onclick="recontactDownloadDetailed()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name, phone, mensaje sugerido, rango (días), carga, descarga, diferencia">📋 Lista detallada</button>';
+    html += '    <button type="button" onclick="recontactDownloadSimple()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name + phone + linea + equipo (listo para WhatsApp)">📞 Lista simple</button>';
+    html += '    <button type="button" onclick="recontactDownloadDetailed()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="CSV con name, phone, linea, equipo, mensaje sugerido, rango (días), carga, descarga, diferencia, bono sugerido y app/notifs">📋 Lista detallada</button>';
+    html += '    <button type="button" onclick="recontactDownloadXlsxByTeam()" style="padding:7px 12px;font-size:11.5px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#5a1aaa);border:none;color:#fff;border-radius:6px;cursor:pointer;" title="XLSX con una hoja por equipo + resumen al inicio. Respeta los filtros actuales.">📊 XLSX por equipos</button>';
     html += '  </div>';
-    html += '  <div style="color:#888;font-size:10.5px;margin-top:6px;line-height:1.5;">Las descargas respetan TODOS los filtros activos (panorama, tier, app/notifs, línea). Los que no tienen teléfono se excluyen automáticamente.</div>';
+    html += '  <div style="color:#888;font-size:10.5px;margin-top:6px;line-height:1.5;">Las descargas respetan TODOS los filtros activos (panorama, tier, app/notifs, línea). El campo <strong>phone</strong> usa el del cliente si está registrado, si no usa el de la línea asignada. Si no hay ni teléfono ni línea, queda vacío pero <strong>la fila igual se exporta</strong> (con el username).</div>';
     html += '</div>';
 
     // ====== PANORAMA: matriz bucket × estado de app ======
