@@ -1413,6 +1413,36 @@ async function revalidateThenReload(which) {
 // Usuarios que reclamaron el bono + estado actual de app/notifs.
 // Permite ver quien desinstalo o desactivo notifs despues de cobrar.
 // ============================================
+// Reintenta acreditar el welcome bonus en JUGAYGANA para un user que quedó
+// en pending_credit_failed. Llama al endpoint de retry y refresca la tabla.
+async function retryWelcomeBonusCredit(username) {
+    if (!username) return;
+    if (!confirm('¿Reintentar acreditar el bono de bienvenida a "' + username + '"?\n\nSi JUGAYGANA acepta, se le suman los $5.000 al saldo.')) return;
+    try {
+        const r = await authFetch('/api/admin/reports/welcome-bonus/retry-credit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+        });
+        const j = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (j.error || ('Error ' + r.status)), 'error');
+            return;
+        }
+        if (j.success) {
+            showToast(j.message || '✅ Acreditado', 'success');
+        } else if (j.alreadyCredited) {
+            showToast('ℹ ' + j.message, 'info');
+        } else {
+            showToast('❌ ' + (j.message || j.error || 'Error'), 'error');
+        }
+        // Refrescar reporte para ver el nuevo estado
+        setTimeout(() => { try { loadWelcomeBonusReport(); } catch (_) {} }, 600);
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
+}
+
 async function loadWelcomeBonusReport() {
     const container = document.getElementById('welcomeBonusReportContent');
     if (!container) return;
@@ -1701,9 +1731,27 @@ function renderWelcomeBonusTableHtml(claims) {
                     : '<small style="color:#666;">sin cargas post-bono</small>');
         }
 
-        const statusBadge = c.status === 'pending_credit_failed'
-            ? '<span style="background:#7f1d1d;color:#fee;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">PENDIENTE</span>'
-            : '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">OK</span>';
+        // Estado: 4 posibles (completed con tx, completed sin tx, pending_credit_failed, pending).
+        // Mostramos badge + creditError si lo hay + botón "🔄 Reintentar credit" para los fallidos.
+        const isFailed = c.status === 'pending_credit_failed' || (c.status === 'pending' && !c.transactionId);
+        const isOk = c.status === 'completed' && c.transactionId;
+        const userArgEsc = JSON.stringify(c.username || '').replace(/"/g, '&quot;');
+        let statusBadge;
+        if (isFailed) {
+            const errMsg = c.creditError ? '<small style="display:block;color:#ff8080;font-size:10px;margin-top:3px;max-width:200px;">' + escapeHtml(c.creditError) + '</small>' : '';
+            statusBadge =
+                '<span style="background:#7f1d1d;color:#fee;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">' +
+                (c.status === 'pending_credit_failed' ? 'FALLÓ' : 'PENDIENTE') +
+                '</span>' +
+                errMsg +
+                '<button onclick="retryWelcomeBonusCredit(' + userArgEsc + ')" style="display:block;margin-top:5px;padding:5px 10px;font-size:11px;font-weight:700;background:linear-gradient(135deg,#ff8800,#cc5500);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔄 Reintentar credit</button>';
+        } else if (isOk) {
+            statusBadge = '<span style="background:rgba(37,211,102,0.18);color:#25d366;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">OK</span>';
+        } else {
+            statusBadge =
+                '<span style="background:rgba(245,158,11,0.18);color:#f59e0b;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;">' + escapeHtml(c.status || 'sin status') + '</span>' +
+                '<button onclick="retryWelcomeBonusCredit(' + userArgEsc + ')" style="display:block;margin-top:5px;padding:5px 10px;font-size:11px;font-weight:700;background:linear-gradient(135deg,#ff8800,#cc5500);color:#fff;border:none;border-radius:6px;cursor:pointer;">🔄 Reintentar credit</button>';
+        }
         const amount = Number(c.amount || 0);
         const amountColor = amount >= 10000 ? '#ff8800' : (amount >= 2000 ? '#25d366' : '#888');
         const amountCell = '<span style="color:' + amountColor + ';font-weight:800;">$' + amount.toLocaleString('es-AR') + '</span>';

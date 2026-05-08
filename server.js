@@ -13376,6 +13376,7 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
       {
         username: 1, userId: 1, claimedAt: 1, status: 1, transactionId: 1,
         amount: 1,
+        creditError: 1,
         chargesAfterClaim: 1, chargesAfterClaimAmount: 1,
         lastChargeAfterClaimAt: 1, chargesAfterClaimCheckedAt: 1,
         _id: 0
@@ -13513,6 +13514,80 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
   } catch (error) {
     logger.error(`/api/admin/reports/welcome-bonus error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// POST /api/admin/reports/welcome-bonus/retry-credit
+// Reintenta acreditar el welcome bonus en JUGAYGANA para un user que
+// quedó en pending_credit_failed (o pending sin transactionId). Útil
+// cuando el call inicial falló por timeout / error transitorio.
+// body: { username }
+app.post('/api/admin/reports/welcome-bonus/retry-credit', authMiddleware, adminMiddleware, express.json({ limit: '50kb' }), async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ error: 'username requerido' });
+
+    const claim = await RefundClaim.findOne({ type: 'welcome_install', username });
+    if (!claim) return res.status(404).json({ error: 'No hay claim de welcome bonus para ese usuario' });
+
+    // Si ya está completed con transactionId, no reintentar (ya se acreditó).
+    if (claim.status === 'completed' && claim.transactionId) {
+      return res.json({
+        success: false,
+        alreadyCredited: true,
+        message: 'Este claim ya fue acreditado correctamente. transactionId: ' + claim.transactionId
+      });
+    }
+
+    const amount = claim.amount || WELCOME_BONUS_AMOUNT;
+    logger.info(`[BONUS] retry-credit para ${username} (claim status=${claim.status}, intento manual por ${(req.user && req.user.username) || 'admin'})`);
+    const depositResult = await jugaygana.creditUserBalance(username, amount);
+
+    if (!depositResult.success) {
+      try {
+        claim.status = 'pending_credit_failed';
+        claim.creditError = String(depositResult.error || 'Error desconocido').slice(0, 500);
+        await claim.save();
+      } catch (_) {}
+      return res.json({
+        success: false,
+        error: depositResult.error || 'Error desconocido',
+        message: 'JUGAYGANA rechazó el credit. Revisá el error.'
+      });
+    }
+
+    try {
+      claim.transactionId = depositResult.data?.transfer_id || depositResult.data?.transferId || null;
+      claim.status = 'completed';
+      claim.creditError = undefined;
+      await claim.save();
+    } catch (_) {}
+
+    // Crear Transaction para que aparezca en historiales.
+    try {
+      await Transaction.create({
+        id: uuidv4(),
+        type: 'refund',
+        amount,
+        username,
+        description: 'Bono de bienvenida (retry manual)',
+        transactionId: claim.transactionId,
+        timestamp: new Date()
+      });
+    } catch (_) {}
+
+    _totalGiveawayCache.ts = 0;
+
+    logger.info(`[BONUS] retry-credit OK para ${username}: $${amount} acreditado, transactionId=${claim.transactionId}`);
+    return res.json({
+      success: true,
+      message: `✅ Acreditado $${amount.toLocaleString('es-AR')} a ${username}`,
+      transactionId: claim.transactionId
+    });
+  } catch (err) {
+    logger.error(`[welcome-bonus/retry-credit] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
   }
 });
 
