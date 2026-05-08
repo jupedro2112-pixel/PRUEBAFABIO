@@ -2560,16 +2560,119 @@ function showStatsTab(tab) {
 // armar estrategia de recuperación. Sube xlsx → análisis enriquecido →
 // CSV listo para el equipo de WhatsApp.
 // =====================================================================
-let _recontactState = { items: null, summary: null, file: null };
+let _recontactState = { items: null, summary: null, file: null, fileLabel: '', savedAt: null };
+
+// ===== Cache + Historial (localStorage) =====
+const RECONTACT_CACHE_KEY = 'vipRecontactCache_v1';
+const RECONTACT_HISTORY_KEY = 'vipRecontactHistory_v1';
+const RECONTACT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const RECONTACT_HISTORY_MAX = 20;
+
+function _recontactSaveCache(items, summary, fileLabel) {
+    try {
+        const payload = {
+            savedAt: Date.now(),
+            fileLabel: fileLabel || '',
+            items: items || [],
+            summary: summary || {}
+        };
+        localStorage.setItem(RECONTACT_CACHE_KEY, JSON.stringify(payload));
+    } catch (e) { console.warn('[recontact] cache save fail', e); }
+}
+function _recontactLoadCache() {
+    try {
+        const raw = localStorage.getItem(RECONTACT_CACHE_KEY);
+        if (!raw) return null;
+        const p = JSON.parse(raw);
+        if (!p || !p.savedAt) return null;
+        if (Date.now() - p.savedAt > RECONTACT_CACHE_TTL_MS) {
+            localStorage.removeItem(RECONTACT_CACHE_KEY);
+            return null;
+        }
+        return p;
+    } catch (_) { return null; }
+}
+function _recontactClearCache() {
+    try { localStorage.removeItem(RECONTACT_CACHE_KEY); } catch (_) {}
+}
+function _recontactPushHistorySnapshot(items, summary, fileLabel) {
+    try {
+        const raw = localStorage.getItem(RECONTACT_HISTORY_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        const list = Array.isArray(arr) ? arr : [];
+        let sinLinea = 0;
+        for (const it of (items || [])) {
+            if (!it.team && !it.linePhone) sinLinea++;
+        }
+        const snap = {
+            at: Date.now(),
+            label: fileLabel || '',
+            totalAnalyzed: summary.totalAnalyzed || (items && items.length) || 0,
+            foundInDb: summary.foundInDb || 0,
+            buckets: Object.assign({}, summary.buckets || {}),
+            tiers: Object.assign({}, summary.tiers || {}),
+            withApp: summary.withApp || 0,
+            withNotifs: summary.withNotifs || 0,
+            withoutApp: summary.withoutApp || 0,
+            fileTotalDeposits:  summary.fileTotalDeposits  || 0,
+            fileTotalWithdraws: summary.fileTotalWithdraws || 0,
+            fileTotalBonuses:   summary.fileTotalBonuses   || 0,
+            totalRecoverableValue: summary.totalRecoverableValue || 0,
+            sinLinea
+        };
+        list.unshift(snap);
+        if (list.length > RECONTACT_HISTORY_MAX) list.length = RECONTACT_HISTORY_MAX;
+        localStorage.setItem(RECONTACT_HISTORY_KEY, JSON.stringify(list));
+    } catch (e) { console.warn('[recontact] history push fail', e); }
+}
+function _recontactLoadHistory() {
+    try {
+        const raw = localStorage.getItem(RECONTACT_HISTORY_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr : [];
+    } catch (_) { return []; }
+}
+function _recontactClearHistory() {
+    if (!confirm('¿Borrar TODO el historial de análisis? (no se puede deshacer)')) return;
+    try { localStorage.removeItem(RECONTACT_HISTORY_KEY); } catch (_) {}
+    loadRecontactSection();
+    showToast('Historial borrado', 'info');
+}
+function _recontactRelTime(ms) {
+    const diff = Date.now() - ms;
+    const min = Math.round(diff / 60000);
+    if (min < 1) return 'recién';
+    if (min < 60) return `hace ${min} min`;
+    const h = Math.round(min / 60);
+    if (h < 24) return `hace ${h} h`;
+    const d = Math.round(h / 24);
+    return `hace ${d} d`;
+}
 
 function loadRecontactSection() {
     const c = document.getElementById('recontactContent');
     if (!c) return;
+    // Hidratar de cache si no hay state actual y todavía está vigente.
+    if (!_recontactState.items || !_recontactState.summary) {
+        const cache = _recontactLoadCache();
+        if (cache && cache.items && cache.summary) {
+            _recontactState.items = cache.items;
+            _recontactState.summary = cache.summary;
+            _recontactState.fileLabel = cache.fileLabel || '';
+            _recontactState.savedAt = cache.savedAt;
+        }
+    }
     if (_recontactState.items && _recontactState.summary) {
         c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
         _wireRecontactFilters();
     } else {
         c.innerHTML = _renderRecontactUploader();
+        // Si hay historial pero no hay cache (expiró o se limpió), mostralo abajo
+        const history = _recontactLoadHistory();
+        if (history.length > 0) {
+            c.innerHTML += _renderRecontactHistoryStandalone(history);
+        }
     }
 }
 
@@ -2779,6 +2882,11 @@ async function recontactAnalyze() {
         }
         _recontactState.items = j.items || [];
         _recontactState.summary = j.summary || {};
+        _recontactState.fileLabel = (file && file.name) || '';
+        _recontactState.savedAt = Date.now();
+        // Guardar en cache (24h) + push al historial.
+        _recontactSaveCache(_recontactState.items, _recontactState.summary, _recontactState.fileLabel);
+        _recontactPushHistorySnapshot(_recontactState.items, _recontactState.summary, _recontactState.fileLabel);
         loadRecontactSection();
         showToast('✅ ' + (j.summary.totalAnalyzed || 0) + ' usuarios analizados', 'success');
     } catch (e) {
@@ -2788,7 +2896,8 @@ async function recontactAnalyze() {
 }
 
 function recontactReset() {
-    _recontactState = { items: null, summary: null, file: null };
+    _recontactState = { items: null, summary: null, file: null, fileLabel: '', savedAt: null };
+    _recontactClearCache();
     window._recontactFilters = { tier: 'all', bucket: 'all', appStatus: 'all' };
     loadRecontactSection();
 }
@@ -2802,6 +2911,22 @@ function _renderRecontactDashboard(summary, items) {
     const f = window._recontactFilters || { tier: 'all', bucket: 'all', appStatus: 'all' };
 
     let html = '';
+
+    // Banner de cache si el state vino de localStorage (24h)
+    if (_recontactState.savedAt) {
+        const rel = _recontactRelTime(_recontactState.savedAt);
+        const lbl = _recontactState.fileLabel ? ' · <strong style="color:#fff;">' + escapeHtml(_recontactState.fileLabel) + '</strong>' : '';
+        html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:8px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
+        html += '  <span style="color:#bbb;font-size:11.5px;">📂 Análisis cargado desde cache · <span style="color:#66ff66;">' + rel + '</span>' + lbl + ' · expira a las 24h</span>';
+        html += '  <button type="button" onclick="recontactReset()" style="padding:5px 10px;font-size:11px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:6px;cursor:pointer;">🗑 Descartar y subir otra</button>';
+        html += '</div>';
+    }
+
+    // Historial de análisis pasados (si hay >=2 entradas)
+    const history = _recontactLoadHistory();
+    if (history.length >= 1) {
+        html += _renderRecontactHistoryCard(history);
+    }
 
     // Header con botones de acción
     html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">';
@@ -2996,6 +3121,94 @@ function _recontactFilterSet(key, value) {
 
 function _wireRecontactFilters() {
     // No hay handlers extras por ahora — los onclicks están inline.
+}
+
+// Tarjeta de historial — se muestra en el dashboard (tras hidratar de cache)
+// y también como standalone debajo del uploader si el cache expiró.
+function _renderRecontactHistoryCard(history) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    let html = '';
+    html += '<details ' + (history.length <= 3 ? 'open' : '') + ' style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:0;margin-bottom:14px;overflow:hidden;">';
+    html += '  <summary style="cursor:pointer;padding:10px 14px;background:rgba(0,212,255,0.06);list-style:none;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
+    html += '    <span style="color:#00d4ff;font-weight:800;font-size:13px;letter-spacing:0.5px;">📈 HISTORIAL DE ANÁLISIS · ' + history.length + (history.length === 1 ? ' análisis' : ' análisis') + '</span>';
+    html += '    <span style="color:#888;font-size:10.5px;">tocá para abrir/cerrar ▾</span>';
+    html += '  </summary>';
+    html += '  <div style="padding:12px 14px;">';
+    html += _renderRecontactHistoryTable(history);
+    html += '    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
+    html += '      <span style="color:#888;font-size:10.5px;">Cada análisis queda guardado por 24h · máximo ' + RECONTACT_HISTORY_MAX + ' snapshots · los Δ comparan con el análisis anterior.</span>';
+    html += '      <button type="button" onclick="_recontactClearHistory()" style="padding:4px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);color:#ff8080;border-radius:5px;cursor:pointer;">🗑 Borrar historial</button>';
+    html += '    </div>';
+    html += '  </div>';
+    html += '</details>';
+    return html;
+}
+
+function _renderRecontactHistoryStandalone(history) {
+    let html = '';
+    html += '<div style="margin-top:14px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;">';
+    html += '  <div style="color:#00d4ff;font-weight:800;font-size:13px;letter-spacing:0.5px;margin-bottom:8px;">📈 HISTORIAL DE ANÁLISIS PREVIOS</div>';
+    html += '  <div style="color:#aaa;font-size:11.5px;margin-bottom:10px;">El cache expiró pero el historial sigue guardado. Subí un archivo nuevo arriba para ver el panorama actualizado.</div>';
+    html += _renderRecontactHistoryTable(history);
+    html += '  <div style="margin-top:8px;text-align:right;">';
+    html += '    <button type="button" onclick="_recontactClearHistory()" style="padding:4px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);color:#ff8080;border-radius:5px;cursor:pointer;">🗑 Borrar historial</button>';
+    html += '  </div>';
+    html += '</div>';
+    return html;
+}
+
+// Tabla del historial: una fila por snapshot, con deltas entre snapshots.
+function _renderRecontactHistoryTable(history) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const delta = (cur, prev) => {
+        if (prev == null) return '';
+        const d = (cur || 0) - (prev || 0);
+        if (d === 0) return ' <span style="color:#666;">·</span>';
+        const sign = d > 0 ? '+' : '';
+        return ' <span style="color:' + (d > 0 ? '#66ff66' : '#ff8080') + ';font-size:9.5px;">' + sign + fmt(d) + '</span>';
+    };
+    let html = '';
+    html += '<div style="overflow-x:auto;max-height:260px;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:740px;">';
+    html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+    html += '    <th style="text-align:left;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Cuándo</th>';
+    html += '    <th style="text-align:left;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Archivo</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Total</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#ff5050;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="0-10 días sin cargar">🔥 Cal.</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#ffaa44;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="10-20 días">⚠ Riesgo</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#9b30ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="20-30 días">💔 Perd.</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#888;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="+30 días">☠ Inact.</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="con app + notifs">📱 Push</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin app">💬 WA</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#ffd700;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin línea asignada en Equipos">⚠ Sin línea</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="$ cargas del archivo">$ Archivo</th>';
+    html += '  </tr></thead><tbody>';
+    for (let i = 0; i < history.length; i++) {
+        const s = history[i];
+        const prev = history[i + 1] || null; // siguiente en la lista = más viejo
+        const dt = new Date(s.at);
+        const dateStr = dt.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' + dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+        const rel = _recontactRelTime(s.at);
+        const lbl = s.label || '<span style="color:#666;">(sin nombre)</span>';
+        const b  = s.buckets || {};
+        const pb = prev ? (prev.buckets || {}) : {};
+        const isFirst = i === 0;
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);' + (isFirst ? 'background:rgba(102,255,102,0.04);' : '') + '">';
+        html += '  <td style="padding:5px 8px;color:#fff;font-size:10.5px;">' + dateStr + '<br><span style="color:#888;font-size:9.5px;">' + rel + '</span></td>';
+        html += '  <td style="padding:5px 8px;color:#bbb;font-size:10.5px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(s.label || '') + '">' + escapeHtml(s.label ? (s.label.length > 22 ? s.label.slice(0, 22) + '…' : s.label) : '(sin nombre)') + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#fff;font-weight:700;">' + fmt(s.totalAnalyzed) + delta(s.totalAnalyzed, prev && prev.totalAnalyzed) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#ff5050;">' + fmt(b.calientes || 0) + delta(b.calientes, pb.calientes) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#ffaa44;">' + fmt(b.enRiesgo || 0)  + delta(b.enRiesgo, pb.enRiesgo) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#9b30ff;">' + fmt(b.perdidos || 0)  + delta(b.perdidos, pb.perdidos) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#888;">'    + fmt(b.inactivos || 0) + delta(b.inactivos, pb.inactivos) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#25d366;">' + fmt(s.withNotifs || 0) + delta(s.withNotifs, prev && prev.withNotifs) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#00d4ff;">' + fmt(s.withoutApp || 0) + delta(s.withoutApp, prev && prev.withoutApp) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#ffd700;">' + fmt(s.sinLinea || 0)   + delta(s.sinLinea, prev && prev.sinLinea) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#bbb;font-family:monospace;font-size:10.5px;">' + (s.fileTotalDeposits ? '$' + fmt(s.fileTotalDeposits) : '—') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
 }
 
 // Matriz panorama: bucket de actividad × estado de app/notifs.
