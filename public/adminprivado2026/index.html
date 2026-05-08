@@ -67,21 +67,9 @@
                     <span>🔄</span>
                     <span>Win-back automático</span>
                 </a>
-                <a href="#" class="nav-item" data-section="topPlayers">
-                    <span>🔥</span>
-                    <span>Top jugadores</span>
-                </a>
-                <a href="#" class="nav-item" data-section="topEngagement">
-                    <span>🏆</span>
-                    <span>Top estadísticas</span>
-                </a>
                 <a href="#" class="nav-item" data-section="teams">
                     <span>📊</span>
                     <span>Equipos</span>
-                </a>
-                <a href="#" class="nav-item" data-section="segments">
-                    <span>📂</span>
-                    <span>Segmentos</span>
                 </a>
                 <a href="#" class="nav-item" data-section="campaigns">
                     <span>🔗</span>
@@ -568,184 +556,6 @@
             </section>
 
             <!-- ============================================
-                 SECCIÓN: TOP 100 ENGAGEMENT
-                 Ranking de usuarios por interaccion combinada:
-                 reembolsos + clicks WA + reclamos de regalo.
-                 ============================================ -->
-            <section id="topEngagementSection" class="section">
-                <div class="panel-header">
-                    <h2>🏆 Top estadísticas — segmentación + recuperación</h2>
-                    <button class="refresh-btn" onclick="openMasterAnalysisModal('top_stats')" title="Analizar con archivo Maestro y guardar snapshot" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">📊 Analizar Maestro</button>
-                    <button class="refresh-btn" onclick="openMasterAnalysisModal('recuperacion')" title="Análisis de recuperación con archivo Maestro" style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.40);color:#ffaa66;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">💔 Recuperación</button>
-                    <button class="refresh-btn" onclick="loadStatsAll()" title="Actualizar tablas (lectura cache)">🔄</button>
-                </div>
-                <div style="margin: 4px 0 14px; color:#aaa; font-size:12px; line-height:1.5;">
-                    Panel estratégico: jugadores segmentados por tier (VIP/Oro/Plata/Bronce) y estado (Activo/En riesgo/Perdido), con
-                    estrategias de recuperación recomendadas por celda.
-                    <strong>Importante:</strong> los datos se calculan desde cache. Tocá <strong>"🔁 Refrescar JUGAYGANA"</strong> para
-                    actualizar los montos y segmentos desde la plataforma (toma ~3 min con 500 usuarios).
-                </div>
-
-                <!-- Refresh + estado del batch -->
-                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
-                    <button onclick="triggerStatsRefresh()" id="statsRefreshBtn" style="padding:10px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;border-radius:8px;cursor:pointer;">
-                        🔁 Refrescar JUGAYGANA
-                    </button>
-                    <div id="statsRefreshState" style="font-size:12px;color:#bbb;flex:1;">Esperando primer refresh…</div>
-                </div>
-
-                <!-- Import CSV de JUGAYGANA -->
-                <div style="background:rgba(106,13,173,0.08);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;">
-                        <label for="csvImportFile" id="csvImportBtn" style="padding:10px 16px;font-size:13px;font-weight:700;background:linear-gradient(135deg,#9b30ff,#6a0dad);color:#fff;border:none;border-radius:8px;cursor:pointer;display:inline-block;">
-                            📤 Subir CSV
-                        </label>
-                        <input type="file" id="csvImportFile" accept=".csv,.txt,text/csv" style="display:none;" onchange="handleCsvImport(event)">
-                        <span style="color:#888;font-size:11px;">o</span>
-                        <input type="text" id="csvImportUrl" placeholder="Pegá link de Google Sheets (compartido como público)"
-                               style="flex:1;min-width:240px;padding:9px 11px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(155,48,255,0.30);border-radius:8px;font-size:12px;">
-                        <button id="csvImportUrlBtn" onclick="handleCsvImportUrl()" style="padding:10px 14px;font-size:12px;font-weight:700;background:rgba(155,48,255,0.20);border:1px solid rgba(155,48,255,0.45);color:#d6b3ff;border-radius:8px;cursor:pointer;">
-                            🔗 Importar desde link
-                        </button>
-                    </div>
-                    <div id="csvImportState" style="font-size:12px;color:#bbb;margin-bottom:8px;">Sin imports todavía.</div>
-                    <div style="font-size:11px;color:#888;line-height:1.5;">
-                        Subí el CSV (o pegá link de Google Sheets compartido como <strong>"Cualquier persona con el enlace puede ver"</strong>). Procesa 200k+ filas en 30-60s. <strong>Ventana rolling de 45 días</strong> — podés subir incrementales (día por día / semana por semana) y siempre vas a ver los últimos 45 días desde hoy. Los datos crudos NO se almacenan; queda solo el agregado por (jugador, día). Subir el mismo archivo dos veces no reprocesa.
-                    </div>
-                </div>
-
-                <!-- Sub-tabs internos (Playbook fue eliminado: ahora vive integrado en Segmentación) -->
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid rgba(255,255,255,0.10);padding-bottom:8px;">
-                    <button class="stats-tab-btn active" data-tab="segments" onclick="showStatsTab('segments')" style="padding:8px 14px;background:rgba(212,175,55,0.20);border:1px solid rgba(212,175,55,0.45);color:#ffd700;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎯 Segmentación + Recuperación</button>
-                    <button class="stats-tab-btn" data-tab="players" onclick="showStatsTab('players')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">👥 Jugadores</button>
-                    <button class="stats-tab-btn" data-tab="giveaways" onclick="showStatsTab('giveaways')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">🎁 Regalos</button>
-                    <button class="stats-tab-btn" data-tab="roi" onclick="showStatsTab('roi')" style="padding:8px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);color:#bbb;border-radius:8px;cursor:pointer;font-weight:700;font-size:12px;">💰 ROI por bono</button>
-                </div>
-
-                <!-- Tab: Segmentación + Recuperación (todo integrado en un solo recuadro) -->
-                <div id="statsTabSegments" class="stats-tab-pane">
-                    <!-- Botón de export del plan semanal a .xlsx -->
-                    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;align-items:center;background:rgba(37,211,102,0.06);border:1px solid rgba(37,211,102,0.25);border-radius:10px;padding:12px;">
-                        <div style="flex:1;min-width:240px;">
-                            <div style="color:#25d366;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:4px;">📥 Plan semanal de recuperación</div>
-                            <div style="color:#bbb;font-size:12px;line-height:1.5;">Descarga un .xlsx con todos los jugadores recuperables (en riesgo / perdidos / inactivos), separados por equipo y estado en hojas distintas. Incluye WhatsApp del usuario, línea del equipo, estrategia y bono sugerido. Listo para que un agente trabaje desde WA. Excluye oportunistas.</div>
-                        </div>
-                        <button onclick="downloadRecoveryPlan()" id="downloadRecoveryPlanBtn" style="padding:12px 20px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px;white-space:nowrap;">📥 Descargar plan (.xlsx)</button>
-                    </div>
-
-                    <!-- Métricas globales arriba: cargas semana actual vs pasada + recuperables totales + $ potencial -->
-                    <div id="statsTopMetrics" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;"></div>
-
-                    <!-- Foco urgente: top 5 segmentos por urgencia -->
-                    <div id="statsUrgentFocus" style="margin-bottom:18px;"></div>
-
-                    <!-- Comparativa semanal compacta -->
-                    <div id="statsWeeklyHeader" style="margin-bottom:14px;"></div>
-
-                    <!-- Efectividad de pushes de recuperación -->
-                    <div id="statsRecoveryHeader" style="margin-bottom:14px;"></div>
-
-                    <!-- Matriz tier × estado (panorama general) -->
-                    <h3 style="color:#fff;font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;">Matriz tier × estado</h3>
-                    <div id="statsSegmentsMatrix" style="overflow-x:auto;margin-bottom:18px;"></div>
-
-                    <!-- Bloques por tier con estrategia y botones de push -->
-                    <h3 style="color:#fff;font-size:14px;margin:18px 0 10px;text-transform:uppercase;letter-spacing:1px;">Plan de acción por tier</h3>
-                    <div id="statsTierDeepDive" style="display:flex;flex-direction:column;gap:14px;"></div>
-                </div>
-
-                <!-- Tab: Jugadores -->
-                <div id="statsTabPlayers" class="stats-tab-pane" style="display:none;">
-                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-                        <select id="playersFilterTier" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                            <option value="">Todos los tiers</option>
-                            <option value="VIP">🏆 VIP</option>
-                            <option value="ORO">🥇 ORO</option>
-                            <option value="PLATA">🥈 PLATA</option>
-                            <option value="BRONCE">🥉 BRONCE</option>
-                            <option value="NUEVO">🆕 NUEVO</option>
-                            <option value="SIN_DATOS">⚪ Sin datos</option>
-                        </select>
-                        <select id="playersFilterStatus" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                            <option value="">Todos los estados</option>
-                            <option value="ACTIVO">✅ Activo (0-7d)</option>
-                            <option value="EN_RIESGO">⚠️ En riesgo (8-15d)</option>
-                            <option value="PERDIDO">💔 Perdido (16-30d)</option>
-                            <option value="INACTIVO">☠️ Inactivo (30d+)</option>
-                            <option value="NUEVO">🆕 Nuevo</option>
-                        </select>
-                        <select id="playersFilterOpp" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                            <option value="">Todos</option>
-                            <option value="false">🟢 Ocultar oportunistas</option>
-                            <option value="true">🚩 Solo oportunistas</option>
-                        </select>
-                        <select id="playersSortBy" onchange="loadPlayersList()" style="padding:8px 10px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                            <option value="netToHouse30d">Ordenar: Neto a la casa</option>
-                            <option value="realDeposits30d">Ordenar: Cargas $</option>
-                            <option value="realChargesCount30d">Ordenar: Cantidad cargas</option>
-                            <option value="bonusGiven30d">Ordenar: Bonos dados</option>
-                            <option value="lastSeenApp">Ordenar: Última vez en la app</option>
-                            <option value="lastRealDepositDate">Ordenar: Última carga real</option>
-                        </select>
-                    </div>
-                    <div id="statsPlayersContent" style="overflow-x:auto;">
-                        <div class="empty-state">Tocá "Refrescar JUGAYGANA" arriba para poblar el cache.</div>
-                    </div>
-                </div>
-
-                <!-- Tab: Regalos (analítica completa de Money Giveaways) -->
-                <div id="statsTabGiveaways" class="stats-tab-pane" style="display:none;">
-                    <!-- Métricas globales del rango filtrado -->
-                    <div id="giveawayTopMetrics" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;"></div>
-
-                    <!-- Filtros de fecha y status -->
-                    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;align-items:flex-end;">
-                        <div>
-                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Desde</label>
-                            <input type="date" id="giveawayFilterFrom" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                        </div>
-                        <div>
-                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Hasta</label>
-                            <input type="date" id="giveawayFilterTo" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                        </div>
-                        <div>
-                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Estado</label>
-                            <select id="giveawayFilterStatus" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;">
-                                <option value="">Todos</option>
-                                <option value="active">🟢 Activos</option>
-                                <option value="closed_expired">⏱️ Vencidos</option>
-                                <option value="closed_budget">💸 Presupuesto agotado</option>
-                                <option value="closed_max">👥 Cupo agotado</option>
-                                <option value="cancelled">🚫 Cancelados</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label style="display:block;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Prefijo (target)</label>
-                            <input type="text" id="giveawayFilterPrefix" placeholder="ej: ato, argen…" onchange="loadGiveawaysHistory()" style="padding:7px 9px;background:rgba(0,0,0,0.5);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;font-size:12px;width:120px;">
-                        </div>
-                        <button onclick="loadGiveawaysHistory()" style="padding:8px 14px;background:rgba(212,175,55,0.20);color:#ffd700;border:1px solid rgba(212,175,55,0.45);border-radius:6px;cursor:pointer;font-size:12px;font-weight:700;">🔄 Refrescar</button>
-                    </div>
-
-                    <!-- Tabla de regalos -->
-                    <div id="giveawayHistoryContent" style="overflow-x:auto;">
-                        <div class="empty-state">⏳ Cargando…</div>
-                    </div>
-
-                    <!-- Modal/panel inline con drill-down (claims de un giveaway específico) -->
-                    <div id="giveawayDrillDown" style="margin-top:14px;display:none;"></div>
-                </div>
-
-                <!-- Tab: ROI -->
-                <div id="statsTabRoi" class="stats-tab-pane" style="display:none;">
-                    <div style="margin-bottom:10px;color:#aaa;font-size:12px;">Por cada monto de bono regalado en los últimos 30 días, cuántos usuarios cargaron real después y el ROI de esa estrategia.</div>
-                    <div id="statsRoiContent" style="overflow-x:auto;">
-                        <div class="empty-state">⏳ Cargando…</div>
-                    </div>
-                </div>
-
-            </section>
-
-            <!-- ============================================
                  SECCIÓN: HISTORIAL DE NOTIFICACIONES
                  Lista de todas las notifs enviadas con audiencia, tipo,
                  horario y contadores de respuesta (waClicks / claims).
@@ -849,30 +659,6 @@
                     Tocá <strong>🔍 Revalidar tokens</strong> para forzar el chequeo ahora (detecta apps desinstaladas en tiempo real).
                 </div>
                 <div id="welcomeBonusReportContent" class="report-content">
-                    <div class="empty-state">⏳ Cargando…</div>
-                </div>
-            </section>
-
-            <!-- ============================================
-                 SECCIÓN: TOP JUGADORES — segmentacion custom
-                 (calientes / en riesgo / perdidos / inactivos)
-                 con filtros por periodo, equipo, app y tier.
-                 ============================================ -->
-            <section id="topPlayersSection" class="section">
-                <div class="panel-header">
-                    <h2>🔥 Top jugadores</h2>
-                    <button class="refresh-btn" onclick="openMasterAnalysisModal('top_jugadores')" title="Analizar con archivo Maestro y guardar snapshot" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">📊 Analizar Maestro</button>
-                    <button class="refresh-btn" onclick="loadTopPlayers()" title="Refrescar">🔄</button>
-                </div>
-                <div style="background:rgba(255,107,53,0.06);border:1px solid rgba(255,107,53,0.20);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.5;">
-                        Segmentación por <strong style="color:#ff6b35;">cargas reales</strong> en JUGAYGANA.
-                        Calientes = 10+ cargas última semana · En riesgo = sin carga 5-9 días · Perdidos = 10-19 días · Inactivos = 20+ días.
-                        Filtrá por <strong>período</strong> (semana del mes / mes completo), <strong>equipo</strong>, <strong>app instalada</strong> y <strong>tier</strong>.
-                        Para jugadores con app: bulk push directo. Para los sin app: WhatsApp por la línea del equipo.
-                    </p>
-                </div>
-                <div id="topPlayersContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
                 </div>
             </section>
@@ -1225,36 +1011,6 @@
                 </div>
             </section>
 
-            <!-- ============================================
-                 SECCIÓN: SEGMENTOS
-                 -----------------------------------------
-                 Sistema general para subir listas de usuarios (CSV o
-                 Sheets URL) por categoría (top jugadores, recuperación,
-                 sin WP, con app, bonus 5k/10k/2k, etc.) y cruzar contra
-                 cargas reales de JUGAYGANA para ver conversion.
-                 ============================================ -->
-            <section id="segmentsSection" class="section">
-                <div class="panel-header">
-                    <h2>📊 Segmentos</h2>
-                    <button class="refresh-btn" onclick="loadSegmentsAdmin()" title="Refrescar">🔄</button>
-                </div>
-                <div style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(102,255,102,0.08));border:1px solid rgba(0,212,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0 0 6px;color:#00d4ff;font-weight:700;font-size:13px;">📊 Cómo funciona</p>
-                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
-                        Subís listas de usuarios (top jugadores, recuperación, clientes con app, bonus 5k/10k/2k, etc.) en CSV o pegando una URL de Google Sheets publicado-a-web. El sistema cruza cada username contra cargas reales en JUGAYGANA y te muestra <strong style="color:#66ff66;">cuántos volvieron a cargar después</strong> de la subida + el monto total.<br>
-                        Las subidas quedan en <strong>historial</strong> — podés re-subir cuando quieras (pisa la lista pero deja registro).
-                    </p>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-                    <button type="button" onclick="newSegmentModal()" style="background:linear-gradient(135deg,#66ff66,#4dabff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">➕ Nuevo segmento</button>
-                    <button type="button" onclick="importLightningSegmentModal()" style="background:linear-gradient(135deg,rgba(255,235,59,0.18),rgba(255,235,59,0.08));color:#fff7c2;border:1px solid #ffeb3b;padding:9px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">⚡ Importar de relámpago</button>
-                </div>
-                <div id="segmentsAdminContent" style="min-height:200px;">
-                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
-                </div>
-            </section>
-
-            <!-- ============================================
                  SECCIÓN: CAMPAÑAS (LINKS DE MARKETING)
                  -----------------------------------------
                  Cada landing tiene un slug (ej: 'promo2k') y un contador

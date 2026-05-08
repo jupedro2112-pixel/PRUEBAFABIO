@@ -169,9 +169,7 @@ function showSection(sectionKey) {
         ingresos: 'ingresosSection',
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
-        topEngagement: 'topEngagementSection',
         recontact: 'recontactSection',
-        topPlayers: 'topPlayersSection',
         encuesta: 'encuestaSection',
         backupPhones: 'backupPhonesSection',
         winback: 'winbackSection',
@@ -184,7 +182,6 @@ function showSection(sectionKey) {
         raffles: 'rafflesSection',
         rafflesFree: 'rafflesFreeSection',
         rafflesLightning: 'rafflesLightningSection',
-        segments: 'segmentsSection',
         campaigns: 'campaignsSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
@@ -220,12 +217,8 @@ function showSection(sectionKey) {
         loadEquipmentReport();
     } else if (sectionKey === 'welcomebonus') {
         loadWelcomeBonusReport();
-    } else if (sectionKey === 'topEngagement') {
-        loadStatsAll();
     } else if (sectionKey === 'recontact') {
         loadRecontactSection();
-    } else if (sectionKey === 'topPlayers') {
-        loadTopPlayers();
     } else if (sectionKey === 'encuesta') {
         loadEncuesta();
     } else if (sectionKey === 'backupPhones') {
@@ -246,8 +239,6 @@ function showSection(sectionKey) {
         loadRafflesFreeAdmin();
     } else if (sectionKey === 'rafflesLightning') {
         loadRafflesLightningAdmin();
-    } else if (sectionKey === 'segments') {
-        loadSegmentsAdmin();
     } else if (sectionKey === 'campaigns') {
         loadCampaignsAdmin();
     } else if (sectionKey === 'recovery') {
@@ -9062,10 +9053,7 @@ function _helpBlocks() {
                 '<li><strong>📋 Encuesta</strong>: configura el plan mensual de pushes (suave / normal / activo) — qué bonos, juegos y regalos recibe cada tier en qué horarios.</li>',
                 '<li><strong>📞 Números de respaldo</strong>: lista de teléfonos que los users dejan en la home como vía paralela. Protegida con PIN.</li>',
                 '<li><strong>🔄 Win-back automático</strong>: motor que detecta usuarios que dejaron de cargar y dispara campañas de recuperación con bonos personalizados.</li>',
-                '<li><strong>🔥 Top jugadores</strong>: ranking de los que más cargan / más reembolsos generan / más activos. Para identificar VIPs.</li>',
-                '<li><strong>🏆 Top estadísticas</strong>: matriz <em>tier × estado de actividad</em> — cuántos VIP/ORO/PLATA están activos vs perdidos. Incluye breakdown app vs no-app y export CSV WhatsApp.</li>',
                 '<li><strong>📊 Equipos</strong>: gestionás líneas de WhatsApp por equipo (cargar xlsx, cambiar número, renombrar línea, ver actividad, historial, diagnosticar, vaciar).</li>',
-                '<li><strong>📂 Segmentos</strong>: clasificación general de los users por comportamiento (activos / dormidos / nuevos / etc.).</li>',
                 '<li><strong>🔗 Campañas (links)</strong>: links de tracking para medir de dónde vienen los registros (WhatsApp, redes, banners, etc.).</li>',
                 '</ul>',
 
@@ -9180,9 +9168,7 @@ function _helpBlocks() {
                 '<li><strong>Comisión equipo</strong>: la parte que cobra el equipo.</li>',
                 '</ul>',
                 '<h4 style="color:#fff;margin-top:14px;">Sección Ingresos:</h4>',
-                '<p>Es el resumen general: <em>cuánto entró menos cuánto salió, cuánto le toca a cada equipo, cuánto queda neto para la casa</em>. Sirve como dashboard de cierre.</p>',
-                '<h4 style="color:#fff;margin-top:14px;">Top engagement:</h4>',
-                '<p>Lista los <em>usuarios más activos</em> (más cargas, más logins, más sesiones). Sirve para identificar VIPs y darles trato preferencial.</p>'
+                '<p>Es el resumen general: <em>cuánto entró menos cuánto salió, cuánto le toca a cada equipo, cuánto queda neto para la casa</em>. Sirve como dashboard de cierre.</p>'
             ].join('')
         },
         {
@@ -9650,26 +9636,15 @@ function _helpBlocks() {
                 '<h4 style="color:#fff;margin-top:14px;">9) Subir otra lista</h4>',
                 '<p>Botón <strong>🔄 Subir otra lista</strong> al lado del descargar CSV — vuelve al uploader sin recargar la página. Los datos del análisis anterior se descartan.</p>',
 
-                '<p style="background:rgba(102,255,102,0.06);border-left:3px solid #66ff66;padding:10px 12px;margin-top:14px;border-radius:6px;"><strong style="color:#66ff66;">Por qué Recontactación es distinta del Top tradicional:</strong> el Top jugadores y Top estadísticas miran a TODA tu base. Recontactación arranca <em>desde una lista que vos definís</em> (ej: 60 días sin actividad). Es <strong>quirúrgico</strong>: trabajás con el universo que querés, no con todo.</p>'
+                '<p style="background:rgba(102,255,102,0.06);border-left:3px solid #66ff66;padding:10px 12px;margin-top:14px;border-radius:6px;"><strong style="color:#66ff66;">Recontactación es la herramienta principal de recuperación:</strong> arrancás <em>desde una lista que vos definís</em> (ej: usuarios sin actividad de 60 días o más exportados de JUGAYGANA). El sistema cruza con tu base, clasifica y arma estrategia per-user — quirúrgico, sin tocar a la base entera.</p>'
             ].join('')
         },
         {
-            anchor: 'help-segments-campaigns',
-            icon: '📂',
-            title: 'Segmentos y Campañas (links de tracking)',
+            anchor: 'help-campaigns',
+            icon: '🔗',
+            title: 'Campañas (links de tracking)',
             body: [
-                '<h4 style="color:#fff;margin-top:0;">📂 Segmentos</h4>',
-                '<p>Clasificación general de los users por comportamiento. La idea es ver de un vistazo cuántos están en cada estado para diseñar campañas dirigidas.</p>',
-                '<ul>',
-                '<li><strong>Activos</strong>: cargaron en los últimos 7-15 días.</li>',
-                '<li><strong>Dormidos</strong>: cargaron pero hace tiempo (15-60 días).</li>',
-                '<li><strong>Perdidos</strong>: 60+ días sin cargar.</li>',
-                '<li><strong>Nuevos</strong>: registrados en la última semana / mes.</li>',
-                '<li><strong>Nunca cargaron</strong>: registrados pero no depositaron.</li>',
-                '</ul>',
-                '<p>Sirve como <em>panorama macro</em> — para análisis profundo y exportación, usá <strong>🆕 Recontactación</strong> o <strong>Top estadísticas</strong>.</p>',
-
-                '<h4 style="color:#fff;margin-top:14px;">🔗 Campañas (links)</h4>',
+                '<h4 style="color:#fff;margin-top:0;">🔗 Campañas (links)</h4>',
                 '<p>Generás <strong>links únicos</strong> con tracking de origen. Cuando alguien se registra a través de un link de campaña queda marcado con esa fuente.</p>',
                 '<p><strong>Para qué sirve:</strong></p>',
                 '<ul>',
@@ -9782,30 +9757,6 @@ function _helpBlocks() {
                 '<li><strong>🆕 Recontactación</strong>: <em>vos subís la lista</em> y el sistema la analiza. Más control, más quirúrgico.</li>',
                 '</ul>',
                 '<p>Los dos pueden convivir: usá Win-back para flujo continuo y Recontactación para campañas grandes / específicas.</p>'
-            ].join('')
-        },
-        {
-            anchor: 'help-top-jugadores',
-            icon: '🔥',
-            title: 'Top jugadores y Top estadísticas — quién es quién en tu base',
-            body: [
-                '<h4 style="color:#fff;margin-top:0;">🔥 Top jugadores</h4>',
-                '<p>Ranking simple de los <strong>más activos</strong> según distintos criterios:</p>',
-                '<ul>',
-                '<li><strong>Más cargan</strong>: top por suma de depósitos.</li>',
-                '<li><strong>Más reembolsos</strong>: top por monto reembolsado (= los que más perdieron, candidatos VIP).</li>',
-                '<li><strong>Más cargas en la semana</strong>: top por cantidad de transacciones (= más enganche).</li>',
-                '</ul>',
-                '<p>Sirve para identificar VIPs y darles trato preferencial (regalos manuales, atención personalizada).</p>',
-
-                '<h4 style="color:#fff;margin-top:14px;">🏆 Top estadísticas</h4>',
-                '<p>Vista <strong>matriz tier × estado de actividad</strong>: cuántos VIP/ORO/PLATA/BRONCE tenés en cada estado (activo/dormido/perdido).</p>',
-                '<ul>',
-                '<li>Por celda muestra: cantidad + breakdown <strong>app vs no-app</strong> — clave para saber a quiénes podés mandar push y a quiénes solo WhatsApp.</li>',
-                '<li>Click en cada celda → expande la lista de usuarios de esa categoría con teléfonos.</li>',
-                '<li>Botón <strong>📤 Export WhatsApp CSV</strong>: arma un CSV con los teléfonos de la celda seleccionada listos para campaña.</li>',
-                '</ul>',
-                '<p style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;padding:10px 12px;margin-top:10px;border-radius:6px;"><strong style="color:#ffc850;">Diferencia clave con 🆕 Recontactación:</strong> Top estadísticas mira a <em>toda tu base</em>. Recontactación arranca de una lista <em>que vos subís</em>. Usá top para vista panorámica, Recontactación para campañas dirigidas con material que ya tenés afuera.</p>'
             ].join('')
         },
         {
