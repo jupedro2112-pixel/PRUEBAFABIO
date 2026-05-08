@@ -2565,7 +2565,7 @@ let _recontactState = { items: null, summary: null, file: null, fileLabel: '', s
 // ===== Cache + Historial (localStorage) =====
 const RECONTACT_CACHE_KEY = 'vipRecontactCache_v1';
 const RECONTACT_HISTORY_KEY = 'vipRecontactHistory_v1';
-const RECONTACT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const RECONTACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
 const RECONTACT_HISTORY_MAX = 20;
 
 function _recontactSaveCache(items, summary, fileLabel) {
@@ -2884,7 +2884,7 @@ async function recontactAnalyze() {
         _recontactState.summary = j.summary || {};
         _recontactState.fileLabel = (file && file.name) || '';
         _recontactState.savedAt = Date.now();
-        // Guardar en cache (24h) + push al historial.
+        // Guardar en cache (7 días) + push al historial.
         _recontactSaveCache(_recontactState.items, _recontactState.summary, _recontactState.fileLabel);
         _recontactPushHistorySnapshot(_recontactState.items, _recontactState.summary, _recontactState.fileLabel);
         loadRecontactSection();
@@ -3009,12 +3009,12 @@ function _renderRecontactDashboard(summary, items) {
 
     let html = '';
 
-    // Banner de cache si el state vino de localStorage (24h)
+    // Banner de cache si el state vino de localStorage (7 días)
     if (_recontactState.savedAt) {
         const rel = _recontactRelTime(_recontactState.savedAt);
         const lbl = _recontactState.fileLabel ? ' · <strong style="color:#fff;">' + escapeHtml(_recontactState.fileLabel) + '</strong>' : '';
         html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:8px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
-        html += '  <span style="color:#bbb;font-size:11.5px;">📂 Análisis cargado desde cache · <span style="color:#66ff66;">' + rel + '</span>' + lbl + ' · expira a las 24h</span>';
+        html += '  <span style="color:#bbb;font-size:11.5px;">📂 Análisis cargado desde cache · <span style="color:#66ff66;">' + rel + '</span>' + lbl + ' · expira en 7 días</span>';
         html += '  <button type="button" onclick="recontactReset()" style="padding:5px 10px;font-size:11px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:6px;cursor:pointer;">🗑 Descartar y subir otra</button>';
         html += '</div>';
     }
@@ -3260,7 +3260,7 @@ function _renderRecontactHistoryCard(history) {
     html += '  <div style="padding:12px 14px;">';
     html += _renderRecontactHistoryTable(history);
     html += '    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
-    html += '      <span style="color:#888;font-size:10.5px;">Cada análisis queda guardado por 24h · máximo ' + RECONTACT_HISTORY_MAX + ' snapshots · los Δ comparan con el análisis anterior.</span>';
+    html += '      <span style="color:#888;font-size:10.5px;">Cada análisis queda guardado por 7 días · máximo ' + RECONTACT_HISTORY_MAX + ' snapshots · los Δ comparan con el análisis anterior.</span>';
     html += '      <button type="button" onclick="_recontactClearHistory()" style="padding:4px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);color:#ff8080;border-radius:5px;cursor:pointer;">🗑 Borrar historial</button>';
     html += '    </div>';
     html += '  </div>';
@@ -3302,8 +3302,9 @@ function _renderRecontactHistoryTable(history) {
     html += '    <th style="text-align:right;padding:6px 8px;color:#ffaa44;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="10-20 días">⚠ Riesgo</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#9b30ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="20-30 días">💔 Perd.</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#888;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="+30 días">☠ Inact.</th>';
-    html += '    <th style="text-align:right;padding:6px 8px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="con app + notifs">📱 Push</th>';
-    html += '    <th style="text-align:right;padding:6px 8px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin app">💬 WA</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#7cffb3;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="total con app instalada (sin importar notifs)">📱 Con app</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="con app + notifs (push directo)">🔔 Push</th>';
+    html += '    <th style="text-align:right;padding:6px 8px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin app (recontacto sólo por WhatsApp)">💬 WA</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#ffd700;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin línea asignada en Equipos">⚠ Sin línea</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="$ cargas del archivo">$ Archivo</th>';
     html += '  </tr></thead><tbody>';
@@ -3325,6 +3326,7 @@ function _renderRecontactHistoryTable(history) {
         html += '  <td style="padding:5px 8px;text-align:right;color:#ffaa44;">' + fmt(b.enRiesgo || 0)  + delta(b.enRiesgo, pb.enRiesgo) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#9b30ff;">' + fmt(b.perdidos || 0)  + delta(b.perdidos, pb.perdidos) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#888;">'    + fmt(b.inactivos || 0) + delta(b.inactivos, pb.inactivos) + '</td>';
+        html += '  <td style="padding:5px 8px;text-align:right;color:#7cffb3;font-weight:600;">' + fmt(s.withApp || 0) + delta(s.withApp, prev && prev.withApp) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#25d366;">' + fmt(s.withNotifs || 0) + delta(s.withNotifs, prev && prev.withNotifs) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#00d4ff;">' + fmt(s.withoutApp || 0) + delta(s.withoutApp, prev && prev.withoutApp) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#ffd700;">' + fmt(s.sinLinea || 0)   + delta(s.sinLinea, prev && prev.sinLinea) + '</td>';
