@@ -2897,26 +2897,32 @@ function _recontactClearPending(username, action) {
     _updateRecontactSaveButton();
 }
 
-// Cuenta los cambios pendientes y refresca el badge del botón "Guardar".
+// Cuenta los cambios pendientes y refresca el banner "Guardar tildes".
 function _updateRecontactSaveButton() {
     const btn = document.getElementById('recontactSaveAllBtn');
+    const banner = document.getElementById('recontactSaveBanner');
+    const status = document.getElementById('recontactSaveStatus');
     if (!btn) return;
     let count = 0;
     for (const u in window._recontactPendingTags) {
         count += Object.keys(window._recontactPendingTags[u]).length;
     }
     if (count === 0) {
-        btn.disabled = true;
-        btn.style.opacity = '0.55';
-        btn.textContent = '💾 Cambios guardados';
-        btn.style.background = 'rgba(102,255,102,0.10)';
-        btn.style.color = '#66ff66';
+        // Todo guardado — banner verde, botón verde apagado.
+        btn.textContent = '✅ TODO GUARDADO';
+        btn.style.background = 'linear-gradient(135deg,#25d366,#128c4f)';
+        btn.style.boxShadow = '0 4px 14px rgba(37,211,102,0.35)';
+        btn.style.cursor = 'default';
+        if (banner) banner.style.borderBottomColor = 'rgba(37,211,102,0.40)';
+        if (status) status.textContent = 'Todos los tildes están sincronizados con el server.';
     } else {
-        btn.disabled = false;
-        btn.style.opacity = '1';
-        btn.textContent = '💾 Guardar cambios (' + count + ')';
+        // Hay pendientes — botón rojo intenso con count.
+        btn.textContent = '💾 GUARDAR ' + count + ' CAMBIO' + (count === 1 ? '' : 'S');
         btn.style.background = 'linear-gradient(135deg,#ff5050,#aa1a1a)';
-        btn.style.color = '#fff';
+        btn.style.boxShadow = '0 4px 14px rgba(255,80,80,0.45)';
+        btn.style.cursor = 'pointer';
+        if (banner) banner.style.borderBottomColor = 'rgba(255,80,80,0.50)';
+        if (status) status.innerHTML = '<strong style="color:#ff8080;">Hay ' + count + ' cambio' + (count === 1 ? '' : 's') + ' sin confirmar al server.</strong> Tocá el botón para guardar todo.';
     }
 }
 
@@ -2979,14 +2985,14 @@ async function recontactSaveAllTags() {
     _updateRecontactSaveButton();
 }
 
-// Wire del event listener delegado para los checkboxes Callbell. Se llama
-// desde _wireRecontactFilters() después de cada re-render de la tabla.
+// Handler único delegado para checkboxes Callbell — se asigna a document.body
+// una sola vez. Usar document.body en lugar de un container que se reemplaza
+// con innerHTML evita duplicados de listener cuando el dashboard re-renderiza.
+let _cbCallbellHandlerWired = false;
 function _wireRecontactCallbellCheckboxes() {
-    const c = document.getElementById('recontactContent');
-    if (!c) return;
-    if (c.dataset.cbWired === '1') return;
-    c.dataset.cbWired = '1';
-    c.addEventListener('change', (e) => {
+    if (_cbCallbellHandlerWired) return;
+    _cbCallbellHandlerWired = true;
+    document.body.addEventListener('change', (e) => {
         const t = e.target;
         if (!t || !t.classList || !t.classList.contains('cb-callbell-toggle')) return;
         const username = t.dataset.user || '';
@@ -3008,8 +3014,6 @@ function _wireRecontactCallbellCheckboxes() {
         const bucket = it ? (it.bucket || '') : '';
         const tier = it ? (it.tier || '') : '';
         _recontactPushTag(username, action, newSet, bucket, tier).then(ok => {
-            // Si fue exitoso quedó out of pending; si no, sigue pending y el
-            // user puede usar el botón "Guardar cambios" para reintentar.
             if (ok) _updateRecontactSaveButton();
         });
         // 4) Re-render para reflejar mutual exclusion visualmente.
@@ -3701,6 +3705,17 @@ function _renderRecontactDashboard(summary, items) {
 
     let html = '';
 
+    // Banner sticky arriba de todo: "Guardar tildes". SIEMPRE visible mientras
+    // estás en la sección, scroll-friendly. Cuando hay pending → rojo + count;
+    // cuando todo guardado → verde apagado.
+    html += '<div id="recontactSaveBanner" style="position:sticky;top:0;z-index:50;background:linear-gradient(135deg,#0f1729,#1a0033);border-bottom:2px solid rgba(155,48,255,0.40);padding:10px 14px;margin:-10px -14px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;box-shadow:0 4px 14px rgba(0,0,0,0.35);">';
+    html += '  <div style="color:#bbb;font-size:12px;line-height:1.4;">';
+    html += '    <strong style="color:#fff;font-size:13px;">📞 Tildes Callbell</strong><br>';
+    html += '    <span id="recontactSaveStatus" style="color:#888;">Tildá las casillas en cada fila. El sistema guarda automáticamente, pero tocá <strong style="color:#fff;">Guardar tildes</strong> si querés confirmar todos los cambios.</span>';
+    html += '  </div>';
+    html += '  <button type="button" id="recontactSaveAllBtn" onclick="recontactSaveAllTags()" style="padding:12px 22px;font-size:14px;font-weight:900;background:linear-gradient(135deg,#9b30ff,#5a1aaa);border:none;color:#fff;border-radius:9px;cursor:pointer;letter-spacing:0.5px;box-shadow:0 4px 14px rgba(155,48,255,0.35);min-width:200px;">💾 GUARDAR TILDES</button>';
+    html += '</div>';
+
     // Banner del análisis activo (compartido entre todos los admins)
     if (_recontactState.savedAt) {
         const rel = _recontactRelTime(_recontactState.savedAt);
@@ -3722,7 +3737,6 @@ function _renderRecontactDashboard(summary, items) {
     html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">';
     html += '  <div style="color:#00d4ff;font-weight:800;font-size:15px;">📊 Análisis de ' + fmt(summary.totalAnalyzed) + ' usuarios</div>';
     html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
-    html += '    <button type="button" id="recontactSaveAllBtn" onclick="recontactSaveAllTags()" disabled style="padding:9px 16px;font-size:12.5px;font-weight:700;background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);color:#66ff66;border-radius:7px;cursor:pointer;opacity:0.55;" title="Reintentar guardar todos los tildes pendientes (se autoguardan en cada click; este botón es para reintentar si algo falló)">💾 Cambios guardados</button>';
     html += '    <button type="button" onclick="recontactDownloadXlsx()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#1a73e8,#0d47a1);border:none;color:#fff;border-radius:7px;cursor:pointer;" title="XLSX con varias hojas: una por bucket, una por estado de app, resumen, y todos por prioridad">📊 XLSX por hojas</button>';
     html += '    <button type="button" onclick="recontactDownloadCsv()" style="padding:9px 16px;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#25d366,#128c4f);border:none;color:#fff;border-radius:7px;cursor:pointer;">📥 CSV simple</button>';
     html += '    <button type="button" onclick="recontactReset()" style="padding:9px 14px;font-size:12.5px;font-weight:700;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:7px;cursor:pointer;">🔄 Subir otra lista</button>';
