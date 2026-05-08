@@ -562,6 +562,18 @@ CBU activo: ${cbuNumber}`;
     function showInstallInstructions(platform) {
         const modal = document.createElement('div');
         modal.className = 'ios-install-modal';
+        // Cerrar al tocar el fondo (no el contenido).
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.remove();
+        });
+        // Cerrar con tecla Escape.
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                modal.remove();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
 
         let title, steps, note;
         // Plataformas móviles: se muestra el aviso de notificaciones
@@ -571,6 +583,7 @@ CBU activo: ${cbuNumber}`;
         if (platform === 'android-notif') {
             modal.innerHTML = `
                 <div class="ios-install-content">
+                    <button type="button" class="ios-install-close" aria-label="Cerrar" onclick="this.closest('.ios-install-modal').remove()">×</button>
                     <h3>🔔 Un paso más</h3>
                     <div style="
                         background: rgba(255, 107, 53, 0.15);
@@ -612,6 +625,7 @@ CBU activo: ${cbuNumber}`;
                 const safeUrl = pageUrl.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
                 modal.innerHTML = `
                     <div class="ios-install-content" style="max-width:380px;">
+                        <button type="button" class="ios-install-close" aria-label="Cerrar" onclick="this.closest('.ios-install-modal').remove()">×</button>
                         <h3 style="color:#ff6b35;margin-bottom:6px;">🦊 Estás en Chrome (o similar)</h3>
                         <p style="color:#fff;font-size:14px;line-height:1.45;margin:0 0 14px;">
                             Para instalar la app en iPhone <strong>solo funciona desde Safari</strong>.
@@ -645,7 +659,8 @@ CBU activo: ${cbuNumber}`;
             // Caso Safari iOS: modal visual completo con representacion del
             // boton Compartir y flechas guia.
             modal.innerHTML = `
-                <div class="ios-install-content" style="max-width:420px;">
+                <div class="ios-install-content">
+                    <button type="button" class="ios-install-close" aria-label="Cerrar" onclick="this.closest('.ios-install-modal').remove()">×</button>
                     <h3 style="margin-bottom:4px;">📱 Instalar en iPhone</h3>
                     <p style="color:#cfcfcf;font-size:13px;margin:0 0 12px;">3 pasos rápidos. Tarda 15 segundos.</p>
 
@@ -662,6 +677,16 @@ CBU activo: ${cbuNumber}`;
                         <div style="background:rgba(0,0,0,0.75);padding:6px 10px;font-size:11px;color:#cfcfcf;text-align:center;">▶️ Mirá el video o seguí los pasos abajo</div>
                     </div>
 
+                    <!-- PASO 0: si no ves la barra de Safari -->
+                    <div style="background:rgba(91,154,255,0.10);border:1px solid rgba(91,154,255,0.40);border-radius:12px;padding:12px;margin-bottom:10px;">
+                        <p style="margin:0 0 8px;color:#5b9aff;font-weight:700;font-size:13px;">
+                            ⚠ ANTES DE EMPEZAR
+                        </p>
+                        <p style="margin:0;color:#fff;font-size:12px;line-height:1.5;">
+                            Si no ves los íconos abajo, primero tocá los <strong style="color:#5b9aff;">3 puntos «•••»</strong> que están <strong>abajo a la derecha</strong> de Safari para abrir el menú. Ahí dentro vas a encontrar el botón Compartir del paso 1.
+                        </p>
+                    </div>
+
                     <!-- PASO 1 -->
                     <div style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:10px;">
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
@@ -669,7 +694,7 @@ CBU activo: ${cbuNumber}`;
                             <strong style="color:#fff;font-size:14px;">Tocá el botón Compartir</strong>
                         </div>
                         <p style="margin:0 0 10px 34px;color:#bbb;font-size:12px;line-height:1.5;">
-                            Está abajo de la pantalla, en el medio de la barra de Safari.
+                            Está abajo de la pantalla, en el medio de la barra de Safari (o dentro del menú de los 3 puntos «•••»).
                         </p>
                         <div style="display:flex;align-items:center;justify-content:center;gap:14px;background:#0a0a0a;border-radius:10px;padding:14px;border:1px dashed rgba(255,255,255,0.15);">
                             <div style="position:relative;">
@@ -788,6 +813,7 @@ CBU activo: ${cbuNumber}`;
 
         modal.innerHTML = `
             <div class="ios-install-content">
+                <button type="button" class="ios-install-close" aria-label="Cerrar" onclick="this.closest('.ios-install-modal').remove()">×</button>
                 <h3>${title}</h3>
                 ${note ? `<p style="color: #f7931e; margin-bottom: 12px;">${note}</p>` : ''}
                 <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>
