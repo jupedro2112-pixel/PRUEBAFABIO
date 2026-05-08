@@ -2941,14 +2941,20 @@ async function _recontactPushTag(username, action, newSet, bucket, tier) {
             })
         });
         if (!r.ok) {
-            const j = await r.json().catch(() => ({}));
-            console.warn('[callbell] push fail:', j.error || r.status, username, action);
+            let errMsg = 'HTTP ' + r.status;
+            try { const j = await r.json(); if (j && j.error) errMsg = j.error; } catch (_) {}
+            console.warn('[callbell] push fail:', errMsg, username, action);
+            // Mostrar toast solo si NO es un 401 (reauthRequired) o errores comunes
+            if (r.status !== 401) {
+                showToast('⚠ No se pudo guardar tilde de ' + username + ': ' + errMsg + ' — usá "GUARDAR TILDES" para reintentar', 'error');
+            }
             return false;
         }
         _recontactClearPending(username, action);
         return true;
     } catch (e) {
         console.warn('[callbell] push exception:', e);
+        showToast('⚠ Sin conexión al server — el tilde quedó pendiente. Tocá GUARDAR TILDES cuando vuelva la red.', 'error');
         return false;
     }
 }
@@ -3996,10 +4002,8 @@ function _recontactFilterSet(key, value) {
 }
 
 function _wireRecontactFilters() {
-    // Cada vez que se re-renderiza el dashboard, re-conectar los listeners de
-    // los checkboxes Callbell. La función chequea si ya estaban conectados.
-    const c = document.getElementById('recontactContent');
-    if (c) c.dataset.cbWired = ''; // forzar re-wire después de innerHTML
+    // El listener Callbell se asigna UNA VEZ a document.body (sobrevive el
+    // innerHTML). Acá sólo aseguramos que esté wired y refrescamos el botón.
     _wireRecontactCallbellCheckboxes();
     _updateRecontactSaveButton();
 }

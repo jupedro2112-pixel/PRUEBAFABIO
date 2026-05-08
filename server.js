@@ -9316,6 +9316,8 @@ app.post('/api/admin/callbell/tag', authMiddleware, adminMiddleware, express.jso
 
     const now = new Date();
     if (action === 'etiqueta' || action === 'wa') {
+      // Asegurarse que el sub-doc esté inicializado.
+      if (!doc[action]) doc[action] = {};
       doc[action].tagged = set;
       if (set) {
         doc[action].taggedAt = now;
@@ -9324,13 +9326,17 @@ app.post('/api/admin/callbell/tag', authMiddleware, adminMiddleware, express.jso
         doc[action].fromTier = tier || doc[action].fromTier || '';
         doc[action].analysisLabel = analysisLabel || doc[action].analysisLabel || '';
       }
+      // Marcar como modified para asegurar persistencia (Mongoose a veces no
+      // detecta cambios en sub-documents anidados).
+      doc.markModified(action);
       // Si es la primera vez que se etiqueta cualquier flag, snapshot del estado de app.
-      const justGotFirstTag = (action === 'etiqueta' || action === 'wa') && set && !doc.firstTaggedAt;
+      const justGotFirstTag = set && !doc.firstTaggedAt;
       if (justGotFirstTag) {
         doc.firstTaggedAt = now;
         doc.hadAppAtFirstTag = await _userHasStandaloneApp(norm);
       }
     } else if (action === 'instalo' || action === 'no_contesto') {
+      if (!doc.respuesta) doc.respuesta = {};
       // Mutuamente excluyentes: setear instalo desmarca no_contesto y viceversa.
       // set=false → limpiar el campo.
       if (set) {
@@ -9348,10 +9354,12 @@ app.post('/api/admin/callbell/tag', authMiddleware, adminMiddleware, express.jso
         doc.respuesta.markedAt = undefined;
         doc.respuesta.markedBy = undefined;
       }
+      doc.markModified('respuesta');
     }
 
-    await doc.save();
-    return res.json({ success: true, tag: doc.toObject() });
+    const saved = await doc.save();
+    logger.info(`[callbell/tag] saved username=${norm} action=${action} set=${set} by=${adminUser} hadAppAtFirstTag=${saved.hadAppAtFirstTag} convertedAt=${saved.convertedAt}`);
+    return res.json({ success: true, tag: saved.toObject() });
   } catch (err) {
     logger.error(`[callbell/tag] error: ${err.message}\n${err.stack}`);
     return res.status(500).json({ error: err.message });
