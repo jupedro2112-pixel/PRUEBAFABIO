@@ -2580,10 +2580,29 @@ function _recontactOpenIDB() {
     });
 }
 
+// El cache vive en MongoDB compartido entre todos los admins. IDB queda como
+// cache LOCAL sólo para hidratación rápida — el server siempre es la
+// fuente de verdad.
+
 async function _recontactSaveCache(items, summary, fileLabel) {
+    // 1) Guardar en server (compartido entre admins).
     try {
-        // Limpiar legacy localStorage si quedó algo de antes.
-        try { localStorage.removeItem(RECONTACT_CACHE_KEY); } catch (_) {}
+        const r = await authFetch('/api/admin/recontact/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items, summary, fileLabel: fileLabel || '' })
+        });
+        if (!r.ok) {
+            let msg = 'Error ' + r.status;
+            try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (_) {}
+            console.warn('[recontact] save server fail:', msg);
+        }
+    } catch (e) {
+        console.warn('[recontact] save server exception', e);
+    }
+
+    // 2) Mirror a IDB local para hidratación inmediata si la red está lenta.
+    try {
         const db = await _recontactOpenIDB();
         const payload = {
             savedAt: Date.now(),
@@ -2598,19 +2617,29 @@ async function _recontactSaveCache(items, summary, fileLabel) {
             tx.onerror = () => reject(tx.error);
         });
         try { db.close(); } catch (_) {}
-    } catch (e) {
-        console.warn('[recontact] IDB save fail', e);
-        // Fallback: intentar guardar SOLO el summary en localStorage (sin items)
-        // para que al menos el banner aparezca al volver.
-        try {
-            const slim = { savedAt: Date.now(), fileLabel: fileLabel || '', items: null, summary: summary || {}, _itemsDropped: true };
-            localStorage.setItem(RECONTACT_CACHE_KEY, JSON.stringify(slim));
-        } catch (_) {}
-    }
+    } catch (e) { console.warn('[recontact] IDB mirror fail', e); }
 }
 
 async function _recontactLoadCache() {
-    // 1) Intentar IDB
+    // 1) Source of truth: server.
+    try {
+        const r = await authFetch('/api/admin/recontact/current');
+        if (r.ok) {
+            const j = await r.json();
+            if (j && j.exists) {
+                return {
+                    savedAt: new Date(j.savedAt).getTime(),
+                    fileLabel: j.fileLabel || '',
+                    savedByUsername: j.savedByUsername || '',
+                    items: j.items || [],
+                    summary: j.summary || {}
+                };
+            }
+            return null;
+        }
+    } catch (e) { console.warn('[recontact] server load fail', e); }
+
+    // 2) Fallback IDB local.
     try {
         const db = await _recontactOpenIDB();
         const p = await new Promise((resolve) => {
@@ -2621,29 +2650,20 @@ async function _recontactLoadCache() {
         });
         try { db.close(); } catch (_) {}
         if (p && p.savedAt) {
-            if (Date.now() - p.savedAt > RECONTACT_CACHE_TTL_MS) {
-                _recontactClearCache();
-                return null;
-            }
+            if (Date.now() - p.savedAt > RECONTACT_CACHE_TTL_MS) return null;
             return p;
         }
-    } catch (e) { console.warn('[recontact] IDB load fail', e); }
+    } catch (_) {}
 
-    // 2) Fallback localStorage (legacy o slim)
-    try {
-        const raw = localStorage.getItem(RECONTACT_CACHE_KEY);
-        if (!raw) return null;
-        const p = JSON.parse(raw);
-        if (!p || !p.savedAt) return null;
-        if (Date.now() - p.savedAt > RECONTACT_CACHE_TTL_MS) {
-            localStorage.removeItem(RECONTACT_CACHE_KEY);
-            return null;
-        }
-        return p;
-    } catch (_) { return null; }
+    return null;
 }
 
 async function _recontactClearCache() {
+    // Borrar del server.
+    try {
+        await authFetch('/api/admin/recontact/current', { method: 'DELETE' });
+    } catch (e) { console.warn('[recontact] server clear fail', e); }
+    // Y del IDB local.
     try { localStorage.removeItem(RECONTACT_CACHE_KEY); } catch (_) {}
     try {
         const db = await _recontactOpenIDB();
@@ -2656,37 +2676,50 @@ async function _recontactClearCache() {
         try { db.close(); } catch (_) {}
     } catch (_) {}
 }
+// El historial vive en server (compartido). Mantenemos un cache local en
+// localStorage que se refresca apenas se llama loadRecontactSection().
+let _recontactHistoryCache = null;
+
 function _recontactPushHistorySnapshot(items, summary, fileLabel) {
-    try {
-        const raw = localStorage.getItem(RECONTACT_HISTORY_KEY);
-        const arr = raw ? JSON.parse(raw) : [];
-        const list = Array.isArray(arr) ? arr : [];
-        let sinLinea = 0;
-        for (const it of (items || [])) {
-            if (!it.team && !it.linePhone) sinLinea++;
-        }
-        const snap = {
-            at: Date.now(),
-            label: fileLabel || '',
-            totalAnalyzed: summary.totalAnalyzed || (items && items.length) || 0,
-            foundInDb: summary.foundInDb || 0,
-            buckets: Object.assign({}, summary.buckets || {}),
-            tiers: Object.assign({}, summary.tiers || {}),
-            withApp: summary.withApp || 0,
-            withNotifs: summary.withNotifs || 0,
-            withoutApp: summary.withoutApp || 0,
-            fileTotalDeposits:  summary.fileTotalDeposits  || 0,
-            fileTotalWithdraws: summary.fileTotalWithdraws || 0,
-            fileTotalBonuses:   summary.fileTotalBonuses   || 0,
-            totalRecoverableValue: summary.totalRecoverableValue || 0,
-            sinLinea
-        };
-        list.unshift(snap);
-        if (list.length > RECONTACT_HISTORY_MAX) list.length = RECONTACT_HISTORY_MAX;
-        localStorage.setItem(RECONTACT_HISTORY_KEY, JSON.stringify(list));
-    } catch (e) { console.warn('[recontact] history push fail', e); }
+    // El push al historial lo hace el endpoint /save automáticamente — esta
+    // función queda como compat por si llamadas viejas siguen siendo invocadas.
+    // Forzamos un refresh del historial cuando se invoca.
+    _recontactRefreshHistory().catch(() => {});
 }
+
+async function _recontactRefreshHistory() {
+    try {
+        const r = await authFetch('/api/admin/recontact/history');
+        if (!r.ok) return _recontactHistoryCache || [];
+        const j = await r.json();
+        const list = Array.isArray(j && j.history) ? j.history.map(h => ({
+            at: new Date(h.at).getTime(),
+            label: h.fileLabel || '',
+            savedByUsername: h.savedByUsername || '',
+            totalAnalyzed: h.totalAnalyzed || 0,
+            foundInDb: h.foundInDb || 0,
+            buckets: h.buckets || {},
+            tiers: h.tiers || {},
+            withApp: h.withApp || 0,
+            withNotifs: h.withNotifs || 0,
+            withoutApp: h.withoutApp || 0,
+            fileTotalDeposits: h.fileTotalDeposits || 0,
+            fileTotalWithdraws: h.fileTotalWithdraws || 0,
+            fileTotalBonuses: h.fileTotalBonuses || 0,
+            totalRecoverableValue: h.totalRecoverableValue || 0,
+            sinLinea: h.sinLinea || 0
+        })) : [];
+        _recontactHistoryCache = list;
+        // Mirror a localStorage para mostrar al instante en próximo refresh.
+        try { localStorage.setItem(RECONTACT_HISTORY_KEY, JSON.stringify(list)); } catch (_) {}
+        return list;
+    } catch (_) { return _recontactHistoryCache || []; }
+}
+
 function _recontactLoadHistory() {
+    // Devuelve el cache en memoria si está; si no, lee localStorage como
+    // bridge mientras el fetch async termina.
+    if (_recontactHistoryCache) return _recontactHistoryCache;
     try {
         const raw = localStorage.getItem(RECONTACT_HISTORY_KEY);
         if (!raw) return [];
@@ -2694,8 +2727,17 @@ function _recontactLoadHistory() {
         return Array.isArray(arr) ? arr : [];
     } catch (_) { return []; }
 }
-function _recontactClearHistory() {
+
+async function _recontactClearHistory() {
     if (!confirm('¿Borrar TODO el historial de análisis? (no se puede deshacer)')) return;
+    try {
+        const r = await authFetch('/api/admin/recontact/history', { method: 'DELETE' });
+        if (!r.ok) {
+            showToast('Error borrando historial', 'error');
+            return;
+        }
+    } catch (e) { showToast('Error: ' + e.message, 'error'); return; }
+    _recontactHistoryCache = [];
     try { localStorage.removeItem(RECONTACT_HISTORY_KEY); } catch (_) {}
     loadRecontactSection();
     showToast('Historial borrado', 'info');
@@ -2736,6 +2778,20 @@ function loadRecontactSection() {
     probe.textContent = '🔍 Buscando análisis previo…';
     if (c.firstChild) c.insertBefore(probe, c.firstChild);
 
+    // Refrescar el historial del server en paralelo al cache.
+    _recontactRefreshHistory().then(() => {
+        // Si todavía estamos en uploader (no hay cache hidratado), re-render
+        // para mostrar el historial actualizado debajo.
+        if (!_recontactState.items) {
+            const stillUploader = c.querySelector('#recontactDropZone');
+            if (stillUploader) {
+                const newHtml = _renderRecontactUploader();
+                const hist = _recontactLoadHistory();
+                c.innerHTML = newHtml + (hist.length > 0 ? _renderRecontactHistoryStandalone(hist) : '');
+            }
+        }
+    }).catch(() => {});
+
     _recontactLoadCache().then(cache => {
         try { document.getElementById('recontactCacheProbe')?.remove(); } catch (_) {}
         if (!cache) return;
@@ -2745,17 +2801,10 @@ function loadRecontactSection() {
             _recontactState.summary = cache.summary;
             _recontactState.fileLabel = cache.fileLabel || '';
             _recontactState.savedAt = cache.savedAt;
+            _recontactState.savedByUsername = cache.savedByUsername || '';
             c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
             _wireRecontactFilters();
             return;
-        }
-        // Cache "slim" (solo summary porque IDB falló) — no podemos rehidratar
-        // el dashboard pero al menos avisamos.
-        if (cache._itemsDropped && cache.summary) {
-            const banner = document.createElement('div');
-            banner.style.cssText = 'background:rgba(255,170,68,0.06);border:1px solid rgba(255,170,68,0.30);border-radius:8px;padding:10px 14px;margin-bottom:10px;color:#ffaa44;font-size:12px;';
-            banner.textContent = '⚠ Hubo un análisis previo (' + (cache.fileLabel || 'archivo') + ') hace ' + _recontactRelTime(cache.savedAt) + ' pero no se pudo guardar el detalle. Subí el archivo de nuevo para verlo.';
-            if (c.firstChild) c.insertBefore(banner, c.firstChild);
         }
     }).catch(e => {
         try { document.getElementById('recontactCacheProbe')?.remove(); } catch (_) {}
@@ -3225,12 +3274,13 @@ function _renderRecontactDashboard(summary, items) {
 
     let html = '';
 
-    // Banner de cache si el state vino de localStorage (7 días)
+    // Banner del análisis activo (compartido entre todos los admins)
     if (_recontactState.savedAt) {
         const rel = _recontactRelTime(_recontactState.savedAt);
         const lbl = _recontactState.fileLabel ? ' · <strong style="color:#fff;">' + escapeHtml(_recontactState.fileLabel) + '</strong>' : '';
+        const by = _recontactState.savedByUsername ? ' · subido por <strong style="color:#fff;">' + escapeHtml(_recontactState.savedByUsername) + '</strong>' : '';
         html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:8px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
-        html += '  <span style="color:#bbb;font-size:11.5px;">📂 Análisis cargado desde cache · <span style="color:#66ff66;">' + rel + '</span>' + lbl + ' · expira en 7 días</span>';
+        html += '  <span style="color:#bbb;font-size:11.5px;">📂 Análisis activo (compartido) · <span style="color:#66ff66;">' + rel + '</span>' + lbl + by + ' · expira en 7 días</span>';
         html += '  <button type="button" onclick="recontactReset()" style="padding:5px 10px;font-size:11px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;border-radius:6px;cursor:pointer;">🗑 Descartar y subir otra</button>';
         html += '</div>';
     }

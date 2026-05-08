@@ -47,7 +47,9 @@ const {
   MasterAnalysisSnapshot,
   NotifStrategyConfig,
   Review,
-  WinbackStrategyConfig
+  WinbackStrategyConfig,
+  RecontactAnalysis,
+  RecontactHistory
 } = require('../src/models');
 
 // ============================================
@@ -368,6 +370,8 @@ module.exports = {
   NotifStrategyConfig,
   Review,
   WinbackStrategyConfig,
+  RecontactAnalysis,
+  RecontactHistory,
   // Helpers
   getConfig,
   setConfig,

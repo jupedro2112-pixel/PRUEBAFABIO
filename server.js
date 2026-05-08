@@ -82,6 +82,8 @@ const {
   NotifStrategyConfig,
   Review,
   WinbackStrategyConfig,
+  RecontactAnalysis,
+  RecontactHistory,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -8853,6 +8855,163 @@ app.post(
     }
   }
 );
+
+// ============================================
+// RECONTACT — análisis compartido entre admins
+// ============================================
+// El cache antes vivía en IndexedDB del browser (per-device). Ahora se
+// persiste en MongoDB para que TODOS los admins vean el mismo análisis
+// activo. Items se comprimen con gzip — 50k usuarios pasan de ~30MB a ~5MB.
+const _zlib = require('zlib');
+const RECONTACT_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+const RECONTACT_HISTORY_MAX = 50;
+
+// GET — devuelve el análisis activo (descomprimiendo items).
+app.get('/api/admin/recontact/current', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const doc = await RecontactAnalysis.findOne({ _id: 'current' }).lean();
+    if (!doc) return res.json({ exists: false });
+    if (doc.expiresAt && doc.expiresAt < new Date()) {
+      // El TTL de Mongo barre solo, pero por las dudas si pegan justo en el medio.
+      return res.json({ exists: false });
+    }
+    let items = [];
+    if (doc.itemsCompressed) {
+      const buf = doc.itemsCompressed.buffer
+        ? Buffer.from(doc.itemsCompressed.buffer)
+        : Buffer.from(doc.itemsCompressed);
+      try {
+        const json = _zlib.gunzipSync(buf).toString('utf8');
+        items = JSON.parse(json);
+      } catch (decompErr) {
+        logger.warn(`[recontact/current] decompress fail: ${decompErr.message}`);
+        items = [];
+      }
+    }
+    return res.json({
+      exists: true,
+      savedAt: doc.savedAt,
+      fileLabel: doc.fileLabel,
+      savedByUsername: doc.savedByUsername,
+      summary: doc.summary || {},
+      items,
+      itemsCount: doc.itemsCount || items.length
+    });
+  } catch (err) {
+    logger.error(`[recontact/current] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — guarda el análisis como "current" y agrega snapshot al historial.
+app.post(
+  '/api/admin/recontact/save',
+  authMiddleware,
+  adminMiddleware,
+  express.json({ limit: '60mb' }),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const items = Array.isArray(body.items) ? body.items : null;
+      const summary = body.summary || {};
+      const fileLabel = String(body.fileLabel || '').slice(0, 200);
+      if (!items || items.length === 0) {
+        return res.status(400).json({ error: 'items requerido' });
+      }
+      if (items.length > 60000) {
+        return res.status(413).json({ error: `Demasiados items (${items.length})` });
+      }
+
+      const json = JSON.stringify(items);
+      const compressed = _zlib.gzipSync(Buffer.from(json, 'utf8'));
+
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + RECONTACT_TTL_MS);
+      const savedByUsername = (req.user && req.user.username) || 'admin';
+
+      await RecontactAnalysis.replaceOne(
+        { _id: 'current' },
+        {
+          _id: 'current',
+          savedAt: now,
+          fileLabel,
+          savedByUsername,
+          summary,
+          itemsCompressed: compressed,
+          itemsCount: items.length,
+          expiresAt
+        },
+        { upsert: true }
+      );
+
+      // Snapshot al historial.
+      let sinLinea = 0;
+      for (const it of items) if (!it.team && !it.linePhone) sinLinea++;
+      await RecontactHistory.create({
+        at: now,
+        fileLabel,
+        savedByUsername,
+        totalAnalyzed: summary.totalAnalyzed || items.length,
+        foundInDb: summary.foundInDb || 0,
+        buckets: summary.buckets || {},
+        tiers: summary.tiers || {},
+        withApp: summary.withApp || 0,
+        withNotifs: summary.withNotifs || 0,
+        withoutApp: summary.withoutApp || 0,
+        fileTotalDeposits: summary.fileTotalDeposits || 0,
+        fileTotalWithdraws: summary.fileTotalWithdraws || 0,
+        fileTotalBonuses: summary.fileTotalBonuses || 0,
+        totalRecoverableValue: summary.totalRecoverableValue || 0,
+        sinLinea
+      });
+
+      // Trim historial al máximo (las más viejas se borran).
+      const allHist = await RecontactHistory.find().sort({ at: -1 }).select('_id').lean();
+      if (allHist.length > RECONTACT_HISTORY_MAX) {
+        const toDelete = allHist.slice(RECONTACT_HISTORY_MAX).map(h => h._id);
+        await RecontactHistory.deleteMany({ _id: { $in: toDelete } });
+      }
+
+      logger.info(`[recontact/save] count=${items.length} compressedKB=${Math.round(compressed.length / 1024)} by=${savedByUsername} file="${fileLabel}"`);
+      return res.json({ success: true, savedAt: now, expiresAt, savedByUsername });
+    } catch (err) {
+      logger.error(`[recontact/save] error: ${err.message}\n${err.stack}`);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// DELETE — limpia el análisis activo (no toca el historial).
+app.delete('/api/admin/recontact/current', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await RecontactAnalysis.deleteOne({ _id: 'current' });
+    logger.info(`[recontact/current] cleared by=${(req.user && req.user.username) || 'admin'}`);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET historial — devuelve los snapshots resumidos (sin items).
+app.get('/api/admin/recontact/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const docs = await RecontactHistory.find().sort({ at: -1 }).limit(RECONTACT_HISTORY_MAX).lean();
+    return res.json({ history: docs });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE historial — vacía todo.
+app.delete('/api/admin/recontact/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const r = await RecontactHistory.deleteMany({});
+    logger.info(`[recontact/history] cleared ${r.deletedCount} entries by=${(req.user && req.user.username) || 'admin'}`);
+    return res.json({ success: true, deletedCount: r.deletedCount });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // CSV con todos los items enriquecidos. Se manda en POST porque no podemos
 // guardar el archivo en el server — el admin manda el xlsx de nuevo y
