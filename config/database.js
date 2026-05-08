@@ -49,7 +49,8 @@ const {
   Review,
   WinbackStrategyConfig,
   RecontactAnalysis,
-  RecontactHistory
+  RecontactHistory,
+  AppUsersDailySnapshot
 } = require('../src/models');
 
 // ============================================
@@ -372,6 +373,7 @@ module.exports = {
   WinbackStrategyConfig,
   RecontactAnalysis,
   RecontactHistory,
+  AppUsersDailySnapshot,
   // Helpers
   getConfig,
   setConfig,

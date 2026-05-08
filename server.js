@@ -84,6 +84,7 @@ const {
   WinbackStrategyConfig,
   RecontactAnalysis,
   RecontactHistory,
+  AppUsersDailySnapshot,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -9020,6 +9021,78 @@ app.delete('/api/admin/recontact/history', authMiddleware, adminMiddleware, asyn
 // context=standalone) y cuántos también tienen notifs activas. Usa el
 // MISMO criterio que el reporte de Bono $5.000 app y Recontactación,
 // para que los números cuadren entre secciones.
+// Helper: dayKey en hora ART (UTC-3) → YYYY-MM-DD
+function _appUsersDayKey(d) {
+  const date = d || new Date();
+  const ms = date.getTime() - 3 * 60 * 60 * 1000; // shift a ART
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+// Toma un snapshot de los counts y lo upsertea en AppUsersDailySnapshot.
+// Se llama desde el endpoint /stats (oportunístico) y desde un cron diario.
+async function _captureAppUsersSnapshot() {
+  const HAS_APP_QUERY = {
+    $or: [
+      { fcmTokenContext: 'standalone' },
+      { 'fcmTokens.context': 'standalone' }
+    ]
+  };
+  const HAS_NOTIFS_QUERY = {
+    $or: [
+      { notifPermission: 'granted' },
+      { 'fcmTokens.notifPermission': 'granted' }
+    ]
+  };
+  const HAS_BOTH_QUERY = { $and: [HAS_APP_QUERY, HAS_NOTIFS_QUERY] };
+  const HAS_APP_NO_NOTIFS_QUERY = { $and: [HAS_APP_QUERY, { $nor: [HAS_NOTIFS_QUERY] }] };
+
+  const [totalUsers, withApp, withNotifs, withBoth, withAppNoNotifs] = await Promise.all([
+    User.countDocuments({}),
+    User.countDocuments(HAS_APP_QUERY),
+    User.countDocuments(HAS_NOTIFS_QUERY),
+    User.countDocuments(HAS_BOTH_QUERY),
+    User.countDocuments(HAS_APP_NO_NOTIFS_QUERY)
+  ]);
+  const platformAgg = await User.aggregate([
+    { $match: HAS_APP_QUERY },
+    { $unwind: '$fcmTokens' },
+    { $match: { 'fcmTokens.context': 'standalone' } },
+    { $group: { _id: '$fcmTokens.platform', count: { $sum: 1 } } }
+  ]);
+  const byPlatform = {};
+  for (const p of platformAgg) byPlatform[p._id || 'desconocido'] = p.count;
+
+  const dayKey = _appUsersDayKey();
+  await AppUsersDailySnapshot.findOneAndUpdate(
+    { dayKey },
+    {
+      dayKey,
+      takenAt: new Date(),
+      totalUsers, withApp, withNotifs, withBoth, withAppNoNotifs,
+      sinApp: totalUsers - withApp,
+      byPlatform
+    },
+    { upsert: true, new: true }
+  );
+
+  return { dayKey, totalUsers, withApp, withNotifs, withBoth };
+}
+
+// GET evolución diaria — devuelve los últimos N snapshots para graficar/tabular.
+app.get('/api/admin/app-users/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.min(180, Math.max(1, parseInt(req.query.days, 10) || 60));
+    const snaps = await AppUsersDailySnapshot.find({})
+      .sort({ dayKey: -1 })
+      .limit(days)
+      .lean();
+    return res.json({ history: snaps });
+  } catch (err) {
+    logger.error(`[app-users/history] error: ${err.message}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/app-users/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const HAS_APP_QUERY = {
@@ -9115,6 +9188,26 @@ app.get('/api/admin/app-users/stats', authMiddleware, adminMiddleware, async (re
     ]);
     const platforms = platformAgg.map(p => ({ platform: p._id || 'desconocido', count: p.count }));
 
+    // Aprovechamos el cómputo para upsertear el snapshot del día (oportunístico).
+    // Si nadie entra hoy a la sección, igual lo captura el cron diario abajo.
+    try {
+      const dayKey = _appUsersDayKey();
+      const byPlatform = {};
+      for (const p of platforms) byPlatform[p.platform] = p.count;
+      await AppUsersDailySnapshot.findOneAndUpdate(
+        { dayKey },
+        {
+          dayKey, takenAt: new Date(),
+          totalUsers, withApp, withNotifs, withBoth, withAppNoNotifs,
+          sinApp: totalUsers - withApp,
+          byPlatform
+        },
+        { upsert: true, new: true }
+      );
+    } catch (snapErr) {
+      logger.warn(`[app-users/stats] snapshot upsert fail: ${snapErr.message}`);
+    }
+
     res.json({
       generatedAt: new Date().toISOString(),
       totals: {
@@ -9133,6 +9226,24 @@ app.get('/api/admin/app-users/stats', authMiddleware, adminMiddleware, async (re
     res.status(500).json({ error: err.message });
   }
 });
+
+// Cron: capturar snapshot diario de usuarios con app a las 03:00 ART
+// (las 06:00 UTC). Usa setInterval que dispara cada hora y chequea si es la
+// hora apropiada — sirve para entornos sin cron del sistema.
+setInterval(async () => {
+  try {
+    const now = new Date();
+    const artHour = (now.getUTCHours() + 24 - 3) % 24; // ART = UTC-3
+    if (artHour !== 3) return;
+    const dayKey = _appUsersDayKey();
+    const exists = await AppUsersDailySnapshot.findOne({ dayKey }).lean();
+    if (exists) return; // ya capturado hoy
+    const r = await _captureAppUsersSnapshot();
+    logger.info(`[app-users/cron] daily snapshot taken dayKey=${r.dayKey} totalUsers=${r.totalUsers} withApp=${r.withApp} withBoth=${r.withBoth}`);
+  } catch (err) {
+    logger.warn(`[app-users/cron] error: ${err.message}`);
+  }
+}, 60 * 60 * 1000).unref(); // cada hora
 
 // CSV con todos los items enriquecidos. Se manda en POST porque no podemos
 // guardar el archivo en el server — el admin manda el xlsx de nuevo y

@@ -3261,13 +3261,18 @@ async function loadAppUsers() {
     if (!c) return;
     c.innerHTML = '<div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Consultando base…</div>';
     try {
-        const r = await authFetch('/api/admin/app-users/stats');
-        if (!r.ok) {
-            const j = await r.json().catch(() => ({}));
-            c.innerHTML = '<div style="padding:20px;color:#ff8080;">❌ ' + (j.error || ('Error ' + r.status)) + '</div>';
+        const [statsR, histR] = await Promise.all([
+            authFetch('/api/admin/app-users/stats'),
+            authFetch('/api/admin/app-users/history?days=60')
+        ]);
+        if (!statsR.ok) {
+            const j = await statsR.json().catch(() => ({}));
+            c.innerHTML = '<div style="padding:20px;color:#ff8080;">❌ ' + (j.error || ('Error ' + statsR.status)) + '</div>';
             return;
         }
-        const data = await r.json();
+        const data = await statsR.json();
+        const histJson = histR.ok ? await histR.json() : { history: [] };
+        data._history = (histJson && histJson.history) || [];
         c.innerHTML = _renderAppUsersDashboard(data);
     } catch (e) {
         c.innerHTML = '<div style="padding:20px;color:#ff8080;">❌ ' + (e.message || e) + '</div>';
@@ -3292,6 +3297,61 @@ function _renderAppUsersDashboard(data) {
     html += '</div>';
 
     html += '<div style="color:#aaa;font-size:11px;margin-bottom:10px;">Generado: ' + new Date(data.generatedAt).toLocaleString('es-AR') + '. Criterio: token con <code style="color:#00d4ff;">context=standalone</code> (PWA real instalada).</div>';
+
+    // === Evolución día por día ===
+    const hist = (data._history || []).slice().sort((a, b) => (b.dayKey || '').localeCompare(a.dayKey || ''));
+    if (hist.length >= 1) {
+        html += '<details open style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:0;margin-bottom:14px;overflow:hidden;">';
+        html += '  <summary style="cursor:pointer;padding:10px 14px;background:rgba(0,212,255,0.06);list-style:none;display:flex;justify-content:space-between;align-items:center;">';
+        html += '    <span style="color:#00d4ff;font-weight:800;font-size:13px;letter-spacing:0.5px;">📈 EVOLUCIÓN DÍA POR DÍA · ' + hist.length + ' días</span>';
+        html += '    <span style="color:#888;font-size:10.5px;">tocá para abrir/cerrar ▾</span>';
+        html += '  </summary>';
+        html += '  <div style="padding:12px 14px;">';
+        html += '    <div style="color:#aaa;font-size:11px;margin-bottom:8px;">Snapshot diario automático (~03:00 ART) o cada vez que entrás a esta sección. Los Δ comparan con el día anterior.</div>';
+
+        const fmt = n => Number(n || 0).toLocaleString('es-AR');
+        const delta = (cur, prev) => {
+            if (prev == null) return '';
+            const d = (cur || 0) - (prev || 0);
+            if (d === 0) return ' <span style="color:#666;">·</span>';
+            const sign = d > 0 ? '+' : '';
+            return ' <span style="color:' + (d > 0 ? '#66ff66' : '#ff8080') + ';font-size:9.5px;">' + sign + fmt(d) + '</span>';
+        };
+
+        html += '    <div style="overflow-x:auto;max-height:340px;overflow-y:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:680px;">';
+        html += '  <thead><tr style="background:rgba(255,255,255,0.04);position:sticky;top:0;">';
+        html += '    <th style="text-align:left;padding:7px 10px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Día</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Total registrados</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#7cffb3;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">📱 Con app</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#25d366;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">🔔 Con notifs</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">✅ Push directo</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#ffaa44;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">App s/ notifs</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#888;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">Sin app</th>';
+        html += '    <th style="text-align:right;padding:7px 10px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;">% app</th>';
+        html += '  </tr></thead><tbody>';
+        for (let i = 0; i < hist.length; i++) {
+            const s = hist[i];
+            const prev = hist[i + 1] || null;
+            const total = s.totalUsers || 0;
+            const pctApp = total > 0 ? ((s.withApp / total) * 100).toFixed(1) : '0';
+            const isToday = i === 0;
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);' + (isToday ? 'background:rgba(102,255,102,0.04);' : '') + '">';
+            html += '  <td style="padding:5px 10px;color:#fff;font-weight:600;font-size:11px;">' + escapeHtml(s.dayKey || '') + (isToday ? ' <span style="color:#66ff66;font-size:9.5px;">● HOY</span>' : '') + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#bbb;">' + fmt(s.totalUsers) + delta(s.totalUsers, prev && prev.totalUsers) + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#7cffb3;font-weight:700;">' + fmt(s.withApp) + delta(s.withApp, prev && prev.withApp) + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#25d366;">' + fmt(s.withNotifs) + delta(s.withNotifs, prev && prev.withNotifs) + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#00d4ff;font-weight:700;">' + fmt(s.withBoth) + delta(s.withBoth, prev && prev.withBoth) + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#ffaa44;">' + fmt(s.withAppNoNotifs) + delta(s.withAppNoNotifs, prev && prev.withAppNoNotifs) + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#888;">' + fmt(s.sinApp) + delta(s.sinApp, prev && prev.sinApp) + '</td>';
+            html += '  <td style="padding:5px 10px;text-align:right;color:#fff;font-weight:600;">' + pctApp + '%</td>';
+            html += '</tr>';
+        }
+        html += '  </tbody></table>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</details>';
+    }
 
     // Plataformas
     const plats = data.platforms || [];

@@ -50,6 +50,7 @@ const Review = require('./Review');
 const WinbackStrategyConfig = require('./WinbackStrategyConfig');
 const RecontactAnalysis = require('./RecontactAnalysis');
 const RecontactHistory = require('./RecontactHistory');
+const AppUsersDailySnapshot = require('./AppUsersDailySnapshot');
 
 
 /**
@@ -472,6 +473,7 @@ module.exports = {
   WinbackStrategyConfig,
   RecontactAnalysis,
   RecontactHistory,
+  AppUsersDailySnapshot,
 
   // Funciones de conexión
   connectDB,
