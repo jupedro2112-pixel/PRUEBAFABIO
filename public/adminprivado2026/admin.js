@@ -178,6 +178,7 @@ function showSection(sectionKey) {
         equipamiento: 'equipamientoSection',
         welcomebonus: 'welcomebonusSection',
         recontact: 'recontactSection',
+        recontactConversions: 'recontactConversionsSection',
         appUsers: 'appUsersSection',
         encuesta: 'encuestaSection',
         backupPhones: 'backupPhonesSection',
@@ -228,6 +229,8 @@ function showSection(sectionKey) {
         loadWelcomeBonusReport();
     } else if (sectionKey === 'recontact') {
         loadRecontactSection();
+    } else if (sectionKey === 'recontactConversions') {
+        loadRecontactConversions();
     } else if (sectionKey === 'appUsers') {
         loadAppUsers();
     } else if (sectionKey === 'encuesta') {
@@ -2817,6 +2820,36 @@ function _recontactRelTime(ms) {
     return `hace ${d} d`;
 }
 
+// Cache de conversiones (etiquetados que instalaron la app después).
+// Se refresca cada vez que entrás a la sección de Recontactación.
+let _recontactConversionsCache = null;
+
+async function _recontactRefreshConversions() {
+    try {
+        const r = await authFetch('/api/admin/callbell/conversions');
+        if (!r.ok) return _recontactConversionsCache || [];
+        const j = await r.json();
+        _recontactConversionsCache = Array.isArray(j && j.conversions) ? j.conversions : [];
+        return _recontactConversionsCache;
+    } catch (_) {
+        return _recontactConversionsCache || [];
+    }
+}
+
+// Carga la sección "Instalaron app recontactación" — pantalla aparte
+// con la tabla de conversiones (etiquetados que instalaron la app después).
+async function loadRecontactConversions() {
+    const c = document.getElementById('recontactConversionsContent');
+    if (!c) return;
+    c.innerHTML = '<div style="color:#888;padding:14px;font-size:12px;">⏳ Cargando conversiones…</div>';
+    try {
+        const list = await _recontactRefreshConversions();
+        c.innerHTML = _renderRecontactConversionsCard(list || []);
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error cargando: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
 function loadRecontactSection() {
     const c = document.getElementById('recontactContent');
     if (!c) return;
@@ -4027,6 +4060,66 @@ function _kpiCard(label, value, color, sub) {
         '<div style="color:' + color + ';font-size:20px;font-weight:900;line-height:1;">' + escapeHtml(value) + '</div>' +
         (sub ? '<div style="color:#aaa;font-size:10px;margin-top:3px;">' + escapeHtml(sub) + '</div>' : '') +
     '</div>';
+}
+
+// Tarjeta "Instalaron app post-recontactación": lista los usuarios que
+// vos marcaste con ✅ etiqueta y que después instalaron la app.
+// Ordenado por fecha de instalación (más reciente arriba).
+function _renderRecontactConversionsCard(conversions) {
+    if (!conversions || conversions.length === 0) {
+        return '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">' +
+            '<div style="color:#00d4ff;font-weight:800;font-size:14px;margin-bottom:6px;">📱 Instalaron app post-recontactación</div>' +
+            '<div style="color:#888;font-size:12px;">Todavía no hay conversiones registradas. Cuando alguien que marques con ✅ etiqueta instale la app, aparece acá con la fecha.</div>' +
+        '</div>';
+    }
+
+    const fmtDate = (d) => {
+        if (!d) return '-';
+        try {
+            return new Date(d).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+        } catch (_) { return '-'; }
+    };
+    const daysCol = (n) => {
+        if (n == null) return '<span style="color:#888;">-</span>';
+        if (n === 0) return '<span style="color:#25d366;font-weight:800;">mismo día</span>';
+        const c = n <= 3 ? '#25d366' : (n <= 7 ? '#ffaa44' : '#aaa');
+        return '<span style="color:' + c + ';font-weight:700;">' + n + 'd</span>';
+    };
+
+    let html = '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">';
+    html += '    <div style="color:#00d4ff;font-weight:800;font-size:14px;">📱 Instalaron app post-recontactación · ' + conversions.length + '</div>';
+    html += '    <div style="color:#888;font-size:11px;">Etiquetados que después instalaron la app · más reciente arriba</div>';
+    html += '  </div>';
+    html += '  <div style="overflow-x:auto;">';
+    html += '    <table style="width:100%;font-size:12px;border-collapse:collapse;">';
+    html += '      <thead>';
+    html += '        <tr style="background:rgba(0,212,255,0.10);color:#00d4ff;text-align:left;">';
+    html += '          <th style="padding:7px 10px;">Usuario</th>';
+    html += '          <th style="padding:7px 10px;">Etiquetado</th>';
+    html += '          <th style="padding:7px 10px;">Instaló app</th>';
+    html += '          <th style="padding:7px 10px;text-align:center;">Días</th>';
+    html += '          <th style="padding:7px 10px;">Equipo</th>';
+    html += '          <th style="padding:7px 10px;">Cómo</th>';
+    html += '        </tr>';
+    html += '      </thead>';
+    html += '      <tbody>';
+    for (const c of conversions) {
+        const como = c.convertedBy === 'manual' ? '✅ manual' : '🤖 auto';
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">';
+        html += '  <td style="padding:6px 10px;color:#fff;font-weight:600;">' + escapeHtml(c.username || '') + '</td>';
+        html += '  <td style="padding:6px 10px;color:#bbb;">' + fmtDate(c.etiquetadoAt) + '</td>';
+        html += '  <td style="padding:6px 10px;color:#25d366;font-weight:700;">' + fmtDate(c.installedAt) + '</td>';
+        html += '  <td style="padding:6px 10px;text-align:center;">' + daysCol(c.daysToInstall) + '</td>';
+        html += '  <td style="padding:6px 10px;color:#aaa;">' + escapeHtml(c.team || '-') + '</td>';
+        html += '  <td style="padding:6px 10px;color:#888;font-size:10.5px;">' + como + '</td>';
+        html += '</tr>';
+    }
+    html += '      </tbody>';
+    html += '    </table>';
+    html += '  </div>';
+    html += '</div>';
+    return html;
 }
 
 function _filterRecontactItems(items, filters) {

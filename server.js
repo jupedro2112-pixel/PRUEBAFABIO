@@ -9488,6 +9488,68 @@ app.get('/api/admin/callbell/report', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// Lista detallada de conversiones: etiquetados que instalaron la app
+// DESPUÉS de haber sido marcados (no los que ya tenían app al etiquetar).
+// Devuelve ordenado por fecha de conversión DESC para ir midiendo el avance.
+app.get('/api/admin/callbell/conversions', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+
+    const tags = await CallbellTag.find(
+      {
+        'etiqueta.tagged': true,
+        convertedAt: { $ne: null },
+        hadAppAtFirstTag: { $ne: true }
+      },
+      {
+        usernameNorm: 1, username: 1,
+        'etiqueta.taggedAt': 1, 'etiqueta.taggedBy': 1,
+        'etiqueta.fromBucket': 1, 'etiqueta.fromTier': 1,
+        convertedAt: 1, convertedBy: 1, _id: 0
+      }
+    ).sort({ convertedAt: -1 }).limit(limit).lean();
+
+    if (tags.length === 0) {
+      return res.json({ conversions: [], total: 0 });
+    }
+
+    const norms = tags.map(t => t.usernameNorm);
+    const users = await User.find(
+      { username: { $in: norms } },
+      { username: 1, phone: 1, lineTeamName: 1, linePhone: 1, appFirstInstalledAt: 1, _id: 0 }
+    ).lean();
+    const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
+
+    const conversions = tags.map(t => {
+      const u = userMap.get(t.usernameNorm) || {};
+      const taggedAt = (t.etiqueta && t.etiqueta.taggedAt) || null;
+      // Fecha de instalación REAL: appFirstInstalledAt si existe, sino el convertedAt detectado.
+      const installedAt = u.appFirstInstalledAt || t.convertedAt || null;
+      const daysToInstall = (taggedAt && installedAt)
+        ? Math.max(0, Math.floor((new Date(installedAt).getTime() - new Date(taggedAt).getTime()) / (24 * 60 * 60 * 1000)))
+        : null;
+      return {
+        username: t.username || t.usernameNorm,
+        etiquetadoAt: taggedAt,
+        etiquetadoBy: (t.etiqueta && t.etiqueta.taggedBy) || null,
+        fromBucket: (t.etiqueta && t.etiqueta.fromBucket) || null,
+        fromTier: (t.etiqueta && t.etiqueta.fromTier) || null,
+        installedAt,
+        convertedBy: t.convertedBy || null,
+        daysToInstall,
+        team: u.lineTeamName || null,
+        linePhone: u.linePhone || null,
+        phone: u.phone || null
+      };
+    });
+
+    return res.json({ conversions, total: conversions.length });
+  } catch (err) {
+    logger.error(`[callbell/conversions] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // CSV con todos los items enriquecidos. Se manda en POST porque no podemos
 // guardar el archivo en el server — el admin manda el xlsx de nuevo y
 // recibimos el CSV directo. Así evitamos persistir state intermedio.
