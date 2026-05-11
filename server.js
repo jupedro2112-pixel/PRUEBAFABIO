@@ -15161,6 +15161,11 @@ async function _executeScheduledNotification(sched) {
   }
 
   // 5) Crear promo o giveaway si aplica, vinculados al historyId.
+  // SCOPING: si la notif tiene targetUsername (single user), el promo/giveaway
+  // SOLO debe ser visible/reclamable por ese user. Sin este scoping, los promos
+  // se guardarían en el singleton global y los giveaways sin whitelist — todos
+  // los users abriendo la app verían el cartel/botón de reclamar (bug grave).
+  const targetUser = sched.targetUsername ? String(sched.targetUsername).toLowerCase() : null;
   if (sched.extraType === 'promo') {
     const promo = {
       id: uuidv4(),
@@ -15172,28 +15177,71 @@ async function _executeScheduledNotification(sched) {
       prefix: sched.audiencePrefix,
       notificationHistoryId: historyId
     };
-    await setConfig(PROMO_ALERT_KEY, promo);
+    if (targetUser) {
+      // Per-user: va al array TIER_PROMOS_KEY (no al singleton). Marcado
+      // como individual_grant para que el cleanup per-user lo agarre.
+      promo.audienceWhitelist = [targetUser];
+      promo.kind = 'individual_grant';
+      const arr = (await getConfig(TIER_PROMOS_KEY, [])) || [];
+      const nowMs = Date.now();
+      const cleaned = arr.filter(p => {
+        if (!p || !p.expiresAt) return false;
+        const exp = new Date(p.expiresAt).getTime();
+        if (!isFinite(exp) || exp <= nowMs) return false;
+        // Limpiar promos previas de este mismo user para no acumular.
+        const sameUser = Array.isArray(p.audienceWhitelist)
+          && p.audienceWhitelist.some(x => String(x).toLowerCase() === targetUser)
+          && (p.kind === 'individual_grant' || p.kind === 'winback_grant');
+        return !sameUser;
+      });
+      cleaned.push(promo);
+      await setConfig(TIER_PROMOS_KEY, cleaned);
+    } else {
+      // Audiencia general: singleton global (comportamiento original).
+      await setConfig(PROMO_ALERT_KEY, promo);
+    }
   } else if (sched.extraType === 'giveaway') {
-    // Cancelar SOLO los giveaways manuales activos (no los de estrategia
-    // automática ni los aprobados de reglas). Sin este filtro, un push
-    // programado del admin cancelaba la campaña netwin/tier-bonus en curso.
-    await MoneyGiveaway.updateMany(
-      { status: 'active', $or: [{ strategySource: 'manual' }, { strategySource: null }, { strategySource: { $exists: false } }] },
-      { $set: { status: 'cancelled' } }
-    );
-    await MoneyGiveaway.create({
-      id: uuidv4(),
-      amount: sched.giveawayAmount,
-      totalBudget: sched.giveawayBudget,
-      maxClaims: sched.giveawayMaxClaims,
-      expiresAt: new Date(Date.now() + sched.giveawayDurationMinutes * 60 * 1000),
-      createdBy: sched.createdBy || null,
-      prefix: sched.audiencePrefix,
-      notificationHistoryId: historyId,
-      requireZeroBalance: !!sched.giveawayRequireZeroBalance,
-      strategySource: 'manual',
-      status: 'active'
-    });
+    if (targetUser) {
+      // Per-user: cancelar SOLO giveaways individual_grant previos del mismo user
+      // (no tocar las campañas activas de otros users ni las generales).
+      await MoneyGiveaway.updateMany(
+        { status: 'active', strategySource: 'individual_grant', audienceWhitelist: targetUser },
+        { $set: { status: 'cancelled' } }
+      );
+      await MoneyGiveaway.create({
+        id: uuidv4(),
+        amount: sched.giveawayAmount,
+        totalBudget: sched.giveawayAmount,
+        maxClaims: 1,
+        expiresAt: new Date(Date.now() + sched.giveawayDurationMinutes * 60 * 1000),
+        createdBy: sched.createdBy || null,
+        prefix: null,
+        notificationHistoryId: historyId,
+        requireZeroBalance: !!sched.giveawayRequireZeroBalance,
+        strategySource: 'individual_grant',
+        audienceWhitelist: [targetUser],
+        status: 'active'
+      });
+    } else {
+      // Audiencia general: comportamiento original (cancelar manuales + crear).
+      await MoneyGiveaway.updateMany(
+        { status: 'active', $or: [{ strategySource: 'manual' }, { strategySource: null }, { strategySource: { $exists: false } }] },
+        { $set: { status: 'cancelled' } }
+      );
+      await MoneyGiveaway.create({
+        id: uuidv4(),
+        amount: sched.giveawayAmount,
+        totalBudget: sched.giveawayBudget,
+        maxClaims: sched.giveawayMaxClaims,
+        expiresAt: new Date(Date.now() + sched.giveawayDurationMinutes * 60 * 1000),
+        createdBy: sched.createdBy || null,
+        prefix: sched.audiencePrefix,
+        notificationHistoryId: historyId,
+        requireZeroBalance: !!sched.giveawayRequireZeroBalance,
+        strategySource: 'manual',
+        status: 'active'
+      });
+    }
   }
 }
 // Limpieza one-shot al boot: cancelar notifs pendientes del sistema viejo
