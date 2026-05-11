@@ -14139,7 +14139,7 @@ app.get('/api/complaints/mine', authMiddleware, async (req, res) => {
   try {
     const list = await Complaint.find(
       { userId: req.user.userId },
-      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, adminResponse: 1, respondedAt: 1, respondedBy: 1, supportWaLink: 1, supportPhone: 1, _id: 0 }
+      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, adminResponse: 1, respondedAt: 1, respondedBy: 1, messages: 1, _id: 0 }
     ).sort({ createdAt: -1 }).limit(50).lean();
     res.json({ complaints: list });
   } catch (err) {
@@ -14179,151 +14179,189 @@ app.get('/api/admin/complaints', authMiddleware, adminMiddleware, async (req, re
   }
 });
 
-// PUT /api/admin/complaints/:id — actualiza status, notas del admin, y/o
-// la respuesta pública para el usuario.
+// Helper interno: manda un push al user dueño de la queja con un mensaje
+// nuevo del admin. Fire-and-forget — los errores se loguean pero no
+// bloquean al caller.
+async function _notifyUserAboutComplaint(complaintDoc, opts) {
+  const o = opts || {};
+  try {
+    if (!complaintDoc || !complaintDoc.userId) return;
+    const targetUser = await User.findOne(
+      { id: complaintDoc.userId },
+      { fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, username: 1, _id: 0 }
+    ).lean();
+    if (!targetUser) return;
+    const tokens = Array.isArray(targetUser.fcmTokens) ? targetUser.fcmTokens : [];
+    const standaloneTokens = tokens
+      .filter(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token)
+      .map(t => t.token);
+    if (standaloneTokens.length === 0) {
+      logger.info(`[complaints] notify skipped — sin tokens standalone para ${complaintDoc.username} (queja ${complaintDoc.id})`);
+      return false;
+    }
+    const title = o.title || '📩 Mensaje en tu queja';
+    const subj = (complaintDoc.subject || '').trim();
+    const body = o.body || (subj
+      ? `Nuevo mensaje sobre: "${subj.slice(0, 60)}". Tocá para responder.`
+      : 'Hay un nuevo mensaje en tu queja. Tocá para responder.');
+    const clickUrl = '/?openComplaint=' + encodeURIComponent(complaintDoc.id);
+    const { sendNotificationToMultiple } = require('./src/services/notificationService');
+    await sendNotificationToMultiple(standaloneTokens, title, body, {
+      type: 'complaint_message',
+      complaintId: complaintDoc.id,
+      url: clickUrl
+    });
+    logger.info(`[complaints] push enviado a ${complaintDoc.username} (queja ${complaintDoc.id})`);
+    return true;
+  } catch (e) {
+    logger.error(`[complaints] push failed for ${(complaintDoc && complaintDoc.id) || 'unknown'}: ${e.message}`);
+    return false;
+  }
+}
+
+// PUT /api/admin/complaints/:id — actualiza status y/o notas internas.
+// (Las respuestas al user se mandan vía POST /messages — ya no se usan
+// adminResponse + notifyUser; el hilo conversacional lo reemplazó.)
 //
 // Body opcional:
 //   status: 'pending' | 'reviewed' | 'resolved'
 //   adminNotes: string (interno, solo admins)
-//   adminResponse: string (la respuesta que ve el dueño de la queja)
-//   notifyUser: bool — si true Y hay adminResponse, manda push al user.
-//                       Si false, solo guarda la respuesta sin notificar.
-//   supportPhone: string E.164 — si viene, el server genera wa.link y
-//                       FORZA status='pending' (queda abierta para
-//                       seguir el caso en WhatsApp).
-//
-// Si notifyUser es true y existen tokens FCM standalone del user, el push
-// abre la PWA con `?openComplaint=<id>` para que vea la respuesta + wa.link.
 app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
     const b = req.body || {};
     const adminUser = (req.user && req.user.username) || 'admin';
     const $set = {};
-
-    // Procesar supportPhone primero — si viene, fuerza status='pending'
-    // (override del status que mandó el admin) porque el caso queda
-    // abierto en WA. Solo permitimos formato E.164 simple.
-    let waLink = '';
-    let supportPhoneNorm = '';
-    if (b.supportPhone !== undefined && String(b.supportPhone || '').trim()) {
-      const raw = String(b.supportPhone).trim();
-      // Acepta +5491155551234 o 5491155551234. Sólo dígitos para wa.me.
-      const digits = raw.replace(/[^\d]/g, '');
-      if (digits.length < 8 || digits.length > 16) {
-        return res.status(400).json({ error: 'Teléfono inválido. Usá formato internacional (ej: +5491155551234).' });
-      }
-      supportPhoneNorm = '+' + digits;
-      $set.supportPhone = supportPhoneNorm;
-    }
-
     if (['pending', 'reviewed', 'resolved'].includes(b.status)) {
       $set.status = b.status;
       if (b.status === 'resolved') {
         $set.resolvedBy = adminUser;
         $set.resolvedAt = new Date();
+      } else if (b.status === 'pending') {
+        // Reabrir: limpio resolvedBy/resolvedAt para que el front sepa que
+        // volvió a estar activa.
+        $set.resolvedBy = null;
+        $set.resolvedAt = null;
       }
     }
     if (b.adminNotes !== undefined) {
       $set.adminNotes = String(b.adminNotes || '').slice(0, 2000);
     }
-    // Respuesta pública: si llega, la guardamos con metadata.
-    let hasNewResponse = false;
-    if (b.adminResponse !== undefined && String(b.adminResponse || '').trim()) {
-      const respText = String(b.adminResponse).trim().slice(0, 2000);
-      $set.adminResponse = respText;
-      $set.respondedBy = adminUser;
-      $set.respondedAt = new Date();
-      hasNewResponse = true;
-    }
     const $addToSet = { readBy: adminUser };
     const update = { $set, $addToSet };
-    const existing = await Complaint.findOne({ id }, { readAt: 1, userId: 1, username: 1, subject: 1, incidentDate: 1, _id: 0 }).lean();
+    const existing = await Complaint.findOne({ id }, { readAt: 1, _id: 0 }).lean();
     if (!existing) return res.status(404).json({ error: 'No encontrada' });
     if (!existing.readAt) update.$set.readAt = new Date();
-
-    // Construir wa.link DESPUÉS de tener `existing` (necesitamos username
-    // y subject/incidentDate para el mensaje pre-llenado).
-    if (supportPhoneNorm) {
-      const greeting = `Hola, soy ${existing.username || 'cliente'}.`;
-      const ctx = existing.subject
-        ? `Quería seguir mi queja: "${existing.subject}" (${existing.incidentDate || ''}).`
-        : `Quería seguir mi queja del ${existing.incidentDate || ''}.`;
-      const msg = `${greeting} ${ctx}`.trim();
-      waLink = `https://wa.me/${supportPhoneNorm.replace(/[^\d]/g, '')}?text=${encodeURIComponent(msg)}`;
-      $set.supportWaLink = waLink;
-      // Forzar status='pending' — el caso queda abierto en WA, no resolvemos
-      // automático aunque el admin haya pedido 'resolved'.
-      $set.status = 'pending';
-      // Y limpiar resolvedBy/resolvedAt por si la queja estaba marcada antes.
-      $set.resolvedBy = null;
-      $set.resolvedAt = null;
-    }
-
-    // Si el admin marcó notifyUser y hay respuesta, mandamos push DESPUÉS
-    // del update (para no bloquear la confirmación del admin).
-    const shouldNotify = !!(hasNewResponse && b.notifyUser);
-    if (shouldNotify) {
-      update.$set.userNotifiedAt = new Date();
-    }
-
     const doc = await Complaint.findOneAndUpdate({ id }, update, { new: true }).lean();
+    res.json({ success: true, complaint: doc });
+  } catch (err) {
+    logger.error(`PUT /api/admin/complaints/:id: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    // Push fire-and-forget — si falla, el admin ya vió "success: true" pero
-    // logueamos el error. La respuesta queda guardada igual.
-    if (shouldNotify && existing.userId) {
-      (async () => {
-        try {
-          const targetUser = await User.findOne(
-            { id: existing.userId },
-            { fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, username: 1, _id: 0 }
-          ).lean();
-          if (!targetUser) return;
-          // Solo push si tiene PWA standalone con notifs activas.
-          const tokens = Array.isArray(targetUser.fcmTokens) ? targetUser.fcmTokens : [];
-          const standaloneTokens = tokens
-            .filter(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token)
-            .map(t => t.token);
-          if (standaloneTokens.length === 0) {
-            logger.info(`[complaints] notify skipped — sin tokens standalone para ${existing.username} (queja ${id})`);
-            return;
-          }
-          const title = '📩 Respondieron tu queja';
-          const subj = (existing.subject || '').trim();
-          let body;
-          if (waLink) {
-            // Push con CTA fuerte hacia WhatsApp.
-            body = subj
-              ? `Respuesta a: "${subj.slice(0, 50)}". Tocá para chatear con soporte.`
-              : 'Tu queja tiene respuesta. Tocá para chatear con soporte por WhatsApp.';
-          } else {
-            body = subj
-              ? `Respuesta a: "${subj.slice(0, 60)}". Tocá para verla.`
-              : 'Tu queja tiene respuesta. Tocá para verla.';
-          }
-          // Click action: abre la PWA con un query param que el front
-          // detecta y abre directo el modal de "Mis quejas". Si hay
-          // wa.link, lo mandamos en data para que la PWA pueda saltar
-          // directo al WhatsApp si quiere.
-          const clickUrl = '/?openComplaint=' + encodeURIComponent(id);
-          const pushData = {
-            type: 'complaint_response',
-            complaintId: id,
-            url: clickUrl
-          };
-          if (waLink) pushData.waLink = waLink;
-          const { sendNotificationToMultiple } = require('./src/services/notificationService');
-          await sendNotificationToMultiple(standaloneTokens, title, body, pushData);
-          logger.info(`[complaints] push enviado a ${existing.username} (queja ${id}, ${standaloneTokens.length} tokens)`);
-        } catch (e) {
-          logger.error(`[complaints] push failed for ${id}: ${e.message}`);
-        }
-      })();
+// POST /api/admin/complaints/:id/messages — admin agrega un mensaje al
+// hilo conversacional. Por default manda push al user; con notifyUser:false
+// el mensaje queda guardado sin notificar.
+//
+// El status NO cambia automáticamente — el admin lo marca 'resolved'
+// cuando da el caso por cerrado, vía PUT /api/admin/complaints/:id.
+app.post('/api/admin/complaints/:id/messages', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const b = req.body || {};
+    const adminUser = (req.user && req.user.username) || 'admin';
+    const text = String(b.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'El mensaje no puede estar vacío.' });
+    if (text.length > 2000) return res.status(400).json({ error: 'Máx 2000 caracteres.' });
+    const shouldNotify = b.notifyUser !== false; // default true
+
+    const existing = await Complaint.findOne({ id }).lean();
+    if (!existing) return res.status(404).json({ error: 'No encontrada' });
+    if (existing.status === 'resolved') {
+      return res.status(409).json({ error: 'La queja está marcada como resuelta. Reabrila primero si querés seguir respondiendo.' });
+    }
+
+    const msg = {
+      from: 'admin',
+      authorName: adminUser,
+      text,
+      notifiedAt: shouldNotify ? new Date() : null,
+      createdAt: new Date()
+    };
+    const $set = {};
+    // Cuando el admin manda un mensaje, marca la queja como 'reviewed' si
+    // todavía está 'pending' (señal visual: alguien la está atendiendo).
+    if (existing.status === 'pending') $set.status = 'reviewed';
+    if (!existing.readAt) $set.readAt = new Date();
+    if (shouldNotify) $set.userNotifiedAt = new Date();
+
+    const doc = await Complaint.findOneAndUpdate(
+      { id },
+      { $push: { messages: msg }, $set, $addToSet: { readBy: adminUser } },
+      { new: true }
+    ).lean();
+
+    // Push fire-and-forget al user. No bloquea la respuesta del admin.
+    if (shouldNotify) {
+      _notifyUserAboutComplaint(doc, {}).catch(() => {});
     }
 
     res.json({ success: true, complaint: doc, notified: shouldNotify });
   } catch (err) {
-    logger.error(`PUT /api/admin/complaints/:id: ${err.message}\n${err.stack}`);
+    logger.error(`POST /api/admin/complaints/:id/messages: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/complaints/:id/messages — el user dueño de la queja agrega
+// un mensaje propio (respuesta al admin). Bloqueado si la queja está
+// resuelta — el caso quedó cerrado.
+app.post('/api/complaints/:id/messages', authMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const text = String((req.body || {}).text || '').trim();
+    if (!text) return res.status(400).json({ error: 'El mensaje no puede estar vacío.' });
+    if (text.length > 2000) return res.status(400).json({ error: 'Máx 2000 caracteres.' });
+
+    const existing = await Complaint.findOne({ id }).lean();
+    if (!existing) return res.status(404).json({ error: 'No encontrada' });
+    if (existing.userId !== userId) {
+      return res.status(403).json({ error: 'Solo el dueño de la queja puede responder.' });
+    }
+    if (existing.status === 'resolved') {
+      return res.status(409).json({ error: 'Esta queja fue cerrada por el equipo. Si necesitás reabrirla, abrí una nueva.' });
+    }
+
+    // Cap anti-flood: máx 30 mensajes del user en una misma queja.
+    const userMsgCount = (existing.messages || []).filter(m => m.from === 'user').length;
+    if (userMsgCount >= 30) {
+      return res.status(429).json({ error: 'Llegaste al límite de mensajes en esta queja.' });
+    }
+
+    const msg = {
+      from: 'user',
+      authorName: username,
+      text,
+      notifiedAt: null, // no notificamos a admins automáticamente (lo verán al entrar al panel)
+      createdAt: new Date()
+    };
+    // Si la queja estaba 'reviewed', volverla a 'pending' para que el admin
+    // vea que hay actividad nueva del user.
+    const $set = {};
+    if (existing.status === 'reviewed') $set.status = 'pending';
+
+    const doc = await Complaint.findOneAndUpdate(
+      { id },
+      { $push: { messages: msg }, $set },
+      { new: true, projection: { id: 1, messages: 1, status: 1, _id: 0 } }
+    ).lean();
+
+    res.json({ success: true, complaint: doc });
+  } catch (err) {
+    logger.error(`POST /api/complaints/:id/messages: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
   }
 });

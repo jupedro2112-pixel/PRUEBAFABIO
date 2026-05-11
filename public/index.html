@@ -2954,19 +2954,45 @@
                     html += '</div></div>';
                     html += '<div style="color:' + statusColor + ';font-size:10.5px;font-weight:700;white-space:nowrap;">' + statusLabel + '</div>';
                     html += '</div>';
-                    // Body expandible
+                    // Body expandible — timeline tipo chat con mensajes admin↔user
+                    // + textarea para responder si la queja no está cerrada.
                     html += '<div class="cmpl-body" style="display:' + (isOpen ? '' : 'none') + ';margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.10);">';
-                    html += '<div style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Tu queja:</div>';
-                    html += '<div style="color:#ddd;font-size:12px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;">' + esc(it.description || '') + '</div>';
-                    if (hasResp) {
-                        html += '<div style="color:#66ff66;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-top:9px;margin-bottom:3px;">📩 Respuesta de nuestro equipo:</div>';
-                        html += '<div style="color:#fff;font-size:12.5px;line-height:1.5;white-space:pre-wrap;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.20);padding:9px 11px;border-radius:7px;">' + esc(it.adminResponse) + '</div>';
-                        // Si la respuesta vino con wa.link, mostramos el botón CTA grande
-                        // para que el user pueda saltar directo al WhatsApp.
-                        if (it.supportWaLink) {
-                            html += '<a href="' + esc(it.supportWaLink) + '" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;text-decoration:none;padding:11px 14px;border-radius:9px;font-weight:900;font-size:13px;margin-top:8px;box-shadow:0 4px 14px rgba(37,211,102,0.30);">💬 Chatear con soporte por WhatsApp</a>';
-                        }
-                        html += '<div style="color:#888;font-size:10px;margin-top:4px;">' + esc(fmt(it.respondedAt || '')) + '</div>';
+
+                    // Mensaje inicial (la descripción del user que abrió el caso).
+                    html += '<div style="display:flex;justify-content:flex-end;margin-bottom:7px;">';
+                    html += '<div style="max-width:90%;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.20);border-radius:10px;padding:8px 11px;">';
+                    html += '<div style="color:#66ff66;font-size:10px;font-weight:800;margin-bottom:3px;">Vos · <span style="color:#888;font-weight:400;">' + esc(fmt(it.createdAt)) + '</span></div>';
+                    html += '<div style="color:#fff;font-size:12px;line-height:1.45;white-space:pre-wrap;">' + esc(it.description || '') + '</div>';
+                    html += '</div></div>';
+
+                    // Mensajes del hilo (compat: si no hay messages pero sí adminResponse legacy, lo mostramos como mensaje admin).
+                    let msgs = Array.isArray(it.messages) ? it.messages.slice() : [];
+                    if (msgs.length === 0 && it.adminResponse) {
+                        msgs = [{ from:'admin', authorName: it.respondedBy || 'soporte', text: it.adminResponse, createdAt: it.respondedAt || it.createdAt }];
+                    }
+                    for (const m of msgs) {
+                        const isAdmin = m.from === 'admin';
+                        const bg = isAdmin ? 'rgba(212,175,55,0.06)' : 'rgba(102,255,102,0.06)';
+                        const bd = isAdmin ? 'rgba(212,175,55,0.30)' : 'rgba(102,255,102,0.20)';
+                        const lbl = isAdmin ? '🛡 Soporte' : 'Vos';
+                        const lblColor = isAdmin ? '#d4af37' : '#66ff66';
+                        const align = isAdmin ? 'flex-start' : 'flex-end';
+                        html += '<div style="display:flex;justify-content:' + align + ';margin-bottom:7px;">';
+                        html += '<div style="max-width:90%;background:' + bg + ';border:1px solid ' + bd + ';border-radius:10px;padding:8px 11px;">';
+                        html += '<div style="color:' + lblColor + ';font-size:10px;font-weight:800;margin-bottom:3px;">' + lbl + ' · <span style="color:#888;font-weight:400;">' + esc(fmt(m.createdAt)) + '</span></div>';
+                        html += '<div style="color:#fff;font-size:12px;line-height:1.45;white-space:pre-wrap;">' + esc(m.text || '') + '</div>';
+                        html += '</div></div>';
+                    }
+
+                    // Si está resuelta, mostrar aviso y NO permitir más mensajes.
+                    if (it.status === 'resolved') {
+                        html += '<div style="text-align:center;color:#66ff66;font-size:11px;padding:8px;background:rgba(102,255,102,0.06);border-radius:8px;margin-top:6px;">✅ Caso cerrado por nuestro equipo. Si necesitás algo más, abrí una queja nueva.</div>';
+                    } else {
+                        // Form de respuesta del user.
+                        html += '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.10);">';
+                        html += '<textarea id="cmplReply_' + esc(it.id) + '" maxlength="2000" rows="3" placeholder="Escribí tu respuesta..." style="width:100%;background:rgba(0,0,0,0.40);color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:8px;font-size:12.5px;font-family:inherit;box-sizing:border-box;resize:vertical;"></textarea>';
+                        html += '<button type="button" onclick="window.sendComplaintReply && window.sendComplaintReply(\'' + esc(it.id) + '\')" style="margin-top:6px;width:100%;background:linear-gradient(135deg,#d4af37,#f4d966);color:#1a0033;border:none;padding:9px;border-radius:8px;font-size:12.5px;font-weight:800;cursor:pointer;">📤 Enviar respuesta</button>';
+                        html += '</div>';
                     }
                     html += '</div>';
                     html += '</div>';
@@ -2985,6 +3011,35 @@
             }
         }
         window.loadMyComplaintsHistory = loadMyComplaintsHistory;
+
+        // User responde un mensaje en su propia queja.
+        window.sendComplaintReply = async function(complaintId) {
+            const ta = document.getElementById('cmplReply_' + complaintId);
+            const text = (ta && ta.value || '').trim();
+            if (!text) {
+                if (ta) ta.focus();
+                return;
+            }
+            const token = (typeof localStorage !== 'undefined') ? localStorage.getItem('userToken') : null;
+            if (!token) return;
+            try {
+                const r = await fetch('/api/complaints/' + encodeURIComponent(complaintId) + '/messages', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ text })
+                });
+                const d = await r.json();
+                if (!r.ok) {
+                    alert(d.error || 'Error enviando la respuesta');
+                    return;
+                }
+                if (ta) ta.value = '';
+                // Refrescar el historial para mostrar el mensaje nuevo.
+                loadMyComplaintsHistory(complaintId);
+            } catch (_) {
+                alert('Error de conexión');
+            }
+        };
 
         // Detecta ?openComplaint=ID en la URL — viene del push del admin cuando
         // responde una queja. Abre el modal y expande la queja específica.

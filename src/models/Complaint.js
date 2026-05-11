@@ -13,6 +13,23 @@
  */
 const mongoose = require('mongoose');
 
+// Sub-doc de mensaje en el hilo conversacional. Cada queja arranca con la
+// descripción inicial del user (no se duplica acá — vive en `description`)
+// y a partir de ahí van apilándose mensajes admin↔user. Cuando el admin
+// marca status='resolved' el hilo se cierra (el front ya no permite
+// agregar más mensajes).
+const complaintMessageSchema = new mongoose.Schema({
+  // 'admin' o 'user' — quién escribió el mensaje.
+  from: { type: String, enum: ['admin', 'user'], required: true },
+  // Username de quien escribió (admin handle o username del dueño).
+  authorName: { type: String, default: '', maxlength: 60 },
+  // Texto del mensaje. Max 2000 chars.
+  text: { type: String, required: true, maxlength: 2000, trim: true },
+  // Cuándo se mandó el push al destinatario (queda null si no se notificó).
+  notifiedAt: { type: Date, default: null },
+  createdAt: { type: Date, default: Date.now }
+}, { _id: false });
+
 const complaintSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
 
@@ -55,14 +72,11 @@ const complaintSchema = new mongoose.Schema({
   // Si el admin tilda "responder sin notificar", este campo queda null.
   userNotifiedAt: { type: Date, default: null },
 
-  // Teléfono de soporte y wa.link generado en el momento del response.
-  // Cuando el admin completa supportPhone, el server arma el wa.me link
-  // con texto pre-llenado ("Hola, soy {username}, queja del {fecha}...")
-  // y la queja queda en status='pending' (el caso continúa en WA, no se
-  // cierra automático). Después el admin la marca como 'resolved' cuando
-  // termina la conversación.
-  supportPhone: { type: String, default: '', maxlength: 24 },
-  supportWaLink: { type: String, default: '', maxlength: 1000 }
+  // Hilo conversacional: mensajes admin↔user. La descripción inicial del
+  // user vive en `description` (no se duplica acá). El admin marca
+  // status='resolved' cuando da el caso por cerrado — recién ahí el front
+  // bloquea agregar más mensajes.
+  messages: { type: [complaintMessageSchema], default: [] }
 }, {
   collection: 'complaints',
   timestamps: true,
