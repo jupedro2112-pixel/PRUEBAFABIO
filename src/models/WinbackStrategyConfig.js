@@ -65,6 +65,12 @@ const winbackStrategyConfigSchema = new mongoose.Schema({
   tier3SuggestedAmount: { type: Number, default: 2000, min: 500, max: 100000 }, // texto del wa.link
   tier3DurationHours: { type: Number, default: 72, min: 12, max: 168 },
 
+  // Métrica de inactividad: 'app' = días sin abrir la app (User.lastLogin),
+  // 'deposit' = días sin depósito real (PlayerStats.lastRealDepositDate).
+  // Default 'app' — un user puede entrar todos los días y no cargar; lo
+  // que importa para el winback es si dejó de usar la plataforma.
+  inactivityMetric: { type: String, enum: ['app', 'deposit'], default: 'app' },
+
   // Filtros: solo gente que respondió encuesta? Excluir VIP top tier?
   onlySurveyResponders: { type: Boolean, default: false },
   excludeOpportunists: { type: Boolean, default: true },

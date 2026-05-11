@@ -16539,6 +16539,14 @@ function _renderWinbackConfig(cfg) {
     html += '</div>';
     html += '</div>';
 
+    // Métrica de inactividad.
+    const metric = cfg.inactivityMetric || 'app';
+    html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<h3 style="color:#d4af37;margin:0 0 8px;font-size:12px;letter-spacing:1px;">📏 MÉTRICA DE INACTIVIDAD</h3>';
+    html += '<label style="display:block;color:#ddd;font-size:12px;margin-bottom:6px;cursor:pointer;"><input type="radio" name="wb_inactivityMetric" value="app" ' + (metric === 'app' ? 'checked' : '') + '> <strong>Uso de la app</strong> (días sin abrir/loguear) — recomendado</label>';
+    html += '<label style="display:block;color:#ddd;font-size:12px;cursor:pointer;"><input type="radio" name="wb_inactivityMetric" value="deposit" ' + (metric === 'deposit' ? 'checked' : '') + '> <strong>Depósitos reales</strong> (días sin cargar plata) — legacy</label>';
+    html += '</div>';
+
     // Filtros.
     html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
     html += '<h3 style="color:#00d4ff;margin:0 0 8px;font-size:12px;letter-spacing:1px;">🎯 FILTROS</h3>';
@@ -16719,6 +16727,7 @@ async function saveWinback() {
         tier3DurationHours: getNum('wb_tier3DurationHours'),
         onlySurveyResponders: getChk('wb_onlySurveyResponders'),
         excludeOpportunists: getChk('wb_excludeOpportunists'),
+        inactivityMetric: (document.querySelector('input[name="wb_inactivityMetric"]:checked') || {}).value || 'app',
         dailyCapTier2: getNum('wb_dailyCapTier2'),
         dailyCapTier3: getNum('wb_dailyCapTier3')
     };

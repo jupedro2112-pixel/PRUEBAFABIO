@@ -12341,29 +12341,62 @@ async function winbackCronTick(opts = {}) {
     const now = Date.now();
     const cutoffMin = now - cfg.tier1Days * 86400000;
     const cutoffMax = now - 0;
+    const useAppMetric = (cfg.inactivityMetric || 'app') === 'app';
 
-    // Pull users con stats donde lastRealDepositDate < cutoffMin (≥ tier1).
-    // Limit alto pero ordenado por días-más-viejos primero (tier3 antes que tier1).
-    const stats = await PlayerStats.find({
-      lastRealDepositDate: { $exists: true, $ne: null, $lt: new Date(cutoffMin) }
-    }, { username: 1, lastRealDepositDate: 1, isOpportunist: 1, _id: 0 })
-      .sort({ lastRealDepositDate: 1 })
-      .limit(2000)
-      .lean();
+    // Source de inactividad:
+    //   'app'     → User.lastLogin (días sin abrir la app)
+    //   'deposit' → PlayerStats.lastRealDepositDate (legacy: días sin cargar)
+    // Para 'app' levantamos User directo y joineamos a PlayerStats solo
+    // para el filtro isOpportunist.
+    let inactivityRows; // [{ username, inactiveSince }]
+    if (useAppMetric) {
+      const usersInactive = await User.find(
+        { lastLogin: { $exists: true, $ne: null, $lt: new Date(cutoffMin) } },
+        { id: 1, username: 1, lastLogin: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
+      )
+        .sort({ lastLogin: 1 })
+        .limit(2000)
+        .lean();
+      inactivityRows = usersInactive.map(u => ({ username: (u.username || '').toLowerCase(), inactiveSince: u.lastLogin, _user: u }));
+    } else {
+      const stats = await PlayerStats.find({
+        lastRealDepositDate: { $exists: true, $ne: null, $lt: new Date(cutoffMin) }
+      }, { username: 1, lastRealDepositDate: 1, _id: 0 })
+        .sort({ lastRealDepositDate: 1 })
+        .limit(2000)
+        .lean();
+      inactivityRows = stats.map(s => ({ username: (s.username || '').toLowerCase(), inactiveSince: s.lastRealDepositDate, _user: null }));
+    }
 
-    // Pull users matching para conseguir fcm + winbackTier.
-    const usernames = stats.map(s => s.username);
-    if (usernames.length === 0) {
+    if (inactivityRows.length === 0) {
       cfg.lastCronRunAt = startedAt;
-      cfg.lastCronOutcome = { skipped: 'no-users-matched', startedAt };
+      cfg.lastCronOutcome = { skipped: 'no-users-matched', startedAt, metric: cfg.inactivityMetric || 'app' };
       await cfg.save();
       return { skipped: true, reason: 'no-users-matched' };
     }
-    const users = await User.find(
-      { username: { $in: usernames } },
-      { id: 1, username: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
-    ).lean();
-    const userByName = new Map(users.map(u => [u.username.toLowerCase(), u]));
+
+    const usernames = inactivityRows.map(r => r.username);
+    // Para 'app': los users vienen de inactivityRows (con _user). Para
+    // 'deposit': hay que pedirlos aparte (los datos vinieron de PlayerStats).
+    let userByName;
+    if (useAppMetric) {
+      userByName = new Map(inactivityRows.map(r => [r.username, r._user]));
+    } else {
+      const users = await User.find(
+        { username: { $in: usernames } },
+        { id: 1, username: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
+      ).lean();
+      userByName = new Map(users.map(u => [u.username.toLowerCase(), u]));
+    }
+    // Lookup isOpportunist (de PlayerStats) — solo si el filtro está prendido.
+    let opportunistByName = new Map();
+    if (cfg.excludeOpportunists) {
+      const ps = await PlayerStats.find(
+        { username: { $in: usernames }, isOpportunist: true },
+        { username: 1, isOpportunist: 1, _id: 0 }
+      ).lean();
+      opportunistByName = new Map(ps.map(p => [p.username.toLowerCase(), true]));
+    }
 
     // Caps diarios.
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
@@ -12377,27 +12410,30 @@ async function winbackCronTick(opts = {}) {
       else if (row._id === 'promo') tier3SentToday = row.count;
     }
 
-    const result = { tier1: 0, tier2: 0, tier3: 0, skipped_cap: 0, skipped_recent: 0, skipped_no_user: 0, skipped_no_tokens: 0, skipped_filter: 0, errors: 0 };
+    const result = { tier1: 0, tier2: 0, tier3: 0, skipped_cap: 0, skipped_recent: 0, skipped_no_user: 0, skipped_no_tokens: 0, skipped_filter: 0, errors: 0, metric: cfg.inactivityMetric || 'app' };
 
-    for (const s of stats) {
-      const days = Math.floor((now - new Date(s.lastRealDepositDate).getTime()) / 86400000);
+    for (const s of inactivityRows) {
+      const days = Math.floor((now - new Date(s.inactiveSince).getTime()) / 86400000);
       const targetTier = _winbackTierForDays(days, cfg);
+      // Username regex case-insensitive — PlayerStats guarda lowercase pero
+      // User.username puede tener mixed case; sin esto el match podría perder users.
+      const usernameRx = new RegExp('^' + s.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
       if (targetTier === 0 || targetTier === 4) {
         // 0 = no aplicable, 4 = cooldown (no mandar más).
         if (targetTier === 4) {
           // Marcar tier 4 sin mandar nada para que no escale más.
           await User.updateOne(
-            { username: s.username, winbackTier: { $lt: 4 } },
+            { username: usernameRx, winbackTier: { $lt: 4 } },
             { $set: { winbackTier: 4, winbackLastSentAt: new Date() } }
           );
         }
         continue;
       }
-      const u = userByName.get(s.username.toLowerCase());
+      const u = userByName.get(s.username);
       if (!u) { result.skipped_no_user++; continue; }
       // Filtros.
       if (cfg.onlySurveyResponders && !u.notifPreference) { result.skipped_filter++; continue; }
-      if (cfg.excludeOpportunists && s.isOpportunist) { result.skipped_filter++; continue; }
+      if (cfg.excludeOpportunists && opportunistByName.get(s.username)) { result.skipped_filter++; continue; }
       // Idempotencia: solo si tier nuevo > tier actual.
       if ((u.winbackTier || 0) >= targetTier) continue;
       // Anti-spam: 24h mínimo entre mandadas.
@@ -12412,7 +12448,7 @@ async function winbackCronTick(opts = {}) {
       // Claim atómico: solo escala si seguimos en el tier viejo.
       const claimed = await User.findOneAndUpdate(
         {
-          username: s.username,
+          username: usernameRx,
           $or: [{ winbackTier: { $lt: targetTier } }, { winbackTier: { $exists: false } }]
         },
         { $set: { winbackTier: targetTier, winbackLastSentAt: new Date() } },
@@ -12511,7 +12547,7 @@ app.post('/api/admin/winback', authMiddleware, adminMiddleware, async (req, res)
       'tier1Message','tier2Message','tier3Message',
       'tier2BonusAmount','tier2DurationHours',
       'tier3BonusPct','tier3SuggestedAmount','tier3DurationHours',
-      'onlySurveyResponders','excludeOpportunists',
+      'onlySurveyResponders','excludeOpportunists','inactivityMetric',
       'dailyCapTier2','dailyCapTier3'
     ];
     for (const k of allowed) {
