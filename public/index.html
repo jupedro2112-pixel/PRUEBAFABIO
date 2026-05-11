@@ -2379,11 +2379,6 @@
         <header class="header">
             <!-- Sección izquierda: nombre de equipo + acciones -->
             <div class="header-left">
-                <!-- Libro de quejas: PRIMER ícono visible arriba a la izquierda,
-                     antes del nombre de equipo y de cualquier otro botón.
-                     Diseño chiquito, dorado sutil. Click → abre el modal con el
-                     form completo (fecha, hora, foto, detalle). -->
-                <button class="complaints-btn" id="complaintsBookBtn" title="Libro de quejas — Si tuviste un problema, contanos" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.45);color:#d4af37;border-radius:8px;cursor:pointer;font-size:14px;padding:6px 10px;font-weight:700;letter-spacing:0.3px;margin-right:8px;display:inline-flex;align-items:center;gap:4px;line-height:1;box-shadow:0 0 8px rgba(212,175,55,0.10);">📖 <span style="font-size:11.5px;font-weight:800;">Quejas</span></button>
                 <!-- Nombre de equipo (ej: "Atomic"). Se muestra solo si el
                      prefijo del usuario matchea un equipo configurado en
                      admin > Número principal. Mismo tamaño que el username
@@ -2461,6 +2456,11 @@
                     </svg>
                     SOPORTE
                 </a>
+                <!-- Libro de quejas — en la MISMA LINEA del username, justo a
+                     su IZQUIERDA. Diseño dorado sutil pero visible, mismo tamaño
+                     que el nombre. Click → abre el modal con fecha/hora/foto/
+                     detalle del problema. -->
+                <button class="complaints-btn" id="complaintsBookBtn" title="Libro de quejas — Si tuviste un problema, contanos" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(0,0,0,0.30);border:1.5px solid #d4af37;color:#d4af37;border-radius:8px;cursor:pointer;font-size:13px;padding:6px 11px;font-weight:800;letter-spacing:0.3px;display:inline-flex;align-items:center;gap:5px;line-height:1;box-shadow:0 0 12px rgba(212,175,55,0.30);">📖 <span style="font-size:12px;">Quejas</span></button>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
