@@ -12091,19 +12091,36 @@ app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
 
 // GET /api/reviews/feed — feed público (los usernames vienen enmascarados).
 // Devuelve también el promedio + cantidad por bucket.
+//
+// Stats agregadas via $group sobre TODA la colección (sin cap), así total
+// y promedio reflejan la realidad aunque haya miles. La lista de items que
+// se muestra es la última N (limit configurable, máx 100).
 app.get('/api/reviews/feed', authMiddleware, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
-    const all = await Review.find({}, { stars: 1, comment: 1, username: 1, updatedAt: 1, _id: 0 })
-      .sort({ updatedAt: -1 })
-      .limit(500)
-      .lean();
-    const total = all.length;
-    const sumStars = all.reduce((acc, r) => acc + (r.stars || 0), 0);
-    const avgStars = total > 0 ? (sumStars / total) : 0;
-    const counts = { bueno: 0, regular: 0, malo: 0 };
-    for (const r of all) counts[_bucketOf(r.stars)]++;
-    const list = all.slice(0, limit).map(r => ({
+    const [aggRes, items] = await Promise.all([
+      Review.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            sumStars: { $sum: '$stars' },
+            bueno:   { $sum: { $cond: [{ $gte: ['$stars', 4] }, 1, 0] } },
+            regular: { $sum: { $cond: [{ $eq:  ['$stars', 3] }, 1, 0] } },
+            malo:    { $sum: { $cond: [{ $lte: ['$stars', 2] }, 1, 0] } }
+          }
+        }
+      ]),
+      Review.find({}, { stars: 1, comment: 1, username: 1, updatedAt: 1, _id: 0 })
+        .sort({ updatedAt: -1 })
+        .limit(limit)
+        .lean()
+    ]);
+    const stats = aggRes[0] || { total: 0, sumStars: 0, bueno: 0, regular: 0, malo: 0 };
+    const total = stats.total || 0;
+    const avgStars = total > 0 ? (stats.sumStars / total) : 0;
+    const counts = { bueno: stats.bueno || 0, regular: stats.regular || 0, malo: stats.malo || 0 };
+    const list = items.map(r => ({
       stars: r.stars,
       comment: r.comment || '',
       maskedUsername: _maskUsername(r.username),
