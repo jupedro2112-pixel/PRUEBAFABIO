@@ -12522,7 +12522,8 @@ function _autoStrategyGiftAmount({ tierBudget, regalosCount }) {
 // Generación: arma TeamCampaign drafts para preview (no persiste) o para
 // activar (persiste). Si commit=true, borra las auto-strategy del mes
 // actual primero y crea las nuevas. Si commit=false, devuelve los drafts.
-async function _autoStrategyGenerate({ commit, createdBy }) {
+// Opciones: maxTotal (cap $ total — escala montos si excede), excludedTeams (array de teams a saltear).
+async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeams }) {
   const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
   if (!cfg) throw new Error('No hay NotifStrategyConfig — guardá la estrategia mensual primero.');
 
@@ -12544,8 +12545,11 @@ async function _autoStrategyGenerate({ commit, createdBy }) {
 
   const distribution = await _autoStrategyGetDistribution();
   const drafts = [];
+  // Set de equipos excluidos (case-insensitive).
+  const excludedSet = new Set((Array.isArray(excludedTeams) ? excludedTeams : []).map(t => String(t || '').trim().toLowerCase()).filter(Boolean));
   for (const dist of distribution) {
     if (!dist.team || !dist.line) continue;
+    if (excludedSet.has(String(dist.team).toLowerCase())) continue; // skip equipo excluido
     for (const tier of ['suave', 'normal', 'activo']) {
       const userCount = dist[tier] || 0;
       if (userCount === 0) continue;
@@ -12629,6 +12633,42 @@ async function _autoStrategyGenerate({ commit, createdBy }) {
   summary.money.avgGiveawayAmount = summary.money.regalosCampaignCount > 0
     ? Math.round(summary.money.regalosMaxTotal / Math.max(1, summary.totalSlotsImpacted))
     : 0;
+
+  // CAP — si el total máximo a regalar excede `maxTotal`, escalamos los
+  // montos proporcionalmente hacia abajo para encajar. Floor $500 por regalo.
+  const cap = Number(maxTotal) > 0 ? Number(maxTotal) : 0;
+  summary.money.cap = cap;
+  summary.money.scaled = false;
+  summary.money.scaleFactor = 1;
+  if (cap > 0 && summary.money.regalosMaxTotal > cap) {
+    const factor = cap / summary.money.regalosMaxTotal;
+    // Aplicar al campo `giveawayAmount` de cada draft de regalo. Floor 500.
+    let newTotal = 0;
+    const tlMoneyNew = {};
+    const tierMoneyNew = { suave: 0, normal: 0, activo: 0 };
+    for (const d of drafts) {
+      if (d.category === 'regalos' && d.giveawayAmount) {
+        const scaled = Math.max(500, Math.round(d.giveawayAmount * factor / 100) * 100);
+        d.giveawayAmount = scaled;
+        const audience = d._meta?.audienceCount || 0;
+        const cost = scaled * audience;
+        newTotal += cost;
+        const key = d.teamFilter + ' · ' + d.lineFilter;
+        tlMoneyNew[key] = (tlMoneyNew[key] || 0) + cost;
+        if (tierMoneyNew[d.tierFilter] !== undefined) tierMoneyNew[d.tierFilter] += cost;
+      }
+    }
+    summary.money.regalosMaxTotal = newTotal;
+    summary.money.byTeamLineMoney = tlMoneyNew;
+    summary.money.byTierMoney = tierMoneyNew;
+    summary.money.scaled = true;
+    summary.money.scaleFactor = factor;
+    summary.money.avgGiveawayAmount = summary.money.regalosCampaignCount > 0
+      ? Math.round(newTotal / Math.max(1, summary.totalSlotsImpacted))
+      : 0;
+  }
+  // Info sobre teams excluidos para devolver al cliente.
+  summary.excludedTeams = Array.from(excludedSet);
 
   if (commit) {
     // Borrar campañas auto-strategy del mes actual antes de crear las nuevas.
