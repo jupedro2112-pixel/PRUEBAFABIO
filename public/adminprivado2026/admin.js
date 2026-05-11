@@ -19007,10 +19007,20 @@ async function _teamCampaignDelete(id, name) {
 // =====================================================================
 // AUTO-ESTRATEGIA — preview modal + commit + clear.
 // =====================================================================
+// Estado en memoria para los controles editables del modal.
+window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
+
 async function _autoStrategyPreview() {
     showToast('⏳ Calculando preview...', 'info');
+    await _autoStrategyRefreshPreview();
+}
+
+// Llama al endpoint con los settings actuales y abre/refresca el modal.
+async function _autoStrategyRefreshPreview() {
+    const state = window._AUTO_STRATEGY_STATE;
+    const url = '/api/admin/team-campaigns/auto-strategy/preview?maxTotal=' + encodeURIComponent(state.maxTotal) + '&excludedTeams=' + encodeURIComponent((state.excludedTeams || []).join(','));
     try {
-        const r = await authFetch('/api/admin/team-campaigns/auto-strategy/preview');
+        const r = await authFetch(url);
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
         _autoStrategyOpenPreviewModal(d);
