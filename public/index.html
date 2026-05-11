@@ -2379,6 +2379,11 @@
         <header class="header">
             <!-- Sección izquierda: nombre de equipo + acciones -->
             <div class="header-left">
+                <!-- Libro de quejas: PRIMER ícono visible arriba a la izquierda,
+                     antes del nombre de equipo y de cualquier otro botón.
+                     Diseño chiquito, dorado sutil. Click → abre el modal con el
+                     form completo (fecha, hora, foto, detalle). -->
+                <button class="complaints-btn" id="complaintsBookBtn" title="Libro de quejas — Si tuviste un problema, contanos" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(212,175,55,0.12);border:1px solid rgba(212,175,55,0.45);color:#d4af37;border-radius:8px;cursor:pointer;font-size:14px;padding:6px 10px;font-weight:700;letter-spacing:0.3px;margin-right:8px;display:inline-flex;align-items:center;gap:4px;line-height:1;box-shadow:0 0 8px rgba(212,175,55,0.10);">📖 <span style="font-size:11.5px;font-weight:800;">Quejas</span></button>
                 <!-- Nombre de equipo (ej: "Atomic"). Se muestra solo si el
                      prefijo del usuario matchea un equipo configurado en
                      admin > Número principal. Mismo tamaño que el username
@@ -2393,9 +2398,6 @@
                     <button class="refresh-home-btn" id="refreshHomeBtn" title="Actualizar página" onclick="window.location.reload()" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">🔄 Actualizar</button>
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
-                    <!-- Libro de quejas: ícono sutil, mismo tamaño que settings/referral.
-                         Click → abre modal premium con form (fecha, hora, foto, detalle). -->
-                    <button class="complaints-btn" id="complaintsBookBtn" title="Libro de quejas" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);color:#d4af37;border-radius:6px;cursor:pointer;">📖</button>
                     <button class="logout-btn" id="logoutBtn" title="Cerrar sesión">🚪</button>
                 </div>
             </div>
