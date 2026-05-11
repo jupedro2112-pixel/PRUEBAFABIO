@@ -19544,6 +19544,7 @@ function _renderTeamCampaignsList(d) {
     html += '      <button type="button" onclick="_autoStrategyPreview()" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">🚀 Generar auto-estrategia</button>';
     html += '      <button type="button" onclick="_openUserAnalysisModal()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Análisis detallado de usuarios: top depositantes, top reclamadores, regalo-hunters">📊 Análisis de usuarios</button>';
     html += '      <button type="button" onclick="_teamCampaignReactionGlobal()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Reporte de reacción de todas las campañas">📈 Reporte global</button>';
+    html += '      <button type="button" onclick="_openGiveawayClaimsExport()" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Descargar CSV con todos los bonos reclamados por usuarios">📥 Descargar bonos (CSV)</button>';
     html += '      <button type="button" onclick="_autoStrategyClearMonth()" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;" title="Borrar todas las auto-strategy del mes actual">🗑 Limpiar mes</button>';
     html += '    </div>';
     html += '  </div>';
@@ -20466,6 +20467,86 @@ function _autoStrategyApplyControls() {
     reincChecks.forEach(c => { if (c.checked) reinc.push(c.getAttribute('data-reinclude')); });
     state.reincludeUsernames = reinc;
     _autoStrategyRefreshPreview();
+}
+
+// Modal para descargar CSV de bonos reclamados con filtros de fecha/origen.
+function _openGiveawayClaimsExport() {
+    const modalId = 'giveawayClaimsExportModal';
+    document.getElementById(modalId)?.remove();
+    const today = new Date().toISOString().slice(0, 10);
+    const monthAgo = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML =
+        '<div style="background:#1a0033;border:1.5px solid #d4af37;border-radius:14px;padding:22px;max-width:460px;width:100%;color:#fff;box-shadow:0 0 40px rgba(212,175,55,0.30);">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:12px;">' +
+                '<div><h3 style="margin:0;color:#d4af37;font-size:15px;">📥 Descargar bonos reclamados</h3>' +
+                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;line-height:1.4;">CSV con fecha, hora, usuario, monto y origen de cada bono cobrado. Útil para auditoría.</div></div>' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">' +
+                '<div><label style="display:block;color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Desde</label>' +
+                '<input type="date" id="claimsCsvFrom" value="' + monthAgo + '" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px;border-radius:7px;font-size:13px;box-sizing:border-box;"></div>' +
+                '<div><label style="display:block;color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Hasta</label>' +
+                '<input type="date" id="claimsCsvTo" value="' + today + '" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px;border-radius:7px;font-size:13px;box-sizing:border-box;"></div>' +
+            '</div>' +
+            '<label style="display:block;color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Origen <span style="text-transform:none;color:#666;">(opcional)</span></label>' +
+            '<select id="claimsCsvSource" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px;border-radius:7px;font-size:13px;box-sizing:border-box;margin-bottom:10px;">' +
+                '<option value="">Todos los orígenes</option>' +
+                '<option value="auto-strategy">Auto-estrategia (campañas por equipo)</option>' +
+                '<option value="auto-rule">Auto-rule (notification rules)</option>' +
+                '<option value="manual">Manual (admin desde panel)</option>' +
+                '<option value="individual_grant">Otorgamiento individual</option>' +
+            '</select>' +
+            '<label style="display:block;color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Status <span style="text-transform:none;color:#666;">(opcional)</span></label>' +
+            '<select id="claimsCsvStatus" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px;border-radius:7px;font-size:13px;box-sizing:border-box;margin-bottom:14px;">' +
+                '<option value="">Todos</option>' +
+                '<option value="completed">Solo acreditados (completed)</option>' +
+                '<option value="pending_credit_failed">Solo fallidos (credit failed)</option>' +
+            '</select>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:9px 14px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;">Cancelar</button>' +
+                '<button type="button" onclick="_downloadGiveawayClaimsCsv()" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:9px 18px;border-radius:8px;font-size:12.5px;font-weight:900;cursor:pointer;">📥 Descargar CSV</button>' +
+            '</div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+}
+
+async function _downloadGiveawayClaimsCsv() {
+    const from = document.getElementById('claimsCsvFrom').value;
+    const to = document.getElementById('claimsCsvTo').value;
+    const source = document.getElementById('claimsCsvSource').value;
+    const status = document.getElementById('claimsCsvStatus').value;
+    if (!from || !to) { showToast('Completá las fechas', 'error'); return; }
+    if (from > to) { showToast('La fecha "desde" no puede ser mayor que "hasta"', 'error'); return; }
+    const params = new URLSearchParams({ from, to });
+    if (source) params.set('source', source);
+    if (status) params.set('status', status);
+    try {
+        // Necesitamos pasar el Authorization header, pero como `fetch` →
+        // descarga directa no es trivial; usamos authFetch y armamos un blob.
+        const r = await authFetch('/api/admin/giveaway-claims.csv?' + params.toString());
+        if (!r.ok) {
+            const txt = await r.text();
+            showToast('❌ Error: ' + (txt.slice(0, 100) || r.status), 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'bonos-claims_' + from + '_' + to + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('✅ Descargando CSV…', 'success');
+        document.getElementById('giveawayClaimsExportModal')?.remove();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 async function _autoStrategyClearMonth() {

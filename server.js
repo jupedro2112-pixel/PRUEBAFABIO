@@ -13608,6 +13608,113 @@ app.post('/api/admin/team-campaigns/auto-strategy/commit', authMiddleware, admin
   }
 });
 
+// GET /api/admin/giveaway-claims.csv?from=YYYY-MM-DD&to=YYYY-MM-DD&source=...
+// Descarga CSV con TODOS los bonos reclamados por usuarios. Sirve para
+// auditar quién cobró qué, cuándo, y de qué giveaway.
+//
+// Filtros opcionales:
+//   from / to: rango de fecha de claim (ART). Default = últimos 30 días.
+//   source:    'auto-strategy' | 'auto-rule' | 'manual' | 'individual_grant'.
+//              Default = todos los sources.
+//   status:    'completed' | 'pending_credit_failed'. Default = todos.
+//
+// Columnas: Fecha, Hora, Usuario, Monto, Origen, Status, GiveawayID, TransactionID.
+app.get('/api/admin/giveaway-claims.csv', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ART_DAY_START_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const { from, to, source, status } = req.query || {};
+
+    // Parsear rango de fechas (defaults: últimos 30 días ART).
+    let startUTC, endUTC;
+    if (from && to && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      const [fy, fm, fd] = from.split('-').map(Number);
+      const [ty, tm, td] = to.split('-').map(Number);
+      startUTC = new Date(Date.UTC(fy, fm - 1, fd, 3, 0, 0, 0));
+      endUTC = new Date(Date.UTC(ty, tm - 1, td, 3, 0, 0, 0) + DAY_MS - 1);
+    } else {
+      endUTC = new Date();
+      startUTC = new Date(endUTC.getTime() - 30 * DAY_MS);
+    }
+
+    // Filtros para la query.
+    const claimFilter = { claimedAt: { $gte: startUTC, $lte: endUTC } };
+    if (status === 'completed' || status === 'pending_credit_failed') {
+      claimFilter.status = status;
+    }
+
+    // Traer claims (cap defensivo en 50k para no tumbar memoria del server).
+    const claims = await MoneyGiveawayClaim
+      .find(claimFilter, { username: 1, amount: 1, claimedAt: 1, giveawayId: 1, transactionId: 1, status: 1, _id: 0 })
+      .sort({ claimedAt: -1 })
+      .limit(50000)
+      .lean();
+
+    // Resolver el `strategySource` de cada giveaway (1 query agregada por id).
+    const giveawayIds = Array.from(new Set(claims.map(c => c.giveawayId).filter(Boolean)));
+    let sourceByGiveaway = new Map();
+    if (giveawayIds.length > 0) {
+      const giveaways = await MoneyGiveaway
+        .find({ id: { $in: giveawayIds } }, { id: 1, strategySource: 1, prefix: 1, createdBy: 1, _id: 0 })
+        .lean();
+      for (const g of giveaways) sourceByGiveaway.set(g.id, g);
+    }
+
+    // Filtro por source (si vino).
+    let rows = claims;
+    if (typeof source === 'string' && source.trim()) {
+      const wanted = source.trim();
+      rows = rows.filter(c => {
+        const g = sourceByGiveaway.get(c.giveawayId);
+        return g && g.strategySource === wanted;
+      });
+    }
+
+    // Helper: formato Fecha + Hora en ART desde un Date UTC.
+    const fmtArt = (utcDate) => {
+      const ms = new Date(utcDate).getTime() - ART_DAY_START_OFFSET_MS;
+      const d = new Date(ms);
+      const date = d.toISOString().slice(0, 10); // YYYY-MM-DD
+      // Hora: tomamos el Date UTC original, le restamos 3h, y leemos las
+      // horas/minutos del nuevo Date. iso slice(11,19) da HH:MM:SS.
+      const time = d.toISOString().slice(11, 19);
+      return { date, time };
+    };
+
+    // Escape CSV: quotear si tiene coma, comilla, salto o CR.
+    const csvEscape = (v) => {
+      const s = v == null ? '' : String(v);
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+
+    const lines = ['Fecha,Hora,Usuario,Monto,Origen,Status,GiveawayID,TransactionID'];
+    for (const c of rows) {
+      const { date, time } = fmtArt(c.claimedAt);
+      const g = sourceByGiveaway.get(c.giveawayId) || {};
+      lines.push([
+        csvEscape(date),
+        csvEscape(time),
+        csvEscape(c.username),
+        csvEscape(c.amount),
+        csvEscape(g.strategySource || 'unknown'),
+        csvEscape(c.status || 'completed'),
+        csvEscape(c.giveawayId || ''),
+        csvEscape(c.transactionId || '')
+      ].join(','));
+    }
+    // BOM UTF-8 + CRLF para que Excel lo abra bien con tildes.
+    const csv = '﻿' + lines.join('\r\n');
+
+    const fname = `bonos-claims_${startUTC.toISOString().slice(0,10)}_${endUTC.toISOString().slice(0,10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(csv);
+  } catch (error) {
+    logger.error(`/api/admin/giveaway-claims.csv: ${error.message}\n${error.stack}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // GET agenda: devuelve qué campañas se van a disparar en una fecha dada
 // (default: mañana). Agrupa por equipo para que el personal sepa qué
 // notifs salen ese día. Muestra: hora, categoría, contenido, target,
