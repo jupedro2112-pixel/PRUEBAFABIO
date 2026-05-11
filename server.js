@@ -13009,7 +13009,13 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
       if (userCount === 0) continue;
       const prefs = (cfg.preferences && cfg.preferences[tier]) || {};
       const tierBudget = Number(prefs.budget) || 0;
-      for (const cat of ['bonos', 'juegos', 'regalos']) {
+      // Solo bonos (con wa.link) y juegos (notif pelada). Los regalos
+      // (giveaways de plata directa) quedan EXCLUIDOS de la auto-estrategia
+      // por decisión del owner: la plata se regala via wa.link (bonos)
+      // donde el user tiene que cargar para usarlo, no via plata gratis.
+      // Si en algún momento querés volver a habilitarlos, agregá 'regalos'
+      // de vuelta a este array.
+      for (const cat of ['bonos', 'juegos']) {
         const count = Math.max(0, Number(prefs[cat]) || 0);
         if (count === 0) continue;
         const pickedDays = _autoStrategyPickDays(remainingDays, count);

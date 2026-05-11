@@ -19357,6 +19357,12 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
     inner += '</div>';
 
+    // Banner: aviso de qué genera y qué NO la auto-estrategia.
+    inner += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:9px 12px;margin-bottom:12px;color:#bbb;font-size:11.5px;line-height:1.5;">';
+    inner += '<strong style="color:#66ff66;">Genera:</strong> 🎁 Bonos (push + cartel wa.link con BONO50/BONO100) · 🎰 Invitaciones a jugar (push pelado).<br>';
+    inner += '<strong style="color:#ff8080;">NO genera:</strong> 💰 Regalos de plata directa (deshabilitados por decisión — la plata se entrega via wa.link cuando el user carga, no gratis).';
+    inner += '</div>';
+
     // ============ CONTROLES EDITABLES (afectan el preview en tiempo real) ============
     const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
     if (d.maxTotal) state.maxTotal = d.maxTotal;
@@ -19369,16 +19375,9 @@ function _autoStrategyOpenPreviewModal(d) {
         .filter(n => typeof n === 'string' && n.length > 0);
     inner += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
     inner += '  <div style="color:#00d4ff;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">⚙ Ajustes (cambiá y se recalcula)</div>';
-    inner += '  <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;">';
-    // Max total
-    inner += '<div>';
-    inner += '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:3px;">💰 Máximo a regalar ($)</label>';
-    inner += '<div style="display:flex;gap:4px;">';
-    inner += '<input id="autoStrategy_maxTotal" type="number" min="0" step="50000" value="' + state.maxTotal + '" style="flex:1;background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;font-weight:700;">';
-    inner += '<button type="button" onclick="_autoStrategyApplyControls()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:7px 12px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;">↻</button>';
-    inner += '</div>';
-    inner += '<div style="color:#888;font-size:10px;margin-top:3px;">Si el total estimado excede este monto, se escalan los regalos proporcionalmente (floor $500/regalo).</div>';
-    inner += '</div>';
+    // Input hidden con maxTotal para no romper el state — pero NO se muestra
+    // porque ya no se generan regalos, así que el cap no aplica.
+    inner += '<input type="hidden" id="autoStrategy_maxTotal" value="' + state.maxTotal + '">';
     // Excluded teams
     inner += '<div>';
     inner += '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:3px;">🚫 Equipos excluidos (no reciben campaña)</label>';
@@ -19401,7 +19400,6 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '</div>';
     inner += '<div style="color:#888;font-size:10px;margin-top:3px;">Tildá un equipo para que NO reciba campañas auto. Mostrá en rojo = excluido.</div>';
     inner += '</div>';
-    inner += '  </div>';
     inner += '</div>';
 
     if (!sum.totalCampaigns || sum.totalCampaigns === 0) {
@@ -19554,11 +19552,13 @@ function _autoStrategyOpenPreviewModal(d) {
         inner += '</div></details>';
     }
 
-    // === REGALO-HUNTERS — users sospechosos que se excluyen de los REGALOS
-    // por default (siguen recibiendo bonos y juegos). El admin puede
-    // reincluir manualmente caso por caso.
+    // === REGALO-HUNTERS — DESHABILITADO en el preview porque ya no se generan
+    // regalos en la auto-estrategia. La lista historica sigue disponible en el
+    // boton 📊 Análisis de usuarios (donde tiene sentido como info historica).
+    // Si en el futuro se vuelven a habilitar regalos, sacar el `if (false)`.
     const rh = d.regaloHunters || { detected: [], excludedCount: 0, reincludedCount: 0, reincludedUsernames: [] };
     const detectedHunters = Array.isArray(rh.detected) ? rh.detected : [];
+    if (false) {
     inner += '<div style="margin-top:14px;background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.40);border-radius:10px;padding:12px;">';
     inner += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
     inner += '    <div style="color:#ff5050;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;">🎯 Regalo-hunters detectados (' + fmt(detectedHunters.length) + ')</div>';
@@ -19605,8 +19605,10 @@ function _autoStrategyOpenPreviewModal(d) {
         inner += '  </div>';
     }
     inner += '</div>';
+    } // fin del if (false) — panel de regalo-hunters deshabilitado en preview
 
-    // Stash hunters data para CSV export
+    // Stash hunters data para CSV export (sigue disponible por si el botón
+    // de exportar CSV se mostrara desde otro lado).
     window._lastRegaloHunters = detectedHunters;
 
     // === MODO PRUEBA — disparar 1 push a un user de prueba antes de activar
@@ -19622,7 +19624,6 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '    <div><label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Categoría</label>';
     inner += '    <select id="autoStrategy_testCategory" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,170,68,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;">';
     inner += '      <option value="bonos">🎁 Bono (con wa.link)</option>';
-    inner += '      <option value="regalos">💰 Regalo (reclamable)</option>';
     inner += '      <option value="juegos">🎮 Juego (solo push)</option>';
     inner += '    </select></div>';
     inner += '    <div><label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Tier</label>';
