@@ -1652,8 +1652,21 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     // Crear usuario localmente
     const userId = uuidv4();
 
-    // Validar referido (evitar auto-referido)
-    const isValidReferral = referrer && referrer.id !== userId;
+    // Validar referido (evitar auto-referido).
+    // BUG fix: el check viejo era `referrer.id !== userId`, pero userId es
+    // un UUID recién generado — nunca puede igualar al UUID del referrer
+    // (que ya existe en DB). El check siempre pasaba. Reemplazamos por
+    // checks reales: mismo phone (mismo dueño con 2 cuentas) o mismo
+    // username case-insensitive. El dedup por phone (línea ~1610) ya
+    // bloquea registrar 2 cuentas con el mismo número, así que esto es
+    // defense-in-depth.
+    const referrerPhone = String(referrer && referrer.phone || '').trim();
+    const referrerUsername = String(referrer && referrer.username || '').toLowerCase();
+    const isValidReferral = !!(
+      referrer
+      && referrerPhone !== normalizedPhone
+      && referrerUsername !== username.toLowerCase()
+    );
 
     // Generar referralCode único para el nuevo usuario (con control de colisiones)
     let newReferralCode = null;
@@ -2002,8 +2015,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     if (adminRoles.includes(userObj.role)) {
       // Set two httpOnly cookies: one for page access, one for API calls.
       // Neither can be read by client-side scripts (XSS-safe).
+      // Incluir tokenVersion para que `Revocar todas las sesiones` invalide
+      // este cookie también. Sin esto, después de un bump de tokenVersion el
+      // localStorage token quedaba inválido pero el cookie httpOnly de 8h
+      // sobrevivía hasta expiración natural.
       const adminCookieToken = jwt.sign(
-        { userId: userId, username: userObj.username, role: userObj.role },
+        { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
         JWT_SECRET,
         { expiresIn: '8h' }
       );
@@ -3067,11 +3084,12 @@ app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    // Set admin cookies if applicable
+    // Set admin cookies if applicable. Incluir tokenVersion para que el
+    // bump de versión invalide este cookie igual que el localStorage token.
     const adminRoles = ['admin', 'depositor', 'withdrawer'];
     if (adminRoles.includes(userObj.role)) {
       const adminCookieToken = jwt.sign(
-        { userId: userId, username: userObj.username, role: userObj.role },
+        { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
         JWT_SECRET,
         { expiresIn: '8h' }
       );
@@ -3600,7 +3618,15 @@ app.post('/api/cbu/request', authMiddleware, async (req, res) => {
 
 app.get('/api/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const users = await User.find().select('-password').lean();
+    // Limit defensivo: con 200k+ users esto cargaba toda la base en RAM
+    // por request. El admin que necesite paginar puede usar ?limit=N&skip=N.
+    const limit = Math.max(1, Math.min(5000, parseInt(req.query.limit, 10) || 1000));
+    const skip = Math.max(0, parseInt(req.query.skip, 10) || 0);
+    const users = await User.find()
+      .select('-password -__v')
+      .skip(skip)
+      .limit(limit)
+      .lean();
     res.json(users);
   } catch (error) {
     console.error('Error obteniendo usuarios:', error);
@@ -3704,8 +3730,12 @@ app.put('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Whitelist of fields any admin role can update
-    const ALLOWED_FIELDS = ['email', 'phone', 'whatsapp', 'isActive', 'balance'];
+    // Whitelist de campos que CUALQUIER admin (incluye depositor/withdrawer)
+    // puede actualizar. 'balance' fue removido en hardening pre-AWS — un
+    // depositor podía acreditarse plata arbitraria con
+    // PUT /api/users/<su-id> {"balance": 99999}. Ahora balance está sólo
+    // bajo `role === 'admin'` (mismo gate que cambiar roles).
+    const ALLOWED_FIELDS = ['email', 'phone', 'whatsapp', 'isActive'];
 
     const updates = {};
 
@@ -3714,17 +3744,24 @@ app.put('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
         // Coerce to safe primitives to prevent NoSQL operator injection
         if (field === 'isActive') {
           updates[field] = Boolean(req.body[field]);
-        } else if (field === 'balance') {
-          const n = parseFloat(req.body[field]);
-          if (isNaN(n)) return res.status(400).json({ error: 'balance debe ser un número' });
-          updates[field] = n;
         } else {
           updates[field] = String(req.body[field]);
         }
       }
     }
 
-    // Only strict admin can change the role
+    // Cambios de campos sensibles — sólo admin estricto (no depositor/withdrawer).
+    // Balance acá porque tocar plata es la operación más sensible del sistema.
+    if (req.body.balance !== undefined) {
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Solo el administrador principal puede modificar el balance' });
+      }
+      const n = parseFloat(req.body.balance);
+      if (isNaN(n)) return res.status(400).json({ error: 'balance debe ser un número' });
+      if (n < 0) return res.status(400).json({ error: 'balance no puede ser negativo' });
+      updates.balance = n;
+    }
+
     if (req.body.role !== undefined) {
       if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Solo el administrador principal puede cambiar roles' });
@@ -6533,28 +6570,40 @@ app.post('/api/movements/withdraw', authMiddleware, async (req, res) => {
   try {
     const { amount } = req.body;
     const username = req.user.username;
-    
+    const userId = req.user.userId;
+
     if (!amount || amount < 100) {
       return res.status(400).json({ error: 'Monto mínimo $100' });
     }
-    
-    const result = await jugaygana.withdrawFromUser(
-      username, 
-      amount, 
-      `Retiro desde Sala de Juegos - ${new Date().toLocaleString('es-AR')}`
-    );
-    
-    if (result.success) {
-      await recordUserActivity(req.user.userId, 'withdrawal', amount);
-      
-      res.json({
-        success: true,
-        message: `Retiro de $${amount} realizado correctamente`,
-        newBalance: result.data?.user_balance_after,
-        transactionId: result.data?.transfer_id || result.data?.transferId
-      });
-    } else {
-      res.status(400).json({ error: result.error || 'Error al realizar retiro' });
+
+    // Lock anti-doble-click: si el cliente reintenta antes que el primer
+    // request termine (network glitch, doble-tap), prevenimos golpear
+    // JUGAYGANA dos veces y duplicar el retiro. Lock vive máx 5 min.
+    if (!await acquireRefundLock(userId, 'withdraw')) {
+      return res.status(409).json({ error: 'Hay un retiro en proceso, esperá unos segundos.' });
+    }
+
+    try {
+      const result = await jugaygana.withdrawFromUser(
+        username,
+        amount,
+        `Retiro desde Sala de Juegos - ${new Date().toLocaleString('es-AR')}`
+      );
+
+      if (result.success) {
+        await recordUserActivity(req.user.userId, 'withdrawal', amount);
+
+        res.json({
+          success: true,
+          message: `Retiro de $${amount} realizado correctamente`,
+          newBalance: result.data?.user_balance_after,
+          transactionId: result.data?.transfer_id || result.data?.transferId
+        });
+      } else {
+        res.status(400).json({ error: result.error || 'Error al realizar retiro' });
+      }
+    } finally {
+      await releaseRefundLock(userId, 'withdraw');
     }
   } catch (error) {
     console.error('Error en retiro:', error);
@@ -9028,7 +9077,7 @@ app.post(
 );
 
 // DELETE — limpia el análisis activo (no toca el historial).
-app.delete('/api/admin/recontact/current', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/recontact/current', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     await RecontactAnalysis.deleteOne({ _id: 'current' });
     logger.info(`[recontact/current] cleared by=${(req.user && req.user.username) || 'admin'}`);
@@ -9049,7 +9098,7 @@ app.get('/api/admin/recontact/history', authMiddleware, adminMiddleware, async (
 });
 
 // DELETE historial — vacía todo.
-app.delete('/api/admin/recontact/history', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/recontact/history', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const r = await RecontactHistory.deleteMany({});
     logger.info(`[recontact/history] cleared ${r.deletedCount} entries by=${(req.user && req.user.username) || 'admin'}`);
@@ -9061,7 +9110,7 @@ app.delete('/api/admin/recontact/history', authMiddleware, adminMiddleware, asyn
 
 // DELETE individual: borra UNA entrada del historial por su _id.
 // Usado cuando el admin sube un XLSX duplicado y quiere limpiar uno.
-app.delete('/api/admin/recontact/history/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/recontact/history/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const id = String((req.params && req.params.id) || '').trim();
     if (!id || !/^[0-9a-fA-F]{24}$/.test(id)) {
@@ -10057,7 +10106,7 @@ app.get('/api/admin/callbell/conversions', authMiddleware, adminMiddleware, asyn
 // Saca a un usuario de la lista de Post recontactación. NO borra el CallbellTag
 // (preserva la etiqueta original — solo limpia los campos convertedAt + convertedBy
 // para que el filtro convertedAt:{$ne:null} ya no lo agarre). Idempotente.
-app.delete('/api/admin/callbell/conversions/:username', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/callbell/conversions/:username', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const raw = String(req.params.username || '').trim();
     if (!raw) return res.status(400).json({ error: 'username requerido' });
@@ -10321,7 +10370,7 @@ app.post(
 // se mantiene (asumiendo que es la versión correcta). NO toca FCM
 // tokens, schedules ni nada que dispare notifs — sólo cambia el label
 // del equipo.
-app.post('/api/admin/teams/merge', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/teams/merge', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const from = String((req.body && req.body.from) || '').trim();
     const to = String((req.body && req.body.to) || '').trim();
@@ -14112,7 +14161,7 @@ app.get('/api/admin/complaints', authMiddleware, adminMiddleware, async (req, re
 
 // PUT /api/admin/complaints/:id — actualiza status y/o notas del admin.
 // Marca readAt la primera vez que el admin la abre. resolvedAt cuando pasa a resolved.
-app.put('/api/admin/complaints/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
     const b = req.body || {};
@@ -14246,7 +14295,7 @@ app.get('/api/admin/reviews', authMiddleware, adminMiddleware, async (req, res) 
 
 // DELETE /api/admin/reviews/:id — borra una opinión (admin only). El user
 // dueño queda libre para volver a opinar (no recreamos el constraint).
-app.delete('/api/admin/reviews/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/reviews/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: 'id requerido' });
@@ -16697,7 +16746,7 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
 // POST admin: crear/reemplazar el giveaway. Marca cualquier activo como
 // 'cancelled' y crea uno nuevo. Body: { amount, totalBudget, maxClaims,
 // durationMinutes, prefix?, notificationHistoryId? }.
-app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede crear regalos de plata.' });
@@ -16729,6 +16778,12 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
     // eso ya causó un bug grave (un test a un user terminó reclamado por otros).
     const whitelist = [];
     if (Array.isArray(audienceWhitelist)) {
+      // Cap defensivo: una whitelist >2000 username dispara una $in query
+      // gigante con N regex en Mongo, bloqueando el thread pool. Para
+      // audiencias más grandes que esto se debería usar prefix o segmento.
+      if (audienceWhitelist.length > 2000) {
+        return res.status(400).json({ error: 'audienceWhitelist máx 2000 usuarios — usá prefix o segmento para audiencias más grandes' });
+      }
       for (const u of audienceWhitelist) {
         const norm = String(u || '').trim().toLowerCase();
         if (norm) whitelist.push(norm);
@@ -17103,7 +17158,7 @@ app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (
 // POST: crea notificacion programada.
 // Body: { scheduledFor (ISO), title, body, prefix?, extraType ('none'|
 //   'promo'|'giveaway'), promo*..., giveaway*... }
-app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede programar notificaciones.' });
@@ -18159,7 +18214,7 @@ app.get('/api/admin/automation/plan/:planId', authMiddleware, adminMiddleware, a
   }
 });
 
-app.post('/api/admin/automation/launch', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/automation/launch', authMiddleware, adminMiddleware, bulkLaunchLimiter, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede lanzar.' });
