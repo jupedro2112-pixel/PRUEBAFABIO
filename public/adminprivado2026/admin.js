@@ -19063,6 +19063,7 @@ function _renderTeamCampaignsList(d) {
     html += '    </div>';
     html += '    <div style="display:flex;gap:8px;flex-wrap:wrap;">';
     html += '      <button type="button" onclick="_autoStrategyPreview()" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">🚀 Generar auto-estrategia</button>';
+    html += '      <button type="button" onclick="_openUserAnalysisModal()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Análisis detallado de usuarios: top depositantes, top reclamadores, regalo-hunters">📊 Análisis de usuarios</button>';
     html += '      <button type="button" onclick="_teamCampaignReactionGlobal()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Reporte de reacción de todas las campañas">📈 Reporte global</button>';
     html += '      <button type="button" onclick="_autoStrategyClearMonth()" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;" title="Borrar todas las auto-strategy del mes actual">🗑 Limpiar mes</button>';
     html += '    </div>';
@@ -19322,11 +19323,11 @@ async function _autoStrategyPreview() {
 // Llama al endpoint con los settings actuales y abre/refresca el modal.
 async function _autoStrategyRefreshPreview() {
     // Inicializar state con defaults si es la primera vez que se abre el
-    // modal (antes, el state solo se creaba DENTRO de _autoStrategyOpenPreviewModal,
-    // así que el primer fetch crasheaba con 'state.maxTotal of undefined' y
-    // mostraba 'Error de conexión' aunque la red estuviera bien).
-    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
-    const url = '/api/admin/team-campaigns/auto-strategy/preview?maxTotal=' + encodeURIComponent(state.maxTotal) + '&excludedTeams=' + encodeURIComponent((state.excludedTeams || []).join(','));
+    // modal. reincludeUsernames es la lista de regalo-hunters que el admin
+    // marcó manualmente para que SÍ reciban regalos (override del auto-exclude).
+    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [], reincludeUsernames: [] };
+    if (!Array.isArray(state.reincludeUsernames)) state.reincludeUsernames = [];
+    const url = '/api/admin/team-campaigns/auto-strategy/preview?maxTotal=' + encodeURIComponent(state.maxTotal) + '&excludedTeams=' + encodeURIComponent((state.excludedTeams || []).join(',')) + '&reincludeUsernames=' + encodeURIComponent((state.reincludeUsernames || []).join(','));
     try {
         const r = await authFetch(url);
         const d = await r.json();
@@ -19553,6 +19554,61 @@ function _autoStrategyOpenPreviewModal(d) {
         inner += '</div></details>';
     }
 
+    // === REGALO-HUNTERS — users sospechosos que se excluyen de los REGALOS
+    // por default (siguen recibiendo bonos y juegos). El admin puede
+    // reincluir manualmente caso por caso.
+    const rh = d.regaloHunters || { detected: [], excludedCount: 0, reincludedCount: 0, reincludedUsernames: [] };
+    const detectedHunters = Array.isArray(rh.detected) ? rh.detected : [];
+    inner += '<div style="margin-top:14px;background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.40);border-radius:10px;padding:12px;">';
+    inner += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    inner += '    <div style="color:#ff5050;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;">🎯 Regalo-hunters detectados (' + fmt(detectedHunters.length) + ')</div>';
+    if (rh.excludedCount > 0) {
+        inner += '    <div style="color:#ff8080;font-size:11px;">⛔ ' + fmt(rh.excludedCount) + ' quedan EXCLUIDOS de los regalos · ' + fmt(rh.reincludedCount || 0) + ' reincluidos manualmente</div>';
+    }
+    inner += '  </div>';
+    inner += '  <div style="color:#bbb;font-size:11.5px;margin-bottom:8px;line-height:1.5;">';
+    inner += '    Reclamaron ≥ 3 regalos en los últimos 30 días <strong>y no cargaron ni un peso real</strong>. Vienen a sacar plata gratis. Por default los excluimos de los REGALOS (siguen recibiendo bonos+juegos por si reaccionan). Tildalos para reincluir si querés.';
+    inner += '  </div>';
+    if (detectedHunters.length === 0) {
+        inner += '  <div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:8px;padding:10px;color:#66ff66;font-size:12px;">✅ No se detectaron regalo-hunters en los últimos 30 días.</div>';
+    } else {
+        inner += '  <div style="max-height:240px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:8px;border:1px solid rgba(255,80,80,0.20);">';
+        inner += '    <table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+        inner += '      <thead style="background:rgba(255,80,80,0.10);position:sticky;top:0;"><tr style="color:#ff8080;text-align:left;">';
+        inner += '        <th style="padding:6px 8px;font-weight:800;">Reincluir</th>';
+        inner += '        <th style="padding:6px 8px;font-weight:800;">Usuario</th>';
+        inner += '        <th style="padding:6px 8px;font-weight:800;">Equipo</th>';
+        inner += '        <th style="padding:6px 8px;font-weight:800;text-align:right;">Reclamos</th>';
+        inner += '        <th style="padding:6px 8px;font-weight:800;text-align:right;">$ Reclamado</th>';
+        inner += '        <th style="padding:6px 8px;font-weight:800;text-align:right;">Última carga</th>';
+        inner += '      </tr></thead><tbody>';
+        const reincSet = new Set((state.reincludeUsernames || []).map(u => String(u).toLowerCase()));
+        for (const h of detectedHunters) {
+            const ulc = String(h.username || '').toLowerCase();
+            const isReinc = reincSet.has(ulc);
+            const daysStr = h.daysSinceLastDeposit == null ? 'nunca' : (h.daysSinceLastDeposit + 'd atrás');
+            const dateStr = h.lastRealDepositDate ? new Date(h.lastRealDepositDate).toLocaleDateString('es-AR') : '—';
+            inner += '<tr style="border-top:1px solid rgba(255,255,255,0.04);' + (isReinc ? 'background:rgba(102,255,102,0.04);' : '') + '">';
+            inner += '<td style="padding:5px 8px;text-align:center;"><input type="checkbox" data-reinclude="' + escapeHtml(h.username) + '" ' + (isReinc ? 'checked' : '') + ' onchange="_autoStrategyApplyControls()" title="Tildá para reincluir a este user en los regalos"></td>';
+            inner += '<td style="padding:5px 8px;color:#fff;font-weight:700;">' + escapeHtml(h.username) + '</td>';
+            inner += '<td style="padding:5px 8px;color:#aaa;">' + escapeHtml(h.lineTeamName || '—') + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#ff5050;font-weight:700;">' + fmt(h.claimCount) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#ffd700;">$' + fmt(h.totalClaimedAmount || 0) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#888;font-size:10.5px;white-space:nowrap;">' + escapeHtml(dateStr) + '<br><span style="color:#666;">' + escapeHtml(daysStr) + '</span></td>';
+            inner += '</tr>';
+        }
+        inner += '    </tbody></table>';
+        inner += '  </div>';
+        // Botón exportar CSV de los hunters
+        inner += '  <div style="margin-top:6px;text-align:right;">';
+        inner += '    <button type="button" onclick="_autoStrategyExportHuntersCSV()" style="padding:4px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.40);color:#ff8080;border-radius:5px;cursor:pointer;">📥 Exportar lista CSV</button>';
+        inner += '  </div>';
+    }
+    inner += '</div>';
+
+    // Stash hunters data para CSV export
+    window._lastRegaloHunters = detectedHunters;
+
     // === MODO PRUEBA — disparar 1 push a un user de prueba antes de activar
     // todo. Hace el flow completo: notif + creación de promo/giveaway scoped
     // por audienceWhitelist al user. Sirve para confirmar que llega bien, que
@@ -19636,16 +19692,22 @@ async function _autoStrategyCommit() {
     const btn = event && event.target;
     if (btn) btn.disabled = true;
     showToast('⏳ Generando campañas...', 'info');
-    const state = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
+    const state = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [], reincludeUsernames: [] };
     try {
         const r = await authFetch('/api/admin/team-campaigns/auto-strategy/commit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ maxTotal: state.maxTotal, excludedTeams: state.excludedTeams })
+            body: JSON.stringify({
+                maxTotal: state.maxTotal,
+                excludedTeams: state.excludedTeams,
+                reincludeUsernames: state.reincludeUsernames || []
+            })
         });
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); if (btn) btn.disabled = false; return; }
-        showToast('✅ ' + d.campaignsCreated + ' campañas generadas para ' + d.monthKey, 'success');
+        const excludedHunters = (d.regaloHunters && d.regaloHunters.excludedCount) || 0;
+        const huntersMsg = excludedHunters > 0 ? ' · ' + excludedHunters + ' regalo-hunters excluidos de regalos' : '';
+        showToast('✅ ' + d.campaignsCreated + ' campañas generadas para ' + d.monthKey + huntersMsg, 'success');
         document.getElementById('autoStrategyPreviewModal')?.remove();
         loadTeamCampaigns();
     } catch (e) {
@@ -19654,15 +19716,254 @@ async function _autoStrategyCommit() {
     }
 }
 
+// Exporta la lista de regalo-hunters detectados a CSV (para que el personal
+// pueda revisarla en Excel o llevarla a otros sistemas).
+function _autoStrategyExportHuntersCSV() {
+    const list = window._lastRegaloHunters || [];
+    if (list.length === 0) { showToast('No hay regalo-hunters para exportar', 'warning'); return; }
+    const rows = [['username', 'equipo', 'linea', 'reclamos_30d', 'monto_reclamado', 'realDeposits30d', 'lastDepositDate', 'daysSinceLastDeposit', 'lastClaimAt']];
+    for (const h of list) {
+        rows.push([
+            h.username || '',
+            h.lineTeamName || '',
+            h.linePhone || '',
+            h.claimCount || 0,
+            h.totalClaimedAmount || 0,
+            h.realDeposits30d || 0,
+            h.lastRealDepositDate ? new Date(h.lastRealDepositDate).toISOString() : '',
+            h.daysSinceLastDeposit == null ? '' : h.daysSinceLastDeposit,
+            h.lastClaimAt ? new Date(h.lastClaimAt).toISOString() : ''
+        ]);
+    }
+    const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'regalo-hunters-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast('✅ CSV exportado · ' + list.length + ' regalo-hunters', 'success');
+}
+
+// === Modal de Análisis de usuarios ===
+// Top depositantes, top reclamadores, regalo-hunters detectados, net positive/negative.
+// Sirve para que el personal pueda revisar de un vistazo quiénes son los buenos
+// clientes y los sospechosos antes de generar la estrategia.
+async function _openUserAnalysisModal() {
+    let modal = document.getElementById('userAnalysisModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'userAnalysisModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+    modal.innerHTML = '<div style="background:#0a1428;border:1px solid rgba(0,212,255,0.50);border-radius:12px;max-width:1100px;width:100%;padding:18px 20px;color:#fff;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap;">' +
+        '  <div><h3 style="margin:0;color:#00d4ff;font-size:17px;">📊 Análisis de usuarios — últimos 30 días</h3><div style="color:#888;font-size:11.5px;margin-top:2px;">Quiénes te dejan plata, quiénes solo vienen a reclamar, y qué tan saludable está tu base.</div></div>' +
+        '  <div style="display:flex;gap:6px;align-items:center;">' +
+        '    <select id="userAnalysisDays" onchange="_loadUserAnalysis()" style="background:#0d1828;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:6px 10px;border-radius:6px;font-size:12px;">' +
+        '      <option value="7">Últimos 7 días</option>' +
+        '      <option value="14">Últimos 14 días</option>' +
+        '      <option value="30" selected>Últimos 30 días</option>' +
+        '      <option value="60">Últimos 60 días</option>' +
+        '      <option value="90">Últimos 90 días</option>' +
+        '    </select>' +
+        '    <button type="button" onclick="document.getElementById(\'userAnalysisModal\').remove()" style="background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.40);color:#ff8080;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;">✕</button>' +
+        '  </div>' +
+        '</div>' +
+        '<div id="userAnalysisContent" style="color:#888;text-align:center;padding:30px;font-size:13px;">⏳ Cargando análisis...</div>' +
+        '</div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    _loadUserAnalysis();
+}
+
+async function _loadUserAnalysis() {
+    const sel = document.getElementById('userAnalysisDays');
+    const days = sel ? Number(sel.value) || 30 : 30;
+    const box = document.getElementById('userAnalysisContent');
+    if (!box) return;
+    box.innerHTML = '<div style="color:#00d4ff;padding:30px;text-align:center;font-size:13px;">⏳ Calculando análisis de los últimos ' + days + ' días...</div>';
+    try {
+        // Hacemos ambos fetches en paralelo: análisis general + lista de hunters.
+        const [analysisRes, huntersRes] = await Promise.all([
+            authFetch('/api/admin/team-campaigns/user-analysis?days=' + days),
+            authFetch('/api/admin/team-campaigns/regalo-hunters?days=' + days)
+        ]);
+        const a = await analysisRes.json();
+        const h = await huntersRes.json();
+        if (!analysisRes.ok) { box.innerHTML = '<div style="color:#ff8080;padding:20px;text-align:center;">❌ ' + escapeHtml(a.error || 'Error') + '</div>'; return; }
+        box.innerHTML = _renderUserAnalysis(a, h.hunters || []);
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:20px;text-align:center;">❌ Error: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+function _renderUserAnalysis(a, hunters) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const t = a.totals || {};
+    const days = a.days || 30;
+
+    let html = '';
+
+    // === KPIs globales ===
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:10px;margin-bottom:14px;">';
+    html += _cohortKpi('💰 Total cargado', '$' + fmt(t.depositTotal || 0), '#66ff66', fmt(t.depositCount || 0) + ' cargas');
+    html += _cohortKpi('🎁 Total regalado', '$' + fmt(t.claimedTotal || 0), '#ffd700', fmt(t.claimedCount || 0) + ' reclamos');
+    const netColor = t.netToHouse > 0 ? '#66ff66' : (t.netToHouse < 0 ? '#ff5050' : '#bbb');
+    html += _cohortKpi('🏦 Net a la casa', '$' + fmt(t.netToHouse || 0), netColor, 'cargas − regalado');
+    html += _cohortKpi('👥 Cargaron', fmt(t.depositUniqueUsers || 0), '#00d4ff', 'users distintos');
+    html += _cohortKpi('🎯 Reclamaron', fmt(t.claimedUniqueUsers || 0), '#ff8080', 'users distintos');
+    html += _cohortKpi('🚨 Regalo-hunters', fmt(hunters.length), '#ff5050', '0 cargas + 3+ reclamos');
+    html += '</div>';
+
+    // === TOP DEPOSITANTES (los buenos) ===
+    html += '<details open style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;margin-bottom:10px;">';
+    html += '<summary style="cursor:pointer;padding:10px 14px;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(102,255,102,0.04);">';
+    html += '<span style="color:#66ff66;font-weight:900;font-size:13px;">✅ Top depositantes — los que más cargaron · ' + (a.topDepositors || []).length + '</span>';
+    html += '<span style="color:#888;font-size:10.5px;">tocá para abrir ▾</span>';
+    html += '</summary>';
+    html += '<div style="padding:8px 14px 12px;">';
+    html += '<div style="color:#bbb;font-size:11px;margin-bottom:6px;">Estos son tus mejores clientes — los que efectivamente cargan plata. Tratalos bien.</div>';
+    html += '<div style="max-height:300px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:6px;">';
+    html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+    html += '<thead style="background:rgba(102,255,102,0.10);position:sticky;top:0;"><tr style="color:#66ff66;text-align:left;">';
+    html += '<th style="padding:5px 8px;">#</th><th style="padding:5px 8px;">Usuario</th><th style="padding:5px 8px;text-align:right;">$ Total</th><th style="padding:5px 8px;text-align:right;"># Cargas</th><th style="padding:5px 8px;text-align:right;">Última</th>';
+    html += '</tr></thead><tbody>';
+    (a.topDepositors || []).forEach((d, i) => {
+        const last = d.lastDepositAt ? new Date(d.lastDepositAt).toLocaleDateString('es-AR') : '—';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+        html += '<td style="padding:4px 8px;color:#666;">' + (i + 1) + '</td>';
+        html += '<td style="padding:4px 8px;color:#fff;font-weight:700;">' + escapeHtml(d.username) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:#66ff66;font-weight:700;">$' + fmt(d.totalDeposited) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:#aaa;">' + fmt(d.depositCount) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:#888;font-size:10.5px;">' + escapeHtml(last) + '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div style="margin-top:6px;text-align:right;"><button type="button" onclick="_userAnalysisExportCSV(\'depositors\')" style="padding:3px 9px;font-size:10.5px;background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);color:#66ff66;border-radius:5px;cursor:pointer;">📥 Exportar CSV</button></div>';
+    html += '</div></details>';
+
+    // === TOP RECLAMADORES (todos, con flag de hunter) ===
+    html += '<details style="background:rgba(255,170,68,0.06);border:1px solid rgba(255,170,68,0.30);border-radius:10px;margin-bottom:10px;">';
+    html += '<summary style="cursor:pointer;padding:10px 14px;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(255,170,68,0.04);">';
+    html += '<span style="color:#ffaa44;font-weight:900;font-size:13px;">⚠ Top reclamadores — analizá net positive vs negative · ' + (a.topClaimers || []).length + '</span>';
+    html += '<span style="color:#888;font-size:10.5px;">tocá para abrir ▾</span>';
+    html += '</summary>';
+    html += '<div style="padding:8px 14px 12px;">';
+    html += '<div style="color:#bbb;font-size:11px;margin-bottom:6px;">Net = lo que cargaron − lo que reclamaron. <span style="color:#66ff66;">Verde</span> = clientes valiosos (cargan más de lo que reciben). <span style="color:#ff5050;">Rojo</span> = sospechosos.</div>';
+    html += '<div style="max-height:300px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:6px;">';
+    html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+    html += '<thead style="background:rgba(255,170,68,0.10);position:sticky;top:0;"><tr style="color:#ffaa44;text-align:left;">';
+    html += '<th style="padding:5px 8px;">Usuario</th><th style="padding:5px 8px;text-align:right;">$ Reclamado</th><th style="padding:5px 8px;text-align:right;"># Reclamos</th><th style="padding:5px 8px;text-align:right;">$ Cargado</th><th style="padding:5px 8px;text-align:right;">Net</th><th style="padding:5px 8px;">Estado</th>';
+    html += '</tr></thead><tbody>';
+    (a.topClaimers || []).forEach(c => {
+        const netColor2 = c.net > 0 ? '#66ff66' : (c.net < 0 ? '#ff5050' : '#bbb');
+        const flagBadge = c.flag === 'regalo-hunter'
+            ? '<span style="background:rgba(255,80,80,0.20);color:#ff5050;padding:2px 6px;border-radius:8px;font-size:9.5px;font-weight:900;">🚨 HUNTER</span>'
+            : c.flag === 'net-negative'
+            ? '<span style="background:rgba(255,170,68,0.20);color:#ffaa44;padding:2px 6px;border-radius:8px;font-size:9.5px;font-weight:900;">⚠ NET-NEG</span>'
+            : '<span style="background:rgba(102,255,102,0.20);color:#66ff66;padding:2px 6px;border-radius:8px;font-size:9.5px;font-weight:900;">✓ OK</span>';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+        html += '<td style="padding:4px 8px;color:#fff;font-weight:700;">' + escapeHtml(c.username) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:#ffd700;">$' + fmt(c.totalClaimed) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:#aaa;">' + fmt(c.claimCount) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:#66ff66;">$' + fmt(c.totalDeposited) + '</td>';
+        html += '<td style="padding:4px 8px;text-align:right;color:' + netColor2 + ';font-weight:700;">' + (c.net >= 0 ? '+' : '') + '$' + fmt(c.net) + '</td>';
+        html += '<td style="padding:4px 8px;">' + flagBadge + '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div style="margin-top:6px;text-align:right;"><button type="button" onclick="_userAnalysisExportCSV(\'claimers\')" style="padding:3px 9px;font-size:10.5px;background:rgba(255,170,68,0.10);border:1px solid rgba(255,170,68,0.40);color:#ffaa44;border-radius:5px;cursor:pointer;">📥 Exportar CSV</button></div>';
+    html += '</div></details>';
+
+    // === REGALO-HUNTERS (los detectados, con detalle completo) ===
+    if (hunters.length > 0) {
+        html += '<details open style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:10px;margin-bottom:10px;">';
+        html += '<summary style="cursor:pointer;padding:10px 14px;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;background:rgba(255,80,80,0.04);">';
+        html += '<span style="color:#ff5050;font-weight:900;font-size:13px;">🚨 Regalo-hunters detectados — los que solo vienen a sacar · ' + hunters.length + '</span>';
+        html += '<span style="color:#888;font-size:10.5px;">tocá para abrir ▾</span>';
+        html += '</summary>';
+        html += '<div style="padding:8px 14px 12px;">';
+        html += '<div style="color:#bbb;font-size:11px;margin-bottom:6px;">Reclamaron ≥ 3 regalos en los últimos ' + days + ' días Y cargaron $0 reales. Por default los excluimos automáticamente de los REGALOS al generar la auto-estrategia.</div>';
+        html += '<div style="max-height:300px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:6px;">';
+        html += '<table style="width:100%;font-size:11.5px;border-collapse:collapse;">';
+        html += '<thead style="background:rgba(255,80,80,0.10);position:sticky;top:0;"><tr style="color:#ff5050;text-align:left;">';
+        html += '<th style="padding:5px 8px;">Usuario</th><th style="padding:5px 8px;">Equipo</th><th style="padding:5px 8px;text-align:right;"># Reclamos</th><th style="padding:5px 8px;text-align:right;">$ Reclamado</th><th style="padding:5px 8px;text-align:right;">Última carga real</th>';
+        html += '</tr></thead><tbody>';
+        for (const u of hunters) {
+            const daysSince = u.daysSinceLastDeposit == null ? 'nunca' : (u.daysSinceLastDeposit + 'd');
+            const date = u.lastRealDepositDate ? new Date(u.lastRealDepositDate).toLocaleDateString('es-AR') : '—';
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+            html += '<td style="padding:4px 8px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + '</td>';
+            html += '<td style="padding:4px 8px;color:#aaa;">' + escapeHtml(u.lineTeamName || '—') + '</td>';
+            html += '<td style="padding:4px 8px;text-align:right;color:#ff5050;font-weight:700;">' + fmt(u.claimCount) + '</td>';
+            html += '<td style="padding:4px 8px;text-align:right;color:#ffd700;">$' + fmt(u.totalClaimedAmount || 0) + '</td>';
+            html += '<td style="padding:4px 8px;text-align:right;color:#888;font-size:10.5px;white-space:nowrap;">' + escapeHtml(date) + '<br><span style="color:#666;">' + escapeHtml(daysSince) + '</span></td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        html += '<div style="margin-top:6px;text-align:right;"><button type="button" onclick="_userAnalysisExportCSV(\'hunters\')" style="padding:3px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.40);color:#ff8080;border-radius:5px;cursor:pointer;">📥 Exportar CSV</button></div>';
+        html += '</div></details>';
+    }
+
+    // Stash data para CSV
+    window._lastUserAnalysisData = { analysis: a, hunters };
+
+    return html;
+}
+
+// Export CSV unificado para análisis de usuarios.
+function _userAnalysisExportCSV(kind) {
+    const data = window._lastUserAnalysisData;
+    if (!data) { showToast('No hay datos para exportar', 'warning'); return; }
+    let rows = [];
+    let filename = '';
+    if (kind === 'depositors') {
+        rows.push(['username', 'total_deposited', 'deposit_count', 'last_deposit_at']);
+        for (const d of data.analysis.topDepositors || []) {
+            rows.push([d.username, d.totalDeposited, d.depositCount, d.lastDepositAt ? new Date(d.lastDepositAt).toISOString() : '']);
+        }
+        filename = 'top-depositantes-' + new Date().toISOString().slice(0,10) + '.csv';
+    } else if (kind === 'claimers') {
+        rows.push(['username', 'total_claimed', 'claim_count', 'total_deposited', 'net', 'flag', 'last_claim_at']);
+        for (const c of data.analysis.topClaimers || []) {
+            rows.push([c.username, c.totalClaimed, c.claimCount, c.totalDeposited, c.net, c.flag || '', c.lastClaimAt ? new Date(c.lastClaimAt).toISOString() : '']);
+        }
+        filename = 'top-reclamadores-' + new Date().toISOString().slice(0,10) + '.csv';
+    } else if (kind === 'hunters') {
+        rows.push(['username', 'equipo', 'linea', 'claim_count', 'total_claimed', 'real_deposits_30d', 'last_deposit', 'days_since_last_deposit']);
+        for (const h of data.hunters || []) {
+            rows.push([h.username, h.lineTeamName || '', h.linePhone || '', h.claimCount, h.totalClaimedAmount || 0, h.realDeposits30d || 0, h.lastRealDepositDate ? new Date(h.lastRealDepositDate).toISOString() : '', h.daysSinceLastDeposit == null ? '' : h.daysSinceLastDeposit]);
+        }
+        filename = 'regalo-hunters-' + new Date().toISOString().slice(0,10) + '.csv';
+    }
+    if (rows.length <= 1) { showToast('Sin datos para exportar', 'warning'); return; }
+    const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast('✅ CSV exportado · ' + (rows.length - 1) + ' filas', 'success');
+}
+
 // Recolecta el estado de los controles del modal y refresca el preview.
 function _autoStrategyApplyControls() {
-    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
+    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [], reincludeUsernames: [] };
     const maxInp = document.getElementById('autoStrategy_maxTotal');
     if (maxInp) state.maxTotal = Math.max(0, Number(maxInp.value) || 0);
     const checks = document.querySelectorAll('[data-team-exclude]');
     const excluded = [];
     checks.forEach(c => { if (c.checked) excluded.push(c.getAttribute('data-team-exclude')); });
     state.excludedTeams = excluded;
+    // Recolectar reinclude usernames (regalo-hunters que el admin marcó manualmente).
+    const reincChecks = document.querySelectorAll('[data-reinclude]');
+    const reinc = [];
+    reincChecks.forEach(c => { if (c.checked) reinc.push(c.getAttribute('data-reinclude')); });
+    state.reincludeUsernames = reinc;
     _autoStrategyRefreshPreview();
 }
 

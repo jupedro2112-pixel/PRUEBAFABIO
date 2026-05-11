@@ -12619,6 +12619,12 @@ async function _fireTeamCampaign(c, fireDate) {
     }, { username: 1, _id: 0 }).lean();
     usernames = active.map(a => a.username.toLowerCase());
   }
+  // Filtro excludeUsernames — saca regalo-hunters de la audience (solo aplica
+  // en categoria 'regalos' tipicamente, pero acepta cualquier lista de exclusion).
+  if (Array.isArray(c.excludeUsernames) && c.excludeUsernames.length > 0) {
+    const excludeLc = new Set(c.excludeUsernames.map(u => String(u || '').toLowerCase()).filter(Boolean));
+    usernames = usernames.filter(u => !excludeLc.has(u));
+  }
   if (usernames.length === 0) return out;
 
   const startMs = new Date(fireDate); startMs.setHours(c.startHour, 0, 0, 0);
@@ -12737,6 +12743,217 @@ async function _autoStrategyGetDistribution() {
   return Object.values(dist);
 }
 
+// Detecta "regalo-hunters": users que en los últimos N días reclamaron
+// muchos regalos PERO no cargaron nada. Estos son los que vienen a sacar
+// plata sin poner — la auto-estrategia los excluye de los REGALOS (pero
+// sigue mandándoles bonos/juegos para darles chance de convertir).
+//
+// Criterio default (configurable):
+//   - claimCount30d >= 3 (reclamó 3+ regalos)
+//   - realDeposits30d === 0 (no cargó nada de su bolsillo)
+//
+// Devuelve array de { username, claimCount, totalClaimedAmount, lastClaimAt,
+// lastDepositDate, realDeposits30d, daysSinceLastDeposit, lineTeamName }.
+async function _detectRegaloHunters({ days = 30, minClaims = 3, maxDeposits = 0 } = {}) {
+  const since = new Date(Date.now() - days * 86400000);
+
+  // 1) Aggregate de claims en MoneyGiveawayClaim por username.
+  // Cruzamos con MoneyGiveaway para sacar monto reclamado por cada claim.
+  const claimAgg = await MoneyGiveawayClaim.aggregate([
+    { $match: { claimedAt: { $gte: since } } },
+    {
+      $lookup: {
+        from: 'money_giveaways',
+        localField: 'giveawayId',
+        foreignField: 'id',
+        as: 'gw'
+      }
+    },
+    {
+      $group: {
+        _id: { $toLower: '$username' },
+        username: { $first: '$username' },
+        claimCount: { $sum: 1 },
+        totalClaimedAmount: { $sum: { $ifNull: [{ $arrayElemAt: ['$gw.amountPerWinner', 0] }, 0] } },
+        lastClaimAt: { $max: '$claimedAt' }
+      }
+    },
+    { $match: { claimCount: { $gte: minClaims } } }
+  ], { allowDiskUse: true });
+
+  if (claimAgg.length === 0) return [];
+
+  // 2) Cruzar con PlayerStats para sacar realDeposits30d.
+  const usernamesLc = claimAgg.map(c => c._id);
+  const stats = await PlayerStats.find(
+    { username: { $in: usernamesLc.map(u => new RegExp('^' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')) } },
+    { username: 1, realDeposits30d: 1, lastRealDepositDate: 1, _id: 0 }
+  ).lean();
+  const statsMap = new Map();
+  for (const s of stats) statsMap.set(String(s.username || '').toLowerCase(), s);
+
+  // 3) Cruzar con User para sacar lineTeamName (para mostrar en el reporte).
+  const users = await User.find(
+    { username: { $in: usernamesLc.map(u => new RegExp('^' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')) } },
+    { username: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
+  ).lean();
+  const userMap = new Map();
+  for (const u of users) userMap.set(String(u.username || '').toLowerCase(), u);
+
+  // 4) Filtrar a los que cumplen los 2 criterios: many claims + 0 deposits.
+  const out = [];
+  const now = Date.now();
+  for (const c of claimAgg) {
+    const s = statsMap.get(c._id) || {};
+    const u = userMap.get(c._id) || {};
+    const deposits30d = Number(s.realDeposits30d) || 0;
+    if (deposits30d > Number(maxDeposits)) continue; // tiene cargas → no es hunter
+    const lastDep = s.lastRealDepositDate ? new Date(s.lastRealDepositDate).getTime() : null;
+    out.push({
+      username: c.username,
+      claimCount: c.claimCount,
+      totalClaimedAmount: c.totalClaimedAmount || 0,
+      lastClaimAt: c.lastClaimAt,
+      realDeposits30d: deposits30d,
+      lastRealDepositDate: s.lastRealDepositDate || null,
+      daysSinceLastDeposit: lastDep ? Math.floor((now - lastDep) / 86400000) : null,
+      lineTeamName: u.lineTeamName || null,
+      linePhone: u.linePhone || null
+    });
+  }
+  // Orden: más sospechosos primero (más reclamos + más plata reclamada).
+  out.sort((a, b) => {
+    if (b.claimCount !== a.claimCount) return b.claimCount - a.claimCount;
+    return (b.totalClaimedAmount || 0) - (a.totalClaimedAmount || 0);
+  });
+  return out;
+}
+
+// Análisis general de usuarios: top depositantes (los que mejor cargan),
+// top reclamadores (los más sospechosos), y net positive/negative.
+// Sirve para que el personal revise quiénes son los buenos clientes y
+// quiénes los regalo-hunters de un vistazo.
+async function _userAnalysisReport({ days = 30 } = {}) {
+  const since = new Date(Date.now() - days * 86400000);
+
+  // 1) Top depositantes por monto.
+  const topDepositors = await Transaction.aggregate([
+    {
+      $match: {
+        type: 'deposit',
+        status: 'completed',
+        timestamp: { $gte: since }
+      }
+    },
+    {
+      $group: {
+        _id: { $toLower: '$username' },
+        username: { $first: '$username' },
+        totalDeposited: { $sum: '$amount' },
+        depositCount: { $sum: 1 },
+        lastDepositAt: { $max: '$timestamp' }
+      }
+    },
+    { $sort: { totalDeposited: -1 } },
+    { $limit: 50 }
+  ], { allowDiskUse: true });
+
+  // 2) Top reclamadores (todos los que reclamaron, ordenado por plata recibida).
+  const topClaimers = await MoneyGiveawayClaim.aggregate([
+    { $match: { claimedAt: { $gte: since } } },
+    {
+      $lookup: {
+        from: 'money_giveaways',
+        localField: 'giveawayId',
+        foreignField: 'id',
+        as: 'gw'
+      }
+    },
+    {
+      $group: {
+        _id: { $toLower: '$username' },
+        username: { $first: '$username' },
+        claimCount: { $sum: 1 },
+        totalClaimed: { $sum: { $ifNull: [{ $arrayElemAt: ['$gw.amountPerWinner', 0] }, 0] } },
+        lastClaimAt: { $max: '$claimedAt' }
+      }
+    },
+    { $sort: { totalClaimed: -1 } },
+    { $limit: 50 }
+  ], { allowDiskUse: true });
+
+  // 3) Para cada top claimer, cruzar con sus deposits para calcular net.
+  const claimerUsernames = topClaimers.map(c => c._id);
+  let depositsByClaimer = new Map();
+  if (claimerUsernames.length > 0) {
+    const depAgg = await Transaction.aggregate([
+      {
+        $match: {
+          type: 'deposit',
+          status: 'completed',
+          timestamp: { $gte: since },
+          $expr: { $in: [{ $toLower: '$username' }, claimerUsernames] }
+        }
+      },
+      {
+        $group: {
+          _id: { $toLower: '$username' },
+          totalDep: { $sum: '$amount' }
+        }
+      }
+    ], { allowDiskUse: true });
+    for (const r of depAgg) depositsByClaimer.set(r._id, r.totalDep);
+  }
+  // Net per claimer.
+  const claimersEnriched = topClaimers.map(c => {
+    const dep = depositsByClaimer.get(c._id) || 0;
+    return {
+      username: c.username,
+      claimCount: c.claimCount,
+      totalClaimed: c.totalClaimed || 0,
+      totalDeposited: dep,
+      net: dep - (c.totalClaimed || 0),
+      lastClaimAt: c.lastClaimAt,
+      flag: dep === 0 && c.claimCount >= 3 ? 'regalo-hunter' : (dep < c.totalClaimed ? 'net-negative' : 'ok')
+    };
+  });
+
+  // 4) Totales globales.
+  const [globalDep, globalClaims] = await Promise.all([
+    Transaction.aggregate([
+      { $match: { type: 'deposit', status: 'completed', timestamp: { $gte: since } } },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 }, uniqueUsers: { $addToSet: { $toLower: '$username' } } } }
+    ], { allowDiskUse: true }),
+    MoneyGiveawayClaim.aggregate([
+      { $match: { claimedAt: { $gte: since } } },
+      {
+        $lookup: { from: 'money_giveaways', localField: 'giveawayId', foreignField: 'id', as: 'gw' }
+      },
+      { $group: { _id: null, total: { $sum: { $ifNull: [{ $arrayElemAt: ['$gw.amountPerWinner', 0] }, 0] } }, count: { $sum: 1 }, uniqueUsers: { $addToSet: { $toLower: '$username' } } } }
+    ], { allowDiskUse: true })
+  ]);
+  const totals = {
+    depositTotal: (globalDep[0] && globalDep[0].total) || 0,
+    depositCount: (globalDep[0] && globalDep[0].count) || 0,
+    depositUniqueUsers: (globalDep[0] && globalDep[0].uniqueUsers && globalDep[0].uniqueUsers.length) || 0,
+    claimedTotal: (globalClaims[0] && globalClaims[0].total) || 0,
+    claimedCount: (globalClaims[0] && globalClaims[0].count) || 0,
+    claimedUniqueUsers: (globalClaims[0] && globalClaims[0].uniqueUsers && globalClaims[0].uniqueUsers.length) || 0
+  };
+  totals.netToHouse = totals.depositTotal - totals.claimedTotal;
+  return {
+    days,
+    totals,
+    topDepositors: topDepositors.map(d => ({
+      username: d.username,
+      totalDeposited: d.totalDeposited,
+      depositCount: d.depositCount,
+      lastDepositAt: d.lastDepositAt
+    })),
+    topClaimers: claimersEnriched
+  };
+}
+
 // Calcula monto rotativo para regalo (mismo algoritmo que la per-user vieja).
 function _autoStrategyGiftAmount({ tierBudget, regalosCount }) {
   const base = (Number(tierBudget) > 0 && Number(regalosCount) > 0)
@@ -12752,7 +12969,7 @@ function _autoStrategyGiftAmount({ tierBudget, regalosCount }) {
 // activar (persiste). Si commit=true, borra las auto-strategy del mes
 // actual primero y crea las nuevas. Si commit=false, devuelve los drafts.
 // Opciones: maxTotal (cap $ total — escala montos si excede), excludedTeams (array de teams a saltear).
-async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeams }) {
+async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeams, reincludeUsernames }) {
   const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
   if (!cfg) throw new Error('No hay NotifStrategyConfig — guardá la estrategia mensual primero.');
 
@@ -12766,7 +12983,7 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
   const remainingDays = [];
   for (let d = today + 1; d <= lastDay; d++) remainingDays.push(new Date(year, month, d));
   if (remainingDays.length === 0) {
-    return { drafts: [], summary: { totalCampaigns: 0, totalSlotsImpacted: 0, byDay: {}, byTier: {}, byCategory: {}, byTeamLine: {} }, monthKey, warning: 'No quedan días del mes para programar.' };
+    return { drafts: [], summary: { totalCampaigns: 0, totalSlotsImpacted: 0, byDay: {}, byTier: {}, byCategory: {}, byTeamLine: {} }, monthKey, regaloHunters: [], warning: 'No quedan días del mes para programar.' };
   }
 
   const startHour = Number.isFinite(cfg.windowStartHour) ? cfg.windowStartHour : 18;
@@ -12776,6 +12993,14 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
   const drafts = [];
   // Set de equipos excluidos (case-insensitive).
   const excludedSet = new Set((Array.isArray(excludedTeams) ? excludedTeams : []).map(t => String(t || '').trim().toLowerCase()).filter(Boolean));
+
+  // Detectar regalo-hunters y armar el set de usernames a excluir de los REGALOS.
+  // Si el admin pasó reincludeUsernames (manual override), esos NO se excluyen.
+  const reincludeLc = new Set((Array.isArray(reincludeUsernames) ? reincludeUsernames : []).map(u => String(u || '').toLowerCase()).filter(Boolean));
+  const detectedHunters = await _detectRegaloHunters({ days: 30, minClaims: 3, maxDeposits: 0 });
+  const hunterUsernames = detectedHunters
+    .filter(h => !reincludeLc.has(String(h.username).toLowerCase()))
+    .map(h => h.username);
   for (const dist of distribution) {
     if (!dist.team || !dist.line) continue;
     if (excludedSet.has(String(dist.team).toLowerCase())) continue; // skip equipo excluido
@@ -12815,6 +13040,9 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
             requireApp: true,
             requireSurveyAnswered: true,
             requireActiveDays: null,
+            // Solo los regalos excluyen a los regalo-hunters. Bonos y juegos
+            // siguen llegándoles porque son incentivos para que vuelvan a cargar.
+            excludeUsernames: cat === 'regalos' ? hunterUsernames : [],
             isActive: true,
             origin: 'auto-strategy',
             autoStrategyMonth: monthKey,
@@ -12909,7 +13137,17 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
     }
     logger.info(`[AUTO-STRATEGY] generated ${toInsert.length} campaigns for ${monthKey} by=${createdBy || 'admin'}`);
   }
-  return { drafts, summary, monthKey, remainingDaysCount: remainingDays.length };
+  return {
+    drafts, summary, monthKey,
+    remainingDaysCount: remainingDays.length,
+    // Info de regalo-hunters para que el admin la vea en el preview.
+    regaloHunters: {
+      detected: detectedHunters,        // lista completa con detalle
+      excludedCount: hunterUsernames.length, // los que efectivamente quedan excluidos
+      reincludedCount: detectedHunters.length - hunterUsernames.length,
+      reincludedUsernames: Array.from(reincludeLc)
+    }
+  };
 }
 
 // GET preview: arma drafts sin persistir, devuelve summary + listado resumido.
@@ -12918,7 +13156,8 @@ app.get('/api/admin/team-campaigns/auto-strategy/preview', authMiddleware, admin
   try {
     const maxTotal = Number(req.query.maxTotal) || 1000000;
     const excludedTeams = String(req.query.excludedTeams || '').split(',').map(t => t.trim()).filter(Boolean);
-    const r = await _autoStrategyGenerate({ commit: false, maxTotal, excludedTeams });
+    const reincludeUsernames = String(req.query.reincludeUsernames || '').split(',').map(u => u.trim()).filter(Boolean);
+    const r = await _autoStrategyGenerate({ commit: false, maxTotal, excludedTeams, reincludeUsernames });
     res.json({
       success: true,
       monthKey: r.monthKey,
@@ -12926,15 +13165,48 @@ app.get('/api/admin/team-campaigns/auto-strategy/preview', authMiddleware, admin
       summary: r.summary,
       maxTotal,
       excludedTeams,
+      reincludeUsernames,
+      regaloHunters: r.regaloHunters || { detected: [], excludedCount: 0, reincludedCount: 0, reincludedUsernames: [] },
       sampleDrafts: r.drafts.slice(0, 20).map(d => ({
         name: d.name, teamFilter: d.teamFilter, lineFilter: d.lineFilter, tierFilter: d.tierFilter,
         category: d.category, specificDate: d.specificDate, startHour: d.startHour, endHour: d.endHour,
         extraType: d.extraType, promoCode: d.promoCode, giveawayAmount: d.giveawayAmount,
-        audienceCount: d._meta?.audienceCount || 0
+        audienceCount: d._meta?.audienceCount || 0,
+        excludeUsernamesCount: Array.isArray(d.excludeUsernames) ? d.excludeUsernames.length : 0
       }))
     });
   } catch (err) {
     logger.error(`/api/admin/team-campaigns/auto-strategy/preview: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET regalo-hunters — lista detectada con detalle (sin generar nada).
+// Sirve para que el personal revise quiénes son los sospechosos sin tocar
+// la auto-estrategia. Query params: days (30 default), minClaims (3 default).
+app.get('/api/admin/team-campaigns/regalo-hunters', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));
+    const minClaims = Math.max(1, parseInt(req.query.minClaims, 10) || 3);
+    const maxDeposits = Math.max(0, Number(req.query.maxDeposits) || 0);
+    const list = await _detectRegaloHunters({ days, minClaims, maxDeposits });
+    res.json({ success: true, days, minClaims, maxDeposits, hunters: list, total: list.length });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/regalo-hunters: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET user-analysis — top depositantes / top reclamadores / net positive/negative.
+// Sirve para que el personal vea de un vistazo quiénes son los buenos clientes
+// y los que solo vienen a sacar.
+app.get('/api/admin/team-campaigns/user-analysis', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));
+    const data = await _userAnalysisReport({ days });
+    res.json({ success: true, ...data });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/user-analysis: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -13038,12 +13310,14 @@ app.post('/api/admin/team-campaigns/auto-strategy/commit', authMiddleware, admin
     const b = req.body || {};
     const maxTotal = Number(b.maxTotal) || 1000000;
     const excludedTeams = Array.isArray(b.excludedTeams) ? b.excludedTeams : [];
-    const r = await _autoStrategyGenerate({ commit: true, createdBy: req.user.username || 'admin', maxTotal, excludedTeams });
+    const reincludeUsernames = Array.isArray(b.reincludeUsernames) ? b.reincludeUsernames : [];
+    const r = await _autoStrategyGenerate({ commit: true, createdBy: req.user.username || 'admin', maxTotal, excludedTeams, reincludeUsernames });
     res.json({
       success: true,
       monthKey: r.monthKey,
       campaignsCreated: r.drafts.length,
-      summary: r.summary
+      summary: r.summary,
+      regaloHunters: r.regaloHunters || { detected: [], excludedCount: 0 }
     });
   } catch (err) {
     logger.error(`/api/admin/team-campaigns/auto-strategy/commit: ${err.message}\n${err.stack}`);
