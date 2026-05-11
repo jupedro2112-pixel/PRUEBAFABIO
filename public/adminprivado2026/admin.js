@@ -2792,8 +2792,10 @@ async function _recontactRefreshHistory() {
         if (!r.ok) return _recontactHistoryCache || [];
         const j = await r.json();
         const list = Array.isArray(j && j.history) ? j.history.map(h => ({
+            _id: h._id || null,  // ObjectId del server — necesario para borrar entradas individuales
             at: new Date(h.at).getTime(),
             label: h.fileLabel || '',
+            fileLabel: h.fileLabel || '',
             savedByUsername: h.savedByUsername || '',
             totalAnalyzed: h.totalAnalyzed || 0,
             foundInDb: h.foundInDb || 0,
@@ -4518,6 +4520,7 @@ function _renderRecontactFileEvolution(history) {
     html += '      <th style="padding:7px 8px;text-align:right;" title="Con app + notifs">🔔 Con notifs</th>';
     html += '      <th style="padding:7px 8px;text-align:right;" title="Suma de depósitos del archivo">💰 Cargas</th>';
     html += '      <th style="padding:7px 8px;text-align:right;" title="Bono total sugerido">🎁 Bono sug.</th>';
+    html += '      <th style="padding:7px 8px;text-align:center;color:#ff8080;" title="Borrar entrada">🗑</th>';
     html += '    </tr></thead><tbody>';
     for (let i = 0; i < history.length; i++) {
         const h = history[i] || {};
@@ -4542,6 +4545,10 @@ function _renderRecontactFileEvolution(history) {
         html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">' + fmt(h.withNotifs || 0) + '<br><span style="font-size:10px;font-weight:400;">' + delta(h.withNotifs, prev && prev.withNotifs) + '</span></td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">$' + fmt(h.fileTotalDeposits || 0) + '</td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#ffd700;">$' + fmt(h.totalRecoverableValue || 0) + '</td>';
+        const delBtn = h._id
+            ? '<button type="button" onclick="_recontactDeleteHistoryEntry(\'' + escapeHtml(h._id) + '\', \'' + escapeHtml(h.fileLabel || '(sin nombre)') + '\')" title="Borrar esta entrada del historial" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:3px 7px;border-radius:5px;cursor:pointer;font-size:11px;">🗑</button>'
+            : '<span style="color:#666;" title="Entrada vieja sin id">—</span>';
+        html += '  <td style="padding:6px 8px;text-align:center;">' + delBtn + '</td>';
         html += '</tr>';
     }
     html += '    </tbody></table>';
@@ -4740,6 +4747,7 @@ function _renderRecontactHistoryTable(history) {
     html += '    <th style="text-align:right;padding:6px 8px;color:#00d4ff;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin app (recontacto sólo por WhatsApp)">💬 WA</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#ffd700;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="sin línea asignada en Equipos">⚠ Sin línea</th>';
     html += '    <th style="text-align:right;padding:6px 8px;color:#aaa;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="$ cargas del archivo">$ Archivo</th>';
+    html += '    <th style="text-align:center;padding:6px 8px;color:#ff8080;border-bottom:1px solid rgba(255,255,255,0.10);font-weight:600;" title="Borrar esta entrada">🗑</th>';
     html += '  </tr></thead><tbody>';
     for (let i = 0; i < history.length; i++) {
         const s = history[i];
@@ -4774,10 +4782,46 @@ function _renderRecontactHistoryTable(history) {
         html += '  <td style="padding:5px 8px;text-align:right;color:#00d4ff;">' + fmt(s.withoutApp || 0) + delta(s.withoutApp, prev && prev.withoutApp) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#ffd700;">' + fmt(s.sinLinea || 0)   + delta(s.sinLinea, prev && prev.sinLinea) + '</td>';
         html += '  <td style="padding:5px 8px;text-align:right;color:#bbb;font-family:monospace;font-size:10.5px;">' + (s.fileTotalDeposits ? '$' + fmt(s.fileTotalDeposits) : '—') + '</td>';
+        const delBtn = s._id
+            ? '<button type="button" onclick="_recontactDeleteHistoryEntry(\'' + escapeHtml(s._id) + '\', \'' + escapeHtml(s.label || '(sin nombre)') + '\')" title="Borrar esta entrada del historial" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:3px 7px;border-radius:5px;cursor:pointer;font-size:11px;">🗑</button>'
+            : '<span style="color:#666;" title="Entrada vieja sin id">—</span>';
+        html += '  <td style="padding:5px 8px;text-align:center;">' + delBtn + '</td>';
         html += '</tr>';
     }
     html += '</tbody></table></div>';
     return html;
+}
+
+// Borra una entrada del historial por su _id (server) y recarga la lista.
+async function _recontactDeleteHistoryEntry(id, label) {
+    if (!id) { showToast('ID inválido', 'error'); return; }
+    if (!confirm('¿Borrar la entrada del historial "' + (label || '(sin nombre)') + '"?\n\nNo se puede deshacer.')) return;
+    try {
+        const r = await authFetch('/api/admin/recontact/history/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error al borrar'), 'error');
+            return;
+        }
+        showToast('✅ Entrada borrada', 'success');
+        // Refrescar cache + UI en las 2 secciones (recontactación y post-recontactación).
+        try {
+            _recontactHistoryCache = null;
+            localStorage.removeItem(RECONTACT_HISTORY_KEY);
+        } catch (_) {}
+        await _recontactRefreshHistory().catch(() => {});
+        // Re-render según la sección activa.
+        const recSec = document.getElementById('recontactSection');
+        if (recSec && recSec.classList.contains('active')) {
+            loadRecontactSection();
+        }
+        const postSec = document.getElementById('recontactConversionsSection');
+        if (postSec && postSec.classList.contains('active')) {
+            loadRecontactConversions();
+        }
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 // Matriz panorama: bucket de actividad × estado de app/notifs.

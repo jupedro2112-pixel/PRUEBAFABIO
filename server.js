@@ -9021,6 +9021,26 @@ app.delete('/api/admin/recontact/history', authMiddleware, adminMiddleware, asyn
   }
 });
 
+// DELETE individual: borra UNA entrada del historial por su _id.
+// Usado cuando el admin sube un XLSX duplicado y quiere limpiar uno.
+app.delete('/api/admin/recontact/history/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String((req.params && req.params.id) || '').trim();
+    if (!id || !/^[0-9a-fA-F]{24}$/.test(id)) {
+      return res.status(400).json({ error: 'id inválido (formato ObjectId)' });
+    }
+    const r = await RecontactHistory.deleteOne({ _id: id });
+    if (r.deletedCount === 0) {
+      return res.status(404).json({ error: 'Entrada no encontrada' });
+    }
+    logger.info(`[recontact/history] deleted entry ${id} by=${(req.user && req.user.username) || 'admin'}`);
+    return res.json({ success: true, deletedId: id });
+  } catch (err) {
+    logger.error(`[recontact/history DELETE :id] ${err.message}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================
 // USUARIOS CON APP — conteo real sobre toda la base
 // ============================================
