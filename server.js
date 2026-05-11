@@ -12938,6 +12938,71 @@ app.get('/api/admin/team-campaigns/auto-strategy/preview', authMiddleware, admin
   }
 });
 
+// POST test-fire: dispara UN push de prueba inmediato a un user de prueba
+// (default 'lalodj') usando el blueprint del tier+categoría elegidos. Sirve
+// para verificar que el sistema entrega bien antes de activar la estrategia
+// completa del mes. NO persiste ninguna campaña — solo crea una
+// ScheduledNotification one-off a +30s. Cuando el cron del scheduler la
+// levante (_executeScheduledNotification), creará el promo/giveaway scoped
+// al user via audienceWhitelist (el fix de leak está en esa función).
+app.post('/api/admin/team-campaigns/auto-strategy/test-fire', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal puede disparar tests' });
+    const b = req.body || {};
+    const testUser = String(b.testUser || 'lalodj').trim().toLowerCase();
+    const category = ['bonos','juegos','regalos'].includes(b.category) ? b.category : 'bonos';
+    const tier = ['suave','normal','activo'].includes(b.tier) ? b.tier : 'normal';
+
+    // Verificar que el user existe.
+    const u = await User.findOne({ username: _ciExact(testUser) }, { username: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }).lean();
+    if (!u) return res.status(404).json({ error: `Usuario '${testUser}' no existe en la base.` });
+    const hasToken = !!u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0);
+    if (!hasToken) return res.status(400).json({ error: `Usuario '${testUser}' no tiene la app instalada (sin fcmToken). El push no llegaría.` });
+
+    // Tomar blueprint y montos defaults del config para que el preview real coincida.
+    const blueprint = (_AUTO_STRATEGY_BLUEPRINTS[category] && _AUTO_STRATEGY_BLUEPRINTS[category][tier])
+      || { title: '🧪 Test', body: 'Push de prueba.' };
+    const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+    const tierBudget = (cfg && cfg.preferences && cfg.preferences[tier] && cfg.preferences[tier].budget) || 100000;
+    const regalosCount = (cfg && cfg.preferences && cfg.preferences[tier] && cfg.preferences[tier].regalos) || 2;
+
+    const sched = {
+      id: uuidv4(),
+      scheduledFor: new Date(Date.now() + 30 * 1000), // +30s
+      status: 'pending',
+      title: blueprint.title + ' (PRUEBA)',
+      body: blueprint.body,
+      targetUsername: u.username, // preserva casing real
+      audiencePrefix: null,
+      extraType: category === 'regalos' ? 'giveaway' : (category === 'bonos' ? 'promo' : 'none'),
+      createdBy: `team-campaign-test:${tier}:${category}:${u.username}`
+    };
+    if (sched.extraType === 'promo') {
+      sched.promoCode = tier === 'activo' ? 'BONO100' : 'BONO50';
+      sched.promoMessage = blueprint.body;
+      sched.promoDurationHours = 6;
+    } else if (sched.extraType === 'giveaway') {
+      sched.giveawayAmount = _autoStrategyGiftAmount({ tierBudget, regalosCount });
+      sched.giveawayDurationMinutes = 360;
+    }
+    await ScheduledNotification.create(sched);
+    res.json({
+      success: true,
+      scheduledFor: sched.scheduledFor,
+      targetUsername: u.username,
+      category, tier,
+      extraType: sched.extraType,
+      promoCode: sched.promoCode || null,
+      giveawayAmount: sched.giveawayAmount || null,
+      title: sched.title,
+      message: `Push de prueba programado para ${u.username} en 30s. Si tiene la app abierta, le va a llegar la notif + ${sched.extraType === 'promo' ? 'cartel wa.link de promo' : sched.extraType === 'giveaway' ? 'botón para reclamar plata' : 'solo el push'}.`
+    });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/auto-strategy/test-fire: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST commit: borra las auto-strategy del mes y crea las nuevas.
 // Acepta body: { maxTotal, excludedTeams }
 app.post('/api/admin/team-campaigns/auto-strategy/commit', authMiddleware, adminMiddleware, async (req, res) => {
@@ -13119,7 +13184,83 @@ app.get('/api/admin/team-campaigns/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
       agg.avgClaimRate = agg.totalClaims / agg.totalUsersReached;
     }
 
-    res.json({ campaign, fires, aggregate: agg });
+    // Per-user breakdown — cruza audienceUsernames de cada history con WaClickLog
+    // y MoneyGiveawayClaim. Mide: ¿le llegó? ¿tocó wa.link? ¿reclamó plata?
+    // Útil para auditar conversión por jugador y exportar a CSV.
+    const perUser = {};
+    // 1) Levantar audienceUsernames + datos extra desde NotificationHistory.
+    const allHistIds = histories.map(h => h.id);
+    if (allHistIds.length > 0) {
+      const fullHists = await NotificationHistory.find(
+        { id: { $in: allHistIds } },
+        { id: 1, sentAt: 1, audienceUsernames: 1, _id: 0 }
+      ).lean();
+      // Map id → {sentAt, audienceUsernames}
+      const histMeta = new Map(fullHists.map(h => [h.id, h]));
+      for (const h of fullHists) {
+        const list = Array.isArray(h.audienceUsernames) ? h.audienceUsernames : [];
+        for (const uname of list) {
+          const key = String(uname || '').toLowerCase();
+          if (!key) continue;
+          if (!perUser[key]) {
+            perUser[key] = { username: uname, pushesReceived: 0, waClicks: 0, claims: 0, totalClaimedAmount: 0, lastPushAt: null, lastWaClickAt: null, lastClaimAt: null };
+          }
+          perUser[key].pushesReceived += 1;
+          if (!perUser[key].lastPushAt || h.sentAt > perUser[key].lastPushAt) perUser[key].lastPushAt = h.sentAt;
+        }
+      }
+
+      // 2) WaClickLog scoped por estos history ids.
+      const waLogs = await WaClickLog.find(
+        { notificationHistoryId: { $in: allHistIds } },
+        { username: 1, clickedAt: 1, _id: 0 }
+      ).lean();
+      for (const wl of waLogs) {
+        const key = String(wl.username || '').toLowerCase();
+        if (!key) continue;
+        if (!perUser[key]) {
+          perUser[key] = { username: wl.username, pushesReceived: 0, waClicks: 0, claims: 0, totalClaimedAmount: 0, lastPushAt: null, lastWaClickAt: null, lastClaimAt: null };
+        }
+        perUser[key].waClicks += 1;
+        if (!perUser[key].lastWaClickAt || wl.clickedAt > perUser[key].lastWaClickAt) perUser[key].lastWaClickAt = wl.clickedAt;
+      }
+
+      // 3) MoneyGiveawayClaim — necesitamos ir via MoneyGiveaway.notificationHistoryId.
+      if (histIds.length > 0) {
+        const gws = await MoneyGiveaway.find(
+          { notificationHistoryId: { $in: histIds } },
+          { id: 1, notificationHistoryId: 1, amountPerWinner: 1, totalGiven: 1, claimedCount: 1, _id: 0 }
+        ).lean();
+        const gwIds = gws.map(g => g.id);
+        if (gwIds.length > 0) {
+          const gwById = new Map(gws.map(g => [g.id, g]));
+          const claims = await MoneyGiveawayClaim.find(
+            { giveawayId: { $in: gwIds } },
+            { giveawayId: 1, username: 1, claimedAt: 1, _id: 0 }
+          ).lean();
+          for (const cl of claims) {
+            const key = String(cl.username || '').toLowerCase();
+            if (!key) continue;
+            const gw = gwById.get(cl.giveawayId);
+            const amount = gw ? (gw.amountPerWinner || 0) : 0;
+            if (!perUser[key]) {
+              perUser[key] = { username: cl.username, pushesReceived: 0, waClicks: 0, claims: 0, totalClaimedAmount: 0, lastPushAt: null, lastWaClickAt: null, lastClaimAt: null };
+            }
+            perUser[key].claims += 1;
+            perUser[key].totalClaimedAmount += amount;
+            if (!perUser[key].lastClaimAt || cl.claimedAt > perUser[key].lastClaimAt) perUser[key].lastClaimAt = cl.claimedAt;
+          }
+        }
+      }
+    }
+    // Convertir a array y ordenar: primero los que reclamaron (más valioso), luego los que tocaron wa.link, luego los pasivos.
+    const perUserArr = Object.values(perUser).sort((a, b) => {
+      if (b.claims !== a.claims) return b.claims - a.claims;
+      if (b.waClicks !== a.waClicks) return b.waClicks - a.waClicks;
+      return (b.totalClaimedAmount || 0) - (a.totalClaimedAmount || 0);
+    });
+
+    res.json({ campaign, fires, aggregate: agg, perUser: perUserArr });
   } catch (err) {
     logger.error(`/api/admin/team-campaigns/:id/reaction: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });

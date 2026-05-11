@@ -19059,7 +19059,7 @@ function _renderTeamCampaignsList(d) {
     html += '      <div style="color:#bbb;font-size:11.5px;">Genera automáticamente todas las campañas del mes para cada equipo × tier según la encuesta. Bonos/regalos quedan reclamables, scoped por user.</div>';
     html += '    </div>';
     html += '    <div style="display:flex;gap:8px;flex-wrap:wrap;">';
-    html += '      <button type="button" onclick="_autoStrategyPreview()" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">🔍 Ver previa</button>';
+    html += '      <button type="button" onclick="_autoStrategyPreview()" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">🚀 Generar auto-estrategia</button>';
     html += '      <button type="button" onclick="_teamCampaignReactionGlobal()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Reporte de reacción de todas las campañas">📈 Reporte global</button>';
     html += '      <button type="button" onclick="_autoStrategyClearMonth()" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;" title="Borrar todas las auto-strategy del mes actual">🗑 Limpiar mes</button>';
     html += '    </div>';
@@ -19532,6 +19532,33 @@ function _autoStrategyOpenPreviewModal(d) {
         inner += '</div></details>';
     }
 
+    // === MODO PRUEBA — disparar 1 push a un user de prueba antes de activar
+    // todo. Hace el flow completo: notif + creación de promo/giveaway scoped
+    // por audienceWhitelist al user. Sirve para confirmar que llega bien, que
+    // el cartel se ve, que el botón de reclamar funciona, etc.
+    inner += '<div style="margin-top:14px;background:rgba(255,170,68,0.06);border:1px solid rgba(255,170,68,0.40);border-radius:10px;padding:12px;">';
+    inner += '  <div style="color:#ffaa44;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">🧪 Modo prueba (antes de activar)</div>';
+    inner += '  <div style="color:#bbb;font-size:11.5px;margin-bottom:10px;">Disparo 1 push de prueba a un usuario específico AHORA (+30s) — para que verifiques que llega bien antes de comprometer todo el mes. NO crea campañas. Solo el user elegido recibe la notif (scoped por audienceWhitelist).</div>';
+    inner += '  <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:8px;align-items:end;">';
+    inner += '    <div><label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Usuario de prueba</label>';
+    inner += '    <input id="autoStrategy_testUser" type="text" value="lalodj" placeholder="lalodj" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,170,68,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;"></div>';
+    inner += '    <div><label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Categoría</label>';
+    inner += '    <select id="autoStrategy_testCategory" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,170,68,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;">';
+    inner += '      <option value="bonos">🎁 Bono (con wa.link)</option>';
+    inner += '      <option value="regalos">💰 Regalo (reclamable)</option>';
+    inner += '      <option value="juegos">🎮 Juego (solo push)</option>';
+    inner += '    </select></div>';
+    inner += '    <div><label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Tier</label>';
+    inner += '    <select id="autoStrategy_testTier" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,170,68,0.40);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;">';
+    inner += '      <option value="suave">suave</option>';
+    inner += '      <option value="normal" selected>normal</option>';
+    inner += '      <option value="activo">activo</option>';
+    inner += '    </select></div>';
+    inner += '    <button type="button" onclick="_autoStrategyTestFire()" style="background:linear-gradient(135deg,#ffaa44,#ff7700);color:#000;border:none;padding:8px 16px;border-radius:6px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">🧪 Disparar prueba</button>';
+    inner += '  </div>';
+    inner += '  <div id="autoStrategyTestResult" style="margin-top:8px;font-size:11.5px;color:#888;"></div>';
+    inner += '</div>';
+
     // Botones.
     inner += '<div style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.10);padding-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
     inner += '<div style="color:#ffd97a;font-size:11.5px;">⚠ Activar va a <strong>borrar las auto-strategy existentes del mes</strong> y crear las nuevas. Las campañas manuales no se tocan.</div>';
@@ -19544,6 +19571,38 @@ function _autoStrategyOpenPreviewModal(d) {
 
     overlay.innerHTML = inner;
     document.body.appendChild(overlay);
+}
+
+// Dispara el test fire usando los inputs del modal.
+async function _autoStrategyTestFire() {
+    const testUser = (document.getElementById('autoStrategy_testUser') || {}).value || 'lalodj';
+    const category = (document.getElementById('autoStrategy_testCategory') || {}).value || 'bonos';
+    const tier = (document.getElementById('autoStrategy_testTier') || {}).value || 'normal';
+    const resBox = document.getElementById('autoStrategyTestResult');
+    if (resBox) resBox.innerHTML = '<span style="color:#ffaa44;">⏳ Programando push de prueba...</span>';
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/auto-strategy/test-fire', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ testUser, category, tier })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            if (resBox) resBox.innerHTML = '<span style="color:#ff8080;">❌ ' + escapeHtml(d.error || 'Error') + '</span>';
+            showToast('❌ ' + (d.error || 'Error'), 'error');
+            return;
+        }
+        const when = new Date(d.scheduledFor).toLocaleTimeString('es-AR');
+        let info = '<span style="color:#66ff66;">✅ Programado para ' + escapeHtml(d.targetUsername) + ' a las ' + when + ' (en 30s)</span><br>';
+        info += '<span style="color:#bbb;">Título: <strong>' + escapeHtml(d.title) + '</strong></span>';
+        if (d.extraType === 'promo') info += '<br><span style="color:#ffaa44;">📲 Promo wa.link: <strong>' + escapeHtml(d.promoCode) + '</strong> (6h activo)</span>';
+        if (d.extraType === 'giveaway') info += '<br><span style="color:#25d366;">💰 Regalo reclamable: <strong>$' + Number(d.giveawayAmount).toLocaleString('es-AR') + '</strong> (6h para reclamar)</span>';
+        if (resBox) resBox.innerHTML = info;
+        showToast('🧪 Test fire programado para ' + d.targetUsername, 'success');
+    } catch (e) {
+        if (resBox) resBox.innerHTML = '<span style="color:#ff8080;">❌ Error de conexión</span>';
+        showToast('Error de conexión', 'error');
+    }
 }
 
 async function _autoStrategyCommit() {
@@ -19664,10 +19723,88 @@ function _renderReactionModal(title, d) {
         inner += '</tr>';
     }
     inner += '</tbody></table></div>';
+
+    // === DETALLE POR JUGADOR ===
+    // Cruza audienceUsernames de cada fire con WaClickLog y MoneyGiveawayClaim
+    // para mostrar quién recibió la push, quién tocó el wa.link y quién reclamó.
+    const perUser = d.perUser || [];
+    if (perUser.length > 0) {
+        // Stash data for CSV export
+        window._lastCampaignReactionData = d;
+        inner += '<div style="margin-top:14px;display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;">';
+        inner += '  <div style="color:#aaa;font-size:11px;">📋 Detalle por jugador (' + fmt(perUser.length) + ' users) — ordenado por reclamos → clicks → impactos</div>';
+        inner += '  <button type="button" onclick="_reactionPerUserExportCSV()" style="padding:4px 10px;font-size:10.5px;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;border-radius:5px;cursor:pointer;font-weight:700;">📥 Exportar CSV</button>';
+        inner += '</div>';
+        inner += '<div style="max-height:340px;overflow-y:auto;background:rgba(0,0,0,0.20);border-radius:8px;margin-top:4px;">';
+        inner += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+        inner += '<thead style="position:sticky;top:0;background:#1a0033;"><tr style="color:#66ff66;text-align:left;">';
+        inner += '<th style="padding:6px 8px;font-weight:800;">Usuario</th>';
+        inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;" title="Cuántas notifs de esta campaña recibió">📨 Pushes</th>';
+        inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;" title="Cuántas veces tocó el wa.link de un push de esta campaña">💬 Wa.link</th>';
+        inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;" title="Cuántos regalos reclamó">💰 Reclamos</th>';
+        inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;" title="Plata total que reclamó">$ Reclamado</th>';
+        inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;" title="Fecha del último wa.link o reclamo (la más reciente)">Última interacción</th>';
+        inner += '</tr></thead><tbody>';
+        for (const u of perUser) {
+            const lastWaClick = u.lastWaClickAt ? new Date(u.lastWaClickAt).getTime() : 0;
+            const lastClaim = u.lastClaimAt ? new Date(u.lastClaimAt).getTime() : 0;
+            const lastInteract = Math.max(lastWaClick, lastClaim);
+            const lastStr = lastInteract > 0
+                ? new Date(lastInteract).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+                : '—';
+            // Color de fila según engagement: verde si reclamó, celeste si tocó wa.link, gris si solo recibió.
+            const rowBg = u.claims > 0 ? 'background:rgba(102,255,102,0.04);'
+                        : (u.waClicks > 0 ? 'background:rgba(0,212,255,0.04);'
+                        : '');
+            inner += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + rowBg + '">';
+            inner += '<td style="padding:5px 8px;color:#fff;font-weight:600;">' + escapeHtml(u.username) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#aaa;">' + fmt(u.pushesReceived) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:' + (u.waClicks > 0 ? '#00d4ff' : '#555') + ';font-weight:' + (u.waClicks > 0 ? '700' : '400') + ';">' + fmt(u.waClicks) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:' + (u.claims > 0 ? '#66ff66' : '#555') + ';font-weight:' + (u.claims > 0 ? '700' : '400') + ';">' + fmt(u.claims) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#ffd700;">' + ((u.totalClaimedAmount || 0) > 0 ? '$' + fmt(u.totalClaimedAmount) : '—') + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#888;font-size:10.5px;white-space:nowrap;">' + escapeHtml(lastStr) + '</td>';
+            inner += '</tr>';
+        }
+        inner += '</tbody></table></div>';
+    }
+
     inner += '</div>';
 
     overlay.innerHTML = inner;
     document.body.appendChild(overlay);
+}
+
+// Exporta el detalle por jugador del último reaction modal abierto a CSV.
+function _reactionPerUserExportCSV() {
+    const d = window._lastCampaignReactionData;
+    if (!d || !Array.isArray(d.perUser) || d.perUser.length === 0) {
+        showToast('No hay datos para exportar', 'warning');
+        return;
+    }
+    const fmtDate = (ts) => ts ? new Date(ts).toISOString() : '';
+    const rows = [['username', 'pushes_received', 'wa_clicks', 'claims', 'total_claimed_amount', 'last_push_at', 'last_wa_click_at', 'last_claim_at']];
+    for (const u of d.perUser) {
+        rows.push([
+            u.username || '',
+            u.pushesReceived || 0,
+            u.waClicks || 0,
+            u.claims || 0,
+            u.totalClaimedAmount || 0,
+            fmtDate(u.lastPushAt),
+            fmtDate(u.lastWaClickAt),
+            fmtDate(u.lastClaimAt)
+        ]);
+    }
+    const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'reaction-per-user-' + (d.campaign && d.campaign.id ? d.campaign.id.slice(0, 8) : 'campaign') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast('✅ CSV exportado · ' + d.perUser.length + ' filas', 'success');
 }
 
 async function _teamCampaignReactionGlobal() {
