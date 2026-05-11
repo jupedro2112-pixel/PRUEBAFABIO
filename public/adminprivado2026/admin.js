@@ -11685,7 +11685,160 @@ function _helpBlocks() {
                 '<dt style="color:#00d4ff;font-weight:700;">scheduledFor</dt><dd>Timestamp futuro de un push programado. Un worker en background los dispara cada 60s cuando llega su hora.</dd>',
                 '<dt style="color:#00d4ff;font-weight:700;">backup phone</dt><dd>Número de respaldo opcional que el user deja en la home. Sirve para tener una vía paralela si la página falla.</dd>',
                 '<dt style="color:#00d4ff;font-weight:700;">categorías</dt><dd>Tipos de push de la estrategia: 🎁 <strong>bonos</strong> (ofertas de carga), 🎰 <strong>juegos</strong> (invitación a jugar), 💎 <strong>regalos</strong> (plata directa).</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">regalo-hunter</dt><dd>User que reclamó ≥ 3 regalos en 30 días sin cargar nada de su bolsillo. Por default lo excluimos de los regalos auto.</dd>',
+                '<dt style="color:#00d4ff;font-weight:700;">cohorte</dt><dd>Grupo de users definido por algún criterio común (ej: los calientes del 8/5). Sirve para medir evolución en el tiempo.</dd>',
                 '</dl>'
+            ].join('')
+        },
+        // ============================================
+        // BLOQUES NUEVOS (features agregadas en 2026)
+        // ============================================
+        {
+            anchor: 'help-complaints',
+            icon: '📖',
+            title: '📖 Libro de quejas (NUEVO TOP)',
+            body: [
+                '<p>Los usuarios tienen un botón <strong>📖 LIBRO DE QUEJAS</strong> dorado <strong>al pie de su home</strong>, debajo del campo "Tu línea (opcional)". Al tocarlo se abre un modal donde pueden:</p>',
+                '<ul>',
+                '<li>Elegir <strong>fecha del incidente</strong> (default hoy) + hora aproximada</li>',
+                '<li>Escribir asunto (opcional) y <strong>detalle</strong> (5-2000 chars)</li>',
+                '<li>Adjuntar una <strong>foto</strong> (captura, comprobante, etc.) — se comprime con canvas a max 800px JPEG antes de enviar</li>',
+                '</ul>',
+                '<p>Al enviar ven: <em>"En breve nos contactamos con usted."</em></p>',
+                '<h4 style="color:#fff;margin-top:14px;">Cómo gestionarlas desde acá</h4>',
+                '<p>En el menú <strong>📖 Libro de quejas</strong> (NUEVO TOP, badge rojo si hay pendientes):</p>',
+                '<ul>',
+                '<li><strong>Tabs:</strong> 🔴 Pendientes · 👁 Vistas · ✓ Resueltas · 📋 Todas (con count cada uno)</li>',
+                '<li><strong>Buscador</strong> por username</li>',
+                '<li><strong>Tabla</strong>: estado, usuario, fecha incidente, asunto+detalle preview, ícono 📷 si tiene foto, fecha de envío</li>',
+                '<li>Click en fila → modal con detalle completo, foto expandible, <strong>notas internas editables</strong> (el user no las ve), botones para marcar Vista o Resuelta</li>',
+                '</ul>',
+                '<p style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;padding:8px 12px;border-radius:6px;font-size:11.5px;"><strong style="color:#ffc850;">Anti-spam:</strong> max 5 quejas por user por día.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-team-campaigns',
+            icon: '📣',
+            title: '📣 Campañas por equipo (dentro de Automatización encuesta)',
+            body: [
+                '<p>Sistema para mandar <strong>pushes programados a un equipo + línea + tier específicos</strong>, con día y horario fijo. Se accede en <strong>Automatización (encuesta) → tab "Campañas por equipo"</strong>.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Crear campaña manual</h4>',
+                '<p>Botón <strong>+ NUEVA CAMPAÑA MANUAL</strong>. Configurás:</p>',
+                '<ul>',
+                '<li>Target: equipo (o todos), línea (o todas), tier (suave/normal/activo o todos)</li>',
+                '<li>Categoría: 🎁 Bono, 🎰 Juego, 💎 Regalo, 🔔 Notif</li>',
+                '<li>Cuándo: día semanal o fecha específica + rango horario (ej: 18-22hs). Cada user recibe en hora random dentro del rango.</li>',
+                '<li>Contenido: título y cuerpo del push</li>',
+                '<li><strong>Extra opcional:</strong> Promo wa.link (BONO50/BONO100) o Giveaway (plata reclamable scoped por user)</li>',
+                '<li>Filtros: solo con app, solo con encuesta respondida, activos en últimos N días</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Auto-estrategia mensual</h4>',
+                '<p>Botón <strong>🚀 Generar auto-estrategia</strong> arma todas las campañas del mes automáticamente según la encuesta:</p>',
+                '<ul>',
+                '<li>Cada user en suave/normal/activo recibe N bonos + M juegos por mes (según preferencias del config)</li>',
+                '<li>Los días se eligen random dentro del mes restante</li>',
+                '<li><strong>Bonos:</strong> SIEMPRE horario 18-24hs (hardcoded — mejor conversión)</li>',
+                '<li><strong>Juegos:</strong> horario del config (default 18-22hs)</li>',
+                '<li><strong>NO se generan regalos de plata directa</strong> (deshabilitado por decisión — la plata se gana cargando)</li>',
+                '<li><strong>solo_reembolsos:</strong> NO reciben bonos ni juegos. Solo el recordatorio de reembolso a las 23hs (configurable en la card 🌙 Recordatorios de reembolso)</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">🧪 Modo prueba</h4>',
+                '<p>Antes de activar todo el mes, podés disparar 1 push de prueba INMEDIATO a un user específico (default <code>lalodj</code>). Eligís categoría (Bono/Juego) y tier. El push sale en el momento + se crea el promo/giveaway scoped a ese user.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">📈 Reaction por campaña</h4>',
+                '<p>Cada campaña tiene su botón 📈 que abre modal con: historial de disparos, % wa.link clicks, % reclamos, $ regalado. <strong>Tabla "Detalle por jugador":</strong> cada user que recibió la push, si tocó wa.link, si reclamó plata, cuándo fue su última interacción. Exportable a CSV.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-refund-reminders',
+            icon: '🌙',
+            title: '🌙 Recordatorios de reembolso (23hs)',
+            body: [
+                '<p>Card en <strong>Automatización (encuesta) → tab Campañas por equipo</strong>, arriba de la auto-estrategia. Manda push automático a las 23hs (configurable) a los users con reembolso pendiente.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Cómo funciona</h4>',
+                '<ul>',
+                '<li>3 tipos independientes: <strong>📅 Diario · 📆 Semanal · 🗓️ Mensual</strong></li>',
+                '<li>Cada uno tiene su propio toggle ON/OFF, hora ART, filtro de equipo opcional</li>',
+                '<li>Botón <strong>✨ Activar los 3 a las 23hs</strong> — one-click setup</li>',
+                '<li>Cron interno corre cada 5 min y dispara cuando llega la hora ART. Idempotente: 1 disparo por día por tipo.</li>',
+                '</ul>',
+                '<h4 style="color:#fff;margin-top:14px;">Cómo se calcula la audiencia</h4>',
+                '<p>Cruza 3 fuentes:</p>',
+                '<ol>',
+                '<li><code>DailyPlayerStats</code>: users con <strong>netLoss > 0</strong> en el período (daily=ayer, weekly=semana cerrada, monthly=mes cerrado)</li>',
+                '<li><code>RefundClaim</code>: excluye los que YA reclamaron ese período</li>',
+                '<li><code>User</code>: solo los que tienen app + notifs habilitadas</li>',
+                '</ol>',
+                '<p><strong>Resultado</strong> = elegibles − ya reclamaron − sin canal = audiencia final.</p>',
+                '<p>Botón <strong>👁 Preview</strong> muestra exactamente quién recibiría (con monto sugerido por user). Botón <strong>🚀 Disparar</strong> manda inmediato (force=true, override del lock diario).</p>',
+                '<p style="background:rgba(0,212,255,0.06);border-left:3px solid #00d4ff;padding:8px 12px;border-radius:6px;font-size:11.5px;"><strong style="color:#00d4ff;">Importante:</strong> los users que en la encuesta votaron <em>"solo reembolsos"</em> reciben ESTOS pushes (la única notif que les llega), pero solo si tienen reembolso pendiente.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-cohort-evolution',
+            icon: '🔬',
+            title: '🔬 Matriz de evolución por cohorte (Recontactación)',
+            body: [
+                '<p>Acceso: <strong>NUEVO TOP → 🎯 Recontactación → card 📈 HISTORIAL DE ANÁLISIS → botón 🔬 Comparar evolución</strong>.</p>',
+                '<p>Responde la pregunta <em>"¿cuántos de los calientes de hace X días siguen calientes ahora?"</em> sin depender del XLSX subido — usa el historial real de transacciones del server.</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Cómo lo lee</h4>',
+                '<ul>',
+                '<li><strong>6 KPIs arriba:</strong> Calientes antes / hoy (con delta neto) · Retenidos · Enfriados · Recuperados · Nuevos depositantes</li>',
+                '<li><strong>Matriz 5×5:</strong> filas = bucket en la fecha pasada, columnas = bucket hoy. Verde = mejoraron · Rojo = empeoraron · Gris diagonal = sin movimiento. Columna especial <em>"— sin dep"</em> = users que no tenían cargas antes de esa fecha.</li>',
+                '<li><strong>8 listas desplegables</strong> con usernames de cada transición clave (siguen calientes, recuperados de inactivo, se enfriaron a riesgo, etc.). Cada una exporta a CSV.</li>',
+                '</ul>',
+                '<p>Caveat: solo cubre users que están en el XLSX actual. Subí siempre el archivo más completo para mejor cobertura.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-user-analysis',
+            icon: '📊',
+            title: '📊 Análisis de usuarios (top depositantes / regalo-hunters)',
+            body: [
+                '<p>Acceso: <strong>Automatización (encuesta) → tab Campañas por equipo → botón 📊 Análisis de usuarios</strong>.</p>',
+                '<p>Modal con análisis de <strong>los últimos 30 días</strong> (configurable: 7/14/30/60/90 días).</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Contenido</h4>',
+                '<ul>',
+                '<li><strong>6 KPIs globales:</strong> total cargado · total regalado · net a la casa · users que cargaron · users que reclamaron · regalo-hunters detectados</li>',
+                '<li><strong>✅ Top depositantes (verde):</strong> los 50 que más cargaron — los buenos clientes</li>',
+                '<li><strong>⚠ Top reclamadores (naranja):</strong> 50 con más reclamos, con flag por user:<br>🟢 <strong>OK</strong>=net positivo · 🟠 <strong>NET-NEG</strong>=reclamó más de lo que cargó · 🔴 <strong>HUNTER</strong>=reclamó 3+ regalos y cargó $0</li>',
+                '<li><strong>🚨 Regalo-hunters (rojo):</strong> los detectados (≥3 reclamos AND $0 cargado en 30d). Por default la auto-estrategia los excluye de los regalos automáticamente.</li>',
+                '</ul>',
+                '<p>Cada tabla tiene su botón 📥 Exportar CSV.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-post-recontact',
+            icon: '📊',
+            title: '📊 Post recontactación (NUEVO TOP)',
+            body: [
+                '<p>Muestra qué pasó <em>después</em> de que hiciste recontactación: lista de usuarios que vos etiquetaste con ✅ en Callbell y que <strong>después instalaron la app</strong>. Mide la efectividad real de tu trabajo de recontacto.</p>',
+                '<p>Columnas: usuario · cuándo lo etiquetaste · cuándo instaló · días entre etiqueta e instalación · equipo · cómo se detectó (manual/auto) · botón 🗑 para sacarlo de la lista si fue un falso positivo.</p>',
+                '<p>Adicionalmente debajo aparece la <strong>📈 Evolución archivo-por-archivo</strong> y el botón <strong>🔬 Comparar evolución</strong> (ver guía de Cohort evolution).</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-app-users',
+            icon: '📱',
+            title: '📱 Usuarios con app (NUEVO TOP)',
+            body: [
+                '<p>Conteo real cruzado contra los <strong>tokens FCM standalone</strong> (PWA instalada como app, no browser). Mismo criterio que usa Equipamiento, Bono $5.000 app y Recontactación — así los nros cuadran entre secciones.</p>',
+                '<p>Breakdown por equipo y por plataforma (Android / iOS). Incluye snapshot diario para tracking de evolución.</p>'
+            ].join('')
+        },
+        {
+            anchor: 'help-auto-encuesta',
+            icon: '🤖',
+            title: '🤖 Automatización (encuesta) (NUEVO TOP)',
+            body: [
+                '<p>Antes se llamaba "Encuesta". Acá viene todo el motor que decide qué notifs reciben los users según lo que votaron en la encuesta de la PWA (Suave / Normal / Activo / Solo reembolsos / Opt-out).</p>',
+                '<h4 style="color:#fff;margin-top:14px;">Tabs de la sección</h4>',
+                '<ul>',
+                '<li><strong>📋 Estrategia:</strong> configurás cuántos bonos/juegos/regalos por tier por mes + presupuesto por user</li>',
+                '<li><strong>📣 Campañas por equipo:</strong> CRUD manual + auto-estrategia + test fire (ver guía aparte)</li>',
+                '<li><strong>👥 Gente que se une:</strong> lista de quién votó qué, con counts globales y por equipo</li>',
+                '<li><strong>📈 ROI / Reacciones:</strong> resultados reales de las campañas</li>',
+                '<li><strong>📅 Historial semanal:</strong> archivo de qué se mandó en semanas pasadas</li>',
+                '</ul>'
             ].join('')
         }
     ];
