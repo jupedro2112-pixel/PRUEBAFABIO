@@ -2669,8 +2669,25 @@ async function _recontactSaveCache(items, summary, fileLabel) {
     }
 
     // 2) Mirror a IDB local para hidratación inmediata si la red está lenta.
+    // Antes de overwrite del 'lastAnalysis', copiamos el actual a 'previousAnalysis'
+    // para poder comparar mejora archivo-a-archivo.
     try {
         const db = await _recontactOpenIDB();
+        // Read current 'lastAnalysis' (si existe) → guardarlo como 'previousAnalysis'.
+        const prev = await new Promise((resolve) => {
+            const tx = db.transaction(RECONTACT_IDB_STORE, 'readonly');
+            const req = tx.objectStore(RECONTACT_IDB_STORE).get('lastAnalysis');
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+        });
+        if (prev && Array.isArray(prev.items) && prev.items.length > 0) {
+            await new Promise((resolve) => {
+                const tx = db.transaction(RECONTACT_IDB_STORE, 'readwrite');
+                tx.objectStore(RECONTACT_IDB_STORE).put(prev, 'previousAnalysis');
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            });
+        }
         const payload = {
             savedAt: Date.now(),
             fileLabel: fileLabel || '',
@@ -2685,6 +2702,21 @@ async function _recontactSaveCache(items, summary, fileLabel) {
         });
         try { db.close(); } catch (_) {}
     } catch (e) { console.warn('[recontact] IDB mirror fail', e); }
+}
+
+// Lee el análisis previo (si existe) para mostrar mejoras vs el actual.
+async function _recontactLoadPreviousAnalysis() {
+    try {
+        const db = await _recontactOpenIDB();
+        const prev = await new Promise((resolve) => {
+            const tx = db.transaction(RECONTACT_IDB_STORE, 'readonly');
+            const req = tx.objectStore(RECONTACT_IDB_STORE).get('previousAnalysis');
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+        });
+        try { db.close(); } catch (_) {}
+        return prev;
+    } catch (_) { return null; }
 }
 
 async function _recontactLoadCache() {
@@ -3025,6 +3057,14 @@ function loadRecontactSection() {
             _recontactState.savedByUsername = cache.savedByUsername || '';
             // Refrescar tags Callbell antes de renderizar (puede haber cambios desde otro admin).
             await _recontactHydrateCallbellTags(_recontactState.items);
+            // Cargar análisis previo (si hay) para poder mostrar mejoras archivo-a-archivo.
+            try {
+                const prev = await _recontactLoadPreviousAnalysis();
+                if (prev && Array.isArray(prev.items)) {
+                    _recontactState.previousItems = prev.items;
+                    _recontactState.previousSavedAt = prev.savedAt || null;
+                }
+            } catch (_) {}
             c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
             _wireRecontactFilters();
             _wireRecontactSearch();
@@ -4187,14 +4227,18 @@ function _kpiCard(label, value, color, sub) {
     '</div>';
 }
 
-// Tarjeta "Instalaron app post-recontactación": lista los usuarios que
-// vos marcaste con ✅ etiqueta y que después instalaron la app.
-// Ordenado por fecha de instalación (más reciente arriba).
+// Tarjeta "Post recontactación": lista las mejoras post-recontactación.
+//   - Conversiones: users que marcaste con ✅ etiqueta y que después instalaron la app.
+//   - Mejora archivo-a-archivo: cuando subís otro XLSX con fecha distinta, compara
+//     contra el análisis anterior y lista los users que mejoraron entre ambos
+//     (instalaron app, subieron de bucket de actividad).
 function _renderRecontactConversionsCard(conversions) {
+    const improvementHtml = _renderRecontactImprovementSection();
     if (!conversions || conversions.length === 0) {
         return '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">' +
-            '<div style="color:#00d4ff;font-weight:800;font-size:14px;margin-bottom:6px;">📱 Instalaron app post-recontactación</div>' +
+            '<div style="color:#00d4ff;font-weight:800;font-size:14px;margin-bottom:6px;">📊 Post recontactación</div>' +
             '<div style="color:#888;font-size:12px;">Todavía no hay conversiones registradas. Cuando alguien que marques con ✅ etiqueta instale la app, aparece acá con la fecha.</div>' +
+            improvementHtml +
         '</div>';
     }
 
@@ -4213,7 +4257,7 @@ function _renderRecontactConversionsCard(conversions) {
 
     let html = '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">';
     html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">';
-    html += '    <div style="color:#00d4ff;font-weight:800;font-size:14px;">📱 Instalaron app post-recontactación · ' + conversions.length + '</div>';
+    html += '    <div style="color:#00d4ff;font-weight:800;font-size:14px;">📊 Post recontactación · ' + conversions.length + ' instalaron app</div>';
     html += '    <div style="color:#888;font-size:11px;">Etiquetados que después instalaron la app · más reciente arriba</div>';
     html += '  </div>';
     html += '  <div style="overflow-x:auto;">';
@@ -4243,6 +4287,71 @@ function _renderRecontactConversionsCard(conversions) {
     html += '      </tbody>';
     html += '    </table>';
     html += '  </div>';
+    html += _renderRecontactImprovementSection();
+    html += '</div>';
+    return html;
+}
+
+// Sección de mejora archivo-a-archivo: compara items del análisis ACTUAL vs el
+// PREVIO (guardado al subir un nuevo XLSX) y lista users que mejoraron entre
+// los dos. "Mejora" = instaló app desde la última vez O subió de bucket
+// (ej: estaba en 'inactivos' y ahora en 'enRiesgo' o 'calientes').
+function _renderRecontactImprovementSection() {
+    const cur = _recontactState.items;
+    const prev = _recontactState.previousItems;
+    const prevSavedAt = _recontactState.previousSavedAt;
+    if (!Array.isArray(cur) || !Array.isArray(prev) || prev.length === 0) {
+        return '<div style="color:#888;font-size:11px;margin-top:14px;padding:8px 10px;background:rgba(0,0,0,0.20);border-radius:6px;">📊 Subí otro XLSX con fecha distinta para ver acá la mejora vs el análisis anterior.</div>';
+    }
+    const bucketRank = { inactivos: 0, perdidos: 1, enRiesgo: 2, calientes: 3, '': -1 };
+    const prevByName = new Map();
+    for (const p of prev) {
+        const k = String((p && p.username) || '').toLowerCase();
+        if (k) prevByName.set(k, p);
+    }
+    const installedApp = []; // antes hasApp=false, ahora hasApp=true
+    const upBucket = [];     // antes bucket peor, ahora mejor
+    for (const c of cur) {
+        const k = String((c && c.username) || '').toLowerCase();
+        if (!k) continue;
+        const p = prevByName.get(k);
+        if (!p) continue;
+        if (!p.hasApp && c.hasApp) installedApp.push({ username: c.username, prevBucket: p.bucket, curBucket: c.bucket });
+        const pr = bucketRank[p.bucket || ''] ?? -1;
+        const cr = bucketRank[c.bucket || ''] ?? -1;
+        if (pr >= 0 && cr > pr) upBucket.push({ username: c.username, from: p.bucket, to: c.bucket });
+    }
+    const total = installedApp.length + upBucket.length;
+    const fmtDate = (ts) => {
+        try { return new Date(ts).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' }); } catch(_) { return '-'; }
+    };
+    let html = '<div style="margin-top:14px;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:12px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    html += '    <div style="color:#66ff66;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;">📈 Mejora vs análisis anterior</div>';
+    html += '    <div style="color:#aaa;font-size:11px;">Comparando con el análisis del ' + (prevSavedAt ? fmtDate(prevSavedAt) : '—') + '</div>';
+    html += '  </div>';
+    if (total === 0) {
+        html += '  <div style="color:#888;font-size:12px;padding:6px;">Sin mejoras detectadas entre los dos análisis.</div>';
+        html += '</div>';
+        return html;
+    }
+    html += '  <div style="color:#bbb;font-size:11.5px;margin-bottom:8px;">' + total + ' mejoras detectadas — ' + installedApp.length + ' instalaron app, ' + upBucket.length + ' subieron de bucket de actividad</div>';
+    if (installedApp.length > 0) {
+        html += '  <div style="margin-top:6px;color:#25d366;font-weight:700;font-size:12px;">📱 Instalaron app desde el análisis anterior (' + installedApp.length + '):</div>';
+        html += '  <div style="max-height:220px;overflow-y:auto;background:rgba(0,0,0,0.20);border-radius:6px;padding:6px;margin-top:4px;">';
+        for (const u of installedApp) {
+            html += '<div style="display:flex;justify-content:space-between;color:#fff;font-size:11.5px;padding:3px 6px;border-bottom:1px solid rgba(255,255,255,0.04);"><span><strong>' + escapeHtml(u.username) + '</strong></span><span style="color:#aaa;">' + escapeHtml(u.prevBucket || '—') + ' → ' + escapeHtml(u.curBucket || '—') + '</span></div>';
+        }
+        html += '  </div>';
+    }
+    if (upBucket.length > 0) {
+        html += '  <div style="margin-top:8px;color:#ffd700;font-weight:700;font-size:12px;">⬆ Subieron de bucket de actividad (' + upBucket.length + '):</div>';
+        html += '  <div style="max-height:220px;overflow-y:auto;background:rgba(0,0,0,0.20);border-radius:6px;padding:6px;margin-top:4px;">';
+        for (const u of upBucket) {
+            html += '<div style="display:flex;justify-content:space-between;color:#fff;font-size:11.5px;padding:3px 6px;border-bottom:1px solid rgba(255,255,255,0.04);"><span><strong>' + escapeHtml(u.username) + '</strong></span><span style="color:#aaa;">' + escapeHtml(u.from || '—') + ' → ' + escapeHtml(u.to || '—') + '</span></div>';
+        }
+        html += '  </div>';
+    }
     html += '</div>';
     return html;
 }
