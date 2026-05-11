@@ -16645,11 +16645,15 @@ function _setEncuestaTab(tab) {
     if (tab === 'historial') {
         loadEncuestaWeeklyHistory();
     }
+    if (tab === 'campañas') {
+        loadTeamCampaigns();
+    }
 }
 
 function _renderEncuestaTabsNav(activeTab) {
     const tabs = [
         { k: 'estrategia', l: '📋 Estrategia' },
+        { k: 'campañas',   l: '📣 Campañas por equipo' },
         { k: 'gente',      l: '👥 Gente que se une' },
         { k: 'roi',        l: '📊 ROI / Reacciones' },
         { k: 'historial',  l: '📅 Historial semanal' }
@@ -16676,6 +16680,7 @@ function _renderEncuesta() {
     let html = '';
     html += _renderEncuestaTabsNav(tab);
     if (tab === 'estrategia')      html += _renderEncuestaTabEstrategia(d, respondedTotal);
+    else if (tab === 'campañas')   html += _renderEncuestaTabCampaigns();
     else if (tab === 'gente')      html += _renderEncuestaTabGente(d, respondedTotal);
     else if (tab === 'roi')        html += _renderEncuestaTabROI(d);
     else if (tab === 'historial')  html += _renderEncuestaTabHistorial();
@@ -18627,4 +18632,268 @@ async function _sendTopPlayersNotify(segment) {
         alert('Error de conexión');
     }
     finally { _sendTopPlayersNotify._busy = false; }
+}
+
+// =====================================================================
+// TEAM CAMPAIGNS — UI (Encuesta → Tab "📣 Campañas por equipo")
+// =====================================================================
+let _TEAM_CAMPAIGNS_CACHE = { list: null, teams: null, lines: null };
+
+function _renderEncuestaTabCampaigns() {
+    return '<div id="teamCampaignsContent"><div style="color:#aaa;padding:14px;font-size:12px;">⏳ Cargando campañas…</div></div>';
+}
+
+async function loadTeamCampaigns() {
+    const c = document.getElementById('teamCampaignsContent');
+    if (!c) return;
+    try {
+        const [listRes, teamsRes] = await Promise.all([
+            authFetch('/api/admin/team-campaigns'),
+            authFetch('/api/admin/team-campaigns/teams')
+        ]);
+        const listJ = listRes.ok ? await listRes.json() : { campaigns: [] };
+        const teamsJ = teamsRes.ok ? await teamsRes.json() : { teams: [], lines: [] };
+        _TEAM_CAMPAIGNS_CACHE = { list: listJ.campaigns || [], teams: teamsJ.teams || [], lines: teamsJ.lines || [] };
+        c.innerHTML = _renderTeamCampaignsList(_TEAM_CAMPAIGNS_CACHE);
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+function _renderTeamCampaignsList(d) {
+    const list = d.list || [];
+    let html = '';
+    html += '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px;">';
+    html += '  <div>';
+    html += '    <div style="color:#d4af37;font-weight:900;font-size:15px;">📣 Campañas por equipo · ' + list.length + '</div>';
+    html += '    <div style="color:#888;font-size:11.5px;">Cada campaña dispara push a un equipo/línea/tier específico, día y horario fijo. El cron las activa cada 60s.</div>';
+    html += '  </div>';
+    html += '  <button type="button" onclick="_teamCampaignOpenForm()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">➕ NUEVA CAMPAÑA</button>';
+    html += '</div>';
+
+    if (list.length === 0) {
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;padding:30px;text-align:center;color:#888;">';
+        html += '  Todavía no hay campañas. Tocá <strong style="color:#66ff66;">+ NUEVA CAMPAÑA</strong> para crear la primera.<br>';
+        html += '  <span style="font-size:11px;">Ej: "Bono 50% Atomic miércoles 18-20" — apunta al equipo Atomic, día miércoles, hora 18-20, manda push + crea promo wa.link de 6 horas.</span>';
+        html += '</div>';
+        return html;
+    }
+
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead style="background:rgba(212,175,55,0.10);"><tr style="color:#d4af37;text-align:left;">';
+    html += '<th style="padding:9px 10px;font-weight:800;">Nombre</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;">Target</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Categoría</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Cuándo</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Extra</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Disparos</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Estado</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Acciones</th>';
+    html += '</tr></thead><tbody>';
+    const dayNames = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+    const catLabel = { bonos:'🎁 Bono', juegos:'🎰 Juego', regalos:'💎 Regalo', notif:'🔔 Notif' };
+    for (const c of list) {
+        const target = (c.teamFilter || 'Todos los equipos') +
+            (c.lineFilter ? ' · ' + c.lineFilter : '') +
+            (c.tierFilter ? ' · ' + c.tierFilter : '');
+        const cuando = (c.specificDate ? c.specificDate : (c.dayOfWeek != null ? dayNames[c.dayOfWeek] : 'Todos los días'))
+            + ' ' + c.startHour + ':00-' + c.endHour + ':00';
+        const extra = c.extraType === 'promo' ? '📲 ' + (c.promoCode || '')
+            : c.extraType === 'giveaway' ? '💰 $' + (c.giveawayAmount || 0).toLocaleString('es-AR')
+            : '—';
+        const statePill = c.isActive
+            ? '<span style="background:rgba(102,255,102,0.15);color:#66ff66;padding:3px 8px;border-radius:10px;font-weight:800;font-size:11px;">✅ Activa</span>'
+            : '<span style="background:rgba(255,128,128,0.10);color:#ff8080;padding:3px 8px;border-radius:10px;font-weight:800;font-size:11px;">⏸ Pausada</span>';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(c.name) + '</td>';
+        html += '<td style="padding:8px 10px;color:#bbb;font-size:11.5px;">' + escapeHtml(target) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;color:#fff;">' + (catLabel[c.category] || c.category) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;color:#fff;font-size:11.5px;">' + escapeHtml(cuando) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;color:#ffd700;font-size:11.5px;">' + escapeHtml(extra) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;color:#aaa;font-size:11px;">' + (c.totalFires || 0) + (c.totalUsersImpactedLastFire ? '<br><span style="font-size:9.5px;">últ. ' + c.totalUsersImpactedLastFire + ' users</span>' : '') + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;">' + statePill + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">';
+        html += '<button type="button" onclick="_teamCampaignToggle(\'' + escapeHtml(c.id) + '\',' + (!c.isActive) + ')" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px;" title="' + (c.isActive ? 'Pausar' : 'Activar') + '">' + (c.isActive ? '⏸' : '▶') + '</button>';
+        html += '<button type="button" onclick="_teamCampaignOpenForm(\'' + escapeHtml(c.id) + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px;" title="Editar">✏</button>';
+        html += '<button type="button" onclick="_teamCampaignDelete(\'' + escapeHtml(c.id) + '\',\'' + escapeHtml(c.name) + '\')" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;" title="Borrar">🗑</button>';
+        html += '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
+function _teamCampaignOpenForm(id) {
+    const existing = id ? (_TEAM_CAMPAIGNS_CACHE.list || []).find(c => c.id === id) : null;
+    const teams = _TEAM_CAMPAIGNS_CACHE.teams || [];
+    const lines = _TEAM_CAMPAIGNS_CACHE.lines || [];
+    const c = existing || {
+        name: '', teamFilter: '', lineFilter: '', tierFilter: '', category: 'notif',
+        dayOfWeek: '', specificDate: '', startHour: 18, endHour: 22,
+        title: '', body: '',
+        extraType: 'none', promoCode: '', promoMessage: '', promoDurationHours: 6,
+        giveawayAmount: 1000, giveawayDurationMinutes: 360,
+        requireApp: true, requireSurveyAnswered: true, requireActiveDays: 30,
+        isActive: false
+    };
+    const modalId = 'teamCampaignModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.80);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+    let inner = '';
+    inner += '<div style="background:#1a0033;border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:18px;max-width:720px;width:100%;color:#fff;">';
+    inner += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">';
+    inner += '  <h3 style="margin:0;color:#d4af37;font-size:16px;">' + (existing ? '✏ Editar campaña' : '➕ Nueva campaña por equipo') + '</h3>';
+    inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
+    inner += '</div>';
+    inner += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+    inner += _tcField('Nombre interno', '<input id="tc_name" type="text" value="' + escapeHtml(c.name) + '" placeholder="Ej: Bono 50% Atomic miércoles" style="' + _tcInputStyle() + '">', true);
+    inner += _tcField('Categoría', '<select id="tc_category" style="' + _tcInputStyle() + '">' +
+        ['bonos','juegos','regalos','notif'].map(k => '<option value="' + k + '"' + (c.category === k ? ' selected' : '') + '>' + ({bonos:'🎁 Bono', juegos:'🎰 Invitación a jugar', regalos:'💎 Regalo', notif:'🔔 Notificación pelada'}[k]) + '</option>').join('') + '</select>');
+    // Team selector
+    let teamOpts = '<option value="">Todos los equipos</option>';
+    for (const t of teams) teamOpts += '<option value="' + escapeHtml(t.name) + '"' + (c.teamFilter === t.name ? ' selected' : '') + '>' + escapeHtml(t.name) + ' (' + t.count + ' users)</option>';
+    inner += _tcField('Equipo', '<select id="tc_teamFilter" onchange="_tcOnTeamChange()" style="' + _tcInputStyle() + '">' + teamOpts + '</select>');
+    // Lines selector (filtered by team)
+    inner += _tcField('Línea (opcional)', '<select id="tc_lineFilter" style="' + _tcInputStyle() + '"><option value="">Todas las líneas del equipo</option></select>');
+    inner += _tcField('Tier (encuesta)', '<select id="tc_tierFilter" style="' + _tcInputStyle() + '">' +
+        '<option value="">Todos los tiers</option>' +
+        ['suave','normal','activo'].map(k => '<option value="' + k + '"' + (c.tierFilter === k ? ' selected' : '') + '>' + k + '</option>').join('') + '</select>');
+    inner += _tcField('Día', '<select id="tc_dayOfWeek" style="' + _tcInputStyle() + '">' +
+        '<option value="">Todos los días</option>' +
+        ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'].map((d, i) => '<option value="' + i + '"' + (c.dayOfWeek == i ? ' selected' : '') + '>' + d + '</option>').join('') + '</select>');
+    inner += _tcField('Hora desde', '<input id="tc_startHour" type="number" min="0" max="23" value="' + c.startHour + '" style="' + _tcInputStyle() + '">');
+    inner += _tcField('Hora hasta', '<input id="tc_endHour" type="number" min="1" max="24" value="' + c.endHour + '" style="' + _tcInputStyle() + '">');
+    inner += '</div>';
+
+    // Contenido
+    inner += '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">';
+    inner += '<h4 style="color:#d4af37;margin:0 0 8px;font-size:12.5px;">📝 Contenido del push</h4>';
+    inner += _tcField('Título', '<input id="tc_title" type="text" maxlength="80" value="' + escapeHtml(c.title) + '" placeholder="🎁 Tu bono del miércoles" style="' + _tcInputStyle() + '">', true);
+    inner += _tcField('Cuerpo', '<textarea id="tc_body" maxlength="200" placeholder="Cargá esta noche y te damos 50% extra. Tocá para reclamar." style="' + _tcInputStyle() + 'min-height:50px;resize:vertical;">' + escapeHtml(c.body) + '</textarea>', true);
+    inner += '</div>';
+
+    // Extras
+    inner += '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">';
+    inner += '<h4 style="color:#d4af37;margin:0 0 8px;font-size:12.5px;">🎁 Extra (opcional)</h4>';
+    inner += '<select id="tc_extraType" onchange="_tcOnExtraChange()" style="' + _tcInputStyle() + 'margin-bottom:8px;">' +
+        ['none','promo','giveaway'].map(k => '<option value="' + k + '"' + (c.extraType === k ? ' selected' : '') + '>' + ({none:'Sin extra (solo push)', promo:'📲 Promo wa.link', giveaway:'💰 Regalo de plata reclamable'}[k]) + '</option>').join('') + '</select>';
+    inner += '<div id="tc_promoFields" style="display:' + (c.extraType === 'promo' ? 'grid' : 'none') + ';grid-template-columns:1fr 1fr;gap:8px;">';
+    inner += _tcField('Código promo', '<input id="tc_promoCode" type="text" value="' + escapeHtml(c.promoCode || '') + '" placeholder="BONO50" style="' + _tcInputStyle() + '">');
+    inner += _tcField('Duración (hs)', '<input id="tc_promoDurationHours" type="number" min="1" max="168" value="' + (c.promoDurationHours || 6) + '" style="' + _tcInputStyle() + '">');
+    inner += '</div>';
+    inner += '<div id="tc_giveawayFields" style="display:' + (c.extraType === 'giveaway' ? 'grid' : 'none') + ';grid-template-columns:1fr 1fr;gap:8px;">';
+    inner += _tcField('Monto $', '<input id="tc_giveawayAmount" type="number" min="1" value="' + (c.giveawayAmount || 1000) + '" style="' + _tcInputStyle() + '">');
+    inner += _tcField('Duración (min)', '<input id="tc_giveawayDurationMinutes" type="number" min="10" max="10080" value="' + (c.giveawayDurationMinutes || 360) + '" style="' + _tcInputStyle() + '">');
+    inner += '</div>';
+    inner += '</div>';
+
+    // Filtros
+    inner += '<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">';
+    inner += '<h4 style="color:#d4af37;margin:0 0 8px;font-size:12.5px;">🎯 Filtros (dentro del equipo)</h4>';
+    inner += '<label style="display:block;color:#ddd;font-size:12px;margin-bottom:6px;cursor:pointer;"><input type="checkbox" id="tc_requireApp" ' + (c.requireApp !== false ? 'checked' : '') + '> Solo users con app instalada</label>';
+    inner += '<label style="display:block;color:#ddd;font-size:12px;margin-bottom:6px;cursor:pointer;"><input type="checkbox" id="tc_requireSurveyAnswered" ' + (c.requireSurveyAnswered !== false ? 'checked' : '') + '> Solo users que respondieron la encuesta</label>';
+    inner += _tcField('Activos en últimos N días (0 = sin filtro)', '<input id="tc_requireActiveDays" type="number" min="0" max="365" value="' + (c.requireActiveDays || 0) + '" style="' + _tcInputStyle() + '">');
+    inner += '</div>';
+
+    // Estado + acciones
+    inner += '<div style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+    inner += '<label style="color:#fff;font-size:13px;cursor:pointer;"><input type="checkbox" id="tc_isActive" ' + (c.isActive ? 'checked' : '') + '> Activar al guardar</label>';
+    inner += '<div style="display:flex;gap:8px;">';
+    inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:8px 14px;border-radius:6px;font-weight:700;cursor:pointer;">Cancelar</button>';
+    inner += '  <button type="button" onclick="_teamCampaignSave(' + (existing ? "'" + escapeHtml(existing.id) + "'" : 'null') + ')" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:8px 20px;border-radius:6px;font-weight:900;cursor:pointer;">💾 Guardar</button>';
+    inner += '</div>';
+    inner += '</div>';
+    inner += '</div>';
+    overlay.innerHTML = inner;
+    document.body.appendChild(overlay);
+    // Después de renderizar, popular el dropdown de líneas para el equipo seleccionado.
+    setTimeout(() => _tcOnTeamChange(c.lineFilter), 0);
+}
+
+function _tcInputStyle() {
+    return 'width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.30);padding:7px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;';
+}
+function _tcField(label, control, required) {
+    return '<div><label style="display:block;color:#aaa;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">' + escapeHtml(label) + (required ? ' <span style="color:#ff8080;">*</span>' : '') + '</label>' + control + '</div>';
+}
+
+function _tcOnTeamChange(preselectLine) {
+    const teamSel = document.getElementById('tc_teamFilter');
+    const lineSel = document.getElementById('tc_lineFilter');
+    if (!teamSel || !lineSel) return;
+    const team = teamSel.value;
+    const allLines = _TEAM_CAMPAIGNS_CACHE.lines || [];
+    const filtered = team ? allLines.filter(l => l.team === team) : [];
+    let html = '<option value="">' + (team ? 'Todas las líneas de ' + team : 'Elegí un equipo primero') + '</option>';
+    for (const l of filtered) {
+        if (!l.line) continue;
+        html += '<option value="' + escapeHtml(l.line) + '"' + (preselectLine === l.line ? ' selected' : '') + '>' + escapeHtml(l.line) + ' (' + l.count + ' users)</option>';
+    }
+    lineSel.innerHTML = html;
+}
+
+function _tcOnExtraChange() {
+    const v = (document.getElementById('tc_extraType') || {}).value;
+    const promoBox = document.getElementById('tc_promoFields');
+    const gwBox = document.getElementById('tc_giveawayFields');
+    if (promoBox) promoBox.style.display = v === 'promo' ? 'grid' : 'none';
+    if (gwBox) gwBox.style.display = v === 'giveaway' ? 'grid' : 'none';
+}
+
+async function _teamCampaignSave(id) {
+    const g = (k) => (document.getElementById(k) || {}).value;
+    const c = (k) => !!(document.getElementById(k) || {}).checked;
+    const body = {
+        name: g('tc_name'),
+        teamFilter: g('tc_teamFilter') || null,
+        lineFilter: g('tc_lineFilter') || null,
+        tierFilter: g('tc_tierFilter') || null,
+        category: g('tc_category'),
+        dayOfWeek: g('tc_dayOfWeek') === '' ? null : Number(g('tc_dayOfWeek')),
+        startHour: Number(g('tc_startHour')),
+        endHour: Number(g('tc_endHour')),
+        title: g('tc_title'),
+        body: g('tc_body'),
+        extraType: g('tc_extraType'),
+        promoCode: g('tc_promoCode'),
+        promoDurationHours: Number(g('tc_promoDurationHours')) || 6,
+        giveawayAmount: Number(g('tc_giveawayAmount')) || 0,
+        giveawayDurationMinutes: Number(g('tc_giveawayDurationMinutes')) || 360,
+        requireApp: c('tc_requireApp'),
+        requireSurveyAnswered: c('tc_requireSurveyAnswered'),
+        requireActiveDays: Number(g('tc_requireActiveDays')) || null,
+        isActive: c('tc_isActive')
+    };
+    try {
+        const url = id ? '/api/admin/team-campaigns/' + encodeURIComponent(id) : '/api/admin/team-campaigns';
+        const method = id ? 'PUT' : 'POST';
+        const r = await authFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✅ Campaña guardada', 'success');
+        document.getElementById('teamCampaignModal')?.remove();
+        loadTeamCampaigns();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function _teamCampaignToggle(id, newState) {
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: newState }) });
+        if (!r.ok) { showToast('❌ Error', 'error'); return; }
+        showToast(newState ? '✅ Activada' : '⏸ Pausada', 'success');
+        loadTeamCampaigns();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+async function _teamCampaignDelete(id, name) {
+    if (!confirm('¿Borrar la campaña "' + name + '"? No se puede deshacer.')) return;
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!r.ok) { showToast('❌ Error', 'error'); return; }
+        showToast('✅ Borrada', 'success');
+        loadTeamCampaigns();
+    } catch (e) { showToast('Error de conexión', 'error'); }
 }

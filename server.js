@@ -10989,39 +10989,32 @@ app.post('/api/user/notif-preference', authMiddleware, async (req, res) => {
       answeredAt: updated.notifPreferenceAt
     });
 
-    // Hook: si la estrategia está activa cuando el user contesta la encuesta,
-    // le programamos AHORA su calendario personal del resto del mes (bonos +
-    // juegos + regalos según su tier). Si entra a mitad de mes, recibe los
-    // pushes del mes proporcionalmente. No bloquea la respuesta del user.
+    // Hook auto-fire per-user DESACTIVADO 2026-05-11 — reemplazado por la
+    // automatización por equipo (TeamCampaign). Las campañas se disparan al
+    // equipo completo respetando el tier de cada user. Para reactivar la
+    // automatización per-user en el futuro: descomentar el bloque siguiente
+    // y desactivar la auto-estrategia por equipo desde el panel.
+    /*
     if (isFirstAnswer && pref !== 'opt_out' && pref !== 'solo_reembolsos') {
       setImmediate(async () => {
         try {
           const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' });
           if (!cfg || !cfg.isActive) return;
-          // El user tiene que tener al menos un FCM token para recibir pushes.
           const u = await User.findOne(
             { id: req.user.userId },
             { username: 1, notifPreference: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
           ).lean();
           if (!u) return;
           const hasToken = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
-          if (!hasToken) {
-            logger.info(`[STRATEGY-MONTH] ${u.username} respondió la encuesta pero no tiene FCM token — sin programar.`);
-            return;
-          }
-          const r = await _scheduleMonthlyStrategyForUser({
-            user: u,
-            tier: u.notifPreference,
-            cfg: cfg.toObject(),
-            monthKey: _currentMonthKey(),
-            reason: 'survey-response'
+          if (!hasToken) return;
+          await _scheduleMonthlyStrategyForUser({
+            user: u, tier: u.notifPreference, cfg: cfg.toObject(),
+            monthKey: _currentMonthKey(), reason: 'survey-response'
           });
-          logger.info(`[STRATEGY-MONTH] ${u.username} (${u.notifPreference}) inscripto · pushes=${r.scheduled} (bonos=${r.perCategory.bonos}, juegos=${r.perCategory.juegos}, regalos=${r.perCategory.regalos})`);
-        } catch (e) {
-          logger.warn(`[STRATEGY-MONTH] hook survey falló: ${e.message}`);
-        }
+        } catch (e) { logger.warn(`[STRATEGY-MONTH] hook survey falló: ${e.message}`); }
       });
     }
+    */
   } catch (err) {
     logger.error(`/api/user/notif-preference POST: ${err.message}`);
     res.status(500).json({ error: err.message || 'Error del servidor' });
@@ -12154,6 +12147,295 @@ app.get('/api/admin/encuesta/weekly-history', authMiddleware, adminMiddleware, a
     res.status(500).json({ error: err.message });
   }
 });
+
+// =====================================================================
+// TEAM CAMPAIGNS — campañas de notificación por equipo/línea/tier con
+// horario fijo. Reemplaza la auto-fire per-user de la encuesta. Cada
+// campaña dispara a TODOS los users del filtro a una hora random dentro
+// del rango configurado.
+// =====================================================================
+
+// Helper: lista distinct teams + lines a partir de User.lineTeamName y linePhone.
+// Sirve para llenar los selects del UI cuando se crea una campaña.
+app.get('/api/admin/team-campaigns/teams', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teams = await User.aggregate([
+      { $match: { lineTeamName: { $exists: true, $ne: null, $ne: '' } } },
+      { $group: { _id: '$lineTeamName', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+    // Por team, listar las líneas (linePhone) y su count.
+    const lines = await User.aggregate([
+      { $match: { lineTeamName: { $exists: true, $ne: null, $ne: '' } } },
+      { $group: { _id: { team: '$lineTeamName', line: '$linePhone' }, count: { $sum: 1 } } },
+      { $sort: { '_id.team': 1, '_id.line': 1 } }
+    ]);
+    res.json({
+      teams: teams.map(t => ({ name: t._id, count: t.count })),
+      lines: lines.map(l => ({ team: l._id.team, line: l._id.line, count: l.count }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/teams: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET list — todas las campañas con count de users impactados estimado.
+app.get('/api/admin/team-campaigns', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const list = await TeamCampaign.find({}).sort({ isActive: -1, createdAt: -1 }).lean();
+    res.json({ campaigns: list });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns GET: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET single — incluye preview del audience matching ahora.
+app.get('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const c = await TeamCampaign.findOne({ id: req.params.id }).lean();
+    if (!c) return res.status(404).json({ error: 'No encontrada' });
+    const audienceCount = await _countTeamCampaignAudience(c);
+    res.json({ campaign: c, audienceCount });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/:id GET: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST create.
+app.post('/api/admin/team-campaigns', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal puede crear campañas' });
+    const b = req.body || {};
+    // Validación mínima.
+    if (!b.name || !b.title || !b.body) return res.status(400).json({ error: 'name, title, body requeridos' });
+    const startHour = Number(b.startHour);
+    const endHour = Number(b.endHour);
+    if (!isFinite(startHour) || startHour < 0 || startHour > 23) return res.status(400).json({ error: 'startHour inválida (0-23)' });
+    if (!isFinite(endHour) || endHour < 1 || endHour > 24 || endHour <= startHour) {
+      return res.status(400).json({ error: 'endHour inválida (debe ser > startHour, máx 24)' });
+    }
+    const extraType = ['none', 'promo', 'giveaway'].includes(b.extraType) ? b.extraType : 'none';
+    if (extraType === 'giveaway' && (!isFinite(Number(b.giveawayAmount)) || Number(b.giveawayAmount) <= 0)) {
+      return res.status(400).json({ error: 'giveawayAmount requerido si extraType=giveaway' });
+    }
+    if (extraType === 'promo' && !b.promoCode) {
+      return res.status(400).json({ error: 'promoCode requerido si extraType=promo' });
+    }
+    const doc = await TeamCampaign.create({
+      id: uuidv4(),
+      name: String(b.name).slice(0, 120).trim(),
+      teamFilter: b.teamFilter ? String(b.teamFilter).trim() : null,
+      lineFilter: b.lineFilter ? String(b.lineFilter).trim() : null,
+      tierFilter: ['suave','normal','activo'].includes(b.tierFilter) ? b.tierFilter : null,
+      category: ['bonos','juegos','regalos','notif'].includes(b.category) ? b.category : 'notif',
+      dayOfWeek: (b.dayOfWeek !== null && b.dayOfWeek !== undefined && b.dayOfWeek !== '') ? Math.max(0, Math.min(6, Number(b.dayOfWeek))) : null,
+      specificDate: /^\d{4}-\d{2}-\d{2}$/.test(b.specificDate || '') ? b.specificDate : null,
+      startHour, endHour,
+      title: String(b.title).slice(0, 80).trim(),
+      body: String(b.body).slice(0, 200).trim(),
+      extraType,
+      promoCode: extraType === 'promo' ? String(b.promoCode || '').slice(0, 40).toUpperCase().trim() : null,
+      promoMessage: extraType === 'promo' ? String(b.promoMessage || b.body || '').slice(0, 200) : null,
+      promoDurationHours: extraType === 'promo' ? Math.max(1, Math.min(168, Number(b.promoDurationHours) || 6)) : 6,
+      giveawayAmount: extraType === 'giveaway' ? Math.max(1, Number(b.giveawayAmount)) : null,
+      giveawayDurationMinutes: extraType === 'giveaway' ? Math.max(10, Math.min(10080, Number(b.giveawayDurationMinutes) || 360)) : 360,
+      requireApp: b.requireApp !== false,
+      requireSurveyAnswered: b.requireSurveyAnswered !== false,
+      requireActiveDays: (b.requireActiveDays && Number(b.requireActiveDays) > 0) ? Number(b.requireActiveDays) : null,
+      isActive: !!b.isActive,
+      origin: 'manual',
+      createdBy: req.user.username || null
+    });
+    res.json({ success: true, campaign: doc.toObject() });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns POST: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT update — solo los campos editables.
+app.put('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const b = req.body || {};
+    const $set = { updatedAt: new Date(), updatedBy: req.user.username || 'admin' };
+    const editable = ['name','teamFilter','lineFilter','tierFilter','category','dayOfWeek','specificDate','startHour','endHour','title','body','extraType','promoCode','promoMessage','promoDurationHours','giveawayAmount','giveawayDurationMinutes','requireApp','requireSurveyAnswered','requireActiveDays','isActive'];
+    for (const k of editable) {
+      if (b[k] !== undefined) $set[k] = b[k];
+    }
+    const doc = await TeamCampaign.findOneAndUpdate({ id: req.params.id }, { $set }, { new: true });
+    if (!doc) return res.status(404).json({ error: 'No encontrada' });
+    res.json({ success: true, campaign: doc.toObject() });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns PUT: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE.
+app.delete('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const r = await TeamCampaign.deleteOne({ id: req.params.id });
+    if (r.deletedCount === 0) return res.status(404).json({ error: 'No encontrada' });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns DELETE: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Helper: estima cuántos users matchean los filtros de una campaña.
+async function _countTeamCampaignAudience(c) {
+  const q = {};
+  if (c.teamFilter) q.lineTeamName = c.teamFilter;
+  if (c.lineFilter) q.linePhone = c.lineFilter;
+  if (c.requireApp) {
+    q.$or = [{ fcmToken: { $exists: true, $ne: null, $ne: '' } }, { fcmTokens: { $exists: true, $ne: [], $not: { $size: 0 } } }];
+  }
+  if (c.requireSurveyAnswered) {
+    q.notifPreference = { $exists: true, $ne: null };
+  }
+  if (c.tierFilter) {
+    q.notifPreference = c.tierFilter;
+  }
+  // requireActiveDays se chequea contra PlayerStats.lastSeenApp — más caro,
+  // hacemos un find separado y intersectamos. Para preview rápido del audience
+  // count si no hay requireActiveDays usamos solo el User count.
+  if (!c.requireActiveDays) {
+    return await User.countDocuments(q);
+  }
+  const candidates = await User.find(q, { username: 1, _id: 0 }).lean();
+  if (candidates.length === 0) return 0;
+  const usernames = candidates.map(u => u.username.toLowerCase());
+  const cutoff = new Date(Date.now() - c.requireActiveDays * 86400000);
+  const activeStats = await PlayerStats.find({
+    username: { $in: usernames },
+    lastSeenApp: { $gte: cutoff }
+  }, { username: 1, _id: 0 }).lean();
+  return activeStats.length;
+}
+
+// Cron: corre cada 60s, dispara campañas activas que tienen que correr HOY
+// y la hora actual está dentro de [startHour, endHour). Idempotente vía
+// lastFiredOnDate (solo dispara una vez por día).
+let _TEAM_CAMPAIGN_TICK_RUNNING = false;
+async function _teamCampaignTick() {
+  if (_TEAM_CAMPAIGN_TICK_RUNNING) return;
+  _TEAM_CAMPAIGN_TICK_RUNNING = true;
+  try {
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const currentDay = now.getDay(); // 0=Sun..6=Sat
+    const currentHour = now.getHours();
+    // Filtrar las campañas que aplican HOY y este horario.
+    const candidates = await TeamCampaign.find({ isActive: true }).lean();
+    for (const c of candidates) {
+      // Skip si ya disparó hoy.
+      if (c.lastFiredOnDate === todayStr) continue;
+      // Match día: o dayOfWeek == hoy, o specificDate == hoy, o ambos null = todos los días.
+      const dayMatch = (c.dayOfWeek == null && !c.specificDate)
+        || (c.dayOfWeek != null && c.dayOfWeek === currentDay)
+        || (c.specificDate && c.specificDate === todayStr);
+      if (!dayMatch) continue;
+      // Match hora: estamos dentro del rango [startHour, endHour).
+      if (currentHour < c.startHour || currentHour >= c.endHour) continue;
+      try {
+        const result = await _fireTeamCampaign(c, now);
+        await TeamCampaign.updateOne(
+          { id: c.id },
+          {
+            $set: { lastFiredOnDate: todayStr, totalUsersImpactedLastFire: result.scheduled },
+            $inc: { totalFires: 1 }
+          }
+        );
+        logger.info(`[TEAM-CAMPAIGN] fired "${c.name}" → ${result.scheduled} users (skipped ${result.skipped})`);
+      } catch (e) {
+        logger.error(`[TEAM-CAMPAIGN] fail firing "${c.name}": ${e.message}`);
+      }
+    }
+  } catch (e) {
+    logger.error(`[TEAM-CAMPAIGN] tick global error: ${e.message}`);
+  } finally {
+    _TEAM_CAMPAIGN_TICK_RUNNING = false;
+  }
+}
+
+// Encola ScheduledNotifications para todos los users del filter, con hora random
+// dentro del rango. Si extraType=promo|giveaway el _executeScheduledNotification
+// crea el promo/giveaway scoped por user (audienceWhitelist) cuando dispare cada uno.
+async function _fireTeamCampaign(c, fireDate) {
+  const out = { scheduled: 0, skipped: 0 };
+  // Levantar candidatos.
+  const q = {};
+  if (c.teamFilter) q.lineTeamName = c.teamFilter;
+  if (c.lineFilter) q.linePhone = c.lineFilter;
+  if (c.tierFilter) q.notifPreference = c.tierFilter;
+  else if (c.requireSurveyAnswered) q.notifPreference = { $exists: true, $ne: null };
+  if (c.requireApp) {
+    q.$or = [{ fcmToken: { $exists: true, $ne: null, $ne: '' } }, { fcmTokens: { $exists: true, $ne: [], $not: { $size: 0 } } }];
+  }
+  const users = await User.find(q, { username: 1, _id: 0 }).limit(20000).lean();
+  if (users.length === 0) return out;
+  let usernames = users.map(u => u.username.toLowerCase());
+  // Filtro activeDays.
+  if (c.requireActiveDays) {
+    const cutoff = new Date(Date.now() - c.requireActiveDays * 86400000);
+    const active = await PlayerStats.find({
+      username: { $in: usernames },
+      lastSeenApp: { $gte: cutoff }
+    }, { username: 1, _id: 0 }).lean();
+    usernames = active.map(a => a.username.toLowerCase());
+  }
+  if (usernames.length === 0) return out;
+
+  const startMs = new Date(fireDate); startMs.setHours(c.startHour, 0, 0, 0);
+  const endMs = new Date(fireDate); endMs.setHours(c.endHour, 0, 0, 0);
+  const windowMs = endMs.getTime() - startMs.getTime();
+  const nowMs = Date.now();
+
+  for (const username of usernames) {
+    // Hora random dentro del rango, pero no en el pasado.
+    let when = new Date(startMs.getTime() + Math.random() * windowMs);
+    if (when.getTime() < nowMs + 30 * 1000) when = new Date(nowMs + 30 * 1000); // mínimo +30s
+    if (when.getTime() > endMs.getTime()) when = new Date(endMs.getTime() - 1000); // dentro de la ventana
+
+    const sched = {
+      id: uuidv4(),
+      scheduledFor: when,
+      status: 'pending',
+      title: c.title,
+      body: c.body,
+      targetUsername: username,
+      audiencePrefix: null,
+      extraType: c.extraType || 'none',
+      createdBy: `team-campaign:${c.id}:${c.name.slice(0, 30)}`
+    };
+    if (c.extraType === 'promo') {
+      sched.promoCode = c.promoCode;
+      sched.promoMessage = c.promoMessage || c.body;
+      sched.promoDurationHours = c.promoDurationHours || 6;
+    } else if (c.extraType === 'giveaway') {
+      sched.giveawayAmount = c.giveawayAmount;
+      sched.giveawayDurationMinutes = c.giveawayDurationMinutes || 360;
+    }
+    try {
+      await ScheduledNotification.create(sched);
+      out.scheduled++;
+    } catch (e) {
+      out.skipped++;
+      logger.warn(`[TEAM-CAMPAIGN] no se pudo encolar push a ${username}: ${e.message}`);
+    }
+  }
+  return out;
+}
+
+// Arrancar el cron 45s después del boot, correr cada 60s.
+setTimeout(() => { _teamCampaignTick(); }, 45 * 1000);
+setInterval(() => { _teamCampaignTick(); }, 60 * 1000);
 
 // =====================================================================
 // REVIEWS — opiniones de usuarios (1 por user, 1-5★, comentario ≤ 100ch).
