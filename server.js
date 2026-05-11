@@ -12615,6 +12615,37 @@ app.post('/api/admin/winback/test-fire-once', authMiddleware, adminMiddleware, a
   }
 });
 
+// Test winback para UN user específico (cualquier tier 1/2/3),
+// independiente de sus días sin cargar. Útil para QA: "¿anda el cartel
+// de bono cuando llega el push del tier 3?". Crea promo/giveaway server-side
+// y graba RecoveryPush con campaignBatchId='winback-test-user' para que no
+// contamine el reporte de la campaña real.
+app.post('/api/admin/winback/test-fire-user', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const username = String((req.body && req.body.username) || '').trim();
+    const tier = Number((req.body && req.body.tier) || 0);
+    if (!username) return res.status(400).json({ error: 'username requerido' });
+    if (![1, 2, 3].includes(tier)) return res.status(400).json({ error: 'tier debe ser 1, 2 o 3' });
+
+    const user = await User.findOne(
+      { username: { $regex: '^' + username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } },
+      { id: 1, username: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }
+    ).lean();
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado: ' + username });
+
+    let cfg = await WinbackStrategyConfig.findOne({ key: 'winback-default' });
+    if (!cfg) cfg = await WinbackStrategyConfig.create({ key: 'winback-default' });
+    cfg = cfg.toObject ? cfg.toObject() : cfg;
+
+    const r = await _fireWinbackForUser(user, tier, cfg, { force: true });
+    res.json({ success: true, username: user.username, tier, result: r });
+  } catch (err) {
+    logger.error(`/api/admin/winback/test-fire-user: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/winback/history', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));

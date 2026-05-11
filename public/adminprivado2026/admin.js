@@ -16552,6 +16552,21 @@ function _renderWinbackConfig(cfg) {
     html += '<button type="button" onclick="testFireWinback()" style="flex:1;min-width:160px;background:linear-gradient(135deg,#ff8c5a,#cc6633);color:#fff;border:none;padding:10px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;" title="Dispara una pasada del cron AHORA (respeta isActive=false → solo simula).">🧪 Disparar wave de prueba</button>';
     html += '</div>';
 
+    // Test para un user específico (ej: lalodj).
+    html += '<div style="margin-top:16px;background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;">';
+    html += '  <h3 style="color:#d4af37;font-size:13px;margin:0 0 6px;text-transform:uppercase;letter-spacing:1px;">🎯 Test para un user específico</h3>';
+    html += '  <p style="color:#aaa;font-size:11px;margin:0 0 10px;">Disparás el push del tier elegido a un username puntual (ignora días sin cargar). Sirve para probar que el cartel/botón aparece bien en la app del user.</p>';
+    html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    html += '    <input type="text" id="wb_testUsername" placeholder="username (ej: lalodj)" style="flex:1;min-width:180px;background:#1a1a1a;color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:6px;font-size:13px;">';
+    html += '    <select id="wb_testTier" style="background:#1a1a1a;color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:6px;font-size:13px;font-weight:700;">';
+    html += '      <option value="1">Tier 1 — push suave</option>';
+    html += '      <option value="2" selected>Tier 2 — regalo reclamable ($)</option>';
+    html += '      <option value="3">Tier 3 — promo wa.link (%)</option>';
+    html += '    </select>';
+    html += '    <button type="button" onclick="testFireWinbackUser()" style="background:linear-gradient(135deg,#d4af37,#a07e16);color:#000;border:none;padding:9px 16px;border-radius:6px;font-weight:900;font-size:12px;cursor:pointer;">🚀 Disparar test</button>';
+    html += '  </div>';
+    html += '</div>';
+
     return html;
 }
 
@@ -16745,6 +16760,37 @@ async function toggleWinback(activate) {
         showToast('✅ Win-back ' + (activate ? 'activo' : 'desactivado'), 'success');
         const c = document.getElementById('winbackContent');
         if (c) c.innerHTML = _renderWinback();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function testFireWinbackUser() {
+    const u = (document.getElementById('wb_testUsername')?.value || '').trim();
+    const tier = parseInt(document.getElementById('wb_testTier')?.value || '2', 10);
+    if (!u) { showToast('Falta el username', 'error'); return; }
+    if (![1, 2, 3].includes(tier)) { showToast('Tier inválido', 'error'); return; }
+    if (!confirm('¿Disparar push winback Tier ' + tier + ' a "' + u + '" AHORA?\n\nIgnora los días sin cargar y crea el bono/promo server-side igual que el cron real. ¿Seguro?')) return;
+    showToast('⏳ Disparando test...', 'info');
+    try {
+        const r = await authFetch('/api/admin/winback/test-fire-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u, tier })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        const res = d.result || {};
+        if (res.fired) {
+            const extra = res.bonusType === 'giveaway'
+                ? ' · Giveaway $' + (res.bonusAmount || 0) + ' creado'
+                : res.bonusType === 'promo'
+                ? ' · Promo ' + (res.promoCode || '') + ' creado'
+                : '';
+            showToast('✅ Push enviado a ' + d.username + ' Tier ' + d.tier + extra, 'success');
+        } else {
+            showToast('⚠️ No se disparó: ' + (res.reason || 'desconocido'), 'error');
+        }
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
