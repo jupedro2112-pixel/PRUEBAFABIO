@@ -9535,7 +9535,7 @@ app.get('/api/admin/users/search', authMiddleware, adminMiddleware, async (req, 
 
     const users = await User.find(
       { username: { $regex: rx } },
-      { username: 1, fcmToken: 1, fcmTokens: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
+      { username: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
     )
       .sort({ lastLogin: -1 })
       .limit(limit)
@@ -9553,7 +9553,12 @@ app.get('/api/admin/users/search', authMiddleware, adminMiddleware, async (req, 
     const items = users.map(u => {
       const norm = _normUsername(u.username);
       const t = tagMap.get(norm) || {};
-      const hasApp = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      // hasApp = mismo criterio que el resto del sistema (fcmTokenContext='standalone'
+      // o algún token con context='standalone'). Antes era 'cualquier token', lo que
+      // inflaba el conteo y no coincidía con Equipamiento/Usuarios con app.
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const standaloneToken = tokens.some(t => t && t.context === 'standalone');
+      const hasApp = u.fcmTokenContext === 'standalone' || standaloneToken;
       return {
         username: u.username,
         usernameNorm: norm,
@@ -12320,11 +12325,19 @@ app.delete('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, asy
   }
 });
 
+// Helper: regex case-insensitive seguro para filtros — evita que diferencias
+// de mayúsculas/minúsculas dejen users fuera del match. Útil cuando los team
+// names o line names pueden venir con casing inconsistente.
+function _ciExact(s) {
+  const safe = String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^' + safe + '$', 'i');
+}
+
 // Helper: estima cuántos users matchean los filtros de una campaña.
 async function _countTeamCampaignAudience(c) {
   const q = {};
-  if (c.teamFilter) q.lineTeamName = c.teamFilter;
-  if (c.lineFilter) q.linePhone = c.lineFilter;
+  if (c.teamFilter) q.lineTeamName = _ciExact(c.teamFilter);
+  if (c.lineFilter) q.linePhone = _ciExact(c.lineFilter);
   if (c.requireApp) {
     q.$or = [{ fcmToken: { $exists: true, $ne: null, $ne: '' } }, { fcmTokens: { $exists: true, $ne: [], $not: { $size: 0 } } }];
   }
@@ -12401,10 +12414,12 @@ async function _teamCampaignTick() {
 // crea el promo/giveaway scoped por user (audienceWhitelist) cuando dispare cada uno.
 async function _fireTeamCampaign(c, fireDate) {
   const out = { scheduled: 0, skipped: 0 };
-  // Levantar candidatos.
+  // Levantar candidatos. Filtros de team/line vía regex case-insensitive
+  // para que diferencias de casing (Atomic / atomic / ATOMIC) no dejen
+  // users afuera del match.
   const q = {};
-  if (c.teamFilter) q.lineTeamName = c.teamFilter;
-  if (c.lineFilter) q.linePhone = c.lineFilter;
+  if (c.teamFilter) q.lineTeamName = _ciExact(c.teamFilter);
+  if (c.lineFilter) q.linePhone = _ciExact(c.lineFilter);
   if (c.tierFilter) q.notifPreference = c.tierFilter;
   else if (c.requireSurveyAnswered) q.notifPreference = { $exists: true, $ne: null };
   if (c.requireApp) {
