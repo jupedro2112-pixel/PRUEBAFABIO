@@ -1011,20 +1011,25 @@ function renderIngresosReport(container, data) {
 
     let html = '';
 
-    // Resumen
+    // Resumen — ahora medimos actividad real con la PWA (no logins web).
+    // "Activos" = usuarios con PWA standalone que abrieron la app dentro
+    // de la ventana (lastSeenApp). "Con app" = total PWA instalada.
     html += '<div class="report-summary">';
     html += '  <div class="stat-card"><span class="label">Total usuarios</span><span class="value">' + (t.totalUsers || 0) + '</span></div>';
-    html += '  <div class="stat-card"><span class="label">Activos últimas 24h</span><span class="value">' + (t.activeLast24h || 0) + '</span></div>';
-    html += '  <div class="stat-card"><span class="label">Nuevos últimas 24h</span><span class="value">' + (t.newLast24h || 0) + '</span></div>';
-    html += '  <div class="stat-card"><span class="label">Nuevos en el rango</span><span class="value">' + (t.newInRange || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Con app instalada</span><span class="value">' + (t.usersWithApp || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Activos en app · 24h</span><span class="value">' + (t.activeWithAppLast24h || t.activeLast24h || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Activos en app · 7d</span><span class="value">' + (t.activeWithAppLast7d || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Activos en app · 30d</span><span class="value">' + (t.activeWithAppLast30d || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Nuevas instalaciones · 24h</span><span class="value">' + (t.newLast24h || 0) + '</span></div>';
     html += '</div>';
 
     // Serie por día — orden descendente (más reciente arriba)
     if (series.length === 0) {
         html += '<div class="empty-state">Sin datos en el rango.</div>';
     } else {
-        html += '<h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:18px 0 10px;">Ingresos por día</h3>';
-        html += '<table class="report-table"><thead><tr><th>Día</th><th>Usuarios nuevos</th><th>Usuarios activos (último login ese día)</th></tr></thead><tbody>';
+        html += '<h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:18px 0 10px;">Actividad con la app por día</h3>';
+        html += '<div style="color:#aaa;font-size:11px;margin-bottom:8px;">Cada usuario aparece en el día de su <b>última</b> sesión en la PWA. "Nuevas instalaciones" = users que se registraron e instalaron la PWA ese día.</div>';
+        html += '<table class="report-table"><thead><tr><th>Día</th><th>Nuevas instalaciones</th><th>Activos en app (última sesión ese día)</th></tr></thead><tbody>';
         for (let i = series.length - 1; i >= 0; i--) {
             const row = series[i];
             html += '<tr>';

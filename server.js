@@ -15316,7 +15316,13 @@ app.get('/api/admin/reports/refunds', authMiddleware, adminMiddleware, async (re
 // ============================================
 // REPORTES - INGRESOS DE USUARIOS POR DÍA
 // GET /api/admin/reports/logins?days=30
-// Devuelve: usuarios nuevos por día (createdAt), activos en últimas 24h y total.
+// Reescrito para medir ACTIVIDAD REAL CON LA PWA (no logins en browser):
+//   - "activos con app" = users con PWA instalada (fcmTokenContext='standalone'
+//     o algún fcmTokens[].context='standalone') Y PlayerStats.lastSeenApp
+//     dentro del rango. El touch de lastSeenApp pasa en cada authed request
+//     del user (throttled 1/min), así que refleja uso real de la app.
+//   - El nombre de la ruta sigue siendo /reports/logins por compatibilidad,
+//     pero las métricas que devuelve ahora son "activos con app".
 // ============================================
 app.get('/api/admin/reports/logins', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -15327,33 +15333,60 @@ app.get('/api/admin/reports/logins', authMiddleware, adminMiddleware, async (req
     const endUTC = new Date();
     const startUTC = new Date(endUTC.getTime() - days * DAY_MS);
 
-    // Usuarios creados en el rango
-    const newUsers = await User.find(
-      { createdAt: { $gte: startUTC, $lte: endUTC } },
-      { username: 1, createdAt: 1, lastLogin: 1, _id: 0 }
+    // 1) Set de usernames con PWA standalone instalada.
+    //    Acepta tanto el campo legacy fcmTokenContext como el array fcmTokens[].
+    const appUsers = await User.find(
+      {
+        $or: [
+          { fcmTokenContext: 'standalone' },
+          { 'fcmTokens.context': 'standalone' }
+        ]
+      },
+      { username: 1, createdAt: 1, _id: 0 }
     ).lean();
-
-    // Agrupar por día (ART)
-    const perDayNew = {};
-    const perDayActive = {};
-    for (const u of newUsers) {
-      const localMs = new Date(u.createdAt).getTime() - ART_DAY_START_OFFSET_MS;
-      const dayKey = new Date(localMs).toISOString().slice(0, 10);
-      perDayNew[dayKey] = (perDayNew[dayKey] || 0) + 1;
+    const appUsernamesLower = new Set();
+    const appUsernamesByLower = new Map(); // lowercase → original
+    for (const u of appUsers) {
+      const lo = String(u.username || '').toLowerCase();
+      if (!lo) continue;
+      appUsernamesLower.add(lo);
+      appUsernamesByLower.set(lo, u.username);
     }
 
-    // Usuarios con lastLogin reciente, agrupados por día (último ingreso de cada uno)
-    const recentlyActive = await User.find(
-      { lastLogin: { $gte: startUTC, $lte: endUTC } },
-      { username: 1, lastLogin: 1, _id: 0 }
-    ).lean();
-    for (const u of recentlyActive) {
-      const localMs = new Date(u.lastLogin).getTime() - ART_DAY_START_OFFSET_MS;
+    // 2) PlayerStats con lastSeenApp en el rango, filtrado a app users.
+    //    lastSeenApp tiene índice, así que el match es eficiente.
+    const recentSeen = appUsernamesLower.size > 0 ? await PlayerStats.find(
+      {
+        username: { $in: Array.from(appUsernamesLower) },
+        lastSeenApp: { $gte: startUTC, $lte: endUTC }
+      },
+      { username: 1, lastSeenApp: 1, _id: 0 }
+    ).lean() : [];
+
+    // 3) Agrupar por día (ART) — cuántos users tuvieron su lastSeenApp ese día.
+    //    Nota: lastSeenApp es el ÚLTIMO timestamp, así que un user que usó
+    //    la app ayer y hoy solo aparece en hoy. La serie refleja "usuarios
+    //    cuya última visita cae en ese día".
+    const perDayActive = {};
+    for (const ps of recentSeen) {
+      if (!ps.lastSeenApp) continue;
+      const localMs = new Date(ps.lastSeenApp).getTime() - ART_DAY_START_OFFSET_MS;
       const dayKey = new Date(localMs).toISOString().slice(0, 10);
       perDayActive[dayKey] = (perDayActive[dayKey] || 0) + 1;
     }
 
-    // Construir serie con todos los días del rango (relleno cero)
+    // 4) Nuevos installs por día — users con PWA cuyo createdAt cae en rango.
+    const perDayNew = {};
+    for (const u of appUsers) {
+      if (!u.createdAt) continue;
+      const ct = new Date(u.createdAt).getTime();
+      if (ct < startUTC.getTime() || ct > endUTC.getTime()) continue;
+      const localMs = ct - ART_DAY_START_OFFSET_MS;
+      const dayKey = new Date(localMs).toISOString().slice(0, 10);
+      perDayNew[dayKey] = (perDayNew[dayKey] || 0) + 1;
+    }
+
+    // 5) Serie diaria (relleno cero).
     const series = [];
     for (let i = 0; i < days; i++) {
       const dt = new Date(endUTC.getTime() - (days - 1 - i) * DAY_MS);
@@ -15366,20 +15399,42 @@ app.get('/api/admin/reports/logins', authMiddleware, adminMiddleware, async (req
       });
     }
 
-    // Totales
+    // 6) Totales agregados.
     const totalUsers = await User.countDocuments();
-    const last24hWindow = new Date(Date.now() - DAY_MS);
-    const activeLast24h = await User.countDocuments({ lastLogin: { $gte: last24hWindow } });
-    const newLast24h = await User.countDocuments({ createdAt: { $gte: last24hWindow } });
+    const usersWithApp = appUsernamesLower.size;
+
+    const last24hCutoff = new Date(Date.now() - DAY_MS);
+    const last7dCutoff = new Date(Date.now() - 7 * DAY_MS);
+    const last30dCutoff = new Date(Date.now() - 30 * DAY_MS);
+
+    let activeWithAppLast24h = 0;
+    let activeWithAppLast7d = 0;
+    let activeWithAppLast30d = 0;
+    if (appUsernamesLower.size > 0) {
+      const usernameList = Array.from(appUsernamesLower);
+      [activeWithAppLast24h, activeWithAppLast7d, activeWithAppLast30d] = await Promise.all([
+        PlayerStats.countDocuments({ username: { $in: usernameList }, lastSeenApp: { $gte: last24hCutoff } }),
+        PlayerStats.countDocuments({ username: { $in: usernameList }, lastSeenApp: { $gte: last7dCutoff } }),
+        PlayerStats.countDocuments({ username: { $in: usernameList }, lastSeenApp: { $gte: last30dCutoff } })
+      ]);
+    }
+    const newLast24h = appUsers.filter(u => u.createdAt && new Date(u.createdAt) >= last24hCutoff).length;
 
     res.json({
       from: startUTC.toISOString(),
       to: endUTC.toISOString(),
+      metric: 'app_activity', // hint a la UI: medimos PWA standalone, no logins
       totals: {
         totalUsers,
-        activeLast24h,
+        usersWithApp,
+        // Backwards-compat: "activeLast24h" / "newLast24h" siguen viniendo
+        // pero ahora representan "activos con PWA / instalaciones de PWA".
+        activeLast24h: activeWithAppLast24h,
+        activeWithAppLast24h,
+        activeWithAppLast7d,
+        activeWithAppLast30d,
         newLast24h,
-        newInRange: newUsers.length
+        newInRange: Object.values(perDayNew).reduce((a, b) => a + b, 0)
       },
       series
     });
