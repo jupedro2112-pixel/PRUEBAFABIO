@@ -419,7 +419,12 @@ VIP.reviews = (function () {
             html += '<div style="color:#aaa;font-size:11.5px;text-align:center;padding:6px;">Todavía nadie escribió un comentario con texto.</div>';
         }
         if (starsOnly.length > 0) {
-            html += '<div class="reviews-stars-only-divider">⭐ Solo estrellas (' + starsOnly.length + ')</div>';
+            // Count real desde el server (data.starsOnlyTotal). Si no vino,
+            // fallback al length local del feed actual (legacy).
+            const starsOnlyCount = (data && Number.isFinite(data.starsOnlyTotal))
+                ? data.starsOnlyTotal
+                : starsOnly.length;
+            html += '<div class="reviews-stars-only-divider">⭐ Solo estrellas (' + starsOnlyCount.toLocaleString('es-AR') + ')</div>';
             html += '<div class="reviews-stars-only-grid">' + starsOnly.map(renderStarsOnly).join('') + '</div>';
         }
         list.innerHTML = html;

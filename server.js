@@ -12107,7 +12107,21 @@ app.get('/api/reviews/feed', authMiddleware, async (req, res) => {
             sumStars: { $sum: '$stars' },
             bueno:   { $sum: { $cond: [{ $gte: ['$stars', 4] }, 1, 0] } },
             regular: { $sum: { $cond: [{ $eq:  ['$stars', 3] }, 1, 0] } },
-            malo:    { $sum: { $cond: [{ $lte: ['$stars', 2] }, 1, 0] } }
+            malo:    { $sum: { $cond: [{ $lte: ['$stars', 2] }, 1, 0] } },
+            // "Solo estrellas" = sin comentario o con comentario default "N estrellas".
+            starsOnly: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: [{ $ifNull: ['$comment', ''] }, ''] },
+                      { $regexMatch: { input: { $ifNull: ['$comment', ''] }, regex: /^[1-5] estrellas$/ } }
+                    ]
+                  },
+                  1, 0
+                ]
+              }
+            }
           }
         }
       ]),
@@ -12116,17 +12130,18 @@ app.get('/api/reviews/feed', authMiddleware, async (req, res) => {
         .limit(limit)
         .lean()
     ]);
-    const stats = aggRes[0] || { total: 0, sumStars: 0, bueno: 0, regular: 0, malo: 0 };
+    const stats = aggRes[0] || { total: 0, sumStars: 0, bueno: 0, regular: 0, malo: 0, starsOnly: 0 };
     const total = stats.total || 0;
     const avgStars = total > 0 ? (stats.sumStars / total) : 0;
     const counts = { bueno: stats.bueno || 0, regular: stats.regular || 0, malo: stats.malo || 0 };
+    const starsOnlyTotal = stats.starsOnly || 0;
     const list = items.map(r => ({
       stars: r.stars,
       comment: r.comment || '',
       maskedUsername: _maskUsername(r.username),
       updatedAt: r.updatedAt
     }));
-    res.json({ total, avgStars, counts, items: list });
+    res.json({ total, avgStars, counts, starsOnlyTotal, items: list });
   } catch (err) {
     logger.error(`GET /api/reviews/feed: ${err.message}`);
     res.status(500).json({ error: err.message });
