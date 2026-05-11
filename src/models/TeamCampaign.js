@@ -63,6 +63,12 @@ const teamCampaignSchema = new mongoose.Schema({
   requireSurveyAnswered: { type: Boolean, default: true }, // solo users con notifPreference seteado
   requireActiveDays: { type: Number, default: null, min: 0, max: 365 }, // últimos N días con lastSeenApp
 
+  // Usernames a excluir explícitamente de esta campaña al disparar. Se usa
+  // por la auto-estrategia para sacar de los regalos a los "regalo-hunters"
+  // detectados (users que reclaman pero no cargan). Snapshot al commit, así
+  // queda fija para el mes aunque la actividad del user cambie después.
+  excludeUsernames: { type: [String], default: [] },
+
   // Estado.
   isActive: { type: Boolean, default: false, index: true },
   lastFiredOnDate: { type: String, default: null }, // 'YYYY-MM-DD' del último disparo
