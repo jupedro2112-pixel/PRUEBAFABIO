@@ -18964,6 +18964,62 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '<div style="background:rgba(0,0,0,0.25);border-radius:8px;padding:10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Días restantes</div><div style="color:#fff;font-weight:900;font-size:24px;">' + (d.remainingDaysCount || 0) + '</div></div>';
     inner += '</div>';
 
+    // ============ DINERO POTENCIAL — SECCIÓN FINANCIERA ============
+    const money = sum.money || {};
+    inner += '<div style="background:linear-gradient(135deg,rgba(255,215,0,0.10),rgba(255,170,0,0.05));border:1px solid rgba(255,215,0,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    inner += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
+    inner += '    <div style="color:#ffd700;font-weight:900;font-size:14px;text-transform:uppercase;letter-spacing:1px;">💰 Plata a regalar (worst case)</div>';
+    inner += '    <div style="color:#bbb;font-size:11px;">Esto es lo MÁXIMO que se podría regalar si TODOS reclaman. En la práctica suele ser 20-40%.</div>';
+    inner += '  </div>';
+
+    // Total grande.
+    inner += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:10px;">';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;border-left:3px solid #ffd700;">';
+    inner += '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Total máximo a regalar</div>';
+    inner += '  <div style="color:#ffd700;font-weight:900;font-size:24px;">$' + fmt(money.regalosMaxTotal || 0) + '</div>';
+    inner += '  <div style="color:#888;font-size:10px;">en ' + (money.regalosCampaignCount || 0) + ' campañas de regalo</div>';
+    inner += '</div>';
+    // Proyecciones realistas.
+    const claim20 = Math.round((money.regalosMaxTotal || 0) * 0.20);
+    const claim40 = Math.round((money.regalosMaxTotal || 0) * 0.40);
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;border-left:3px solid #66ff66;">';
+    inner += '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Si reclama el 20%</div>';
+    inner += '  <div style="color:#66ff66;font-weight:900;font-size:20px;">$' + fmt(claim20) + '</div>';
+    inner += '  <div style="color:#888;font-size:10px;">escenario probable</div>';
+    inner += '</div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;border-left:3px solid #ffaa44;">';
+    inner += '  <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Si reclama el 40%</div>';
+    inner += '  <div style="color:#ffaa44;font-weight:900;font-size:20px;">$' + fmt(claim40) + '</div>';
+    inner += '  <div style="color:#888;font-size:10px;">escenario optimista</div>';
+    inner += '</div>';
+    inner += '</div>';
+
+    // Plata por tier.
+    inner += '<div style="margin-bottom:8px;">';
+    inner += '  <div style="color:#ffd700;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Plata máxima por tier</div>';
+    inner += '  <div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    const byTierMoney = money.byTierMoney || {};
+    inner += '<span style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🟢 Suave: <strong>$' + fmt(byTierMoney.suave || 0) + '</strong></span>';
+    inner += '<span style="background:rgba(255,210,68,0.10);border:1px solid rgba(255,210,68,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🟡 Normal: <strong>$' + fmt(byTierMoney.normal || 0) + '</strong></span>';
+    inner += '<span style="background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🔴 Activo: <strong>$' + fmt(byTierMoney.activo || 0) + '</strong></span>';
+    inner += '  </div>';
+    inner += '</div>';
+
+    // Plata por team/línea (top).
+    const moneyByTL = Object.entries(money.byTeamLineMoney || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    if (moneyByTL.length > 0) {
+        inner += '<div>';
+        inner += '  <div style="color:#ffd700;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Plata máxima por equipo/línea (top 10)</div>';
+        inner += '  <div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:6px;max-height:200px;overflow-y:auto;">';
+        for (const [tl, $] of moneyByTL) {
+            inner += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;"><span>' + escapeHtml(tl) + '</span><strong style="color:#ffd700;">$' + fmt($) + '</strong></div>';
+        }
+        inner += '  </div>';
+        inner += '</div>';
+    }
+    inner += '</div>';
+    // ============ FIN SECCIÓN FINANCIERA ============
+
     // Distribución por tier.
     inner += '<div style="margin-bottom:10px;">';
     inner += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por tier</div>';

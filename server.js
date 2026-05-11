@@ -12600,7 +12600,15 @@ async function _autoStrategyGenerate({ commit, createdBy }) {
     byDay: {},
     byTier: { suave: 0, normal: 0, activo: 0 },
     byCategory: { bonos: 0, juegos: 0, regalos: 0 },
-    byTeamLine: {}
+    byTeamLine: {},
+    // Costos $ potenciales (worst case: si todos reclaman)
+    money: {
+      regalosMaxTotal: 0,           // suma de (giveawayAmount × audienceCount) de todos los drafts de regalo
+      regalosCampaignCount: 0,
+      avgGiveawayAmount: 0,
+      byTeamLineMoney: {},          // dinero potencial por equipo/línea
+      byTierMoney: { suave: 0, normal: 0, activo: 0 }
+    }
   };
   for (const d of drafts) {
     summary.byDay[d.specificDate] = (summary.byDay[d.specificDate] || 0) + 1;
@@ -12608,7 +12616,19 @@ async function _autoStrategyGenerate({ commit, createdBy }) {
     summary.byCategory[d.category] = (summary.byCategory[d.category] || 0) + 1;
     const key = d.teamFilter + ' · ' + d.lineFilter;
     summary.byTeamLine[key] = (summary.byTeamLine[key] || 0) + 1;
+    // Costos en plata
+    if (d.category === 'regalos' && d.giveawayAmount) {
+      const audience = d._meta?.audienceCount || 0;
+      const potentialCost = d.giveawayAmount * audience;
+      summary.money.regalosMaxTotal += potentialCost;
+      summary.money.regalosCampaignCount++;
+      summary.money.byTeamLineMoney[key] = (summary.money.byTeamLineMoney[key] || 0) + potentialCost;
+      summary.money.byTierMoney[d.tierFilter] = (summary.money.byTierMoney[d.tierFilter] || 0) + potentialCost;
+    }
   }
+  summary.money.avgGiveawayAmount = summary.money.regalosCampaignCount > 0
+    ? Math.round(summary.money.regalosMaxTotal / Math.max(1, summary.totalSlotsImpacted))
+    : 0;
 
   if (commit) {
     // Borrar campañas auto-strategy del mes actual antes de crear las nuevas.
