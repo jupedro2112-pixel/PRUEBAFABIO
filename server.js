@@ -65,6 +65,7 @@ const {
   TeamCampaign,
   JugayganaImport,
   DailyPlayerStats,
+  DailyAppOpen,
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,
@@ -1316,25 +1317,44 @@ const authMiddleware = async (req, res, next) => {
 
     req.user = decoded;
 
-    // Touch lastSeenApp en PlayerStats (fire-and-forget, no bloquea request).
-    // Solo para roles de jugador — los admins entrando al panel NO cuentan como
-    // actividad de usuario. Throttled a 1 update por minuto por user para no
-    // martillar Mongo en una sesion activa con muchas requests.
+    // Touch lastSeenApp en PlayerStats + upsert en DailyAppOpen del día actual.
+    // Fire-and-forget, no bloquea request. Solo para roles de jugador — los
+    // admins entrando al panel NO cuentan como actividad de usuario.
+    // Throttled a 1 update por minuto por user para no martillar Mongo en
+    // una sesion activa con muchas requests.
+    //
+    // DailyAppOpen guarda 1 row por (user, día ART). Cuando el reloj cruza
+    // al día siguiente, el row anterior queda inmutable — base perfecta
+    // para gráficos históricos de DAU sin perder data.
     const isPlayerRole = !['admin', 'depositor', 'withdrawer'].includes(user.role || 'player');
     if (isPlayerRole && user.username) {
       const now = Date.now();
       const lastTouchKey = '_lastSeenTouch_' + user.username.toLowerCase();
       if (!global[lastTouchKey] || (now - global[lastTouchKey]) > 60_000) {
         global[lastTouchKey] = now;
+        const unameLower = user.username.toLowerCase();
+        const nowDate = new Date();
+        // dayKey ART: restamos 3h al UTC y tomamos YYYY-MM-DD.
+        const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+        const dayKey = new Date(now - ART_OFFSET_MS).toISOString().slice(0, 10);
         // No await — fire and forget.
         PlayerStats.updateOne(
-          { username: user.username.toLowerCase() },
+          { username: unameLower },
           {
-            $set: { lastSeenApp: new Date() },
-            $setOnInsert: { username: user.username.toLowerCase(), userId: user.id || null }
+            $set: { lastSeenApp: nowDate },
+            $setOnInsert: { username: unameLower, userId: user.id || null }
           },
           { upsert: true }
         ).catch((e) => logger.warn(`[lastSeenApp] failed for ${user.username}: ${e.message}`));
+        DailyAppOpen.updateOne(
+          { username: unameLower, dayKey },
+          {
+            $inc: { opens: 1 },
+            $set: { lastSeenAt: nowDate },
+            $setOnInsert: { username: unameLower, dayKey, firstSeenAt: nowDate }
+          },
+          { upsert: true }
+        ).catch((e) => logger.warn(`[DailyAppOpen] failed for ${user.username}: ${e.message}`));
       }
     }
 
@@ -14119,7 +14139,7 @@ app.get('/api/complaints/mine', authMiddleware, async (req, res) => {
   try {
     const list = await Complaint.find(
       { userId: req.user.userId },
-      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, _id: 0 }
+      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, adminResponse: 1, respondedAt: 1, respondedBy: 1, _id: 0 }
     ).sort({ createdAt: -1 }).limit(50).lean();
     res.json({ complaints: list });
   } catch (err) {
@@ -14159,8 +14179,18 @@ app.get('/api/admin/complaints', authMiddleware, adminMiddleware, async (req, re
   }
 });
 
-// PUT /api/admin/complaints/:id — actualiza status y/o notas del admin.
-// Marca readAt la primera vez que el admin la abre. resolvedAt cuando pasa a resolved.
+// PUT /api/admin/complaints/:id — actualiza status, notas del admin, y/o
+// la respuesta pública para el usuario.
+//
+// Body opcional:
+//   status: 'pending' | 'reviewed' | 'resolved'
+//   adminNotes: string (interno, solo admins)
+//   adminResponse: string (la respuesta que ve el dueño de la queja)
+//   notifyUser: bool — si true Y hay adminResponse, manda push al user.
+//                       Si false, solo guarda la respuesta sin notificar.
+//
+// Si notifyUser es true y existen tokens FCM standalone del user, el push
+// abre la PWA con `?complaint=<id>` para que vea la respuesta directo.
 app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
@@ -14177,14 +14207,71 @@ app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async
     if (b.adminNotes !== undefined) {
       $set.adminNotes = String(b.adminNotes || '').slice(0, 2000);
     }
+    // Respuesta pública: si llega, la guardamos con metadata.
+    let hasNewResponse = false;
+    if (b.adminResponse !== undefined && String(b.adminResponse || '').trim()) {
+      const respText = String(b.adminResponse).trim().slice(0, 2000);
+      $set.adminResponse = respText;
+      $set.respondedBy = adminUser;
+      $set.respondedAt = new Date();
+      hasNewResponse = true;
+    }
     const $addToSet = { readBy: adminUser };
     const update = { $set, $addToSet };
-    // Si no hay readAt todavía, setearlo ahora.
-    const existing = await Complaint.findOne({ id }, { readAt: 1, _id: 0 }).lean();
+    const existing = await Complaint.findOne({ id }, { readAt: 1, userId: 1, username: 1, subject: 1, _id: 0 }).lean();
     if (!existing) return res.status(404).json({ error: 'No encontrada' });
     if (!existing.readAt) update.$set.readAt = new Date();
+
+    // Si el admin marcó notifyUser y hay respuesta, mandamos push DESPUÉS
+    // del update (para no bloquear la confirmación del admin).
+    const shouldNotify = !!(hasNewResponse && b.notifyUser);
+    if (shouldNotify) {
+      update.$set.userNotifiedAt = new Date();
+    }
+
     const doc = await Complaint.findOneAndUpdate({ id }, update, { new: true }).lean();
-    res.json({ success: true, complaint: doc });
+
+    // Push fire-and-forget — si falla, el admin ya vió "success: true" pero
+    // logueamos el error. La respuesta queda guardada igual.
+    if (shouldNotify && existing.userId) {
+      (async () => {
+        try {
+          const targetUser = await User.findOne(
+            { id: existing.userId },
+            { fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, username: 1, _id: 0 }
+          ).lean();
+          if (!targetUser) return;
+          // Solo push si tiene PWA standalone con notifs activas.
+          const tokens = Array.isArray(targetUser.fcmTokens) ? targetUser.fcmTokens : [];
+          const standaloneTokens = tokens
+            .filter(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token)
+            .map(t => t.token);
+          if (standaloneTokens.length === 0) {
+            logger.info(`[complaints] notify skipped — sin tokens standalone para ${existing.username} (queja ${id})`);
+            return;
+          }
+          const title = '📩 Respondieron tu queja';
+          const subj = (existing.subject || '').trim();
+          const body = subj
+            ? `Respuesta a: "${subj.slice(0, 60)}". Tocá para verla.`
+            : 'Tu queja tiene respuesta. Tocá para verla.';
+          // Click action: abre la PWA con un query param que el front
+          // detecta y abre directo el modal de "Mis quejas".
+          const clickUrl = '/?openComplaint=' + encodeURIComponent(id);
+          const { sendNotificationToMultiple } = require('./src/services/notificationService');
+          await sendNotificationToMultiple(standaloneTokens, title, body, {
+            type: 'complaint_response',
+            complaintId: id,
+            url: clickUrl
+          });
+          logger.info(`[complaints] push enviado a ${existing.username} (queja ${id}, ${standaloneTokens.length} tokens)`);
+        } catch (e) {
+          logger.error(`[complaints] push failed for ${id}: ${e.message}`);
+        }
+      })();
+    }
+
+    res.json({ success: true, complaint: doc, notified: shouldNotify });
   } catch (err) {
     logger.error(`PUT /api/admin/complaints/:id: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
@@ -15531,6 +15618,89 @@ app.get('/api/admin/reports/equipment', authMiddleware, adminMiddleware, async (
     });
   } catch (error) {
     logger.error(`/api/admin/reports/equipment error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// GET /api/admin/reports/daily-app-opens?days=30
+// Cierre diario de actividad en la PWA — cuántos usuarios distintos
+// abrieron la app cada día. Datos vienen de DailyAppOpen (1 row por
+// (user, día), upserteado en authMiddleware). Cada día cierra cuando
+// el reloj cruza la medianoche ART y nunca se modifica después.
+// ============================================
+app.get('/api/admin/reports/daily-app-opens', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const DAY_MS = 24 * 60 * 60 * 1000;
+
+    // Build dayKey range (últimos N días, incluye hoy parcial).
+    const todayKey = new Date(Date.now() - ART_OFFSET_MS).toISOString().slice(0, 10);
+    const startKey = new Date(Date.now() - ART_OFFSET_MS - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+
+    // Agregación: distinct usernames por día + suma de opens.
+    const rows = await DailyAppOpen.aggregate([
+      { $match: { dayKey: { $gte: startKey, $lte: todayKey } } },
+      { $group: {
+          _id: '$dayKey',
+          uniqueUsers: { $sum: 1 },
+          totalOpens: { $sum: '$opens' }
+      } },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const perDay = new Map();
+    for (const r of rows) {
+      perDay.set(r._id, { uniqueUsers: r.uniqueUsers, totalOpens: r.totalOpens });
+    }
+
+    // Relleno cero para días sin actividad — el gráfico no se rompe.
+    const series = [];
+    for (let i = 0; i < days; i++) {
+      const dt = new Date(Date.now() - ART_OFFSET_MS - (days - 1 - i) * DAY_MS);
+      const key = dt.toISOString().slice(0, 10);
+      const data = perDay.get(key) || { uniqueUsers: 0, totalOpens: 0 };
+      series.push({ day: key, uniqueUsers: data.uniqueUsers, totalOpens: data.totalOpens });
+    }
+
+    // Totales rápidos.
+    const todayRow = perDay.get(todayKey) || { uniqueUsers: 0, totalOpens: 0 };
+    const yesterdayKey = new Date(Date.now() - ART_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
+    const yesterdayRow = perDay.get(yesterdayKey) || { uniqueUsers: 0, totalOpens: 0 };
+
+    let last7dUsers = 0, last30dUsers = 0;
+    if (series.length > 0) {
+      const last7 = series.slice(-7);
+      const last30 = series.slice(-30);
+      // Estos son SUMA de "usuarios distintos por día" — no es DAU 7d real
+      // (un mismo user puede estar varios días). Para "MAU/WAU verdadero"
+      // se necesita otra agregación. Lo aclaro en la UI.
+      last7dUsers = last7.reduce((s, d) => s + d.uniqueUsers, 0);
+      last30dUsers = last30.reduce((s, d) => s + d.uniqueUsers, 0);
+    }
+
+    // WAU/MAU reales: distinct usernames en la ventana.
+    const last7dCutoff = new Date(Date.now() - ART_OFFSET_MS - 7 * DAY_MS).toISOString().slice(0, 10);
+    const last30dCutoff = new Date(Date.now() - ART_OFFSET_MS - 30 * DAY_MS).toISOString().slice(0, 10);
+    const [wau, mau] = await Promise.all([
+      DailyAppOpen.distinct('username', { dayKey: { $gte: last7dCutoff, $lte: todayKey } }),
+      DailyAppOpen.distinct('username', { dayKey: { $gte: last30dCutoff, $lte: todayKey } })
+    ]);
+
+    res.json({
+      todayKey,
+      totals: {
+        dauToday: todayRow.uniqueUsers,
+        dauYesterday: yesterdayRow.uniqueUsers,
+        opensToday: todayRow.totalOpens,
+        wau: wau.length,   // distinct users últimos 7 días
+        mau: mau.length    // distinct users últimos 30 días
+      },
+      series
+    });
+  } catch (error) {
+    logger.error(`/api/admin/reports/daily-app-opens error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

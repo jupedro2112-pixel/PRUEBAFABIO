@@ -28,6 +28,7 @@ const RecoveryPush = require('./RecoveryPush');
 const TeamCampaign = require('./TeamCampaign');
 const JugayganaImport = require('./JugayganaImport');
 const DailyPlayerStats = require('./DailyPlayerStats');
+const DailyAppOpen = require('./DailyAppOpen');
 const UserLineLookup = require('./UserLineLookup');
 const AppNotifSnapshot = require('./AppNotifSnapshot');
 const NotificationRule = require('./NotificationRule');
@@ -454,6 +455,7 @@ module.exports = {
   TeamCampaign,
   JugayganaImport,
   DailyPlayerStats,
+  DailyAppOpen,
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,

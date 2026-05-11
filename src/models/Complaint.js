@@ -41,7 +41,19 @@ const complaintSchema = new mongoose.Schema({
   readBy: { type: [String], default: [] },              // usernames de admins que la vieron
   readAt: { type: Date, default: null },                // primera lectura
   resolvedBy: { type: String, default: null },
-  resolvedAt: { type: Date, default: null }
+  resolvedAt: { type: Date, default: null },
+
+  // Respuesta del admin para el usuario (visible en "Mis quejas" en la PWA).
+  // adminNotes es interno (solo admins); adminResponse es la respuesta
+  // pública que ve el dueño de la queja.
+  adminResponse: { type: String, default: '', maxlength: 2000 },
+  respondedBy: { type: String, default: null },
+  respondedAt: { type: Date, default: null },
+
+  // Cuándo se le mandó el push al user avisándole que hay respuesta.
+  // Sirve para evitar mandar dos pushes si el admin edita la respuesta.
+  // Si el admin tilda "responder sin notificar", este campo queda null.
+  userNotifiedAt: { type: Date, default: null }
 }, {
   collection: 'complaints',
   timestamps: true,

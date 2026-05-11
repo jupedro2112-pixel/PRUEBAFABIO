@@ -684,6 +684,27 @@
                     Cuando un usuario desinstala la PWA, el navegador NO le avisa al server: el token FCM queda muerto en silencio.
                     Cada 24h el sistema lo detecta automáticamente, pero podés tocar <strong>🔍 Revalidar tokens</strong> para forzar la validación ahora.
                 </div>
+
+                <!-- Cierre diario de actividad en la PWA — se construye desde
+                     DailyAppOpen (1 row por (user, día), upsert en cada touch).
+                     Cada día cierra solo cuando cruza la medianoche ART. -->
+                <div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:14px;margin-bottom:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <h3 style="margin:0;color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;">📊 Cierre diario de actividad</h3>
+                        <select id="dailyOpensDays" onchange="loadDailyAppOpens()" style="background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,0.20);padding:4px 8px;border-radius:6px;font-size:12px;">
+                            <option value="7">Últimos 7 días</option>
+                            <option value="14">Últimos 14 días</option>
+                            <option value="30" selected>Últimos 30 días</option>
+                            <option value="60">Últimos 60 días</option>
+                            <option value="90">Últimos 90 días</option>
+                        </select>
+                    </div>
+                    <div style="color:#aaa;font-size:11px;margin-bottom:10px;">Cada usuario que abre la app suma al día actual. Cuando cruza la medianoche (hora ARG), el día queda cerrado y no se vuelve a modificar.</div>
+                    <div id="dailyAppOpensContent" class="report-content">
+                        <div class="empty-state">⏳ Cargando…</div>
+                    </div>
+                </div>
+
                 <div id="equipmentReportContent" class="report-content">
                     <div class="empty-state">⏳ Cargando…</div>
                 </div>

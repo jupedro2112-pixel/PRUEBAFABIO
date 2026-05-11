@@ -437,6 +437,7 @@ function showSection(sectionKey) {
     } else if (sectionKey === 'ingresos') {
         loadIngresosReport();
     } else if (sectionKey === 'equipamiento') {
+        loadDailyAppOpens();
         loadEquipmentReport();
     } else if (sectionKey === 'welcomebonus') {
         loadWelcomeBonusReport();
@@ -1036,6 +1037,65 @@ function renderIngresosReport(container, data) {
             html += '  <td>' + escapeHtml(row.day) + '</td>';
             html += '  <td>' + row.newUsers + '</td>';
             html += '  <td>' + row.activeUsers + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+    }
+
+    container.innerHTML = html;
+}
+
+// ============================================
+// CIERRE DIARIO DE ACTIVIDAD EN LA APP
+// Tabla histórica + KPIs (DAU/WAU/MAU). La fuente es DailyAppOpen,
+// que se llena en cada request authed (throttled 1/min por user).
+// ============================================
+async function loadDailyAppOpens() {
+    const container = document.getElementById('dailyAppOpensContent');
+    if (!container) return;
+    container.innerHTML = '<div class="empty-state">⏳ Cargando…</div>';
+    const daysSel = document.getElementById('dailyOpensDays');
+    const days = (daysSel && daysSel.value) || 30;
+    try {
+        const r = await authFetch('/api/admin/reports/daily-app-opens?days=' + encodeURIComponent(days));
+        if (!r.ok) {
+            container.innerHTML = '<div class="empty-state">❌ Error cargando cierre diario</div>';
+            return;
+        }
+        const data = await r.json();
+        renderDailyAppOpens(container, data);
+    } catch (err) {
+        console.error('loadDailyAppOpens error:', err);
+        container.innerHTML = '<div class="empty-state">❌ Error de conexión</div>';
+    }
+}
+
+function renderDailyAppOpens(container, data) {
+    const t = data.totals || {};
+    const series = data.series || [];
+    let html = '';
+
+    // KPIs principales (DAU hoy, ayer, WAU, MAU).
+    html += '<div class="report-summary">';
+    html += '  <div class="stat-card"><span class="label">Activos hoy (DAU)</span><span class="value">' + (t.dauToday || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Activos ayer</span><span class="value">' + (t.dauYesterday || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Activos 7d (WAU)</span><span class="value">' + (t.wau || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Activos 30d (MAU)</span><span class="value">' + (t.mau || 0) + '</span></div>';
+    html += '  <div class="stat-card"><span class="label">Aperturas hoy</span><span class="value">' + (t.opensToday || 0) + '</span></div>';
+    html += '</div>';
+
+    // Tabla histórica — orden descendente (hoy arriba).
+    if (series.length === 0) {
+        html += '<div class="empty-state">Aún no hay actividad registrada. Empieza a contarse cuando el primer usuario abra la app.</div>';
+    } else {
+        html += '<table class="report-table" style="margin-top:12px;"><thead><tr><th>Día</th><th>Usuarios distintos</th><th>Aperturas totales</th></tr></thead><tbody>';
+        for (let i = series.length - 1; i >= 0; i--) {
+            const row = series[i];
+            const isToday = row.day === data.todayKey;
+            html += '<tr' + (isToday ? ' style="background:rgba(212,175,55,0.05);"' : '') + '>';
+            html += '  <td>' + escapeHtml(row.day) + (isToday ? ' <span style="color:#d4af37;font-size:10px;">· hoy (en curso)</span>' : '') + '</td>';
+            html += '  <td>' + row.uniqueUsers + '</td>';
+            html += '  <td>' + row.totalOpens + '</td>';
             html += '</tr>';
         }
         html += '</tbody></table>';
@@ -20836,16 +20896,36 @@ function _complaintShowDetail(id) {
         inner += '</div>';
     }
 
+    // Respuesta previa al user (si ya hay una guardada).
+    if (c.adminResponse) {
+        inner += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+        inner += '<div style="color:#66ff66;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">✅ Respuesta enviada al usuario</div>';
+        inner += '<div style="color:#fff;font-size:13px;line-height:1.5;white-space:pre-wrap;background:rgba(0,0,0,0.30);padding:10px;border-radius:8px;">' + escapeHtml(c.adminResponse) + '</div>';
+        inner += '<div style="color:#aaa;font-size:10.5px;margin-top:6px;">Por <b>' + escapeHtml(c.respondedBy || 'admin') + '</b> · ' + escapeHtml(fmtDate(c.respondedAt));
+        if (c.userNotifiedAt) inner += ' · 🔔 Notificado al user';
+        else inner += ' · ⚪ Sin notificar';
+        inner += '</div>';
+        inner += '</div>';
+    }
+
+    // Respuesta para el usuario (textarea editable). Pre-llenamos con la
+    // respuesta existente para que el admin pueda corregirla y reenviar.
+    inner += '<div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">💬 Respuesta para el usuario (la verá en su queja)</div>';
+    inner += '<textarea id="complaintAdminResponse_' + escapeHtml(c.id) + '" maxlength="2000" rows="4" placeholder="Hola ' + escapeHtml(c.username) + ', revisamos tu caso..." style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:9px 11px;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical;">' + escapeHtml(c.adminResponse || '') + '</textarea>';
+    inner += '</div>';
+
     // Notas internas del admin
     inner += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
     inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">🔒 Notas internas (no las ve el user)</div>';
     inner += '<textarea id="complaintAdminNotes_' + escapeHtml(c.id) + '" maxlength="2000" rows="3" placeholder="Ej: contacté por wa.link, le devolvimos $X, escalado a..." style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:8px;font-size:12px;font-family:inherit;box-sizing:border-box;resize:vertical;">' + escapeHtml(c.adminNotes || '') + '</textarea>';
     inner += '</div>';
 
-    // Acciones — cambiar estado
+    // Acciones — 3 botones: solo vista, responder + notificar + resolver, resolver silencioso.
     inner += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">';
-    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'reviewed\')" style="background:rgba(255,215,0,0.10);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12.5px;">👁 Marcar Vista</button>';
-    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\')" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12.5px;">✓ Marcar Resuelta</button>';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'reviewed\',{respond:false,notify:false})" style="background:rgba(255,215,0,0.10);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12.5px;">👁 Solo vista</button>';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\',{respond:false,notify:false})" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12.5px;" title="Cierra la queja sin avisarle al usuario">🔕 Resuelta sin notificar</button>';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\',{respond:true,notify:true})" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12.5px;" title="Guarda la respuesta + manda push al user + cierra la queja">💬 Responder y notificar</button>';
     inner += '</div>';
     inner += '</div>';
 
@@ -20853,18 +20933,40 @@ function _complaintShowDetail(id) {
     document.body.appendChild(overlay);
 }
 
-async function _complaintUpdate(id, status) {
+async function _complaintUpdate(id, status, opts) {
+    const o = opts || {};
     const notesEl = document.getElementById('complaintAdminNotes_' + id);
+    const respEl  = document.getElementById('complaintAdminResponse_' + id);
     const adminNotes = notesEl ? notesEl.value : '';
+    const respText = respEl ? respEl.value.trim() : '';
+
+    // Si el admin pide "Responder y notificar" pero el textarea está vacío,
+    // no tiene sentido — abortamos con feedback.
+    if (o.respond && !respText) {
+        showToast('Escribí una respuesta para el usuario antes de enviar', 'error');
+        if (respEl) respEl.focus();
+        return;
+    }
+
+    const payload = { status, adminNotes };
+    if (o.respond && respText) {
+        payload.adminResponse = respText;
+        payload.notifyUser = !!o.notify;
+    }
+
     try {
         const r = await authFetch('/api/admin/complaints/' + encodeURIComponent(id), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status, adminNotes })
+            body: JSON.stringify(payload)
         });
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
-        showToast('✅ ' + (status === 'resolved' ? 'Queja resuelta' : 'Queja marcada como vista'), 'success');
+        let msg;
+        if (status === 'resolved' && o.respond && d.notified) msg = '✅ Resuelta + push enviado';
+        else if (status === 'resolved') msg = '✅ Queja resuelta';
+        else msg = '✅ Marcada como vista';
+        showToast(msg, 'success');
         document.getElementById('complaintDetailModal')?.remove();
         loadComplaintsAdmin();
     } catch (e) {

@@ -2860,6 +2860,15 @@
                 <div style="color:#bbb;font-size:13px;line-height:1.5;">En breve nos contactamos con usted.</div>
                 <button type="button" onclick="closeComplaintBookModal()" style="margin-top:14px;background:rgba(212,175,55,0.10);color:#d4af37;border:1px solid rgba(212,175,55,0.40);padding:8px 22px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">Cerrar</button>
             </div>
+
+            <!-- Historial: mis quejas anteriores con respuestas del admin. -->
+            <div id="myComplaintsHistory" style="margin-top:20px;border-top:1px solid rgba(212,175,55,0.20);padding-top:14px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div style="color:#d4af37;font-weight:800;font-size:13px;letter-spacing:0.5px;">📋 Mis quejas anteriores</div>
+                    <div id="myComplaintsBadge" style="display:none;background:#66ff66;color:#000;font-size:10px;font-weight:900;padding:2px 8px;border-radius:10px;">Hay respuestas</div>
+                </div>
+                <div id="myComplaintsList" style="font-size:12.5px;color:#bbb;">⏳ Cargando…</div>
+            </div>
         </div>
     </div>
 
@@ -2892,12 +2901,109 @@
             document.getElementById('complaintErrorMsg').textContent = '';
             clearComplaintImage();
             m.style.display = 'flex';
+            // Cargar historial de quejas anteriores con respuestas del admin.
+            if (typeof window.loadMyComplaintsHistory === 'function') {
+                window.loadMyComplaintsHistory();
+            }
         };
 
         window.closeComplaintBookModal = function() {
             const m = document.getElementById('complaintBookModal');
             if (m) m.style.display = 'none';
         };
+
+        // Carga "Mis quejas anteriores" del backend cuando el modal se abre.
+        // Muestra las respuestas del admin (si las hay) destacadas.
+        // expandComplaintId: si viene, expande directo esa queja (uso desde push).
+        async function loadMyComplaintsHistory(expandComplaintId) {
+            const list = document.getElementById('myComplaintsList');
+            const badge = document.getElementById('myComplaintsBadge');
+            if (!list) return;
+            const token = (typeof localStorage !== 'undefined') ? localStorage.getItem('userToken') : null;
+            if (!token) { list.innerHTML = ''; return; }
+            try {
+                const r = await fetch('/api/complaints/mine', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!r.ok) { list.innerHTML = '<div style="color:#888;font-size:11.5px;">No se pudo cargar el historial.</div>'; return; }
+                const d = await r.json();
+                const items = Array.isArray(d.complaints) ? d.complaints : [];
+                if (items.length === 0) {
+                    list.innerHTML = '<div style="color:#888;font-size:11.5px;">Aún no enviaste ninguna queja.</div>';
+                    if (badge) badge.style.display = 'none';
+                    return;
+                }
+                const esc = (s) => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                const fmt = (d) => { try { return new Date(d).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' }); } catch(_) { return ''; } };
+                const hasUnresolvedResponses = items.some(it => it.adminResponse);
+                if (badge) badge.style.display = hasUnresolvedResponses ? '' : 'none';
+
+                let html = '';
+                for (const it of items) {
+                    const hasResp = !!it.adminResponse;
+                    const isOpen = expandComplaintId && it.id === expandComplaintId;
+                    const statusLabel = it.status === 'resolved' ? '✅ Resuelta' : (it.status === 'reviewed' ? '👁 En revisión' : '⏳ Pendiente');
+                    const statusColor = it.status === 'resolved' ? '#66ff66' : (it.status === 'reviewed' ? '#ffd700' : '#aaa');
+                    const borderColor = hasResp ? 'rgba(102,255,102,0.45)' : 'rgba(212,175,55,0.20)';
+                    html += '<div data-cid="' + esc(it.id) + '" style="background:rgba(0,0,0,0.30);border:1px solid ' + borderColor + ';border-radius:9px;padding:9px 11px;margin-bottom:8px;">';
+                    html += '<div onclick="(function(el){var b=el.parentElement.querySelector(\'.cmpl-body\');if(b)b.style.display=(b.style.display===\'none\'?\'\':\'none\');})(this)" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;cursor:pointer;">';
+                    html += '<div style="flex:1;min-width:0;">';
+                    if (it.subject) html += '<div style="color:#fff;font-weight:700;font-size:12.5px;">' + esc(it.subject) + '</div>';
+                    html += '<div style="color:#888;font-size:10.5px;margin-top:2px;">' + esc(fmt(it.createdAt));
+                    if (hasResp) html += ' · <span style="color:#66ff66;font-weight:800;">📩 Respondida</span>';
+                    html += '</div></div>';
+                    html += '<div style="color:' + statusColor + ';font-size:10.5px;font-weight:700;white-space:nowrap;">' + statusLabel + '</div>';
+                    html += '</div>';
+                    // Body expandible
+                    html += '<div class="cmpl-body" style="display:' + (isOpen ? '' : 'none') + ';margin-top:8px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.10);">';
+                    html += '<div style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Tu queja:</div>';
+                    html += '<div style="color:#ddd;font-size:12px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;">' + esc(it.description || '') + '</div>';
+                    if (hasResp) {
+                        html += '<div style="color:#66ff66;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-top:9px;margin-bottom:3px;">📩 Respuesta de nuestro equipo:</div>';
+                        html += '<div style="color:#fff;font-size:12.5px;line-height:1.5;white-space:pre-wrap;background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.20);padding:9px 11px;border-radius:7px;">' + esc(it.adminResponse) + '</div>';
+                        html += '<div style="color:#888;font-size:10px;margin-top:4px;">' + esc(fmt(it.respondedAt || '')) + '</div>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+                }
+                list.innerHTML = html;
+
+                // Si el modal vino de un push (?openComplaint=ID), scrollea hasta esa card.
+                if (expandComplaintId) {
+                    setTimeout(() => {
+                        const el = list.querySelector('[data-cid="' + CSS.escape(expandComplaintId) + '"]');
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 150);
+                }
+            } catch (e) {
+                list.innerHTML = '<div style="color:#888;font-size:11.5px;">Error cargando el historial.</div>';
+            }
+        }
+        window.loadMyComplaintsHistory = loadMyComplaintsHistory;
+
+        // Detecta ?openComplaint=ID en la URL — viene del push del admin cuando
+        // responde una queja. Abre el modal y expande la queja específica.
+        (function autoOpenFromPush() {
+            try {
+                const url = new URL(window.location.href);
+                const cid = url.searchParams.get('openComplaint');
+                if (!cid) return;
+                // Limpia el query param para que un reload no vuelva a abrir.
+                url.searchParams.delete('openComplaint');
+                window.history.replaceState({}, '', url.toString());
+                // Espera a que el user esté logueado para tener token.
+                const tryOpen = () => {
+                    const t = localStorage.getItem('userToken');
+                    if (!t) { setTimeout(tryOpen, 500); return; }
+                    if (typeof window.openComplaintBookModal === 'function') {
+                        window.openComplaintBookModal();
+                        // Disparar la carga con la queja a expandir.
+                        setTimeout(() => loadMyComplaintsHistory(cid), 100);
+                    }
+                };
+                setTimeout(tryOpen, 1500);
+            } catch (_) { /* ignore */ }
+        })();
 
         // Char counter
         const desc = document.getElementById('complaintDescription');
