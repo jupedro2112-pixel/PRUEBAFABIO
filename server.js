@@ -12651,6 +12651,63 @@ app.post('/api/admin/winback/test-fire-once', authMiddleware, adminMiddleware, a
   }
 });
 
+// =====================================================================
+// LIMPIEZA: cancelar promos y giveaways de pruebas anteriores que pueden
+// haber quedado activos sin scoping (visibles a todos). Mira:
+//   - PROMO_ALERT_KEY (singleton) → si createdBy arranca con 'test-fire:' o
+//     'strategy-month:' o 'admin-scheduled', lo borra.
+//   - MoneyGiveaway con strategySource='manual' y createdBy con esos prefijos
+//     y SIN audienceWhitelist → cancela.
+// =====================================================================
+app.post('/api/admin/cleanup-test-leaks', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const out = { promoSingletonCleared: false, giveawaysCancelled: 0, tierPromosRemoved: 0 };
+
+    // 1) Singleton promo: si vino de test/strategy y NO tiene whitelist, borrar.
+    const promo = await getConfig(PROMO_ALERT_KEY, null);
+    if (promo) {
+      const cb = String(promo.createdBy || '');
+      const looksLikeTest = cb.startsWith('test-fire:') || cb.startsWith('strategy-month:');
+      const noWhitelist = !Array.isArray(promo.audienceWhitelist) || promo.audienceWhitelist.length === 0;
+      if (looksLikeTest && noWhitelist) {
+        await setConfig(PROMO_ALERT_KEY, null);
+        out.promoSingletonCleared = true;
+      }
+    }
+
+    // 2) TIER_PROMOS_KEY: cualquier entrada de test-fire la sacamos.
+    const tier = (await getConfig(TIER_PROMOS_KEY, [])) || [];
+    if (Array.isArray(tier) && tier.length > 0) {
+      const filtered = tier.filter(p => {
+        const cb = String((p && p.createdBy) || '');
+        return !cb.startsWith('test-fire:');
+      });
+      if (filtered.length !== tier.length) {
+        out.tierPromosRemoved = tier.length - filtered.length;
+        await setConfig(TIER_PROMOS_KEY, filtered);
+      }
+    }
+
+    // 3) MoneyGiveaway: cancelar los activos sin whitelist creados por test/strategy.
+    const r = await MoneyGiveaway.updateMany(
+      {
+        status: 'active',
+        $or: [{ audienceWhitelist: null }, { audienceWhitelist: { $size: 0 } }, { audienceWhitelist: { $exists: false } }],
+        createdBy: { $regex: '^(test-fire:|strategy-month:)' }
+      },
+      { $set: { status: 'cancelled' } }
+    );
+    out.giveawaysCancelled = r.modifiedCount || 0;
+
+    logger.info(`[CLEANUP-TEST-LEAKS] ${JSON.stringify(out)} by ${req.user.username}`);
+    res.json({ success: true, ...out });
+  } catch (err) {
+    logger.error(`/api/admin/cleanup-test-leaks: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Test winback para UN user específico (cualquier tier 1/2/3),
 // independiente de sus días sin cargar. Útil para QA: "¿anda el cartel
 // de bono cuando llega el push del tier 3?". Crea promo/giveaway server-side
