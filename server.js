@@ -11825,7 +11825,7 @@ app.post('/api/admin/encuesta/grant-bonus', authMiddleware, adminMiddleware, asy
 // =====================================================================
 app.get('/api/admin/encuesta/timeline', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 500));
+    const limit = Math.max(1, Math.min(10000, parseInt(req.query.limit, 10) || 10000));
     const respondents = await User.find(
       { notifPreference: { $exists: true, $ne: null } },
       { username: 1, notifPreference: 1, notifPreferenceAt: 1, team: 1, fcmToken: 1, fcmTokens: 1, _id: 0 }

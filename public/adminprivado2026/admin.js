@@ -15933,7 +15933,7 @@ async function loadEncuesta() {
         // tienen que matchear.
         const [statsR, timelineR, strategyR] = await Promise.all([
             authFetch('/api/admin/users/notif-preference-stats'),
-            authFetch('/api/admin/encuesta/timeline?limit=500'),
+            authFetch('/api/admin/encuesta/timeline?limit=10000'),
             authFetch('/api/admin/notif-strategy')
         ]);
         const stats = statsR.ok ? await statsR.json() : null;
@@ -15974,7 +15974,7 @@ async function _refreshEncuestaSilent() {
     try {
         const [statsR, timelineR] = await Promise.all([
             authFetch('/api/admin/users/notif-preference-stats'),
-            authFetch('/api/admin/encuesta/timeline?limit=500')
+            authFetch('/api/admin/encuesta/timeline?limit=10000')
         ]);
         if (statsR.ok && timelineR.ok) {
             const stats = await statsR.json();
