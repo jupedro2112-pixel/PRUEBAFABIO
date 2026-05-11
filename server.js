@@ -14784,7 +14784,7 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede crear regalos de plata.' });
     }
-    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId, requireZeroBalance } = req.body || {};
+    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId, requireZeroBalance, targetUsername, audienceWhitelist } = req.body || {};
     const a = Number(amount), b = Number(totalBudget), m = Number(maxClaims), d = Number(durationMinutes);
     if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto por persona inválido' });
     if (!isFinite(b) || b < a) return res.status(400).json({ error: 'Presupuesto total inválido (debe ser >= monto por persona)' });
@@ -14805,13 +14805,54 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
       return res.status(400).json({ error: `Cantidad máxima excede el tope de seguridad (${GIVEAWAY_MAX_CLAIMS})` });
     }
 
-    // Cerrar SOLO giveaways manuales activos previos. Los de estrategia
-    // automática y de reglas aprobadas son intocables — corren en su
-    // propio carril con audienceWhitelist y strategySource distinto.
-    await MoneyGiveaway.updateMany(
-      { status: 'active', $or: [{ strategySource: 'manual' }, { strategySource: null }, { strategySource: { $exists: false } }] },
-      { $set: { status: 'cancelled' } }
-    );
+    // GUARDRAIL: no se permiten regalos generales. Tiene que haber audiencia
+    // explícita — un user específico, una whitelist, o un prefix. Sin esto el
+    // regalo sería visible a TODOS los users que pollen /api/money-giveaway/active y
+    // eso ya causó un bug grave (un test a un user terminó reclamado por otros).
+    const whitelist = [];
+    if (Array.isArray(audienceWhitelist)) {
+      for (const u of audienceWhitelist) {
+        const norm = String(u || '').trim().toLowerCase();
+        if (norm) whitelist.push(norm);
+      }
+    }
+    if (targetUsername && typeof targetUsername === 'string') {
+      const t = targetUsername.trim().toLowerCase();
+      if (t && !whitelist.includes(t)) whitelist.push(t);
+    }
+    const prefixTrimmed = (prefix && typeof prefix === 'string') ? prefix.trim() : '';
+    if (whitelist.length === 0 && !prefixTrimmed) {
+      return res.status(400).json({
+        error: 'Falta audiencia. Especificá targetUsername (regalo a 1 user), audienceWhitelist (lista de users) o prefix (equipo). Sin esto el regalo se filtra a TODA la base.'
+      });
+    }
+    // Si hay whitelist, verificamos que los users existan (evita typos que regalen a nadie).
+    if (whitelist.length > 0) {
+      const found = await User.find({ username: { $in: whitelist.map(u => new RegExp('^' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')) } }, { username: 1, _id: 0 }).lean();
+      if (found.length === 0) {
+        return res.status(404).json({ error: 'Ningún user de la whitelist existe en la base. Revisá los usernames.' });
+      }
+      if (found.length < whitelist.length) {
+        const foundNorms = new Set(found.map(u => u.username.toLowerCase()));
+        const missing = whitelist.filter(u => !foundNorms.has(u));
+        return res.status(404).json({ error: 'Algunos users de la whitelist no existen: ' + missing.join(', ') });
+      }
+    }
+
+    // Cerrar SOLO giveaways manuales activos previos QUE COMPARTAN AUDIENCIA con
+    // este nuevo (sea por whitelist o por prefix). Los de estrategia automática
+    // y de reglas aprobadas son intocables — corren en su propio carril.
+    if (whitelist.length > 0) {
+      await MoneyGiveaway.updateMany(
+        { status: 'active', strategySource: { $in: ['manual', null] }, audienceWhitelist: { $in: whitelist } },
+        { $set: { status: 'cancelled' } }
+      );
+    } else if (prefixTrimmed) {
+      await MoneyGiveaway.updateMany(
+        { status: 'active', strategySource: { $in: ['manual', null] }, prefix: prefixTrimmed },
+        { $set: { status: 'cancelled' } }
+      );
+    }
 
     const g = await MoneyGiveaway.create({
       id: uuidv4(),
@@ -14820,12 +14861,14 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (re
       maxClaims: m,
       expiresAt: new Date(Date.now() + d * 60 * 1000),
       createdBy: req.user.username || null,
-      prefix: prefix && typeof prefix === 'string' && prefix.trim() ? prefix.trim() : null,
+      prefix: prefixTrimmed || null,
+      audienceWhitelist: whitelist.length > 0 ? whitelist : null,
       notificationHistoryId: notificationHistoryId || null,
       requireZeroBalance: !!requireZeroBalance,
-      strategySource: 'manual',
+      strategySource: whitelist.length > 0 ? 'individual_grant' : 'manual',
       status: 'active'
     });
+    logger.info(`[GIVEAWAY-MANUAL] created amount=${a} audience=${whitelist.length > 0 ? whitelist.join(',') : 'prefix:' + prefixTrimmed} by=${req.user.username}`);
     res.json({ success: true, giveaway: g.toObject() });
   } catch (error) {
     logger.error(`POST /api/admin/money-giveaway error: ${error.message}`);
