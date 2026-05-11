@@ -9075,6 +9075,183 @@ app.delete('/api/admin/recontact/history/:id', authMiddleware, adminMiddleware, 
 });
 
 // ============================================
+// RECONTACT — Evolución de cohortes entre 2 fechas
+// ============================================
+// Compara el bucket de actividad de cada usuario AHORA vs en una fecha
+// pasada. La fecha pasada se elige (default = snapshot más reciente del
+// historial). Para cada user del análisis actual, calcula:
+//   - bucket AHORA = (now - lastRealDepositDate) bucketizado
+//   - bucket EN prevDate = (prevDate - lastDepositBeforePrev) bucketizado
+//     donde lastDepositBeforePrev = última carga del user ANTES de prevDate
+//     (consultando Transaction.timestamp). Si nunca cargó antes = 'noDeposit'.
+// Devuelve:
+//   - matrix: cross-tab prev × current (counts)
+//   - transitions: top movimientos clave (cooled, recovered, new, lost)
+//   - totals: agregados (currentCalientes, prevCalientes, retained, new, lost)
+app.get('/api/admin/recontact/cohort-evolution', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const prevDateStr = String(req.query.prevDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}/.test(prevDateStr)) {
+      return res.status(400).json({ error: 'prevDate (YYYY-MM-DD) requerido' });
+    }
+    const prevDate = new Date(prevDateStr);
+    if (isNaN(prevDate.getTime())) {
+      return res.status(400).json({ error: 'prevDate inválida' });
+    }
+    const now = new Date();
+    const DAY = 24 * 60 * 60 * 1000;
+
+    // 1) Cargar items del análisis actual (descomprimir).
+    const cur = await RecontactAnalysis.findOne({ _id: 'current' }).lean();
+    if (!cur || !cur.itemsCompressed) {
+      return res.status(404).json({ error: 'No hay análisis actual cargado. Subí un XLSX primero.' });
+    }
+    let items = [];
+    try {
+      const buf = cur.itemsCompressed.buffer
+        ? Buffer.from(cur.itemsCompressed.buffer)
+        : Buffer.from(cur.itemsCompressed);
+      items = JSON.parse(_zlib.gunzipSync(buf).toString('utf8'));
+    } catch (e) {
+      return res.status(500).json({ error: 'No se pudo descomprimir el análisis actual' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(404).json({ error: 'El análisis actual no tiene items' });
+    }
+
+    // 2) Sacar lista de usernames del archivo (lowercase para join robusto).
+    const usernames = items.map(it => String((it && it.username) || '').toLowerCase()).filter(Boolean);
+    const uniqueUsernames = Array.from(new Set(usernames));
+
+    // 3) Para cada user, buscar última carga ANTES de prevDate. Aggregation única.
+    // Indices ya existen: { username: 1, timestamp: -1 } y { type: 1, timestamp: -1 }.
+    // Procesamos en chunks por si el array de usernames es muy grande (>10k).
+    const lastDepositBeforePrev = new Map(); // username (lc) → Date
+    const CHUNK = 5000;
+    for (let i = 0; i < uniqueUsernames.length; i += CHUNK) {
+      const chunk = uniqueUsernames.slice(i, i + CHUNK);
+      const rows = await Transaction.aggregate([
+        {
+          $match: {
+            type: 'deposit',
+            status: 'completed',
+            timestamp: { $lt: prevDate },
+            // username viene en lower del análisis, pero en Transaction puede venir mixto —
+            // hacemos $expr con toLower para garantizar match case-insensitive.
+            $expr: { $in: [{ $toLower: '$username' }, chunk] }
+          }
+        },
+        { $sort: { username: 1, timestamp: -1 } },
+        { $group: { _id: { $toLower: '$username' }, lastDep: { $first: '$timestamp' } } }
+      ], { allowDiskUse: true });
+      for (const r of rows) {
+        if (r && r._id) lastDepositBeforePrev.set(r._id, r.lastDep);
+      }
+    }
+
+    // 4) Helper bucketize (mismo criterio que el resto del sistema).
+    const bucketize = (days) => {
+      if (days == null || !isFinite(days)) return 'noDeposit';
+      if (days <= 10) return 'calientes';
+      if (days <= 20) return 'enRiesgo';
+      if (days <= 30) return 'perdidos';
+      return 'inactivos';
+    };
+
+    // 5) Construir matriz + listas de transiciones.
+    const BUCKETS = ['calientes', 'enRiesgo', 'perdidos', 'inactivos', 'noDeposit'];
+    const matrix = {};
+    for (const p of BUCKETS) {
+      matrix[p] = {};
+      for (const c of BUCKETS) matrix[p][c] = 0;
+    }
+
+    // Transiciones específicas que importan al admin (top 100 c/u, ordenadas).
+    const transitions = {
+      retainedHot: [],   // CAL → CAL (seguís calientes, los más valiosos)
+      cooledHotToRisk: [], // CAL → RIESGO (se están enfriando, recuperables)
+      cooledHotToPerd: [], // CAL → PERDIDOS (preocupante)
+      cooledHotToInact: [], // CAL → INACTIVOS (perdidos, alta señal)
+      recoveredFromInact: [], // INACT → CAL (recuperaste — métrica de tu trabajo)
+      recoveredFromPerd: [], // PERD → CAL (recuperaste — métrica de tu trabajo)
+      recoveredFromRisk: [], // RIESGO → CAL (recuperaste)
+      newDepositors: []  // noDeposit → CAL (depósito por primera vez después de prevDate)
+    };
+
+    for (const it of items) {
+      const userLc = String((it && it.username) || '').toLowerCase();
+      if (!userLc) continue;
+      const curDaysSince = (it.daysSinceLastDeposit != null && isFinite(it.daysSinceLastDeposit))
+        ? Number(it.daysSinceLastDeposit)
+        : (it.lastDepositAt ? Math.floor((now - new Date(it.lastDepositAt)) / DAY) : null);
+      const curBucket = bucketize(curDaysSince);
+
+      const prevDep = lastDepositBeforePrev.get(userLc);
+      let prevBucket;
+      if (!prevDep) {
+        prevBucket = 'noDeposit';
+      } else {
+        const prevDays = Math.floor((prevDate - new Date(prevDep)) / DAY);
+        prevBucket = bucketize(prevDays < 0 ? 0 : prevDays);
+      }
+
+      matrix[prevBucket][curBucket] += 1;
+
+      // Acumular para listas (con info para mostrar).
+      const sample = {
+        username: it.username || userLc,
+        prevBucket, curBucket,
+        prevDaysSince: prevDep ? Math.floor((prevDate - new Date(prevDep)) / DAY) : null,
+        curDaysSince,
+        lastDepositAt: it.lastDepositAt || null,
+        hasApp: !!it.hasApp,
+        team: it.team || null
+      };
+      if (prevBucket === 'calientes' && curBucket === 'calientes') transitions.retainedHot.push(sample);
+      else if (prevBucket === 'calientes' && curBucket === 'enRiesgo') transitions.cooledHotToRisk.push(sample);
+      else if (prevBucket === 'calientes' && curBucket === 'perdidos') transitions.cooledHotToPerd.push(sample);
+      else if (prevBucket === 'calientes' && curBucket === 'inactivos') transitions.cooledHotToInact.push(sample);
+      else if (prevBucket === 'inactivos' && curBucket === 'calientes') transitions.recoveredFromInact.push(sample);
+      else if (prevBucket === 'perdidos' && curBucket === 'calientes') transitions.recoveredFromPerd.push(sample);
+      else if (prevBucket === 'enRiesgo' && curBucket === 'calientes') transitions.recoveredFromRisk.push(sample);
+      else if (prevBucket === 'noDeposit' && curBucket !== 'noDeposit') transitions.newDepositors.push(sample);
+    }
+
+    // Cortar listas a 300 por categoría para no inflar el response.
+    for (const k of Object.keys(transitions)) {
+      transitions[k].sort((a, b) => (a.curDaysSince || 0) - (b.curDaysSince || 0));
+      transitions[k] = transitions[k].slice(0, 300);
+    }
+
+    // Totales útiles.
+    const totals = {
+      analyzedItems: items.length,
+      prevCalientes: BUCKETS.reduce((s, c) => s + matrix.calientes[c], 0),
+      curCalientes: BUCKETS.reduce((s, p) => s + matrix[p].calientes, 0),
+      retained: matrix.calientes.calientes,
+      cooled: matrix.calientes.enRiesgo + matrix.calientes.perdidos + matrix.calientes.inactivos,
+      recovered: matrix.inactivos.calientes + matrix.perdidos.calientes + matrix.enRiesgo.calientes,
+      brandNew: matrix.noDeposit.calientes + matrix.noDeposit.enRiesgo + matrix.noDeposit.perdidos
+    };
+    totals.netCalientesChange = totals.curCalientes - totals.prevCalientes;
+
+    res.json({
+      success: true,
+      prevDate: prevDateStr,
+      currentSavedAt: cur.savedAt,
+      currentFileLabel: cur.fileLabel || '',
+      daysBetween: Math.max(0, Math.floor((now - prevDate) / DAY)),
+      matrix,
+      totals,
+      transitions
+    });
+  } catch (err) {
+    logger.error(`[recontact/cohort-evolution] ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // USUARIOS CON APP — conteo real sobre toda la base
 // ============================================
 // Cuenta exacta de cuántos usuarios tienen la PWA instalada (token con

@@ -4711,7 +4711,15 @@ function _renderRecontactHistoryCard(history) {
     html += _renderRecontactHistoryTable(history);
     html += '    <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
     html += '      <span style="color:#888;font-size:10.5px;">Cada análisis queda guardado por 7 días · máximo ' + RECONTACT_HISTORY_MAX + ' snapshots · los Δ comparan con el análisis anterior.</span>';
-    html += '      <button type="button" onclick="_recontactClearHistory()" style="padding:4px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);color:#ff8080;border-radius:5px;cursor:pointer;">🗑 Borrar historial</button>';
+    html += '      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+    // Botón nuevo: matriz de evolución por cohorte. Solo aparece si hay al menos 1 snapshot previo en historial.
+    if (history.length >= 2) {
+        const prevSnap = history[1] || {};
+        const prevIso = prevSnap.at ? new Date(prevSnap.at).toISOString().slice(0, 10) : '';
+        html += '        <button type="button" onclick="_recontactOpenCohortEvolution(\'' + escapeHtml(prevIso) + '\')" title="Compara qué bucket tenía cada user en una fecha pasada vs ahora — sin depender de qué XLSX subiste" style="padding:5px 11px;font-size:11px;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;border-radius:5px;cursor:pointer;font-weight:700;">🔬 Comparar evolución vs análisis anterior</button>';
+    }
+    html += '        <button type="button" onclick="_recontactClearHistory()" style="padding:4px 9px;font-size:10.5px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);color:#ff8080;border-radius:5px;cursor:pointer;">🗑 Borrar historial</button>';
+    html += '      </div>';
     html += '    </div>';
     html += '  </div>';
     html += '</details>';
@@ -4848,6 +4856,213 @@ async function _recontactDeleteHistoryEntry(id, label) {
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
+}
+
+// === Cohort Evolution Modal ===
+// Compara el bucket de actividad de cada usuario en una fecha pasada vs AHORA.
+// A diferencia del delta de la tabla del historial (que depende del XLSX),
+// este análisis usa el historial de transacciones reales del server — los
+// nros son verdaderos independientemente de qué archivo subiste.
+async function _recontactOpenCohortEvolution(defaultPrevDate) {
+    // Crear modal
+    let modal = document.getElementById('cohortEvolutionModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'cohortEvolutionModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:30px 14px;overflow-y:auto;';
+    modal.innerHTML = '<div style="background:#0a1428;border:1px solid rgba(0,212,255,0.40);border-radius:12px;max-width:1100px;width:100%;padding:18px 20px;color:#fff;box-shadow:0 12px 40px rgba(0,212,255,0.15);">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap;">' +
+        '  <div><h3 style="margin:0;color:#00d4ff;font-size:17px;">🔬 Evolución de cohortes — del análisis anterior a HOY</h3><div style="color:#888;font-size:11.5px;margin-top:2px;">Mide cómo cambió la actividad real de cada usuario entre 2 fechas. Independiente del XLSX subido.</div></div>' +
+        '  <button type="button" onclick="document.getElementById(\'cohortEvolutionModal\').remove()" style="background:rgba(255,80,80,0.15);border:1px solid rgba(255,80,80,0.40);color:#ff8080;padding:5px 11px;border-radius:6px;cursor:pointer;font-weight:700;">✕</button>' +
+        '</div>' +
+        '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:8px;padding:10px 12px;margin-bottom:12px;">' +
+        '  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">' +
+        '    <label style="color:#bbb;font-size:12px;">Fecha de comparación: ' +
+        '      <input type="date" id="cohortPrevDate" value="' + (defaultPrevDate || '') + '" style="background:#0d1828;color:#fff;border:1px solid rgba(0,212,255,0.35);padding:5px 8px;border-radius:5px;font-family:inherit;font-size:12px;margin-left:6px;">' +
+        '    </label>' +
+        '    <button type="button" onclick="_recontactRunCohortEvolution()" style="padding:6px 14px;background:linear-gradient(135deg,#00d4ff,#0080a0);color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;">▶ Calcular</button>' +
+        '    <span style="color:#888;font-size:11px;">El cálculo escanea la tabla de movimientos reales · puede tardar 5-30s con 25k users</span>' +
+        '  </div>' +
+        '</div>' +
+        '<div id="cohortEvolutionResult" style="color:#888;text-align:center;padding:30px;font-size:13px;">Elegí la fecha de comparación y tocá Calcular.</div>' +
+        '</div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    // Auto-run si tenemos default.
+    if (defaultPrevDate) _recontactRunCohortEvolution();
+}
+
+async function _recontactRunCohortEvolution() {
+    const inp = document.getElementById('cohortPrevDate');
+    const resBox = document.getElementById('cohortEvolutionResult');
+    if (!inp || !resBox) return;
+    const prevDate = inp.value;
+    if (!prevDate) { showToast('Elegí fecha de comparación', 'warning'); return; }
+    resBox.innerHTML = '<div style="color:#00d4ff;padding:30px;text-align:center;font-size:13px;">⏳ Calculando matriz de evolución… (puede tardar hasta 30s)</div>';
+    try {
+        const r = await authFetch('/api/admin/recontact/cohort-evolution?prevDate=' + encodeURIComponent(prevDate));
+        const d = await r.json();
+        if (!r.ok) {
+            resBox.innerHTML = '<div style="color:#ff8080;padding:20px;text-align:center;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        resBox.innerHTML = _renderCohortEvolution(d);
+    } catch (e) {
+        resBox.innerHTML = '<div style="color:#ff8080;padding:20px;text-align:center;">❌ Error de conexión: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+function _renderCohortEvolution(d) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const t = d.totals || {};
+    const m = d.matrix || {};
+    const tr = d.transitions || {};
+
+    const bucketDef = {
+        calientes: { label: '🔥 CAL', color: '#ff5050' },
+        enRiesgo:  { label: '⚠ RIESGO', color: '#ffaa44' },
+        perdidos:  { label: '💔 PERD', color: '#9b30ff' },
+        inactivos: { label: '☠ INACT', color: '#888' },
+        noDeposit: { label: '— sin dep', color: '#555' }
+    };
+    const buckets = ['calientes', 'enRiesgo', 'perdidos', 'inactivos', 'noDeposit'];
+
+    // KPIs principales.
+    const netColor = t.netCalientesChange > 0 ? '#66ff66' : (t.netCalientesChange < 0 ? '#ff8080' : '#bbb');
+    const netSign = t.netCalientesChange > 0 ? '+' : '';
+    let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:10px;margin-bottom:14px;">';
+    html += _cohortKpi('🔥 Calientes ' + (d.prevDate || 'antes'), fmt(t.prevCalientes), '#ff5050');
+    html += _cohortKpi('🔥 Calientes HOY', fmt(t.curCalientes), '#ff5050', (netSign + fmt(t.netCalientesChange)), netColor);
+    html += _cohortKpi('✅ Retenidos (CAL→CAL)', fmt(t.retained), '#66ff66', 'siguen calientes');
+    html += _cohortKpi('❄ Se enfriaron', fmt(t.cooled), '#ff8080', 'eran cal — bajaron');
+    html += _cohortKpi('💪 Recuperados', fmt(t.recovered), '#25d366', 'no eran cal → ahora sí');
+    html += _cohortKpi('✨ Nuevos depositantes', fmt(t.brandNew), '#ffd700', 'primera carga después');
+    html += '</div>';
+
+    // Matriz cross-tab.
+    html += '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-bottom:14px;">';
+    html += '  <div style="color:#00d4ff;font-weight:800;font-size:13px;margin-bottom:4px;">📊 Matriz: bucket EL ' + escapeHtml(d.prevDate) + ' → bucket HOY (' + (d.daysBetween || 0) + ' días)</div>';
+    html += '  <div style="color:#888;font-size:11px;margin-bottom:10px;">Filas = estado en el pasado · columnas = estado actual. Verde = sin movimiento (diagonal) o mejor. Rojo = peor.</div>';
+    html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '    <thead><tr>';
+    html += '      <th style="text-align:left;padding:7px 8px;color:#888;border-bottom:1px solid rgba(255,255,255,0.10);">↓ ' + escapeHtml(d.prevDate) + ' \\ HOY →</th>';
+    for (const c of buckets) {
+        html += '      <th style="text-align:right;padding:7px 8px;color:' + bucketDef[c].color + ';border-bottom:1px solid rgba(255,255,255,0.10);font-weight:700;">' + bucketDef[c].label + '</th>';
+    }
+    html += '      <th style="text-align:right;padding:7px 8px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.10);">total</th>';
+    html += '    </tr></thead><tbody>';
+    const bucketRank = { calientes: 3, enRiesgo: 2, perdidos: 1, inactivos: 0, noDeposit: -1 };
+    for (const p of buckets) {
+        const rowTotal = buckets.reduce((s, c) => s + (m[p] && m[p][c] || 0), 0);
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+        html += '  <td style="padding:6px 8px;color:' + bucketDef[p].color + ';font-weight:700;">' + bucketDef[p].label + '</td>';
+        for (const c of buckets) {
+            const v = m[p] && m[p][c] || 0;
+            const isDiag = p === c;
+            const pr = bucketRank[p], cr = bucketRank[c];
+            let cellColor = '#fff';
+            let bg = 'transparent';
+            if (v > 0) {
+                if (isDiag) { cellColor = '#bbb'; bg = 'rgba(255,255,255,0.04)'; }
+                else if (cr > pr) { cellColor = '#66ff66'; bg = 'rgba(102,255,102,0.08)'; }
+                else if (cr < pr) { cellColor = '#ff8080'; bg = 'rgba(255,128,128,0.06)'; }
+            } else {
+                cellColor = '#444';
+            }
+            html += '<td style="padding:6px 8px;text-align:right;color:' + cellColor + ';background:' + bg + ';font-weight:' + (v > 0 ? '700' : '400') + ';">' + fmt(v) + '</td>';
+        }
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;font-weight:700;">' + fmt(rowTotal) + '</td>';
+        html += '</tr>';
+    }
+    // Fila de totales por columna.
+    html += '<tr style="border-top:2px solid rgba(0,212,255,0.30);">';
+    html += '  <td style="padding:6px 8px;color:#00d4ff;font-weight:800;">total HOY</td>';
+    for (const c of buckets) {
+        const colTotal = buckets.reduce((s, p) => s + (m[p] && m[p][c] || 0), 0);
+        html += '<td style="padding:6px 8px;text-align:right;color:#fff;font-weight:800;">' + fmt(colTotal) + '</td>';
+    }
+    html += '<td style="padding:6px 8px;text-align:right;color:#00d4ff;font-weight:800;">' + fmt(t.analyzedItems) + '</td>';
+    html += '</tr>';
+    html += '  </tbody></table>';
+    html += '</div>';
+
+    // Listas clave de transiciones.
+    const sections = [
+        { key: 'retainedHot', label: '🔥 Siguen calientes (CAL → CAL)', color: '#66ff66', tip: 'Los más valiosos: cargaron antes y siguieron cargando.' },
+        { key: 'recoveredFromInact', label: '💪 RECUPERADOS de inactivo → caliente', color: '#25d366', tip: 'Métrica directa de tu trabajo de recontacto. Volvieron a cargar después de 30+ días.' },
+        { key: 'recoveredFromPerd', label: '💪 Recuperados de perdido → caliente', color: '#25d366', tip: 'Estaban entre 20-30 días sin cargar y volvieron.' },
+        { key: 'recoveredFromRisk', label: '💪 Recuperados de riesgo → caliente', color: '#25d366', tip: 'Estaban entre 10-20 días sin cargar y volvieron.' },
+        { key: 'cooledHotToRisk', label: '❄ Se enfriaron a riesgo (CAL → RIESGO)', color: '#ffaa44', tip: 'Aún recuperables — están al borde, mandales un WhatsApp.' },
+        { key: 'cooledHotToPerd', label: '❄ Se enfriaron a perdidos (CAL → PERD)', color: '#9b30ff', tip: 'Necesitan más esfuerzo para recuperarlos.' },
+        { key: 'cooledHotToInact', label: '☠ Se perdieron (CAL → INACTIVOS)', color: '#ff5050', tip: 'Eran calientes y ahora no cargan hace 30+ días. Alta señal de pérdida.' },
+        { key: 'newDepositors', label: '✨ Cargaron por primera vez (después de ' + d.prevDate + ')', color: '#ffd700', tip: 'No tenían cargas antes de esta fecha. Son ventas nuevas reales.' }
+    ];
+    for (const sec of sections) {
+        const arr = tr[sec.key] || [];
+        if (arr.length === 0) continue;
+        html += '<details style="background:rgba(0,0,0,0.20);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:0;margin-bottom:8px;">';
+        html += '  <summary style="cursor:pointer;padding:9px 13px;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;">';
+        html += '    <span style="color:' + sec.color + ';font-weight:700;font-size:12.5px;">' + sec.label + ' · ' + fmt(arr.length) + (arr.length >= 300 ? '+' : '') + '</span>';
+        html += '    <span style="color:#888;font-size:10.5px;">tocá para abrir ▾</span>';
+        html += '  </summary>';
+        html += '  <div style="padding:8px 13px 12px;">';
+        html += '    <div style="color:#bbb;font-size:11px;margin-bottom:8px;">' + sec.tip + '</div>';
+        html += '    <div style="max-height:260px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:6px;padding:6px;">';
+        html += '      <table style="width:100%;font-size:11px;border-collapse:collapse;">';
+        html += '        <thead><tr style="color:#aaa;border-bottom:1px solid rgba(255,255,255,0.06);"><th style="text-align:left;padding:4px 6px;">Usuario</th><th style="text-align:left;padding:4px 6px;">Equipo</th><th style="text-align:right;padding:4px 6px;">Días antes</th><th style="text-align:right;padding:4px 6px;">Días hoy</th><th style="text-align:center;padding:4px 6px;">App</th></tr></thead>';
+        html += '        <tbody>';
+        for (const u of arr) {
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.03);">';
+            html += '  <td style="padding:4px 6px;color:#fff;font-weight:600;">' + escapeHtml(u.username || '—') + '</td>';
+            html += '  <td style="padding:4px 6px;color:#bbb;">' + escapeHtml(u.team || '—') + '</td>';
+            html += '  <td style="padding:4px 6px;text-align:right;color:#888;">' + (u.prevDaysSince == null ? '—' : u.prevDaysSince + 'd') + '</td>';
+            html += '  <td style="padding:4px 6px;text-align:right;color:#fff;">' + (u.curDaysSince == null ? '—' : u.curDaysSince + 'd') + '</td>';
+            html += '  <td style="padding:4px 6px;text-align:center;">' + (u.hasApp ? '<span style="color:#25d366;">📱</span>' : '<span style="color:#666;">—</span>') + '</td>';
+            html += '</tr>';
+        }
+        html += '        </tbody></table>';
+        html += '    </div>';
+        // Exportar a CSV
+        html += '    <div style="margin-top:6px;text-align:right;">';
+        html += '      <button type="button" onclick="_cohortExportTransition(\'' + sec.key + '\')" style="padding:3px 9px;font-size:10.5px;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.35);color:#00d4ff;border-radius:5px;cursor:pointer;">📥 Exportar CSV</button>';
+        html += '    </div>';
+        html += '  </div>';
+        html += '</details>';
+    }
+
+    // Stash data for export.
+    window._lastCohortEvolutionData = d;
+
+    return html;
+}
+
+function _cohortKpi(label, value, color, sub, subColor) {
+    let html = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;">';
+    html += '<div style="color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">' + label + '</div>';
+    html += '<div style="color:' + (color || '#fff') + ';font-size:20px;font-weight:800;margin-top:2px;">' + value + '</div>';
+    if (sub) html += '<div style="color:' + (subColor || '#888') + ';font-size:10.5px;margin-top:1px;">' + sub + '</div>';
+    html += '</div>';
+    return html;
+}
+
+function _cohortExportTransition(key) {
+    const d = window._lastCohortEvolutionData;
+    if (!d || !d.transitions || !d.transitions[key]) { showToast('No hay datos para exportar', 'warning'); return; }
+    const arr = d.transitions[key];
+    const rows = [['username', 'team', 'prev_bucket', 'cur_bucket', 'prev_days', 'cur_days', 'has_app', 'last_deposit_at']];
+    for (const u of arr) {
+        rows.push([u.username || '', u.team || '', u.prevBucket || '', u.curBucket || '', u.prevDaysSince == null ? '' : u.prevDaysSince, u.curDaysSince == null ? '' : u.curDaysSince, u.hasApp ? 'si' : 'no', u.lastDepositAt || '']);
+    }
+    const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cohort-evolution-' + key + '-' + (d.prevDate || 'prev') + '-to-hoy.csv';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast('✅ CSV exportado · ' + arr.length + ' filas', 'success');
 }
 
 // Matriz panorama: bucket de actividad × estado de app/notifs.
