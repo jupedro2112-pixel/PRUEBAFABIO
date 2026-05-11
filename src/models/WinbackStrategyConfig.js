@@ -48,8 +48,8 @@ const winbackStrategyConfigSchema = new mongoose.Schema({
   tier2Message: {
     type: tierMessageSchema,
     default: () => ({
-      title: '⏰ Tu bono del 50% sigue activo',
-      body:  'Ya van 20 días — tu 50% de bono te espera. Cargá hoy y aprovechalo.'
+      title: '👀 Hace 20 días que no te vemos',
+      body:  'Cargá hoy y te damos 50% extra encima. Pedí el código COD50.'
     })
   },
   tier3Message: {
@@ -88,7 +88,7 @@ const winbackStrategyConfigSchema = new mongoose.Schema({
   excludeOpportunists: { type: Boolean, default: true },
 
   // Cap diario por tier para no quemar plata si la base es enorme.
-  dailyCapTier2: { type: Number, default: 50, min: 0, max: 5000 },  // máx 50 cash giveaways/día
+  dailyCapTier2: { type: Number, default: 50, min: 0, max: 5000 },  // máx 50 pushes promo wa.link/día
   dailyCapTier3: { type: Number, default: 100, min: 0, max: 5000 },
 
   // Stats agregadas (auto-actualiza el cron).

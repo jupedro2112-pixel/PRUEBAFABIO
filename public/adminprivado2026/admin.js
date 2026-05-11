@@ -17951,7 +17951,7 @@ function _renderWinbackPreview(p) {
     const samples = p.samples || {};
     const tiers = [
         { k: 'tier1', l: '🟣 Tier 1 — te extrañamos', color: '#b48bff' },
-        { k: 'tier2', l: '🟡 Tier 2 — regalo cash', color: '#ffd700' },
+        { k: 'tier2', l: '🟡 Tier 2 — bono 50% (20 días)', color: '#ffd700' },
         { k: 'tier3', l: '🔴 Tier 3 — cod' + ((p.cfg && p.cfg.tier3BonusPct) || 100), color: '#ff8c5a' }
     ];
     for (const t of tiers) {
