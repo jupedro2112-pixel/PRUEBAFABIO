@@ -75,6 +75,26 @@ function showToast(msg, type) {
     }, 3200);
 }
 
+// Ruteo de section-pin tokens — si el endpoint corresponde a una sección
+// protegida, adjuntamos el token JWT corto que emitió /section-pins/verify.
+// Sin esto, el backend devuelve 403 PIN_REQUIRED aunque el admin tenga
+// sesión válida.
+function _getSectionPinTokenForUrl(url) {
+    try {
+        // Endpoints que requieren token de 'numero'
+        if (/^\/api\/admin\/user-lines(\?|$|\/)/.test(url) && !/lookup|import|history/.test(url)) {
+            const raw = sessionStorage.getItem('sectionPinTokens') || '{}';
+            return (JSON.parse(raw) || {}).numero || '';
+        }
+        // Endpoints que requieren token de 'backupPhones'
+        if (/^\/api\/admin\/backup-phones(\.csv)?(\?|$)/.test(url)) {
+            const raw = sessionStorage.getItem('sectionPinTokens') || '{}';
+            return (JSON.parse(raw) || {}).backupPhones || '';
+        }
+    } catch (_) {}
+    return '';
+}
+
 async function authFetch(url, opts) {
     const o = opts || {};
     o.headers = Object.assign({}, o.headers || {}, {
@@ -83,11 +103,29 @@ async function authFetch(url, opts) {
     if (o.body && !o.headers['Content-Type']) {
         o.headers['Content-Type'] = 'application/json';
     }
+    const pinTok = _getSectionPinTokenForUrl(url);
+    if (pinTok) o.headers['X-Section-Pin-Token'] = pinTok;
     const r = await fetch(API_URL + url, o);
     if (r.status === 401) {
         // Token expiró — forzar logout
         handleLogout();
         throw new Error('Sesión expirada');
+    }
+    // 403 PIN_REQUIRED — el token de sección expiró o nunca se obtuvo.
+    // Limpiamos el unlock para que el siguiente intento abra el modal.
+    if (r.status === 403) {
+        try {
+            const clone = r.clone();
+            const d = await clone.json();
+            if (d && d.error === 'PIN_REQUIRED' && d.section) {
+                const raw = sessionStorage.getItem(_SECTION_PIN_UNLOCK_KEY) || '{}';
+                const u = JSON.parse(raw); delete u[d.section];
+                sessionStorage.setItem(_SECTION_PIN_UNLOCK_KEY, JSON.stringify(u));
+                const t = sessionStorage.getItem('sectionPinTokens') || '{}';
+                const tt = JSON.parse(t); delete tt[d.section];
+                sessionStorage.setItem('sectionPinTokens', JSON.stringify(tt));
+            }
+        } catch (_) {}
     }
     return r;
 }
@@ -174,7 +212,13 @@ function _isSectionUnlocked(sectionKey) {
     try {
         const raw = sessionStorage.getItem(_SECTION_PIN_UNLOCK_KEY) || '{}';
         const u = JSON.parse(raw);
-        return !!u[sectionKey];
+        if (!u[sectionKey]) return false;
+        // Después del deploy del PIN backend, además del flag de unlock
+        // necesitamos un token vivo. Si no hay token, forzamos re-ingreso
+        // del PIN — el backend igual devolvería 403 sin token.
+        const t = sessionStorage.getItem('sectionPinTokens') || '{}';
+        const tt = JSON.parse(t);
+        return !!tt[sectionKey];
     } catch (_) { return false; }
 }
 
@@ -231,6 +275,17 @@ function _promptSectionPin(sectionKey, sectionLabel, callback) {
                 return;
             }
             _markSectionUnlocked(sectionKey);
+            // Guardamos el JWT corto que emite el backend — authFetch lo
+            // inyecta como X-Section-Pin-Token en cada request a endpoints
+            // de la sección. Sin esto, los endpoints devuelven 403.
+            if (d.token) {
+                try {
+                    const t = sessionStorage.getItem('sectionPinTokens') || '{}';
+                    const tt = JSON.parse(t);
+                    tt[sectionKey] = d.token;
+                    sessionStorage.setItem('sectionPinTokens', JSON.stringify(tt));
+                } catch (_) {}
+            }
             overlay.remove();
             if (typeof callback === 'function') callback();
         } catch (e) {

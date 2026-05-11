@@ -1725,11 +1725,12 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       lastMessageAt: new Date()
     });
     
-    // Generar token con expiración de 90 días
+    // 30 días: balance entre UX (no relogear seguido) y blast radius si
+    // un token leakea desde localStorage del PWA via XSS o backup.
     const token = jwt.sign(
       { userId: newUser.id, username: newUser.username, role: newUser.role },
       JWT_SECRET,
-      { expiresIn: '90d' }
+      { expiresIn: '30d' }
     );
     
     res.status(201).json({
@@ -3058,11 +3059,12 @@ app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
     const userObj = user.toObject ? user.toObject() : user;
     const userId = userObj.id || userObj._id?.toString();
 
-    // Generate token (same as regular login)
+    // Mismo lifetime que login regular (30d) — antes era 90d pero
+    // homogeneizamos para reducir blast radius en caso de leak.
     const token = jwt.sign(
       { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion || 0 },
       JWT_SECRET,
-      { expiresIn: '90d' }
+      { expiresIn: '30d' }
     );
 
     // Set admin cookies if applicable
@@ -7288,7 +7290,9 @@ app.get('/api/admin/user-lines/lookup-by-line.csv', authMiddleware, adminMiddlew
   }
 });
 
-app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
+// Gateado por PIN 'numero' — el directorio completo de líneas/teléfonos
+// solo se entrega si el admin ingresó el PIN en esta sesión.
+app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, requireSectionPin('numero'), async (req, res) => {
   try {
     const config = (await getConfig('userLinesByPrefix')) || {};
     const slots = Array.isArray(config.slots) ? config.slots : [];
@@ -7315,7 +7319,7 @@ app.get('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, re
   }
 });
 
-app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, async (req, res) => {
+app.put('/api/admin/user-lines', authMiddleware, adminMiddleware, requireSectionPin('numero'), async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede modificar las líneas.' });
@@ -9727,7 +9731,10 @@ async function _getSectionPins() {
   return init;
 }
 
-// POST verify — valida el PIN para una sección. Devuelve { valid: bool }.
+// POST verify — valida el PIN para una sección. Si coincide, emite un
+// JWT corto (30 min) que el cliente debe mandar como X-Section-Pin-Token
+// en las llamadas a endpoints protegidos. Sin ese token, el backend
+// responde 403 aunque el admin esté autenticado.
 app.post('/api/admin/section-pins/verify', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const { section, pin } = req.body || {};
@@ -9735,7 +9742,9 @@ app.post('/api/admin/section-pins/verify', authMiddleware, adminMiddleware, asyn
     const pins = await _getSectionPins();
     const expected = pins[section] || _DEFAULT_SECTION_PIN;
     const valid = String(pin || '') === String(expected);
-    res.json({ valid });
+    if (!valid) return res.json({ valid: false });
+    const token = _signSectionPinToken(section, req.user && req.user.username);
+    res.json({ valid: true, token, expiresIn: _SECTION_PIN_TOKEN_TTL_SEC });
   } catch (err) {
     logger.error(`/api/admin/section-pins/verify: ${err.message}`);
     res.status(500).json({ error: err.message });
@@ -9773,6 +9782,55 @@ app.get('/api/admin/section-pins/status', authMiddleware, adminMiddleware, async
     res.status(500).json({ error: err.message });
   }
 });
+
+// ============================================================
+// PIN GATE BACKEND — defensa real, no sólo UI
+// ============================================================
+// Antes el PIN era cosmético: el frontend mostraba el modal pero el backend
+// devolvía los datos sólo con auth+admin. Esto significa que un withdrawer
+// con sesión válida (o un admin con cookie robada via XSS) podía bajar todo
+// el directorio de números sin tocar el PIN.
+//
+// Fix: en /verify exitoso firmamos un JWT corto (scope='section-pin:<seccion>',
+// exp 30 min) y se lo devolvemos al cliente. El cliente lo manda como header
+// X-Section-Pin-Token. requireSectionPin valida que el token sea para la
+// sección correcta, no expirado, y firmado con el mismo JWT_SECRET — sin
+// eso, 403.
+//
+// El token caduca a los 30 min — el admin re-ingresa el PIN entonces. El
+// trade-off de cosmético→funcional es 1 modal cada 30 min para el admin
+// legítimo, a cambio de que un atacante sin el PIN no pueda bajar nada.
+
+const _SECTION_PIN_TOKEN_TTL_SEC = 30 * 60; // 30 min
+
+function _signSectionPinToken(section, username) {
+  return jwt.sign(
+    { scope: 'section-pin', section: String(section), u: String(username || '') },
+    JWT_SECRET,
+    { expiresIn: _SECTION_PIN_TOKEN_TTL_SEC }
+  );
+}
+
+function _verifySectionPinToken(token, expectedSection) {
+  try {
+    const d = jwt.verify(String(token || ''), JWT_SECRET);
+    if (!d || d.scope !== 'section-pin') return false;
+    if (String(d.section) !== String(expectedSection)) return false;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function requireSectionPin(section) {
+  return (req, res, next) => {
+    const token = req.headers['x-section-pin-token'] || req.headers['X-Section-Pin-Token'];
+    if (!_verifySectionPinToken(token, section)) {
+      return res.status(403).json({ error: 'PIN_REQUIRED', section });
+    }
+    next();
+  };
+}
 
 app.get('/api/admin/users/search', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -11398,7 +11456,9 @@ app.post('/api/user/backup-phone', authMiddleware, async (req, res) => {
 });
 
 // Listado para el panel admin: usuario, equipo y número de respaldo.
-app.get('/api/admin/backup-phones', authMiddleware, adminMiddleware, async (req, res) => {
+// Gateado por PIN — un withdrawer con sesión válida pero sin la clave de
+// 'backupPhones' obtiene 403, no la lista.
+app.get('/api/admin/backup-phones', authMiddleware, adminMiddleware, requireSectionPin('backupPhones'), async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(5000, parseInt(req.query.limit, 10) || 2000));
     const rows = await User.find(
@@ -11422,7 +11482,8 @@ app.get('/api/admin/backup-phones', authMiddleware, adminMiddleware, async (req,
 });
 
 // CSV: equipo, usuario, teléfono. Para descargar el listado completo.
-app.get('/api/admin/backup-phones.csv', authMiddleware, adminMiddleware, async (req, res) => {
+// Mismo gate de PIN — el CSV es el vector de fuga más jugoso (todo en un archivo).
+app.get('/api/admin/backup-phones.csv', authMiddleware, adminMiddleware, requireSectionPin('backupPhones'), async (req, res) => {
   try {
     const rows = await User.find(
       { backupContactPhone: { $exists: true, $ne: null, $nin: [''] } },
@@ -13907,7 +13968,10 @@ app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
 // Admin las ve en NUEVO TOP → Libro de quejas (filtrable por status).
 
 // POST /api/complaints — el user envía una queja nueva.
-app.post('/api/complaints', authMiddleware, async (req, res) => {
+// El cap por user (5/día) ya existe abajo, pero un atacante autenticado
+// con scripts podía mandar 5 quejas de 1.4MB cada una sin tope por IP.
+// sensitiveLimiter (10 req / 15 min por IP) corta ese vector.
+app.post('/api/complaints', sensitiveLimiter, authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
@@ -13928,11 +13992,25 @@ app.post('/api/complaints', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'El detalle es muy largo (máx 2000 caracteres).' });
     }
     const subject = String(b.subject || '').trim().slice(0, 100);
-    // imageUrl puede ser URL S3 o data URL base64 (la PWA comprime antes).
+    // imageUrl puede ser URL S3 (https://) o data URL base64 (la PWA comprime antes).
     // 1.5MB cap para que un usuario malintencionado no llene la DB.
     let imageUrl = String(b.imageUrl || '').trim();
     if (imageUrl.length > 1500000) {
       return res.status(413).json({ error: 'La foto es muy grande. Sacá una más liviana o probá de nuevo.' });
+    }
+    // Validación de MIME para data-URLs — sin esto un atacante podía mandar
+    // data:text/html;base64,... y, si el admin panel lo renderiza vía
+    // innerHTML o <iframe src>, ejecutar XSS. Aceptamos sólo imágenes
+    // tipicas. Para URLs http(s) confiamos en S3 (presigned upload bloquea
+    // tipos no-imagen vía content-type policy).
+    if (imageUrl) {
+      if (imageUrl.startsWith('data:')) {
+        if (!/^data:image\/(png|jpe?g|webp|gif|heic);base64,[A-Za-z0-9+/=]+$/.test(imageUrl)) {
+          return res.status(400).json({ error: 'Formato de imagen inválido. Subí PNG, JPG o WEBP.' });
+        }
+      } else if (!/^https:\/\//.test(imageUrl)) {
+        return res.status(400).json({ error: 'URL de imagen inválida.' });
+      }
     }
 
     // Anti-spam: máx 5 quejas por user por día.
