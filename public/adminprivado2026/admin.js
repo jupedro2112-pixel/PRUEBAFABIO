@@ -2877,13 +2877,14 @@ async function loadRecontactConversions() {
     if (!c) return;
     c.innerHTML = '<div style="color:#888;padding:14px;font-size:12px;">⏳ Cargando conversiones…</div>';
     try {
-        // Paralelo: conversiones + historial server (para evolución archivo-por-archivo).
-        const [list, historyRes] = await Promise.all([
+        // Paralelo: conversiones + historial server + stats de la base TOTAL (para comparar).
+        const [list, historyRes, baseStatsRes] = await Promise.all([
             _recontactRefreshConversions(),
-            authFetch('/api/admin/recontact/history').then(r => r.ok ? r.json() : { history: [] }).catch(() => ({ history: [] }))
+            authFetch('/api/admin/recontact/history').then(r => r.ok ? r.json() : { history: [] }).catch(() => ({ history: [] })),
+            authFetch('/api/admin/app-users/stats').then(r => r.ok ? r.json() : null).catch(() => null)
         ]);
         const history = (historyRes && Array.isArray(historyRes.history)) ? historyRes.history : [];
-        c.innerHTML = _renderRecontactConversionsCard(list || [], history);
+        c.innerHTML = _renderRecontactConversionsCard(list || [], history, baseStatsRes);
     } catch (e) {
         c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error cargando: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
@@ -4416,9 +4417,9 @@ function _kpiCard(label, value, color, sub) {
 //     (instalaron app, subieron de bucket de actividad).
 //   - Evolución histórica: usa RecontactHistory para mostrar timeline de análisis
 //     con métricas reales (con app, %, bucket counts) y deltas archivo-a-archivo.
-function _renderRecontactConversionsCard(conversions, history) {
+function _renderRecontactConversionsCard(conversions, history, baseStats) {
     const improvementHtml = _renderRecontactImprovementSection();
-    const historyHtml = _renderRecontactFileEvolution(history || []);
+    const historyHtml = _renderRecontactFileEvolution(history || [], baseStats);
     if (!conversions || conversions.length === 0) {
         return '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">' +
             '<div style="color:#00d4ff;font-weight:800;font-size:14px;margin-bottom:6px;">📊 Post recontactación</div>' +
@@ -4482,7 +4483,7 @@ function _renderRecontactConversionsCard(conversions, history) {
 // Evolución archivo-por-archivo: usa RecontactHistory (server) para mostrar los
 // últimos análisis con métricas reales y deltas. Si el archivo cambia entre
 // análisis, muestra warning de que la comparación NO es de los mismos users.
-function _renderRecontactFileEvolution(history) {
+function _renderRecontactFileEvolution(history, baseStats) {
     if (!Array.isArray(history) || history.length === 0) {
         return '<div style="color:#888;font-size:11px;margin-top:14px;padding:10px 12px;background:rgba(0,0,0,0.20);border-radius:6px;">📜 No hay análisis históricos todavía. Subí XLSXs en Recontactación para que aparezcan acá.</div>';
     }
@@ -4509,40 +4510,65 @@ function _renderRecontactFileEvolution(history) {
     html += '    <div style="color:#888;font-size:11px;">' + history.length + ' análisis · más reciente arriba · Δ = vs análisis anterior</div>';
     html += '  </div>';
     html += '  <div style="color:#bbb;font-size:11.5px;margin-bottom:8px;background:rgba(255,170,68,0.06);border-left:3px solid #ffaa44;padding:6px 10px;border-radius:4px;">⚠ Los Δ son válidos como progreso real <strong>solo si el archivo es el MISMO</strong> entre análisis. Si el nombre del archivo cambia, los users son distintos y el delta es referencial.</div>';
+    // Banner comparativo con la base TOTAL: aclara por qué los nros del archivo difieren de Equipamiento/Usuarios con app.
+    if (baseStats) {
+        const baseTotalUsers = baseStats.totalUsers || 0;
+        const baseWithApp = baseStats.withApp || 0;
+        const baseWithNotifs = baseStats.withNotifs || 0;
+        const newest = history[0] || {};
+        const fileWithApp = newest.withApp || 0;
+        const coveragePct = baseWithApp > 0 ? ((fileWithApp / baseWithApp) * 100).toFixed(1) : '0';
+        html += '  <div style="background:rgba(0,212,255,0.06);border-left:3px solid #00d4ff;padding:8px 12px;border-radius:4px;margin-bottom:10px;color:#fff;font-size:12px;">';
+        html += '    <div style="color:#00d4ff;font-weight:700;margin-bottom:3px;">📊 Comparación con TU BASE TOTAL</div>';
+        html += '    <div style="color:#bbb;line-height:1.5;">';
+        html += '      Tu base actual: <strong>' + fmt(baseTotalUsers) + ' users registrados</strong> · <strong style="color:#25d366;">' + fmt(baseWithApp) + ' con app</strong> · <strong style="color:#ffd700;">' + fmt(baseWithNotifs) + ' con notifs</strong>.<br>';
+        html += '      Tu último análisis cubre <strong style="color:#00d4ff;">' + fmt(fileWithApp) + ' users con app</strong> (= <strong>' + coveragePct + '% de tu base con app</strong>). Los ' + fmt(Math.max(0, baseWithApp - fileWithApp)) + ' restantes NO están en el XLSX.';
+        html += '    </div>';
+        html += '  </div>';
+    }
     html += '  <div style="overflow-x:auto;">';
     html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
     html += '    <thead><tr style="background:rgba(0,212,255,0.10);color:#00d4ff;text-align:left;">';
     html += '      <th style="padding:7px 8px;">Fecha</th>';
     html += '      <th style="padding:7px 8px;">Archivo</th>';
-    html += '      <th style="padding:7px 8px;text-align:right;">Total users</th>';
-    html += '      <th style="padding:7px 8px;text-align:right;" title="Tienen la PWA instalada">📱 Con app</th>';
-    html += '      <th style="padding:7px 8px;text-align:right;" title="% con app sobre total">% app</th>';
-    html += '      <th style="padding:7px 8px;text-align:right;" title="Con app + notifs">🔔 Con notifs</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Total usernames en el archivo">📋 Usernames archivo</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Cuántos de esos usernames son users registrados en la plataforma">✓ Registrados</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="De los registrados del archivo, cuántos tienen la PWA instalada">📱 Con app (archivo)</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="% con app sobre los registrados del archivo">% app (archivo)</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Cobertura: % de tu base con app que está en este archivo">📊 Cobertura</th>';
     html += '      <th style="padding:7px 8px;text-align:right;" title="Suma de depósitos del archivo">💰 Cargas</th>';
     html += '      <th style="padding:7px 8px;text-align:right;" title="Bono total sugerido">🎁 Bono sug.</th>';
     html += '      <th style="padding:7px 8px;text-align:center;color:#ff8080;" title="Borrar entrada">🗑</th>';
     html += '    </tr></thead><tbody>';
+    const baseWithApp = (baseStats && baseStats.withApp) || 0;
     for (let i = 0; i < history.length; i++) {
         const h = history[i] || {};
         const prev = history[i + 1] || null;
         const fileChanged = prev && h.fileLabel && prev.fileLabel && h.fileLabel !== prev.fileLabel;
         const fileChangedNote = fileChanged ? ' <span style="color:#ffaa44;" title="Archivo distinto al anterior — Δ no es comparación válida de usuarios">⚠</span>' : '';
-        const withApp = h.withApp || 0;
         const total = h.totalAnalyzed || 0;
-        const prevWithApp = prev && prev.withApp || 0;
+        const foundInDb = h.foundInDb || 0;
+        const withApp = h.withApp || 0;
         const prevTotal = prev && prev.totalAnalyzed || 0;
-        const curPct = total > 0 ? (withApp / total) * 100 : 0;
-        const prevPct = prevTotal > 0 ? (prevWithApp / prevTotal) * 100 : 0;
+        const prevFound = prev && prev.foundInDb || 0;
+        const prevWithApp = prev && prev.withApp || 0;
+        // % app del archivo: % sobre los REGISTRADOS (foundInDb), no sobre el total del XLSX —
+        // así se mide la calidad del archivo, no inflada por usernames inexistentes.
+        const curPct = foundInDb > 0 ? (withApp / foundInDb) * 100 : 0;
+        const prevPct = prevFound > 0 ? (prevWithApp / prevFound) * 100 : 0;
         const pctDelta = prev ? (curPct - prevPct).toFixed(1) : null;
         const pctColor = pctDelta == null ? '#666' : (parseFloat(pctDelta) > 0 ? '#66ff66' : (parseFloat(pctDelta) < 0 ? '#ff8080' : '#666'));
         const pctDeltaStr = pctDelta == null ? '—' : ((parseFloat(pctDelta) > 0 ? '+' : '') + pctDelta + 'pp');
+        // Cobertura: % de la base total con app que está en este archivo.
+        const coveragePct = baseWithApp > 0 ? ((withApp / baseWithApp) * 100).toFixed(1) : null;
         html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
         html += '  <td style="padding:6px 8px;color:#aaa;font-size:11px;white-space:nowrap;">' + escapeHtml(fmtDate(h.at)) + '</td>';
         html += '  <td style="padding:6px 8px;color:#fff;font-weight:600;">' + escapeHtml(h.fileLabel || '—') + fileChangedNote + '</td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#fff;font-weight:700;">' + fmt(total) + '<br><span style="font-size:10px;font-weight:400;">' + delta(total, prevTotal) + '</span></td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#7cffb3;font-weight:700;">' + fmt(foundInDb) + '<br><span style="font-size:10px;font-weight:400;">' + delta(foundInDb, prevFound) + '</span></td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#25d366;font-weight:700;">' + fmt(withApp) + '<br><span style="font-size:10px;font-weight:400;">' + delta(withApp, prevWithApp) + '</span></td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">' + curPct.toFixed(1) + '%<br><span style="font-size:10px;color:' + pctColor + ';">' + pctDeltaStr + '</span></td>';
-        html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">' + fmt(h.withNotifs || 0) + '<br><span style="font-size:10px;font-weight:400;">' + delta(h.withNotifs, prev && prev.withNotifs) + '</span></td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#00d4ff;font-weight:700;">' + (coveragePct != null ? coveragePct + '%' : '<span style="color:#666;">—</span>') + '<br><span style="font-size:10px;color:#888;">de tu base</span></td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">$' + fmt(h.fileTotalDeposits || 0) + '</td>';
         html += '  <td style="padding:6px 8px;text-align:right;color:#ffd700;">$' + fmt(h.totalRecoverableValue || 0) + '</td>';
         const delBtn = h._id
