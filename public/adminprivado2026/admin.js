@@ -18961,6 +18961,8 @@ async function loadTeamCampaigns() {
         c.innerHTML = _renderTeamCampaignsList(_TEAM_CAMPAIGNS_CACHE);
         // Cargar agenda de mañana en paralelo.
         _loadTeamCampaignAgenda(); // default = mañana
+        // Cargar config de recordatorios de reembolso en paralelo.
+        _loadRefundRemindersCard();
     } catch (e) {
         c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
@@ -19054,6 +19056,8 @@ function _renderTeamCampaignsList(d) {
     let html = '';
     // Agenda (qué se va a lanzar mañana o el día elegido).
     html += '<div id="teamCampaignAgendaBox" style="margin-bottom:14px;"></div>';
+    // Card de recordatorios de reembolso (lazy load — la rellena loadRefundRemindersCard).
+    html += '<div id="refundRemindersBox" style="margin-bottom:14px;"></div>';
     // Caja de auto-estrategia (lo nuevo de la Parte B).
     html += '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.10),rgba(102,255,102,0.05));border:1px solid rgba(155,48,255,0.40);border-radius:12px;padding:12px;margin-bottom:14px;">';
     html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">';
@@ -20448,4 +20452,231 @@ async function _complaintsPollBadge() {
 if (typeof window !== 'undefined') {
     setTimeout(_complaintsPollBadge, 5000);
     setInterval(_complaintsPollBadge, 60000);
+}
+
+// ============================================================
+// 🌙 RECORDATORIOS DE REEMBOLSO — card en sección Campañas por equipo
+// ============================================================
+// Backend: endpoints ya existen (/api/admin/refund-reminders/{config,preview,run-now})
+// + cron _runRefundRemindersCheck cada 5min que dispara cuando llega la hora.
+// Acá armamos la UI: ver estado de los 3 tipos (daily/weekly/monthly), activarlos,
+// cambiar hora (default 23hs), filtrar por equipo, preview audiencia, disparar ahora.
+
+let _REFUND_REMINDERS_CACHE = null;
+
+async function _loadRefundRemindersCard() {
+    const box = document.getElementById('refundRemindersBox');
+    if (!box) return;
+    box.innerHTML = '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.20);border-radius:12px;padding:12px;color:#888;font-size:11.5px;">⏳ Cargando recordatorios de reembolso...</div>';
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/config');
+        const d = await r.json();
+        if (!r.ok) { box.innerHTML = '<div style="color:#ff8080;padding:8px;font-size:11.5px;">Error: ' + escapeHtml(d.error || '') + '</div>'; return; }
+        _REFUND_REMINDERS_CACHE = d.config || null;
+        const teams = (_TEAM_CAMPAIGNS_CACHE && _TEAM_CAMPAIGNS_CACHE.teams) || [];
+        box.innerHTML = _renderRefundRemindersCard(d.config || {}, teams);
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:8px;font-size:11.5px;">Error de conexión cargando recordatorios.</div>';
+    }
+}
+
+function _renderRefundRemindersCard(cfg, teams) {
+    const fmtDate = (d) => d ? new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : 'nunca';
+    const allEnabled = cfg.daily && cfg.daily.enabled && cfg.weekly && cfg.weekly.enabled && cfg.monthly && cfg.monthly.enabled;
+    const allAt23 = cfg.daily && cfg.daily.hourART === 23 && cfg.weekly && cfg.weekly.hourART === 23 && cfg.monthly && cfg.monthly.hourART === 23;
+
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(102,255,102,0.04));border:1.5px solid rgba(0,212,255,0.40);border-radius:12px;padding:14px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">';
+    html += '    <div>';
+    html += '      <div style="color:#00d4ff;font-weight:900;font-size:14px;letter-spacing:1px;text-transform:uppercase;">🌙 Recordatorios de reembolso</div>';
+    html += '      <div style="color:#bbb;font-size:11.5px;line-height:1.5;margin-top:2px;">A las 23hs (configurable), notificar a los users con reembolso disponible que NO reclamaron. Funciona para los 3 tipos: <strong style="color:#fff;">diario · semanal · mensual</strong>. Incluye también a los users que pidieron <em>solo notificarme cuando hay reembolso</em>.</div>';
+    html += '    </div>';
+    if (!(allEnabled && allAt23)) {
+        html += '    <button type="button" onclick="_refundRemindersActivateAllAt23()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">✨ Activar los 3 a las 23hs</button>';
+    } else {
+        html += '    <span style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);color:#66ff66;padding:6px 10px;border-radius:6px;font-weight:800;font-size:11px;">✓ Los 3 activos a las 23hs</span>';
+    }
+    html += '  </div>';
+
+    // 3 cards una al lado de la otra (responsive).
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:10px;margin-top:10px;">';
+    for (const type of ['daily', 'weekly', 'monthly']) {
+        const sub = cfg[type] || {};
+        const enabled = !!sub.enabled;
+        const hour = (sub.hourART != null) ? sub.hourART : 20;
+        const minute = (sub.minuteART != null) ? sub.minuteART : 0;
+        const teamFilter = sub.teamFilter || '';
+        const lastFired = fmtDate(sub.lastFiredAt);
+        const totalFires = sub.totalFiresAllTime || 0;
+        const label = type === 'daily' ? '📅 Diario' : type === 'weekly' ? '📆 Semanal' : '🗓️ Mensual';
+        const color = enabled ? '#66ff66' : '#888';
+        const bg = enabled ? 'rgba(102,255,102,0.06)' : 'rgba(255,255,255,0.03)';
+        const border = enabled ? 'rgba(102,255,102,0.40)' : 'rgba(255,255,255,0.10)';
+        html += '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:10px;padding:10px;">';
+        html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        html += '    <div style="color:' + color + ';font-weight:900;font-size:13px;">' + label + '</div>';
+        html += '    <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:' + color + ';font-size:11px;font-weight:700;">';
+        html += '      <input type="checkbox" id="rr_enabled_' + type + '" ' + (enabled ? 'checked' : '') + ' onchange="_refundRemindersSaveOne(\'' + type + '\')" style="margin:0;">';
+        html += '      ' + (enabled ? 'Activo' : 'Apagado');
+        html += '    </label>';
+        html += '  </div>';
+        // Hora
+        html += '  <div style="display:flex;gap:5px;align-items:center;margin-bottom:6px;">';
+        html += '    <label style="color:#aaa;font-size:10.5px;flex-shrink:0;">Hora:</label>';
+        html += '    <input type="number" min="0" max="23" id="rr_hour_' + type + '" value="' + hour + '" onchange="_refundRemindersSaveOne(\'' + type + '\')" style="width:55px;background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:4px 6px;border-radius:5px;font-size:12px;text-align:center;">';
+        html += '    <span style="color:#666;">:</span>';
+        html += '    <input type="number" min="0" max="59" id="rr_minute_' + type + '" value="' + minute + '" onchange="_refundRemindersSaveOne(\'' + type + '\')" style="width:55px;background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:4px 6px;border-radius:5px;font-size:12px;text-align:center;">';
+        html += '    <span style="color:#888;font-size:10.5px;margin-left:auto;">ART</span>';
+        html += '  </div>';
+        // Filtro de equipo
+        html += '  <div style="margin-bottom:6px;">';
+        html += '    <label style="color:#aaa;font-size:10.5px;display:block;margin-bottom:2px;">Equipo (opcional):</label>';
+        html += '    <select id="rr_team_' + type + '" onchange="_refundRemindersSaveOne(\'' + type + '\')" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:4px 8px;border-radius:5px;font-size:12px;">';
+        html += '      <option value="">Todos los equipos</option>';
+        for (const t of teams) {
+            if (!t || !t.name) continue;
+            const sel = (t.name === teamFilter) ? ' selected' : '';
+            html += '<option value="' + escapeHtml(t.name) + '"' + sel + '>' + escapeHtml(t.name) + '</option>';
+        }
+        html += '    </select>';
+        html += '  </div>';
+        // Stats: último disparo + total
+        html += '  <div style="color:#666;font-size:10.5px;line-height:1.4;border-top:1px solid rgba(255,255,255,0.05);padding-top:6px;margin-top:6px;">';
+        html += '    Último envío: <span style="color:#888;">' + escapeHtml(lastFired) + '</span><br>';
+        html += '    Total disparos: <span style="color:#888;">' + totalFires + '</span>';
+        html += '  </div>';
+        // Acciones
+        html += '  <div style="display:flex;gap:5px;margin-top:8px;">';
+        html += '    <button type="button" onclick="_refundRemindersPreview(\'' + type + '\')" style="flex:1;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:5px 8px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;">👁 Preview</button>';
+        html += '    <button type="button" onclick="_refundRemindersRunNow(\'' + type + '\')" style="flex:1;background:linear-gradient(135deg,#ffaa44,#ff7700);color:#000;border:none;padding:5px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">🚀 Disparar</button>';
+        html += '  </div>';
+        html += '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+}
+
+// Activa los 3 tipos a las 23hs en una sola llamada.
+async function _refundRemindersActivateAllAt23() {
+    try {
+        const body = {
+            daily:   { enabled: true, hourART: 23, minuteART: 0 },
+            weekly:  { enabled: true, hourART: 23, minuteART: 0 },
+            monthly: { enabled: true, hourART: 23, minuteART: 0 }
+        };
+        const r = await authFetch('/api/admin/refund-reminders/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✅ Los 3 recordatorios activados a las 23hs', 'success');
+        _loadRefundRemindersCard();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Guarda los cambios de un solo tipo (cuando se modifica un input del form).
+async function _refundRemindersSaveOne(type) {
+    const enabled = !!(document.getElementById('rr_enabled_' + type) || {}).checked;
+    const hourART = Math.max(0, Math.min(23, Number((document.getElementById('rr_hour_' + type) || {}).value) || 0));
+    const minuteART = Math.max(0, Math.min(59, Number((document.getElementById('rr_minute_' + type) || {}).value) || 0));
+    const teamFilter = (document.getElementById('rr_team_' + type) || {}).value || null;
+    try {
+        const body = {}; body[type] = { enabled, hourART, minuteART, teamFilter };
+        const r = await authFetch('/api/admin/refund-reminders/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✓ Guardado', 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Preview de a quién le llegaría (sin enviar nada).
+async function _refundRemindersPreview(type) {
+    showToast('⏳ Calculando audiencia...', 'info');
+    const teamFilter = (document.getElementById('rr_team_' + type) || {}).value || null;
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, teamFilter })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        _refundRemindersOpenPreviewModal(type, d);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+function _refundRemindersOpenPreviewModal(type, d) {
+    const modalId = 'refundRemindersPreviewModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const label = type === 'daily' ? 'Diario' : type === 'weekly' ? 'Semanal' : 'Mensual';
+    const totals = d.totals || {};
+    const perUser = Array.isArray(d.perUser) ? d.perUser : [];
+    let inner = '';
+    inner += '<div style="background:#0a1428;border:1.5px solid rgba(0,212,255,0.50);border-radius:14px;padding:18px;max-width:780px;width:100%;color:#fff;">';
+    inner += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap;">';
+    inner += '<div><h3 style="margin:0;color:#00d4ff;font-size:16px;">👁 Preview · Reembolso ' + escapeHtml(label) + '</h3>';
+    inner += '<div style="color:#888;font-size:11px;margin-top:2px;">Quién recibiría el push si dispararas AHORA. NO se envía nada.</div></div>';
+    inner += '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
+    inner += '</div>';
+    inner += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px;">';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Elegibles</div><div style="color:#fff;font-weight:900;font-size:18px;">' + fmt(totals.eligible) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Ya reclamaron</div><div style="color:#66ff66;font-weight:900;font-size:18px;">' + fmt(totals.alreadyClaimed) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Sin canal</div><div style="color:#aaa;font-weight:900;font-size:18px;">' + fmt(totals.withoutChannel) + '</div></div>';
+    inner += '<div style="background:rgba(0,212,255,0.10);border-radius:8px;padding:8px;"><div style="color:#00d4ff;font-size:10px;text-transform:uppercase;">Recibirían push</div><div style="color:#00d4ff;font-weight:900;font-size:18px;">' + fmt(totals.finalAudience) + '</div></div>';
+    inner += '</div>';
+    if (perUser.length === 0) {
+        inner += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:20px;text-align:center;color:#888;">Sin audiencia — todos ya reclamaron o no tienen reembolso pendiente.</div>';
+    } else {
+        inner += '<div style="color:#aaa;font-size:11px;margin-bottom:4px;">Usuarios que recibirían el push (top ' + Math.min(100, perUser.length) + '):</div>';
+        inner += '<div style="max-height:360px;overflow-y:auto;background:rgba(0,0,0,0.30);border-radius:8px;">';
+        inner += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        inner += '<thead style="position:sticky;top:0;background:#0a1428;"><tr style="color:#00d4ff;text-align:left;">';
+        inner += '<th style="padding:6px 10px;">Usuario</th><th style="padding:6px 10px;">Equipo</th><th style="padding:6px 10px;text-align:right;">Net loss</th><th style="padding:6px 10px;text-align:right;">$ a reclamar</th>';
+        inner += '</tr></thead><tbody>';
+        for (const u of perUser.slice(0, 100)) {
+            inner += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+            inner += '<td style="padding:5px 10px;color:#fff;font-weight:700;">' + escapeHtml(u.username) + '</td>';
+            inner += '<td style="padding:5px 10px;color:#aaa;">' + escapeHtml(u.lineTeamName || '—') + '</td>';
+            inner += '<td style="padding:5px 10px;text-align:right;color:#ff8080;">$' + fmt(u.netLoss) + '</td>';
+            inner += '<td style="padding:5px 10px;text-align:right;color:#66ff66;font-weight:700;">$' + fmt(u.potentialAmount) + '</td>';
+            inner += '</tr>';
+        }
+        inner += '</tbody></table></div>';
+    }
+    inner += '</div>';
+    overlay.innerHTML = inner;
+    document.body.appendChild(overlay);
+}
+
+// Disparo manual (force=true) — manda el push aunque ya se haya disparado hoy.
+async function _refundRemindersRunNow(type) {
+    const label = type === 'daily' ? 'Diario' : type === 'weekly' ? 'Semanal' : 'Mensual';
+    if (!confirm('¿Disparar AHORA el recordatorio de reembolso ' + label + '?\nManda push a todos los usuarios con reembolso pendiente.')) return;
+    showToast('⏳ Disparando...', 'info');
+    const teamFilter = (document.getElementById('rr_team_' + type) || {}).value || null;
+    try {
+        const r = await authFetch('/api/admin/refund-reminders/run-now', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type, teamFilter, force: true, manualTrigger: true })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        const sent = d.sentCount || 0;
+        showToast('✅ ' + sent + ' push' + (sent === 1 ? '' : 'es') + ' enviado' + (sent === 1 ? '' : 's') + ' (' + label + ')', 'success');
+        _loadRefundRemindersCard();
+    } catch (e) { showToast('Error de conexión', 'error'); }
 }
