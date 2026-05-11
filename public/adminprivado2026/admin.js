@@ -19108,6 +19108,17 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '    <div style="color:#ffd700;font-weight:900;font-size:14px;text-transform:uppercase;letter-spacing:1px;">💰 Plata a regalar (worst case)</div>';
     inner += '    <div style="color:#bbb;font-size:11px;">Esto es lo MÁXIMO que se podría regalar si TODOS reclaman. En la práctica suele ser 20-40%.</div>';
     inner += '  </div>';
+    if (money.scaled) {
+        const scalePct = ((1 - money.scaleFactor) * 100).toFixed(1);
+        inner += '<div style="background:rgba(0,212,255,0.10);border-left:3px solid #00d4ff;padding:8px 12px;border-radius:4px;margin-bottom:10px;color:#fff;font-size:12px;">';
+        inner += '⚙ <strong>Ajuste automático aplicado:</strong> los regalos se escalaron <strong>-' + scalePct + '%</strong> para no exceder el cap de $' + fmt(money.cap || 0) + '. Floor $500/regalo.';
+        inner += '</div>';
+    }
+    if (sum.excludedTeams && sum.excludedTeams.length > 0) {
+        inner += '<div style="background:rgba(255,128,128,0.08);border-left:3px solid #ff8080;padding:8px 12px;border-radius:4px;margin-bottom:10px;color:#fff;font-size:12px;">';
+        inner += '🚫 <strong>Equipos excluidos:</strong> ' + sum.excludedTeams.map(t => '<code>' + escapeHtml(t) + '</code>').join(', ') + ' — no reciben campañas.';
+        inner += '</div>';
+    }
 
     // Total grande.
     inner += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:10px;">';
@@ -19238,8 +19249,13 @@ async function _autoStrategyCommit() {
     const btn = event && event.target;
     if (btn) btn.disabled = true;
     showToast('⏳ Generando campañas...', 'info');
+    const state = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
     try {
-        const r = await authFetch('/api/admin/team-campaigns/auto-strategy/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const r = await authFetch('/api/admin/team-campaigns/auto-strategy/commit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ maxTotal: state.maxTotal, excludedTeams: state.excludedTeams })
+        });
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); if (btn) btn.disabled = false; return; }
         showToast('✅ ' + d.campaignsCreated + ' campañas generadas para ' + d.monthKey, 'success');
@@ -19249,6 +19265,18 @@ async function _autoStrategyCommit() {
         showToast('Error de conexión', 'error');
         if (btn) btn.disabled = false;
     }
+}
+
+// Recolecta el estado de los controles del modal y refresca el preview.
+function _autoStrategyApplyControls() {
+    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
+    const maxInp = document.getElementById('autoStrategy_maxTotal');
+    if (maxInp) state.maxTotal = Math.max(0, Number(maxInp.value) || 0);
+    const checks = document.querySelectorAll('[data-team-exclude]');
+    const excluded = [];
+    checks.forEach(c => { if (c.checked) excluded.push(c.getAttribute('data-team-exclude')); });
+    state.excludedTeams = excluded;
+    _autoStrategyRefreshPreview();
 }
 
 async function _autoStrategyClearMonth() {
