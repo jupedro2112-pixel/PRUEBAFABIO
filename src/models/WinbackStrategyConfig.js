@@ -1,13 +1,17 @@
 /**
  * WinbackStrategyConfig — singleton key='winback-default'.
  *
- * Cron horario: si isActive, escanea PlayerStats.lastRealDepositDate y
- * dispara push escalonado en 3 tiers según días sin cargar.
+ * Cron horario: si isActive, escanea inactividad (app o deposit) y
+ * dispara push escalonado en 3 tiers según días sin actividad.
  *
- *  Tier 1 (default 7d):  push suave, SIN bono ("te extrañamos")
- *  Tier 2 (default 14d): push + MoneyGiveaway $X, vence 48h
- *  Tier 3 (default 30d): push + promo-alert COD100 (% configurable), vence 72h
+ *  Tier 1 (default 10d): push + promo wa.link 50% (sin regalar plata)
+ *  Tier 2 (default 20d): push + promo wa.link 50% (mensaje más urgente)
+ *  Tier 3 (default 30d): push + promo wa.link 100% (última oportunidad)
  *  Tier 4 (default 60d): cooldown — no mandar más
+ *
+ * IMPORTANTE: NO se regala plata directa. Todos los bonos son promo-alerts
+ * con código wa.link — el user tiene que cargar para usar el bono. El
+ * porcentaje viene aplicado encima de su carga.
  *
  * Idempotencia: User.winbackTier + User.winbackLastSentAt. Si el user
  * carga, su tier vuelve a 0 (libre para volver a entrar al ciclo).
@@ -27,9 +31,9 @@ const winbackStrategyConfigSchema = new mongoose.Schema({
   activatedAt: { type: Date, default: null },
   activatedBy: { type: String, default: null },
 
-  // Umbrales por tier (días sin cargar reales).
-  tier1Days: { type: Number, default: 7,  min: 3,  max: 30 },
-  tier2Days: { type: Number, default: 14, min: 7,  max: 45 },
+  // Umbrales por tier (días sin actividad).
+  tier1Days: { type: Number, default: 10, min: 3,  max: 30 },
+  tier2Days: { type: Number, default: 20, min: 7,  max: 45 },
   tier3Days: { type: Number, default: 30, min: 14, max: 90 },
   tier4Days: { type: Number, default: 60, min: 30, max: 365 }, // cooldown
 
@@ -37,15 +41,15 @@ const winbackStrategyConfigSchema = new mongoose.Schema({
   tier1Message: {
     type: tierMessageSchema,
     default: () => ({
-      title: '🤗 Te extrañamos',
-      body:  'Hace unos días que no te vemos. ¿Todo bien? Hay novedades para vos.'
+      title: '🎁 50% extra esperándote',
+      body:  'Volvé hoy y te damos 50% extra sobre tu carga. Pedí el código COD50.'
     })
   },
   tier2Message: {
     type: tierMessageSchema,
     default: () => ({
-      title: '🎁 $1.000 GRATIS para vos',
-      body:  'Volvé y te regalamos $1.000 listos para usar. Tocá la app.'
+      title: '⏰ Tu bono del 50% sigue activo',
+      body:  'Ya van 20 días — tu 50% de bono te espera. Cargá hoy y aprovechalo.'
     })
   },
   tier3Message: {
@@ -56,8 +60,16 @@ const winbackStrategyConfigSchema = new mongoose.Schema({
     })
   },
 
-  // Bono del tier 2 (giveaway cash).
-  tier2BonusAmount: { type: Number, default: 1000, min: 0, max: 50000 },
+  // Bono del tier 1 (promo-alert con código, sin plata directa).
+  tier1BonusPct: { type: Number, default: 50, min: 25, max: 200 },
+  tier1SuggestedAmount: { type: Number, default: 2000, min: 500, max: 100000 },
+  tier1DurationHours: { type: Number, default: 48, min: 6, max: 168 },
+
+  // Bono del tier 2 (promo-alert con código, sin plata directa).
+  // tier2BonusAmount queda DEPRECATED (era para giveaway cash, ya no se usa).
+  tier2BonusPct: { type: Number, default: 50, min: 25, max: 200 },
+  tier2SuggestedAmount: { type: Number, default: 2000, min: 500, max: 100000 },
+  tier2BonusAmount: { type: Number, default: 0, min: 0, max: 50000 }, // DEPRECATED, no usar
   tier2DurationHours: { type: Number, default: 48, min: 6, max: 168 },
 
   // Bono del tier 3 (promo-alert con código).

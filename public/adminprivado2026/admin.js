@@ -17760,26 +17760,34 @@ function _renderWinbackConfig(cfg) {
     const m1 = cfg.tier1Message || {}, m2 = cfg.tier2Message || {}, m3 = cfg.tier3Message || {};
     let html = '';
 
-    // Tier 1
+    // Tier 1 — bono wa.link 50% día 10
     html += '<div style="background:rgba(157,78,221,0.06);border:1px solid rgba(157,78,221,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
-    html += '<h3 style="color:#b48bff;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🟣 TIER 1 — TE EXTRAÑAMOS (sin bono)</h3>';
+    html += '<h3 style="color:#b48bff;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🟣 TIER 1 — BONO ' + (cfg.tier1BonusPct || 50) + '% (wa.link, sin plata directa)</h3>';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">';
-    html += '<label style="color:#bbb;font-size:11px;">Días sin cargar para disparar:</label>';
-    html += '<input type="number" id="wb_tier1Days" value="' + (cfg.tier1Days || 7) + '" min="3" max="30" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Días sin cargar:</label>';
+    html += '<input type="number" id="wb_tier1Days" value="' + (cfg.tier1Days || 10) + '" min="3" max="30" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">% bono:</label>';
+    html += '<input type="number" id="wb_tier1BonusPct" value="' + (cfg.tier1BonusPct || 50) + '" min="25" max="200" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">$ sugerido:</label>';
+    html += '<input type="number" id="wb_tier1SuggestedAmount" value="' + (cfg.tier1SuggestedAmount || 2000) + '" min="500" max="100000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:90px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Vence horas:</label>';
+    html += '<input type="number" id="wb_tier1DurationHours" value="' + (cfg.tier1DurationHours || 48) + '" min="6" max="168" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
     html += '</div>';
     html += '<input type="text" id="wb_tier1Title" value="' + escapeHtml(m1.title || '') + '" maxlength="80" placeholder="Título del push" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;margin-bottom:6px;">';
     html += '<textarea id="wb_tier1Body" maxlength="200" rows="2" placeholder="Cuerpo del push" style="width:100%;background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 10px;border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;">' + escapeHtml(m1.body || '') + '</textarea>';
     html += '</div>';
 
-    // Tier 2
+    // Tier 2 — bono wa.link 50% día 20 (mensaje más urgente)
     html += '<div style="background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
-    html += '<h3 style="color:#ffd700;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🟡 TIER 2 — REGALO CASH</h3>';
+    html += '<h3 style="color:#ffd700;margin:0 0 6px;font-size:13px;letter-spacing:1px;">🟡 TIER 2 — BONO ' + (cfg.tier2BonusPct || 50) + '% (wa.link, mensaje más urgente)</h3>';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">';
     html += '<label style="color:#bbb;font-size:11px;">Días sin cargar:</label>';
-    html += '<input type="number" id="wb_tier2Days" value="' + (cfg.tier2Days || 14) + '" min="7" max="45" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
-    html += '<label style="color:#bbb;font-size:11px;">Monto regalo $:</label>';
-    html += '<input type="number" id="wb_tier2BonusAmount" value="' + (cfg.tier2BonusAmount || 1000) + '" min="0" max="50000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:90px;">';
-    html += '<label style="color:#bbb;font-size:11px;">Vence en horas:</label>';
+    html += '<input type="number" id="wb_tier2Days" value="' + (cfg.tier2Days || 20) + '" min="7" max="45" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">% bono:</label>';
+    html += '<input type="number" id="wb_tier2BonusPct" value="' + (cfg.tier2BonusPct || 50) + '" min="25" max="200" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
+    html += '<label style="color:#bbb;font-size:11px;">$ sugerido:</label>';
+    html += '<input type="number" id="wb_tier2SuggestedAmount" value="' + (cfg.tier2SuggestedAmount || 2000) + '" min="500" max="100000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:90px;">';
+    html += '<label style="color:#bbb;font-size:11px;">Vence horas:</label>';
     html += '<input type="number" id="wb_tier2DurationHours" value="' + (cfg.tier2DurationHours || 48) + '" min="6" max="168" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
     html += '<label style="color:#bbb;font-size:11px;">Cap diario:</label>';
     html += '<input type="number" id="wb_dailyCapTier2" value="' + (cfg.dailyCapTier2 || 50) + '" min="0" max="5000" style="background:rgba(0,0,0,0.50);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:5px 8px;border-radius:6px;font-size:12px;width:70px;">';
@@ -17998,8 +18006,15 @@ async function saveWinback() {
         tier1Message: { title: get('wb_tier1Title') || '', body: get('wb_tier1Body') || '' },
         tier2Message: { title: get('wb_tier2Title') || '', body: get('wb_tier2Body') || '' },
         tier3Message: { title: get('wb_tier3Title') || '', body: get('wb_tier3Body') || '' },
-        tier2BonusAmount: getNum('wb_tier2BonusAmount'),
+        // Tier 1 bono (promo wa.link)
+        tier1BonusPct: getNum('wb_tier1BonusPct'),
+        tier1SuggestedAmount: getNum('wb_tier1SuggestedAmount'),
+        tier1DurationHours: getNum('wb_tier1DurationHours'),
+        // Tier 2 bono (promo wa.link — antes era cash, ya no)
+        tier2BonusPct: getNum('wb_tier2BonusPct'),
+        tier2SuggestedAmount: getNum('wb_tier2SuggestedAmount'),
         tier2DurationHours: getNum('wb_tier2DurationHours'),
+        // Tier 3 bono (promo wa.link)
         tier3BonusPct: getNum('wb_tier3BonusPct'),
         tier3SuggestedAmount: getNum('wb_tier3SuggestedAmount'),
         tier3DurationHours: getNum('wb_tier3DurationHours'),

@@ -14202,49 +14202,43 @@ async function _fireWinbackForUser(user, tier, cfg, opts = {}) {
   let bonusType = 'none', bonusAmount = 0;
   let promoCode = null, giveawayId = null;
   const now = new Date();
-  // BONIFICACIONES Y REGALOS AUTOMÁTICOS DESACTIVADOS (admin lo maneja
-  // manual). Solo se manda el push del tier, sin crear giveaway/promo.
-  // Para reactivar: cambiar a true.
-  const AUTO_BONUS_ENABLED = false;
+  // Winback usa SOLO promos wa.link (sin regalar plata directa).
+  // Tier 1 = 50%, Tier 2 = 50%, Tier 3 = 100% (configurable).
+  // Para tier 2 los giveaways cash quedaron deprecated — ahora todos los
+  // tiers crean promo-alert con código (COD50/COD100/etc).
+  const AUTO_BONUS_ENABLED = true;
   try {
-    if (AUTO_BONUS_ENABLED && tier === 2 && cfg.tier2BonusAmount > 0) {
-      // Cerrar otros giveaways individuales activos del mismo user.
-      await MoneyGiveaway.updateMany(
-        { status: 'active', strategySource: 'individual_grant', audienceWhitelist: username },
-        { $set: { status: 'cancelled' } }
-      );
-      const g = await MoneyGiveaway.create({
-        id: uuidv4(),
-        amount: cfg.tier2BonusAmount,
-        totalBudget: cfg.tier2BonusAmount,
-        maxClaims: 1,
-        expiresAt: new Date(now.getTime() + cfg.tier2DurationHours * 3600 * 1000),
-        createdBy: 'cron-winback',
-        prefix: null,
-        notificationHistoryId: null,
-        requireZeroBalance: false,
-        strategySource: 'individual_grant',
-        audienceWhitelist: [username],
-        status: 'active'
-      });
-      bonusType = 'giveaway';
-      bonusAmount = cfg.tier2BonusAmount;
-      giveawayId = g.id;
-    } else if (AUTO_BONUS_ENABLED && tier === 3 && cfg.tier3BonusPct > 0) {
-      promoCode = 'COD' + Math.round(cfg.tier3BonusPct);
-      const promoMessage = `🎁 Cargás $${cfg.tier3SuggestedAmount.toLocaleString('es-AR')} y te damos un ${cfg.tier3BonusPct}% extra. Pedí el código ${promoCode}.`;
+    // Determinar parametros del bono según tier.
+    let bonusPct = 0, suggestedAmount = 0, durationHours = 0;
+    if (tier === 1) {
+      bonusPct = cfg.tier1BonusPct || 50;
+      suggestedAmount = cfg.tier1SuggestedAmount || 2000;
+      durationHours = cfg.tier1DurationHours || 48;
+    } else if (tier === 2) {
+      bonusPct = cfg.tier2BonusPct || 50;
+      suggestedAmount = cfg.tier2SuggestedAmount || 2000;
+      durationHours = cfg.tier2DurationHours || 48;
+    } else if (tier === 3) {
+      bonusPct = cfg.tier3BonusPct || 100;
+      suggestedAmount = cfg.tier3SuggestedAmount || 2000;
+      durationHours = cfg.tier3DurationHours || 72;
+    }
+
+    if (AUTO_BONUS_ENABLED && bonusPct > 0 && (tier === 1 || tier === 2 || tier === 3)) {
+      promoCode = 'COD' + Math.round(bonusPct);
+      const promoMessage = `🎁 Cargás $${suggestedAmount.toLocaleString('es-AR')} y te damos un ${bonusPct}% extra. Pedí el código ${promoCode}.`;
       const promo = {
         id: uuidv4(),
         message: promoMessage,
         code: promoCode,
-        expiresAt: new Date(now.getTime() + cfg.tier3DurationHours * 3600 * 1000).toISOString(),
+        expiresAt: new Date(now.getTime() + durationHours * 3600 * 1000).toISOString(),
         createdAt: now.toISOString(),
         createdBy: 'cron-winback',
         prefix: null,
         audienceWhitelist: [username],
         kind: 'winback_grant',
-        grantAmount: cfg.tier3SuggestedAmount,
-        grantPct: cfg.tier3BonusPct,
+        grantAmount: suggestedAmount,
+        grantPct: bonusPct,
         notificationHistoryId: null
       };
       const arr = (await getConfig(TIER_PROMOS_KEY, [])) || [];
@@ -14261,7 +14255,7 @@ async function _fireWinbackForUser(user, tier, cfg, opts = {}) {
       cleaned.push(promo);
       await setConfig(TIER_PROMOS_KEY, cleaned);
       bonusType = 'promo';
-      bonusAmount = cfg.tier3SuggestedAmount;
+      bonusAmount = suggestedAmount;
     }
 
     // Push.
@@ -14533,7 +14527,11 @@ app.post('/api/admin/winback', authMiddleware, adminMiddleware, async (req, res)
     const allowed = [
       'tier1Days','tier2Days','tier3Days','tier4Days',
       'tier1Message','tier2Message','tier3Message',
-      'tier2BonusAmount','tier2DurationHours',
+      // Tier 1 bono (nuevo — promo wa.link)
+      'tier1BonusPct','tier1SuggestedAmount','tier1DurationHours',
+      // Tier 2 bono (ahora promo wa.link; tier2BonusAmount queda como deprecated)
+      'tier2BonusPct','tier2SuggestedAmount','tier2BonusAmount','tier2DurationHours',
+      // Tier 3 bono
       'tier3BonusPct','tier3SuggestedAmount','tier3DurationHours',
       'onlySurveyResponders','excludeOpportunists','inactivityMetric',
       'dailyCapTier2','dailyCapTier3'
