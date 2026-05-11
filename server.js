@@ -66,6 +66,7 @@ const {
   JugayganaImport,
   DailyPlayerStats,
   DailyAppOpen,
+  QuinielaResult,
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,
@@ -14155,6 +14156,203 @@ app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     logger.error(`GET /api/reviews/mine: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// QUINIELA — resultado del sorteo público (admin publica, users ven)
+// ============================================================
+// El admin crea un resultado (draft), carga el número ganador (4 cifras)
+// y los premios, y lo publica. Al publicar:
+//   - Status pasa a 'published' y queda visible en la PWA.
+//   - Se manda push a todos los users con PWA standalone para avisarles.
+// La PWA muestra el ÚLTIMO publicado en un banner centrado arriba del home.
+
+// GET /api/quiniela/latest — endpoint PÚBLICO (con auth) que devuelve el
+// último resultado publicado. La PWA lo polla al cargar el home.
+app.get('/api/quiniela/latest', authMiddleware, async (req, res) => {
+  try {
+    const doc = await QuinielaResult.findOne(
+      { status: 'published' },
+      { id: 1, drawName: 1, drawDate: 1, winningNumber: 1, prize4digits: 1, prize3digits: 1, publishedAt: 1, _id: 0 }
+    ).sort({ publishedAt: -1 }).lean();
+    res.json({ result: doc || null });
+  } catch (err) {
+    logger.error(`GET /api/quiniela/latest: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/quiniela — lista (draft + published) para el panel.
+app.get('/api/admin/quiniela', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const list = await QuinielaResult.find({}).sort({ createdAt: -1 }).limit(100).lean();
+    res.json({ results: list });
+  } catch (err) {
+    logger.error(`GET /api/admin/quiniela: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/quiniela — crear un nuevo resultado (draft).
+app.post('/api/admin/quiniela', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const drawName = String(b.drawName || 'Quiniela Nacional Nocturna').trim().slice(0, 80);
+    const drawDate = b.drawDate ? new Date(b.drawDate) : null;
+    if (!drawDate || isNaN(drawDate.getTime())) {
+      return res.status(400).json({ error: 'Fecha del sorteo inválida' });
+    }
+    const winningNumber = String(b.winningNumber || '').trim();
+    if (!/^\d{4}$/.test(winningNumber)) {
+      return res.status(400).json({ error: 'El número ganador debe tener 4 cifras (ej: 0042 o 1234)' });
+    }
+    const prize4 = Math.max(1, Math.floor(Number(b.prize4digits) || 5000000));
+    const prize3 = Math.max(1, Math.floor(Number(b.prize3digits) || 500000));
+    const doc = await QuinielaResult.create({
+      id: uuidv4(),
+      drawName, drawDate, winningNumber,
+      prize4digits: prize4, prize3digits: prize3,
+      status: 'draft',
+      createdBy: (req.user && req.user.username) || 'admin',
+      createdAt: new Date()
+    });
+    res.json({ success: true, result: doc });
+  } catch (err) {
+    logger.error(`POST /api/admin/quiniela: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/quiniela/:id — editar (solo si está en draft).
+app.put('/api/admin/quiniela/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const b = req.body || {};
+    const existing = await QuinielaResult.findOne({ id }).lean();
+    if (!existing) return res.status(404).json({ error: 'No encontrado' });
+    if (existing.status === 'published') {
+      return res.status(409).json({ error: 'Este resultado ya fue publicado y no se puede editar. Borrá y creá uno nuevo si querés corregirlo.' });
+    }
+    const $set = {};
+    if (b.drawName !== undefined) $set.drawName = String(b.drawName || '').trim().slice(0, 80);
+    if (b.drawDate !== undefined) {
+      const dt = new Date(b.drawDate);
+      if (isNaN(dt.getTime())) return res.status(400).json({ error: 'Fecha inválida' });
+      $set.drawDate = dt;
+    }
+    if (b.winningNumber !== undefined) {
+      const wn = String(b.winningNumber || '').trim();
+      if (!/^\d{4}$/.test(wn)) return res.status(400).json({ error: 'Número ganador inválido (4 cifras)' });
+      $set.winningNumber = wn;
+    }
+    if (b.prize4digits !== undefined) $set.prize4digits = Math.max(1, Math.floor(Number(b.prize4digits) || 0));
+    if (b.prize3digits !== undefined) $set.prize3digits = Math.max(1, Math.floor(Number(b.prize3digits) || 0));
+    const doc = await QuinielaResult.findOneAndUpdate({ id }, { $set }, { new: true }).lean();
+    res.json({ success: true, result: doc });
+  } catch (err) {
+    logger.error(`PUT /api/admin/quiniela/:id: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/quiniela/:id/publish — publica el resultado.
+// Body opcional:
+//   sendPush: bool (default true) — si false, publica sin notificar.
+//   excludeTeams: [String] — equipos cuyos users NO reciben el push (filtro
+//                              por User.lineTeamName). Útil para reservar el
+//                              anuncio a ciertos canales.
+// Cambia status, setea publishedAt, y dispara push broadcast a los users
+// con PWA standalone que no estén en `excludeTeams`. Fire-and-forget.
+app.post('/api/admin/quiniela/:id/publish', authMiddleware, adminMiddleware, bulkLaunchLimiter, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const b = req.body || {};
+    const sendPush = b.sendPush !== false; // default true
+    const excludeTeams = Array.isArray(b.excludeTeams)
+      ? b.excludeTeams.map(t => String(t || '').trim()).filter(Boolean)
+      : [];
+    const adminUser = (req.user && req.user.username) || 'admin';
+    const existing = await QuinielaResult.findOne({ id }).lean();
+    if (!existing) return res.status(404).json({ error: 'No encontrado' });
+    if (existing.status === 'published') {
+      return res.status(409).json({ error: 'Este resultado ya fue publicado' });
+    }
+    const now = new Date();
+    const doc = await QuinielaResult.findOneAndUpdate(
+      { id },
+      { $set: { status: 'published', publishedAt: now, publishedBy: adminUser } },
+      { new: true }
+    ).lean();
+
+    // Push broadcast fire-and-forget. Recolectamos todos los tokens
+    // standalone con permission granted, excluyendo teams si vinieron.
+    if (sendPush) {
+      (async () => {
+        try {
+          const userFilter = {
+            role: 'user',
+            $or: [
+              { fcmTokenContext: 'standalone' },
+              { 'fcmTokens.context': 'standalone' }
+            ]
+          };
+          if (excludeTeams.length > 0) {
+            userFilter.lineTeamName = { $nin: excludeTeams };
+          }
+          const users = await User.find(
+            userFilter,
+            { fcmTokens: 1, fcmTokenContext: 1, fcmToken: 1, lineTeamName: 1, _id: 0 }
+          ).limit(20000).lean();
+          const tokens = [];
+          for (const u of users) {
+            const arr = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+            for (const t of arr) {
+              if (t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token) tokens.push(t.token);
+            }
+          }
+          const uniqTokens = Array.from(new Set(tokens));
+          if (uniqTokens.length === 0) {
+            logger.info(`[quiniela] sin tokens para enviar (excludeTeams=${excludeTeams.length})`);
+            return;
+          }
+          const { sendNotificationToMultiple } = require('./src/services/notificationService');
+          // El body menciona el premio mayor — más impactante en notif.
+          const prizeStr = '$' + Number(doc.prize4digits || 5000000).toLocaleString('es-AR');
+          const title = '🎰 Resultado sorteo ' + prizeStr;
+          const body = 'Salió el ' + doc.winningNumber + '. Si ganaste, reclamá en el principal con tu comprobante.';
+          await sendNotificationToMultiple(uniqTokens, title, body, {
+            type: 'quiniela_result',
+            quinielaId: doc.id,
+            url: '/'
+          });
+          await QuinielaResult.updateOne({ id }, { $set: { pushesSent: uniqTokens.length } });
+          logger.info(`[quiniela] push enviado a ${uniqTokens.length} tokens (excludeTeams=${JSON.stringify(excludeTeams)})`);
+        } catch (e) {
+          logger.error(`[quiniela] push failed: ${e.message}`);
+        }
+      })();
+    } else {
+      logger.info(`[quiniela] publicado SIN push por pedido del admin (resultado ${doc.id})`);
+    }
+
+    res.json({ success: true, result: doc, sendPush, excludeTeams });
+  } catch (err) {
+    logger.error(`POST /api/admin/quiniela/:id/publish: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/admin/quiniela/:id — borrar (cualquier estado).
+app.delete('/api/admin/quiniela/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const r = await QuinielaResult.deleteOne({ id });
+    if (r.deletedCount === 0) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/quiniela/:id: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

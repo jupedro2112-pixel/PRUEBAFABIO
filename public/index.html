@@ -2461,6 +2461,31 @@
             </div>
         </header>
 
+        <!-- Banner QUINIELA — resultado oficial del sorteo. Arriba de todo,
+             centrado, muy visible. JS lo muestra solo si hay un resultado
+             publicado (fetch a /api/quiniela/latest al cargar el home). -->
+        <div id="quinielaBanner" style="display:none;margin:10px auto 14px;max-width:580px;background:linear-gradient(135deg,#1a0033 0%,#3a0066 50%,#1a0033 100%);border:2px solid #ffd700;border-radius:14px;padding:18px 16px;text-align:center;box-shadow:0 6px 30px rgba(255,215,0,0.30), inset 0 0 30px rgba(255,215,0,0.08);position:relative;">
+            <div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">🎰 <span id="quinielaBannerName">Quiniela Nacional Nocturna</span></div>
+            <div id="quinielaBannerDate" style="color:#bbb;font-size:11px;margin-bottom:12px;">—</div>
+            <div style="margin:10px auto 12px;display:inline-block;background:rgba(0,0,0,0.40);border:2px solid rgba(255,215,0,0.50);border-radius:12px;padding:10px 22px;">
+                <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Número ganador</div>
+                <div id="quinielaBannerNumber" style="color:#ffd700;font-family:monospace;font-size:38px;font-weight:900;letter-spacing:10px;line-height:1;text-shadow:0 0 18px rgba(255,215,0,0.55);">— — — —</div>
+            </div>
+            <div style="display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+                <div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:6px 12px;">
+                    <div style="color:#66ff66;font-size:10px;font-weight:700;text-transform:uppercase;">4 cifras</div>
+                    <div id="quinielaBannerPrize4" style="color:#fff;font-size:15px;font-weight:900;">$5.000.000</div>
+                </div>
+                <div style="background:rgba(255,215,0,0.08);border:1px solid rgba(255,215,0,0.40);border-radius:8px;padding:6px 12px;">
+                    <div style="color:#ffd700;font-size:10px;font-weight:700;text-transform:uppercase;">3 cifras</div>
+                    <div id="quinielaBannerPrize3" style="color:#fff;font-size:15px;font-weight:900;">$500.000</div>
+                </div>
+            </div>
+            <div style="color:#fff;font-size:12.5px;line-height:1.5;background:rgba(255,255,255,0.05);border-radius:8px;padding:8px 12px;">
+                🏆 <strong style="color:#ffd700;">¿Ganaste?</strong> Reclamá en nuestro principal mostrando tu comprobante ganador.
+            </div>
+        </div>
+
         <!-- Boton ACTUALIZAR (soft refresh): SIN reload de pagina — solo
              refetch de datos (saldo, sorteos, refunds). Asi el user no
              pierde sesion ni notifs. -->
@@ -3169,6 +3194,53 @@
                 btn.textContent = '📨 Enviar queja';
             }
         };
+    })();
+    </script>
+
+    <!-- Banner Quiniela — fetch + render del último resultado publicado -->
+    <script>
+    (function() {
+        async function loadQuinielaBanner() {
+            try {
+                const token = localStorage.getItem('userToken');
+                if (!token) return;
+                const r = await fetch('/api/quiniela/latest', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!r.ok) return;
+                const d = await r.json();
+                const result = d && d.result;
+                if (!result || !result.winningNumber) return;
+                const $name = document.getElementById('quinielaBannerName');
+                const $date = document.getElementById('quinielaBannerDate');
+                const $num = document.getElementById('quinielaBannerNumber');
+                const $p4 = document.getElementById('quinielaBannerPrize4');
+                const $p3 = document.getElementById('quinielaBannerPrize3');
+                const $banner = document.getElementById('quinielaBanner');
+                if (!$banner) return;
+                if ($name && result.drawName) $name.textContent = result.drawName;
+                if ($date && result.drawDate) {
+                    try {
+                        $date.textContent = 'Sorteo del ' + new Date(result.drawDate).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                    } catch (_) {}
+                }
+                if ($num) $num.textContent = String(result.winningNumber).split('').join(' ');
+                if ($p4) $p4.textContent = '$' + Number(result.prize4digits || 0).toLocaleString('es-AR');
+                if ($p3) $p3.textContent = '$' + Number(result.prize3digits || 0).toLocaleString('es-AR');
+                $banner.style.display = '';
+            } catch (_) { /* silencio */ }
+        }
+        // Carga al inicio + cuando el user vuelve al tab.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', loadQuinielaBanner);
+        } else {
+            loadQuinielaBanner();
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') loadQuinielaBanner();
+        });
+        // Permite refrescar desde fuera (ej: tras un push notification).
+        window.refreshQuinielaBanner = loadQuinielaBanner;
     })();
     </script>
 

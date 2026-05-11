@@ -29,6 +29,7 @@ const TeamCampaign = require('./TeamCampaign');
 const JugayganaImport = require('./JugayganaImport');
 const DailyPlayerStats = require('./DailyPlayerStats');
 const DailyAppOpen = require('./DailyAppOpen');
+const QuinielaResult = require('./QuinielaResult');
 const UserLineLookup = require('./UserLineLookup');
 const AppNotifSnapshot = require('./AppNotifSnapshot');
 const NotificationRule = require('./NotificationRule');
@@ -456,6 +457,7 @@ module.exports = {
   JugayganaImport,
   DailyPlayerStats,
   DailyAppOpen,
+  QuinielaResult,
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,

@@ -190,6 +190,10 @@
                     <span>⚡</span>
                     <span>Sorteo relámpago</span>
                 </a>
+                <a href="#" class="nav-item" data-section="quiniela">
+                    <span>🎰</span>
+                    <span>Quiniela</span>
+                </a>
 
                 <div class="nav-section-title">✨ Automatización</div>
                 <a href="#" class="nav-item" data-section="automation">
@@ -1135,6 +1139,25 @@
                     </p>
                 </div>
                 <div id="rafflesLightningAdminContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: QUINIELA — admin publica resultado oficial
+                 ============================================ -->
+            <section id="quinielaSection" class="section">
+                <div class="panel-header">
+                    <h2>🎰 Quiniela</h2>
+                    <button class="refresh-btn" onclick="loadQuinielaAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:linear-gradient(135deg,rgba(255,215,0,0.10),rgba(155,48,255,0.08));border:1px solid rgba(255,215,0,0.40);border-radius:10px;padding:12px;margin-bottom:14px;color:#ffd700;font-size:12px;line-height:1.5;">
+                    <strong>📌 ¿Cómo funciona?</strong> Cargás el número ganador del sorteo (4 cifras) y los premios.
+                    Al apretar <b>"Publicar y notificar"</b>, el resultado queda visible <strong>arriba de todo</strong> en
+                    la home de los usuarios y se les manda push. Los que jugaron por WhatsApp reclaman el premio mostrando
+                    su comprobante (no hay juego en la app).
+                </div>
+                <div id="quinielaAdminContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

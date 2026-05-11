@@ -405,6 +405,7 @@ function showSection(sectionKey) {
         raffles: 'rafflesSection',
         rafflesFree: 'rafflesFreeSection',
         rafflesLightning: 'rafflesLightningSection',
+        quiniela: 'quinielaSection',
         campaigns: 'campaignsSection',
         recovery: 'recoverySection',
         teams: 'teamsSection',
@@ -469,6 +470,8 @@ function showSection(sectionKey) {
         loadRafflesFreeAdmin();
     } else if (sectionKey === 'rafflesLightning') {
         loadRafflesLightningAdmin();
+    } else if (sectionKey === 'quiniela') {
+        loadQuinielaAdmin();
     } else if (sectionKey === 'campaigns') {
         loadCampaignsAdmin();
     } else if (sectionKey === 'recovery') {
@@ -14654,6 +14657,195 @@ function _renderSegmentDetail(d) {
 }
 
 // (reanalyzeSegment fue reemplazado por applySegmentFilters/clearSegmentFilters)
+
+// ============================================
+// QUINIELA — admin publica resultado oficial del sorteo
+// ============================================
+let _QUINIELA_CACHE = { results: [], teams: [] };
+
+async function loadQuinielaAdmin() {
+    const c = document.getElementById('quinielaAdminContent');
+    if (!c) return;
+    c.innerHTML = '<div class="empty-state" style="padding:20px;color:#aaa;">⏳ Cargando…</div>';
+    try {
+        const [listRes, teamsRes] = await Promise.all([
+            authFetch('/api/admin/quiniela'),
+            authFetch('/api/admin/teams/names').catch(() => null)
+        ]);
+        const listJ = listRes.ok ? await listRes.json() : { results: [] };
+        let teams = [];
+        if (teamsRes && teamsRes.ok) {
+            const tj = await teamsRes.json();
+            teams = (tj.teams || []).map(t => t.teamName).filter(Boolean);
+        }
+        _QUINIELA_CACHE = { results: listJ.results || [], teams };
+        c.innerHTML = _renderQuinielaAdmin();
+    } catch (e) {
+        c.innerHTML = '<div class="empty-state" style="color:#ff8080;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+function _renderQuinielaAdmin() {
+    const list = _QUINIELA_CACHE.results || [];
+    const teams = _QUINIELA_CACHE.teams || [];
+    const today = new Date().toISOString().slice(0, 10);
+    let html = '';
+
+    // Form: crear nuevo resultado.
+    html += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.40);border-radius:12px;padding:14px;margin-bottom:16px;">';
+    html += '  <div style="color:#d4af37;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">➕ Nuevo resultado</div>';
+    html += '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
+    html += '    <div><label style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px;">Nombre del sorteo</label>';
+    html += '    <input type="text" id="qnDrawName" value="Quiniela Nacional Nocturna" maxlength="80" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px 10px;border-radius:7px;font-size:13px;box-sizing:border-box;"></div>';
+    html += '    <div><label style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px;">Fecha del sorteo</label>';
+    html += '    <input type="date" id="qnDrawDate" value="' + today + '" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px 10px;border-radius:7px;font-size:13px;box-sizing:border-box;"></div>';
+    html += '  </div>';
+    html += '  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">';
+    html += '    <div><label style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px;">Número ganador (4 cifras)</label>';
+    html += '    <input type="text" id="qnWinningNumber" maxlength="4" inputmode="numeric" pattern="[0-9]{4}" placeholder="0042" style="width:100%;background:#0a0a0a;color:#fff;border:1.5px solid rgba(212,175,55,0.50);padding:9px 11px;border-radius:7px;font-size:18px;font-weight:900;font-family:monospace;text-align:center;letter-spacing:6px;box-sizing:border-box;"></div>';
+    html += '    <div><label style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px;">Premio 4 cifras</label>';
+    html += '    <input type="number" id="qnPrize4" value="5000000" min="1" step="1000" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px 10px;border-radius:7px;font-size:13px;box-sizing:border-box;"></div>';
+    html += '    <div><label style="color:#bbb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px;">Premio 3 cifras</label>';
+    html += '    <input type="number" id="qnPrize3" value="500000" min="1" step="1000" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px 10px;border-radius:7px;font-size:13px;box-sizing:border-box;"></div>';
+    html += '  </div>';
+    // Toggle push + equipos excluidos
+    html += '  <div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;margin-bottom:10px;">';
+    html += '    <label style="display:flex;align-items:center;gap:8px;color:#fff;font-size:12.5px;cursor:pointer;margin-bottom:8px;">';
+    html += '      <input type="checkbox" id="qnSendPush" checked> <span><b>📲 Enviar notificación push</b> a todos los usuarios al publicar</span>';
+    html += '    </label>';
+    html += '    <div id="qnExcludeTeamsBox" style="padding-left:24px;">';
+    html += '      <div style="color:#bbb;font-size:11px;margin-bottom:5px;">Omitir equipos (opcional — esos users NO reciben el push):</div>';
+    if (teams.length === 0) {
+        html += '      <div style="color:#888;font-size:11.5px;">— Sin equipos configurados —</div>';
+    } else {
+        html += '      <div style="display:flex;flex-wrap:wrap;gap:6px;">';
+        for (const t of teams) {
+            html += '<label style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.15);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:11.5px;">';
+            html += '<input type="checkbox" class="qn-exclude-team" value="' + escapeHtml(t) + '"> ' + escapeHtml(t);
+            html += '</label>';
+        }
+        html += '      </div>';
+    }
+    html += '    </div>';
+    html += '  </div>';
+    html += '  <div style="display:flex;gap:8px;justify-content:flex-end;">';
+    html += '    <button type="button" onclick="_quinielaCreateAndPublish()" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:900;cursor:pointer;">🚀 Publicar y notificar</button>';
+    html += '  </div>';
+    html += '</div>';
+
+    // Lista histórica
+    html += '<div style="color:#aaa;font-size:12.5px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;">📜 Histórico (' + list.length + ')</div>';
+    if (list.length === 0) {
+        html += '<div class="empty-state" style="padding:20px;color:#666;text-align:center;">Aún no se publicó ningún resultado.</div>';
+    } else {
+        for (const r of list) {
+            const isPub = r.status === 'published';
+            const fmtDate = (d) => { try { return new Date(d).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit' }); } catch(_) { return ''; } };
+            const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid ' + (isPub ? 'rgba(102,255,102,0.30)' : 'rgba(255,215,0,0.20)') + ';border-radius:10px;padding:11px 13px;margin-bottom:7px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:200px;">';
+            html += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="background:rgba(212,175,55,0.10);border:1.5px solid #d4af37;color:#ffd700;padding:6px 12px;border-radius:8px;font-family:monospace;font-size:22px;font-weight:900;letter-spacing:3px;">' + escapeHtml(r.winningNumber) + '</div>';
+            html += '<div>';
+            html += '<div style="color:#fff;font-weight:700;font-size:12.5px;">' + escapeHtml(r.drawName) + '</div>';
+            html += '<div style="color:#aaa;font-size:11px;">Sorteo del ' + escapeHtml(fmtDate(r.drawDate)) + ' · 4 cifras: ' + escapeHtml(fmtMoney(r.prize4digits)) + ' · 3 cifras: ' + escapeHtml(fmtMoney(r.prize3digits)) + '</div>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+            html += '<div style="display:flex;align-items:center;gap:8px;">';
+            if (isPub) {
+                html += '<div style="color:#66ff66;font-size:11px;font-weight:700;">✅ Publicado · ' + escapeHtml(fmtDate(r.publishedAt));
+                if (r.pushesSent) html += ' · 📲 ' + r.pushesSent;
+                html += '</div>';
+            } else {
+                html += '<div style="color:#ffd700;font-size:11px;font-weight:700;">📝 Borrador</div>';
+                html += '<button type="button" onclick="_quinielaPublish(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:5px 11px;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;">Publicar</button>';
+            }
+            html += '<button type="button" onclick="_quinielaDelete(\'' + escapeHtml(r.id) + '\')" title="Borrar" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.30);color:#ff8080;padding:5px 9px;border-radius:6px;font-size:11px;cursor:pointer;">🗑</button>';
+            html += '</div>';
+            html += '</div>';
+        }
+    }
+    return html;
+}
+
+async function _quinielaCreateAndPublish() {
+    const drawName = document.getElementById('qnDrawName').value.trim();
+    const drawDate = document.getElementById('qnDrawDate').value;
+    const winningNumber = document.getElementById('qnWinningNumber').value.trim();
+    const prize4 = Number(document.getElementById('qnPrize4').value);
+    const prize3 = Number(document.getElementById('qnPrize3').value);
+    const sendPush = document.getElementById('qnSendPush').checked;
+    const excludeTeams = Array.from(document.querySelectorAll('.qn-exclude-team:checked')).map(el => el.value);
+
+    if (!drawName || !drawDate) { showToast('Completá nombre y fecha', 'error'); return; }
+    if (!/^\d{4}$/.test(winningNumber)) { showToast('El número ganador debe tener exactamente 4 cifras', 'error'); return; }
+    if (!prize4 || prize4 < 1) { showToast('Premio 4 cifras inválido', 'error'); return; }
+    if (!prize3 || prize3 < 1) { showToast('Premio 3 cifras inválido', 'error'); return; }
+
+    const teamsMsg = excludeTeams.length ? '\n\nEquipos omitidos: ' + excludeTeams.join(', ') : '';
+    if (!confirm('¿Publicar y notificar?\n\nNúmero ganador: ' + winningNumber + teamsMsg + '\n\nLos usuarios van a recibir el push y verán el resultado en su home.')) return;
+
+    try {
+        // 1) Crear el draft.
+        const createR = await authFetch('/api/admin/quiniela', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ drawName, drawDate, winningNumber, prize4digits: prize4, prize3digits: prize3 })
+        });
+        const createJ = await createR.json();
+        if (!createR.ok) { showToast('❌ ' + (createJ.error || 'Error creando'), 'error'); return; }
+        const id = createJ.result && createJ.result.id;
+        if (!id) { showToast('❌ Error: no se obtuvo ID', 'error'); return; }
+
+        // 2) Publicar.
+        const pubR = await authFetch('/api/admin/quiniela/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sendPush, excludeTeams })
+        });
+        const pubJ = await pubR.json();
+        if (!pubR.ok) {
+            showToast('❌ Creado pero NO publicado: ' + (pubJ.error || 'Error'), 'error');
+            loadQuinielaAdmin();
+            return;
+        }
+        showToast(sendPush ? '🎰 Publicado + push enviado' : '🎰 Publicado (sin push)', 'success');
+        loadQuinielaAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function _quinielaPublish(id) {
+    if (!confirm('¿Publicar este resultado? El push se enviará a todos los usuarios (sin filtro de equipos).')) return;
+    try {
+        const r = await authFetch('/api/admin/quiniela/' + encodeURIComponent(id) + '/publish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sendPush: true, excludeTeams: [] })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('🎰 Publicado y notificado', 'success');
+        loadQuinielaAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function _quinielaDelete(id) {
+    if (!confirm('¿Borrar este resultado? Esta acción no se puede deshacer.')) return;
+    try {
+        const r = await authFetch('/api/admin/quiniela/' + encodeURIComponent(id), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('🗑 Borrado', 'success');
+        loadQuinielaAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
 
 // ============================================
 // CAMPAÑAS / LANDINGS (counter de /promo2k y similares)
