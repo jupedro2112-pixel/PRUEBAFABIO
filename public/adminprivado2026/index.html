@@ -121,6 +121,10 @@
                     <span>📱</span>
                     <span><strong>Usuarios con app</strong></span>
                 </a>
+                <a href="#" class="nav-item" data-section="complaints" style="background:rgba(0,212,255,0.04);border-left:3px solid #00d4ff;">
+                    <span>📖</span>
+                    <span><strong>Libro de quejas</strong> <span id="complaintsBadge" style="display:none;background:#ff5050;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;letter-spacing:0.5px;">0</span></span>
+                </a>
 
                 <div class="nav-section-title">💸 Reembolsos</div>
                 <a href="#" class="nav-item" data-section="reportDaily">
@@ -847,6 +851,26 @@
                     </p>
                 </div>
                 <div id="appUsersContent" style="min-height:200px;">
+                    <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- Libro de quejas (NUEVO TOP) — quejas que los users envían desde
+                 el botón 📖 del header de la PWA. Filtrable por estado (nuevas,
+                 vistas, resueltas). Cada queja: fecha incidente + hora + asunto
+                 + detalle + foto opcional + notas internas del admin. -->
+            <section id="complaintsSection" class="section">
+                <div class="panel-header">
+                    <h2>📖 Libro de quejas</h2>
+                    <button class="refresh-btn" onclick="loadComplaintsAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0 0 6px;color:#d4af37;font-weight:700;font-size:13px;">📖 Lo que los usuarios reportan desde la app</p>
+                    <p style="margin:0;color:#bbb;font-size:11px;line-height:1.6;">
+                        Cada usuario logueado tiene un botón <strong>📖 Libro de quejas</strong> arriba a la izquierda de su home. Puede completar fecha, hora, asunto, detalle y adjuntar una foto. Vos las recibís acá, las marcás <strong>Vista</strong> o <strong>Resuelta</strong> y agregás notas internas (no las ve el user). Filtros: pendientes / vistas / resueltas / todas.
+                    </p>
+                </div>
+                <div id="complaintsContent" style="min-height:200px;">
                     <div class="empty-state" style="padding:30px;text-align:center;color:#aaa;">⏳ Cargando…</div>
                 </div>
             </section>

@@ -180,6 +180,7 @@ function showSection(sectionKey) {
         recontact: 'recontactSection',
         recontactConversions: 'recontactConversionsSection',
         appUsers: 'appUsersSection',
+        complaints: 'complaintsSection',
         encuesta: 'encuestaSection',
         backupPhones: 'backupPhonesSection',
         winback: 'winbackSection',
@@ -233,6 +234,8 @@ function showSection(sectionKey) {
         loadRecontactConversions();
     } else if (sectionKey === 'appUsers') {
         loadAppUsers();
+    } else if (sectionKey === 'complaints') {
+        loadComplaintsAdmin();
     } else if (sectionKey === 'encuesta') {
         loadEncuesta();
     } else if (sectionKey === 'backupPhones') {
@@ -19906,4 +19909,217 @@ function _renderGlobalReactionModal(d) {
     inner += '</div>';
     overlay.innerHTML = inner;
     document.body.appendChild(overlay);
+}
+
+// ============================================================
+// 📖 LIBRO DE QUEJAS — admin
+// ============================================================
+// Lista quejas con filtros (pendientes / vistas / resueltas / todas).
+// Click en una queja → modal con detalle completo + foto + notas internas
+// + cambio de estado. El badge en el sidebar refleja cuántas pending hay.
+
+let _COMPLAINTS_CACHE = { list: [], summary: { pending: 0, reviewed: 0, resolved: 0, total: 0 }, filter: 'pending', q: '' };
+
+async function loadComplaintsAdmin() {
+    const c = document.getElementById('complaintsContent');
+    if (!c) return;
+    c.innerHTML = '<div style="color:#aaa;padding:14px;font-size:12px;">⏳ Cargando quejas...</div>';
+    const filter = _COMPLAINTS_CACHE.filter || 'pending';
+    const q = _COMPLAINTS_CACHE.q || '';
+    try {
+        const url = '/api/admin/complaints?status=' + encodeURIComponent(filter) + '&q=' + encodeURIComponent(q);
+        const r = await authFetch(url);
+        const d = await r.json();
+        if (!r.ok) {
+            c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error: ' + escapeHtml(d.error || '') + '</div>';
+            return;
+        }
+        _COMPLAINTS_CACHE.list = d.complaints || [];
+        _COMPLAINTS_CACHE.summary = d.summary || { pending: 0, reviewed: 0, resolved: 0, total: 0 };
+        c.innerHTML = _renderComplaintsList();
+        _updateComplaintsBadge(_COMPLAINTS_CACHE.summary.pending || 0);
+    } catch (e) {
+        c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error de conexión.</div>';
+    }
+}
+
+function _renderComplaintsList() {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const s = _COMPLAINTS_CACHE.summary || {};
+    const list = _COMPLAINTS_CACHE.list || [];
+    const filter = _COMPLAINTS_CACHE.filter || 'pending';
+
+    let html = '';
+    // Tabs de filtro + buscador
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;padding:10px;margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
+    const tab = (k, label, count, color) => {
+        const isActive = filter === k;
+        return '<button type="button" onclick="_complaintsSetFilter(\'' + k + '\')" style="background:' + (isActive ? color : 'rgba(255,255,255,0.05)') + ';color:' + (isActive ? '#000' : color) + ';border:1px solid ' + color + ';padding:6px 12px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;">' + label + ' <span style="font-weight:900;">' + fmt(count) + '</span></button>';
+    };
+    html += tab('pending',  '🔴 Pendientes', s.pending || 0, '#ff5050');
+    html += tab('reviewed', '👁 Vistas',     s.reviewed || 0, '#ffd700');
+    html += tab('resolved', '✓ Resueltas',   s.resolved || 0, '#66ff66');
+    html += tab('all',      '📋 Todas',      s.total || 0,    '#00d4ff');
+    html += '<input type="text" id="complaintsSearchInput" value="' + escapeHtml(_COMPLAINTS_CACHE.q || '') + '" placeholder="Buscar por usuario..." oninput="_complaintsOnSearchInput(this.value)" style="flex:1;min-width:160px;background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,0.20);padding:6px 10px;border-radius:8px;font-size:12px;">';
+    html += '</div>';
+
+    if (list.length === 0) {
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;padding:30px;text-align:center;color:#888;">Sin quejas ' + (filter === 'pending' ? 'pendientes' : filter === 'reviewed' ? 'en revisión' : filter === 'resolved' ? 'resueltas' : '') + '.</div>';
+        return html;
+    }
+
+    // Tabla
+    html += '<div style="background:rgba(0,0,0,0.20);border-radius:10px;overflow:hidden;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead style="background:rgba(212,175,55,0.10);"><tr style="color:#d4af37;text-align:left;">';
+    html += '<th style="padding:9px 10px;font-weight:800;">Estado</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;">Incidente</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;">Asunto / Detalle</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">📷</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;">Enviada</th>';
+    html += '<th style="padding:9px 10px;font-weight:800;text-align:center;">Acciones</th>';
+    html += '</tr></thead><tbody>';
+    for (const x of list) {
+        const incident = (x.incidentDate || '') + (x.incidentTime ? ' ' + x.incidentTime : '');
+        const submitted = x.createdAt ? new Date(x.createdAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+        const preview = (x.subject ? x.subject + ' — ' : '') + (x.description || '').slice(0, 80) + ((x.description || '').length > 80 ? '...' : '');
+        const statusPill = x.status === 'pending'
+            ? '<span style="background:rgba(255,80,80,0.15);color:#ff5050;padding:3px 8px;border-radius:10px;font-weight:800;font-size:10.5px;">🔴 Pendiente</span>'
+            : x.status === 'reviewed'
+            ? '<span style="background:rgba(255,215,0,0.15);color:#ffd700;padding:3px 8px;border-radius:10px;font-weight:800;font-size:10.5px;">👁 Vista</span>'
+            : '<span style="background:rgba(102,255,102,0.15);color:#66ff66;padding:3px 8px;border-radius:10px;font-weight:800;font-size:10.5px;">✓ Resuelta</span>';
+        const photoIcon = x.imageUrl ? '<span style="color:#d4af37;font-size:14px;" title="Tiene foto adjunta">📷</span>' : '<span style="color:#444;">—</span>';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);cursor:pointer;" onclick="_complaintShowDetail(\'' + escapeHtml(x.id) + '\')">';
+        html += '<td style="padding:8px 10px;">' + statusPill + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(x.username) + '</td>';
+        html += '<td style="padding:8px 10px;color:#bbb;white-space:nowrap;">' + escapeHtml(incident) + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;">' + escapeHtml(preview) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;">' + photoIcon + '</td>';
+        html += '<td style="padding:8px 10px;color:#888;font-size:11px;white-space:nowrap;">' + escapeHtml(submitted) + '</td>';
+        html += '<td style="padding:8px 10px;text-align:center;"><button type="button" onclick="event.stopPropagation();_complaintShowDetail(\'' + escapeHtml(x.id) + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:700;">Ver</button></td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
+function _complaintsSetFilter(filter) {
+    _COMPLAINTS_CACHE.filter = filter;
+    loadComplaintsAdmin();
+}
+
+// Debounce búsqueda para no martillar el server.
+let _complaintsSearchTimer = null;
+function _complaintsOnSearchInput(value) {
+    _COMPLAINTS_CACHE.q = String(value || '').trim();
+    if (_complaintsSearchTimer) clearTimeout(_complaintsSearchTimer);
+    _complaintsSearchTimer = setTimeout(() => loadComplaintsAdmin(), 400);
+}
+
+function _updateComplaintsBadge(count) {
+    const b = document.getElementById('complaintsBadge');
+    if (!b) return;
+    if (count > 0) {
+        b.style.display = '';
+        b.textContent = String(count);
+    } else {
+        b.style.display = 'none';
+    }
+}
+
+// Modal de detalle de una queja — muestra todo (foto, descripción, notas
+// internas) y permite cambiar estado.
+function _complaintShowDetail(id) {
+    const c = (_COMPLAINTS_CACHE.list || []).find(x => x.id === id);
+    if (!c) { showToast('No encontrada', 'error'); return; }
+    const modalId = 'complaintDetailModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    const fmtDate = (ts) => ts ? new Date(ts).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+    const incident = (c.incidentDate || '') + (c.incidentTime ? ' a las ' + c.incidentTime : '');
+    let inner = '';
+    inner += '<div style="background:linear-gradient(135deg,#1a0033 0%,#2a0a4a 100%);border:1.5px solid rgba(212,175,55,0.50);border-radius:14px;padding:20px;max-width:680px;width:100%;color:#fff;box-shadow:0 0 50px rgba(212,175,55,0.20);">';
+    inner += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:10px;">';
+    inner += '<div><h3 style="margin:0;color:#d4af37;font-size:16px;">📖 Queja de ' + escapeHtml(c.username) + '</h3>';
+    inner += '<div style="color:#888;font-size:11px;margin-top:2px;">Enviada el ' + escapeHtml(fmtDate(c.createdAt)) + '</div></div>';
+    inner += '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;">×</button>';
+    inner += '</div>';
+
+    // Info de incidente
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">🕐 Cuándo pasó</div>';
+    inner += '<div style="color:#fff;font-size:14px;font-weight:700;">' + escapeHtml(incident) + '</div>';
+    if (c.subject) {
+        inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-top:10px;margin-bottom:4px;">📌 Asunto</div>';
+        inner += '<div style="color:#fff;font-size:13px;">' + escapeHtml(c.subject) + '</div>';
+    }
+    inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-top:10px;margin-bottom:4px;">📝 Detalle</div>';
+    inner += '<div style="color:#fff;font-size:13px;line-height:1.5;white-space:pre-wrap;background:rgba(0,0,0,0.30);padding:10px;border-radius:8px;">' + escapeHtml(c.description || '') + '</div>';
+    inner += '</div>';
+
+    // Foto si existe
+    if (c.imageUrl) {
+        inner += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+        inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">📷 Foto adjunta</div>';
+        inner += '<img src="' + escapeHtml(c.imageUrl) + '" style="max-width:100%;max-height:400px;border-radius:8px;border:1px solid rgba(212,175,55,0.30);display:block;cursor:zoom-in;" onclick="window.open(\'' + escapeHtml(c.imageUrl) + '\',\'_blank\')">';
+        inner += '</div>';
+    }
+
+    // Notas internas del admin
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
+    inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">🔒 Notas internas (no las ve el user)</div>';
+    inner += '<textarea id="complaintAdminNotes_' + escapeHtml(c.id) + '" maxlength="2000" rows="3" placeholder="Ej: contacté por wa.link, le devolvimos $X, escalado a..." style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:8px;font-size:12px;font-family:inherit;box-sizing:border-box;resize:vertical;">' + escapeHtml(c.adminNotes || '') + '</textarea>';
+    inner += '</div>';
+
+    // Acciones — cambiar estado
+    inner += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'reviewed\')" style="background:rgba(255,215,0,0.10);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12.5px;">👁 Marcar Vista</button>';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\')" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12.5px;">✓ Marcar Resuelta</button>';
+    inner += '</div>';
+    inner += '</div>';
+
+    overlay.innerHTML = inner;
+    document.body.appendChild(overlay);
+}
+
+async function _complaintUpdate(id, status) {
+    const notesEl = document.getElementById('complaintAdminNotes_' + id);
+    const adminNotes = notesEl ? notesEl.value : '';
+    try {
+        const r = await authFetch('/api/admin/complaints/' + encodeURIComponent(id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status, adminNotes })
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✅ ' + (status === 'resolved' ? 'Queja resuelta' : 'Queja marcada como vista'), 'success');
+        document.getElementById('complaintDetailModal')?.remove();
+        loadComplaintsAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+// Poll automático cada 60s para refrescar el badge cuando hay quejas nuevas.
+// Se dispara desde adminapp.js al inicio del session, no necesita estar en la
+// sección activa.
+async function _complaintsPollBadge() {
+    try {
+        const r = await authFetch('/api/admin/complaints?status=pending&limit=1');
+        if (!r.ok) return;
+        const d = await r.json();
+        const cnt = (d.summary && d.summary.pending) || 0;
+        _updateComplaintsBadge(cnt);
+    } catch (_) {}
+}
+// Arrancar poll después de que el admin esté logueado (timer corre al cargar).
+if (typeof window !== 'undefined') {
+    setTimeout(_complaintsPollBadge, 5000);
+    setInterval(_complaintsPollBadge, 60000);
 }

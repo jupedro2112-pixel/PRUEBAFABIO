@@ -87,6 +87,7 @@ const {
   RecontactHistory,
   AppUsersDailySnapshot,
   CallbellTag,
+  Complaint,
   ensureMongoReady,
   getConfig,
   setConfig,
@@ -13464,6 +13465,148 @@ app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
     });
   } catch (err) {
     logger.error(`GET /api/reviews/mine: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// LIBRO DE QUEJAS — público + admin
+// ============================================================
+// Cualquier user logueado puede enviar una queja. Foto opcional (URL
+// pública que ya subió a S3 via /api/upload/presigned-url).
+// Admin las ve en NUEVO TOP → Libro de quejas (filtrable por status).
+
+// POST /api/complaints — el user envía una queja nueva.
+app.post('/api/complaints', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const b = req.body || {};
+    const incidentDate = String(b.incidentDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(incidentDate)) {
+      return res.status(400).json({ error: 'Fecha del incidente inválida (YYYY-MM-DD)' });
+    }
+    const incidentTime = String(b.incidentTime || '').trim();
+    if (incidentTime && !/^\d{2}:\d{2}$/.test(incidentTime)) {
+      return res.status(400).json({ error: 'Hora del incidente inválida (HH:MM)' });
+    }
+    const description = String(b.description || '').trim();
+    if (description.length < 5) {
+      return res.status(400).json({ error: 'Describí brevemente qué pasó (mínimo 5 caracteres).' });
+    }
+    if (description.length > 2000) {
+      return res.status(400).json({ error: 'El detalle es muy largo (máx 2000 caracteres).' });
+    }
+    const subject = String(b.subject || '').trim().slice(0, 100);
+    // imageUrl puede ser URL S3 o data URL base64 (la PWA comprime antes).
+    // 1.5MB cap para que un usuario malintencionado no llene la DB.
+    let imageUrl = String(b.imageUrl || '').trim();
+    if (imageUrl.length > 1500000) {
+      return res.status(413).json({ error: 'La foto es muy grande. Sacá una más liviana o probá de nuevo.' });
+    }
+
+    // Anti-spam: máx 5 quejas por user por día.
+    const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+    const recentCount = await Complaint.countDocuments({
+      userId,
+      createdAt: { $gte: todayStart }
+    });
+    if (recentCount >= 5) {
+      return res.status(429).json({ error: 'Llegaste al límite de 5 quejas por día. Si necesitás algo urgente, contactá a soporte.' });
+    }
+
+    const doc = await Complaint.create({
+      id: uuidv4(),
+      userId,
+      username,
+      incidentDate,
+      incidentTime,
+      subject,
+      description,
+      imageUrl,
+      status: 'pending'
+    });
+    logger.info(`[complaints] new from ${username} (${doc.id})`);
+    res.json({ success: true, id: doc.id });
+  } catch (err) {
+    logger.error(`POST /api/complaints: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/complaints/mine — el user puede ver sus propias quejas.
+app.get('/api/complaints/mine', authMiddleware, async (req, res) => {
+  try {
+    const list = await Complaint.find(
+      { userId: req.user.userId },
+      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, _id: 0 }
+    ).sort({ createdAt: -1 }).limit(50).lean();
+    res.json({ complaints: list });
+  } catch (err) {
+    logger.error(`GET /api/complaints/mine: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/complaints — listado para el admin con filtros.
+// Query params: status (pending|reviewed|resolved|all), limit (default 200), q (búsqueda por username).
+app.get('/api/admin/complaints', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'all').trim();
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 200));
+    const q = String(req.query.q || '').trim();
+    const filter = {};
+    if (['pending', 'reviewed', 'resolved'].includes(status)) filter.status = status;
+    if (q) {
+      const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.username = { $regex: safe, $options: 'i' };
+    }
+    const [list, counts] = await Promise.all([
+      Complaint.find(filter).sort({ createdAt: -1 }).limit(limit).lean(),
+      Complaint.aggregate([
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ])
+    ]);
+    const summary = { pending: 0, reviewed: 0, resolved: 0, total: 0 };
+    for (const row of counts) {
+      if (row._id && summary[row._id] !== undefined) summary[row._id] = row.count;
+      summary.total += row.count;
+    }
+    res.json({ complaints: list, summary });
+  } catch (err) {
+    logger.error(`GET /api/admin/complaints: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/admin/complaints/:id — actualiza status y/o notas del admin.
+// Marca readAt la primera vez que el admin la abre. resolvedAt cuando pasa a resolved.
+app.put('/api/admin/complaints/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const b = req.body || {};
+    const adminUser = (req.user && req.user.username) || 'admin';
+    const $set = {};
+    if (['pending', 'reviewed', 'resolved'].includes(b.status)) {
+      $set.status = b.status;
+      if (b.status === 'resolved') {
+        $set.resolvedBy = adminUser;
+        $set.resolvedAt = new Date();
+      }
+    }
+    if (b.adminNotes !== undefined) {
+      $set.adminNotes = String(b.adminNotes || '').slice(0, 2000);
+    }
+    const $addToSet = { readBy: adminUser };
+    const update = { $set, $addToSet };
+    // Si no hay readAt todavía, setearlo ahora.
+    const existing = await Complaint.findOne({ id }, { readAt: 1, _id: 0 }).lean();
+    if (!existing) return res.status(404).json({ error: 'No encontrada' });
+    if (!existing.readAt) update.$set.readAt = new Date();
+    const doc = await Complaint.findOneAndUpdate({ id }, update, { new: true }).lean();
+    res.json({ success: true, complaint: doc });
+  } catch (err) {
+    logger.error(`PUT /api/admin/complaints/:id: ${err.message}\n${err.stack}`);
     res.status(500).json({ error: err.message });
   }
 });

@@ -53,6 +53,7 @@ const RecontactAnalysis = require('./RecontactAnalysis');
 const RecontactHistory = require('./RecontactHistory');
 const AppUsersDailySnapshot = require('./AppUsersDailySnapshot');
 const CallbellTag = require('./CallbellTag');
+const Complaint = require('./Complaint');
 
 
 /**
@@ -478,6 +479,7 @@ module.exports = {
   RecontactHistory,
   AppUsersDailySnapshot,
   CallbellTag,
+  Complaint,
 
   // Funciones de conexión
   connectDB,

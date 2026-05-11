@@ -2393,6 +2393,9 @@
                     <button class="refresh-home-btn" id="refreshHomeBtn" title="Actualizar página" onclick="window.location.reload()" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">🔄 Actualizar</button>
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
+                    <!-- Libro de quejas: ícono sutil, mismo tamaño que settings/referral.
+                         Click → abre modal premium con form (fecha, hora, foto, detalle). -->
+                    <button class="complaints-btn" id="complaintsBookBtn" title="Libro de quejas" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);color:#d4af37;border-radius:6px;cursor:pointer;">📖</button>
                     <button class="logout-btn" id="logoutBtn" title="Cerrar sesión">🚪</button>
                 </div>
             </div>
@@ -2781,6 +2784,219 @@
             </div>
         </div>
     </div>
+
+    <!-- ============================================================
+         Modal LIBRO DE QUEJAS — user envía una queja con fecha/hora/foto.
+         Premium sutil: fondo morado oscuro, borde dorado, gradient sutil.
+         Se abre desde el botón 📖 arriba a la izquierda del header.
+         Al enviar muestra "En breve nos contactamos con usted, gracias".
+         ============================================================ -->
+    <div id="complaintBookModal" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:20000;align-items:center;justify-content:center;background:rgba(0,0,0,0.85);padding:14px;overflow-y:auto;" onclick="if(event.target===event.currentTarget)closeComplaintBookModal()">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2a0a4a 100%);border:1.5px solid rgba(212,175,55,0.50);border-radius:16px;padding:22px 20px;max-width:480px;width:100%;max-height:95vh;overflow-y:auto;box-shadow:0 0 60px rgba(212,175,55,0.20);">
+            <!-- Header -->
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:10px;">
+                <div>
+                    <div style="color:#d4af37;font-weight:900;font-size:16px;letter-spacing:0.5px;">📖 Libro de quejas</div>
+                    <div style="color:#aaa;font-size:11.5px;margin-top:2px;line-height:1.4;">Si tuviste un problema, contanos qué pasó. Lo revisamos todos.</div>
+                </div>
+                <button type="button" onclick="closeComplaintBookModal()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
+            </div>
+
+            <!-- Form -->
+            <div id="complaintBookForm">
+                <!-- Fecha + Hora -->
+                <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:8px;margin-bottom:10px;">
+                    <div>
+                        <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Fecha del problema</label>
+                        <input type="date" id="complaintIncidentDate" style="width:100%;background:rgba(0,0,0,0.40);color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:8px;font-size:13px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Hora aprox.</label>
+                        <input type="time" id="complaintIncidentTime" style="width:100%;background:rgba(0,0,0,0.40);color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:8px;font-size:13px;box-sizing:border-box;">
+                    </div>
+                </div>
+
+                <!-- Asunto (opcional) -->
+                <div style="margin-bottom:10px;">
+                    <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Asunto <span style="color:#666;text-transform:none;">(opcional)</span></label>
+                    <input type="text" id="complaintSubject" maxlength="100" placeholder="Ej: Demora en retiro" style="width:100%;background:rgba(0,0,0,0.40);color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:8px;font-size:13px;box-sizing:border-box;">
+                </div>
+
+                <!-- Descripción -->
+                <div style="margin-bottom:10px;">
+                    <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Detalle <span style="color:#ff8080;">*</span></label>
+                    <textarea id="complaintDescription" maxlength="2000" rows="5" placeholder="Contanos qué pasó con la mayor cantidad de detalles posibles." style="width:100%;background:rgba(0,0,0,0.40);color:#fff;border:1px solid rgba(212,175,55,0.30);padding:8px 10px;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical;min-height:90px;"></textarea>
+                    <div style="color:#666;font-size:10px;text-align:right;margin-top:2px;"><span id="complaintCharCount">0</span>/2000</div>
+                </div>
+
+                <!-- Foto (opcional) -->
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;color:#bbb;font-size:11px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Foto <span style="color:#666;text-transform:none;">(opcional · captura de pantalla, comprobante, etc.)</span></label>
+                    <input type="file" id="complaintImageInput" accept="image/*" style="display:none;" onchange="handleComplaintImageSelect(event)">
+                    <button type="button" onclick="document.getElementById('complaintImageInput').click()" style="width:100%;background:rgba(212,175,55,0.08);color:#d4af37;border:1px dashed rgba(212,175,55,0.40);padding:10px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600;">📎 Adjuntar foto</button>
+                    <div id="complaintImagePreview" style="margin-top:8px;display:none;">
+                        <img id="complaintImagePreviewImg" style="max-width:100%;max-height:200px;border-radius:8px;border:1px solid rgba(212,175,55,0.30);display:block;">
+                        <button type="button" onclick="clearComplaintImage()" style="margin-top:4px;background:rgba(255,80,80,0.10);color:#ff8080;border:1px solid rgba(255,80,80,0.30);padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;">🗑 Quitar foto</button>
+                    </div>
+                </div>
+
+                <!-- Submit -->
+                <button type="button" id="complaintSubmitBtn" onclick="submitComplaintForm()" style="width:100%;background:linear-gradient(135deg,#d4af37 0%,#f4d966 50%,#d4af37 100%);color:#1a0033;border:none;padding:12px;border-radius:10px;font-size:14px;font-weight:900;cursor:pointer;letter-spacing:0.5px;box-shadow:0 4px 14px rgba(212,175,55,0.30);">📨 Enviar queja</button>
+                <div id="complaintErrorMsg" style="color:#ff8080;font-size:12px;margin-top:8px;text-align:center;min-height:14px;"></div>
+            </div>
+
+            <!-- Mensaje de éxito (se muestra después de enviar) -->
+            <div id="complaintBookSuccess" style="display:none;text-align:center;padding:20px 10px;">
+                <div style="color:#d4af37;font-size:42px;margin-bottom:10px;">✓</div>
+                <div style="color:#fff;font-weight:800;font-size:15px;margin-bottom:6px;">¡Gracias!</div>
+                <div style="color:#bbb;font-size:13px;line-height:1.5;">En breve nos contactamos con usted.</div>
+                <button type="button" onclick="closeComplaintBookModal()" style="margin-top:14px;background:rgba(212,175,55,0.10);color:#d4af37;border:1px solid rgba(212,175,55,0.40);padding:8px 22px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // === Libro de Quejas — UI logic ===
+    // Solo carga si hay user logueado (el botón del header está siempre visible
+    // si el user está en el home).
+    (function() {
+        // State
+        let _complaintImageBase64 = '';
+
+        // Abrir modal — precarga fecha de hoy y resetea form.
+        window.openComplaintBookModal = function() {
+            const m = document.getElementById('complaintBookModal');
+            if (!m) return;
+            // Si no hay token, no se puede usar.
+            const token = (typeof localStorage !== 'undefined') ? localStorage.getItem('userToken') : null;
+            if (!token) {
+                alert('Tenés que iniciar sesión para usar el libro de quejas.');
+                return;
+            }
+            // Reset
+            document.getElementById('complaintBookForm').style.display = '';
+            document.getElementById('complaintBookSuccess').style.display = 'none';
+            document.getElementById('complaintIncidentDate').value = new Date().toISOString().slice(0,10);
+            document.getElementById('complaintIncidentTime').value = '';
+            document.getElementById('complaintSubject').value = '';
+            document.getElementById('complaintDescription').value = '';
+            document.getElementById('complaintCharCount').textContent = '0';
+            document.getElementById('complaintErrorMsg').textContent = '';
+            clearComplaintImage();
+            m.style.display = 'flex';
+        };
+
+        window.closeComplaintBookModal = function() {
+            const m = document.getElementById('complaintBookModal');
+            if (m) m.style.display = 'none';
+        };
+
+        // Char counter
+        const desc = document.getElementById('complaintDescription');
+        if (desc) {
+            desc.addEventListener('input', function() {
+                const cnt = document.getElementById('complaintCharCount');
+                if (cnt) cnt.textContent = String(desc.value.length);
+            });
+        }
+
+        // Selección de imagen + compresión a base64 con canvas (max 800px, JPEG 0.7).
+        // Evita mandar fotos pesadas; el server cap a 1.5MB.
+        window.handleComplaintImageSelect = function(ev) {
+            const file = ev.target.files && ev.target.files[0];
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+                document.getElementById('complaintErrorMsg').textContent = 'El archivo no es una imagen.';
+                return;
+            }
+            // Cap inicial: 12MB raw (sino canvas se queja).
+            if (file.size > 12 * 1024 * 1024) {
+                document.getElementById('complaintErrorMsg').textContent = 'La imagen es muy pesada (máx 12MB).';
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    // Resize a max 800px wide, mantener aspect ratio.
+                    const maxDim = 800;
+                    let w = img.width, h = img.height;
+                    if (w > maxDim || h > maxDim) {
+                        if (w > h) { h = Math.round(h * (maxDim / w)); w = maxDim; }
+                        else       { w = Math.round(w * (maxDim / h)); h = maxDim; }
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    // JPEG quality 0.7 — balance peso/calidad.
+                    _complaintImageBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                    // Mostrar preview.
+                    document.getElementById('complaintImagePreviewImg').src = _complaintImageBase64;
+                    document.getElementById('complaintImagePreview').style.display = '';
+                    document.getElementById('complaintErrorMsg').textContent = '';
+                };
+                img.onerror = function() {
+                    document.getElementById('complaintErrorMsg').textContent = 'No se pudo leer la imagen.';
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
+        window.clearComplaintImage = function() {
+            _complaintImageBase64 = '';
+            const inp = document.getElementById('complaintImageInput');
+            if (inp) inp.value = '';
+            const prev = document.getElementById('complaintImagePreview');
+            if (prev) prev.style.display = 'none';
+        };
+
+        // Submit del form.
+        window.submitComplaintForm = async function() {
+            const btn = document.getElementById('complaintSubmitBtn');
+            const errBox = document.getElementById('complaintErrorMsg');
+            errBox.textContent = '';
+            const incidentDate = document.getElementById('complaintIncidentDate').value;
+            const incidentTime = document.getElementById('complaintIncidentTime').value || '';
+            const subject = document.getElementById('complaintSubject').value.trim();
+            const description = document.getElementById('complaintDescription').value.trim();
+            if (!incidentDate) { errBox.textContent = 'Falta la fecha del problema.'; return; }
+            if (description.length < 5) { errBox.textContent = 'Describí el problema (mínimo 5 caracteres).'; return; }
+
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+            btn.textContent = '⏳ Enviando...';
+            try {
+                const token = localStorage.getItem('userToken') || '';
+                const r = await fetch('/api/complaints', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ incidentDate, incidentTime, subject, description, imageUrl: _complaintImageBase64 })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    errBox.textContent = d.error || 'No se pudo enviar la queja. Intentá de nuevo.';
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    btn.textContent = '📨 Enviar queja';
+                    return;
+                }
+                // Éxito: mostrar mensaje "en breve nos contactamos".
+                document.getElementById('complaintBookForm').style.display = 'none';
+                document.getElementById('complaintBookSuccess').style.display = '';
+            } catch (e) {
+                errBox.textContent = 'Error de conexión. Intentá de nuevo.';
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                btn.textContent = '📨 Enviar queja';
+            }
+        };
+    })();
+    </script>
 
     <!-- Modal Registro -->
     <div id="registerModal" class="modal hidden">

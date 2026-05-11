@@ -52,7 +52,8 @@ const {
   RecontactAnalysis,
   RecontactHistory,
   AppUsersDailySnapshot,
-  CallbellTag
+  CallbellTag,
+  Complaint
 } = require('../src/models');
 
 // ============================================
@@ -378,6 +379,7 @@ module.exports = {
   RecontactHistory,
   AppUsersDailySnapshot,
   CallbellTag,
+  Complaint,
   // Helpers
   getConfig,
   setConfig,
