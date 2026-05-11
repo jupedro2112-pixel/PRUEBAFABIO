@@ -2875,8 +2875,13 @@ async function loadRecontactConversions() {
     if (!c) return;
     c.innerHTML = '<div style="color:#888;padding:14px;font-size:12px;">⏳ Cargando conversiones…</div>';
     try {
-        const list = await _recontactRefreshConversions();
-        c.innerHTML = _renderRecontactConversionsCard(list || []);
+        // Paralelo: conversiones + historial server (para evolución archivo-por-archivo).
+        const [list, historyRes] = await Promise.all([
+            _recontactRefreshConversions(),
+            authFetch('/api/admin/recontact/history').then(r => r.ok ? r.json() : { history: [] }).catch(() => ({ history: [] }))
+        ]);
+        const history = (historyRes && Array.isArray(historyRes.history)) ? historyRes.history : [];
+        c.innerHTML = _renderRecontactConversionsCard(list || [], history);
     } catch (e) {
         c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error cargando: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
@@ -4407,12 +4412,16 @@ function _kpiCard(label, value, color, sub) {
 //   - Mejora archivo-a-archivo: cuando subís otro XLSX con fecha distinta, compara
 //     contra el análisis anterior y lista los users que mejoraron entre ambos
 //     (instalaron app, subieron de bucket de actividad).
-function _renderRecontactConversionsCard(conversions) {
+//   - Evolución histórica: usa RecontactHistory para mostrar timeline de análisis
+//     con métricas reales (con app, %, bucket counts) y deltas archivo-a-archivo.
+function _renderRecontactConversionsCard(conversions, history) {
     const improvementHtml = _renderRecontactImprovementSection();
+    const historyHtml = _renderRecontactFileEvolution(history || []);
     if (!conversions || conversions.length === 0) {
         return '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">' +
             '<div style="color:#00d4ff;font-weight:800;font-size:14px;margin-bottom:6px;">📊 Post recontactación</div>' +
-            '<div style="color:#888;font-size:12px;">Todavía no hay conversiones registradas. Cuando alguien que marques con ✅ etiqueta instale la app, aparece acá con la fecha.</div>' +
+            '<div style="color:#888;font-size:12px;">Todavía no hay conversiones registradas (etiquetados que instalaron app). Cuando alguien que marques con ✅ etiqueta instale la app, aparece acá con la fecha.</div>' +
+            historyHtml +
             improvementHtml +
         '</div>';
     }
@@ -4462,7 +4471,99 @@ function _renderRecontactConversionsCard(conversions) {
     html += '      </tbody>';
     html += '    </table>';
     html += '  </div>';
+    html += historyHtml;
     html += _renderRecontactImprovementSection();
+    html += '</div>';
+    return html;
+}
+
+// Evolución archivo-por-archivo: usa RecontactHistory (server) para mostrar los
+// últimos análisis con métricas reales y deltas. Si el archivo cambia entre
+// análisis, muestra warning de que la comparación NO es de los mismos users.
+function _renderRecontactFileEvolution(history) {
+    if (!Array.isArray(history) || history.length === 0) {
+        return '<div style="color:#888;font-size:11px;margin-top:14px;padding:10px 12px;background:rgba(0,0,0,0.20);border-radius:6px;">📜 No hay análisis históricos todavía. Subí XLSXs en Recontactación para que aparezcan acá.</div>';
+    }
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const fmtDate = (d) => {
+        try { return new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }); }
+        catch (_) { return '-'; }
+    };
+    const pct = (a, b) => (b > 0 ? ((a / b) * 100).toFixed(1) + '%' : '—');
+    // Color del delta según signo (positivo = verde, negativo = rojo, cero = gris).
+    const delta = (cur, prev, prefix) => {
+        if (prev == null || prev === undefined) return '<span style="color:#666;">—</span>';
+        const d = (cur || 0) - (prev || 0);
+        if (d === 0) return '<span style="color:#666;">0</span>';
+        const color = d > 0 ? '#66ff66' : '#ff8080';
+        return '<span style="color:' + color + ';font-weight:700;">' + (d > 0 ? '+' : '') + fmt(d) + '</span>';
+    };
+    // History viene desc por fecha (más nuevo primero). Para deltas, comparamos
+    // cada uno con el SIGUIENTE en la lista (más viejo).
+    let html = '';
+    html += '<div style="margin-top:14px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.25);border-radius:10px;padding:12px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
+    html += '    <div style="color:#00d4ff;font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;">📊 Evolución archivo-por-archivo</div>';
+    html += '    <div style="color:#888;font-size:11px;">' + history.length + ' análisis · más reciente arriba · Δ = vs análisis anterior</div>';
+    html += '  </div>';
+    html += '  <div style="color:#bbb;font-size:11.5px;margin-bottom:8px;background:rgba(255,170,68,0.06);border-left:3px solid #ffaa44;padding:6px 10px;border-radius:4px;">⚠ Los Δ son válidos como progreso real <strong>solo si el archivo es el MISMO</strong> entre análisis. Si el nombre del archivo cambia, los users son distintos y el delta es referencial.</div>';
+    html += '  <div style="overflow-x:auto;">';
+    html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    html += '    <thead><tr style="background:rgba(0,212,255,0.10);color:#00d4ff;text-align:left;">';
+    html += '      <th style="padding:7px 8px;">Fecha</th>';
+    html += '      <th style="padding:7px 8px;">Archivo</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;">Total users</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Tienen la PWA instalada">📱 Con app</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="% con app sobre total">% app</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Con app + notifs">🔔 Con notifs</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Suma de depósitos del archivo">💰 Cargas</th>';
+    html += '      <th style="padding:7px 8px;text-align:right;" title="Bono total sugerido">🎁 Bono sug.</th>';
+    html += '    </tr></thead><tbody>';
+    for (let i = 0; i < history.length; i++) {
+        const h = history[i] || {};
+        const prev = history[i + 1] || null;
+        const fileChanged = prev && h.fileLabel && prev.fileLabel && h.fileLabel !== prev.fileLabel;
+        const fileChangedNote = fileChanged ? ' <span style="color:#ffaa44;" title="Archivo distinto al anterior — Δ no es comparación válida de usuarios">⚠</span>' : '';
+        const withApp = h.withApp || 0;
+        const total = h.totalAnalyzed || 0;
+        const prevWithApp = prev && prev.withApp || 0;
+        const prevTotal = prev && prev.totalAnalyzed || 0;
+        const curPct = total > 0 ? (withApp / total) * 100 : 0;
+        const prevPct = prevTotal > 0 ? (prevWithApp / prevTotal) * 100 : 0;
+        const pctDelta = prev ? (curPct - prevPct).toFixed(1) : null;
+        const pctColor = pctDelta == null ? '#666' : (parseFloat(pctDelta) > 0 ? '#66ff66' : (parseFloat(pctDelta) < 0 ? '#ff8080' : '#666'));
+        const pctDeltaStr = pctDelta == null ? '—' : ((parseFloat(pctDelta) > 0 ? '+' : '') + pctDelta + 'pp');
+        html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+        html += '  <td style="padding:6px 8px;color:#aaa;font-size:11px;white-space:nowrap;">' + escapeHtml(fmtDate(h.at)) + '</td>';
+        html += '  <td style="padding:6px 8px;color:#fff;font-weight:600;">' + escapeHtml(h.fileLabel || '—') + fileChangedNote + '</td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#fff;font-weight:700;">' + fmt(total) + '<br><span style="font-size:10px;font-weight:400;">' + delta(total, prevTotal) + '</span></td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#25d366;font-weight:700;">' + fmt(withApp) + '<br><span style="font-size:10px;font-weight:400;">' + delta(withApp, prevWithApp) + '</span></td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">' + curPct.toFixed(1) + '%<br><span style="font-size:10px;color:' + pctColor + ';">' + pctDeltaStr + '</span></td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">' + fmt(h.withNotifs || 0) + '<br><span style="font-size:10px;font-weight:400;">' + delta(h.withNotifs, prev && prev.withNotifs) + '</span></td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#fff;">$' + fmt(h.fileTotalDeposits || 0) + '</td>';
+        html += '  <td style="padding:6px 8px;text-align:right;color:#ffd700;">$' + fmt(h.totalRecoverableValue || 0) + '</td>';
+        html += '</tr>';
+    }
+    html += '    </tbody></table>';
+    html += '  </div>';
+    // Resumen interpretativo: si los archivos son iguales, calculamos el progreso real total.
+    const sameFileSeries = history.filter(h => h.fileLabel === history[0].fileLabel);
+    if (sameFileSeries.length >= 2) {
+        const newest = sameFileSeries[0];
+        const oldest = sameFileSeries[sameFileSeries.length - 1];
+        const installs = (newest.withApp || 0) - (oldest.withApp || 0);
+        const pctNew = (newest.totalAnalyzed > 0) ? (newest.withApp / newest.totalAnalyzed) * 100 : 0;
+        const pctOld = (oldest.totalAnalyzed > 0) ? (oldest.withApp / oldest.totalAnalyzed) * 100 : 0;
+        const ppDelta = (pctNew - pctOld).toFixed(1);
+        const installsColor = installs > 0 ? '#66ff66' : (installs < 0 ? '#ff8080' : '#bbb');
+        html += '<div style="margin-top:10px;padding:8px 12px;background:rgba(102,255,102,0.06);border-left:3px solid #66ff66;border-radius:6px;font-size:12px;color:#fff;">';
+        html += '<strong style="color:#66ff66;">📈 Progreso real (mismo archivo "' + escapeHtml(newest.fileLabel || '—') + '"):</strong> entre el ' + escapeHtml(fmtDate(oldest.at)) + ' y el ' + escapeHtml(fmtDate(newest.at)) + ' → <strong style="color:' + installsColor + ';">' + (installs > 0 ? '+' : '') + installs + ' users con app</strong> · ' + pctOld.toFixed(1) + '% → ' + pctNew.toFixed(1) + '% (Δ ' + (ppDelta > 0 ? '+' : '') + ppDelta + 'pp).';
+        html += '</div>';
+    } else if (history.length >= 2) {
+        html += '<div style="margin-top:10px;padding:8px 12px;background:rgba(255,170,68,0.06);border-left:3px solid #ffaa44;border-radius:6px;font-size:12px;color:#ddd;">';
+        html += '<strong style="color:#ffaa44;">⚠ Progreso real no calculable:</strong> los análisis tienen archivos distintos. Para ver evolución real, subí siempre el mismo XLSX con los mismos usernames (o exportá uno desde la sección y reusalo).';
+        html += '</div>';
+    }
     html += '</div>';
     return html;
 }
