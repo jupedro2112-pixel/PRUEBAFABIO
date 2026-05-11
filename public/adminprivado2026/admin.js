@@ -2952,6 +2952,8 @@ function _renderRecontactSearchResults(items) {
     html += '<th style="padding:7px 10px;font-weight:800;">Equipo</th>';
     html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="Etiqueta Callbell">📞 Etiq.</th>';
     html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="WhatsApp Callbell">💬 WA</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="Instaló app (respuesta)">✅ Inst.</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="No contestó (respuesta)">❌ Sin resp.</th>';
     html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="Marcar como favorito">⭐ Fav.</th>';
     html += '</tr></thead><tbody>';
     for (const it of items) {
@@ -2960,13 +2962,15 @@ function _renderRecontactSearchResults(items) {
         const appBadge = it.hasApp
             ? '<span style="color:#66ff66;font-weight:800;">✓</span>'
             : '<span style="color:#666;">—</span>';
-        const chk = (action, isOn) => '<input type="checkbox" data-search-action="' + action + '" data-search-username="' + u + '" ' + (isOn ? 'checked' : '') + ' style="width:18px;height:18px;cursor:pointer;accent-color:#9b30ff;">';
+        const chk = (action, isOn, color) => '<input type="checkbox" data-search-action="' + action + '" data-search-username="' + u + '" ' + (isOn ? 'checked' : '') + ' style="width:18px;height:18px;cursor:pointer;accent-color:' + (color || '#9b30ff') + ';">';
         html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
         html += '<td style="padding:7px 10px;color:#fff;font-weight:700;">' + u + '</td>';
         html += '<td style="padding:7px 10px;text-align:center;">' + appBadge + '</td>';
         html += '<td style="padding:7px 10px;color:#aaa;">' + team + '</td>';
         html += '<td style="padding:7px 10px;text-align:center;">' + chk('etiqueta', it.cbEtiqueta) + '</td>';
         html += '<td style="padding:7px 10px;text-align:center;">' + chk('wa', it.cbWa) + '</td>';
+        html += '<td style="padding:7px 10px;text-align:center;">' + chk('instalo', it.cbRespuesta === 'instalo', '#7cffb3') + '</td>';
+        html += '<td style="padding:7px 10px;text-align:center;">' + chk('no_contesto', it.cbRespuesta === 'no_contesto', '#ff8080') + '</td>';
         html += '<td style="padding:7px 10px;text-align:center;">' + chk('favorito', it.cbFavorito) + '</td>';
         html += '</tr>';
     }
@@ -2990,6 +2994,22 @@ function _renderRecontactSearchResults(items) {
                         el.checked = !set; // revert
                         showToast('❌ ' + (d.error || 'Error'), 'error');
                     } else {
+                        // Exclusión mutua instalo / no_contesto: si tildaste uno y
+                        // el otro estaba activo, destildarlo en server + en UI.
+                        if (set && (action === 'instalo' || action === 'no_contesto')) {
+                            const opposite = action === 'instalo' ? 'no_contesto' : 'instalo';
+                            const oppEl = document.querySelector('[data-search-action="' + opposite + '"][data-search-username="' + username + '"]');
+                            if (oppEl && oppEl.checked) {
+                                oppEl.checked = false;
+                                try {
+                                    await authFetch('/api/admin/callbell/tag', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ username, action: opposite, set: false })
+                                    });
+                                } catch (_) {}
+                            }
+                        }
                         showToast('✅ ' + username + ' · ' + action + (set ? ' tildado' : ' destildado'), 'success');
                     }
                 } catch (e) {
@@ -10620,6 +10640,15 @@ function _helpBlocks() {
             body: [
                 '<p>La sección <strong>📋 Encuesta</strong> tiene <em>4 pestañas</em>: <strong>Estrategia</strong>, <strong>Gente que se une</strong>, <strong>ROI / Reacciones</strong>, <strong>Historial semanal</strong>. La pestaña principal es <strong>Estrategia</strong>: ahí configurás qué notifs salen, a quién y cuándo.</p>',
 
+                '<p style="background:rgba(255,170,68,0.08);border-left:4px solid #ffaa44;padding:10px 14px;border-radius:6px;margin-top:8px;"><strong style="color:#ffaa44;">⚠ Estado actual:</strong> bono y regalo automáticos están <strong>DESACTIVADOS</strong>. La automatización de la encuesta envía <strong>solo push notifications informativas</strong> (texto). Cuando el push de "bono" o "regalo" llega al user, NO se crea ningún registro reclamable en la app — el admin maneja los bonos/regalos manualmente desde otras secciones del panel.</p>',
+
+                '<h4 style="color:#fff;margin-top:16px;">📍 Métrica de targeting (lo que decide a quién mandar)</h4>',
+                '<ul>',
+                '<li>El push se manda <strong>per-user</strong> (uno por user) — nunca a "todos" ni por prefijo.</li>',
+                '<li>Filtrado por <code>targetUsername</code>: solo el FCM token del user específico recibe el push, los demás no se enteran.</li>',
+                '<li>Requisito: el user tiene que haber <strong>respondido la encuesta</strong> Y tener <strong>al menos un FCM token activo</strong> (PWA instalada + notifs aceptadas).</li>',
+                '</ul>',
+
                 '<h4 style="color:#fff;margin-top:16px;">1) Cómo funciona el modal de la encuesta</h4>',
                 '<p>Cuando un user entra a la PWA por primera vez (después de instalarla), le aparece un modal preguntando qué tipo de notifs quiere recibir. Las opciones son:</p>',
                 '<ul>',
@@ -10787,7 +10816,50 @@ function _helpBlocks() {
             icon: '🎯',
             title: '🆕 NUEVO TOP — Recontactación (subir lista, analizar, sugerir bono, exportar CSV)',
             body: [
-                '<p style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(0,128,255,0.06));border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px 14px;color:#fff;"><strong style="color:#00d4ff;">¿Qué es?</strong> Tu nueva herramienta para <em>recuperar usuarios inactivos</em>. Subís un .xlsx con usernames (típico: gente sin actividad de 60 días o más), el sistema los cruza con la base, los clasifica, te dice qué hacer con cada uno, y exporta un CSV listo para que el equipo de WhatsApp arranque la campaña.</p>',
+                '<p style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(0,128,255,0.06));border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:10px 14px;color:#fff;"><strong style="color:#00d4ff;">¿Qué es?</strong> Tu herramienta para <em>recuperar usuarios inactivos</em>. Subís un .xlsx con usernames (típico: gente sin actividad de 60 días o más), el sistema los cruza con la base, los clasifica en buckets, te dice qué hacer con cada uno, y exporta un CSV listo para el equipo de WhatsApp.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">📏 Cómo se clasifican los buckets (de qué depende)</h4>',
+                '<p>El bucket de cada user se calcula a partir de <code>PlayerStats.lastRealDepositDate</code> — la fecha del <strong>último depósito REAL</strong> (no bonos, no regalos). Bonos y regalos NO mueven el bucket — solo una carga real cuenta.</p>',
+                '<table style="width:100%;font-size:11.5px;border-collapse:collapse;margin-top:4px;">',
+                '<tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:6px;color:#aaa;">Bucket</th><th style="text-align:left;padding:6px;color:#aaa;">Días sin cargar</th><th style="text-align:left;padding:6px;color:#aaa;">Significado</th></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#ff5050;">🔥 Calientes</td><td style="padding:6px;color:#bbb;">0-10</td><td style="padding:6px;color:#bbb;">Activo, cargó hace poco</td></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#ffaa44;">⚠ En riesgo</td><td style="padding:6px;color:#bbb;">10-20</td><td style="padding:6px;color:#bbb;">Hay tiempo, intervenir antes de perderlo</td></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#9b30ff;">💔 Perdidos</td><td style="padding:6px;color:#bbb;">20-30</td><td style="padding:6px;color:#bbb;">Necesita bono fuerte para volver</td></tr>',
+                '<tr><td style="padding:6px;color:#888;">☠ Inactivos</td><td style="padding:6px;color:#bbb;">+30</td><td style="padding:6px;color:#bbb;">Última jugada: oferta máxima</td></tr>',
+                '</table>',
+                '<p style="background:rgba(102,255,102,0.06);border-left:3px solid #66ff66;padding:8px 12px;margin-top:8px;border-radius:6px;font-size:11.5px;"><strong style="color:#66ff66;">Importante:</strong> el bucket NO mejora si el user solo recibió un regalo o bono — el regalo es un INCENTIVO para que vuelva, no es prueba de que volvió. Para salir de "en riesgo" tiene que detectarse una <strong>carga real</strong>.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">🔎 Buscador de usuarios (siempre arriba)</h4>',
+                '<p>Caja celeste arriba de todo. <strong>No requiere subir XLSX</strong> — sirve para buscar y tildar users uno a uno:</p>',
+                '<ul>',
+                '<li>Escribís 2+ caracteres del username → resultados aparecen al toque (debounce 350ms).</li>',
+                '<li>Cada resultado tiene 3 checkboxes: 📞 <strong>Etiqueta</strong> (Callbell), 💬 <strong>WA</strong> (mensaje enviado), ⭐ <strong>Favorito</strong> (marcador personal del admin).</li>',
+                '<li>Cada tilde se guarda al toque vía API. Si falla, revierte el check.</li>',
+                '<li>Los tildes son <strong>persistentes</strong> y compartidos con la lista del XLSX (mismo storage <code>CallbellTag</code>).</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:14px;">📊 Sección "Post recontactación" (debajo del dashboard)</h4>',
+                '<p>Card celeste con dos componentes:</p>',
+                '<ul>',
+                '<li><strong>Etiquetados que instalaron app</strong>: users que vos marcaste con ✅ etiqueta y que <em>después</em> instalaron la app. Mide la efectividad de tu campaña Callbell.</li>',
+                '<li><strong>📈 Mejora vs análisis anterior</strong>: cuando subís otro XLSX (con fecha distinta), el sistema compara contra el análisis previo y lista users que mejoraron entre los dos:',
+                '<ul>',
+                '<li>📱 <em>Instalaron app</em> desde el último análisis (no tenían y ahora sí).</li>',
+                '<li>⬆ <em>Subieron de bucket de actividad</em> (ej: estaba <code>inactivos</code> y ahora <code>enRiesgo</code>) — solo si se detectó carga real.</li>',
+                '</ul></li>',
+                '</ul>',
+                '<p style="font-size:11.5px;color:#aaa;">El comparativo arranca desde el SEGUNDO XLSX que subís (no se puede reconstruir retroactivamente porque los análisis viejos solo tenían summary, no detalle por user).</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">📅 Sección "Avance del día" (al fondo)</h4>',
+                '<p>Card morada para auditar el trabajo del personal por día:</p>',
+                '<ul>',
+                '<li><strong>Date picker</strong> (default hoy, máx hoy).</li>',
+                '<li><strong>KPIs</strong>: total tildes del día + usuarios únicos tocados.</li>',
+                '<li><strong>Por personal</strong>: chips con conteo (ej. <code>pedro: 47</code>, <code>juan: 23</code>).</li>',
+                '<li><strong>Por tipo</strong>: chips con conteo por acción (📞 etiqueta, 💬 WA, ⭐ favorito, ✓ respuesta).</li>',
+                '<li><strong>Tabla detallada</strong>: hora · usuario · acción · estado (tildado/destildado) · personal que lo hizo.</li>',
+                '</ul>',
+                '<p style="font-size:11.5px;color:#aaa;">El sistema solo guarda el ÚLTIMO timestamp de cada tilde por user — si alguien tildó y destildó varias veces el mismo día, ves solo el último estado.</p>',
 
                 '<h4 style="color:#fff;margin-top:14px;">1) Cómo subir el archivo</h4>',
                 '<ol>',
@@ -11001,22 +11073,57 @@ function _helpBlocks() {
         {
             anchor: 'help-winback',
             icon: '🔄',
-            title: 'Win-back automático — recuperar usuarios que dejaron de cargar',
+            title: 'Win-back automático — recuperar usuarios inactivos',
             body: [
-                '<p>Motor que detecta usuarios que <strong>cargaban regularmente y dejaron de hacerlo</strong> y dispara campañas de recuperación con bonos personalizados según el tier y la inactividad.</p>',
-                '<h4 style="color:#fff;margin-top:14px;">Cómo funciona:</h4>',
-                '<ol>',
-                '<li>Cada cron, escanea la base buscando users con perfil "ex-cargador" (ej: cargaban X veces/semana y hace Y días que no).</li>',
-                '<li>Calcula bono recomendado según el tier histórico del user y cuánto cargaba.</li>',
-                '<li>Genera una campaña personalizada (push si tiene app, marca para WhatsApp si no).</li>',
-                '<li>Te muestra el plan en pantalla — vos lo aprobás y se dispara, o lo descartás.</li>',
-                '</ol>',
-                '<h4 style="color:#fff;margin-top:14px;">Diferencia vs Recontactación:</h4>',
+                '<p>Motor que detecta usuarios que <strong>dejaron de usar la plataforma</strong> y dispara campañas de recuperación escalonadas según cuántos días llevan inactivos.</p>',
+
+                '<p style="background:rgba(255,170,68,0.08);border-left:4px solid #ffaa44;padding:10px 14px;border-radius:6px;margin-top:8px;"><strong style="color:#ffaa44;">⚠ Estado actual:</strong> bono y regalo automáticos están <strong>DESACTIVADOS</strong>. El cron envía <strong>solo el push informativo del tier</strong> (texto). Para reactivar la creación automática de bonos/regalos, hay que volver a <code>true</code> el flag <code>AUTO_BONUS_ENABLED</code> en el código.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">📏 Métrica de inactividad (configurable)</h4>',
+                '<p>El admin elige en la UI con qué métrica medir si un user está inactivo:</p>',
                 '<ul>',
-                '<li><strong>Win-back</strong>: <em>el sistema te trae automáticamente</em> los candidatos según reglas pre-configuradas.</li>',
-                '<li><strong>🆕 Recontactación</strong>: <em>vos subís la lista</em> y el sistema la analiza. Más control, más quirúrgico.</li>',
+                '<li>📱 <strong>Uso de app</strong> (default — recomendado): mira <code>User.lastLogin</code>. Días = ahora − última vez que abrió la app. Detecta si el user dejó de visitar la plataforma, independientemente de si carga o no.</li>',
+                '<li>💰 <strong>Depósitos reales</strong> (legacy): mira <code>PlayerStats.lastRealDepositDate</code>. Días = ahora − último depósito real. NO cuenta bonos ni regalos. Solo carga real de plata cuenta como "actividad".</li>',
                 '</ul>',
-                '<p>Los dos pueden convivir: usá Win-back para flujo continuo y Recontactación para campañas grandes / específicas.</p>'
+                '<p style="font-size:11.5px;color:#aaa;">Cambiar la métrica afecta solo los próximos ticks del cron — no re-evalúa users ya en cooldown.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">📊 Tiers (días sin actividad)</h4>',
+                '<p>Cada tier tiene su umbral en días + mensaje configurable. Defaults:</p>',
+                '<table style="width:100%;font-size:11.5px;border-collapse:collapse;margin-top:4px;">',
+                '<tr style="background:rgba(255,255,255,0.05);"><th style="text-align:left;padding:6px;color:#aaa;">Tier</th><th style="text-align:left;padding:6px;color:#aaa;">Días</th><th style="text-align:left;padding:6px;color:#aaa;">Acción</th></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#fff;">Tier 1</td><td style="padding:6px;color:#bbb;">7-13</td><td style="padding:6px;color:#bbb;">Push suave ("te extrañamos") · sin bono</td></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#fff;">Tier 2</td><td style="padding:6px;color:#bbb;">14-29</td><td style="padding:6px;color:#bbb;">Push + giveaway $1000 (48 hs) — <strong style="color:#ffaa44;">DESACTIVADO actualmente</strong>, solo manda push</td></tr>',
+                '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);"><td style="padding:6px;color:#fff;">Tier 3</td><td style="padding:6px;color:#bbb;">30-59</td><td style="padding:6px;color:#bbb;">Push + promo wa.link COD100 (72 hs) — <strong style="color:#ffaa44;">DESACTIVADO actualmente</strong>, solo manda push</td></tr>',
+                '<tr><td style="padding:6px;color:#fff;">Tier 4</td><td style="padding:6px;color:#bbb;">60+</td><td style="padding:6px;color:#bbb;">Cooldown — no se manda más nada al user</td></tr>',
+                '</table>',
+
+                '<h4 style="color:#fff;margin-top:14px;">⚙️ Reglas del cron (cada hora)</h4>',
+                '<ul>',
+                '<li><strong>Reset automático</strong>: si el user vuelve a depositar (real, no bono), su <code>lastRealDepositDate</code> se actualiza, su <code>winbackTier</code> vuelve a 0 y entra de nuevo al ciclo si vuelve a inactivarse. Si la métrica es "app", el reset es por nuevo login.</li>',
+                '<li><strong>Anti-spam</strong>: mínimo 24 hs entre cualquier mensaje al mismo user.</li>',
+                '<li><strong>Escalación una vía</strong>: el tier solo sube (1→2→3→4). Nunca baja salvo por reset.</li>',
+                '<li><strong>Caps diarios</strong>: máximo configurable de envíos por tier por día (default 50 tier 2, 100 tier 3) — protege contra quemar plata si la base es enorme.</li>',
+                '<li><strong>Filtros opcionales</strong>: solo a los que respondieron la encuesta · excluir oportunistas (los marcados como "reclama bonos sin cargar" en <code>PlayerStats.isOpportunist</code>).</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:14px;">🚀 Test fire para un user específico</h4>',
+                '<p>Caja dorada "🎯 Test para un user específico": ingresás username + tier (1/2/3) y se dispara el push <strong>ignorando los días sin actividad</strong>. El push va <strong>solo a ese user</strong> (no leak a otros). Útil para QA del flow.</p>',
+
+                '<h4 style="color:#fff;margin-top:14px;">📊 Tab Historial (RecoveryPush)</h4>',
+                '<p>Cada push enviado deja un row en <code>RecoveryPush</code> con outcome:</p>',
+                '<ul>',
+                '<li><strong>recovered</strong>: el user hizo carga real después del push.</li>',
+                '<li><strong>opportunist</strong>: reclamó el bono/giveaway pero no cargó.</li>',
+                '<li><strong>no_response</strong>: pasaron 14 días, no hizo nada.</li>',
+                '<li><strong>pending</strong>: todavía dentro de la ventana de 14 días.</li>',
+                '</ul>',
+
+                '<h4 style="color:#fff;margin-top:14px;">🆚 Win-back vs Recontactación</h4>',
+                '<ul>',
+                '<li><strong>Win-back</strong>: <em>automático</em>. El sistema escanea solo y dispara según reglas pre-configuradas.</li>',
+                '<li><strong>Recontactación</strong>: <em>manual</em>. Vos subís el XLSX y el sistema sugiere bonos. Más control, más quirúrgico.</li>',
+                '</ul>',
+                '<p>Los dos pueden convivir: Win-back para flujo continuo automático, Recontactación para campañas grandes específicas.</p>'
             ].join('')
         },
         {
