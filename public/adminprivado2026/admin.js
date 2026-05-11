@@ -202,10 +202,10 @@ function showApp() {
         return;
     }
 
-    // Cargar la sección por defecto (Equipos). showSection dispara el PIN
-    // gate automáticamente — el admin ve el modal al entrar en vez de
-    // aterrizar en una sección vacía.
-    try { showSection('teams'); } catch (_) {}
+    // Cargar la sección por defecto (Ingresos diarios) — coincide con el
+    // primer item del sidebar reorganizado. No tiene PIN, así que el admin
+    // aterriza directo en datos útiles sin tener que ingresar clave.
+    try { showSection('ingresos'); } catch (_) {}
 }
 
 // ============================================
