@@ -19594,13 +19594,13 @@ function _autoStrategyOpenPreviewModal(d) {
     document.body.appendChild(overlay);
 }
 
-// Dispara el test fire usando los inputs del modal.
+// Dispara el test fire usando los inputs del modal — fire INMEDIATO.
 async function _autoStrategyTestFire() {
     const testUser = (document.getElementById('autoStrategy_testUser') || {}).value || 'lalodj';
     const category = (document.getElementById('autoStrategy_testCategory') || {}).value || 'bonos';
     const tier = (document.getElementById('autoStrategy_testTier') || {}).value || 'normal';
     const resBox = document.getElementById('autoStrategyTestResult');
-    if (resBox) resBox.innerHTML = '<span style="color:#ffaa44;">⏳ Programando push de prueba...</span>';
+    if (resBox) resBox.innerHTML = '<span style="color:#ffaa44;">⏳ Enviando push de prueba ahora...</span>';
     try {
         const r = await authFetch('/api/admin/team-campaigns/auto-strategy/test-fire', {
             method: 'POST',
@@ -19613,13 +19613,19 @@ async function _autoStrategyTestFire() {
             showToast('❌ ' + (d.error || 'Error'), 'error');
             return;
         }
-        const when = new Date(d.scheduledFor).toLocaleTimeString('es-AR');
-        let info = '<span style="color:#66ff66;">✅ Programado para ' + escapeHtml(d.targetUsername) + ' a las ' + when + ' (en 30s)</span><br>';
+        // El endpoint dispara sincronamente. Si executed=true ya fue. Si no, mostrar el error.
+        if (d.executed === false) {
+            if (resBox) resBox.innerHTML = '<span style="color:#ff8080;">⚠ La notif se programó pero falló el envío: ' + escapeHtml(d.executeError || 'desconocido') + '</span>';
+            showToast('⚠ Error al ejecutar: ' + (d.executeError || ''), 'error');
+            return;
+        }
+        let info = '<span style="color:#66ff66;">✅ Enviado AHORA a ' + escapeHtml(d.targetUsername) + '</span><br>';
         info += '<span style="color:#bbb;">Título: <strong>' + escapeHtml(d.title) + '</strong></span>';
-        if (d.extraType === 'promo') info += '<br><span style="color:#ffaa44;">📲 Promo wa.link: <strong>' + escapeHtml(d.promoCode) + '</strong> (6h activo)</span>';
-        if (d.extraType === 'giveaway') info += '<br><span style="color:#25d366;">💰 Regalo reclamable: <strong>$' + Number(d.giveawayAmount).toLocaleString('es-AR') + '</strong> (6h para reclamar)</span>';
+        if (d.extraType === 'promo') info += '<br><span style="color:#ffaa44;">📲 Promo wa.link: <strong>' + escapeHtml(d.promoCode) + '</strong> (6h activo). Decile a ' + escapeHtml(d.targetUsername) + ' que abra la app — el cartel debería aparecer arriba de QUIERO CARGAR.</span>';
+        if (d.extraType === 'giveaway') info += '<br><span style="color:#25d366;">💰 Regalo reclamable: <strong>$' + Number(d.giveawayAmount).toLocaleString('es-AR') + '</strong> (6h para reclamar). El user verá el botón de reclamar en la app.</span>';
+        if (d.extraType === 'none') info += '<br><span style="color:#aaa;">Solo el push pelado, sin extras.</span>';
         if (resBox) resBox.innerHTML = info;
-        showToast('🧪 Test fire programado para ' + d.targetUsername, 'success');
+        showToast('🧪 Test fire enviado AHORA a ' + d.targetUsername, 'success');
     } catch (e) {
         if (resBox) resBox.innerHTML = '<span style="color:#ff8080;">❌ Error de conexión</span>';
         showToast('Error de conexión', 'error');

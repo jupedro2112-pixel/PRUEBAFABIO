@@ -12969,8 +12969,9 @@ app.post('/api/admin/team-campaigns/auto-strategy/test-fire', authMiddleware, ad
 
     const sched = {
       id: uuidv4(),
-      scheduledFor: new Date(Date.now() + 30 * 1000), // +30s
-      status: 'pending',
+      scheduledFor: new Date(), // ahora — fire inmediato
+      status: 'processing',     // marca processing directo para que el cron no lo agarre
+      processingStartedAt: new Date(),
       title: blueprint.title + ' (PRUEBA)',
       body: blueprint.body,
       targetUsername: u.username, // preserva casing real
@@ -12986,9 +12987,32 @@ app.post('/api/admin/team-campaigns/auto-strategy/test-fire', authMiddleware, ad
       sched.giveawayAmount = _autoStrategyGiftAmount({ tierBudget, regalosCount });
       sched.giveawayDurationMinutes = 360;
     }
-    await ScheduledNotification.create(sched);
+    const doc = await ScheduledNotification.create(sched);
+    // Disparar AHORA — sin esperar al cron de 60s. Replica lo que hace el
+    // scheduler: ejecuta el push + crea el promo/giveaway scoped via
+    // audienceWhitelist, marca como sent. Si falla, queda failed con el error.
+    let executed = false;
+    let executeError = null;
+    try {
+      await _executeScheduledNotification(sched);
+      await ScheduledNotification.updateOne(
+        { id: sched.id },
+        { $set: { status: 'sent', executedAt: new Date() }, $unset: { processingStartedAt: 1 } }
+      ).catch(() => {});
+      executed = true;
+      logger.info(`[test-fire] notif ${sched.id} ejecutada INMEDIATO para ${u.username}`);
+    } catch (e) {
+      executeError = e.message || String(e);
+      logger.error(`[test-fire] error ejecutando ${sched.id}: ${executeError}`);
+      await ScheduledNotification.updateOne(
+        { id: sched.id },
+        { $set: { status: 'failed', errorMsg: executeError.slice(0, 500) }, $unset: { processingStartedAt: 1 } }
+      ).catch(() => {});
+    }
     res.json({
-      success: true,
+      success: executed,
+      executed,
+      executeError,
       scheduledFor: sched.scheduledFor,
       targetUsername: u.username,
       category, tier,
@@ -12996,7 +13020,9 @@ app.post('/api/admin/team-campaigns/auto-strategy/test-fire', authMiddleware, ad
       promoCode: sched.promoCode || null,
       giveawayAmount: sched.giveawayAmount || null,
       title: sched.title,
-      message: `Push de prueba programado para ${u.username} en 30s. Si tiene la app abierta, le va a llegar la notif + ${sched.extraType === 'promo' ? 'cartel wa.link de promo' : sched.extraType === 'giveaway' ? 'botón para reclamar plata' : 'solo el push'}.`
+      message: executed
+        ? `Push enviado AHORA a ${u.username}. Si tiene la app abierta, ya debería ver la notif + ${sched.extraType === 'promo' ? 'cartel wa.link de promo' : sched.extraType === 'giveaway' ? 'botón para reclamar plata' : 'solo el push'}.`
+        : `Falló el envío: ${executeError}`
     });
   } catch (err) {
     logger.error(`/api/admin/team-campaigns/auto-strategy/test-fire: ${err.message}\n${err.stack}`);
