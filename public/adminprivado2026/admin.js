@@ -19360,7 +19360,12 @@ function _autoStrategyOpenPreviewModal(d) {
     const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
     if (d.maxTotal) state.maxTotal = d.maxTotal;
     if (d.excludedTeams) state.excludedTeams = d.excludedTeams;
-    const allTeams = (_TEAM_CAMPAIGNS_CACHE.teams || []).map(t => t.name);
+    // Filtrar teams sin nombre (raro pero posible si la aggregation devuelve
+    // un _id null). Sin este filter, el .toLowerCase() de abajo crashea con
+    // "can't access property toLowerCase, t is null".
+    const allTeams = (_TEAM_CAMPAIGNS_CACHE.teams || [])
+        .map(t => t && t.name)
+        .filter(n => typeof n === 'string' && n.length > 0);
     inner += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
     inner += '  <div style="color:#00d4ff;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">⚙ Ajustes (cambiá y se recalcula)</div>';
     inner += '  <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;">';
@@ -19380,8 +19385,12 @@ function _autoStrategyOpenPreviewModal(d) {
     if (allTeams.length === 0) {
         inner += '<span style="color:#888;font-size:11px;">No hay equipos detectados.</span>';
     } else {
+        // Normalizar excludedTeams a strings no-null para evitar crashes en .toLowerCase().
+        const excludedLower = (state.excludedTeams || [])
+            .filter(x => typeof x === 'string' && x.length > 0)
+            .map(x => x.toLowerCase());
         for (const t of allTeams) {
-            const isExcluded = state.excludedTeams.map(x => x.toLowerCase()).includes(t.toLowerCase());
+            const isExcluded = excludedLower.includes(t.toLowerCase());
             inner += '<label style="display:inline-flex;align-items:center;gap:4px;background:' + (isExcluded ? 'rgba(255,128,128,0.10)' : 'rgba(255,255,255,0.05)') + ';border:1px solid ' + (isExcluded ? 'rgba(255,128,128,0.40)' : 'rgba(255,255,255,0.15)') + ';padding:3px 8px;border-radius:14px;cursor:pointer;font-size:11px;color:' + (isExcluded ? '#ff8080' : '#ddd') + ';">';
             inner += '<input type="checkbox" data-team-exclude="' + escapeHtml(t) + '" ' + (isExcluded ? 'checked' : '') + ' onchange="_autoStrategyApplyControls()" style="margin:0;">';
             inner += escapeHtml(t);
