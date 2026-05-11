@@ -62,6 +62,7 @@ const {
   WaClickLog,
   PlayerStats,
   RecoveryPush,
+  TeamCampaign,
   JugayganaImport,
   DailyPlayerStats,
   UserLineLookup,

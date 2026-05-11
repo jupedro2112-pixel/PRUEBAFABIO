@@ -25,6 +25,7 @@ const ScheduledNotification = require('./ScheduledNotification');
 const WaClickLog = require('./WaClickLog');
 const PlayerStats = require('./PlayerStats');
 const RecoveryPush = require('./RecoveryPush');
+const TeamCampaign = require('./TeamCampaign');
 const JugayganaImport = require('./JugayganaImport');
 const DailyPlayerStats = require('./DailyPlayerStats');
 const UserLineLookup = require('./UserLineLookup');
@@ -449,6 +450,7 @@ module.exports = {
   WaClickLog,
   PlayerStats,
   RecoveryPush,
+  TeamCampaign,
   JugayganaImport,
   DailyPlayerStats,
   UserLineLookup,
