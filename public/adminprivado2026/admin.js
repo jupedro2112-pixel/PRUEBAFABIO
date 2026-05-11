@@ -19043,6 +19043,44 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
     inner += '</div>';
 
+    // ============ CONTROLES EDITABLES (afectan el preview en tiempo real) ============
+    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
+    if (d.maxTotal) state.maxTotal = d.maxTotal;
+    if (d.excludedTeams) state.excludedTeams = d.excludedTeams;
+    const allTeams = (_TEAM_CAMPAIGNS_CACHE.teams || []).map(t => t.name);
+    inner += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">';
+    inner += '  <div style="color:#00d4ff;font-weight:900;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">⚙ Ajustes (cambiá y se recalcula)</div>';
+    inner += '  <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;">';
+    // Max total
+    inner += '<div>';
+    inner += '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:3px;">💰 Máximo a regalar ($)</label>';
+    inner += '<div style="display:flex;gap:4px;">';
+    inner += '<input id="autoStrategy_maxTotal" type="number" min="0" step="50000" value="' + state.maxTotal + '" style="flex:1;background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:7px 9px;border-radius:6px;font-size:13px;font-weight:700;">';
+    inner += '<button type="button" onclick="_autoStrategyApplyControls()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:7px 12px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;">↻</button>';
+    inner += '</div>';
+    inner += '<div style="color:#888;font-size:10px;margin-top:3px;">Si el total estimado excede este monto, se escalan los regalos proporcionalmente (floor $500/regalo).</div>';
+    inner += '</div>';
+    // Excluded teams
+    inner += '<div>';
+    inner += '<label style="display:block;color:#aaa;font-size:11px;margin-bottom:3px;">🚫 Equipos excluidos (no reciben campaña)</label>';
+    inner += '<div style="background:#0a0a0a;border:1px solid rgba(0,212,255,0.40);border-radius:6px;padding:6px;max-height:90px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:5px;">';
+    if (allTeams.length === 0) {
+        inner += '<span style="color:#888;font-size:11px;">No hay equipos detectados.</span>';
+    } else {
+        for (const t of allTeams) {
+            const isExcluded = state.excludedTeams.map(x => x.toLowerCase()).includes(t.toLowerCase());
+            inner += '<label style="display:inline-flex;align-items:center;gap:4px;background:' + (isExcluded ? 'rgba(255,128,128,0.10)' : 'rgba(255,255,255,0.05)') + ';border:1px solid ' + (isExcluded ? 'rgba(255,128,128,0.40)' : 'rgba(255,255,255,0.15)') + ';padding:3px 8px;border-radius:14px;cursor:pointer;font-size:11px;color:' + (isExcluded ? '#ff8080' : '#ddd') + ';">';
+            inner += '<input type="checkbox" data-team-exclude="' + escapeHtml(t) + '" ' + (isExcluded ? 'checked' : '') + ' onchange="_autoStrategyApplyControls()" style="margin:0;">';
+            inner += escapeHtml(t);
+            inner += '</label>';
+        }
+    }
+    inner += '</div>';
+    inner += '<div style="color:#888;font-size:10px;margin-top:3px;">Tildá un equipo para que NO reciba campañas auto. Mostrá en rojo = excluido.</div>';
+    inner += '</div>';
+    inner += '  </div>';
+    inner += '</div>';
+
     if (!sum.totalCampaigns || sum.totalCampaigns === 0) {
         inner += '<div style="background:rgba(255,170,68,0.10);border:1px solid rgba(255,170,68,0.40);border-radius:8px;padding:14px;color:#ffd97a;">';
         inner += '⚠ Nada para generar. Verificá que:<ul style="margin:8px 0 0;padding-left:20px;">';
