@@ -53,7 +53,16 @@ const complaintSchema = new mongoose.Schema({
   // Cuándo se le mandó el push al user avisándole que hay respuesta.
   // Sirve para evitar mandar dos pushes si el admin edita la respuesta.
   // Si el admin tilda "responder sin notificar", este campo queda null.
-  userNotifiedAt: { type: Date, default: null }
+  userNotifiedAt: { type: Date, default: null },
+
+  // Teléfono de soporte y wa.link generado en el momento del response.
+  // Cuando el admin completa supportPhone, el server arma el wa.me link
+  // con texto pre-llenado ("Hola, soy {username}, queja del {fecha}...")
+  // y la queja queda en status='pending' (el caso continúa en WA, no se
+  // cierra automático). Después el admin la marca como 'resolved' cuando
+  // termina la conversación.
+  supportPhone: { type: String, default: '', maxlength: 24 },
+  supportWaLink: { type: String, default: '', maxlength: 1000 }
 }, {
   collection: 'complaints',
   timestamps: true,

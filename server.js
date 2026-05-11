@@ -14139,7 +14139,7 @@ app.get('/api/complaints/mine', authMiddleware, async (req, res) => {
   try {
     const list = await Complaint.find(
       { userId: req.user.userId },
-      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, adminResponse: 1, respondedAt: 1, respondedBy: 1, _id: 0 }
+      { id: 1, incidentDate: 1, incidentTime: 1, subject: 1, description: 1, imageUrl: 1, status: 1, createdAt: 1, adminResponse: 1, respondedAt: 1, respondedBy: 1, supportWaLink: 1, supportPhone: 1, _id: 0 }
     ).sort({ createdAt: -1 }).limit(50).lean();
     res.json({ complaints: list });
   } catch (err) {
@@ -14188,15 +14188,35 @@ app.get('/api/admin/complaints', authMiddleware, adminMiddleware, async (req, re
 //   adminResponse: string (la respuesta que ve el dueño de la queja)
 //   notifyUser: bool — si true Y hay adminResponse, manda push al user.
 //                       Si false, solo guarda la respuesta sin notificar.
+//   supportPhone: string E.164 — si viene, el server genera wa.link y
+//                       FORZA status='pending' (queda abierta para
+//                       seguir el caso en WhatsApp).
 //
 // Si notifyUser es true y existen tokens FCM standalone del user, el push
-// abre la PWA con `?complaint=<id>` para que vea la respuesta directo.
+// abre la PWA con `?openComplaint=<id>` para que vea la respuesta + wa.link.
 app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
     const b = req.body || {};
     const adminUser = (req.user && req.user.username) || 'admin';
     const $set = {};
+
+    // Procesar supportPhone primero — si viene, fuerza status='pending'
+    // (override del status que mandó el admin) porque el caso queda
+    // abierto en WA. Solo permitimos formato E.164 simple.
+    let waLink = '';
+    let supportPhoneNorm = '';
+    if (b.supportPhone !== undefined && String(b.supportPhone || '').trim()) {
+      const raw = String(b.supportPhone).trim();
+      // Acepta +5491155551234 o 5491155551234. Sólo dígitos para wa.me.
+      const digits = raw.replace(/[^\d]/g, '');
+      if (digits.length < 8 || digits.length > 16) {
+        return res.status(400).json({ error: 'Teléfono inválido. Usá formato internacional (ej: +5491155551234).' });
+      }
+      supportPhoneNorm = '+' + digits;
+      $set.supportPhone = supportPhoneNorm;
+    }
+
     if (['pending', 'reviewed', 'resolved'].includes(b.status)) {
       $set.status = b.status;
       if (b.status === 'resolved') {
@@ -14218,9 +14238,27 @@ app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async
     }
     const $addToSet = { readBy: adminUser };
     const update = { $set, $addToSet };
-    const existing = await Complaint.findOne({ id }, { readAt: 1, userId: 1, username: 1, subject: 1, _id: 0 }).lean();
+    const existing = await Complaint.findOne({ id }, { readAt: 1, userId: 1, username: 1, subject: 1, incidentDate: 1, _id: 0 }).lean();
     if (!existing) return res.status(404).json({ error: 'No encontrada' });
     if (!existing.readAt) update.$set.readAt = new Date();
+
+    // Construir wa.link DESPUÉS de tener `existing` (necesitamos username
+    // y subject/incidentDate para el mensaje pre-llenado).
+    if (supportPhoneNorm) {
+      const greeting = `Hola, soy ${existing.username || 'cliente'}.`;
+      const ctx = existing.subject
+        ? `Quería seguir mi queja: "${existing.subject}" (${existing.incidentDate || ''}).`
+        : `Quería seguir mi queja del ${existing.incidentDate || ''}.`;
+      const msg = `${greeting} ${ctx}`.trim();
+      waLink = `https://wa.me/${supportPhoneNorm.replace(/[^\d]/g, '')}?text=${encodeURIComponent(msg)}`;
+      $set.supportWaLink = waLink;
+      // Forzar status='pending' — el caso queda abierto en WA, no resolvemos
+      // automático aunque el admin haya pedido 'resolved'.
+      $set.status = 'pending';
+      // Y limpiar resolvedBy/resolvedAt por si la queja estaba marcada antes.
+      $set.resolvedBy = null;
+      $set.resolvedAt = null;
+    }
 
     // Si el admin marcó notifyUser y hay respuesta, mandamos push DESPUÉS
     // del update (para no bloquear la confirmación del admin).
@@ -14252,18 +14290,30 @@ app.put('/api/admin/complaints/:id', authMiddleware, superAdminMiddleware, async
           }
           const title = '📩 Respondieron tu queja';
           const subj = (existing.subject || '').trim();
-          const body = subj
-            ? `Respuesta a: "${subj.slice(0, 60)}". Tocá para verla.`
-            : 'Tu queja tiene respuesta. Tocá para verla.';
+          let body;
+          if (waLink) {
+            // Push con CTA fuerte hacia WhatsApp.
+            body = subj
+              ? `Respuesta a: "${subj.slice(0, 50)}". Tocá para chatear con soporte.`
+              : 'Tu queja tiene respuesta. Tocá para chatear con soporte por WhatsApp.';
+          } else {
+            body = subj
+              ? `Respuesta a: "${subj.slice(0, 60)}". Tocá para verla.`
+              : 'Tu queja tiene respuesta. Tocá para verla.';
+          }
           // Click action: abre la PWA con un query param que el front
-          // detecta y abre directo el modal de "Mis quejas".
+          // detecta y abre directo el modal de "Mis quejas". Si hay
+          // wa.link, lo mandamos en data para que la PWA pueda saltar
+          // directo al WhatsApp si quiere.
           const clickUrl = '/?openComplaint=' + encodeURIComponent(id);
-          const { sendNotificationToMultiple } = require('./src/services/notificationService');
-          await sendNotificationToMultiple(standaloneTokens, title, body, {
+          const pushData = {
             type: 'complaint_response',
             complaintId: id,
             url: clickUrl
-          });
+          };
+          if (waLink) pushData.waLink = waLink;
+          const { sendNotificationToMultiple } = require('./src/services/notificationService');
+          await sendNotificationToMultiple(standaloneTokens, title, body, pushData);
           logger.info(`[complaints] push enviado a ${existing.username} (queja ${id}, ${standaloneTokens.length} tokens)`);
         } catch (e) {
           logger.error(`[complaints] push failed for ${id}: ${e.message}`);

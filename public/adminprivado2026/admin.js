@@ -20913,6 +20913,13 @@ function _complaintShowDetail(id) {
     inner += '<div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:12px;">';
     inner += '<div style="color:#d4af37;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">💬 Respuesta para el usuario (la verá en su queja)</div>';
     inner += '<textarea id="complaintAdminResponse_' + escapeHtml(c.id) + '" maxlength="2000" rows="4" placeholder="Hola ' + escapeHtml(c.username) + ', revisamos tu caso..." style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:9px 11px;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box;resize:vertical;">' + escapeHtml(c.adminResponse || '') + '</textarea>';
+    // Teléfono de soporte → genera wa.link automático. Si lo completás,
+    // la queja queda en 'pending' (no se resuelve sola).
+    inner += '<div style="margin-top:10px;">';
+    inner += '<label style="display:block;color:#bbb;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">📞 Teléfono de soporte <span style="text-transform:none;color:#666;">(opcional · genera wa.link)</span></label>';
+    inner += '<input type="tel" id="complaintSupportPhone_' + escapeHtml(c.id) + '" placeholder="+5491155551234" maxlength="20" value="' + escapeHtml(c.supportPhone || '') + '" style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(212,175,55,0.40);padding:8px 11px;border-radius:8px;font-size:13px;box-sizing:border-box;font-family:monospace;">';
+    inner += '<div style="color:#888;font-size:10.5px;margin-top:4px;line-height:1.4;">Si completás el teléfono, el user recibe el push con un botón directo a WhatsApp. La queja queda <b style="color:#ffd700;">pendiente</b> hasta que la marques manualmente como resuelta.</div>';
+    inner += '</div>';
     inner += '</div>';
 
     // Notas internas del admin
@@ -20921,11 +20928,12 @@ function _complaintShowDetail(id) {
     inner += '<textarea id="complaintAdminNotes_' + escapeHtml(c.id) + '" maxlength="2000" rows="3" placeholder="Ej: contacté por wa.link, le devolvimos $X, escalado a..." style="width:100%;background:#0a0a0a;color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 10px;border-radius:8px;font-size:12px;font-family:inherit;box-sizing:border-box;resize:vertical;">' + escapeHtml(c.adminNotes || '') + '</textarea>';
     inner += '</div>';
 
-    // Acciones — 3 botones: solo vista, responder + notificar + resolver, resolver silencioso.
+    // Acciones — 4 botones según flujo.
     inner += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">';
     inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'reviewed\',{respond:false,notify:false})" style="background:rgba(255,215,0,0.10);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12.5px;">👁 Solo vista</button>';
     inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\',{respond:false,notify:false})" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:9px 14px;border-radius:8px;font-weight:700;cursor:pointer;font-size:12.5px;" title="Cierra la queja sin avisarle al usuario">🔕 Resuelta sin notificar</button>';
-    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\',{respond:true,notify:true})" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12.5px;" title="Guarda la respuesta + manda push al user + cierra la queja">💬 Responder y notificar</button>';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'resolved\',{respond:true,notify:true,allowPhone:false})" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 16px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12.5px;" title="Guarda la respuesta + manda push al user + cierra la queja">💬 Responder y notificar</button>';
+    inner += '<button type="button" onclick="_complaintUpdate(\'' + escapeHtml(c.id) + '\',\'pending\',{respond:true,notify:true,allowPhone:true,requirePhone:true})" style="background:linear-gradient(135deg,#25D366,#128C7E);color:#fff;border:none;padding:9px 16px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12.5px;" title="Responde + manda push con wa.link al user. La queja queda PENDIENTE hasta que la marques resuelta manualmente.">💬 Responder con WhatsApp</button>';
     inner += '</div>';
     inner += '</div>';
 
@@ -20937,14 +20945,22 @@ async function _complaintUpdate(id, status, opts) {
     const o = opts || {};
     const notesEl = document.getElementById('complaintAdminNotes_' + id);
     const respEl  = document.getElementById('complaintAdminResponse_' + id);
+    const phoneEl = document.getElementById('complaintSupportPhone_' + id);
     const adminNotes = notesEl ? notesEl.value : '';
     const respText = respEl ? respEl.value.trim() : '';
+    const phoneText = phoneEl ? phoneEl.value.trim() : '';
 
-    // Si el admin pide "Responder y notificar" pero el textarea está vacío,
-    // no tiene sentido — abortamos con feedback.
+    // Si pide "Responder y notificar" pero el textarea está vacío, aborto.
     if (o.respond && !respText) {
         showToast('Escribí una respuesta para el usuario antes de enviar', 'error');
         if (respEl) respEl.focus();
+        return;
+    }
+
+    // El flujo "Responder con WhatsApp" requiere phone (requirePhone:true).
+    if (o.requirePhone && !phoneText) {
+        showToast('Para enviar wa.link necesitás completar el teléfono de soporte', 'error');
+        if (phoneEl) phoneEl.focus();
         return;
     }
 
@@ -20952,6 +20968,15 @@ async function _complaintUpdate(id, status, opts) {
     if (o.respond && respText) {
         payload.adminResponse = respText;
         payload.notifyUser = !!o.notify;
+    }
+    // Mandamos supportPhone si:
+    //  - el botón lo permite (allowPhone:true) Y el admin lo completó, O
+    //  - el flujo lo requiere (requirePhone:true)
+    // El server, al recibir supportPhone, fuerza status='pending' y genera
+    // el wa.link, así que el client status que mandamos es decorativo en
+    // ese caso (igual lo seteamos a 'pending' para coherencia visual).
+    if ((o.allowPhone || o.requirePhone) && phoneText) {
+        payload.supportPhone = phoneText;
     }
 
     try {
@@ -20963,7 +20988,10 @@ async function _complaintUpdate(id, status, opts) {
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
         let msg;
-        if (status === 'resolved' && o.respond && d.notified) msg = '✅ Resuelta + push enviado';
+        const isWa = !!(d.complaint && d.complaint.supportWaLink);
+        if (isWa && d.notified) msg = '💬 Respuesta + wa.link enviados (queda pendiente)';
+        else if (isWa) msg = '💬 Respuesta + wa.link guardados (queda pendiente)';
+        else if (status === 'resolved' && o.respond && d.notified) msg = '✅ Resuelta + push enviado';
         else if (status === 'resolved') msg = '✅ Queja resuelta';
         else msg = '✅ Marcada como vista';
         showToast(msg, 'success');
