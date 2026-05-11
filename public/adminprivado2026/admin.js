@@ -3123,9 +3123,15 @@ function _renderRecontactDailyResults(data) {
         html += '  </div>';
         html += '</div>';
     }
+    // Buscador para filtrar la tabla por username (verificación rápida).
+    html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">';
+    html += '  <label style="color:#bbb;font-size:11.5px;">🔎 Filtrar por usuario:</label>';
+    html += '  <input type="text" id="recontactDailyFilter" placeholder="Ej: lalodj" autocomplete="off" style="flex:1;min-width:180px;background:#0a0a0a;color:#fff;border:1px solid rgba(155,48,255,0.40);padding:6px 10px;border-radius:6px;font-size:12px;">';
+    html += '  <span id="recontactDailyFilterCount" style="color:#888;font-size:11px;">' + (data.events || []).length + ' eventos</span>';
+    html += '</div>';
     // Tabla de eventos.
     html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;max-height:480px;overflow-y:auto;">';
-    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;" id="recontactDailyTable">';
     html += '<thead style="position:sticky;top:0;background:#1a0033;"><tr style="color:#c977ff;text-align:left;">';
     html += '<th style="padding:7px 10px;font-weight:800;">Hora</th>';
     html += '<th style="padding:7px 10px;font-weight:800;">Usuario</th>';
@@ -3137,7 +3143,9 @@ function _renderRecontactDailyResults(data) {
         const stateBadge = e.set
             ? '<span style="color:#66ff66;font-weight:800;">✓ tildado</span>'
             : '<span style="color:#ff8080;font-weight:800;">✗ destildado</span>';
-        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        const u = String(e.username || '').toLowerCase();
+        const by = String(e.by || '').toLowerCase();
+        html += '<tr data-user="' + escapeHtml(u) + '" data-by="' + escapeHtml(by) + '" style="border-top:1px solid rgba(255,255,255,0.05);">';
         html += '<td style="padding:6px 10px;color:#aaa;font-size:11px;white-space:nowrap;">' + escapeHtml(fmtTime(e.at)) + '</td>';
         html += '<td style="padding:6px 10px;color:#fff;font-weight:700;">' + escapeHtml(e.username || '—') + '</td>';
         html += '<td style="padding:6px 10px;color:#fff;">' + escapeHtml(actionLabel(e.action)) + '</td>';
@@ -3146,6 +3154,25 @@ function _renderRecontactDailyResults(data) {
         html += '</tr>';
     }
     html += '</tbody></table></div>';
+    // Wire del filtro client-side (no hace falta llamar al server).
+    setTimeout(() => {
+        const inp = document.getElementById('recontactDailyFilter');
+        const tbody = document.querySelector('#recontactDailyTable tbody');
+        const counter = document.getElementById('recontactDailyFilterCount');
+        if (!inp || !tbody) return;
+        inp.oninput = () => {
+            const q = (inp.value || '').trim().toLowerCase();
+            let visible = 0;
+            tbody.querySelectorAll('tr').forEach(tr => {
+                const u = tr.getAttribute('data-user') || '';
+                const by = tr.getAttribute('data-by') || '';
+                const match = !q || u.includes(q) || by.includes(q);
+                tr.style.display = match ? '' : 'none';
+                if (match) visible++;
+            });
+            if (counter) counter.textContent = visible + ' eventos' + (q ? ' (filtrado)' : '');
+        };
+    }, 0);
     return html;
 }
 
