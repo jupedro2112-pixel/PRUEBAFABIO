@@ -12684,16 +12684,19 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
 }
 
 // GET preview: arma drafts sin persistir, devuelve summary + listado resumido.
+// Acepta query params: maxTotal (cap $), excludedTeams (csv de teams a saltear).
 app.get('/api/admin/team-campaigns/auto-strategy/preview', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const r = await _autoStrategyGenerate({ commit: false });
-    // Recortamos los drafts en la response — el resumen es lo importante. Los detalles
-    // se pueden ver post-activación en la lista de campañas.
+    const maxTotal = Number(req.query.maxTotal) || 1000000;
+    const excludedTeams = String(req.query.excludedTeams || '').split(',').map(t => t.trim()).filter(Boolean);
+    const r = await _autoStrategyGenerate({ commit: false, maxTotal, excludedTeams });
     res.json({
       success: true,
       monthKey: r.monthKey,
       remainingDaysCount: r.remainingDaysCount,
       summary: r.summary,
+      maxTotal,
+      excludedTeams,
       sampleDrafts: r.drafts.slice(0, 20).map(d => ({
         name: d.name, teamFilter: d.teamFilter, lineFilter: d.lineFilter, tierFilter: d.tierFilter,
         category: d.category, specificDate: d.specificDate, startHour: d.startHour, endHour: d.endHour,
@@ -12708,10 +12711,14 @@ app.get('/api/admin/team-campaigns/auto-strategy/preview', authMiddleware, admin
 });
 
 // POST commit: borra las auto-strategy del mes y crea las nuevas.
+// Acepta body: { maxTotal, excludedTeams }
 app.post('/api/admin/team-campaigns/auto-strategy/commit', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
-    const r = await _autoStrategyGenerate({ commit: true, createdBy: req.user.username || 'admin' });
+    const b = req.body || {};
+    const maxTotal = Number(b.maxTotal) || 1000000;
+    const excludedTeams = Array.isArray(b.excludedTeams) ? b.excludedTeams : [];
+    const r = await _autoStrategyGenerate({ commit: true, createdBy: req.user.username || 'admin', maxTotal, excludedTeams });
     res.json({
       success: true,
       monthKey: r.monthKey,
