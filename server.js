@@ -11239,14 +11239,17 @@ app.get('/api/admin/notif-strategy/preview', authMiddleware, adminMiddleware, as
 //  - Maximo 10 notifs por test (10 min total).
 //  - 1 test concurrente por user (evita pisarse).
 const _TEST_FIRE_RUNNING = new Set();
+// kind 'bono'   → promo (cartel RECLAMÁ + wa.link, 6 hs)
+// kind 'regalo' → giveaway reclamable desde la app (6 hs, monto fijo de test)
+// resto         → push pelado (sin extra)
 const _TEST_FIRE_BLUEPRINTS = [
-  { kind: 'bono',     title: '🎁 Tenés un bono',         body: 'TEST: Bono 50% al próximo depósito. ¡Aprovechá!' },
-  { kind: 'juga',     title: '🎰 Jugá con nosotros',      body: 'TEST: La racha está caliente, vení a tirar unos giros.' },
-  { kind: 'regalo',   title: '💸 Regalo activo',          body: 'TEST: Tenemos un regalo de plata para vos. Pasá por la app.' },
-  { kind: 'reembolso',title: '💰 Tu reembolso te espera', body: 'TEST: No te olvides — tenés un reembolso disponible.' },
-  { kind: 'motivado', title: '⚡ Bonus 100% × 2hs',       body: 'TEST: Solo hoy 19:00–21:00, te duplicamos la carga.' },
-  { kind: 'extra',    title: '🏆 Top jugador',            body: 'TEST: Sos top de la semana, premio extra al cargar hoy.' },
-  { kind: 'sorteo',   title: '🎫 Sorteo gratis',          body: 'TEST: Tenés un número en el sorteo del lunes. ¡Suerte!' }
+  { kind: 'bono',     title: '🎁 Tenés un bono',         body: 'TEST: Bono 50% al próximo depósito. ¡Aprovechá!', extraType: 'promo',    promoCode: 'BONO50TEST',  promoMessage: 'Bono 50% al próximo depósito',  promoDurationHours: 6 },
+  { kind: 'juga',     title: '🎰 Jugá con nosotros',      body: 'TEST: La racha está caliente, vení a tirar unos giros.', extraType: 'none' },
+  { kind: 'regalo',   title: '💸 Regalo activo',          body: 'TEST: Tenemos un regalo de plata para vos. Pasá por la app.', extraType: 'giveaway', giveawayAmount: 1000, giveawayDurationMinutes: 360 },
+  { kind: 'reembolso',title: '💰 Tu reembolso te espera', body: 'TEST: No te olvides — tenés un reembolso disponible.', extraType: 'none' },
+  { kind: 'motivado', title: '⚡ Bonus 100% × 2hs',       body: 'TEST: Solo hoy 19:00–21:00, te duplicamos la carga.', extraType: 'promo',    promoCode: 'BONO100TEST', promoMessage: 'Bono 100% por 2 hs hoy',         promoDurationHours: 6 },
+  { kind: 'extra',    title: '🏆 Top jugador',            body: 'TEST: Sos top de la semana, premio extra al cargar hoy.', extraType: 'none' },
+  { kind: 'sorteo',   title: '🎫 Sorteo gratis',          body: 'TEST: Tenés un número en el sorteo del lunes. ¡Suerte!', extraType: 'none' }
 ];
 
 app.post('/api/admin/notif-strategy/test-fire', authMiddleware, adminMiddleware, async (req, res) => {
@@ -11276,23 +11279,46 @@ app.post('/api/admin/notif-strategy/test-fire', authMiddleware, adminMiddleware,
     const startedAt = new Date();
     logger.info(`[TEST-FIRE] iniciado para ${user.username} · ${count} notifs · cada 1 min · token(s)=${tokens.length}`);
 
-    // Disparar cada blueprint a 1 min, 2 min, 3 min... usando setTimeout.
-    // Si el server reinicia entre medio, el test se aborta — no hace falta
-    // persistir nada porque es solo QA.
-    blueprints.forEach((bp, i) => {
-      setTimeout(async () => {
-        try {
-          for (const tok of tokens) {
-            await _sendPushToUser(tok, bp.title, bp.body, { test: '1', kind: bp.kind, idx: String(i + 1) });
-          }
-          logger.info(`[TEST-FIRE] ${user.username} #${i+1}/${count} · ${bp.kind} · "${bp.title}"`);
-        } catch (e) {
-          logger.warn(`[TEST-FIRE] ${user.username} #${i+1} fallo: ${e.message}`);
-        } finally {
-          if (i === blueprints.length - 1) _TEST_FIRE_RUNNING.delete(username.toLowerCase());
-        }
-      }, (i + 1) * 60 * 1000); // 60s, 120s, 180s, ...
-    });
+    // Encolamos cada blueprint como ScheduledNotification a +1min, +2min...
+    // El worker del scheduler las toma y las dispara via _executeScheduledNotification,
+    // que crea promo/giveaway server-side cuando corresponda — así el test
+    // valida la cadena completa (push + cartel/botón reclamable en la app).
+    const usernameLower = user.username.toLowerCase();
+    const enqueueErrors = [];
+    for (let i = 0; i < blueprints.length; i++) {
+      const bp = blueprints[i];
+      const when = new Date(Date.now() + (i + 1) * 60 * 1000); // +60s, +120s, ...
+      const sched = {
+        id: uuidv4(),
+        scheduledFor: when,
+        status: 'pending',
+        title: bp.title,
+        body: bp.body,
+        targetUsername: usernameLower,
+        audiencePrefix: null,
+        extraType: bp.extraType || 'none',
+        createdBy: `test-fire:${usernameLower}:${bp.kind}`
+      };
+      if (bp.extraType === 'promo') {
+        sched.promoCode = bp.promoCode;
+        sched.promoMessage = bp.promoMessage;
+        sched.promoDurationHours = bp.promoDurationHours;
+      } else if (bp.extraType === 'giveaway') {
+        sched.giveawayAmount = bp.giveawayAmount;
+        sched.giveawayDurationMinutes = bp.giveawayDurationMinutes;
+      }
+      try {
+        await ScheduledNotification.create(sched);
+      } catch (e) {
+        enqueueErrors.push(`#${i+1} ${bp.kind}: ${e.message}`);
+      }
+    }
+    // El test-fire siempre fue best-effort. Liberamos el lock al final del
+    // último firing teórico (count + 1 min de margen).
+    setTimeout(() => _TEST_FIRE_RUNNING.delete(usernameLower), (count + 1) * 60 * 1000);
+    if (enqueueErrors.length) {
+      logger.warn(`[TEST-FIRE] ${user.username} · errores al encolar: ${enqueueErrors.join(' | ')}`);
+    }
 
     res.json({
       success: true,
