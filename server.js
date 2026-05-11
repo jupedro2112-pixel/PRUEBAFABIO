@@ -12229,7 +12229,9 @@ app.get('/api/admin/team-campaigns', authMiddleware, adminMiddleware, async (req
 });
 
 // GET single — incluye preview del audience matching ahora.
-app.get('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async (req, res) => {
+// :id restringido a formato UUID para que rutas hermanas como /teams,
+// /agenda, /auto-strategy/* no caigan acá por orden de registro.
+app.get('/api/admin/team-campaigns/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const c = await TeamCampaign.findOne({ id: req.params.id }).lean();
     if (!c) return res.status(404).json({ error: 'No encontrada' });
@@ -12294,7 +12296,8 @@ app.post('/api/admin/team-campaigns', authMiddleware, adminMiddleware, async (re
 });
 
 // PUT update — solo los campos editables.
-app.put('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async (req, res) => {
+// :id restringido a UUID (ver nota en GET) para no shadowear rutas hermanas.
+app.put('/api/admin/team-campaigns/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
     const b = req.body || {};
@@ -12313,7 +12316,8 @@ app.put('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async 
 });
 
 // DELETE.
-app.delete('/api/admin/team-campaigns/:id', authMiddleware, adminMiddleware, async (req, res) => {
+// :id restringido a UUID (ver nota en GET).
+app.delete('/api/admin/team-campaigns/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
     const r = await TeamCampaign.deleteOne({ id: req.params.id });
@@ -12864,7 +12868,7 @@ app.get('/api/admin/team-campaigns/agenda', authMiddleware, adminMiddleware, asy
 // GET reaction de UNA campaña: cruza NotificationHistory (disparos
 // efectivos vía scheduler) con waClicks (clicks en wa.link) y
 // MoneyGiveawayClaim (reclamos de regalos). Mide la conversión real.
-app.get('/api/admin/team-campaigns/:id/reaction', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/api/admin/team-campaigns/:id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/reaction', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const campaignId = String(req.params.id || '').trim();
     const campaign = await TeamCampaign.findOne({ id: campaignId }).lean();
