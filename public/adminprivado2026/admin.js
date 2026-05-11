@@ -20919,7 +20919,9 @@ function _complaintShowDetail(id) {
             const isAdmin = m.from === 'admin';
             const bg = isAdmin ? 'rgba(212,175,55,0.08)' : 'rgba(102,255,102,0.06)';
             const bd = isAdmin ? 'rgba(212,175,55,0.30)' : 'rgba(102,255,102,0.25)';
-            const lbl = isAdmin ? '🛡 ' + escapeHtml(m.authorName || 'admin') : '👤 ' + escapeHtml(m.authorName || c.username);
+            // Admin se muestra como "SOPORTE GENERAL" — username real queda
+            // en m.authorName para auditoría interna pero no se expone en UI.
+            const lbl = isAdmin ? '🛡 SOPORTE GENERAL' : '👤 ' + escapeHtml(m.authorName || c.username);
             const lblColor = isAdmin ? '#d4af37' : '#66ff66';
             const align = isAdmin ? 'flex-end' : 'flex-start';
             inner += '<div style="display:flex;justify-content:' + align + ';margin-bottom:7px;">';
@@ -20938,7 +20940,7 @@ function _complaintShowDetail(id) {
     if (c.status === 'resolved') {
         inner += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:10px;margin-bottom:12px;color:#66ff66;font-size:12px;text-align:center;">';
         inner += '✅ Esta queja fue marcada como resuelta';
-        if (c.resolvedBy) inner += ' por <b>' + escapeHtml(c.resolvedBy) + '</b>';
+        if (c.resolvedBy) inner += ' por <b>SOPORTE GENERAL</b>';
         if (c.resolvedAt) inner += ' · ' + escapeHtml(fmtDate(c.resolvedAt));
         inner += '. <a href="#" onclick="event.preventDefault();_complaintReopen(\'' + escapeHtml(c.id) + '\');" style="color:#ffd700;">Reabrir</a> para seguir respondiendo.';
         inner += '</div>';
