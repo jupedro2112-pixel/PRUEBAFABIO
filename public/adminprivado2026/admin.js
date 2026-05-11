@@ -18655,14 +18655,101 @@ async function loadTeamCampaigns() {
         const teamsJ = teamsRes.ok ? await teamsRes.json() : { teams: [], lines: [] };
         _TEAM_CAMPAIGNS_CACHE = { list: listJ.campaigns || [], teams: teamsJ.teams || [], lines: teamsJ.lines || [] };
         c.innerHTML = _renderTeamCampaignsList(_TEAM_CAMPAIGNS_CACHE);
+        // Cargar agenda de mañana en paralelo.
+        _loadTeamCampaignAgenda(); // default = mañana
     } catch (e) {
         c.innerHTML = '<div style="color:#ff8080;padding:14px;font-size:12px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
 }
 
+// Default: mañana. Permite pasar un date string YYYY-MM-DD.
+async function _loadTeamCampaignAgenda(dateStr) {
+    const box = document.getElementById('teamCampaignAgendaBox');
+    if (!box) return;
+    // Skeleton inicial.
+    if (!dateStr) {
+        const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+        dateStr = tomorrow.toISOString().slice(0, 10);
+    }
+    box.innerHTML = '<div style="background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:12px;color:#aaa;font-size:12px;">⏳ Cargando agenda del ' + escapeHtml(dateStr) + '…</div>';
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/agenda?date=' + encodeURIComponent(dateStr));
+        const d = await r.json();
+        if (!r.ok) { box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error: ' + escapeHtml(d.error || '') + '</div>'; return; }
+        box.innerHTML = _renderTeamCampaignAgenda(d);
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error de conexión.</div>';
+    }
+}
+
+function _renderTeamCampaignAgenda(d) {
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const tomorrowStr = (() => { const t = new Date(); t.setDate(t.getDate() + 1); return t.toISOString().slice(0, 10); })();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(0,212,255,0.02));border:1px solid rgba(0,212,255,0.40);border-radius:12px;padding:12px;">';
+    // Header con selector de fecha.
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+    html += '    <div>';
+    html += '      <div style="color:#00d4ff;font-weight:900;font-size:14px;text-transform:uppercase;letter-spacing:1px;">📅 Agenda del ' + escapeHtml(d.dayName || '') + ' ' + escapeHtml(d.date || '') + '</div>';
+    html += '      <div style="color:#888;font-size:11.5px;">Qué notificaciones van a salir ese día, agrupadas por equipo. Útil para que el personal sepa qué se viene.</div>';
+    html += '    </div>';
+    html += '    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+    html += '      <input type="date" id="teamCampaignAgendaDate" value="' + escapeHtml(d.date || tomorrowStr) + '" style="background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:6px 9px;border-radius:6px;font-size:12px;" onchange="_loadTeamCampaignAgenda(this.value)">';
+    html += '      <button type="button" onclick="_loadTeamCampaignAgenda(\'' + todayStr + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:6px 12px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">Hoy</button>';
+    html += '      <button type="button" onclick="_loadTeamCampaignAgenda(\'' + tomorrowStr + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:6px 12px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">Mañana</button>';
+    html += '    </div>';
+    html += '  </div>';
+
+    if (!d.total || d.total === 0) {
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;padding:14px;text-align:center;color:#888;">Sin notificaciones programadas para ese día.</div>';
+        html += '</div>';
+        return html;
+    }
+
+    // KPIs del día.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-bottom:10px;">';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Notifs</div><div style="color:#fff;font-weight:900;font-size:18px;">' + fmt(d.total) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Total impactos</div><div style="color:#fff;font-weight:900;font-size:18px;">' + fmt(d.totalAudience || 0) + '</div></div>';
+    if ((d.totalPotentialCost || 0) > 0) {
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">$ máx a regalar</div><div style="color:#ffd700;font-weight:900;font-size:18px;">$' + fmt(d.totalPotentialCost) + '</div></div>';
+    }
+    html += '</div>';
+
+    // Agrupado por equipo.
+    const teams = Object.values(d.byTeam || {}).sort((a, b) => b.totalAudience - a.totalAudience);
+    const catIcon = { bonos:'🎁', juegos:'🎰', regalos:'💎', notif:'🔔' };
+    for (const t of teams) {
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;padding:10px;margin-bottom:8px;">';
+        html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;flex-wrap:wrap;gap:6px;">';
+        html += '    <div style="color:#00d4ff;font-weight:900;font-size:13px;">🏢 ' + escapeHtml(t.team) + '</div>';
+        html += '    <div style="color:#888;font-size:11px;">' + t.items.length + ' notifs · ' + fmt(t.totalAudience) + ' impactos' + (t.totalCost > 0 ? ' · <span style="color:#ffd700;">$' + fmt(t.totalCost) + ' máx</span>' : '') + '</div>';
+        html += '  </div>';
+        html += '  <table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        for (const it of t.items) {
+            const target = (it.line ? it.line + ' · ' : '') + (it.tier ? it.tier : 'todos los tiers');
+            const extraStr = it.extraType === 'promo' ? '📲 ' + (it.promoCode || '')
+                : it.extraType === 'giveaway' ? '💰 $' + fmt(it.giveawayAmount || 0) + (it.audienceCount ? ' × ' + it.audienceCount : '')
+                : '';
+            const autoBadge = it.origin === 'auto-strategy' ? ' <span style="color:#c977ff;font-size:9.5px;">🤖</span>' : '';
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+            html += '<td style="padding:6px 8px;color:#fff;font-weight:700;font-family:monospace;white-space:nowrap;min-width:60px;">' + it.startHour + ':00-' + it.endHour + ':00</td>';
+            html += '<td style="padding:6px 8px;color:#fff;">' + (catIcon[it.category] || '') + ' ' + escapeHtml(it.title) + autoBadge + '<br><span style="color:#888;font-size:10px;">' + escapeHtml(target) + '</span></td>';
+            html += '<td style="padding:6px 8px;text-align:right;color:#aaa;white-space:nowrap;">' + fmt(it.audienceCount) + ' users<br>' + (extraStr ? '<span style="font-size:10.5px;color:#ffd700;">' + escapeHtml(extraStr) + '</span>' : '') + '</td>';
+            html += '</tr>';
+        }
+        html += '  </table>';
+        html += '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
 function _renderTeamCampaignsList(d) {
     const list = d.list || [];
     let html = '';
+    // Agenda (qué se va a lanzar mañana o el día elegido).
+    html += '<div id="teamCampaignAgendaBox" style="margin-bottom:14px;"></div>';
     // Caja de auto-estrategia (lo nuevo de la Parte B).
     html += '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.10),rgba(102,255,102,0.05));border:1px solid rgba(155,48,255,0.40);border-radius:12px;padding:12px;margin-bottom:14px;">';
     html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">';

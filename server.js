@@ -12684,6 +12684,89 @@ app.post('/api/admin/team-campaigns/auto-strategy/commit', authMiddleware, admin
   }
 });
 
+// GET agenda: devuelve qué campañas se van a disparar en una fecha dada
+// (default: mañana). Agrupa por equipo para que el personal sepa qué
+// notifs salen ese día. Muestra: hora, categoría, contenido, target,
+// estimación de audience.
+app.get('/api/admin/team-campaigns/agenda', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dateStr = String((req.query && req.query.date) || '').trim();
+    let targetDate;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      targetDate = new Date(dateStr + 'T00:00:00');
+    } else {
+      // Default: mañana.
+      targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() + 1);
+      targetDate.setHours(0, 0, 0, 0);
+    }
+    if (isNaN(targetDate.getTime())) return res.status(400).json({ error: 'date inválida (YYYY-MM-DD)' });
+    const targetDateStr = targetDate.toISOString().slice(0, 10);
+    const targetDayOfWeek = targetDate.getDay();
+
+    // Levantar campañas activas que matchean ese día.
+    const allActive = await TeamCampaign.find({ isActive: true }).lean();
+    const matching = allActive.filter(c => {
+      // Match día: dayOfWeek == target OR specificDate == target OR ambos null=todos los días.
+      return (c.dayOfWeek == null && !c.specificDate)
+          || (c.dayOfWeek != null && c.dayOfWeek === targetDayOfWeek)
+          || (c.specificDate && c.specificDate === targetDateStr);
+    });
+
+    if (matching.length === 0) {
+      return res.json({ date: targetDateStr, dayName: ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'][targetDayOfWeek], total: 0, byTeam: {}, items: [] });
+    }
+
+    // Para cada campaña matching, estimar audience count.
+    const items = [];
+    for (const c of matching) {
+      const audienceCount = await _countTeamCampaignAudience(c);
+      items.push({
+        id: c.id,
+        name: c.name,
+        team: c.teamFilter || 'Todos los equipos',
+        line: c.lineFilter || null,
+        tier: c.tierFilter || null,
+        category: c.category,
+        startHour: c.startHour,
+        endHour: c.endHour,
+        title: c.title,
+        body: c.body,
+        extraType: c.extraType,
+        promoCode: c.promoCode || null,
+        giveawayAmount: c.giveawayAmount || null,
+        origin: c.origin,
+        audienceCount,
+        potentialCost: (c.category === 'regalos' && c.giveawayAmount) ? c.giveawayAmount * audienceCount : 0
+      });
+    }
+    // Orden: por hora ascendente, luego por equipo.
+    items.sort((a, b) => (a.startHour - b.startHour) || a.team.localeCompare(b.team) || (a.line || '').localeCompare(b.line || ''));
+
+    // Agrupar por equipo (para la vista del personal).
+    const byTeam = {};
+    for (const it of items) {
+      if (!byTeam[it.team]) byTeam[it.team] = { team: it.team, items: [], totalAudience: 0, totalCost: 0 };
+      byTeam[it.team].items.push(it);
+      byTeam[it.team].totalAudience += it.audienceCount;
+      byTeam[it.team].totalCost += it.potentialCost;
+    }
+
+    res.json({
+      date: targetDateStr,
+      dayName: ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'][targetDayOfWeek],
+      total: items.length,
+      totalAudience: items.reduce((s, it) => s + it.audienceCount, 0),
+      totalPotentialCost: items.reduce((s, it) => s + it.potentialCost, 0),
+      byTeam,
+      items
+    });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/agenda: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE all auto-strategy del mes: limpieza.
 app.delete('/api/admin/team-campaigns/auto-strategy', authMiddleware, adminMiddleware, async (req, res) => {
   try {
