@@ -4257,8 +4257,8 @@ function _renderRecontactConversionsCard(conversions) {
 
     let html = '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.20);border-radius:10px;padding:14px;margin-top:18px;">';
     html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px;">';
-    html += '    <div style="color:#00d4ff;font-weight:800;font-size:14px;">📊 Post recontactación · ' + conversions.length + ' instalaron app</div>';
-    html += '    <div style="color:#888;font-size:11px;">Etiquetados que después instalaron la app · más reciente arriba</div>';
+    html += '    <div style="color:#00d4ff;font-weight:800;font-size:14px;">📊 Post recontactación</div>';
+    html += '    <div style="color:#888;font-size:11px;">' + conversions.length + ' usuarios reactivados desde la última recontactación</div>';
     html += '  </div>';
     html += '  <div style="overflow-x:auto;">';
     html += '    <table style="width:100%;font-size:12px;border-collapse:collapse;">';
