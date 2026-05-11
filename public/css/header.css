@@ -657,10 +657,16 @@
 
 @media (max-width: 768px) {
     .mobile-menu-btn { display: flex; align-items: center; justify-content: center; font-size: 22px; padding: 8px 12px; }
-    /* Hide everything in header-right except plataforma button and hamburger */
-    .header-right > *:not(#plataformaBtn):not(.mobile-menu-btn) { display: none !important; }
+    /* Hide everything in header-right except plataforma button, hamburger y el
+       botón de quejas. El libro de quejas SIEMPRE tiene que verse en mobile
+       porque es la forma principal que tiene el user de reportar problemas. */
+    .header-right > *:not(#plataformaBtn):not(.mobile-menu-btn):not(#complaintsBookBtn) { display: none !important; }
     /* Show plataforma button prominently on mobile */
     #plataformaBtn { display: inline-flex !important; font-size: 12px; padding: 8px 14px; font-weight: 900; }
+    /* Quejas botón compactado en mobile — ícono prominente, texto más chico
+       para que entre al lado de CASINO y la hamburguesa sin overflow. */
+    #complaintsBookBtn { display: inline-flex !important; font-size: 11px; padding: 6px 9px; }
+    #complaintsBookBtn span { font-size: 10.5px; }
     /* Hide user-action-btns (settings/referral/logout) on mobile */
     .header-left .user-action-btns { display: none; }
     /* Hide individual refund buttons on mobile, show unified one instead */
