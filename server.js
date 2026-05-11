@@ -13025,6 +13025,12 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
           const specificDate = day.toISOString().slice(0, 10);
           const blueprint = (_AUTO_STRATEGY_BLUEPRINTS[cat] && _AUTO_STRATEGY_BLUEPRINTS[cat][tier])
             || { title: '🎁 Hay algo para vos', body: 'Tocá la app.' };
+          // Horario por categoría:
+          // - Bonos: HARDCODED 18:00 a 24:00 (00hs) — la ventana de mayor
+          //   tráfico para que el user vea el wa.link y vaya a cargar de noche.
+          // - Juegos: respeta el config (windowStart/EndHour) o defaults 18-22.
+          const catStartHour = cat === 'bonos' ? 18 : startHour;
+          const catEndHour = cat === 'bonos' ? 24 : endHour;
           const draft = {
             id: uuidv4(),
             name: cat.charAt(0).toUpperCase() + cat.slice(1) + ' ' + tier + ' · ' + dist.line + ' · ' + specificDate,
@@ -13034,7 +13040,8 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
             category: cat,
             dayOfWeek: null,
             specificDate,
-            startHour, endHour,
+            startHour: catStartHour,
+            endHour: catEndHour,
             title: blueprint.title,
             body: blueprint.body,
             extraType: cat === 'regalos' ? 'giveaway' : (cat === 'bonos' ? 'promo' : 'none'),
