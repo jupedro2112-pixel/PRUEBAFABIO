@@ -10728,21 +10728,21 @@ async function _scheduleMonthlyStrategyForUser({ user, tier, cfg, monthKey, reas
     for (const day of pickedDays) {
       const when = _randomTimeInDayWindow(day, startHour, endHour);
       if (!when) continue; // ventana del día ya pasó (caso: hoy después de endHour)
-      // Mapeo categoría → tipo de extra:
-      //   regalos → giveaway reclamable 6 hs (monto rotativo por actividad)
-      //   bonos   → promo con wa.link a cargar, reclamable 6 hs
-      //   juegos  → texto pelado (sin extra, no hay nada para reclamar)
+      // BONIFICACIONES Y REGALOS AUTOMÁTICOS DESACTIVADOS (admin lo maneja
+      // manual). El push se manda igual (informativo), pero no se crea
+      // promo ni giveaway server-side. Para reactivar: descomentar el
+      // bloque condicional de abajo.
       const extra = { extraType: 'none' };
-      if (cat === 'regalos') {
-        extra.extraType = 'giveaway';
-        extra.giveawayAmount = _computeStrategyGiftAmount({ tierBudget, regalosCount, realDeposits30d });
-        extra.giveawayDurationMinutes = 360; // 6 hs
-      } else if (cat === 'bonos') {
-        extra.extraType = 'promo';
-        extra.promoCode = _STRATEGY_PROMO_CODES[tier] || 'BONO50';
-        extra.promoMessage = bp.body;
-        extra.promoDurationHours = 6;
-      }
+      // if (cat === 'regalos') {
+      //   extra.extraType = 'giveaway';
+      //   extra.giveawayAmount = _computeStrategyGiftAmount({ tierBudget, regalosCount, realDeposits30d });
+      //   extra.giveawayDurationMinutes = 360;
+      // } else if (cat === 'bonos') {
+      //   extra.extraType = 'promo';
+      //   extra.promoCode = _STRATEGY_PROMO_CODES[tier] || 'BONO50';
+      //   extra.promoMessage = bp.body;
+      //   extra.promoDurationHours = 6;
+      // }
       try {
         await ScheduledNotification.create({
           id: uuidv4(),
@@ -12220,8 +12220,12 @@ async function _fireWinbackForUser(user, tier, cfg, opts = {}) {
   let bonusType = 'none', bonusAmount = 0;
   let promoCode = null, giveawayId = null;
   const now = new Date();
+  // BONIFICACIONES Y REGALOS AUTOMÁTICOS DESACTIVADOS (admin lo maneja
+  // manual). Solo se manda el push del tier, sin crear giveaway/promo.
+  // Para reactivar: cambiar a true.
+  const AUTO_BONUS_ENABLED = false;
   try {
-    if (tier === 2 && cfg.tier2BonusAmount > 0) {
+    if (AUTO_BONUS_ENABLED && tier === 2 && cfg.tier2BonusAmount > 0) {
       // Cerrar otros giveaways individuales activos del mismo user.
       await MoneyGiveaway.updateMany(
         { status: 'active', strategySource: 'individual_grant', audienceWhitelist: username },
@@ -12244,7 +12248,7 @@ async function _fireWinbackForUser(user, tier, cfg, opts = {}) {
       bonusType = 'giveaway';
       bonusAmount = cfg.tier2BonusAmount;
       giveawayId = g.id;
-    } else if (tier === 3 && cfg.tier3BonusPct > 0) {
+    } else if (AUTO_BONUS_ENABLED && tier === 3 && cfg.tier3BonusPct > 0) {
       promoCode = 'COD' + Math.round(cfg.tier3BonusPct);
       const promoMessage = `🎁 Cargás $${cfg.tier3SuggestedAmount.toLocaleString('es-AR')} y te damos un ${cfg.tier3BonusPct}% extra. Pedí el código ${promoCode}.`;
       const promo = {
@@ -15321,6 +15325,50 @@ setTimeout(async () => {
 // Arrancar el scheduler 30s despues del boot y correr cada 60s.
 setTimeout(() => { _runScheduledNotifications(); }, 30 * 1000);
 setInterval(() => { _runScheduledNotifications(); }, 60 * 1000);
+
+// One-shot cleanup: borrar promos/giveaways "leakeados" de tests que no
+// tienen audienceWhitelist y por eso eran visibles a TODOS los users.
+// Corre 7s después del boot, una sola vez. No toca campañas reales del admin.
+setTimeout(async () => {
+  try {
+    let promoCleared = false, tierRemoved = 0, gwCancelled = 0;
+    const promo = await getConfig(PROMO_ALERT_KEY, null);
+    if (promo) {
+      const cb = String(promo.createdBy || '');
+      const looksLikeTest = cb.startsWith('test-fire:') || cb.startsWith('strategy-month:');
+      const noWhitelist = !Array.isArray(promo.audienceWhitelist) || promo.audienceWhitelist.length === 0;
+      if (looksLikeTest && noWhitelist) {
+        await setConfig(PROMO_ALERT_KEY, null);
+        promoCleared = true;
+      }
+    }
+    const tier = (await getConfig(TIER_PROMOS_KEY, [])) || [];
+    if (Array.isArray(tier) && tier.length > 0) {
+      const filtered = tier.filter(p => {
+        const cb = String((p && p.createdBy) || '');
+        return !cb.startsWith('test-fire:');
+      });
+      if (filtered.length !== tier.length) {
+        tierRemoved = tier.length - filtered.length;
+        await setConfig(TIER_PROMOS_KEY, filtered);
+      }
+    }
+    const r = await MoneyGiveaway.updateMany(
+      {
+        status: 'active',
+        $or: [{ audienceWhitelist: null }, { audienceWhitelist: { $size: 0 } }, { audienceWhitelist: { $exists: false } }],
+        createdBy: { $regex: '^(test-fire:|strategy-month:)' }
+      },
+      { $set: { status: 'cancelled' } }
+    );
+    gwCancelled = r.modifiedCount || 0;
+    if (promoCleared || tierRemoved > 0 || gwCancelled > 0) {
+      logger.info(`[BOOT-CLEANUP-LEAKS] promo=${promoCleared} tierRemoved=${tierRemoved} gwCancelled=${gwCancelled}`);
+    }
+  } catch (e) {
+    logger.warn(`[BOOT-CLEANUP-LEAKS] failed: ${e.message}`);
+  }
+}, 7 * 1000);
 
 // ============================================================
 // SNAPSHOT DIARIO DE SALUD DEL CANAL DE PUSH
