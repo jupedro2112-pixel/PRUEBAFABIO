@@ -3004,21 +3004,148 @@ function _renderRecontactSearchResults(items) {
     return html;
 }
 
+// =====================================================================
+// AVANCE DEL DÍA — auditoría diaria de tildes hechos por el personal.
+// Date picker (default hoy), lista de eventos del día, agregados por
+// admin y por tipo de tilde. Pensado para control de avance: ver quién
+// tildó qué y cuándo, qué días se trabaja más.
+// =====================================================================
+function _renderRecontactDailyProgress() {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let html = '';
+    html += '<div style="background:rgba(155,48,255,0.05);border:1px solid rgba(155,48,255,0.30);border-radius:12px;padding:12px;margin-top:18px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+    html += '    <div style="color:#c977ff;font-weight:900;font-size:14px;letter-spacing:1px;text-transform:uppercase;">📅 Avance del día</div>';
+    html += '    <div style="color:#888;font-size:11px;">Tildes hechos por el personal · seleccioná fecha para auditar</div>';
+    html += '  </div>';
+    html += '  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">';
+    html += '    <label style="color:#bbb;font-size:12px;">Fecha:</label>';
+    html += '    <input type="date" id="recontactDailyDate" value="' + todayStr + '" max="' + todayStr + '" style="background:#0a0a0a;color:#fff;border:1px solid rgba(155,48,255,0.40);padding:7px 10px;border-radius:6px;font-size:12px;">';
+    html += '    <button type="button" id="recontactDailyBtn" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:7px 14px;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer;">🔍 Ver avance</button>';
+    html += '  </div>';
+    html += '  <div id="recontactDailyResults"></div>';
+    html += '</div>';
+    return html;
+}
+
+function _wireRecontactDailyProgress() {
+    const btn = document.getElementById('recontactDailyBtn');
+    const inp = document.getElementById('recontactDailyDate');
+    if (!btn || !inp) return;
+    const fire = () => _loadRecontactDailyProgress(inp.value);
+    btn.onclick = fire;
+    inp.onchange = fire;
+    // Auto-cargar el día seleccionado (hoy) al abrir.
+    fire();
+}
+
+async function _loadRecontactDailyProgress(dateStr) {
+    const box = document.getElementById('recontactDailyResults');
+    if (!box) return;
+    box.innerHTML = '<div style="color:#aaa;font-size:11.5px;padding:6px;">⏳ Cargando avance del ' + escapeHtml(dateStr) + '…</div>';
+    try {
+        const r = await authFetch('/api/admin/recontact/daily-progress?date=' + encodeURIComponent(dateStr));
+        const d = await r.json();
+        if (!r.ok) { box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error: ' + escapeHtml(d.error || '') + '</div>'; return; }
+        box.innerHTML = _renderRecontactDailyResults(d);
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error de conexión.</div>';
+    }
+}
+
+function _renderRecontactDailyResults(data) {
+    const total = data.total || 0;
+    if (total === 0) {
+        return '<div style="color:#888;font-size:12px;padding:10px;background:rgba(0,0,0,0.20);border-radius:6px;text-align:center;">Sin actividad de tildes en esta fecha.</div>';
+    }
+    const fmtTime = (t) => {
+        try { return new Date(t).toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' }); }
+        catch (_) { return '-'; }
+    };
+    const actionLabel = (a) => {
+        if (a === 'etiqueta') return '📞 Etiqueta';
+        if (a === 'wa') return '💬 WA';
+        if (a === 'favorito') return '⭐ Favorito';
+        if (a.startsWith('respuesta:')) {
+            const s = a.split(':')[1] || '';
+            return '✓ Respuesta: ' + s;
+        }
+        return a;
+    };
+    let html = '';
+    // KPIs.
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-bottom:10px;">';
+    html += '  <div style="background:rgba(0,0,0,0.25);border-radius:6px;padding:8px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Total tildes</div><div style="color:#fff;font-weight:900;font-size:20px;">' + total + '</div></div>';
+    html += '  <div style="background:rgba(0,0,0,0.25);border-radius:6px;padding:8px 10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Usuarios únicos</div><div style="color:#fff;font-weight:900;font-size:20px;">' + (data.uniqueUsers || 0) + '</div></div>';
+    html += '</div>';
+
+    // Agregados por admin.
+    const adminEntries = Object.entries(data.byAdmin || {}).sort((a,b) => b[1] - a[1]);
+    if (adminEntries.length > 0) {
+        html += '<div style="margin-bottom:10px;">';
+        html += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por personal:</div>';
+        html += '  <div style="display:flex;flex-wrap:wrap;gap:6px;">';
+        for (const [adm, n] of adminEntries) {
+            html += '<div style="background:rgba(155,48,255,0.15);border:1px solid rgba(155,48,255,0.40);color:#fff;padding:4px 10px;border-radius:14px;font-size:11.5px;"><strong>' + escapeHtml(adm) + '</strong>: ' + n + '</div>';
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+    // Agregados por acción.
+    const actionEntries = Object.entries(data.byAction || {}).sort((a,b) => b[1] - a[1]);
+    if (actionEntries.length > 0) {
+        html += '<div style="margin-bottom:10px;">';
+        html += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por tipo:</div>';
+        html += '  <div style="display:flex;flex-wrap:wrap;gap:6px;">';
+        for (const [a, n] of actionEntries) {
+            html += '<div style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);color:#fff;padding:4px 10px;border-radius:14px;font-size:11.5px;">' + escapeHtml(actionLabel(a)) + ': <strong>' + n + '</strong></div>';
+        }
+        html += '  </div>';
+        html += '</div>';
+    }
+    // Tabla de eventos.
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;max-height:480px;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead style="position:sticky;top:0;background:#1a0033;"><tr style="color:#c977ff;text-align:left;">';
+    html += '<th style="padding:7px 10px;font-weight:800;">Hora</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;">Acción</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Estado</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;">Personal</th>';
+    html += '</tr></thead><tbody>';
+    for (const e of (data.events || [])) {
+        const stateBadge = e.set
+            ? '<span style="color:#66ff66;font-weight:800;">✓ tildado</span>'
+            : '<span style="color:#ff8080;font-weight:800;">✗ destildado</span>';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:6px 10px;color:#aaa;font-size:11px;white-space:nowrap;">' + escapeHtml(fmtTime(e.at)) + '</td>';
+        html += '<td style="padding:6px 10px;color:#fff;font-weight:700;">' + escapeHtml(e.username || '—') + '</td>';
+        html += '<td style="padding:6px 10px;color:#fff;">' + escapeHtml(actionLabel(e.action)) + '</td>';
+        html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
+        html += '<td style="padding:6px 10px;color:#c977ff;font-weight:700;">' + escapeHtml(e.by || '—') + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+}
+
 function loadRecontactSection() {
     const c = document.getElementById('recontactContent');
     if (!c) return;
 
     // Si ya hay state en memoria (mismo session), renderizar al toque.
     if (_recontactState.items && _recontactState.summary) {
-        c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+        c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items) + _renderRecontactDailyProgress();
         _wireRecontactFilters();
         _wireRecontactSearch();
+        _wireRecontactDailyProgress();
         return;
     }
 
     // Mostrar buscador (siempre arriba) + uploader (con loader chiquito mientras revisamos IDB)
-    c.innerHTML = _renderRecontactUserSearch() + _renderRecontactUploader();
+    c.innerHTML = _renderRecontactUserSearch() + _renderRecontactUploader() + _renderRecontactDailyProgress();
     _wireRecontactSearch();
+    _wireRecontactDailyProgress();
     const history = _recontactLoadHistory();
     if (history.length > 0) {
         c.innerHTML += _renderRecontactHistoryStandalone(history);
@@ -3065,9 +3192,10 @@ function loadRecontactSection() {
                     _recontactState.previousSavedAt = prev.savedAt || null;
                 }
             } catch (_) {}
-            c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+            c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items) + _renderRecontactDailyProgress();
             _wireRecontactFilters();
             _wireRecontactSearch();
+            _wireRecontactDailyProgress();
             return;
         }
     }).catch(e => {

@@ -9390,6 +9390,83 @@ app.post('/api/admin/callbell/tags-by-usernames', authMiddleware, adminMiddlewar
   }
 });
 
+// GET /api/admin/recontact/daily-progress?date=YYYY-MM-DD
+// Devuelve TODOS los tildes (etiqueta / wa / favorito / respuesta) hechos en
+// el día indicado, agrupados por user. Sirve para auditar avance diario del
+// personal: quién tildó qué, a qué hora, sobre qué user. Default: hoy.
+app.get('/api/admin/recontact/daily-progress', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dateStr = String((req.query && req.query.date) || '').trim();
+    let dayStart, dayEnd;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      dayStart = new Date(dateStr + 'T00:00:00');
+      dayEnd = new Date(dateStr + 'T23:59:59.999');
+    } else {
+      dayStart = new Date(); dayStart.setHours(0,0,0,0);
+      dayEnd = new Date(); dayEnd.setHours(23,59,59,999);
+    }
+    if (isNaN(dayStart.getTime())) return res.status(400).json({ error: 'date inválida (YYYY-MM-DD)' });
+
+    // Query: cualquier tag cuyo taggedAt/markedAt caiga en el día.
+    // Ojo: el doc se devuelve si AL MENOS UNO de los timestamps está en rango;
+    // después filtramos sub-acciones por timestamp.
+    const docs = await CallbellTag.find({
+      $or: [
+        { 'etiqueta.taggedAt': { $gte: dayStart, $lte: dayEnd } },
+        { 'wa.taggedAt':       { $gte: dayStart, $lte: dayEnd } },
+        { 'favorito.taggedAt': { $gte: dayStart, $lte: dayEnd } },
+        { 'respuesta.markedAt':{ $gte: dayStart, $lte: dayEnd } }
+      ]
+    }, {
+      username: 1, usernameNorm: 1,
+      etiqueta: 1, wa: 1, favorito: 1, respuesta: 1,
+      _id: 0
+    }).lean();
+
+    // Aplanar a una lista de eventos { username, action, set, at, by }.
+    const events = [];
+    const inRange = (d) => d && new Date(d).getTime() >= dayStart.getTime() && new Date(d).getTime() <= dayEnd.getTime();
+    for (const d of docs) {
+      const u = d.username || d.usernameNorm;
+      if (d.etiqueta && inRange(d.etiqueta.taggedAt)) {
+        events.push({ username: u, action: 'etiqueta', set: !!d.etiqueta.tagged, at: d.etiqueta.taggedAt, by: d.etiqueta.taggedBy || null });
+      }
+      if (d.wa && inRange(d.wa.taggedAt)) {
+        events.push({ username: u, action: 'wa', set: !!d.wa.tagged, at: d.wa.taggedAt, by: d.wa.taggedBy || null });
+      }
+      if (d.favorito && inRange(d.favorito.taggedAt)) {
+        events.push({ username: u, action: 'favorito', set: !!d.favorito.tagged, at: d.favorito.taggedAt, by: d.favorito.taggedBy || null });
+      }
+      if (d.respuesta && inRange(d.respuesta.markedAt)) {
+        events.push({ username: u, action: 'respuesta:' + (d.respuesta.status || ''), set: true, at: d.respuesta.markedAt, by: d.respuesta.markedBy || null });
+      }
+    }
+    // Orden: más reciente arriba.
+    events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+    // Agregados: por admin, por acción.
+    const byAdmin = {};
+    const byAction = {};
+    for (const e of events) {
+      const adm = e.by || 'desconocido';
+      byAdmin[adm] = (byAdmin[adm] || 0) + 1;
+      const act = e.action.split(':')[0];
+      byAction[act] = (byAction[act] || 0) + 1;
+    }
+
+    return res.json({
+      date: (dayStart.toISOString().slice(0, 10)),
+      total: events.length,
+      uniqueUsers: new Set(events.map(e => (e.username || '').toLowerCase())).size,
+      byAdmin, byAction,
+      events
+    });
+  } catch (err) {
+    logger.error(`[recontact/daily-progress] error: ${err.message}\n${err.stack}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/admin/users/search?q=<text>&limit=50
 // Busca usuarios por substring del username (case-insensitive) y devuelve
 // info básica + tags Callbell + favorito. Limit hard 100. Pensado para el
