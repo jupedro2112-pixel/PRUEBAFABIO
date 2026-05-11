@@ -33,6 +33,14 @@ const CallbellTagSchema = new mongoose.Schema({
     analysisLabel: String
   },
 
+  // Flag favorito/marcado — uso interno del admin para seguir users específicos
+  // desde el buscador (sin XLSX). No es una etiqueta de Callbell; marcador personal.
+  favorito: {
+    tagged: { type: Boolean, default: false },
+    taggedAt: Date,
+    taggedBy: String
+  },
+
   // Respuesta MANUAL del agente que recontactó: instaló | no_contesto | null
   // (mutuamente excluyentes en la UI, ambas pueden estar vacías al inicio).
   respuesta: {

@@ -9303,7 +9303,7 @@ app.post('/api/admin/callbell/tag', authMiddleware, adminMiddleware, express.jso
     const tier = String((req.body && req.body.tier) || '').trim();
     const analysisLabel = String((req.body && req.body.analysisLabel) || '').trim().slice(0, 200);
     if (!username) return res.status(400).json({ error: 'username requerido' });
-    if (!['etiqueta', 'wa', 'instalo', 'no_contesto'].includes(action)) {
+    if (!['etiqueta', 'wa', 'favorito', 'instalo', 'no_contesto'].includes(action)) {
       return res.status(400).json({ error: 'action inválida' });
     }
     const norm = _normUsername(username);
@@ -9315,16 +9315,19 @@ app.post('/api/admin/callbell/tag', authMiddleware, adminMiddleware, express.jso
     if (!doc) doc = new CallbellTag({ usernameNorm: norm, username });
 
     const now = new Date();
-    if (action === 'etiqueta' || action === 'wa') {
+    if (action === 'etiqueta' || action === 'wa' || action === 'favorito') {
       // Asegurarse que el sub-doc esté inicializado.
       if (!doc[action]) doc[action] = {};
       doc[action].tagged = set;
       if (set) {
         doc[action].taggedAt = now;
         doc[action].taggedBy = adminUser;
-        doc[action].fromBucket = bucket || doc[action].fromBucket || '';
-        doc[action].fromTier = tier || doc[action].fromTier || '';
-        doc[action].analysisLabel = analysisLabel || doc[action].analysisLabel || '';
+        // bucket/tier/analysisLabel solo aplican a etiqueta y wa (origen XLSX).
+        if (action !== 'favorito') {
+          doc[action].fromBucket = bucket || doc[action].fromBucket || '';
+          doc[action].fromTier = tier || doc[action].fromTier || '';
+          doc[action].analysisLabel = analysisLabel || doc[action].analysisLabel || '';
+        }
       }
       // Marcar como modified para asegurar persistencia (Mongoose a veces no
       // detecta cambios en sub-documents anidados).
@@ -9376,13 +9379,68 @@ app.post('/api/admin/callbell/tags-by-usernames', authMiddleware, adminMiddlewar
     const norms = usernames.map(_normUsername).filter(Boolean);
     const docs = await CallbellTag.find(
       { usernameNorm: { $in: norms } },
-      { usernameNorm: 1, etiqueta: 1, wa: 1, respuesta: 1, convertedAt: 1, hadAppAtFirstTag: 1, firstTaggedAt: 1, _id: 0 }
+      { usernameNorm: 1, etiqueta: 1, wa: 1, favorito: 1, respuesta: 1, convertedAt: 1, hadAppAtFirstTag: 1, firstTaggedAt: 1, _id: 0 }
     ).lean();
     const map = {};
     for (const d of docs) map[d.usernameNorm] = d;
     return res.json({ tags: map });
   } catch (err) {
     logger.error(`[callbell/tags-by-usernames] error: ${err.message}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/users/search?q=<text>&limit=50
+// Busca usuarios por substring del username (case-insensitive) y devuelve
+// info básica + tags Callbell + favorito. Limit hard 100. Pensado para el
+// buscador de la sección Recontactación: el admin teclea, ve resultados, y
+// puede tildar etiqueta/wa/favorito desde ahí mismo sin subir XLSX.
+app.get('/api/admin/users/search', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const q = String((req.query && req.query.q) || '').trim();
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    if (!q || q.length < 2) return res.json({ items: [], q, hint: 'Escribí al menos 2 caracteres.' });
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(safe, 'i');
+
+    const users = await User.find(
+      { username: { $regex: rx } },
+      { username: 1, fcmToken: 1, fcmTokens: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
+    )
+      .sort({ lastLogin: -1 })
+      .limit(limit)
+      .lean();
+
+    if (users.length === 0) return res.json({ items: [], q });
+
+    const norms = users.map(u => _normUsername(u.username)).filter(Boolean);
+    const tagDocs = await CallbellTag.find(
+      { usernameNorm: { $in: norms } },
+      { usernameNorm: 1, etiqueta: 1, wa: 1, favorito: 1, respuesta: 1, _id: 0 }
+    ).lean();
+    const tagMap = new Map(tagDocs.map(d => [d.usernameNorm, d]));
+
+    const items = users.map(u => {
+      const norm = _normUsername(u.username);
+      const t = tagMap.get(norm) || {};
+      const hasApp = !!(u.fcmToken || (Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0));
+      return {
+        username: u.username,
+        usernameNorm: norm,
+        hasApp,
+        notifPermission: u.notifPermission || null,
+        lineTeamName: u.lineTeamName || null,
+        linePhone: u.linePhone || null,
+        lastLogin: u.lastLogin || null,
+        cbEtiqueta: !!(t.etiqueta && t.etiqueta.tagged),
+        cbWa: !!(t.wa && t.wa.tagged),
+        cbFavorito: !!(t.favorito && t.favorito.tagged),
+        cbRespuesta: (t.respuesta && t.respuesta.status) || null
+      };
+    });
+    return res.json({ items, q, total: items.length });
+  } catch (err) {
+    logger.error(`[users/search] error: ${err.message}`);
     return res.status(500).json({ error: err.message });
   }
 });

@@ -2850,19 +2850,143 @@ async function loadRecontactConversions() {
     }
 }
 
+// =====================================================================
+// BUSCADOR DE USERS (siempre visible arriba de Recontactación).
+// Permite buscar por nombre y tildar etiqueta/wa/favorito sin XLSX.
+// Persiste vía /api/admin/callbell/tag (mismo endpoint que el de la lista).
+// =====================================================================
+function _renderRecontactUserSearch() {
+    let html = '';
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.06),rgba(155,48,255,0.04));border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:12px;margin-bottom:14px;">';
+    html += '  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">';
+    html += '    <span style="color:#00d4ff;font-weight:900;font-size:13px;letter-spacing:1px;text-transform:uppercase;">🔎 Buscar usuario</span>';
+    html += '    <span style="color:#888;font-size:11px;">Tildá etiqueta / WA / favorito sin necesidad de subir lista — se guarda solo</span>';
+    html += '  </div>';
+    html += '  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+    html += '    <input type="text" id="recontactUserSearchInput" placeholder="Username (mín 2 caracteres)" autocomplete="off" style="flex:1;min-width:220px;background:#0a0a0a;color:#fff;border:1px solid rgba(0,212,255,0.40);padding:9px 12px;border-radius:7px;font-size:13px;">';
+    html += '    <button type="button" id="recontactUserSearchBtn" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 18px;border-radius:7px;font-weight:900;font-size:13px;cursor:pointer;">Buscar</button>';
+    html += '  </div>';
+    html += '  <div id="recontactUserSearchResults" style="margin-top:10px;"></div>';
+    html += '</div>';
+    return html;
+}
+
+function _wireRecontactSearch() {
+    const inp = document.getElementById('recontactUserSearchInput');
+    const btn = document.getElementById('recontactUserSearchBtn');
+    if (!inp || !btn) return;
+    let _debounceId = null;
+    const fire = () => _runRecontactUserSearch(inp.value || '');
+    btn.onclick = fire;
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fire(); } });
+    inp.addEventListener('input', () => {
+        clearTimeout(_debounceId);
+        const v = (inp.value || '').trim();
+        if (v.length < 2) {
+            const box = document.getElementById('recontactUserSearchResults');
+            if (box) box.innerHTML = '';
+            return;
+        }
+        _debounceId = setTimeout(fire, 350);
+    });
+}
+
+async function _runRecontactUserSearch(q) {
+    const box = document.getElementById('recontactUserSearchResults');
+    if (!box) return;
+    const qt = String(q || '').trim();
+    if (qt.length < 2) {
+        box.innerHTML = '<div style="color:#888;font-size:11.5px;padding:6px;">Escribí al menos 2 caracteres.</div>';
+        return;
+    }
+    box.innerHTML = '<div style="color:#aaa;font-size:11.5px;padding:6px;">⏳ Buscando…</div>';
+    try {
+        const r = await authFetch('/api/admin/users/search?q=' + encodeURIComponent(qt) + '&limit=50');
+        const d = await r.json();
+        if (!r.ok) { box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error: ' + escapeHtml(d.error || '') + '</div>'; return; }
+        box.innerHTML = _renderRecontactSearchResults(d.items || []);
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error de conexión.</div>';
+    }
+}
+
+function _renderRecontactSearchResults(items) {
+    if (items.length === 0) return '<div style="color:#888;font-size:11.5px;padding:6px;">Sin resultados.</div>';
+    let html = '<div style="background:rgba(0,0,0,0.30);border-radius:8px;overflow:hidden;max-height:380px;overflow-y:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+    html += '<thead style="position:sticky;top:0;background:#1a0033;"><tr style="color:#00d4ff;text-align:left;">';
+    html += '<th style="padding:7px 10px;font-weight:800;">Usuario</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">App</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;">Equipo</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="Etiqueta Callbell">📞 Etiq.</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="WhatsApp Callbell">💬 WA</th>';
+    html += '<th style="padding:7px 10px;font-weight:800;text-align:center;" title="Marcar como favorito">⭐ Fav.</th>';
+    html += '</tr></thead><tbody>';
+    for (const it of items) {
+        const u = escapeHtml(it.username);
+        const team = it.lineTeamName ? escapeHtml(it.lineTeamName) : '<span style="color:#666;">—</span>';
+        const appBadge = it.hasApp
+            ? '<span style="color:#66ff66;font-weight:800;">✓</span>'
+            : '<span style="color:#666;">—</span>';
+        const chk = (action, isOn) => '<input type="checkbox" data-search-action="' + action + '" data-search-username="' + u + '" ' + (isOn ? 'checked' : '') + ' style="width:18px;height:18px;cursor:pointer;accent-color:#9b30ff;">';
+        html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        html += '<td style="padding:7px 10px;color:#fff;font-weight:700;">' + u + '</td>';
+        html += '<td style="padding:7px 10px;text-align:center;">' + appBadge + '</td>';
+        html += '<td style="padding:7px 10px;color:#aaa;">' + team + '</td>';
+        html += '<td style="padding:7px 10px;text-align:center;">' + chk('etiqueta', it.cbEtiqueta) + '</td>';
+        html += '<td style="padding:7px 10px;text-align:center;">' + chk('wa', it.cbWa) + '</td>';
+        html += '<td style="padding:7px 10px;text-align:center;">' + chk('favorito', it.cbFavorito) + '</td>';
+        html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    // Wire onchange en el siguiente tick (cuando el HTML ya esté en el DOM).
+    setTimeout(() => {
+        document.querySelectorAll('[data-search-action]').forEach(el => {
+            el.onchange = async () => {
+                const action = el.getAttribute('data-search-action');
+                const username = el.getAttribute('data-search-username');
+                const set = el.checked;
+                el.disabled = true;
+                try {
+                    const r = await authFetch('/api/admin/callbell/tag', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, action, set })
+                    });
+                    const d = await r.json();
+                    if (!r.ok) {
+                        el.checked = !set; // revert
+                        showToast('❌ ' + (d.error || 'Error'), 'error');
+                    } else {
+                        showToast('✅ ' + username + ' · ' + action + (set ? ' tildado' : ' destildado'), 'success');
+                    }
+                } catch (e) {
+                    el.checked = !set;
+                    showToast('Error de conexión', 'error');
+                } finally {
+                    el.disabled = false;
+                }
+            };
+        });
+    }, 0);
+    return html;
+}
+
 function loadRecontactSection() {
     const c = document.getElementById('recontactContent');
     if (!c) return;
 
     // Si ya hay state en memoria (mismo session), renderizar al toque.
     if (_recontactState.items && _recontactState.summary) {
-        c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+        c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
         _wireRecontactFilters();
+        _wireRecontactSearch();
         return;
     }
 
-    // Mostrar uploader (con loader chiquito mientras revisamos IDB)
-    c.innerHTML = _renderRecontactUploader();
+    // Mostrar buscador (siempre arriba) + uploader (con loader chiquito mientras revisamos IDB)
+    c.innerHTML = _renderRecontactUserSearch() + _renderRecontactUploader();
+    _wireRecontactSearch();
     const history = _recontactLoadHistory();
     if (history.length > 0) {
         c.innerHTML += _renderRecontactHistoryStandalone(history);
@@ -2901,8 +3025,9 @@ function loadRecontactSection() {
             _recontactState.savedByUsername = cache.savedByUsername || '';
             // Refrescar tags Callbell antes de renderizar (puede haber cambios desde otro admin).
             await _recontactHydrateCallbellTags(_recontactState.items);
-            c.innerHTML = _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
+            c.innerHTML = _renderRecontactUserSearch() + _renderRecontactDashboard(_recontactState.summary, _recontactState.items);
             _wireRecontactFilters();
+            _wireRecontactSearch();
             return;
         }
     }).catch(e => {
