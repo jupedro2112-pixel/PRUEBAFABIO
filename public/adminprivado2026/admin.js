@@ -19321,14 +19321,23 @@ async function _autoStrategyPreview() {
 
 // Llama al endpoint con los settings actuales y abre/refresca el modal.
 async function _autoStrategyRefreshPreview() {
-    const state = window._AUTO_STRATEGY_STATE;
+    // Inicializar state con defaults si es la primera vez que se abre el
+    // modal (antes, el state solo se creaba DENTRO de _autoStrategyOpenPreviewModal,
+    // así que el primer fetch crasheaba con 'state.maxTotal of undefined' y
+    // mostraba 'Error de conexión' aunque la red estuviera bien).
+    const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
     const url = '/api/admin/team-campaigns/auto-strategy/preview?maxTotal=' + encodeURIComponent(state.maxTotal) + '&excludedTeams=' + encodeURIComponent((state.excludedTeams || []).join(','));
     try {
         const r = await authFetch(url);
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
         _autoStrategyOpenPreviewModal(d);
-    } catch (e) { showToast('Error de conexión', 'error'); }
+    } catch (e) {
+        // Capturamos el error real para debug (era 'state.maxTotal of undefined'
+        // mostrándose como 'Error de conexión' genérico antes del fix).
+        console.error('[auto-strategy] preview error:', e);
+        showToast('Error: ' + (e && e.message ? e.message : 'conexión'), 'error');
+    }
 }
 
 function _autoStrategyOpenPreviewModal(d) {
