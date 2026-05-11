@@ -2456,11 +2456,6 @@
                     </svg>
                     SOPORTE
                 </a>
-                <!-- Libro de quejas — en la MISMA LINEA del username, justo a
-                     su IZQUIERDA. Diseño dorado sutil pero visible, mismo tamaño
-                     que el nombre. Click → abre el modal con fecha/hora/foto/
-                     detalle del problema. -->
-                <button class="complaints-btn" id="complaintsBookBtn" title="Libro de quejas — Si tuviste un problema, contanos" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(0,0,0,0.30);border:1.5px solid #d4af37;color:#d4af37;border-radius:8px;cursor:pointer;font-size:13px;padding:6px 11px;font-weight:800;letter-spacing:0.3px;display:inline-flex;align-items:center;gap:5px;line-height:1;box-shadow:0 0 12px rgba(212,175,55,0.30);">📖 <span style="font-size:12px;">Quejas</span></button>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
@@ -2714,6 +2709,17 @@
               <button type="button" id="backupPhoneCardSave" class="backup-phone-card-save">Guardar</button>
           </div>
           <div id="backupPhoneCardStatus" class="backup-phone-card-status" hidden></div>
+      </div>
+
+      <!-- ============================================================
+           LIBRO DE QUEJAS — botón centrado AL FONDO de la home, debajo
+           del número opcional. Diseño premium dorado, prominente.
+           Click → abre el modal con form completo (fecha, hora, foto,
+           detalle). El user ve el mensaje "en breve nos contactamos"
+           al enviar.
+           ============================================================ -->
+      <div style="display:flex;justify-content:center;margin:18px 0 24px;padding:0 14px;">
+          <button id="complaintsBookBtn" type="button" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:linear-gradient(135deg,rgba(0,0,0,0.50) 0%,rgba(40,15,0,0.65) 100%);border:1.5px solid #d4af37;color:#d4af37;border-radius:14px;cursor:pointer;font-size:14px;padding:11px 28px;font-weight:900;letter-spacing:0.5px;display:inline-flex;align-items:center;gap:8px;line-height:1;box-shadow:0 4px 18px rgba(212,175,55,0.30), inset 0 0 12px rgba(212,175,55,0.10);text-shadow:0 0 8px rgba(212,175,55,0.40);max-width:360px;width:100%;justify-content:center;">📖 LIBRO DE QUEJAS</button>
       </div>
 
       <div class="drawer-overlay" id="drawerOverlay" onclick="VIP.ui.toggleDrawer()"></div>
