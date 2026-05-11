@@ -14761,6 +14761,7 @@ function _renderQuinielaAdmin() {
                 html += '<div style="color:#ffd700;font-size:11px;font-weight:700;">📝 Borrador</div>';
                 html += '<button type="button" onclick="_quinielaPublish(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:5px 11px;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;">Publicar</button>';
             }
+            html += '<button type="button" onclick="_quinielaTestPush(\'' + escapeHtml(r.id) + '\')" title="Probar push enviando solo a un usuario específico" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:5px 9px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">🧪 Test</button>';
             html += '<button type="button" onclick="_quinielaDelete(\'' + escapeHtml(r.id) + '\')" title="Borrar" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.30);color:#ff8080;padding:5px 9px;border-radius:6px;font-size:11px;cursor:pointer;">🗑</button>';
             html += '</div>';
             html += '</div>';
@@ -14831,6 +14832,48 @@ async function _quinielaPublish(id) {
         loadQuinielaAdmin();
     } catch (e) {
         showToast('Error de conexión', 'error');
+    }
+}
+
+// Test push: pregunta username, manda solo a ese usuario y muestra el
+// diagnóstico devuelto por el server (cuántos tokens tiene, cuáles son
+// standalone, qué notifPermission, etc.). Sirve para debugear cuando el
+// push no llega — ej: "le mandé a lalodj y no le llegó".
+async function _quinielaTestPush(id) {
+    const username = prompt('Username del usuario al que querés mandar el TEST push:');
+    if (!username || !username.trim()) return;
+    try {
+        const r = await authFetch('/api/admin/quiniela/' + encodeURIComponent(id) + '/test-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username.trim() })
+        });
+        const d = await r.json();
+        const diag = d.diagnostic || {};
+        let msg = '';
+        if (d.success) {
+            msg = '✅ PUSH ENVIADO a ' + (diag.username || username) + '\n\n';
+            msg += 'Tokens efectivos: ' + d.sent + '\n\n';
+            msg += d.reason || '';
+        } else {
+            msg = '❌ NO SE ENVIÓ\n\n' + (d.reason || d.error || 'Error desconocido') + '\n\n';
+        }
+        // Agregar diagnóstico.
+        if (diag.username) {
+            msg += '\n— Diagnóstico —\n';
+            msg += 'Username: ' + diag.username + '\n';
+            msg += 'Role: ' + diag.role + '\n';
+            msg += 'Team: ' + (diag.lineTeamName || '(none)') + '\n';
+            msg += 'Tokens totales: ' + diag.tokens_total + '\n';
+            msg += '  • Standalone + granted: ' + diag.tokens_standalone_granted + ' ← solo estos reciben\n';
+            msg += '  • Standalone sin permiso: ' + diag.tokens_standalone_no_perm + '\n';
+            msg += '  • Browser u otro: ' + diag.tokens_browser_or_other + '\n';
+            msg += '  • Sin contexto: ' + diag.tokens_no_context + '\n';
+            msg += 'Legacy fcmToken: ' + diag.legacy_fcmToken + ' (context=' + diag.legacy_fcmTokenContext + ', perm=' + diag.legacy_notifPermission + ')';
+        }
+        alert(msg);
+    } catch (e) {
+        alert('Error de conexión: ' + (e.message || e));
     }
 }
 

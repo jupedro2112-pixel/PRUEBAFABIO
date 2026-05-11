@@ -14170,11 +14170,23 @@ app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
 // La PWA muestra el ÚLTIMO publicado en un banner centrado arriba del home.
 
 // GET /api/quiniela/latest — endpoint PÚBLICO (con auth) que devuelve el
-// último resultado publicado. La PWA lo polla al cargar el home.
+// último resultado publicado SI fue publicado HOY (ART). Después de las
+// 00:00 ART del día siguiente, el banner desaparece solo. La PWA lo polla
+// al cargar el home y cuando vuelve al tab (visibilitychange).
 app.get('/api/quiniela/latest', authMiddleware, async (req, res) => {
   try {
+    // Inicio del día actual ART (00:00 ART = 03:00 UTC).
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const localMs = nowMs - ART_OFFSET_MS;
+    const localDay = new Date(localMs);
+    const y = localDay.getUTCFullYear();
+    const m = localDay.getUTCMonth();
+    const d = localDay.getUTCDate();
+    // 00:00 ART de hoy = 03:00 UTC de hoy.
+    const startOfTodayART = new Date(Date.UTC(y, m, d, 3, 0, 0, 0));
     const doc = await QuinielaResult.findOne(
-      { status: 'published' },
+      { status: 'published', publishedAt: { $gte: startOfTodayART } },
       { id: 1, drawName: 1, drawDate: 1, winningNumber: 1, prize4digits: 1, prize3digits: 1, publishedAt: 1, _id: 0 }
     ).sort({ publishedAt: -1 }).lean();
     res.json({ result: doc || null });
@@ -14321,7 +14333,7 @@ app.post('/api/admin/quiniela/:id/publish', authMiddleware, adminMiddleware, bul
           // El body menciona el premio mayor — más impactante en notif.
           const prizeStr = '$' + Number(doc.prize4digits || 5000000).toLocaleString('es-AR');
           const title = '🎰 Resultado sorteo ' + prizeStr;
-          const body = 'Salió el ' + doc.winningNumber + '. Si ganaste, reclamá en el principal con tu comprobante.';
+          const body = 'Salió el ' + doc.winningNumber + '. Si coinciden los números finales de tu comprobante COELSA, reclamalo en el principal.';
           await sendNotificationToMultiple(uniqTokens, title, body, {
             type: 'quiniela_result',
             quinielaId: doc.id,
@@ -14340,6 +14352,103 @@ app.post('/api/admin/quiniela/:id/publish', authMiddleware, adminMiddleware, bul
     res.json({ success: true, result: doc, sendPush, excludeTeams });
   } catch (err) {
     logger.error(`POST /api/admin/quiniela/:id/publish: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/quiniela/:id/test-push — manda el push SÓLO a un username
+// para probar antes de hacer broadcast. Devuelve diagnóstico detallado
+// (cuántos tokens tiene, cuáles son standalone, notifPermission, etc.) para
+// debugear casos donde el push no llega.
+app.post('/api/admin/quiniela/:id/test-push', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const targetUsername = String((req.body || {}).username || '').trim().toLowerCase();
+    if (!targetUsername) return res.status(400).json({ error: 'Falta username' });
+
+    const doc = await QuinielaResult.findOne({ id }).lean();
+    if (!doc) return res.status(404).json({ error: 'Quiniela no encontrada' });
+
+    // Buscar el user case-insensitive.
+    const target = await User.findOne(
+      { username: { $regex: new RegExp('^' + targetUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
+      { username: 1, role: 1, lineTeamName: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, fcmToken: 1, _id: 0 }
+    ).lean();
+    if (!target) return res.status(404).json({ error: 'Usuario ' + targetUsername + ' no encontrado' });
+
+    // Construir diagnóstico.
+    const tokens = Array.isArray(target.fcmTokens) ? target.fcmTokens : [];
+    const standaloneOk = tokens.filter(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token);
+    const standaloneNoPerm = tokens.filter(t => t && t.context === 'standalone' && t.notifPermission !== 'granted');
+    const browserTokens = tokens.filter(t => t && t.context && t.context !== 'standalone');
+    const noContextTokens = tokens.filter(t => t && !t.context);
+
+    const diagnostic = {
+      username: target.username,
+      role: target.role,
+      lineTeamName: target.lineTeamName || null,
+      // Campos legacy
+      legacy_fcmToken: target.fcmToken ? '(set)' : '(none)',
+      legacy_fcmTokenContext: target.fcmTokenContext || null,
+      legacy_notifPermission: target.notifPermission || null,
+      // Array nuevo
+      tokens_total: tokens.length,
+      tokens_standalone_granted: standaloneOk.length,
+      tokens_standalone_no_perm: standaloneNoPerm.length,
+      tokens_browser_or_other: browserTokens.length,
+      tokens_no_context: noContextTokens.length,
+      tokens_breakdown: tokens.map(t => ({
+        context: (t && t.context) || null,
+        notifPermission: (t && t.notifPermission) || null,
+        hasToken: !!(t && t.token),
+        updatedAt: t && t.updatedAt
+      }))
+    };
+
+    // Tokens efectivos para mandar = standalone + granted.
+    const sendTokens = standaloneOk.map(t => t.token);
+
+    if (sendTokens.length === 0) {
+      return res.json({
+        success: false,
+        sent: 0,
+        reason: 'El user no tiene tokens FCM standalone con permission granted. Probablemente:\n' +
+                '  - No instaló la PWA en su celular (sigue usando el browser)\n' +
+                '  - No aceptó permisos de notificaciones\n' +
+                '  - Desinstaló la PWA y los tokens viejos quedaron inválidos',
+        diagnostic
+      });
+    }
+
+    // Mandar push idéntico al broadcast.
+    try {
+      const { sendNotificationToMultiple } = require('./src/services/notificationService');
+      const prizeStr = '$' + Number(doc.prize4digits || 5000000).toLocaleString('es-AR');
+      const title = '🎰 [TEST] Resultado sorteo ' + prizeStr;
+      const body = 'TEST: Salió el ' + doc.winningNumber + '. Si coinciden los números finales de tu comprobante COELSA, reclamalo en el principal.';
+      await sendNotificationToMultiple(sendTokens, title, body, {
+        type: 'quiniela_result_test',
+        quinielaId: doc.id,
+        url: '/'
+      });
+      logger.info(`[quiniela] TEST push enviado a ${target.username} (${sendTokens.length} tokens)`);
+      res.json({
+        success: true,
+        sent: sendTokens.length,
+        reason: 'Push enviado. Si no le llega al celular: (1) verificá que tenga la PWA abierta o cerrada pero instalada, (2) que el celular tenga conexión, (3) que las notifs no estén silenciadas a nivel SO.',
+        diagnostic
+      });
+    } catch (e) {
+      logger.error(`[quiniela] TEST push failed: ${e.message}`);
+      res.json({
+        success: false,
+        sent: 0,
+        reason: 'Error al mandar a FCM: ' + e.message,
+        diagnostic
+      });
+    }
+  } catch (err) {
+    logger.error(`POST /api/admin/quiniela/:id/test-push: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

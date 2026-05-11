@@ -2482,7 +2482,7 @@
                 </div>
             </div>
             <div style="color:#fff;font-size:12.5px;line-height:1.5;background:rgba(255,255,255,0.05);border-radius:8px;padding:8px 12px;">
-                🏆 <strong style="color:#ffd700;">¿Ganaste?</strong> Reclamá en nuestro principal mostrando tu comprobante ganador.
+                🏆 Si coinciden los <strong style="color:#ffd700;">números finales</strong> de tu comprobante <strong style="color:#ffd700;">COELSA</strong>, reclamalo en nuestro principal.
             </div>
         </div>
 
@@ -3200,17 +3200,34 @@
     <!-- Banner Quiniela — fetch + render del último resultado publicado -->
     <script>
     (function() {
+        // Devuelve YYYY-MM-DD en ART (UTC-3) para un timestamp UTC.
+        function dayKeyArt(ms) {
+            const ART_OFFSET = 3 * 60 * 60 * 1000;
+            return new Date(ms - ART_OFFSET).toISOString().slice(0, 10);
+        }
+        function hideBanner() {
+            const $b = document.getElementById('quinielaBanner');
+            if ($b) $b.style.display = 'none';
+        }
         async function loadQuinielaBanner() {
             try {
                 const token = localStorage.getItem('userToken');
-                if (!token) return;
+                if (!token) { hideBanner(); return; }
                 const r = await fetch('/api/quiniela/latest', {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
-                if (!r.ok) return;
+                if (!r.ok) { hideBanner(); return; }
                 const d = await r.json();
                 const result = d && d.result;
-                if (!result || !result.winningNumber) return;
+                if (!result || !result.winningNumber) { hideBanner(); return; }
+                // Safety extra (además del filtro server-side): si el front
+                // sigue abierto pasada medianoche ART, no mostramos resultado
+                // del día anterior.
+                if (result.publishedAt) {
+                    const pubDay = dayKeyArt(new Date(result.publishedAt).getTime());
+                    const today = dayKeyArt(Date.now());
+                    if (pubDay !== today) { hideBanner(); return; }
+                }
                 const $name = document.getElementById('quinielaBannerName');
                 const $date = document.getElementById('quinielaBannerDate');
                 const $num = document.getElementById('quinielaBannerNumber');
@@ -3228,9 +3245,10 @@
                 if ($p4) $p4.textContent = '$' + Number(result.prize4digits || 0).toLocaleString('es-AR');
                 if ($p3) $p3.textContent = '$' + Number(result.prize3digits || 0).toLocaleString('es-AR');
                 $banner.style.display = '';
-            } catch (_) { /* silencio */ }
+            } catch (_) { hideBanner(); }
         }
-        // Carga al inicio + cuando el user vuelve al tab.
+        // Carga al inicio + cuando el user vuelve al tab + cada 30 min (por
+        // si el browser se queda abierto cruzando medianoche).
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', loadQuinielaBanner);
         } else {
@@ -3239,6 +3257,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') loadQuinielaBanner();
         });
+        setInterval(loadQuinielaBanner, 30 * 60 * 1000);
         // Permite refrescar desde fuera (ej: tras un push notification).
         window.refreshQuinielaBanner = loadQuinielaBanner;
     })();
