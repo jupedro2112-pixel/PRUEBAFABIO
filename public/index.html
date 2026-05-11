@@ -2391,6 +2391,7 @@
                          tocar F5 del navegador, pero como la app vive como PWA
                          standalone mucha gente no sabe como hacer F5. -->
                     <button class="refresh-home-btn" id="refreshHomeBtn" title="Actualizar página" onclick="window.location.reload()" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;font-size:13px;padding:4px 8px;border-radius:6px;cursor:pointer;font-weight:700;letter-spacing:0.3px;">🔄 Actualizar</button>
+                    <button type="button" id="notifInboxBtn" title="Notificaciones" onclick="window.openNotifInbox && window.openNotifInbox()" style="position:relative;background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.40);color:#ffd700;font-size:14px;padding:4px 9px;border-radius:6px;cursor:pointer;font-weight:700;">🔔<span id="notifInboxBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:#ff3030;color:#fff;font-size:9px;font-weight:900;min-width:16px;height:16px;line-height:16px;border-radius:8px;padding:0 4px;box-sizing:border-box;text-align:center;">0</span></button>
                     <button class="settings-btn" id="settingsBtn" title="Configuración">⚙️</button>
                     <button class="referral-btn" id="referralBtn" title="Mis Referidos">🤝</button>
                     <button class="logout-btn" id="logoutBtn" title="Cerrar sesión">🚪</button>
@@ -3194,6 +3195,132 @@
                 btn.textContent = '📨 Enviar queja';
             }
         };
+    })();
+    </script>
+
+    <!-- Inbox de notificaciones — modal + fetch -->
+    <div id="notifInboxModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:20000;align-items:center;justify-content:center;padding:14px;" onclick="if(event.target===event.currentTarget)window.closeNotifInbox&&window.closeNotifInbox()">
+        <div style="background:linear-gradient(135deg,#1a0033 0%,#2a0a4a 100%);border:1.5px solid rgba(212,175,55,0.50);border-radius:14px;padding:18px 16px;max-width:460px;width:100%;max-height:90vh;overflow-y:auto;color:#fff;box-shadow:0 0 50px rgba(212,175,55,0.25);">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;">
+                <div style="color:#ffd700;font-weight:900;font-size:15px;letter-spacing:0.5px;">🔔 Mis notificaciones</div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button type="button" onclick="window.markAllNotifsRead&&window.markAllNotifsRead()" id="notifMarkAllBtn" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#ddd;padding:4px 9px;border-radius:6px;font-size:11px;cursor:pointer;">Marcar todas leídas</button>
+                    <button type="button" onclick="window.closeNotifInbox&&window.closeNotifInbox()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
+                </div>
+            </div>
+            <div id="notifInboxList" style="font-size:12.5px;">
+                <div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        let _NOTIF_POLL = null;
+
+        function _esc(s) {
+            return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+        function _timeAgo(ts) {
+            if (!ts) return '';
+            const ms = Date.now() - new Date(ts).getTime();
+            if (ms < 60_000) return 'hace instantes';
+            const mins = Math.floor(ms / 60_000);
+            if (mins < 60) return 'hace ' + mins + 'm';
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return 'hace ' + hrs + 'h';
+            const days = Math.floor(hrs / 24);
+            if (days < 7) return 'hace ' + days + 'd';
+            try { return new Date(ts).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' }); } catch(_) { return ''; }
+        }
+        function _typeIcon(type) {
+            if (type === 'quiniela') return '🎰';
+            if (type === 'complaint') return '📩';
+            if (type === 'broadcast') return '📣';
+            return '🔔';
+        }
+
+        async function fetchNotifs(updateBadgeOnly) {
+            const token = localStorage.getItem('userToken');
+            if (!token) return;
+            try {
+                const r = await fetch('/api/notifications/mine?limit=30', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!r.ok) return;
+                const d = await r.json();
+                const badge = document.getElementById('notifInboxBadge');
+                if (badge) {
+                    if (d.unread && d.unread > 0) {
+                        badge.textContent = d.unread > 99 ? '99+' : String(d.unread);
+                        badge.style.display = '';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                }
+                if (updateBadgeOnly) return;
+                const list = document.getElementById('notifInboxList');
+                if (!list) return;
+                const items = Array.isArray(d.items) ? d.items : [];
+                if (items.length === 0) {
+                    list.innerHTML = '<div style="color:#888;text-align:center;padding:24px;font-size:12px;">No tenés notificaciones todavía.</div>';
+                    return;
+                }
+                let html = '';
+                for (const n of items) {
+                    const isUnread = !n.readAt;
+                    const bg = isUnread ? 'rgba(212,175,55,0.10)' : 'rgba(255,255,255,0.04)';
+                    const bd = isUnread ? 'rgba(212,175,55,0.40)' : 'rgba(255,255,255,0.10)';
+                    const dot = isUnread ? '<span style="display:inline-block;width:8px;height:8px;background:#ff3030;border-radius:50%;margin-right:6px;vertical-align:middle;"></span>' : '';
+                    html += '<div style="background:' + bg + ';border:1px solid ' + bd + ';border-radius:9px;padding:10px 11px;margin-bottom:7px;">';
+                    html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px;">';
+                    html += '<div style="font-weight:700;color:#fff;font-size:12.5px;flex:1;min-width:0;">' + dot + _typeIcon(n.type) + ' ' + _esc(n.title) + '</div>';
+                    html += '<div style="color:#888;font-size:10px;white-space:nowrap;flex-shrink:0;">' + _esc(_timeAgo(n.sentAt)) + '</div>';
+                    html += '</div>';
+                    html += '<div style="color:#ddd;font-size:12px;line-height:1.45;white-space:pre-wrap;">' + _esc(n.body) + '</div>';
+                    html += '</div>';
+                }
+                list.innerHTML = html;
+            } catch (_) { /* silencio */ }
+        }
+
+        window.openNotifInbox = function() {
+            const m = document.getElementById('notifInboxModal');
+            if (!m) return;
+            m.style.display = 'flex';
+            fetchNotifs(false);
+        };
+        window.closeNotifInbox = function() {
+            const m = document.getElementById('notifInboxModal');
+            if (m) m.style.display = 'none';
+            // Al cerrar, refrescamos el badge — si el user marcó todas leídas
+            // y aún hay notifs nuevas que llegaron mientras estaba abierto, lo reflejamos.
+            fetchNotifs(true);
+        };
+        window.markAllNotifsRead = async function() {
+            const token = localStorage.getItem('userToken');
+            if (!token) return;
+            try {
+                await fetch('/api/notifications/mark-all-read', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                fetchNotifs(false);
+            } catch (_) {}
+        };
+        window.refreshNotifBadge = () => fetchNotifs(true);
+
+        // Inicialización: cargo el badge al toque y refresco cada 60s.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => fetchNotifs(true));
+        } else {
+            fetchNotifs(true);
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') fetchNotifs(true);
+        });
+        if (_NOTIF_POLL) clearInterval(_NOTIF_POLL);
+        _NOTIF_POLL = setInterval(() => fetchNotifs(true), 60_000);
     })();
     </script>
 

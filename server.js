@@ -67,6 +67,7 @@ const {
   DailyPlayerStats,
   DailyAppOpen,
   QuinielaResult,
+  UserNotification,
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,
@@ -14161,6 +14162,79 @@ app.get('/api/reviews/mine', authMiddleware, async (req, res) => {
 });
 
 // ============================================================
+// USER NOTIFICATION INBOX — para que el user relea pushes recibidos
+// ============================================================
+
+// Helper: persiste 1 row por (user, push) para que aparezca en el inbox.
+// Fire-and-forget — errores no rompen el flow del push.
+// `targets` puede venir como array de { userId, username } o de docs User.
+async function _persistUserNotifications(targets, payload) {
+  try {
+    if (!Array.isArray(targets) || targets.length === 0) return 0;
+    const now = new Date();
+    const docs = [];
+    for (const t of targets) {
+      if (!t) continue;
+      const uname = String(t.username || '').trim().toLowerCase();
+      const uid = t.userId || t.id || null;
+      if (!uname || !uid) continue;
+      docs.push({
+        id: uuidv4(),
+        userId: uid,
+        username: uname,
+        type: payload.type || 'plain',
+        title: String(payload.title || '').slice(0, 200),
+        body:  String(payload.body  || '').slice(0, 600),
+        data:  payload.data || {},
+        sentAt: now,
+        readAt: null
+      });
+    }
+    if (docs.length === 0) return 0;
+    // insertMany con ordered:false — si alguno falla por dup key u otro, los demás insertan.
+    await UserNotification.insertMany(docs, { ordered: false }).catch(() => {});
+    return docs.length;
+  } catch (e) {
+    logger.warn(`[user-notif] persist failed: ${e.message}`);
+    return 0;
+  }
+}
+
+// GET /api/notifications/mine?limit=30 — inbox del user logueado.
+app.get('/api/notifications/mine', authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 30));
+    const username = String(req.user.username || '').toLowerCase();
+    const [items, unread] = await Promise.all([
+      UserNotification.find(
+        { username },
+        { id: 1, type: 1, title: 1, body: 1, data: 1, sentAt: 1, readAt: 1, _id: 0 }
+      ).sort({ sentAt: -1 }).limit(limit).lean(),
+      UserNotification.countDocuments({ username, readAt: null })
+    ]);
+    res.json({ items, unread });
+  } catch (err) {
+    logger.error(`GET /api/notifications/mine: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/notifications/mark-all-read — marca todas las del user como leídas.
+app.post('/api/notifications/mark-all-read', authMiddleware, async (req, res) => {
+  try {
+    const username = String(req.user.username || '').toLowerCase();
+    const r = await UserNotification.updateMany(
+      { username, readAt: null },
+      { $set: { readAt: new Date() } }
+    );
+    res.json({ success: true, marked: r.modifiedCount || 0 });
+  } catch (err) {
+    logger.error(`POST /api/notifications/mark-all-read: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // QUINIELA — resultado del sorteo público (admin publica, users ven)
 // ============================================================
 // El admin crea un resultado (draft), carga el número ganador (4 cifras)
@@ -14315,7 +14389,7 @@ app.post('/api/admin/quiniela/:id/publish', authMiddleware, adminMiddleware, bul
           }
           const users = await User.find(
             userFilter,
-            { fcmTokens: 1, fcmTokenContext: 1, fcmToken: 1, lineTeamName: 1, _id: 0 }
+            { id: 1, username: 1, fcmTokens: 1, fcmTokenContext: 1, fcmToken: 1, lineTeamName: 1, _id: 0 }
           ).limit(20000).lean();
           const tokens = [];
           for (const u of users) {
@@ -14340,6 +14414,17 @@ app.post('/api/admin/quiniela/:id/publish', authMiddleware, adminMiddleware, bul
             url: '/'
           });
           await QuinielaResult.updateOne({ id }, { $set: { pushesSent: uniqTokens.length } });
+          // Inbox per-user: 1 row por user que realmente tenía tokens válidos.
+          // Filtramos los users del query que tenían al menos 1 token standalone.
+          const usersWithTokens = users.filter(u => {
+            const arr = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+            return arr.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token);
+          });
+          await _persistUserNotifications(usersWithTokens, {
+            type: 'quiniela',
+            title, body,
+            data: { quinielaId: doc.id, winningNumber: doc.winningNumber, url: '/' }
+          });
           logger.info(`[quiniela] push enviado a ${uniqTokens.length} tokens (excludeTeams=${JSON.stringify(excludeTeams)})`);
         } catch (e) {
           logger.error(`[quiniela] push failed: ${e.message}`);
@@ -14372,7 +14457,7 @@ app.post('/api/admin/quiniela/:id/test-push', authMiddleware, adminMiddleware, a
     // Buscar el user case-insensitive.
     const target = await User.findOne(
       { username: { $regex: new RegExp('^' + targetUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i') } },
-      { username: 1, role: 1, lineTeamName: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, fcmToken: 1, _id: 0 }
+      { id: 1, username: 1, role: 1, lineTeamName: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, fcmToken: 1, _id: 0 }
     ).lean();
     if (!target) return res.status(404).json({ error: 'Usuario ' + targetUsername + ' no encontrado' });
 
@@ -14430,6 +14515,12 @@ app.post('/api/admin/quiniela/:id/test-push', authMiddleware, adminMiddleware, a
         type: 'quiniela_result_test',
         quinielaId: doc.id,
         url: '/'
+      });
+      // Inbox per-user: el test push también se ve en el inbox del target.
+      await _persistUserNotifications([target], {
+        type: 'quiniela',
+        title, body,
+        data: { quinielaId: doc.id, winningNumber: doc.winningNumber, url: '/', isTest: true }
       });
       logger.info(`[quiniela] TEST push enviado a ${target.username} (${sendTokens.length} tokens)`);
       res.json({
@@ -14609,16 +14700,23 @@ async function _notifyUserAboutComplaint(complaintDoc, opts) {
     const standaloneTokens = tokens
       .filter(t => t && t.context === 'standalone' && t.notifPermission === 'granted' && t.token)
       .map(t => t.token);
-    if (standaloneTokens.length === 0) {
-      logger.info(`[complaints] notify skipped — sin tokens standalone para ${complaintDoc.username} (queja ${complaintDoc.id})`);
-      return false;
-    }
     const title = o.title || '📩 Mensaje en tu queja';
     const subj = (complaintDoc.subject || '').trim();
     const body = o.body || (subj
       ? `Nuevo mensaje sobre: "${subj.slice(0, 60)}". Tocá para responder.`
       : 'Hay un nuevo mensaje en tu queja. Tocá para responder.');
     const clickUrl = '/?openComplaint=' + encodeURIComponent(complaintDoc.id);
+    // Inbox per-user: persistimos el mensaje incluso si no tiene tokens FCM
+    // standalone — así el user lo ve en su inbox cuando abra la app.
+    await _persistUserNotifications([{ userId: complaintDoc.userId, username: complaintDoc.username }], {
+      type: 'complaint',
+      title, body,
+      data: { complaintId: complaintDoc.id, url: clickUrl }
+    });
+    if (standaloneTokens.length === 0) {
+      logger.info(`[complaints] push skipped — sin tokens standalone para ${complaintDoc.username} (queja ${complaintDoc.id}, queda solo en inbox)`);
+      return false;
+    }
     const { sendNotificationToMultiple } = require('./src/services/notificationService');
     await sendNotificationToMultiple(standaloneTokens, title, body, {
       type: 'complaint_message',

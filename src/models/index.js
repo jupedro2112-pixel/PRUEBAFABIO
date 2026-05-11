@@ -30,6 +30,7 @@ const JugayganaImport = require('./JugayganaImport');
 const DailyPlayerStats = require('./DailyPlayerStats');
 const DailyAppOpen = require('./DailyAppOpen');
 const QuinielaResult = require('./QuinielaResult');
+const UserNotification = require('./UserNotification');
 const UserLineLookup = require('./UserLineLookup');
 const AppNotifSnapshot = require('./AppNotifSnapshot');
 const NotificationRule = require('./NotificationRule');
@@ -458,6 +459,7 @@ module.exports = {
   DailyPlayerStats,
   DailyAppOpen,
   QuinielaResult,
+  UserNotification,
   UserLineLookup,
   AppNotifSnapshot,
   NotificationRule,
