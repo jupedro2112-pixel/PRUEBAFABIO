@@ -19367,6 +19367,27 @@ function _autoStrategyOpenPreviewModal(d) {
     inner += '<strong style="color:#ff8080;">NO genera:</strong> 💰 Regalos de plata directa (deshabilitados por decisión — la plata se entrega via wa.link cuando el user carga, no gratis).';
     inner += '</div>';
 
+    // Banner: segmento solo_reembolsos. Users que en la encuesta votaron
+    // "notificarme solo cuando hay reembolso" — no reciben bonos/juegos.
+    // SOLO les llega el recordatorio de reembolso a las 23hs (manejado por
+    // la card 🌙 Recordatorios de reembolso, separada).
+    const soloR = sum.soloReembolsos || { total: 0, byTeamLine: {} };
+    if (soloR.total > 0) {
+        inner += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:9px 12px;margin-bottom:12px;color:#bbb;font-size:11.5px;line-height:1.5;">';
+        inner += '<div style="margin-bottom:4px;"><strong style="color:#00d4ff;">🔕 Solo reembolsos (' + fmt(soloR.total) + ' users):</strong> los que votaron en la encuesta <em>"notificarme solo cuando hay reembolso"</em>.</div>';
+        inner += '<div style="color:#aaa;font-size:11px;">No reciben bonos ni juegos. <strong style="color:#fff;">SOLO el recordatorio de reembolso a las 23hs</strong> (vía la card <strong style="color:#00d4ff;">🌙 Recordatorios de reembolso</strong> arriba). Si no la activaste, este segmento NO recibe nada.</div>';
+        const tlEntries = Object.entries(soloR.byTeamLine || {});
+        if (tlEntries.length > 0) {
+            inner += '<details style="margin-top:6px;"><summary style="cursor:pointer;color:#00d4ff;font-size:11px;font-weight:700;">📋 Ver breakdown por equipo/línea ▾</summary>';
+            inner += '<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px;">';
+            for (const [tl, count] of tlEntries.sort((a, b) => b[1] - a[1])) {
+                inner += '<span style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);padding:2px 8px;border-radius:10px;font-size:10.5px;color:#fff;">' + escapeHtml(tl) + ': <strong>' + fmt(count) + '</strong></span>';
+            }
+            inner += '</div></details>';
+        }
+        inner += '</div>';
+    }
+
     // ============ CONTROLES EDITABLES (afectan el preview en tiempo real) ============
     const state = window._AUTO_STRATEGY_STATE = window._AUTO_STRATEGY_STATE || { maxTotal: 1000000, excludedTeams: [] };
     if (d.maxTotal) state.maxTotal = d.maxTotal;

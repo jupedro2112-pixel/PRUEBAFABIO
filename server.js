@@ -12721,22 +12721,26 @@ function _autoStrategyPickDays(remainingDays, count) {
 
 // Cuenta distribucion de tier por (team, line). Devuelve mapa team::line → {suave, normal, activo, total}.
 async function _autoStrategyGetDistribution() {
+  // Incluyo solo_reembolsos en el aggregate aunque no generemos campañas de
+  // bonos/juegos para ellos — sirve para que el admin vea CUÁNTOS users hay
+  // en ese segmento por equipo. Esos users SOLO reciben recordatorios de
+  // reembolso a las 23hs cuando tienen plata pendiente.
   const agg = await User.aggregate([
     {
       $match: {
         lineTeamName: { $exists: true, $ne: null, $ne: '' },
-        notifPreference: { $in: ['suave', 'normal', 'activo'] }
+        notifPreference: { $in: ['suave', 'normal', 'activo', 'solo_reembolsos'] }
       }
     },
     { $group: { _id: { team: '$lineTeamName', line: '$linePhone', tier: '$notifPreference' }, count: { $sum: 1 } } }
   ]);
-  const dist = {}; // key: team::line → {suave, normal, activo, total}
+  const dist = {}; // key: team::line → {suave, normal, activo, solo_reembolsos, total}
   for (const row of agg) {
     const team = row._id.team || '';
     const line = row._id.line || '';
     const tier = row._id.tier || '';
     const k = team + '::' + line;
-    if (!dist[k]) dist[k] = { team, line, suave: 0, normal: 0, activo: 0, total: 0 };
+    if (!dist[k]) dist[k] = { team, line, suave: 0, normal: 0, activo: 0, solo_reembolsos: 0, total: 0 };
     dist[k][tier] = row.count;
     dist[k].total += row.count;
   }
@@ -13068,6 +13072,20 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
   }
 
   // Summary: para mostrar en preview.
+  // Contar usuarios solo_reembolsos para mostrar en el preview como segmento
+  // informativo: estos users NO reciben bonos ni juegos, SOLO recordatorios
+  // de reembolso a las 23hs cuando tienen plata pendiente (lo maneja el cron
+  // de refund-reminders separado).
+  const soloReembolsosByTeamLine = {};
+  let soloReembolsosTotal = 0;
+  for (const dist of distribution) {
+    const cnt = Number(dist.solo_reembolsos) || 0;
+    if (cnt === 0) continue;
+    const key = (dist.team || '') + ' · ' + (dist.line || '');
+    soloReembolsosByTeamLine[key] = (soloReembolsosByTeamLine[key] || 0) + cnt;
+    soloReembolsosTotal += cnt;
+  }
+
   const summary = {
     totalCampaigns: drafts.length,
     totalSlotsImpacted: drafts.reduce((s, d) => s + (d._meta?.audienceCount || 0), 0),
@@ -13075,6 +13093,12 @@ async function _autoStrategyGenerate({ commit, createdBy, maxTotal, excludedTeam
     byTier: { suave: 0, normal: 0, activo: 0 },
     byCategory: { bonos: 0, juegos: 0, regalos: 0 },
     byTeamLine: {},
+    // Segmento solo_reembolsos: visible en el preview pero NO se generan
+    // campañas para ellos. Los maneja refundReminderService a las 23hs.
+    soloReembolsos: {
+      total: soloReembolsosTotal,
+      byTeamLine: soloReembolsosByTeamLine
+    },
     // Costos $ potenciales (worst case: si todos reclaman)
     money: {
       regalosMaxTotal: 0,           // suma de (giveawayAmount × audienceCount) de todos los drafts de regalo
