@@ -12535,20 +12535,21 @@ async function winbackCronTick(opts = {}) {
     const useAppMetric = (cfg.inactivityMetric || 'app') === 'app';
 
     // Source de inactividad:
-    //   'app'     → User.lastLogin (días sin abrir la app)
+    //   'app'     → PlayerStats.lastSeenApp (días sin USAR la app — actualizado en
+    //               cada request autenticada del user, throttled 1/min). NO usamos
+    //               User.lastLogin porque solo se actualiza al re-loguearse, no
+    //               refleja uso real (sesión persiste 30-90 días).
     //   'deposit' → PlayerStats.lastRealDepositDate (legacy: días sin cargar)
-    // Para 'app' levantamos User directo y joineamos a PlayerStats solo
-    // para el filtro isOpportunist.
     let inactivityRows; // [{ username, inactiveSince }]
     if (useAppMetric) {
-      const usersInactive = await User.find(
-        { lastLogin: { $exists: true, $ne: null, $lt: new Date(cutoffMin) } },
-        { id: 1, username: 1, lastLogin: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
-      )
-        .sort({ lastLogin: 1 })
+      // PlayerStats.lastSeenApp ya tiene su propio index — query rápido.
+      const stats = await PlayerStats.find({
+        lastSeenApp: { $exists: true, $ne: null, $lt: new Date(cutoffMin) }
+      }, { username: 1, lastSeenApp: 1, _id: 0 })
+        .sort({ lastSeenApp: 1 })
         .limit(2000)
         .lean();
-      inactivityRows = usersInactive.map(u => ({ username: (u.username || '').toLowerCase(), inactiveSince: u.lastLogin, _user: u }));
+      inactivityRows = stats.map(s => ({ username: (s.username || '').toLowerCase(), inactiveSince: s.lastSeenApp, _user: null }));
     } else {
       const stats = await PlayerStats.find({
         lastRealDepositDate: { $exists: true, $ne: null, $lt: new Date(cutoffMin) }
@@ -12567,18 +12568,13 @@ async function winbackCronTick(opts = {}) {
     }
 
     const usernames = inactivityRows.map(r => r.username);
-    // Para 'app': los users vienen de inactivityRows (con _user). Para
-    // 'deposit': hay que pedirlos aparte (los datos vinieron de PlayerStats).
-    let userByName;
-    if (useAppMetric) {
-      userByName = new Map(inactivityRows.map(r => [r.username, r._user]));
-    } else {
-      const users = await User.find(
-        { username: { $in: usernames } },
-        { id: 1, username: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
-      ).lean();
-      userByName = new Map(users.map(u => [u.username.toLowerCase(), u]));
-    }
+    // Ambas métricas ('app' y 'deposit') vienen ahora de PlayerStats, así que
+    // siempre cargamos los Users aparte para tener fcm tokens + winbackTier.
+    const users = await User.find(
+      { username: { $in: usernames } },
+      { id: 1, username: 1, fcmToken: 1, fcmTokens: 1, winbackTier: 1, winbackLastSentAt: 1, notifPreference: 1, _id: 0 }
+    ).lean();
+    const userByName = new Map(users.map(u => [u.username.toLowerCase(), u]));
     // Lookup isOpportunist (de PlayerStats) — solo si el filtro está prendido.
     let opportunistByName = new Map();
     if (cfg.excludeOpportunists) {
@@ -12693,9 +12689,15 @@ setTimeout(() => {
 // lo bajamos a 0.
 async function _resetWinbackTierForReturners() {
   try {
+    // Resetear el tier de quienes volvieron a usar la app O volvieron a cargar
+    // en los últimos 7 días. Cualquiera de las dos cuenta como "volvieron al ciclo".
     const since = new Date(Date.now() - 7 * 86400000);
+    const cfg = await WinbackStrategyConfig.findOne({ key: 'winback-default' }).lean();
+    const useAppMetric = (cfg && cfg.inactivityMetric || 'app') === 'app';
+    // Para 'app' usamos lastSeenApp (uso real); para 'deposit' usamos lastRealDepositDate.
+    const matchField = useAppMetric ? 'lastSeenApp' : 'lastRealDepositDate';
     const recent = await PlayerStats.find(
-      { lastRealDepositDate: { $gte: since } },
+      { [matchField]: { $gte: since } },
       { username: 1, _id: 0 }
     ).lean();
     if (recent.length === 0) return;
@@ -12705,7 +12707,7 @@ async function _resetWinbackTierForReturners() {
       { $set: { winbackTier: 0, winbackLastSentAt: null } }
     );
     if (r.modifiedCount > 0) {
-      logger.info(`[WINBACK] reset tier para ${r.modifiedCount} returners`);
+      logger.info(`[WINBACK] reset tier para ${r.modifiedCount} returners (metric=${useAppMetric ? 'app' : 'deposit'})`);
     }
   } catch (e) {
     logger.warn(`[WINBACK] reset returners falló: ${e.message}`);

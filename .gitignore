@@ -1,10 +1,81 @@
+# Dependencies
 node_modules/
-firebase-service-account.json
-*.env
-.env
-.env.*
-.npmrc
+package-lock.json.bak
 
-# Log files
+# Logs
 logs/
 *.log
+*.log.*
+
+# ============================================
+# SECRETOS — NUNCA COMMITEAR
+# ============================================
+# Variables de entorno (incluye .env, .env.local, .env.production, etc.)
+.env
+.env.*
+*.env
+.envrc
+.npmrc
+.netrc
+
+# Service accounts / credenciales
+*service-account*.json
+*service_account*.json
+firebase-service-account.json
+firebase-*.json
+google-credentials*.json
+gcp-credentials*.json
+gcp-key*.json
+aws-credentials*
+.aws/
+credentials.json
+credentials.yml
+credentials.yaml
+secrets.json
+secrets.yml
+secrets.yaml
+
+# Claves privadas y certificados
+*.pem
+*.key
+*.cert
+*.crt
+*.cer
+*.pfx
+*.p12
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.priv
+
+# Otros archivos sensibles típicos
+*token*.txt
+*secret*.txt
+mongo-uri.txt
+connection-string.txt
+config/secrets.*
+config/local.*
+.vscode/sftp.json
+
+# Backups y dumps
+*.bak
+*.backup
+*.dump
+*.sql
+mongodump/
+mongorestore/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Tests temporales
+tmp/
+temp/
+.tmp/

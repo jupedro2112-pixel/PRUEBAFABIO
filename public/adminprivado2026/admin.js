@@ -11254,7 +11254,7 @@ function _helpBlocks() {
                 '<h4 style="color:#fff;margin-top:14px;">📏 Métrica de inactividad (configurable)</h4>',
                 '<p>El admin elige en la UI con qué métrica medir si un user está inactivo:</p>',
                 '<ul>',
-                '<li>📱 <strong>Uso de app</strong> (default — recomendado): mira <code>User.lastLogin</code>. Días = ahora − última vez que abrió la app. Detecta si el user dejó de visitar la plataforma, independientemente de si carga o no.</li>',
+                '<li>📱 <strong>Uso de app</strong> (default — recomendado): mira <code>PlayerStats.lastSeenApp</code>. Se actualiza en CADA request autenticada del user (throttled 1/min). Días = ahora − última vez que abrió la app. Detecta uso REAL de la plataforma, no se confunde con sesiones largas que no requieren re-login.</li>',
                 '<li>💰 <strong>Depósitos reales</strong> (legacy): mira <code>PlayerStats.lastRealDepositDate</code>. Días = ahora − último depósito real. NO cuenta bonos ni regalos. Solo carga real de plata cuenta como "actividad".</li>',
                 '</ul>',
                 '<p style="font-size:11.5px;color:#aaa;">Cambiar la métrica afecta solo los próximos ticks del cron — no re-evalúa users ya en cooldown.</p>',
