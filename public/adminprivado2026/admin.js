@@ -18759,6 +18759,7 @@ function _renderTeamCampaignsList(d) {
     html += '    </div>';
     html += '    <div style="display:flex;gap:8px;flex-wrap:wrap;">';
     html += '      <button type="button" onclick="_autoStrategyPreview()" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">🔍 Ver previa</button>';
+    html += '      <button type="button" onclick="_teamCampaignReactionGlobal()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;" title="Reporte de reacción de todas las campañas">📈 Reporte global</button>';
     html += '      <button type="button" onclick="_autoStrategyClearMonth()" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;" title="Borrar todas las auto-strategy del mes actual">🗑 Limpiar mes</button>';
     html += '    </div>';
     html += '  </div>';
@@ -18819,6 +18820,7 @@ function _renderTeamCampaignsList(d) {
         html += '<td style="padding:8px 10px;text-align:center;">' + statePill + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;white-space:nowrap;">';
         html += '<button type="button" onclick="_teamCampaignToggle(\'' + escapeHtml(c.id) + '\',' + (!c.isActive) + ')" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px;" title="' + (c.isActive ? 'Pausar' : 'Activar') + '">' + (c.isActive ? '⏸' : '▶') + '</button>';
+        html += '<button type="button" onclick="_teamCampaignShowReaction(\'' + escapeHtml(c.id) + '\',\'' + escapeHtml(c.name) + '\')" style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);color:#66ff66;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px;" title="Ver reacción (clicks + reclamos)">📈</button>';
         html += '<button type="button" onclick="_teamCampaignOpenForm(\'' + escapeHtml(c.id) + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);color:#00d4ff;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;margin-right:3px;" title="Editar">✏</button>';
         html += '<button type="button" onclick="_teamCampaignDelete(\'' + escapeHtml(c.id) + '\',\'' + escapeHtml(c.name) + '\')" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;" title="Borrar">🗑</button>';
         html += '</td>';
@@ -19210,4 +19212,184 @@ async function _autoStrategyClearMonth() {
         showToast('✅ ' + (d.deletedCount || 0) + ' campañas auto borradas', 'success');
         loadTeamCampaigns();
     } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// =====================================================================
+// REACCIÓN — reporte por campaña + reporte global.
+// =====================================================================
+async function _teamCampaignShowReaction(id, name) {
+    showToast('⏳ Cargando reacción...', 'info');
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/' + encodeURIComponent(id) + '/reaction');
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        _renderReactionModal('🎯 Reacción · ' + name, d);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+function _renderReactionModal(title, d) {
+    const modalId = 'campaignReactionModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const pct = (a, b) => b > 0 ? ((a / b) * 100).toFixed(1) + '%' : '—';
+    const agg = d.aggregate || {};
+    const fires = d.fires || [];
+    let inner = '';
+    inner += '<div style="background:#1a0033;border:1px solid rgba(102,255,102,0.40);border-radius:12px;padding:18px;max-width:820px;width:100%;color:#fff;">';
+    inner += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">';
+    inner += '  <h3 style="margin:0;color:#66ff66;font-size:16px;">' + escapeHtml(title) + '</h3>';
+    inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
+    inner += '</div>';
+
+    if (fires.length === 0) {
+        inner += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;padding:14px;color:#888;text-align:center;">';
+        inner += 'Esta campaña todavía no se disparó. Cuando salga el primer push, vas a ver acá clicks en wa.link y reclamos de regalo.';
+        inner += '</div>';
+        inner += '</div>';
+        overlay.innerHTML = inner;
+        document.body.appendChild(overlay);
+        return;
+    }
+
+    // KPIs.
+    inner += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:12px;">';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Disparos</div><div style="color:#fff;font-weight:900;font-size:20px;">' + fmt(agg.totalFires) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Users alcanzados</div><div style="color:#fff;font-weight:900;font-size:20px;">' + fmt(agg.totalUsersReached) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Clicks wa.link</div><div style="color:#00d4ff;font-weight:900;font-size:20px;">' + fmt(agg.totalWaClicks) + '</div><div style="color:#888;font-size:10px;">' + pct(agg.totalWaClicks, agg.totalUsersReached) + ' conversión</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Regalos reclamados</div><div style="color:#66ff66;font-weight:900;font-size:20px;">' + fmt(agg.totalClaims) + '</div><div style="color:#888;font-size:10px;">' + pct(agg.totalClaims, agg.totalUsersReached) + ' conversión</div></div>';
+    if ((agg.totalGiven || 0) > 0) {
+        inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">$ regalado real</div><div style="color:#ffd700;font-weight:900;font-size:20px;">$' + fmt(agg.totalGiven) + '</div></div>';
+    }
+    inner += '</div>';
+
+    // Tabla de fires.
+    inner += '<div style="color:#aaa;font-size:11px;margin-bottom:4px;">Historial de disparos (más reciente arriba):</div>';
+    inner += '<div style="max-height:380px;overflow-y:auto;background:rgba(0,0,0,0.20);border-radius:8px;">';
+    inner += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+    inner += '<thead style="position:sticky;top:0;background:#1a0033;"><tr style="color:#66ff66;text-align:left;">';
+    inner += '<th style="padding:6px 8px;font-weight:800;">Fecha</th>';
+    inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;">Enviados</th>';
+    inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;">Wa.link</th>';
+    inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;">Reclamos</th>';
+    inner += '<th style="padding:6px 8px;font-weight:800;text-align:right;">$ regalado</th>';
+    inner += '</tr></thead><tbody>';
+    for (const f of fires) {
+        const date = f.sentAt ? new Date(f.sentAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+        inner += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        inner += '<td style="padding:5px 8px;color:#fff;white-space:nowrap;">' + escapeHtml(date) + '</td>';
+        inner += '<td style="padding:5px 8px;text-align:right;color:#fff;">' + fmt(f.successCount) + (f.failureCount ? ' <span style="color:#ff8080;">/ ' + f.failureCount + ' fail</span>' : '') + '</td>';
+        inner += '<td style="padding:5px 8px;text-align:right;color:#00d4ff;">' + fmt(f.waClicks) + ' <span style="color:#888;">(' + pct(f.waClicks, f.successCount) + ')</span></td>';
+        inner += '<td style="padding:5px 8px;text-align:right;color:#66ff66;">' + fmt(f.claims) + ' <span style="color:#888;">(' + pct(f.claims, f.successCount) + ')</span></td>';
+        inner += '<td style="padding:5px 8px;text-align:right;color:#ffd700;">' + (f.totalGiven ? '$' + fmt(f.totalGiven) : '—') + '</td>';
+        inner += '</tr>';
+    }
+    inner += '</tbody></table></div>';
+    inner += '</div>';
+
+    overlay.innerHTML = inner;
+    document.body.appendChild(overlay);
+}
+
+async function _teamCampaignReactionGlobal() {
+    showToast('⏳ Cargando reporte...', 'info');
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/reaction/summary?days=30');
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        _renderGlobalReactionModal(d);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+function _renderGlobalReactionModal(d) {
+    const modalId = 'globalReactionModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const pct = (a, b) => b > 0 ? ((a / b) * 100).toFixed(1) + '%' : '—';
+    const totals = d.totals || {};
+    let inner = '';
+    inner += '<div style="background:#1a0033;border:1px solid rgba(102,255,102,0.40);border-radius:12px;padding:18px;max-width:1000px;width:100%;color:#fff;">';
+    inner += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">';
+    inner += '  <h3 style="margin:0;color:#66ff66;font-size:16px;">📈 Reacción global — últimos ' + (d.days || 30) + ' días</h3>';
+    inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
+    inner += '</div>';
+
+    if (!totals.fires || totals.fires === 0) {
+        inner += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;padding:14px;color:#888;text-align:center;">No hay disparos en el período. Las campañas todavía no se ejecutaron.</div>';
+        inner += '</div>';
+        overlay.innerHTML = inner;
+        document.body.appendChild(overlay);
+        return;
+    }
+
+    // KPIs globales.
+    inner += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px;">';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Disparos</div><div style="color:#fff;font-weight:900;font-size:22px;">' + fmt(totals.fires) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Users alcanzados</div><div style="color:#fff;font-weight:900;font-size:22px;">' + fmt(totals.reached) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:10px;border-left:3px solid #00d4ff;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Wa.link</div><div style="color:#00d4ff;font-weight:900;font-size:22px;">' + fmt(totals.waClicks) + '</div><div style="color:#888;font-size:10px;">' + pct(totals.waClicks, totals.reached) + ' conv.</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:10px;border-left:3px solid #66ff66;"><div style="color:#888;font-size:10px;text-transform:uppercase;">Reclamos</div><div style="color:#66ff66;font-weight:900;font-size:22px;">' + fmt(totals.claims) + '</div><div style="color:#888;font-size:10px;">' + pct(totals.claims, totals.reached) + ' conv.</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:10px;border-left:3px solid #ffd700;"><div style="color:#888;font-size:10px;text-transform:uppercase;">$ regalado</div><div style="color:#ffd700;font-weight:900;font-size:22px;">$' + fmt(totals.given) + '</div></div>';
+    inner += '</div>';
+
+    // Por equipo.
+    const teamRows = Object.entries(d.byTeam || {}).sort((a, b) => b[1].reached - a[1].reached);
+    if (teamRows.length > 0) {
+        inner += '<div style="margin-bottom:12px;">';
+        inner += '<div style="color:#66ff66;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por equipo</div>';
+        inner += '<div style="background:rgba(0,0,0,0.20);border-radius:6px;overflow:hidden;">';
+        inner += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        inner += '<thead><tr style="background:rgba(102,255,102,0.10);color:#66ff66;text-align:left;"><th style="padding:6px 8px;">Equipo</th><th style="padding:6px 8px;text-align:right;">Reached</th><th style="padding:6px 8px;text-align:right;">Wa.link</th><th style="padding:6px 8px;text-align:right;">Reclamos</th><th style="padding:6px 8px;text-align:right;">$ regalado</th></tr></thead><tbody>';
+        for (const [team, s] of teamRows) {
+            inner += '<tr style="border-top:1px solid rgba(255,255,255,0.04);">';
+            inner += '<td style="padding:5px 8px;color:#fff;font-weight:700;">' + escapeHtml(team) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#fff;">' + fmt(s.reached) + '</td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#00d4ff;">' + fmt(s.waClicks) + ' <span style="color:#888;font-size:10px;">(' + pct(s.waClicks, s.reached) + ')</span></td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#66ff66;">' + fmt(s.claims) + ' <span style="color:#888;font-size:10px;">(' + pct(s.claims, s.reached) + ')</span></td>';
+            inner += '<td style="padding:5px 8px;text-align:right;color:#ffd700;">' + (s.given ? '$' + fmt(s.given) : '—') + '</td>';
+            inner += '</tr>';
+        }
+        inner += '</tbody></table></div></div>';
+    }
+
+    // Por tier.
+    inner += '<div style="margin-bottom:12px;">';
+    inner += '<div style="color:#66ff66;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por tier (encuesta)</div>';
+    inner += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    for (const tierName of ['suave', 'normal', 'activo']) {
+        const t = d.byTier?.[tierName] || { reached: 0, waClicks: 0, claims: 0, given: 0 };
+        inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px 12px;font-size:11.5px;flex:1;min-width:170px;">';
+        inner += '<div style="color:#fff;font-weight:800;text-transform:uppercase;">' + tierName + '</div>';
+        inner += '<div style="color:#aaa;margin-top:4px;">' + fmt(t.reached) + ' alcanzados</div>';
+        inner += '<div style="color:#00d4ff;">📲 ' + fmt(t.waClicks) + ' (' + pct(t.waClicks, t.reached) + ')</div>';
+        inner += '<div style="color:#66ff66;">💰 ' + fmt(t.claims) + ' (' + pct(t.claims, t.reached) + ')</div>';
+        if (t.given) inner += '<div style="color:#ffd700;">$' + fmt(t.given) + '</div>';
+        inner += '</div>';
+    }
+    inner += '</div></div>';
+
+    // Por categoría.
+    inner += '<div>';
+    inner += '<div style="color:#66ff66;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por categoría</div>';
+    inner += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    const catIcon = { bonos:'🎁 Bonos', juegos:'🎰 Juegos', regalos:'💎 Regalos' };
+    for (const cat of ['bonos','juegos','regalos']) {
+        const c = d.byCategory?.[cat] || { reached: 0, waClicks: 0, claims: 0, given: 0 };
+        inner += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:8px 12px;font-size:11.5px;flex:1;min-width:170px;">';
+        inner += '<div style="color:#fff;font-weight:800;">' + catIcon[cat] + '</div>';
+        inner += '<div style="color:#aaa;margin-top:4px;">' + fmt(c.reached) + ' alcanzados</div>';
+        inner += '<div style="color:#00d4ff;">📲 ' + fmt(c.waClicks) + ' (' + pct(c.waClicks, c.reached) + ')</div>';
+        inner += '<div style="color:#66ff66;">💰 ' + fmt(c.claims) + ' (' + pct(c.claims, c.reached) + ')</div>';
+        if (c.given) inner += '<div style="color:#ffd700;">$' + fmt(c.given) + '</div>';
+        inner += '</div>';
+    }
+    inner += '</div></div>';
+
+    inner += '</div>';
+    overlay.innerHTML = inner;
+    document.body.appendChild(overlay);
 }

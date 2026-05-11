@@ -12767,6 +12767,177 @@ app.get('/api/admin/team-campaigns/agenda', authMiddleware, adminMiddleware, asy
   }
 });
 
+// GET reaction de UNA campaña: cruza NotificationHistory (disparos
+// efectivos vía scheduler) con waClicks (clicks en wa.link) y
+// MoneyGiveawayClaim (reclamos de regalos). Mide la conversión real.
+app.get('/api/admin/team-campaigns/:id/reaction', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const campaignId = String(req.params.id || '').trim();
+    const campaign = await TeamCampaign.findOne({ id: campaignId }).lean();
+    if (!campaign) return res.status(404).json({ error: 'Campaña no encontrada' });
+
+    // Buscar NotificationHistory creadas a partir de scheduled notifs de esta campaña.
+    // El sentBy de NotificationHistory == createdBy de la ScheduledNotification origin
+    // que arranca con `team-campaign:${id}:`.
+    const sentByPrefix = '^team-campaign:' + campaignId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':';
+    const histories = await NotificationHistory.find({
+      sentBy: { $regex: sentByPrefix }
+    }, {
+      id: 1, sentAt: 1, audienceType: 1, totalUsers: 1, successCount: 1, failureCount: 1,
+      type: 1, promoCode: 1, giveawayAmount: 1, giveawayExpiresAt: 1, waClicks: 1, _id: 0
+    }).sort({ sentAt: -1 }).limit(200).lean();
+
+    // Para cada fire que era giveaway, buscar MoneyGiveaway → MoneyGiveawayClaim.
+    const histIds = histories.filter(h => h.type === 'money_giveaway').map(h => h.id);
+    let giveawaysByHistId = new Map();
+    if (histIds.length > 0) {
+      const gws = await MoneyGiveaway.find({ notificationHistoryId: { $in: histIds } }, { id: 1, notificationHistoryId: 1, totalGiven: 1, claimedCount: 1, _id: 0 }).lean();
+      giveawaysByHistId = new Map(gws.map(g => [g.notificationHistoryId, g]));
+    }
+
+    // Armar fires con sus métricas.
+    const fires = histories.map(h => {
+      const gw = giveawaysByHistId.get(h.id) || null;
+      const totalUsers = h.totalUsers || 0;
+      const successCount = h.successCount || 0;
+      const waClicks = h.waClicks || 0;
+      const claims = gw ? (gw.claimedCount || 0) : 0;
+      const totalGiven = gw ? (gw.totalGiven || 0) : 0;
+      return {
+        historyId: h.id,
+        sentAt: h.sentAt,
+        type: h.type,
+        totalUsers,
+        successCount,
+        failureCount: h.failureCount || 0,
+        promoCode: h.promoCode || null,
+        giveawayAmount: h.giveawayAmount || null,
+        waClicks,
+        waClickRate: successCount > 0 ? (waClicks / successCount) : 0,
+        claims,
+        claimRate: successCount > 0 ? (claims / successCount) : 0,
+        totalGiven
+      };
+    });
+
+    // Agregados.
+    const agg = {
+      totalFires: fires.length,
+      totalUsersReached: fires.reduce((s, f) => s + f.successCount, 0),
+      totalWaClicks: fires.reduce((s, f) => s + f.waClicks, 0),
+      totalClaims: fires.reduce((s, f) => s + f.claims, 0),
+      totalGiven: fires.reduce((s, f) => s + f.totalGiven, 0),
+      avgWaClickRate: 0,
+      avgClaimRate: 0
+    };
+    if (agg.totalUsersReached > 0) {
+      agg.avgWaClickRate = agg.totalWaClicks / agg.totalUsersReached;
+      agg.avgClaimRate = agg.totalClaims / agg.totalUsersReached;
+    }
+
+    res.json({ campaign, fires, aggregate: agg });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/:id/reaction: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET reaction agregado por team/tier/categoría sobre TODAS las campañas
+// activas del último período (default 30 días). Sirve para responder
+// "qué team responde mejor", "qué tier convierte más en bonos vs regalos".
+app.get('/api/admin/team-campaigns/reaction/summary', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(180, parseInt(req.query.days, 10) || 30));
+    const since = new Date(Date.now() - days * 86400000);
+
+    // Pull TODAS las campañas + sus histories en el período.
+    const campaigns = await TeamCampaign.find({}).lean();
+    const campaignMap = new Map(campaigns.map(c => [c.id, c]));
+
+    // Pull histories del período cuyo sentBy arranca con team-campaign:
+    const histories = await NotificationHistory.find({
+      sentAt: { $gte: since },
+      sentBy: { $regex: '^team-campaign:' }
+    }, {
+      id: 1, sentAt: 1, totalUsers: 1, successCount: 1, type: 1, waClicks: 1, sentBy: 1, _id: 0
+    }).lean();
+
+    // Pull giveaway claims para los histories que son money_giveaway.
+    const gwHistIds = histories.filter(h => h.type === 'money_giveaway').map(h => h.id);
+    const giveaways = gwHistIds.length > 0
+      ? await MoneyGiveaway.find({ notificationHistoryId: { $in: gwHistIds } }, { notificationHistoryId: 1, claimedCount: 1, totalGiven: 1, _id: 0 }).lean()
+      : [];
+    const gwByHist = new Map(giveaways.map(g => [g.notificationHistoryId, g]));
+
+    // Bucket por (team, tier, category).
+    const buckets = {}; // key: team::tier::category → stats
+    const byTeam = {};
+    const byTier = { suave: { reached:0, waClicks:0, claims:0, given:0 }, normal: { reached:0, waClicks:0, claims:0, given:0 }, activo: { reached:0, waClicks:0, claims:0, given:0 } };
+    const byCategory = { bonos: { reached:0, waClicks:0, claims:0, given:0 }, juegos: { reached:0, waClicks:0, claims:0, given:0 }, regalos: { reached:0, waClicks:0, claims:0, given:0 } };
+
+    for (const h of histories) {
+      // Extraer campaignId del sentBy.
+      const m = String(h.sentBy || '').match(/^team-campaign:([^:]+):/);
+      if (!m) continue;
+      const cId = m[1];
+      const c = campaignMap.get(cId);
+      if (!c) continue;
+      const team = c.teamFilter || 'sin-equipo';
+      const tier = c.tierFilter || 'sin-tier';
+      const cat = c.category || 'notif';
+      const reached = h.successCount || 0;
+      const waClicks = h.waClicks || 0;
+      const gw = gwByHist.get(h.id);
+      const claims = gw ? (gw.claimedCount || 0) : 0;
+      const given = gw ? (gw.totalGiven || 0) : 0;
+
+      const k = team + '::' + tier + '::' + cat;
+      if (!buckets[k]) buckets[k] = { team, tier, category: cat, fires: 0, reached: 0, waClicks: 0, claims: 0, given: 0 };
+      buckets[k].fires++;
+      buckets[k].reached += reached;
+      buckets[k].waClicks += waClicks;
+      buckets[k].claims += claims;
+      buckets[k].given += given;
+
+      if (!byTeam[team]) byTeam[team] = { reached: 0, waClicks: 0, claims: 0, given: 0 };
+      byTeam[team].reached += reached;
+      byTeam[team].waClicks += waClicks;
+      byTeam[team].claims += claims;
+      byTeam[team].given += given;
+
+      if (tier && byTier[tier]) {
+        byTier[tier].reached += reached;
+        byTier[tier].waClicks += waClicks;
+        byTier[tier].claims += claims;
+        byTier[tier].given += given;
+      }
+      if (cat && byCategory[cat]) {
+        byCategory[cat].reached += reached;
+        byCategory[cat].waClicks += waClicks;
+        byCategory[cat].claims += claims;
+        byCategory[cat].given += given;
+      }
+    }
+
+    // Convertir buckets a array ordenado por reach desc.
+    const bucketList = Object.values(buckets).sort((a, b) => b.reached - a.reached);
+
+    // Totales globales.
+    const totals = {
+      reached: histories.reduce((s, h) => s + (h.successCount || 0), 0),
+      waClicks: histories.reduce((s, h) => s + (h.waClicks || 0), 0),
+      claims: giveaways.reduce((s, g) => s + (g.claimedCount || 0), 0),
+      given: giveaways.reduce((s, g) => s + (g.totalGiven || 0), 0),
+      fires: histories.length
+    };
+
+    res.json({ days, totals, byTeam, byTier, byCategory, buckets: bucketList });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/reaction/summary: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE all auto-strategy del mes: limpieza.
 app.delete('/api/admin/team-campaigns/auto-strategy', authMiddleware, adminMiddleware, async (req, res) => {
   try {
