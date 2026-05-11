@@ -9703,6 +9703,75 @@ app.get('/api/admin/recontact/daily-progress', authMiddleware, adminMiddleware, 
 // info básica + tags Callbell + favorito. Limit hard 100. Pensado para el
 // buscador de la sección Recontactación: el admin teclea, ve resultados, y
 // puede tildar etiqueta/wa/favorito desde ahí mismo sin subir XLSX.
+// ============================================================
+// CLAVES PARA SECCIONES PROTEGIDAS (CENTRAL / Números vigentes)
+// ============================================================
+// Cada sección protegida tiene su PIN (default 1818). Se guarda en Config con
+// key='admin_section_pins'. El admin ya pasó por authMiddleware/adminMiddleware,
+// el PIN es una capa extra de friccion antes de tocar settings sensibles
+// (números, equipos). El PIN se almacena en plaintext porque ya está dentro
+// del admin; no es un secret externo.
+
+const _DEFAULT_SECTION_PIN = '1818';
+const _PROTECTED_SECTIONS = ['numero', 'teams'];
+
+async function _getSectionPins() {
+  const v = await getConfig('admin_section_pins', null);
+  if (v && typeof v === 'object') return v;
+  // Init con defaults si no existe
+  const init = {};
+  for (const s of _PROTECTED_SECTIONS) init[s] = _DEFAULT_SECTION_PIN;
+  await setConfig('admin_section_pins', init);
+  return init;
+}
+
+// POST verify — valida el PIN para una sección. Devuelve { valid: bool }.
+app.post('/api/admin/section-pins/verify', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { section, pin } = req.body || {};
+    if (!_PROTECTED_SECTIONS.includes(section)) return res.status(400).json({ error: 'section inválida' });
+    const pins = await _getSectionPins();
+    const expected = pins[section] || _DEFAULT_SECTION_PIN;
+    const valid = String(pin || '') === String(expected);
+    res.json({ valid });
+  } catch (err) {
+    logger.error(`/api/admin/section-pins/verify: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST change — cambia el PIN. Requiere el PIN actual + el nuevo.
+app.post('/api/admin/section-pins/change', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { section, currentPin, newPin } = req.body || {};
+    if (!_PROTECTED_SECTIONS.includes(section)) return res.status(400).json({ error: 'section inválida' });
+    if (!/^\d{4,8}$/.test(String(newPin || ''))) return res.status(400).json({ error: 'El PIN nuevo debe tener 4-8 dígitos' });
+    const pins = await _getSectionPins();
+    const expected = pins[section] || _DEFAULT_SECTION_PIN;
+    if (String(currentPin || '') !== String(expected)) return res.status(403).json({ error: 'PIN actual incorrecto' });
+    pins[section] = String(newPin);
+    await setConfig('admin_section_pins', pins);
+    logger.info(`[section-pins] ${section} cambiado por ${(req.user && req.user.username) || 'admin'}`);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/admin/section-pins/change: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET sections — devuelve qué secciones tienen PIN activo (sin exponer el PIN).
+app.get('/api/admin/section-pins/status', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const pins = await _getSectionPins();
+    const out = {};
+    for (const s of _PROTECTED_SECTIONS) out[s] = !!pins[s];
+    res.json({ sections: out });
+  } catch (err) {
+    logger.error(`/api/admin/section-pins/status: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/users/search', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const q = String((req.query && req.query.q) || '').trim();

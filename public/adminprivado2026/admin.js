@@ -162,9 +162,157 @@ function showApp() {
 }
 
 // ============================================
+// PIN GATE — secciones protegidas (CENTRAL, Números vigentes)
+// ============================================
+// Cada sección protegida tiene su propio PIN. Cuando el admin tilda una
+// nav-item protegida, mostramos el modal de PIN. Si lo acierta, marcamos
+// la sección como desbloqueada en sessionStorage (vive solo mientras la
+// pestaña esté abierta). Si recarga, vuelve a pedir.
+const _SECTION_PIN_UNLOCK_KEY = 'sectionPinsUnlocked';
+
+function _isSectionUnlocked(sectionKey) {
+    try {
+        const raw = sessionStorage.getItem(_SECTION_PIN_UNLOCK_KEY) || '{}';
+        const u = JSON.parse(raw);
+        return !!u[sectionKey];
+    } catch (_) { return false; }
+}
+
+function _markSectionUnlocked(sectionKey) {
+    try {
+        const raw = sessionStorage.getItem(_SECTION_PIN_UNLOCK_KEY) || '{}';
+        const u = JSON.parse(raw);
+        u[sectionKey] = true;
+        sessionStorage.setItem(_SECTION_PIN_UNLOCK_KEY, JSON.stringify(u));
+    } catch (_) {}
+}
+
+// Abre el modal de PIN para una sección. Si el admin lo acierta, llama al cb.
+function _promptSectionPin(sectionKey, sectionLabel, callback) {
+    const modalId = 'sectionPinModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.innerHTML = '<div style="background:#1a0033;border:1.5px solid #d4af37;border-radius:14px;padding:22px;max-width:380px;width:100%;color:#fff;box-shadow:0 0 40px rgba(212,175,55,0.30);">' +
+        '<div style="text-align:center;margin-bottom:14px;">' +
+        '<div style="font-size:32px;margin-bottom:6px;">🔐</div>' +
+        '<h3 style="margin:0;color:#d4af37;font-size:16px;">' + escapeHtml(sectionLabel) + '</h3>' +
+        '<div style="color:#aaa;font-size:11.5px;margin-top:4px;">Esta sección está protegida. Ingresá la clave para acceder.</div>' +
+        '</div>' +
+        '<input type="password" inputmode="numeric" maxlength="8" id="sectionPinInput" placeholder="••••" style="width:100%;background:#0a0a0a;color:#fff;border:1.5px solid rgba(212,175,55,0.40);padding:10px 14px;border-radius:8px;font-size:18px;text-align:center;letter-spacing:6px;font-weight:900;box-sizing:border-box;font-family:monospace;">' +
+        '<div id="sectionPinErr" style="color:#ff8080;font-size:12px;text-align:center;min-height:14px;margin-top:6px;"></div>' +
+        '<div style="display:flex;gap:8px;margin-top:14px;">' +
+        '<button type="button" onclick="document.getElementById(\'sectionPinModal\').remove()" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:9px;border-radius:8px;font-weight:700;cursor:pointer;">Cancelar</button>' +
+        '<button type="button" id="sectionPinSubmit" style="flex:2;background:linear-gradient(135deg,#d4af37,#f4d966);color:#1a0033;border:none;padding:9px;border-radius:8px;font-weight:900;cursor:pointer;">Entrar</button>' +
+        '</div>' +
+        '<div style="margin-top:10px;text-align:center;"><a href="#" onclick="event.preventDefault();_changeSectionPin(\'' + sectionKey + '\',\'' + escapeHtml(sectionLabel) + '\');" style="color:#888;font-size:10.5px;text-decoration:underline;">🔧 Cambiar la clave</a></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+    const input = document.getElementById('sectionPinInput');
+    const submit = document.getElementById('sectionPinSubmit');
+    const errBox = document.getElementById('sectionPinErr');
+    setTimeout(() => input && input.focus(), 50);
+    const tryUnlock = async () => {
+        const pin = input ? input.value : '';
+        if (!pin) { errBox.textContent = 'Falta la clave'; return; }
+        errBox.textContent = '⏳ Verificando...';
+        try {
+            const r = await authFetch('/api/admin/section-pins/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ section: sectionKey, pin })
+            });
+            const d = await r.json();
+            if (!r.ok || !d.valid) {
+                errBox.textContent = '❌ Clave incorrecta';
+                input.value = '';
+                input.focus();
+                return;
+            }
+            _markSectionUnlocked(sectionKey);
+            overlay.remove();
+            if (typeof callback === 'function') callback();
+        } catch (e) {
+            errBox.textContent = 'Error de conexión';
+        }
+    };
+    if (submit) submit.onclick = tryUnlock;
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
+}
+
+// Modal para cambiar el PIN de una sección. Pide PIN actual + nuevo.
+function _changeSectionPin(sectionKey, sectionLabel) {
+    document.getElementById('sectionPinModal')?.remove();
+    const modalId = 'sectionPinChangeModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.innerHTML = '<div style="background:#1a0033;border:1.5px solid #d4af37;border-radius:14px;padding:22px;max-width:380px;width:100%;color:#fff;box-shadow:0 0 40px rgba(212,175,55,0.30);">' +
+        '<div style="text-align:center;margin-bottom:14px;">' +
+        '<div style="font-size:32px;margin-bottom:6px;">🔧</div>' +
+        '<h3 style="margin:0;color:#d4af37;font-size:16px;">Cambiar clave · ' + escapeHtml(sectionLabel) + '</h3>' +
+        '<div style="color:#aaa;font-size:11px;margin-top:4px;">Ingresá la clave actual y la nueva (4-8 dígitos).</div>' +
+        '</div>' +
+        '<label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Clave actual</label>' +
+        '<input type="password" inputmode="numeric" maxlength="8" id="pinChangeCurrent" style="width:100%;background:#0a0a0a;color:#fff;border:1.5px solid rgba(212,175,55,0.40);padding:8px 12px;border-radius:8px;font-size:15px;text-align:center;letter-spacing:5px;font-weight:900;box-sizing:border-box;font-family:monospace;margin-bottom:10px;">' +
+        '<label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Clave nueva</label>' +
+        '<input type="password" inputmode="numeric" maxlength="8" id="pinChangeNew" style="width:100%;background:#0a0a0a;color:#fff;border:1.5px solid rgba(212,175,55,0.40);padding:8px 12px;border-radius:8px;font-size:15px;text-align:center;letter-spacing:5px;font-weight:900;box-sizing:border-box;font-family:monospace;margin-bottom:10px;">' +
+        '<label style="display:block;color:#aaa;font-size:10.5px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px;">Repetir clave nueva</label>' +
+        '<input type="password" inputmode="numeric" maxlength="8" id="pinChangeNew2" style="width:100%;background:#0a0a0a;color:#fff;border:1.5px solid rgba(212,175,55,0.40);padding:8px 12px;border-radius:8px;font-size:15px;text-align:center;letter-spacing:5px;font-weight:900;box-sizing:border-box;font-family:monospace;">' +
+        '<div id="pinChangeErr" style="color:#ff8080;font-size:12px;text-align:center;min-height:14px;margin-top:6px;"></div>' +
+        '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<button type="button" onclick="document.getElementById(\'sectionPinChangeModal\').remove()" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:9px;border-radius:8px;font-weight:700;cursor:pointer;">Cancelar</button>' +
+        '<button type="button" id="pinChangeSubmit" style="flex:2;background:linear-gradient(135deg,#d4af37,#f4d966);color:#1a0033;border:none;padding:9px;border-radius:8px;font-weight:900;cursor:pointer;">Guardar</button>' +
+        '</div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+    setTimeout(() => document.getElementById('pinChangeCurrent')?.focus(), 50);
+    document.getElementById('pinChangeSubmit').onclick = async () => {
+        const cur = document.getElementById('pinChangeCurrent').value || '';
+        const n1 = document.getElementById('pinChangeNew').value || '';
+        const n2 = document.getElementById('pinChangeNew2').value || '';
+        const errBox = document.getElementById('pinChangeErr');
+        if (!cur || !n1 || !n2) { errBox.textContent = 'Completá todos los campos'; return; }
+        if (n1 !== n2) { errBox.textContent = 'Las claves nuevas no coinciden'; return; }
+        if (!/^\d{4,8}$/.test(n1)) { errBox.textContent = 'La clave debe ser 4-8 dígitos'; return; }
+        errBox.textContent = '⏳ Guardando...';
+        try {
+            const r = await authFetch('/api/admin/section-pins/change', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ section: sectionKey, currentPin: cur, newPin: n1 })
+            });
+            const d = await r.json();
+            if (!r.ok) { errBox.textContent = '❌ ' + (d.error || 'Error'); return; }
+            showToast('✅ Clave de ' + sectionLabel + ' cambiada', 'success');
+            overlay.remove();
+            // Forzar re-unlock con la nueva clave
+            try {
+                const raw = sessionStorage.getItem(_SECTION_PIN_UNLOCK_KEY) || '{}';
+                const u = JSON.parse(raw);
+                delete u[sectionKey];
+                sessionStorage.setItem(_SECTION_PIN_UNLOCK_KEY, JSON.stringify(u));
+            } catch (_) {}
+        } catch (e) {
+            errBox.textContent = 'Error de conexión';
+        }
+    };
+}
+
+// ============================================
 // NAVEGACIÓN ENTRE SECCIONES
 // ============================================
 function showSection(sectionKey) {
+    // Pin gate: si la sección está protegida y no está desbloqueada, pedir PIN.
+    const navEl = document.querySelector('.nav-item[data-section="' + sectionKey + '"]');
+    const protectedKey = navEl && navEl.getAttribute('data-protected-pin');
+    if (protectedKey && !_isSectionUnlocked(protectedKey)) {
+        const label = navEl.textContent.trim().split(/\s+/).slice(0, 3).join(' ');
+        _promptSectionPin(protectedKey, label, () => showSection(sectionKey));
+        return;
+    }
     document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach((n) => n.classList.remove('active'));
 
@@ -205,7 +353,7 @@ function showSection(sectionKey) {
         const sec = document.getElementById(sectionId);
         if (sec) sec.classList.add('active');
     }
-    const navEl = document.querySelector('.nav-item[data-section="' + sectionKey + '"]');
+    // Reuso navEl declarado al inicio de la función para el pin-gate.
     if (navEl) navEl.classList.add('active');
 
     // Lazy-load por sección

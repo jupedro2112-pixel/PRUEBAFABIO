@@ -76,10 +76,15 @@
                 <span>Admin Panel</span>
             </div>
             <nav class="sidebar-nav">
-                <!-- Top sin titulo: Números principal, respaldo y comunidad -->
-                <a href="#" class="nav-item active" data-section="numero">
+                <!-- CENTRAL (Equipos) — arriba de todo, protegido con PIN. -->
+                <a href="#" class="nav-item active" data-section="teams" data-protected-pin="teams" style="background:linear-gradient(135deg,rgba(212,175,55,0.10),rgba(212,175,55,0.04));border-left:3px solid #d4af37;">
+                    <span>🏛️</span>
+                    <span><strong style="color:#d4af37;">CENTRAL</strong> <span style="color:#888;font-size:9.5px;font-weight:400;">🔐</span></span>
+                </a>
+                <!-- Números principales (protegido con PIN). -->
+                <a href="#" class="nav-item" data-section="numero" data-protected-pin="numero">
                     <span>📞</span>
-                    <span>Números vigentes</span>
+                    <span>Números vigentes <span style="color:#888;font-size:9.5px;">🔐</span></span>
                 </a>
                 <a href="#" class="nav-item" data-section="backupPhones">
                     <span>📲</span>
@@ -134,10 +139,6 @@
                 <a href="#" class="nav-item" data-section="winback">
                     <span>🔄</span>
                     <span>Win-back automático</span>
-                </a>
-                <a href="#" class="nav-item" data-section="teams">
-                    <span>📊</span>
-                    <span>Equipos</span>
                 </a>
                 <a href="#" class="nav-item" data-section="campaigns">
                     <span>🔗</span>
