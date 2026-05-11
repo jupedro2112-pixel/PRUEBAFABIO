@@ -9713,7 +9713,9 @@ app.get('/api/admin/recontact/daily-progress', authMiddleware, adminMiddleware, 
 // del admin; no es un secret externo.
 
 const _DEFAULT_SECTION_PIN = '1818';
-const _PROTECTED_SECTIONS = ['numero', 'teams'];
+// 'teams' fue removido por pedido del owner — CENTRAL ya no tiene PIN.
+// 'backupPhones' agregado — Números de respaldo también está protegido.
+const _PROTECTED_SECTIONS = ['numero', 'backupPhones'];
 
 async function _getSectionPins() {
   const v = await getConfig('admin_section_pins', null);

@@ -76,27 +76,25 @@
                 <span>Admin Panel</span>
             </div>
             <nav class="sidebar-nav">
-                <!-- CENTRAL (Equipos) — arriba de todo. -->
-                <a href="#" class="nav-item active" data-section="teams" data-help="help-equipos-detallado" style="background:linear-gradient(135deg,rgba(212,175,55,0.10),rgba(212,175,55,0.04));border-left:3px solid #d4af37;">
-                    <span>🏛️</span>
-                    <span><strong style="color:#d4af37;">CENTRAL</strong></span>
+                <!-- CENTRAL — titulo de sección (mismo estilo que NUEVO TOP). -->
+                <div class="nav-section-title" style="color:#d4af37;border-top:1px solid rgba(212,175,55,0.30);padding-top:10px;margin-top:0;">🏛️ CENTRAL</div>
+                <a href="#" class="nav-item active" data-section="teams" style="background:rgba(212,175,55,0.06);border-left:3px solid #d4af37;">
+                    <span>📊</span>
+                    <span><strong>Equipos</strong></span>
                 </a>
-                <!-- Números principales (protegido con PIN — 🔑 al final indica clave). -->
+                <!-- Números principales (protegido con PIN — 🔑 al final). -->
                 <a href="#" class="nav-item" data-section="numero" data-protected-pin="numero" data-help="help-numero">
                     <span>📞</span>
                     <span>Números vigentes <span style="margin-left:auto;font-size:10px;opacity:0.7;" title="Esta sección requiere clave">🔑</span></span>
                 </a>
-                <a href="#" class="nav-item" data-section="backupPhones">
+                <!-- Números de respaldo (también protegido con PIN). -->
+                <a href="#" class="nav-item" data-section="backupPhones" data-protected-pin="backupPhones">
                     <span>📲</span>
-                    <span>Números de respaldo</span>
+                    <span>Números de respaldo <span style="margin-left:auto;font-size:10px;opacity:0.7;" title="Esta sección requiere clave">🔑</span></span>
                 </a>
                 <a href="#" class="nav-item" data-section="comunidad">
                     <span>💬</span>
                     <span>Comunidad</span>
-                </a>
-                <a href="#" class="nav-item" data-section="help" style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;">
-                    <span>❓</span>
-                    <span><strong>Ayuda y guía</strong> <span style="color:#888;font-size:9.5px;font-weight:400;">(cómo usar cada sección)</span></span>
                 </a>
 
                 <div class="nav-section-title">🔔 Notificaciones push</div>
@@ -211,6 +209,14 @@
                 <a href="#" class="nav-item" data-section="equipamiento">
                     <span>📱</span>
                     <span>Detalles app usuarios</span>
+                </a>
+
+                <!-- Ayuda y guía al fondo de todo (cada item tiene su propio ❓
+                     en el sidebar, esta entrada lleva al overview completo). -->
+                <div class="nav-section-title">❓ Ayuda</div>
+                <a href="#" class="nav-item" data-section="help" style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;">
+                    <span>❓</span>
+                    <span><strong>Ayuda y guía</strong></span>
                 </a>
 
             </nav>
