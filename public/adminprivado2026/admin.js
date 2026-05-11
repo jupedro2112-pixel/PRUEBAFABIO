@@ -18663,12 +18663,26 @@ async function loadTeamCampaigns() {
 function _renderTeamCampaignsList(d) {
     const list = d.list || [];
     let html = '';
+    // Caja de auto-estrategia (lo nuevo de la Parte B).
+    html += '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.10),rgba(102,255,102,0.05));border:1px solid rgba(155,48,255,0.40);border-radius:12px;padding:12px;margin-bottom:14px;">';
+    html += '  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">';
+    html += '    <div>';
+    html += '      <div style="color:#c977ff;font-weight:900;font-size:14px;letter-spacing:1px;text-transform:uppercase;">🤖 Auto-estrategia mensual</div>';
+    html += '      <div style="color:#bbb;font-size:11.5px;">Genera automáticamente todas las campañas del mes para cada equipo × tier según la encuesta. Bonos/regalos quedan reclamables, scoped por user.</div>';
+    html += '    </div>';
+    html += '    <div style="display:flex;gap:8px;flex-wrap:wrap;">';
+    html += '      <button type="button" onclick="_autoStrategyPreview()" style="background:linear-gradient(135deg,#9b30ff,#5a1aaa);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">🔍 Ver previa</button>';
+    html += '      <button type="button" onclick="_autoStrategyClearMonth()" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:9px 14px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;" title="Borrar todas las auto-strategy del mes actual">🗑 Limpiar mes</button>';
+    html += '    </div>';
+    html += '  </div>';
+    html += '</div>';
+
     html += '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px;">';
     html += '  <div>';
-    html += '    <div style="color:#d4af37;font-weight:900;font-size:15px;">📣 Campañas por equipo · ' + list.length + '</div>';
+    html += '    <div style="color:#d4af37;font-weight:900;font-size:15px;">📣 Campañas · ' + list.length + '</div>';
     html += '    <div style="color:#888;font-size:11.5px;">Cada campaña dispara push a un equipo/línea/tier específico, día y horario fijo. El cron las activa cada 60s.</div>';
     html += '  </div>';
-    html += '  <button type="button" onclick="_teamCampaignOpenForm()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">➕ NUEVA CAMPAÑA</button>';
+    html += '  <button type="button" onclick="_teamCampaignOpenForm()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">➕ NUEVA CAMPAÑA MANUAL</button>';
     html += '</div>';
 
     if (list.length === 0) {
@@ -18694,6 +18708,9 @@ function _renderTeamCampaignsList(d) {
     const dayNames = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
     const catLabel = { bonos:'🎁 Bono', juegos:'🎰 Juego', regalos:'💎 Regalo', notif:'🔔 Notif' };
     for (const c of list) {
+        const originBadge = c.origin === 'auto-strategy'
+            ? ' <span style="background:rgba(155,48,255,0.20);color:#c977ff;padding:1px 6px;border-radius:8px;font-size:9.5px;font-weight:700;" title="Generada por auto-estrategia ' + escapeHtml(c.autoStrategyMonth || '') + '">🤖 AUTO</span>'
+            : '';
         const target = (c.teamFilter || 'Todos los equipos') +
             (c.lineFilter ? ' · ' + c.lineFilter : '') +
             (c.tierFilter ? ' · ' + c.tierFilter : '');
@@ -18706,7 +18723,7 @@ function _renderTeamCampaignsList(d) {
             ? '<span style="background:rgba(102,255,102,0.15);color:#66ff66;padding:3px 8px;border-radius:10px;font-weight:800;font-size:11px;">✅ Activa</span>'
             : '<span style="background:rgba(255,128,128,0.10);color:#ff8080;padding:3px 8px;border-radius:10px;font-weight:800;font-size:11px;">⏸ Pausada</span>';
         html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
-        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(c.name) + '</td>';
+        html += '<td style="padding:8px 10px;color:#fff;font-weight:700;">' + escapeHtml(c.name) + originBadge + '</td>';
         html += '<td style="padding:8px 10px;color:#bbb;font-size:11.5px;">' + escapeHtml(target) + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;color:#fff;">' + (catLabel[c.category] || c.category) + '</td>';
         html += '<td style="padding:8px 10px;text-align:center;color:#fff;font-size:11.5px;">' + escapeHtml(cuando) + '</td>';
@@ -18894,6 +18911,160 @@ async function _teamCampaignDelete(id, name) {
         const r = await authFetch('/api/admin/team-campaigns/' + encodeURIComponent(id), { method: 'DELETE' });
         if (!r.ok) { showToast('❌ Error', 'error'); return; }
         showToast('✅ Borrada', 'success');
+        loadTeamCampaigns();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// =====================================================================
+// AUTO-ESTRATEGIA — preview modal + commit + clear.
+// =====================================================================
+async function _autoStrategyPreview() {
+    showToast('⏳ Calculando preview...', 'info');
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/auto-strategy/preview');
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        _autoStrategyOpenPreviewModal(d);
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+function _autoStrategyOpenPreviewModal(d) {
+    const modalId = 'autoStrategyPreviewModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;';
+
+    const fmt = n => Number(n || 0).toLocaleString('es-AR');
+    const sum = d.summary || {};
+    let inner = '';
+    inner += '<div style="background:#1a0033;border:1px solid rgba(155,48,255,0.50);border-radius:12px;padding:20px;max-width:920px;width:100%;color:#fff;">';
+    inner += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">';
+    inner += '  <h3 style="margin:0;color:#c977ff;font-size:16px;">🤖 Auto-estrategia — Previa para ' + escapeHtml(d.monthKey || '') + '</h3>';
+    inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>';
+    inner += '</div>';
+
+    if (!sum.totalCampaigns || sum.totalCampaigns === 0) {
+        inner += '<div style="background:rgba(255,170,68,0.10);border:1px solid rgba(255,170,68,0.40);border-radius:8px;padding:14px;color:#ffd97a;">';
+        inner += '⚠ Nada para generar. Verificá que:<ul style="margin:8px 0 0;padding-left:20px;">';
+        inner += '<li>Hayas guardado la estrategia mensual (Encuesta → Estrategia → Guardar)</li>';
+        inner += '<li>Haya users con <code>notifPreference</code> (suave/normal/activo) asignados a equipos/líneas</li>';
+        inner += '<li>Queden días del mes (' + (d.remainingDaysCount || 0) + ' días restantes)</li>';
+        inner += '</ul></div>';
+        inner += '</div>';
+        overlay.innerHTML = inner;
+        document.body.appendChild(overlay);
+        return;
+    }
+
+    // KPIs grandes.
+    inner += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px;">';
+    inner += '<div style="background:rgba(0,0,0,0.25);border-radius:8px;padding:10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Campañas</div><div style="color:#fff;font-weight:900;font-size:24px;">' + fmt(sum.totalCampaigns) + '</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.25);border-radius:8px;padding:10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Total impactos</div><div style="color:#fff;font-weight:900;font-size:24px;">' + fmt(sum.totalSlotsImpacted) + '</div><div style="color:#888;font-size:10px;">suma de users alcanzados (un user puede recibir varios)</div></div>';
+    inner += '<div style="background:rgba(0,0,0,0.25);border-radius:8px;padding:10px;"><div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Días restantes</div><div style="color:#fff;font-weight:900;font-size:24px;">' + (d.remainingDaysCount || 0) + '</div></div>';
+    inner += '</div>';
+
+    // Distribución por tier.
+    inner += '<div style="margin-bottom:10px;">';
+    inner += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por tier</div>';
+    inner += '  <div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    inner += '<span style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🟢 Suave: <strong>' + fmt(sum.byTier?.suave || 0) + '</strong></span>';
+    inner += '<span style="background:rgba(255,210,68,0.10);border:1px solid rgba(255,210,68,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🟡 Normal: <strong>' + fmt(sum.byTier?.normal || 0) + '</strong></span>';
+    inner += '<span style="background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🔴 Activo: <strong>' + fmt(sum.byTier?.activo || 0) + '</strong></span>';
+    inner += '  </div>';
+    inner += '</div>';
+
+    // Distribución por categoría.
+    inner += '<div style="margin-bottom:10px;">';
+    inner += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por categoría</div>';
+    inner += '  <div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    inner += '<span style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🎁 Bonos: <strong>' + fmt(sum.byCategory?.bonos || 0) + '</strong></span>';
+    inner += '<span style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">🎰 Juegos: <strong>' + fmt(sum.byCategory?.juegos || 0) + '</strong></span>';
+    inner += '<span style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.30);padding:5px 12px;border-radius:14px;font-size:12px;">💎 Regalos: <strong>' + fmt(sum.byCategory?.regalos || 0) + '</strong></span>';
+    inner += '  </div>';
+    inner += '</div>';
+
+    // Distribución por team/línea (top 8).
+    const teamLineEntries = Object.entries(sum.byTeamLine || {}).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    if (teamLineEntries.length > 0) {
+        inner += '<div style="margin-bottom:10px;">';
+        inner += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por equipo/línea (top 8)</div>';
+        inner += '  <div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:6px;">';
+        for (const [tl, n] of teamLineEntries) {
+            inner += '<div style="display:flex;justify-content:space-between;padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;"><span>' + escapeHtml(tl) + '</span><strong>' + fmt(n) + '</strong></div>';
+        }
+        inner += '  </div>';
+        inner += '</div>';
+    }
+
+    // Distribución por día.
+    const dayEntries = Object.entries(sum.byDay || {}).sort();
+    if (dayEntries.length > 0) {
+        inner += '<div style="margin-bottom:10px;">';
+        inner += '  <div style="color:#c977ff;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Por día (cómo se distribuye)</div>';
+        inner += '  <div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:6px;max-height:200px;overflow-y:auto;">';
+        const maxN = Math.max(...dayEntries.map(([, v]) => v));
+        for (const [day, n] of dayEntries) {
+            const w = Math.max(2, (n / maxN) * 100);
+            inner += '<div style="display:flex;align-items:center;gap:8px;padding:3px 8px;font-size:11.5px;">';
+            inner += '  <div style="min-width:90px;color:#aaa;">' + escapeHtml(day) + '</div>';
+            inner += '  <div style="flex:1;background:rgba(155,48,255,0.10);height:14px;border-radius:3px;overflow:hidden;"><div style="background:linear-gradient(90deg,#9b30ff,#c977ff);width:' + w + '%;height:100%;"></div></div>';
+            inner += '  <div style="min-width:36px;text-align:right;color:#fff;font-weight:700;">' + fmt(n) + '</div>';
+            inner += '</div>';
+        }
+        inner += '  </div>';
+        inner += '</div>';
+    }
+
+    // Muestra de drafts.
+    const samples = d.sampleDrafts || [];
+    if (samples.length > 0) {
+        inner += '<details style="margin-top:10px;"><summary style="cursor:pointer;color:#c977ff;font-size:12px;font-weight:700;">Ver muestra (primeras ' + samples.length + ' campañas)</summary>';
+        inner += '<div style="max-height:200px;overflow-y:auto;background:rgba(0,0,0,0.20);border-radius:6px;padding:6px;margin-top:6px;font-size:11px;font-family:monospace;">';
+        for (const s of samples) {
+            inner += '<div style="padding:2px 4px;color:#bbb;">' + escapeHtml(s.specificDate) + ' ' + s.startHour + 'h · ' + escapeHtml(s.teamFilter) + ' · ' + escapeHtml(s.tierFilter) + ' · ' + escapeHtml(s.category) + ' · ' + s.audienceCount + ' users</div>';
+        }
+        inner += '</div></details>';
+    }
+
+    // Botones.
+    inner += '<div style="margin-top:16px;border-top:1px solid rgba(255,255,255,0.10);padding-top:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+    inner += '<div style="color:#ffd97a;font-size:11.5px;">⚠ Activar va a <strong>borrar las auto-strategy existentes del mes</strong> y crear las nuevas. Las campañas manuales no se tocan.</div>';
+    inner += '<div style="display:flex;gap:8px;">';
+    inner += '  <button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:8px 14px;border-radius:6px;font-weight:700;cursor:pointer;">Cancelar</button>';
+    inner += '  <button type="button" onclick="_autoStrategyCommit()" style="background:linear-gradient(135deg,#66ff66,#2a8);color:#000;border:none;padding:8px 22px;border-radius:6px;font-weight:900;cursor:pointer;">✅ Activar (crear ' + fmt(sum.totalCampaigns) + ' campañas)</button>';
+    inner += '</div>';
+    inner += '</div>';
+    inner += '</div>';
+
+    overlay.innerHTML = inner;
+    document.body.appendChild(overlay);
+}
+
+async function _autoStrategyCommit() {
+    const btn = event && event.target;
+    if (btn) btn.disabled = true;
+    showToast('⏳ Generando campañas...', 'info');
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/auto-strategy/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); if (btn) btn.disabled = false; return; }
+        showToast('✅ ' + d.campaignsCreated + ' campañas generadas para ' + d.monthKey, 'success');
+        document.getElementById('autoStrategyPreviewModal')?.remove();
+        loadTeamCampaigns();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function _autoStrategyClearMonth() {
+    if (!confirm('¿Borrar TODAS las campañas auto-generadas del mes actual?\n\nLas campañas manuales NO se tocan. Esta acción no se puede deshacer.')) return;
+    try {
+        const r = await authFetch('/api/admin/team-campaigns/auto-strategy', { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✅ ' + (d.deletedCount || 0) + ' campañas auto borradas', 'success');
         loadTeamCampaigns();
     } catch (e) { showToast('Error de conexión', 'error'); }
 }

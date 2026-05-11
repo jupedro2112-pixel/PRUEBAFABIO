@@ -12438,6 +12438,248 @@ setTimeout(() => { _teamCampaignTick(); }, 45 * 1000);
 setInterval(() => { _teamCampaignTick(); }, 60 * 1000);
 
 // =====================================================================
+// AUTO-ESTRATEGIA POR EQUIPO — generación masiva de TeamCampaigns basadas
+// en la encuesta (NotifStrategyConfig) y la distribución de tiers por
+// (team, line). Para cada combo con users, distribuye los N pushes del
+// tier en días distintos del mes con horario random dentro de la ventana.
+// Marca las campañas con origin='auto-strategy' + autoStrategyMonth='YYYY-MM'
+// para poder regenerar o limpiar después.
+// =====================================================================
+
+// Default blueprints por (categoría, tier) — title/body templates.
+const _AUTO_STRATEGY_BLUEPRINTS = {
+  bonos: {
+    suave:  { title: '🟢 Tu bono suave', body: 'Cargá hoy y te damos un bono extra. Aprovechá la oferta.' },
+    normal: { title: '🟡 Bono activo para vos', body: 'Hoy hay bono en cargas. Aprovechalo antes de que cierre.' },
+    activo: { title: '🔴 BONO PREMIUM', body: 'Hoy duplicás tu carga. Ventana corta — entrá ahora.' }
+  },
+  juegos: {
+    suave:  { title: '🎮 Vení a jugar un rato', body: 'Tu plataforma te espera. Pegale una vuelta hoy.' },
+    normal: { title: '🎰 Hora de jugar', body: 'Pasá un rato y probá los juegos nuevos.' },
+    activo: { title: '🔥 ¡A jugar!', body: 'Los slots están pagando. Entrá antes de que se acabe.' }
+  },
+  regalos: {
+    suave:  { title: '🎁 Hay un regalo para vos', body: 'Pasá por la app — te dejamos plata extra para hoy.' },
+    normal: { title: '🎁 Regalo activo', body: 'Tu regalo del mes está listo. Reclamalo dentro de la app.' },
+    activo: { title: '💎 REGALO PREMIUM', body: 'Plata de regalo cargada para vos — limitada en tiempo.' }
+  }
+};
+
+// Distribuye N elementos en M slots — devuelve indices distintos (si N <= M)
+// o todos los slots + extra random repetidos (si N > M).
+function _autoStrategyPickDays(remainingDays, count) {
+  if (count <= 0 || remainingDays.length === 0) return [];
+  if (count >= remainingDays.length) {
+    const extras = count - remainingDays.length;
+    const out = remainingDays.slice();
+    for (let i = 0; i < extras; i++) out.push(remainingDays[Math.floor(Math.random() * remainingDays.length)]);
+    return out.sort((a, b) => a.getTime() - b.getTime());
+  }
+  const pool = remainingDays.slice();
+  const picked = [];
+  for (let i = 0; i < count; i++) {
+    const idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  return picked.sort((a, b) => a.getTime() - b.getTime());
+}
+
+// Cuenta distribucion de tier por (team, line). Devuelve mapa team::line → {suave, normal, activo, total}.
+async function _autoStrategyGetDistribution() {
+  const agg = await User.aggregate([
+    {
+      $match: {
+        lineTeamName: { $exists: true, $ne: null, $ne: '' },
+        notifPreference: { $in: ['suave', 'normal', 'activo'] }
+      }
+    },
+    { $group: { _id: { team: '$lineTeamName', line: '$linePhone', tier: '$notifPreference' }, count: { $sum: 1 } } }
+  ]);
+  const dist = {}; // key: team::line → {suave, normal, activo, total}
+  for (const row of agg) {
+    const team = row._id.team || '';
+    const line = row._id.line || '';
+    const tier = row._id.tier || '';
+    const k = team + '::' + line;
+    if (!dist[k]) dist[k] = { team, line, suave: 0, normal: 0, activo: 0, total: 0 };
+    dist[k][tier] = row.count;
+    dist[k].total += row.count;
+  }
+  return Object.values(dist);
+}
+
+// Calcula monto rotativo para regalo (mismo algoritmo que la per-user vieja).
+function _autoStrategyGiftAmount({ tierBudget, regalosCount }) {
+  const base = (Number(tierBudget) > 0 && Number(regalosCount) > 0)
+    ? (Number(tierBudget) / Number(regalosCount))
+    : 1000;
+  // Sin activity boost porque acá es por equipo, no individual. Aplica variación ±15%.
+  const variance = 0.85 + Math.random() * 0.30;
+  const rounded = Math.round(base * variance / 100) * 100;
+  return Math.max(500, rounded);
+}
+
+// Generación: arma TeamCampaign drafts para preview (no persiste) o para
+// activar (persiste). Si commit=true, borra las auto-strategy del mes
+// actual primero y crea las nuevas. Si commit=false, devuelve los drafts.
+async function _autoStrategyGenerate({ commit, createdBy }) {
+  const cfg = await NotifStrategyConfig.findOne({ key: 'monthly-default' }).lean();
+  if (!cfg) throw new Error('No hay NotifStrategyConfig — guardá la estrategia mensual primero.');
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const monthKey = year + '-' + String(month + 1).padStart(2, '0');
+  // Días que quedan del mes (desde mañana, no hoy — para no caer dentro de minutos del request).
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const today = now.getDate();
+  const remainingDays = [];
+  for (let d = today + 1; d <= lastDay; d++) remainingDays.push(new Date(year, month, d));
+  if (remainingDays.length === 0) {
+    return { drafts: [], summary: { totalCampaigns: 0, totalSlotsImpacted: 0, byDay: {}, byTier: {}, byCategory: {}, byTeamLine: {} }, monthKey, warning: 'No quedan días del mes para programar.' };
+  }
+
+  const startHour = Number.isFinite(cfg.windowStartHour) ? cfg.windowStartHour : 18;
+  const endHour = Number.isFinite(cfg.windowEndHour) ? cfg.windowEndHour : 22;
+
+  const distribution = await _autoStrategyGetDistribution();
+  const drafts = [];
+  for (const dist of distribution) {
+    if (!dist.team || !dist.line) continue;
+    for (const tier of ['suave', 'normal', 'activo']) {
+      const userCount = dist[tier] || 0;
+      if (userCount === 0) continue;
+      const prefs = (cfg.preferences && cfg.preferences[tier]) || {};
+      const tierBudget = Number(prefs.budget) || 0;
+      for (const cat of ['bonos', 'juegos', 'regalos']) {
+        const count = Math.max(0, Number(prefs[cat]) || 0);
+        if (count === 0) continue;
+        const pickedDays = _autoStrategyPickDays(remainingDays, count);
+        for (let i = 0; i < pickedDays.length; i++) {
+          const day = pickedDays[i];
+          const dayOfWeek = day.getDay();
+          const specificDate = day.toISOString().slice(0, 10);
+          const blueprint = (_AUTO_STRATEGY_BLUEPRINTS[cat] && _AUTO_STRATEGY_BLUEPRINTS[cat][tier])
+            || { title: '🎁 Hay algo para vos', body: 'Tocá la app.' };
+          const draft = {
+            id: uuidv4(),
+            name: cat.charAt(0).toUpperCase() + cat.slice(1) + ' ' + tier + ' · ' + dist.line + ' · ' + specificDate,
+            teamFilter: dist.team,
+            lineFilter: dist.line,
+            tierFilter: tier,
+            category: cat,
+            dayOfWeek: null,
+            specificDate,
+            startHour, endHour,
+            title: blueprint.title,
+            body: blueprint.body,
+            extraType: cat === 'regalos' ? 'giveaway' : (cat === 'bonos' ? 'promo' : 'none'),
+            promoCode: cat === 'bonos' ? (tier === 'activo' ? 'BONO100' : 'BONO50') : null,
+            promoMessage: cat === 'bonos' ? blueprint.body : null,
+            promoDurationHours: 6,
+            giveawayAmount: cat === 'regalos' ? _autoStrategyGiftAmount({ tierBudget, regalosCount: count }) : null,
+            giveawayDurationMinutes: 360,
+            requireApp: true,
+            requireSurveyAnswered: true,
+            requireActiveDays: null,
+            isActive: true,
+            origin: 'auto-strategy',
+            autoStrategyMonth: monthKey,
+            createdBy: createdBy || 'auto-strategy'
+          };
+          drafts.push({ ...draft, _meta: { audienceCount: userCount } });
+        }
+      }
+    }
+  }
+
+  // Summary: para mostrar en preview.
+  const summary = {
+    totalCampaigns: drafts.length,
+    totalSlotsImpacted: drafts.reduce((s, d) => s + (d._meta?.audienceCount || 0), 0),
+    byDay: {},
+    byTier: { suave: 0, normal: 0, activo: 0 },
+    byCategory: { bonos: 0, juegos: 0, regalos: 0 },
+    byTeamLine: {}
+  };
+  for (const d of drafts) {
+    summary.byDay[d.specificDate] = (summary.byDay[d.specificDate] || 0) + 1;
+    summary.byTier[d.tierFilter] = (summary.byTier[d.tierFilter] || 0) + 1;
+    summary.byCategory[d.category] = (summary.byCategory[d.category] || 0) + 1;
+    const key = d.teamFilter + ' · ' + d.lineFilter;
+    summary.byTeamLine[key] = (summary.byTeamLine[key] || 0) + 1;
+  }
+
+  if (commit) {
+    // Borrar campañas auto-strategy del mes actual antes de crear las nuevas.
+    await TeamCampaign.deleteMany({ origin: 'auto-strategy', autoStrategyMonth: monthKey });
+    // Insertar todas las drafts.
+    const toInsert = drafts.map(d => { const x = { ...d }; delete x._meta; return x; });
+    if (toInsert.length > 0) {
+      await TeamCampaign.insertMany(toInsert);
+    }
+    logger.info(`[AUTO-STRATEGY] generated ${toInsert.length} campaigns for ${monthKey} by=${createdBy || 'admin'}`);
+  }
+  return { drafts, summary, monthKey, remainingDaysCount: remainingDays.length };
+}
+
+// GET preview: arma drafts sin persistir, devuelve summary + listado resumido.
+app.get('/api/admin/team-campaigns/auto-strategy/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const r = await _autoStrategyGenerate({ commit: false });
+    // Recortamos los drafts en la response — el resumen es lo importante. Los detalles
+    // se pueden ver post-activación en la lista de campañas.
+    res.json({
+      success: true,
+      monthKey: r.monthKey,
+      remainingDaysCount: r.remainingDaysCount,
+      summary: r.summary,
+      sampleDrafts: r.drafts.slice(0, 20).map(d => ({
+        name: d.name, teamFilter: d.teamFilter, lineFilter: d.lineFilter, tierFilter: d.tierFilter,
+        category: d.category, specificDate: d.specificDate, startHour: d.startHour, endHour: d.endHour,
+        extraType: d.extraType, promoCode: d.promoCode, giveawayAmount: d.giveawayAmount,
+        audienceCount: d._meta?.audienceCount || 0
+      }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/auto-strategy/preview: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST commit: borra las auto-strategy del mes y crea las nuevas.
+app.post('/api/admin/team-campaigns/auto-strategy/commit', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const r = await _autoStrategyGenerate({ commit: true, createdBy: req.user.username || 'admin' });
+    res.json({
+      success: true,
+      monthKey: r.monthKey,
+      campaignsCreated: r.drafts.length,
+      summary: r.summary
+    });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/auto-strategy/commit: ${err.message}\n${err.stack}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE all auto-strategy del mes: limpieza.
+app.delete('/api/admin/team-campaigns/auto-strategy', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin principal' });
+    const now = new Date();
+    const monthKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    const r = await TeamCampaign.deleteMany({ origin: 'auto-strategy', autoStrategyMonth: monthKey });
+    logger.info(`[AUTO-STRATEGY] cleared ${r.deletedCount} for ${monthKey}`);
+    res.json({ success: true, deletedCount: r.deletedCount });
+  } catch (err) {
+    logger.error(`/api/admin/team-campaigns/auto-strategy DELETE: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =====================================================================
 // REVIEWS — opiniones de usuarios (1 por user, 1-5★, comentario ≤ 100ch).
 // Categorización: 1-2★ malo · 3★ regular · 4-5★ bueno.
 // =====================================================================
