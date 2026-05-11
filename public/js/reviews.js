@@ -9,7 +9,10 @@ window.VIP = window.VIP || {};
 VIP.reviews = (function () {
     'use strict';
 
-    let _selectedStars = 0;
+    // Default: 5 estrellas pre-seleccionadas. El user ajusta hacia abajo si
+    // quiere puntuarnos menos — antes arrancaba en 0 y el primer click pintaba
+    // 1 sola, lo que hacía que mucha gente se quedara puntuando bajo sin querer.
+    let _selectedStars = 5;
     let _myReviewLoaded = false;
     let _feedPollId = null;
     // Comentario por defecto: matchea con las estrellas que el user tocó.
@@ -78,6 +81,9 @@ VIP.reviews = (function () {
             ta.value = _defaultCommentForStars(5);
             if (cnt) cnt.textContent = String(ta.value.length);
         }
+        // Pintar las 5 estrellas como pre-seleccionadas. El user puede
+        // clickear una más baja para ajustar — no tiene que clickear desde 0.
+        _paintStarsRow(_selectedStars);
         if (ta) {
             ta.addEventListener('focus', () => {
                 if (_isDefaultComment(ta.value)) {
