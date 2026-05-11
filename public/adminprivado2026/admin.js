@@ -91,6 +91,13 @@ function _getSectionPinTokenForUrl(url) {
             const raw = sessionStorage.getItem('sectionPinTokens') || '{}';
             return (JSON.parse(raw) || {}).backupPhones || '';
         }
+        // Endpoints que requieren token de 'teams' — solo /stats (el detalle).
+        // /names (solo nombres) NO requiere PIN para no romper líneas caídas
+        // y refund-reminders que usan el selector de equipos.
+        if (/^\/api\/admin\/teams\/stats(\?|$)/.test(url)) {
+            const raw = sessionStorage.getItem('sectionPinTokens') || '{}';
+            return (JSON.parse(raw) || {}).teams || '';
+        }
     } catch (_) {}
     return '';
 }
@@ -195,8 +202,10 @@ function showApp() {
         return;
     }
 
-    // Cargar la sección por defecto
-    loadUserLines();
+    // Cargar la sección por defecto (Equipos). showSection dispara el PIN
+    // gate automáticamente — el admin ve el modal al entrar en vez de
+    // aterrizar en una sección vacía.
+    try { showSection('teams'); } catch (_) {}
 }
 
 // ============================================
@@ -9452,7 +9461,9 @@ async function loadLineDownTeams() {
     if (!sel) return;
     sel.innerHTML = '<option value="">— Cargando…</option>';
     try {
-        const r = await authFetch('/api/admin/teams/stats');
+        // Usamos /teams/names — endpoint "lite" sin PIN gate. Acá solo
+        // necesitamos el listado de nombres para poblar el selector.
+        const r = await authFetch('/api/admin/teams/names');
         if (!r.ok) {
             sel.innerHTML = '<option value="">❌ Error cargando equipos</option>';
             return;
@@ -12586,8 +12597,9 @@ async function _remindersRenderTab() {
         if (!r.ok) { c.innerHTML = '<div class="empty-state">❌ Error</div>'; return; }
         const j = await r.json();
         _remindersConfigCache = j.config || null;
-        // También necesitamos lista de equipos para el selector.
-        const teamsR = await authFetch('/api/admin/teams/stats').catch(() => null);
+        // También necesitamos lista de equipos para el selector — endpoint
+        // "lite" sin PIN gate (solo nombres, no stats).
+        const teamsR = await authFetch('/api/admin/teams/names').catch(() => null);
         let teams = [];
         if (teamsR && teamsR.ok) {
             const tj = await teamsR.json();

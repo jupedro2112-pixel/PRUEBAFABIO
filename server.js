@@ -9717,9 +9717,12 @@ app.get('/api/admin/recontact/daily-progress', authMiddleware, adminMiddleware, 
 // del admin; no es un secret externo.
 
 const _DEFAULT_SECTION_PIN = '1818';
-// 'teams' fue removido por pedido del owner — CENTRAL ya no tiene PIN.
-// 'backupPhones' agregado — Números de respaldo también está protegido.
-const _PROTECTED_SECTIONS = ['numero', 'backupPhones'];
+// 'teams' está protegido — el detalle por equipo (stats agregados, líneas,
+// usuarios) requiere PIN. Las features que solo necesitan el listado de
+// nombres de equipo (líneas caídas, refund-reminders) usan /teams/names
+// que NO está gateado.
+// 'backupPhones' protege el listado de números de respaldo.
+const _PROTECTED_SECTIONS = ['numero', 'backupPhones', 'teams'];
 
 async function _getSectionPins() {
   const v = await getConfig('admin_section_pins', null);
@@ -10707,7 +10710,27 @@ app.post('/api/admin/user-lines/clear-team', authMiddleware, adminMiddleware, as
 // y devuelve, para cada equipo, total de usuarios + canal abierto +
 // activos en la semana + desglose por línea dentro del equipo.
 // =============================================================
-app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, async (req, res) => {
+// Endpoint "lite": solo los nombres de equipo, sin stats. Usado por features
+// que necesitan poblar selectores (líneas caídas, refund-reminders) y que
+// no requieren ver el detalle gateado por PIN.
+app.get('/api/admin/teams/names', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const teams = await User.distinct('lineTeamName', {
+      role: 'user',
+      lineTeamName: { $exists: true, $ne: null, $nin: [''] }
+    });
+    const sorted = (teams || []).filter(Boolean).sort((a, b) => a.localeCompare(b, 'es-AR'));
+    res.json({ teams: sorted.map(teamName => ({ teamName })) });
+  } catch (error) {
+    logger.error(`/api/admin/teams/names: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Stats agregados por equipo (PII + métricas). Gateado por PIN 'teams' —
+// sin el PIN, un depositor/withdrawer (o admin con cookie robada) no puede
+// bajar el detalle completo de cada equipo.
+app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, requireSectionPin('teams'), async (req, res) => {
   try {
     // Una sola query trae todo lo necesario para construir el agregado.
     // role='user' para excluir admins. Solo campos requeridos para no
