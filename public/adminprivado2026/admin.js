@@ -21044,3 +21044,112 @@ async function _refundRemindersRunNow(type) {
         _loadRefundRemindersCard();
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
+
+// ============================================================
+// 📚 AYUDA POR COLUMNA — botón ❓ al final de cada item del sidebar
+// ============================================================
+// Cada nav-item del sidebar tiene su help correspondiente. Al tocar el ❓ a
+// la derecha del item, se abre un modal con SOLO la explicación de esa sección.
+// No interfiere con el click normal del item (que sigue navegando).
+
+const _SECTION_HELP_MAP = {
+    numero: 'help-numero',
+    teams: 'help-equipos-detallado',
+    backupPhones: 'help-backup-phones',
+    comunidad: 'help-overview',
+    notifs: 'help-notifs',
+    notifsHistory: 'help-notifs-history',
+    reviews: 'help-opiniones',
+    recontact: 'help-recontact',
+    recontactConversions: 'help-post-recontact',
+    appUsers: 'help-app-users',
+    encuesta: 'help-auto-encuesta',
+    complaints: 'help-complaints',
+    winback: 'help-winback',
+    campaigns: 'help-campaigns',
+    ingresos: 'help-stats',
+    reportDaily: 'help-refunds',
+    reportWeekly: 'help-refunds',
+    reportMonthly: 'help-refunds',
+    refundReminders: 'help-refund-reminders',
+    welcomebonus: 'help-welcome',
+    raffles: 'help-raffles',
+    rafflesFree: 'help-raffles',
+    rafflesLightning: 'help-raffles',
+    automation: 'help-automations',
+    automations: 'help-automations',
+    recovery: 'help-stats',
+    lineDown: 'help-linedown',
+    activePlayers: 'help-active',
+    equipamiento: 'help-app-details',
+    help: 'help-overview'
+};
+
+// Inyecta un ícono ❓ al final de cada nav-item con un help mapeado.
+// Click en el ❓ abre el modal de ayuda específico SIN navegar.
+function _injectSectionHelpIcons() {
+    const items = document.querySelectorAll('.sidebar-nav .nav-item[data-section]');
+    items.forEach(item => {
+        if (item.querySelector('.section-help-btn')) return; // ya tiene
+        const section = item.getAttribute('data-section');
+        const anchor = item.getAttribute('data-help') || _SECTION_HELP_MAP[section];
+        if (!anchor) return;
+        const btn = document.createElement('span');
+        btn.className = 'section-help-btn';
+        btn.title = 'Cómo se usa esta sección';
+        btn.setAttribute('data-help-anchor', anchor);
+        btn.style.cssText = 'margin-left:auto;color:rgba(255,200,80,0.55);font-size:13px;cursor:help;padding:0 4px;border-radius:50%;flex-shrink:0;line-height:1;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;transition:all 0.15s;';
+        btn.textContent = '❓';
+        btn.addEventListener('mouseenter', () => {
+            btn.style.color = '#ffc850';
+            btn.style.background = 'rgba(255,200,80,0.15)';
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.color = 'rgba(255,200,80,0.55)';
+            btn.style.background = 'transparent';
+        });
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            _openSectionHelpModal(anchor, item.textContent.trim());
+        });
+        item.appendChild(btn);
+    });
+}
+
+// Abre modal con SOLO el bloque de ayuda del anchor especificado.
+function _openSectionHelpModal(anchor, sectionLabel) {
+    const blocks = (typeof _helpBlocks === 'function') ? _helpBlocks() : [];
+    const block = blocks.find(b => b.anchor === anchor);
+    if (!block) {
+        showToast('Sin ayuda específica para esta sección. Andá a Ayuda y guía para el overview.', 'info');
+        return;
+    }
+    const modalId = 'sectionHelpModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML = '<div style="background:#0a0a0a;border:1.5px solid rgba(255,200,80,0.50);border-radius:14px;max-width:760px;width:100%;color:#fff;box-shadow:0 0 50px rgba(255,200,80,0.20);overflow:hidden;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;background:linear-gradient(135deg,rgba(255,200,80,0.10),rgba(255,200,80,0.04));border-bottom:1px solid rgba(255,200,80,0.30);">' +
+        '<div><div style="color:#ffc850;font-weight:900;font-size:14px;letter-spacing:0.5px;">' + escapeHtml(block.icon || '❓') + ' ' + escapeHtml(block.title || sectionLabel) + '</div>' +
+        '<div style="color:#888;font-size:11px;margin-top:2px;">Cómo se usa y para qué sirve</div></div>' +
+        '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.40);color:#ff8080;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer;">✕</button>' +
+        '</div>' +
+        '<div style="padding:18px;color:#ddd;font-size:13px;line-height:1.7;max-height:75vh;overflow-y:auto;">' + (block.body || '') + '</div>' +
+        '<div style="padding:10px 18px;background:rgba(0,0,0,0.30);border-top:1px solid rgba(255,255,255,0.06);text-align:right;">' +
+        '<button type="button" onclick="showSection(\'help\');document.getElementById(\'' + modalId + '\').remove();" style="background:rgba(255,200,80,0.10);border:1px solid rgba(255,200,80,0.40);color:#ffc850;padding:6px 14px;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;">📚 Ver guía completa</button>' +
+        '</div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+}
+
+// Auto-inyectar al cargar y al cambiar el DOM del sidebar.
+if (typeof window !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _injectSectionHelpIcons);
+    } else {
+        setTimeout(_injectSectionHelpIcons, 50);
+    }
+}
