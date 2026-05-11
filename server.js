@@ -10672,6 +10672,30 @@ function _randomTimeInDayWindow(dayDate, startHour, endHour) {
 // y a una hora random dentro de la ventana configurada [startHour, endHour).
 //
 // Retorna: { scheduled, failed, perCategory: { bonos, juegos, regalos } }
+// Códigos de promo por tier de la encuesta. El cliente lee promoCode desde
+// el push y lo muestra en el cartel "RECLAMÁ" con wa.link a cargar.
+const _STRATEGY_PROMO_CODES = {
+  suave: 'BONO50',
+  normal: 'BONO50',
+  activo: 'BONO100'
+};
+
+// Calcula el monto del regalo para un user dado, "rotativo" según su
+// actividad real (PlayerStats.realDeposits30d) sobre la base del budget
+// del tier dividido entre la cantidad de regalos del mes. Boost por
+// actividad (hasta +50%) y variación random ±15% para que dos regalos
+// del mismo user no caigan iguales. Floor $500, redondeo a $100.
+function _computeStrategyGiftAmount({ tierBudget, regalosCount, realDeposits30d }) {
+  const base = (Number(tierBudget) > 0 && Number(regalosCount) > 0)
+    ? (Number(tierBudget) / Number(regalosCount))
+    : 1000;
+  const activityBoost = 1 + Math.min(0.5, Math.max(0, Number(realDeposits30d) || 0) / 10000);
+  const variance = 0.85 + Math.random() * 0.30; // 0.85 .. 1.15
+  const raw = base * activityBoost * variance;
+  const rounded = Math.round(raw / 100) * 100;
+  return Math.max(500, rounded);
+}
+
 async function _scheduleMonthlyStrategyForUser({ user, tier, cfg, monthKey, reason }) {
   const out = { scheduled: 0, failed: 0, perCategory: { bonos: 0, juegos: 0, regalos: 0 } };
   if (tier === 'solo_reembolsos' || tier === 'opt_out') return out;
@@ -10685,6 +10709,16 @@ async function _scheduleMonthlyStrategyForUser({ user, tier, cfg, monthKey, reas
   if (!username) return out;
   const reasonStr = String(reason || 'monthly-activate');
 
+  // PlayerStats define el monto rotativo de los regalos (categoría 'regalos').
+  // Si el user no tiene stats, factor de actividad neutro (boost 0%).
+  let realDeposits30d = 0;
+  try {
+    const ps = await PlayerStats.findOne({ username }, { realDeposits30d: 1, _id: 0 }).lean();
+    if (ps && Number.isFinite(ps.realDeposits30d)) realDeposits30d = ps.realDeposits30d;
+  } catch (_) { /* best-effort */ }
+  const tierBudget = Number(prefs.budget) || 0;
+  const regalosCount = Math.max(1, Number(prefs.regalos) || 0);
+
   for (const cat of _STRATEGY_CATEGORIES) {
     const count = Math.max(0, Number(prefs[cat]) || 0);
     if (count === 0) continue;
@@ -10694,6 +10728,21 @@ async function _scheduleMonthlyStrategyForUser({ user, tier, cfg, monthKey, reas
     for (const day of pickedDays) {
       const when = _randomTimeInDayWindow(day, startHour, endHour);
       if (!when) continue; // ventana del día ya pasó (caso: hoy después de endHour)
+      // Mapeo categoría → tipo de extra:
+      //   regalos → giveaway reclamable 6 hs (monto rotativo por actividad)
+      //   bonos   → promo con wa.link a cargar, reclamable 6 hs
+      //   juegos  → texto pelado (sin extra, no hay nada para reclamar)
+      const extra = { extraType: 'none' };
+      if (cat === 'regalos') {
+        extra.extraType = 'giveaway';
+        extra.giveawayAmount = _computeStrategyGiftAmount({ tierBudget, regalosCount, realDeposits30d });
+        extra.giveawayDurationMinutes = 360; // 6 hs
+      } else if (cat === 'bonos') {
+        extra.extraType = 'promo';
+        extra.promoCode = _STRATEGY_PROMO_CODES[tier] || 'BONO50';
+        extra.promoMessage = bp.body;
+        extra.promoDurationHours = 6;
+      }
       try {
         await ScheduledNotification.create({
           id: uuidv4(),
@@ -10703,8 +10752,8 @@ async function _scheduleMonthlyStrategyForUser({ user, tier, cfg, monthKey, reas
           body: bp.body,
           targetUsername: username,
           audiencePrefix: null,
-          extraType: 'none',
-          createdBy: `strategy-month:${monthKey}:${tier}:${cat}:${reasonStr}`
+          createdBy: `strategy-month:${monthKey}:${tier}:${cat}:${reasonStr}`,
+          ...extra
         });
         out.scheduled++;
         out.perCategory[cat]++;
