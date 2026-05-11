@@ -8463,25 +8463,42 @@ async function _recontactAnalyzeFromJSON(req, res) {
     }
 
     const norms = inputUsernames.map(x => x.norm);
-    const [users, stats, lookups] = await Promise.all([
+    const normsSet = new Set(norms);
+    // Helper: normaliza igual que `inp.norm` (lowercase + solo alfanuméricos).
+    // User.username y PlayerStats.username NO se guardan en esta forma
+    // (User preserva mayúsculas y caracteres como `_` `.` `-`; PlayerStats
+    // lowercaseiza pero preserva caracteres especiales). Por eso el $in
+    // directo se perdía a todos esos usuarios — se hace el match en JS.
+    const _normUname = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const [allUsers, allStats, lookups] = await Promise.all([
       User.find(
-        { username: { $in: norms } },
+        {},
         { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
       ).lean(),
       PlayerStats.find(
-        { username: { $in: norms } },
+        {},
         { username: 1, tier: 1, activityStatus: 1, lastRealDepositDate: 1, realDeposits30d: 1, realDeposits90d: 1, totalRealDeposits: 1, _id: 0 }
       ).lean(),
       // Pre-asignaciones de equipos cargadas por xlsx — resuelve línea
       // incluso para users que no están registrados o que tienen User
-      // sin lineTeamName/linePhone seteados.
+      // sin lineTeamName/linePhone seteados. Esta colección sí tiene
+      // `usernameNorm` ya en la forma normalizada → $in funciona OK.
       UserLineLookup.find(
         { usernameNorm: { $in: norms } },
         { usernameNorm: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
       ).lean()
     ]);
-    const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
-    const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+    const userMap = new Map();
+    for (const u of allUsers) {
+      const n = _normUname(u.username);
+      if (n && normsSet.has(n)) userMap.set(n, u);
+    }
+    const statsMap = new Map();
+    for (const s of allStats) {
+      const n = _normUname(s.username);
+      if (n && normsSet.has(n)) statsMap.set(n, s);
+    }
     const lookupMap = new Map(lookups.map(l => [String(l.usernameNorm || '').toLowerCase(), l]));
 
     const now = Date.now();
@@ -8718,14 +8735,21 @@ app.post(
       // Lookup batch contra User, PlayerStats y UserLineLookup (este último
       // resuelve la línea/equipo de pre-asignaciones cargadas por xlsx
       // aunque la persona no esté registrada ni tenga User.lineTeamName).
+      // User.username y PlayerStats.username NO se guardan en forma normalizada
+      // (User preserva mayúsculas y caracteres `_` `.` `-`; PlayerStats lowercase
+      // pero preserva caracteres). Por eso traemos toda la base con projection
+      // chica y matcheamos en JS — un $in directo perdía a esos usuarios.
       const norms = inputUsernames.map(u => u.norm);
-      const [users, stats, lookups] = await Promise.all([
+      const normsSet = new Set(norms);
+      const _normUname = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      const [allUsers, allStats, lookups] = await Promise.all([
         User.find(
-          { username: { $in: norms } },
+          {},
           { username: 1, phone: 1, fcmToken: 1, fcmTokens: 1, fcmTokenContext: 1, notifPermission: 1, lineTeamName: 1, linePhone: 1, lastLogin: 1, _id: 0 }
         ).lean(),
         PlayerStats.find(
-          { username: { $in: norms } },
+          {},
           { username: 1, tier: 1, activityStatus: 1, lastRealDepositDate: 1, realDeposits30d: 1, realDeposits90d: 1, totalRealDeposits: 1, _id: 0 }
         ).lean(),
         UserLineLookup.find(
@@ -8733,8 +8757,16 @@ app.post(
           { usernameNorm: 1, lineTeamName: 1, linePhone: 1, _id: 0 }
         ).lean()
       ]);
-      const userMap = new Map(users.map(u => [String(u.username || '').toLowerCase(), u]));
-      const statsMap = new Map(stats.map(s => [String(s.username || '').toLowerCase(), s]));
+      const userMap = new Map();
+      for (const u of allUsers) {
+        const n = _normUname(u.username);
+        if (n && normsSet.has(n)) userMap.set(n, u);
+      }
+      const statsMap = new Map();
+      for (const s of allStats) {
+        const n = _normUname(s.username);
+        if (n && normsSet.has(n)) statsMap.set(n, s);
+      }
       const lookupMap = new Map(lookups.map(l => [String(l.usernameNorm || '').toLowerCase(), l]));
 
       const now = Date.now();
