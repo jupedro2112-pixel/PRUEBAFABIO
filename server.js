@@ -9921,6 +9921,28 @@ app.get('/api/admin/callbell/conversions', authMiddleware, adminMiddleware, asyn
   }
 });
 
+// DELETE /api/admin/callbell/conversions/:username
+// Saca a un usuario de la lista de Post recontactación. NO borra el CallbellTag
+// (preserva la etiqueta original — solo limpia los campos convertedAt + convertedBy
+// para que el filtro convertedAt:{$ne:null} ya no lo agarre). Idempotente.
+app.delete('/api/admin/callbell/conversions/:username', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raw = String(req.params.username || '').trim();
+    if (!raw) return res.status(400).json({ error: 'username requerido' });
+    const norm = raw.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const r = await CallbellTag.updateOne(
+      { usernameNorm: norm },
+      { $set: { convertedAt: null, convertedBy: null } }
+    );
+    if (r.matchedCount === 0) return res.status(404).json({ error: 'No encontrada' });
+    logger.info(`[callbell/conversions DELETE] ${raw} (norm=${norm}) by=${(req.user && req.user.username) || 'admin'}`);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`[callbell/conversions DELETE] ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // CSV con todos los items enriquecidos. Se manda en POST porque no podemos
 // guardar el archivo en el server — el admin manda el xlsx de nuevo y
 // recibimos el CSV directo. Así evitamos persistir state intermedio.

@@ -4460,18 +4460,23 @@ function _renderRecontactConversionsCard(conversions, history, baseStats) {
     html += '          <th style="padding:7px 10px;text-align:center;">Días</th>';
     html += '          <th style="padding:7px 10px;">Equipo</th>';
     html += '          <th style="padding:7px 10px;">Cómo</th>';
+    html += '          <th style="padding:7px 10px;text-align:center;color:#ff8080;" title="Borrar de la lista">🗑</th>';
     html += '        </tr>';
     html += '      </thead>';
     html += '      <tbody>';
     for (const c of conversions) {
         const como = c.convertedBy === 'manual' ? '✅ manual' : '🤖 auto';
+        const safeUser = escapeHtml(c.username || '');
         html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">';
-        html += '  <td style="padding:6px 10px;color:#fff;font-weight:600;">' + escapeHtml(c.username || '') + '</td>';
+        html += '  <td style="padding:6px 10px;color:#fff;font-weight:600;">' + safeUser + '</td>';
         html += '  <td style="padding:6px 10px;color:#bbb;">' + fmtDate(c.etiquetadoAt) + '</td>';
         html += '  <td style="padding:6px 10px;color:#25d366;font-weight:700;">' + fmtDate(c.installedAt) + '</td>';
         html += '  <td style="padding:6px 10px;text-align:center;">' + daysCol(c.daysToInstall) + '</td>';
         html += '  <td style="padding:6px 10px;color:#aaa;">' + escapeHtml(c.team || '-') + '</td>';
         html += '  <td style="padding:6px 10px;color:#888;font-size:10.5px;">' + como + '</td>';
+        html += '  <td style="padding:6px 10px;text-align:center;">';
+        html += '    <button type="button" onclick="_recontactDeleteConversion(\'' + safeUser + '\')" title="Sacar a este usuario de la lista (no borra su etiqueta, solo lo saca de Post recontactación)" style="background:rgba(255,128,128,0.10);border:1px solid rgba(255,128,128,0.40);color:#ff8080;padding:3px 8px;border-radius:5px;cursor:pointer;font-size:11px;">🗑</button>';
+        html += '  </td>';
         html += '</tr>';
     }
     html += '      </tbody>';
@@ -4830,6 +4835,28 @@ function _renderRecontactHistoryTable(history) {
 }
 
 // Borra una entrada del historial por su _id (server) y recarga la lista.
+// Saca a un usuario de la lista de Post recontactación. NO borra su tag
+// de Callbell — solo limpia los campos convertedAt/convertedBy en el server
+// para que el filtro convertedAt:{$ne:null} ya no lo agarre. Idempotente.
+async function _recontactDeleteConversion(username) {
+    if (!username) return;
+    if (!confirm('¿Sacar a "' + username + '" de la lista de Post recontactación?\n\nSu etiqueta de Callbell queda intacta — solo se saca de esta vista.')) return;
+    try {
+        const r = await authFetch('/api/admin/callbell/conversions/' + encodeURIComponent(username), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error al borrar'), 'error');
+            return;
+        }
+        showToast('✅ ' + username + ' sacado de la lista', 'success');
+        // Invalidar cache + refresh
+        _recontactConversionsCache = null;
+        loadRecontactConversions();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 async function _recontactDeleteHistoryEntry(id, label) {
     if (!id) { showToast('ID inválido', 'error'); return; }
     if (!confirm('¿Borrar la entrada del historial "' + (label || '(sin nombre)') + '"?\n\nNo se puede deshacer.')) return;
