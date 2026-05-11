@@ -12979,6 +12979,15 @@ app.get('/api/admin/team-campaigns/agenda', authMiddleware, adminMiddleware, asy
     const targetDateStr = targetDate.toISOString().slice(0, 10);
     const targetDayOfWeek = targetDate.getDay();
 
+    // Defensive: verificar que el modelo está cargado antes de usarlo.
+    // Si TeamCampaign está undefined acá significa que hay un problema con
+    // los imports/registros — devolvemos un error claro en vez de el genérico
+    // "Cannot read properties of undefined (reading 'find')".
+    if (!TeamCampaign || typeof TeamCampaign.find !== 'function') {
+      logger.error('[agenda] TeamCampaign model is undefined or invalid');
+      return res.status(500).json({ error: 'Modelo TeamCampaign no disponible — reinicia el server.' });
+    }
+
     // Levantar campañas activas que matchean ese día.
     const allActive = await TeamCampaign.find({ isActive: true }).lean();
     const matching = allActive.filter(c => {
