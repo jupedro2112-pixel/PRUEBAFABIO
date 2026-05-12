@@ -15382,6 +15382,7 @@ function _renderRafflesAdmin() {
         html += '      <button type="button" disabled style="background:rgba(255,255,255,0.04);color:#666;border:1px solid rgba(255,255,255,0.10);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:not-allowed;" title="Sorteos pagos deshabilitados por política — los activos se mantienen hasta sortearse">🚫 Force seed (off)</button>';
         html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando de un sorteo activo (elegís sorteo + equipos + texto)">📣 Anunciar sorteo</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
+        html += '      <button type="button" onclick="viewArchivedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver sorteos archivados — útil para reabrir uno y cargarle ganador">🗄 Ver archivados</button>';
     }
     // Crear sorteo relampago: SOLO en la seccion de relampago.
     if (isLightning) {
@@ -17114,6 +17115,94 @@ async function announceRaffleSend(raffleId) {
         alert('Error de conexión');
     }
     finally { announceRaffleSend._busy = false; }
+}
+
+// Lista los sorteos PAGOS archivados (incluye drawn/archived) y permite
+// REABRIR uno para cargarle ganador. Útil cuando cleanup archivó un
+// sorteo lleno que todavía no se sorteó.
+async function viewArchivedRaffles() {
+    const modalId = 'archivedRafflesModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML =
+        '<div style="background:#1a0033;border:1.5px solid rgba(0,212,255,0.50);border-radius:14px;padding:18px;max-width:780px;width:100%;color:#fff;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:12px;">' +
+                '<div><h3 style="margin:0;color:#00d4ff;font-size:15px;">🗄 Sorteos pagos archivados</h3>' +
+                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;">Estos sorteos están archivados. Si todavía no se sortearon (sin ganador) y tenían participantes, podés reabrirlos para cargarles ganador.</div></div>' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>' +
+            '</div>' +
+            '<div id="archivedRafflesList" style="font-size:12px;"><div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    try {
+        const r = await authFetch('/api/admin/raffles?include=archived');
+        if (!r.ok) {
+            document.getElementById('archivedRafflesList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error cargando</div>';
+            return;
+        }
+        const d = await r.json();
+        const archived = (d.raffles || []).filter(x => x.status === 'archived');
+        const list = document.getElementById('archivedRafflesList');
+        if (!list) return;
+        if (archived.length === 0) {
+            list.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">No hay sorteos archivados.</div>';
+            return;
+        }
+        const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+        const fmtDate = (d) => { try { return new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }); } catch(_) { return ''; } };
+        let html = '';
+        for (const r of archived) {
+            const hasWinner = !!r.winnerUsername;
+            const sold = r.cuposSold || 0;
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:10px 12px;margin-bottom:8px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:200px;">';
+            html += '<div style="color:#fff;font-weight:700;font-size:13px;">' + escapeHtml((r.emoji || '🎯') + ' ' + r.name) + ' · #' + r.instanceNumber + '</div>';
+            html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">Premio: ' + escapeHtml(fmtMoney(r.prizeValueARS)) + ' · Vendidos: ' + sold + '/' + (r.totalTickets || 100) + ' · Recaudó: ' + escapeHtml(fmtMoney(r.revenue)) + '</div>';
+            if (r.drawDate) html += '<div style="color:#888;font-size:10.5px;">Fecha sorteo: ' + escapeHtml(fmtDate(r.drawDate)) + '</div>';
+            if (hasWinner) html += '<div style="color:#66ff66;font-size:11px;margin-top:3px;">🏆 Ganador: ' + escapeHtml(r.winnerUsername) + ' (#' + r.winningTicketNumber + ')</div>';
+            html += '</div>';
+            html += '<div style="display:flex;gap:6px;align-items:center;">';
+            if (!hasWinner && sold > 0) {
+                html += '<button type="button" onclick="reopenRaffle(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:7px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">♻️ Reabrir</button>';
+            } else if (hasWinner) {
+                html += '<div style="color:#888;font-size:10.5px;">(ya sorteado)</div>';
+            } else {
+                html += '<div style="color:#888;font-size:10.5px;">(sin participantes)</div>';
+            }
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+        }
+        list.innerHTML = html;
+    } catch (e) {
+        const l = document.getElementById('archivedRafflesList');
+        if (l) l.innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+async function reopenRaffle(id) {
+    if (!confirm('¿Reabrir este sorteo para cargarle ganador? Va a volver a estado activo/cerrado según los cupos vendidos.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(id) + '/reopen', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (!r.ok) {
+            showToast('❌ ' + (d.error || 'Error'), 'error');
+            return;
+        }
+        showToast('♻️ Sorteo reabierto en estado: ' + d.newStatus, 'success');
+        document.getElementById('archivedRafflesModal')?.remove();
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
 
 // Lista los sorteos del modelo viejo (iphone/caribe/auto/other) que sigan

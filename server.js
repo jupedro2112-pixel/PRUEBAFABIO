@@ -21337,9 +21337,16 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
 app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const newTypes = RAFFLE_TYPES.map(t => t.type);
+    // ?include=archived agrega los 'archived' al listado. Útil cuando hay
+    // que reabrir un sorteo viejo para cargarle ganador (post-cleanup).
+    const includeArchived = String(req.query.include || '').toLowerCase() === 'archived' ||
+                            String(req.query.include || '').toLowerCase() === 'all';
+    const statusFilter = includeArchived
+      ? ['active', 'closed', 'drawn', 'archived']
+      : ['active', 'closed', 'drawn'];
     const raffles = await Raffle.find(
-      { status: { $in: ['active', 'closed', 'drawn'] }, raffleType: { $in: newTypes } }
-    ).sort({ status: 1, raffleType: 1, instanceNumber: 1 }).lean();
+      { status: { $in: statusFilter }, raffleType: { $in: newTypes } }
+    ).sort({ status: 1, raffleType: 1, instanceNumber: 1 }).limit(500).lean();
     const ids = raffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([
       { $match: { raffleId: { $in: ids } } },
@@ -22539,6 +22546,41 @@ app.delete('/api/admin/raffles/:id', authMiddleware, superAdminMiddleware, async
   } catch (err) {
     logger.error(`/api/admin/raffles/:id DELETE: ${err.message}`);
     res.status(500).json({ error: 'Error eliminando sorteo' });
+  }
+});
+
+// POST /api/admin/raffles/:id/reopen — devuelve un sorteo 'archived' a
+// 'closed' para que se pueda volver a sortear (cargar ganador). Solo
+// admite reabrir sorteos que NO estaban drawn (sin ganador). Útil cuando
+// cleanup archivó un sorteo lleno que todavía no se sortea.
+app.post('/api/admin/raffles/:id/reopen', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status === 'active' || raffle.status === 'closed') {
+      return res.status(400).json({ error: 'Este sorteo ya está activo o cerrado — no necesita reabrirse.' });
+    }
+    if (raffle.winnerUsername) {
+      return res.status(400).json({ error: 'Este sorteo ya tiene ganador asignado. No se puede reabrir; el ganador es ' + raffle.winnerUsername + '.' });
+    }
+    // Recontar cupos vendidos para decidir a qué estado volver.
+    const partsAgg = await RaffleParticipation.aggregate([
+      { $match: { raffleId: raffle.id } },
+      { $group: { _id: '$raffleId', cuposSold: { $sum: '$cuposCount' } } }
+    ]);
+    const sold = (partsAgg[0] && partsAgg[0].cuposSold) || 0;
+    if (sold === 0) {
+      return res.status(400).json({ error: 'Este sorteo no tiene participantes. Para crear uno nuevo usá el cron del lunes o /api/admin/raffles/cleanup.' });
+    }
+    const newStatus = sold >= (raffle.totalTickets || 100) ? 'closed' : 'active';
+    await Raffle.updateOne(
+      { id: raffle.id },
+      { $set: { status: newStatus, archivedAt: null } }
+    );
+    res.json({ success: true, raffleId: raffle.id, newStatus, cuposSold: sold });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/reopen: ${err.message}`);
+    res.status(500).json({ error: err.message });
   }
 });
 
