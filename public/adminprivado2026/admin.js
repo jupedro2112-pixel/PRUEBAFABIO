@@ -1774,10 +1774,29 @@ async function loadNotifCheckAdmin() {
         html += '<input id="ncTitle" type="text" placeholder="🔔 Test de notificaciones" maxlength="100" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">';
         html += '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Mensaje del test (máx 200 chars) *</label>';
         html += '<textarea id="ncMessage" placeholder="Ej: Probando que te lleguen las notificaciones de regalos. Tocá CONFIRMAR si te llegó." maxlength="200" rows="3" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;font-family:inherit;resize:vertical;"></textarea>';
-        html += '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Duración (hs)</label>';
-        html += '<input id="ncTtl" type="number" min="1" max="72" value="24" style="width:100px;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;">';
+        html += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">';
+        html += '<div><label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Duración (hs)</label>';
+        html += '<input id="ncTtl" type="number" min="1" max="72" value="24" style="width:100px;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;">';
+        html += '</div>';
+        html += '<div><label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">🎯 Meta de taps (opcional)</label>';
+        html += '<input id="ncGoal" type="number" min="0" max="100000" placeholder="ej. 2000" style="width:130px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.40);color:#ffd700;padding:9px 11px;border-radius:7px;font-size:13px;font-weight:800;">';
+        html += '<div style="color:#888;font-size:10px;margin-top:2px;">Si la setas, ves progreso vivo</div></div>';
+        html += '</div>';
         html += '<div><button onclick="sendNotifCheck()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:11px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 ENVIAR TEST A TODOS</button></div>';
         html += '</div>';
+
+        // === Agregado global de TODOS los tests ===
+        const agg = d.aggregate || {};
+        if ((agg.totalChecks || 0) > 0) {
+            html += '<div style="background:rgba(155,48,255,0.08);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:11px 13px;margin-bottom:14px;">';
+            html += '<div style="color:#c89bff;font-weight:900;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;">📈 Acumulado · TODOS los tests</div>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;">';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px;text-align:center;"><div style="color:#aaa;font-size:9.5px;font-weight:700;letter-spacing:0.5px;">Tests</div><div style="color:#fff;font-size:18px;font-weight:900;">' + Number(agg.totalChecks || 0).toLocaleString('es-AR') + '</div></div>';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px;text-align:center;"><div style="color:#aaa;font-size:9.5px;font-weight:700;letter-spacing:0.5px;">Enviados</div><div style="color:#4dabff;font-size:18px;font-weight:900;">' + Number(agg.totalSent || 0).toLocaleString('es-AR') + '</div></div>';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px;text-align:center;"><div style="color:#aaa;font-size:9.5px;font-weight:700;letter-spacing:0.5px;">Taps totales</div><div style="color:#ffd700;font-size:18px;font-weight:900;">' + Number(agg.totalTapped || 0).toLocaleString('es-AR') + '</div></div>';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px;text-align:center;"><div style="color:#aaa;font-size:9.5px;font-weight:700;letter-spacing:0.5px;">Confirms totales</div><div style="color:#66ff66;font-size:18px;font-weight:900;">' + Number(agg.totalConfirmed || 0).toLocaleString('es-AR') + '</div></div>';
+            html += '</div></div>';
+        }
 
         // === Último check (si existe) ===
         if (latest) {
@@ -1798,8 +1817,64 @@ async function loadNotifCheckAdmin() {
             html += '<div style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">👆 Tocaron push</div><div style="color:#ffd700;font-size:20px;font-weight:900;">' + Number(latest.tappedCount || 0).toLocaleString('es-AR') + '</div></div>';
             html += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">✅ Confirmaron</div><div style="color:#66ff66;font-size:20px;font-weight:900;">' + Number(latest.confirmedCount || 0).toLocaleString('es-AR') + '</div><div style="color:#888;font-size:10px;">' + confPct + '% de enviados</div></div>';
             html += '</div>';
+            // === Barra de progreso hacia la meta (si está seteada) ===
+            if (latest.goalTaps && latest.goalTaps > 0) {
+                const cur = latest.tappedCount || 0;
+                const goal = latest.goalTaps;
+                const pct = Math.min(100, Math.round(cur * 100 / goal));
+                const reached = !!latest.goalReachedAt;
+                html += '<div style="background:rgba(0,0,0,0.30);border:2px solid ' + (reached ? '#66ff66' : '#ffd700') + ';border-radius:10px;padding:11px;margin-top:10px;">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
+                html += '<div style="color:' + (reached ? '#66ff66' : '#ffd700') + ';font-weight:900;font-size:12px;letter-spacing:1px;">' + (reached ? '🏆 META ALCANZADA' : '🎯 META: ' + goal.toLocaleString('es-AR') + ' taps') + '</div>';
+                html += '<div style="color:#fff;font-size:14px;font-weight:900;">' + cur.toLocaleString('es-AR') + ' / ' + goal.toLocaleString('es-AR') + ' <span style="color:#888;font-size:11px;">(' + pct + '%)</span></div>';
+                html += '</div>';
+                html += '<div style="height:14px;background:rgba(0,0,0,0.50);border-radius:7px;overflow:hidden;">';
+                html += '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,' + (reached ? '#66ff66,#a8ff66' : '#ffd700,#ff8c5a') + ');transition:width 0.5s;"></div></div>';
+                if (reached) {
+                    const reachedDate = latest.goalReachedAt ? new Date(latest.goalReachedAt).toLocaleString('es-AR') : '';
+                    html += '<div style="color:#66ff66;font-size:11px;margin-top:5px;text-align:center;">✨ Alcanzaste la meta el ' + escapeHtml(reachedDate) + '</div>';
+                } else {
+                    const remaining = goal - cur;
+                    html += '<div style="color:#aaa;font-size:11px;margin-top:5px;text-align:center;">Faltan <strong style="color:#ffd700;">' + remaining.toLocaleString('es-AR') + '</strong> taps</div>';
+                }
+                html += '</div>';
+            }
+
+            // === Breakdown por hora (chart simple) ===
+            const hourly = d.hourly || [];
+            if (hourly.length > 0) {
+                const maxBar = Math.max(...hourly.map(h => h.confirms || 0), 1);
+                html += '<div style="margin-top:14px;background:rgba(0,0,0,0.20);border-radius:8px;padding:10px;">';
+                html += '<div style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">⏱️ Confirmaciones por hora</div>';
+                html += '<div style="display:flex;align-items:flex-end;gap:3px;height:80px;">';
+                for (const h of hourly) {
+                    const heightPct = Math.max(4, Math.round((h.confirms / maxBar) * 100));
+                    const hourLabel = String(h._id || '').split(' ')[1] || '';
+                    html += '<div style="flex:1;min-width:18px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;" title="' + escapeHtml(h._id) + ' · ' + h.confirms + ' confirmaron">';
+                    html += '<div style="color:#66ff66;font-size:9.5px;font-weight:900;margin-bottom:2px;">' + h.confirms + '</div>';
+                    html += '<div style="width:100%;background:linear-gradient(180deg,#66ff66,#0080ff);border-radius:3px 3px 0 0;height:' + heightPct + '%;"></div>';
+                    html += '<div style="color:#888;font-size:8.5px;margin-top:2px;font-family:monospace;">' + escapeHtml(hourLabel.slice(0,5)) + '</div>';
+                    html += '</div>';
+                }
+                html += '</div></div>';
+            }
+
             html += '<div style="margin-top:10px;text-align:right;"><button onclick="viewNotifCheckConfirmers(\'' + escapeJsArg(latest.id) + '\')" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:6px 12px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">👥 Ver lista de confirmaciones</button></div>';
             html += '</div>';
+
+            // === Top users engagement (todos los checks) ===
+            const top = d.topUsers || [];
+            if (top.length > 0) {
+                html += '<div style="background:rgba(255,215,0,0.05);border:1px solid rgba(255,215,0,0.30);border-radius:10px;padding:11px 13px;margin-bottom:14px;">';
+                html += '<div style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;">⭐ Top engagers (más confirmaciones en historial)</div>';
+                html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+                for (let i = 0; i < top.length; i++) {
+                    const u = top[i];
+                    const medal = i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '⭐'));
+                    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,215,0,0.20);border-radius:6px;padding:6px 9px;font-size:11px;color:#fff;font-weight:700;">' + medal + ' @' + escapeHtml(u._id || '?') + ' <span style="color:#ffd700;">×' + u.count + '</span></div>';
+                }
+                html += '</div></div>';
+            }
         }
 
         // === Historial ===
@@ -1839,13 +1914,19 @@ async function sendNotifCheck() {
     const title = (document.getElementById('ncTitle')?.value || '').trim();
     const message = (document.getElementById('ncMessage')?.value || '').trim();
     const ttlHours = parseInt(document.getElementById('ncTtl')?.value || '24', 10) || 24;
+    const goalRaw = (document.getElementById('ncGoal')?.value || '').trim();
+    const goalTaps = goalRaw ? parseInt(goalRaw, 10) : null;
     if (!message) { showToast('Escribí el mensaje del test', 'error'); return; }
-    if (!confirm('¿Mandar este test a TODOS los users con notifs?\n\n' + (title || '🔔 Test') + '\n' + message + '\n\nDura ' + ttlHours + 'hs.')) return;
+    if (goalTaps != null && (!Number.isFinite(goalTaps) || goalTaps <= 0)) {
+        showToast('Meta de taps inválida', 'error'); return;
+    }
+    const goalLine = goalTaps ? `\nMeta: ${goalTaps.toLocaleString('es-AR')} taps` : '';
+    if (!confirm('¿Mandar este test a TODOS los users con notifs?\n\n' + (title || '🔔 Test') + '\n' + message + '\n\nDura ' + ttlHours + 'hs.' + goalLine)) return;
     try {
         const r = await authFetch('/api/admin/notif-check/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, message, ttlHours })
+            body: JSON.stringify({ title, message, ttlHours, goalTaps })
         });
         const d = await r.json();
         if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }

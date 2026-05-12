@@ -30,6 +30,12 @@ const checkSchema = new mongoose.Schema({
   tappedCount: { type: Number, default: 0 },
   confirmedCount: { type: Number, default: 0 },
 
+  // Meta opcional: si admin lo configura, la PWA y el panel admin
+  // muestran la barra de progreso "X / goalTaps". Cuando el contador
+  // alcanza la meta, admin sabe que cumplió el objetivo del push.
+  goalTaps: { type: Number, default: null },
+  goalReachedAt: { type: Date, default: null, index: true },
+
   createdAt: { type: Date, default: Date.now, index: true },
   createdBy: { type: String, default: null },
 

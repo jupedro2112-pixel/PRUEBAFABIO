@@ -18194,6 +18194,8 @@ app.post('/api/admin/notif-check/send', authMiddleware, adminMiddleware, bulkLau
     const title = String((req.body && req.body.title) || '').slice(0, 100).trim() || '🔔 Test de notificaciones';
     if (!message) return res.status(400).json({ error: 'Falta el mensaje del check' });
     const ttlHours = Math.max(1, Math.min(72, Number(req.body && req.body.ttlHours) || 24));
+    const goalTapsRaw = Number(req.body && req.body.goalTaps);
+    const goalTaps = (Number.isFinite(goalTapsRaw) && goalTapsRaw > 0) ? Math.min(100000, Math.floor(goalTapsRaw)) : null;
 
     // Cerrar checks anteriores activos.
     await NotifCheck.updateMany({ status: 'active' }, { $set: { status: 'closed' } });
@@ -18209,6 +18211,7 @@ app.post('/api/admin/notif-check/send', authMiddleware, adminMiddleware, bulkLau
       id: uuidv4(),
       title, message, audienceTotal,
       sentCount: 0, tappedCount: 0, confirmedCount: 0,
+      goalTaps,
       status: 'active',
       expiresAt: new Date(Date.now() + ttlHours * 3600 * 1000),
       createdBy: req.user.username || null
@@ -18239,22 +18242,74 @@ app.post('/api/admin/notif-check/send', authMiddleware, adminMiddleware, bulkLau
   }
 });
 
-// GET /api/admin/notif-check/stats — stats del check activo + historial.
+// GET /api/admin/notif-check/stats — stats del check activo + historial +
+// agregados globales + breakdown por hora del check más reciente.
 app.get('/api/admin/notif-check/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const recent = await NotifCheck.find({}).sort({ createdAt: -1 }).limit(10).lean();
-    // Para el más reciente, recomputar counters from source of truth.
+    let hourly = [];
+    let topUsers = [];
+    let aggregateAll = { totalChecks: 0, totalSent: 0, totalTapped: 0, totalConfirmed: 0 };
+
     if (recent.length > 0) {
       const top = recent[0];
+      // Recomputar counters del check más reciente.
       const [confirmedCount, taps] = await Promise.all([
         NotifCheckConfirm.countDocuments({ checkId: top.id }),
-        PushTapLog.countDocuments({ source: 'notif-check', giveawayId: null })
+        // taps específicos del check (vamos a usar createdAt como floor para
+        // diferenciar de otros checks anteriores).
+        PushTapLog.countDocuments({
+          source: 'notif-check',
+          giveawayId: null,
+          tappedAt: { $gte: top.createdAt }
+        })
       ]);
       top.confirmedCount = confirmedCount;
       top.tappedCount = taps;
-      await NotifCheck.updateOne({ id: top.id }, { $set: { confirmedCount, tappedCount: taps } }).catch(() => {});
+
+      // Si llegó a la meta y todavía no se marcó, marcarlo.
+      const update = { confirmedCount, tappedCount: taps };
+      if (top.goalTaps && taps >= top.goalTaps && !top.goalReachedAt) {
+        update.goalReachedAt = new Date();
+        top.goalReachedAt = update.goalReachedAt;
+      }
+      await NotifCheck.updateOne({ id: top.id }, { $set: update }).catch(() => {});
+
+      // Breakdown por HORA desde createdAt para el chart del check actual.
+      hourly = await NotifCheckConfirm.aggregate([
+        { $match: { checkId: top.id } },
+        { $group: {
+          _id: {
+            $dateToString: {
+              format: '%Y-%m-%d %H:00', date: '$confirmedAt',
+              timezone: 'America/Argentina/Buenos_Aires'
+            }
+          },
+          confirms: { $sum: 1 }
+        }},
+        { $sort: { _id: 1 } }
+      ]);
+
+      // Top 10 usuarios que más confirmaron en TODOS los checks (engagement).
+      topUsers = await NotifCheckConfirm.aggregate([
+        { $group: { _id: '$username', count: { $sum: 1 }, lastConfirmedAt: { $max: '$confirmedAt' } } },
+        { $sort: { count: -1, lastConfirmedAt: -1 } },
+        { $limit: 10 }
+      ]);
     }
-    res.json({ success: true, checks: recent });
+
+    // Agregado global histórico.
+    const allChecks = await NotifCheck.find({},
+      { sentCount: 1, tappedCount: 1, confirmedCount: 1, _id: 0 }
+    ).lean();
+    aggregateAll.totalChecks = allChecks.length;
+    for (const c of allChecks) {
+      aggregateAll.totalSent += Number(c.sentCount || 0);
+      aggregateAll.totalTapped += Number(c.tappedCount || 0);
+      aggregateAll.totalConfirmed += Number(c.confirmedCount || 0);
+    }
+
+    res.json({ success: true, checks: recent, hourly, topUsers, aggregate: aggregateAll });
   } catch (err) {
     logger.error(`/api/admin/notif-check/stats: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
