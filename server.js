@@ -23118,16 +23118,16 @@ function _buildWinnerPush(raffle, mappedNumber, opts) {
   const MIN_CARGAS_LOCAL = 5;
   const title = lightningForfeited
     ? '🎲 Salió tu número pero…'
-    : (cargasInsuficientes
-      ? '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁')
-      : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'));
+    : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
   let body;
   if (lightningForfeited) {
     body = `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${MIN_CARGAS_LOCAL} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`;
-  } else if (cargasInsuficientes) {
-    body = `¡Salió tu número #${mappedNumber} y ganaste $${prize.toLocaleString('es-AR')}! Reclamá directo desde la aplicación.`;
   } else {
-    body = `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá el botón de WhatsApp del agente para reclamar. Recordá: necesitás tener 5 cargas vigentes.`;
+    // Mensaje unificado para todos los ganadores (con o sin cargas
+    // detectadas). Decisión del dueño 2026-05-12: que todos puedan
+    // reclamar directo desde la app — la verificación final la hace el
+    // agente en Pagos antes de habilitar el retiro.
+    body = `¡Salió tu número #${mappedNumber} y ganaste $${prize.toLocaleString('es-AR')}! Reclamá directo desde la aplicación.`;
   }
   const data = {
     source: (opts && opts.source) || (lightningForfeited ? 'raffle-win-forfeit' : (cargasInsuficientes ? 'raffle-win-needs-verify' : 'raffle-win')),
