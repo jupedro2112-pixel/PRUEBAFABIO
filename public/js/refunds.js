@@ -745,11 +745,19 @@ VIP.refunds = (function () {
             return;
         }
 
-        // Como este card ya guía el flow de instalación (3 pasos), ocultamos
-        // el `installHeroCard` para no duplicar el CTA de "Instalar la app".
+        // Coordinación con installHeroCard:
+        //   - browser (no standalone): mostramos el hero card (big $5K visual)
+        //     ADEMÁS del welcomeBonusCard (que tiene el progreso real). El user
+        //     ve el hook y el stepper.
+        //   - standalone (app abierta): ocultamos el hero card. El user ya
+        //     instaló — el welcomeBonusCard alcanza para guiarlo a notifs +
+        //     reclamar.
         try {
             const heroCard = document.getElementById('installHeroCard');
-            if (heroCard) heroCard.hidden = true;
+            if (heroCard) {
+                if (isStandalone()) heroCard.hidden = true;
+                else heroCard.hidden = false;
+            }
         } catch (_) {}
 
         // NOTA: antes este bloque ocultaba el card si isAppInstalled() === true,

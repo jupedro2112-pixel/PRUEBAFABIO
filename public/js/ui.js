@@ -967,9 +967,11 @@ if (VIP.ui.isAppStandalone()) {
 (function setupInstallHeroCard() {
     const card = document.getElementById('installHeroCard');
     if (!card) return;
-    let alreadyInstalled = false;
-    try { alreadyInstalled = localStorage.getItem('vipAppInstalled') === '1'; } catch (_) {}
-    if (VIP.ui.isAppStandalone() || alreadyInstalled) {
+    // Solo ocultar el card si CURRENTLY estamos en standalone. NO usar el
+    // flag vipAppInstalled localStorage porque persiste aunque el user
+    // desinstale la app — y nos quedábamos sin mostrar el hook del $5.000
+    // a usuarios que claramente NO tienen la app instalada ahora.
+    if (VIP.ui.isAppStandalone()) {
         card.hidden = true;
         return;
     }
