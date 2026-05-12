@@ -21342,13 +21342,19 @@ app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) 
     if (kind === 'free')      typeFilter = FREE_RAFFLE_TYPES.map(t => t.type);
     else if (kind === 'all')  typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
     else                      typeFilter = RAFFLE_TYPES.map(t => t.type);
-    // ?include=archived agrega los 'archived' al listado. Útil cuando hay
-    // que reabrir un sorteo viejo para cargarle ganador (post-cleanup).
-    const includeArchived = String(req.query.include || '').toLowerCase() === 'archived' ||
-                            String(req.query.include || '').toLowerCase() === 'all';
-    const statusFilter = includeArchived
-      ? ['active', 'closed', 'drawn', 'archived']
-      : ['active', 'closed', 'drawn'];
+    // ?include=archived | all | history — qué estados incluir.
+    // 'archived' → suma 'archived' a los normales.
+    // 'all' o 'history' → trae TODO (active, closed, drawn, archived, cancelled).
+    //   Útil cuando "desaparecieron" sorteos y hay que ver qué pasó realmente.
+    const incl = String(req.query.include || '').toLowerCase();
+    let statusFilter;
+    if (incl === 'all' || incl === 'history') {
+      statusFilter = ['active', 'closed', 'drawn', 'archived', 'cancelled'];
+    } else if (incl === 'archived') {
+      statusFilter = ['active', 'closed', 'drawn', 'archived'];
+    } else {
+      statusFilter = ['active', 'closed', 'drawn'];
+    }
     const raffles = await Raffle.find(
       { status: { $in: statusFilter }, raffleType: { $in: typeFilter } }
     ).sort({ status: 1, raffleType: 1, instanceNumber: 1 }).limit(500).lean();

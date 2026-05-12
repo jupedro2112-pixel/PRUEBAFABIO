@@ -17135,10 +17135,10 @@ async function viewArchivedRaffles(kind) {
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     overlay.innerHTML =
-        '<div style="background:#1a0033;border:1.5px solid rgba(0,212,255,0.50);border-radius:14px;padding:18px;max-width:780px;width:100%;color:#fff;">' +
+        '<div style="background:#1a0033;border:1.5px solid rgba(0,212,255,0.50);border-radius:14px;padding:18px;max-width:820px;width:100%;color:#fff;">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:12px;">' +
-                '<div><h3 style="margin:0;color:#00d4ff;font-size:15px;">🗄 Sorteos ' + kindLabel + ' archivados</h3>' +
-                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;">Estos sorteos están archivados. Si todavía no se sortearon (sin ganador) y tenían participantes, podés reabrirlos para cargarles ganador.</div></div>' +
+                '<div><h3 style="margin:0;color:#00d4ff;font-size:15px;">🗄 Histórico completo · sorteos ' + kindLabel + '</h3>' +
+                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;">TODOS los sorteos del tipo (todos los estados). Si está sin ganador y con participantes, podés sortear o reabrir según corresponda.</div></div>' +
                 '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>' +
             '</div>' +
             '<div id="archivedRafflesList" style="font-size:12px;"><div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div></div>' +
@@ -17146,39 +17146,64 @@ async function viewArchivedRaffles(kind) {
     document.body.appendChild(overlay);
 
     try {
-        const r = await authFetch('/api/admin/raffles?include=archived&kind=' + k);
+        // include=history → TODOS los estados (active, closed, drawn, archived, cancelled).
+        const r = await authFetch('/api/admin/raffles?include=history&kind=' + k);
         if (!r.ok) {
             document.getElementById('archivedRafflesList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error cargando</div>';
             return;
         }
         const d = await r.json();
-        const archived = (d.raffles || []).filter(x => x.status === 'archived');
+        const all = d.raffles || [];
         const list = document.getElementById('archivedRafflesList');
         if (!list) return;
-        if (archived.length === 0) {
-            list.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">No hay sorteos archivados.</div>';
+        if (all.length === 0) {
+            list.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">No hay NINGÚN sorteo ' + kindLabel + ' en la base de datos.<br>(Ni archivado, ni activo, ni cancelado.)</div>';
             return;
         }
+        // Resumen por status para diagnóstico rápido.
+        const counts = {};
+        for (const x of all) counts[x.status] = (counts[x.status] || 0) + 1;
+        const labels = { active: '🟢 Activos', closed: '🔵 Llenos', drawn: '🏆 Sorteados', archived: '🗄 Archivados', cancelled: '✖ Cancelados' };
+        let summary = '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:9px 11px;margin-bottom:12px;font-size:11.5px;color:#cce;">Total: <strong>' + all.length + '</strong>';
+        for (const s of Object.keys(counts)) {
+            summary += ' · ' + (labels[s] || s) + ': <strong>' + counts[s] + '</strong>';
+        }
+        summary += '</div>';
+
         const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
         const fmtDate = (d) => { try { return new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }); } catch(_) { return ''; } };
-        let html = '';
-        for (const r of archived) {
+        const statusBadge = (s) => {
+            const colors = { active: '#66ff66', closed: '#00d4ff', drawn: '#ffd700', archived: '#aaa', cancelled: '#ff8080' };
+            return '<span style="background:rgba(255,255,255,0.05);border:1px solid ' + (colors[s] || '#888') + '50;color:' + (colors[s] || '#888') + ';padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;text-transform:uppercase;">' + s + '</span>';
+        };
+        let html = summary;
+        for (const r of all) {
             const hasWinner = !!r.winnerUsername;
             const sold = r.cuposSold || 0;
+            const isArchivedOrDrawn = (r.status === 'archived' || r.status === 'drawn');
+            const isActive = (r.status === 'active' || r.status === 'closed');
             html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:10px 12px;margin-bottom:8px;">';
             html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
             html += '<div style="flex:1;min-width:200px;">';
+            html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
             html += '<div style="color:#fff;font-weight:700;font-size:13px;">' + escapeHtml((r.emoji || '🎯') + ' ' + r.name) + ' · #' + r.instanceNumber + '</div>';
-            html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">Premio: ' + escapeHtml(fmtMoney(r.prizeValueARS)) + ' · Vendidos: ' + sold + '/' + (r.totalTickets || 100) + ' · Recaudó: ' + escapeHtml(fmtMoney(r.revenue)) + '</div>';
-            if (r.drawDate) html += '<div style="color:#888;font-size:10.5px;">Fecha sorteo: ' + escapeHtml(fmtDate(r.drawDate)) + '</div>';
+            html += statusBadge(r.status);
+            html += '</div>';
+            html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">Premio: ' + escapeHtml(fmtMoney(r.prizeValueARS)) + ' · Vendidos: ' + sold + '/' + (r.totalTickets || 100) + ' · Recaudó: ' + escapeHtml(fmtMoney(r.revenue || 0)) + '</div>';
+            if (r.weekKey) html += '<div style="color:#888;font-size:10.5px;">Semana: ' + escapeHtml(r.weekKey) + (r.drawDate ? ' · Sorteo: ' + escapeHtml(fmtDate(r.drawDate)) : '') + '</div>';
             if (hasWinner) html += '<div style="color:#66ff66;font-size:11px;margin-top:3px;">🏆 Ganador: ' + escapeHtml(r.winnerUsername) + ' (#' + r.winningTicketNumber + ')</div>';
             html += '</div>';
-            html += '<div style="display:flex;gap:6px;align-items:center;">';
-            if (!hasWinner && sold > 0) {
+            html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+            if (isActive && sold > 0 && !hasWinner) {
+                html += '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove();drawRaffle(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:7px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">🎰 Sortear</button>';
+            }
+            if (isArchivedOrDrawn && sold > 0 && !hasWinner) {
                 html += '<button type="button" onclick="reopenRaffle(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:7px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">♻️ Reabrir</button>';
-            } else if (hasWinner) {
-                html += '<div style="color:#888;font-size:10.5px;">(ya sorteado)</div>';
-            } else {
+            }
+            if (hasWinner) {
+                html += '<div style="color:#888;font-size:10.5px;">(ganador asignado)</div>';
+            }
+            if (sold === 0 && !hasWinner) {
                 html += '<div style="color:#888;font-size:10.5px;">(sin participantes)</div>';
             }
             html += '</div>';
