@@ -20282,11 +20282,11 @@ const LIGHTNING_RAFFLE_CONFIG = {
 // spawnear las nuevas (free_*_cargas / free_*_netwin).
 const FREE_RAFFLE_TYPES = [
   // === Por CARGAS ===
-  { type: 'free_1m_cargas',   prize: 1000000, totalTickets: 100, minCargasARS: 100000, minNetLossARS: 0, parallelInstances: 1, emoji: '👑',
+  { type: 'free_1m_cargas',   prize: 1000000, totalTickets: 100, minCargasARS: 2000000, minNetLossARS: 0, parallelInstances: 1, emoji: '👑',
     name: 'Sorteo $1.000.000', prizeName: '$1.000.000 en saldo' },
-  { type: 'free_500k_cargas', prize:  500000, totalTickets: 100, minCargasARS:  50000, minNetLossARS: 0, parallelInstances: 1, emoji: '💎',
+  { type: 'free_500k_cargas', prize:  500000, totalTickets: 100, minCargasARS: 1000000, minNetLossARS: 0, parallelInstances: 1, emoji: '💎',
     name: 'Sorteo $500.000',   prizeName: '$500.000 en saldo' },
-  { type: 'free_100k_cargas', prize:  100000, totalTickets: 100, minCargasARS:  20000, minNetLossARS: 0, parallelInstances: 5, emoji: '🎯',
+  { type: 'free_100k_cargas', prize:  100000, totalTickets: 100, minCargasARS:  200000, minNetLossARS: 0, parallelInstances: 5, emoji: '🎯',
     name: 'Sorteo $100.000',   prizeName: '$100.000 en saldo' },
   // === Por NETWIN ===
   { type: 'free_500k_netwin', prize:  500000, totalTickets: 100, minCargasARS: 0, minNetLossARS:  50000, parallelInstances: 1, emoji: '💰',
@@ -20604,6 +20604,25 @@ async function _ensureActiveRafflesSeeded() {
   for (const cfg of allTypes) {
     try {
       const target = Math.max(1, Number(cfg.parallelInstances) || 1);
+
+      // Sincronizamos minCargasARS / minNetLossARS de los activos con el
+      // umbral actual del constante. Si el dueño sube el threshold (ej.
+      // $100k → $2M para el $1M), los sorteos activos lo reflejan en el
+      // próximo seed sin necesidad de migración manual. Los que ya están
+      // anotados conservan su número — solo afecta a futuros enrolls.
+      const desiredCargas = Number(cfg.minCargasARS || 0);
+      const desiredNet = Number(cfg.minNetLossARS || 0);
+      await Raffle.updateMany(
+        {
+          raffleType: cfg.type,
+          status: 'active',
+          $or: [
+            { minCargasARS: { $ne: desiredCargas } },
+            { minNetLossARS: { $ne: desiredNet } }
+          ]
+        },
+        { $set: { minCargasARS: desiredCargas, minNetLossARS: desiredNet } }
+      ).catch(() => {});
 
       // Auto-rotate: cualquier activo con drawDate en el pasado se cierra
       // para que arranque uno nuevo (cutoff de 3hs pre-draw no bloquee).
