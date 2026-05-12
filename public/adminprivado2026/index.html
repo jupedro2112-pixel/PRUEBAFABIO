@@ -348,9 +348,12 @@
                         ➕ Agregar otro link / equipo
                     </button>
                     <div style="margin-top:18px;padding-top:14px;border-top:1px dashed rgba(255,255,255,0.1);">
-                        <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Link de comunidad por defecto (si el inicio del usuario no coincide con ningún equipo)</label>
+                        <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Link de comunidad 1 por defecto (si el inicio del usuario no coincide con ningún equipo)</label>
                         <input type="text" id="userCommunitiesDefaultLink" placeholder="https://chat.whatsapp.com/..." style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#25d366;font-size:13px;font-weight:600;font-family:monospace;box-sizing:border-box;">
                         <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Dejalo vacío si no querés que esos usuarios vean ningún link.</small>
+                        <label style="display:block;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;">Link de comunidad 2 por defecto (opcional)</label>
+                        <input type="text" id="userCommunitiesDefaultLink2" placeholder="https://chat.whatsapp.com/... (opcional)" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#00d4ff;font-size:13px;font-weight:600;font-family:monospace;box-sizing:border-box;">
+                        <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Si lo cargás, los usuarios sin equipo van a ver dos botones de comunidad.</small>
                     </div>
                     <button class="btn-primary" onclick="saveUserCommunities()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
                         💾 Guardar links de comunidad

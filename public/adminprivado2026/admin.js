@@ -735,12 +735,15 @@ function renderUserCommunitiesSlots(slots) {
     const container = document.getElementById('userCommunitiesSlots');
     if (!container) return;
     const data = Array.isArray(slots) ? slots : [];
-    const items = data.length > 0 ? data : [{ prefix: '', link: '' }];
-    container.innerHTML = items.map((s, i) => communitySlotHtml(i, s.prefix || '', s.link || '')).join('');
+    const items = data.length > 0 ? data : [{ prefix: '', link: '', link2: '', label: '', label2: '' }];
+    container.innerHTML = items.map((s, i) => communitySlotHtml(i, s.prefix || '', s.link || '', s.link2 || '', s.label || '', s.label2 || '')).join('');
     updateAddCommunityButton();
 }
 
-function communitySlotHtml(i, prefix, link) {
+function communitySlotHtml(i, prefix, link, link2, label, label2) {
+    link2 = link2 || '';
+    label = label || '';
+    label2 = label2 || '';
     return `
         <div class="user-community-slot" data-slot-index="${i}" style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;position:relative;">
             <div style="display:flex;align-items:center;gap:8px;">
@@ -752,9 +755,15 @@ function communitySlotHtml(i, prefix, link) {
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
                 <input type="text" class="user-community-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
             </div>
-            <div style="display:flex;flex-direction:column;gap:4px;">
-                <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Link de comunidad</label>
-                <input type="text" class="user-community-link" placeholder="https://chat.whatsapp.com/..." value="${escapeHtml(link)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(37,211,102,0.25);background:rgba(0,0,0,0.5);color:#25d366;font-size:13px;font-weight:600;font-family:monospace;width:100%;box-sizing:border-box;">
+            <div style="background:rgba(37,211,102,0.05);border:1px dashed rgba(37,211,102,0.25);border-radius:8px;padding:9px;display:flex;flex-direction:column;gap:5px;">
+                <div style="color:#25d366;font-size:10px;font-weight:900;letter-spacing:0.8px;">📍 COMUNIDAD 1 (principal)</div>
+                <input type="text" class="user-community-link" placeholder="https://chat.whatsapp.com/..." value="${escapeHtml(link)}" style="padding:8px 10px;border-radius:7px;border:1px solid rgba(37,211,102,0.25);background:rgba(0,0,0,0.5);color:#25d366;font-size:12.5px;font-weight:600;font-family:monospace;width:100%;box-sizing:border-box;">
+                <input type="text" class="user-community-label" maxlength="60" placeholder="Etiqueta (default: Comunidad 1 oficial)" value="${escapeHtml(label)}" style="padding:6px 9px;border-radius:6px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.5);color:#fff;font-size:11.5px;width:100%;box-sizing:border-box;">
+            </div>
+            <div style="background:rgba(0,212,255,0.05);border:1px dashed rgba(0,212,255,0.25);border-radius:8px;padding:9px;display:flex;flex-direction:column;gap:5px;">
+                <div style="color:#00d4ff;font-size:10px;font-weight:900;letter-spacing:0.8px;">📍 COMUNIDAD 2 (opcional)</div>
+                <input type="text" class="user-community-link2" placeholder="https://chat.whatsapp.com/... (opcional)" value="${escapeHtml(link2)}" style="padding:8px 10px;border-radius:7px;border:1px solid rgba(0,212,255,0.25);background:rgba(0,0,0,0.5);color:#00d4ff;font-size:12.5px;font-weight:600;font-family:monospace;width:100%;box-sizing:border-box;">
+                <input type="text" class="user-community-label2" maxlength="60" placeholder="Etiqueta (default: Comunidad 2 oficial)" value="${escapeHtml(label2)}" style="padding:6px 9px;border-radius:6px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.5);color:#fff;font-size:11.5px;width:100%;box-sizing:border-box;">
             </div>
             <button type="button" onclick="notifyCommunityPrefix(${i})" style="margin-top:4px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:8px;border-radius:7px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;" title="Mandar push a TODOS los users de este equipo recordandoles que se sumen a la comunidad">📢 Avisar push a este equipo</button>
         </div>
@@ -906,7 +915,7 @@ function addCommunitySlot() {
         showToast(`Máximo ${USER_COMMUNITIES_MAX} links`, 'error');
         return;
     }
-    container.insertAdjacentHTML('beforeend', communitySlotHtml(i, '', ''));
+    container.insertAdjacentHTML('beforeend', communitySlotHtml(i, '', '', '', '', ''));
     updateAddCommunityButton();
     const last = container.lastElementChild;
     if (last) {
@@ -965,6 +974,8 @@ async function loadUserCommunities() {
         renderUserCommunitiesSlots(data.slots || []);
         const def = document.getElementById('userCommunitiesDefaultLink');
         if (def) def.value = data.defaultLink || '';
+        const def2 = document.getElementById('userCommunitiesDefaultLink2');
+        if (def2) def2.value = data.defaultLink2 || '';
         loadCommunityForceStatus();
         loadCommunityLinkStats();
     } catch (err) {
@@ -986,6 +997,7 @@ async function loadCommunityLinkStats() {
         const byDay = d.byDay || [];
         const byTeam = d.byTeam || [];
         const topUsers = d.topUsers || [];
+        const bySource = d.bySource || [];
         const fmt = (n) => Number(n || 0).toLocaleString('es-AR');
         let html = '';
 
@@ -999,6 +1011,28 @@ async function loadCommunityLinkStats() {
             html += '<div style="color:#aaa;text-align:center;padding:14px;background:rgba(255,255,255,0.03);border-radius:8px;">Todavía nadie tocó el link en esta ventana de tiempo.</div>';
             box.innerHTML = html;
             return;
+        }
+
+        // Breakdown por origen del click — Comunidad 1 vs Comunidad 2 vs
+        // modal forzado vs reemplazo.
+        if (bySource.length > 0) {
+            const SRC_LABELS = {
+                home_button: { label: '📍 Comunidad 1 (home)', color: '#25d366' },
+                home_button_2: { label: '📍 Comunidad 2 (home)', color: '#00d4ff' },
+                modal_join: { label: '🔔 Modal "Revisá tu comunidad"', color: '#ffd700' },
+                replacement: { label: '♻️ Link de reemplazo (down)', color: '#ff8080' }
+            };
+            html += '<h4 style="color:#fff;font-size:12px;margin:6px 0 6px;letter-spacing:0.5px;">🎯 Por origen del click</h4>';
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:14px;">';
+            for (const s of bySource) {
+                const meta = SRC_LABELS[s.source] || { label: s.source || '(otro)', color: '#aaa' };
+                html += '<div style="background:rgba(0,0,0,0.30);border:1px solid ' + meta.color + '55;border-radius:9px;padding:9px 11px;">';
+                html += '<div style="color:' + meta.color + ';font-weight:800;font-size:11px;letter-spacing:0.4px;">' + escapeHtml(meta.label) + '</div>';
+                html += '<div style="color:#fff;font-size:20px;font-weight:900;margin-top:2px;">' + fmt(s.clicks) + '</div>';
+                html += '<div style="color:#aaa;font-size:10.5px;">' + fmt(s.uniqueUsers) + ' users únicos</div>';
+                html += '</div>';
+            }
+            html += '</div>';
         }
 
         // Por comunidad (cada link único = comunidad distinta).
@@ -1273,13 +1307,16 @@ async function markCommunityDown(link, oldLabel) {
 async function saveUserCommunities() {
     const container = document.getElementById('userCommunitiesSlots');
     if (!container) return;
-    const prefixInputs = container.querySelectorAll('.user-community-prefix');
-    const linkInputs = container.querySelectorAll('.user-community-link');
+    const slotEls = container.querySelectorAll('.user-community-slot');
     const slots = [];
-    for (let i = 0; i < prefixInputs.length; i++) {
-        const prefix = (prefixInputs[i].value || '').trim();
-        const link = (linkInputs[i].value || '').trim();
-        if (!prefix && !link) continue;
+    for (let i = 0; i < slotEls.length; i++) {
+        const el = slotEls[i];
+        const prefix = (el.querySelector('.user-community-prefix')?.value || '').trim();
+        const link = (el.querySelector('.user-community-link')?.value || '').trim();
+        const link2 = (el.querySelector('.user-community-link2')?.value || '').trim();
+        const label = (el.querySelector('.user-community-label')?.value || '').trim();
+        const label2 = (el.querySelector('.user-community-label2')?.value || '').trim();
+        if (!prefix && !link && !link2) continue;
         if (prefix && !link) {
             showToast('El prefijo "' + prefix + '" no tiene link', 'error');
             return;
@@ -1288,13 +1325,19 @@ async function saveUserCommunities() {
             showToast('El link "' + link + '" debe empezar con http:// o https://', 'error');
             return;
         }
-        slots.push({ prefix, link });
+        if (link2 && !/^https?:\/\//i.test(link2)) {
+            showToast('El segundo link "' + link2 + '" debe empezar con http:// o https://', 'error');
+            return;
+        }
+        slots.push({ prefix, link, link2, label, label2 });
     }
     const defaultLink = (document.getElementById('userCommunitiesDefaultLink').value || '').trim();
+    const defaultLink2El = document.getElementById('userCommunitiesDefaultLink2');
+    const defaultLink2 = (defaultLink2El && defaultLink2El.value || '').trim();
     try {
         const r = await authFetch('/api/admin/user-communities', {
             method: 'PUT',
-            body: JSON.stringify({ slots, defaultLink })
+            body: JSON.stringify({ slots, defaultLink, defaultLink2 })
         });
         const data = await r.json();
         if (r.ok) {

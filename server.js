@@ -2208,11 +2208,25 @@ function pickTeamNameForUsername(linesConfig, username) {
 }
 
 // Mismo criterio que pickLinePhoneForUsername pero para los links de comunidad.
-// Usa la config 'userCommunitiesByPrefix' con shape { slots: [{prefix, link}], defaultLink }.
+// Usa la config 'userCommunitiesByPrefix' con shape:
+//   { slots: [{prefix, link, link2?, label?, label2?}], defaultLink }.
+// Retorna SOLO el link primario (string) para compat. Para obtener
+// ambas comunidades del slot, usar pickCommunityBundleForUsername.
 function pickCommunityLinkForUsername(communitiesConfig, username) {
-  if (!communitiesConfig || typeof communitiesConfig !== 'object') return null;
+  const b = pickCommunityBundleForUsername(communitiesConfig, username);
+  return b ? b.link : null;
+}
+
+// Variante extendida: devuelve { prefix, link, link2, label, label2 } del
+// slot que matchea (longest prefix wins). Usada por /api/user-lines/me
+// para exponer ambas comunidades a la PWA.
+function pickCommunityBundleForUsername(communitiesConfig, username) {
+  if (!communitiesConfig || typeof communitiesConfig !== 'object') {
+    return null;
+  }
   const slots = Array.isArray(communitiesConfig.slots) ? communitiesConfig.slots : [];
   const defaultLink = communitiesConfig.defaultLink || null;
+  const defaultLink2 = communitiesConfig.defaultLink2 || null;
   const lower = String(username || '').toLowerCase();
   let bestMatch = null;
   for (const slot of slots) {
@@ -2221,11 +2235,21 @@ function pickCommunityLinkForUsername(communitiesConfig, username) {
     if (!prefix) continue;
     if (lower.startsWith(prefix)) {
       if (!bestMatch || prefix.length > bestMatch.prefix.length) {
-        bestMatch = { prefix, link: String(slot.link).trim() };
+        bestMatch = {
+          prefix,
+          link: String(slot.link).trim(),
+          link2: slot.link2 ? String(slot.link2).trim() : null,
+          label: slot.label ? String(slot.label).trim() : null,
+          label2: slot.label2 ? String(slot.label2).trim() : null
+        };
       }
     }
   }
-  return bestMatch ? bestMatch.link : defaultLink;
+  if (bestMatch) return bestMatch;
+  if (defaultLink) {
+    return { prefix: '', link: defaultLink, link2: defaultLink2, label: null, label2: null };
+  }
+  return null;
 }
 
 // Probe endpoint para verificar versión deployada (no requiere auth)
@@ -2534,9 +2558,19 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
         }
       }
     } catch (e) { /* fall through to prefix */ }
+    let communityLink2 = null;
+    let communityLabel2 = null;
     if (!communityLink) {
       const communitiesConfig = await getConfig('userCommunitiesByPrefix');
-      communityLink = pickCommunityLinkForUsername(communitiesConfig, req.user.username);
+      const bundle = pickCommunityBundleForUsername(communitiesConfig, req.user.username);
+      if (bundle) {
+        communityLink = bundle.link || null;
+        communityLink2 = bundle.link2 || null;
+        // Si los labels vinieron desde el slot, los usamos. Si no,
+        // default a "Comunidad 1 oficial" / "Comunidad 2 oficial" cuando hay 2 links.
+        communityLabel = bundle.label || (bundle.link && bundle.link2 ? 'Comunidad 1 oficial' : null);
+        communityLabel2 = bundle.label2 || (bundle.link2 ? 'Comunidad 2 oficial' : null);
+      }
     }
     // Flag de "alerta forzada" — si el admin activó el reminder por N hs
     // (vía /api/admin/community-alert/force o automáticamente al apretar
@@ -2553,6 +2587,8 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       teamName: teamName || null,
       communityLink: communityLink || null,
       communityLabel: communityLabel || null,
+      communityLink2: communityLink2 || null,
+      communityLabel2: communityLabel2 || null,
       communityStatus,
       communityReplacementLink: communityReplacementLink || null,
       communityReplacementLabel: communityReplacementLabel || null,
@@ -11203,7 +11239,7 @@ app.post('/api/community/link-click', authMiddleware, async (req, res) => {
     const username = String(req.user.username || '').toLowerCase();
     const source = String((req.body && req.body.source) || 'home_button').trim();
     const communityLink = String((req.body && req.body.communityLink) || '').slice(0, 300).trim();
-    const validSources = ['home_button', 'modal_join', 'replacement'];
+    const validSources = ['home_button', 'home_button_2', 'modal_join', 'replacement'];
     const safeSource = validSources.includes(source) ? source : 'home_button';
     // Calculamos teamPrefix: el match más largo contra userCommunitiesByPrefix,
     // o fallback a los 3 primeros chars.
@@ -11244,7 +11280,7 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
     const days = Math.max(1, Math.min(60, Number(req.query.days) || 14));
     const sinceDate = new Date(Date.now() - days * 24 * 3600 * 1000);
 
-    const [byDay, byTeam, byDayTeam, byCommunity, byCommunityDay, topUsers, total] = await Promise.all([
+    const [byDay, byTeam, byDayTeam, byCommunity, byCommunityDay, topUsers, total, bySource] = await Promise.all([
       // Total clicks por día (últimos N días).
       CommunityLinkClick.aggregate([
         { $match: { clickedAt: { $gte: sinceDate } } },
@@ -11308,7 +11344,15 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
         { $sort: { clicks: -1, lastClick: -1 } },
         { $limit: 10 }
       ]),
-      CommunityLinkClick.countDocuments({ clickedAt: { $gte: sinceDate } })
+      CommunityLinkClick.countDocuments({ clickedAt: { $gte: sinceDate } }),
+      // Breakdown por source — para ver Comunidad 1 vs Comunidad 2 vs
+      // modal forzado vs reemplazo.
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate } } },
+        { $group: { _id: '$source', clicks: { $sum: 1 }, uniqueUsers: { $addToSet: '$userId' } } },
+        { $project: { source: '$_id', clicks: 1, uniqueUsers: { $size: '$uniqueUsers' }, _id: 0 } },
+        { $sort: { clicks: -1 } }
+      ])
     ]);
 
     // Enriquecemos byCommunity con el label desde userCommunitiesByPrefix
@@ -11318,7 +11362,15 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
       const cfg = await getConfig('userCommunitiesByPrefix').catch(() => null);
       if (cfg && Array.isArray(cfg.slots)) {
         for (const s of cfg.slots) {
-          if (s && s.link) communityLabels.set(s.link, s.prefix ? `Equipo "${s.prefix}"` : 'Sin nombre');
+          if (!s) continue;
+          if (s.link) {
+            const lbl = s.label || (s.prefix ? `Equipo "${s.prefix}" · Comunidad 1` : 'Comunidad 1');
+            communityLabels.set(s.link, lbl);
+          }
+          if (s.link2) {
+            const lbl2 = s.label2 || (s.prefix ? `Equipo "${s.prefix}" · Comunidad 2` : 'Comunidad 2');
+            communityLabels.set(s.link2, lbl2);
+          }
         }
       }
       // Labels desde UserCommunityLookup (más prioritario porque suele
@@ -11341,6 +11393,7 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
       total,
       byDay, byTeam, byDayTeam,
       byCommunity: byCommunityEnriched, byCommunityDay,
+      bySource,
       topUsers
     });
   } catch (err) {
@@ -11613,11 +11666,18 @@ app.get('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
     const config = (await getConfig('userCommunitiesByPrefix')) || {};
     const slots = Array.isArray(config.slots) ? config.slots : [];
     const cleaned = slots
-      .filter(s => s && (s.prefix || s.link))
-      .map(s => ({ prefix: s.prefix || '', link: s.link || '' }));
+      .filter(s => s && (s.prefix || s.link || s.link2))
+      .map(s => ({
+        prefix: s.prefix || '',
+        link: s.link || '',
+        link2: s.link2 || '',
+        label: s.label || '',
+        label2: s.label2 || ''
+      }));
     res.json({
       slots: cleaned,
       defaultLink: config.defaultLink || '',
+      defaultLink2: config.defaultLink2 || '',
       maxSlots: USER_COMMUNITIES_MAX_SLOTS
     });
   } catch (error) {
@@ -11628,7 +11688,7 @@ app.get('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
 
 app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { slots, defaultLink } = req.body || {};
+    const { slots, defaultLink, defaultLink2 } = req.body || {};
     if (!Array.isArray(slots)) {
       return res.status(400).json({ error: 'slots debe ser un array' });
     }
@@ -11639,7 +11699,10 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
     for (const s of slots) {
       const prefix = (s && s.prefix ? String(s.prefix) : '').trim();
       const link = (s && s.link ? String(s.link) : '').trim();
-      if (!prefix && !link) continue;
+      const link2 = (s && s.link2 ? String(s.link2) : '').trim();
+      const label = (s && s.label ? String(s.label) : '').trim().slice(0, 60);
+      const label2 = (s && s.label2 ? String(s.label2) : '').trim().slice(0, 60);
+      if (!prefix && !link && !link2) continue;
       if (prefix && !link) {
         return res.status(400).json({ error: `El prefijo "${prefix}" no tiene link` });
       }
@@ -11647,16 +11710,24 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
       if (link && !/^https?:\/\//i.test(link)) {
         return res.status(400).json({ error: `El link "${link}" debe empezar con http:// o https://` });
       }
-      cleaned.push({ prefix, link });
+      if (link2 && !/^https?:\/\//i.test(link2)) {
+        return res.status(400).json({ error: `El segundo link "${link2}" debe empezar con http:// o https://` });
+      }
+      cleaned.push({ prefix, link, link2, label, label2 });
     }
     const newDefaultLink = (defaultLink ? String(defaultLink) : '').trim();
     if (newDefaultLink && !/^https?:\/\//i.test(newDefaultLink)) {
       return res.status(400).json({ error: 'El link por defecto debe empezar con http:// o https://' });
     }
+    const newDefaultLink2 = (defaultLink2 ? String(defaultLink2) : '').trim();
+    if (newDefaultLink2 && !/^https?:\/\//i.test(newDefaultLink2)) {
+      return res.status(400).json({ error: 'El segundo link por defecto debe empezar con http:// o https://' });
+    }
 
     const value = {
       slots: cleaned,
-      defaultLink: newDefaultLink
+      defaultLink: newDefaultLink,
+      defaultLink2: newDefaultLink2
     };
     await setConfig('userCommunitiesByPrefix', value);
     res.json({ success: true, message: 'Links de comunidad actualizados', value });

@@ -17,12 +17,13 @@ const clickSchema = new mongoose.Schema({
 
   communityLink: { type: String, default: '', trim: true },
 
-  // 'home_button' = click en el botón "LINK COMUNIDAD" del home
+  // 'home_button' = click en el botón "LINK COMUNIDAD" del home (comunidad 1)
+  // 'home_button_2' = click en el botón "COMUNIDAD 2" del home
   // 'modal_join' = click en "ENTRAR A LA COMUNIDAD" del modal forzado
   // 'replacement' = click en el link de reemplazo (cuando la anterior se cayó)
   source: {
     type: String,
-    enum: ['home_button', 'modal_join', 'replacement'],
+    enum: ['home_button', 'home_button_2', 'modal_join', 'replacement'],
     default: 'home_button'
   },
 

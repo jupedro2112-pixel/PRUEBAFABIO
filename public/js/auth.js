@@ -361,19 +361,43 @@ VIP.auth = (function () {
         // se renderiza el boton sin destino para mantener el aspecto.
         const communityEl = document.getElementById('userCommunityLink');
         const communityLink = VIP.state.communityLink || null;
+        const communityLink2 = VIP.state.communityLink2 || null;
+        const communityLabel = VIP.state.communityLabel || '';
+        const communityLabel2 = VIP.state.communityLabel2 || '';
+        const escAttr = (s) => String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
         if (communityEl) {
-            if (communityLink) {
-                const safeLink = communityLink
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;');
+            if (communityLink && communityLink2) {
+                const safeLink = escAttr(communityLink);
+                const safeLink2 = escAttr(communityLink2);
+                const lbl1 = (communityLabel || 'Comunidad 1 oficial').toUpperCase();
+                const lbl2 = (communityLabel2 || 'Comunidad 2 oficial').toUpperCase();
+                communityEl.innerHTML =
+                    '<a href="' + safeLink + '" target="_blank" rel="noopener noreferrer" ' +
+                      'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + safeLink + '\')" ' +
+                      'aria-label="Abrir ' + escAttr(lbl1) + '">' +
+                        waIcon +
+                        '<span>' + escAttr(lbl1) + '</span>' +
+                    '</a>' +
+                    '<a href="' + safeLink2 + '" target="_blank" rel="noopener noreferrer" ' +
+                      'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button_2\',\'' + safeLink2 + '\')" ' +
+                      'aria-label="Abrir ' + escAttr(lbl2) + '" ' +
+                      'style="margin-top:6px;">' +
+                        waIcon +
+                        '<span>' + escAttr(lbl2) + '</span>' +
+                    '</a>';
+            } else if (communityLink) {
+                const safeLink = escAttr(communityLink);
+                const lblTxt = communityLabel ? communityLabel.toUpperCase() : 'LINK COMUNIDAD';
                 communityEl.innerHTML =
                     '<a href="' + safeLink + '" target="_blank" rel="noopener noreferrer" ' +
                       'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + safeLink + '\')" ' +
                       'aria-label="Abrir link de comunidad">' +
                         waIcon +
-                        '<span>LINK COMUNIDAD</span>' +
+                        '<span>' + escAttr(lblTxt) + '</span>' +
                     '</a>';
             } else {
                 communityEl.innerHTML =
@@ -583,6 +607,8 @@ VIP.auth = (function () {
                 VIP.state.linePhone = newPhone;
                 VIP.state.communityLink = d.communityLink || null;
                 VIP.state.communityLabel = d.communityLabel || null;
+                VIP.state.communityLink2 = d.communityLink2 || null;
+                VIP.state.communityLabel2 = d.communityLabel2 || null;
                 VIP.state.communityStatus = d.communityStatus || 'active';
                 VIP.state.communityReplacementLink = d.communityReplacementLink || null;
                 VIP.state.communityReplacementLabel = d.communityReplacementLabel || null;
