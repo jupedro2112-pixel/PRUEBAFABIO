@@ -2550,6 +2550,18 @@
             <div class="welcome-bonus-title">BONO POR BAJAR LA APP</div>
             <div class="welcome-bonus-amount" id="welcomeBonusAmount">$5.000 GRATIS</div>
             <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Por única vez por tener la app instalada.</div>
+
+            <!-- Stepper de los 3 pasos obligatorios. JS actualiza cada badge
+                 con ✅ o ⏳ según el estado real (isAppInstalled/isStandalone/
+                 isNotifGranted) en cada render del card. -->
+            <div id="welcomeBonusSteps" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,215,0,0.30);border-radius:9px;padding:10px 11px;margin:10px 0 8px;text-align:left;font-size:12px;line-height:1.6;">
+                <div style="color:#ffd700;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;text-align:center;">⚠️ TENÉS QUE HACER LOS 3 PASOS</div>
+                <div id="welcomeStep1" style="color:#fff;"><span id="welcomeStep1Badge">⏳</span> <strong>1.</strong> Instalá la app en el celular</div>
+                <div id="welcomeStep2" style="color:#fff;"><span id="welcomeStep2Badge">⏳</span> <strong>2.</strong> Abrila desde el ícono (no desde el navegador)</div>
+                <div id="welcomeStep3" style="color:#fff;"><span id="welcomeStep3Badge">⏳</span> <strong>3.</strong> Aceptá las notificaciones</div>
+                <div style="color:#ffaa44;font-size:11px;margin-top:7px;text-align:center;font-weight:700;">👇 Recién después tocá el botón de abajo</div>
+            </div>
+
             <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn" onclick="VIP.refunds.handleWelcomeBonusClick()">🎁 RECLAMAR $5.000</button>
         </div>
 
@@ -3731,6 +3743,11 @@
                 <h2 id="refundModalTitle">🎁 Reembolso</h2>
             </div>
             <div class="refund-details">
+                <!-- Cómo funciona el reembolso (banner fijo, siempre visible) -->
+                <div style="background: linear-gradient(135deg,rgba(255,170,68,0.10),rgba(255,215,0,0.08));border:1px solid rgba(255,215,0,0.40);border-radius:9px;padding:11px 13px;margin-bottom:14px;color:#ffe7a8;font-size:12px;line-height:1.5;">
+                    💡 <strong>¿Cómo funciona?</strong> El reembolso es <strong>un % de la plata que perdiste</strong> en el período (cargas menos retiros). <strong>Si ganaste o no jugaste, no hay reembolso.</strong> Es un porcentaje sobre la pérdida — no es plata extra.
+                </div>
+
                 <!-- Balance actual -->
                 <div class="refund-info-row" style="background: rgba(0,255,136,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
                     <span style="font-weight: bold; color: #00ff88;">💰 Tu Balance Actual:</span>
