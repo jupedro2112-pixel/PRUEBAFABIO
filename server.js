@@ -20893,7 +20893,18 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     // 'relampago' va aparte (no esta en RAFFLE_TYPES ni FREE_RAFFLE_TYPES por
     // ser one-shot). Sin esto, el filter de raffleType en la query lo descarta
     // y el user no ve el sorteo ni en el modal ni en el hero.
-    const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
+    // Tipos LEGACY (free_p2m/p1m/p500/p100 + iphone/caribe/auto/other) que
+    // todavía pueden existir en DB con status drawn — necesitan aparecer en
+    // el banner "🏆 Resultados sorteos" de la PWA aunque ya no se respawnean.
+    const FREE_LEGACY_PWA = ['free_p2m', 'free_p1m', 'free_p500', 'free_p100'];
+    const PAID_LEGACY_PWA = ['iphone', 'caribe', 'auto', 'other'];
+    const allTypes = [
+      ...RAFFLE_TYPES.map(t => t.type),
+      ...FREE_RAFFLE_TYPES.map(t => t.type),
+      ...FREE_LEGACY_PWA,
+      ...PAID_LEGACY_PWA,
+      'relampago'
+    ];
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // Paralelizamos las 3 fuentes pesadas: saldo en JUGAYGANA, lista de
@@ -22101,10 +22112,27 @@ app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) 
   try {
     // ?kind=paid|free|all — qué tipo de sorteo. Default 'paid' por compat.
     const kind = String(req.query.kind || 'paid').toLowerCase();
+    // Tipos LEGACY que existen en la base pero ya no están en los configs
+    // de spawn (FREE_RAFFLE_TYPES / RAFFLE_TYPES). Si los excluimos del
+    // filter, los sorteos viejos sin sortear DESAPARECEN del admin —
+    // exactamente el bug que reportó el dueño ("faltan 4 de $100K + los
+    // pagos"). Los incluimos al menos cuando kind=free / all.
+    const FREE_LEGACY_TYPES = ['free_p2m', 'free_p1m', 'free_p500', 'free_p100'];
+    const PAID_LEGACY_TYPES = ['iphone', 'caribe', 'auto', 'other'];
     let typeFilter;
-    if (kind === 'free')      typeFilter = FREE_RAFFLE_TYPES.map(t => t.type);
-    else if (kind === 'all')  typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
-    else                      typeFilter = RAFFLE_TYPES.map(t => t.type);
+    if (kind === 'free') {
+      typeFilter = [...FREE_RAFFLE_TYPES.map(t => t.type), ...FREE_LEGACY_TYPES];
+    } else if (kind === 'all') {
+      typeFilter = [
+        ...RAFFLE_TYPES.map(t => t.type),
+        ...FREE_RAFFLE_TYPES.map(t => t.type),
+        ...FREE_LEGACY_TYPES,
+        ...PAID_LEGACY_TYPES,
+        'relampago'
+      ];
+    } else {
+      typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...PAID_LEGACY_TYPES];
+    }
     // ?include=archived | all | history — qué estados incluir.
     // 'archived' → suma 'archived' a los normales.
     // 'all' o 'history' → trae TODO (active, closed, drawn, archived, cancelled).
@@ -23868,10 +23896,25 @@ app.post('/api/admin/raffles/apply-new-structure', authMiddleware, superAdminMid
 app.post('/api/admin/raffles/reopen-all-pending', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
     const kind = String(req.query.kind || 'paid').toLowerCase();
+    // Mismo fix que el endpoint /api/admin/raffles: incluir tipos LEGACY
+    // (free_p2m/p1m/p500/p100 + iphone/caribe/auto/other) que existen en
+    // la base pero ya no están en los configs de spawn.
+    const FREE_LEGACY_TYPES = ['free_p2m', 'free_p1m', 'free_p500', 'free_p100'];
+    const PAID_LEGACY_TYPES = ['iphone', 'caribe', 'auto', 'other'];
     let typeFilter;
-    if (kind === 'free')      typeFilter = FREE_RAFFLE_TYPES.map(t => t.type);
-    else if (kind === 'all')  typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
-    else                      typeFilter = RAFFLE_TYPES.map(t => t.type);
+    if (kind === 'free') {
+      typeFilter = [...FREE_RAFFLE_TYPES.map(t => t.type), ...FREE_LEGACY_TYPES];
+    } else if (kind === 'all') {
+      typeFilter = [
+        ...RAFFLE_TYPES.map(t => t.type),
+        ...FREE_RAFFLE_TYPES.map(t => t.type),
+        ...FREE_LEGACY_TYPES,
+        ...PAID_LEGACY_TYPES,
+        'relampago'
+      ];
+    } else {
+      typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...PAID_LEGACY_TYPES];
+    }
 
     const candidates = await Raffle.find(
       {
