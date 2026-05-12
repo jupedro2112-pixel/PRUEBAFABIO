@@ -984,6 +984,29 @@ VIP.refunds = (function () {
         }
     }
 
+    // Dismiss del card del regalo de plata. Guardamos el giveaway ID +
+    // username en localStorage para que no le aparezca otra vez en ese
+    // device hasta que venza el regalo (después renderGiveawayCard ya no
+    // lo muestra porque _giveawayState queda en null al expirar).
+    function _giveawayDismissKey(giveawayId) {
+        const u = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '';
+        return 'vipGiveawayDismissed:' + u.toLowerCase() + ':' + giveawayId;
+    }
+    function _isGiveawayDismissed(giveawayId) {
+        try { return localStorage.getItem(_giveawayDismissKey(giveawayId)) === '1'; }
+        catch (_) { return false; }
+    }
+    function _markGiveawayDismissed(giveawayId) {
+        try { localStorage.setItem(_giveawayDismissKey(giveawayId), '1'); } catch (_) {}
+    }
+    function dismissGiveaway() {
+        if (!_giveawayState || !_giveawayState.id) return;
+        _markGiveawayDismissed(_giveawayState.id);
+        const card = document.getElementById('giveawayCard');
+        if (card) card.style.setProperty('display', 'none', 'important');
+        _clearGiveawayCountdown();
+    }
+
     function renderGiveawayCard() {
         const card = document.getElementById('giveawayCard');
         if (!card) return;
@@ -992,6 +1015,12 @@ VIP.refunds = (function () {
 
         const g = _giveawayState;
         if (!g) {
+            _clearGiveawayCountdown();
+            hide();
+            return;
+        }
+        // Si el user lo cerró antes con la X, no volverlo a mostrar.
+        if (g.id && _isGiveawayDismissed(g.id)) {
             _clearGiveawayCountdown();
             hide();
             return;
@@ -1377,7 +1406,8 @@ VIP.refunds = (function () {
         handleWelcomeBonusClick,
         loadGiveawayStatus,
         renderGiveawayCard,
-        handleGiveawayClick
+        handleGiveawayClick,
+        dismissGiveaway
     };
 
 })();

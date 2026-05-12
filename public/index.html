@@ -2640,7 +2640,10 @@
         <!-- Refunds-only: Difusion con regalo de plata (temporal, on-demand
              desde admin). Oculto por default; render dinamico solo cuando
              hay un giveaway activo. -->
-        <div class="giveaway-card" id="giveawayCard" style="display:none;">
+        <div class="giveaway-card" id="giveawayCard" style="display:none;position:relative;">
+            <button type="button" id="giveawayDismissBtn" aria-label="Cerrar regalo"
+                    onclick="VIP.refunds.dismissGiveaway && VIP.refunds.dismissGiveaway()"
+                    style="position:absolute;top:6px;right:8px;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.45);color:#fff;border:1px solid rgba(255,255,255,0.25);font-size:16px;font-weight:900;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;z-index:5;">×</button>
             <div class="giveaway-card-flag">🎉 REGALO ACTIVO</div>
             <div class="giveaway-card-amount" id="giveawayAmount">$0</div>
             <div class="giveaway-card-sub" id="giveawaySub">Tocá el botón para reclamar</div>
