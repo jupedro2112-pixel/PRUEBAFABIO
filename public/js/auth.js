@@ -697,8 +697,8 @@ VIP.auth = (function () {
         const titleTxt = isDown ? '⚠️ Tu comunidad cerró' : '🔔 Revisá tu comunidad';
         const labelTxt = isDown ? (replacementLabel || 'la nueva comunidad') : (label || 'la comunidad de tu equipo');
         const bodyTxt = isDown
-            ? 'La comunidad anterior fue cerrada. Sumate a la nueva para no perderte regalos y novedades.'
-            : 'Revisá si estás unido a la comunidad de tu equipo para recibir contenido exclusivo y novedades.';
+            ? 'La comunidad anterior fue cerrada. Sumate a la nueva para tener el canal informativo de nuestro servicio y novedades.'
+            : 'Revisá si estás unido a la comunidad de tu equipo para tener el canal informativo de nuestro servicio y novedades.';
 
         function dismiss() {
             try {

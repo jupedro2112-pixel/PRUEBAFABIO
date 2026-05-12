@@ -11148,8 +11148,8 @@ app.post(
           ).lean();
           const title = '🎉 Nueva comunidad';
           const body = communityLabel
-            ? `Te sumamos a "${communityLabel}". Entrá desde la app para no perderte los regalos y avisos.`
-            : 'Te sumamos a una nueva comunidad. Entrá desde la app para no perderte regalos y avisos.';
+            ? `Te sumamos a "${communityLabel}". Entrá para tener el canal informativo de nuestro servicio y novedades.`
+            : 'Te sumamos a una nueva comunidad. Entrá para tener el canal informativo de nuestro servicio y novedades.';
           const sendPromises = [];
           for (const u of users) {
             const tokens = [];
