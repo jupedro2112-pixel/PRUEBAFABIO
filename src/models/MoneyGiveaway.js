@@ -31,6 +31,22 @@ const moneyGiveawaySchema = new mongoose.Schema({
 
   prefix: { type: String, default: null, trim: true },
 
+  // Lista de PREFIXES de equipos a EXCLUIR del broadcast. Cuando se setea,
+  // el giveaway es "para TODOS los users EXCEPTO los que pertenezcan a
+  // estos equipos". Sirve para campañas masivas donde el admin elige a
+  // dedo qué equipos NO incluir (ej: "regalo $500 a todos menos al equipo
+  // de prueba interno"). Si está vacía o null y NO hay prefix/whitelist,
+  // es 100% abierto (sólo si broadcastAll=true para evitar accidentes).
+  excludeTeams: { type: [String], default: [] },
+  broadcastAll: { type: Boolean, default: false },
+
+  // Mensaje custom que se muestra en el banner del home en la PWA. Si está
+  // vacío, se usa el texto default "🎁 RECLAMÁ $X — premio especial". Sirve
+  // para que el admin escriba algo concreto tipo "Por tu fidelidad — reclamá
+  // $500 ahora 🎁" o lo que quiera. Cap 200 chars.
+  customMessage: { type: String, default: '', maxlength: 200 },
+  customEmoji: { type: String, default: '🎁', maxlength: 8 },
+
   // Whitelist EXACTA de usernames habilitados para reclamar este regalo.
   // Si está poblada (length > 0), SOLO esos usernames pueden reclamar —
   // se ignoran prefix y todo el resto de la base. Pensado para regalos

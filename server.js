@@ -15672,9 +15672,13 @@ app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
+    const safeUsername = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const claim = await RefundClaim.findOne({
       type: 'welcome_install',
-      $or: [{ userId }, { username }]
+      $or: [
+        { userId },
+        { username: { $regex: '^' + safeUsername + '$', $options: 'i' } }
+      ]
     }).lean();
 
     // Si ya reclamó, no necesitamos llamar a JUGAYGANA para chequear cargas.
@@ -15691,6 +15695,34 @@ app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
         windowDays: WELCOME_BONUS_DEPOSIT_WINDOW_DAYS
       });
     }
+
+    // GATE fresh-install: si la cuenta tiene FCM token con > 24h, NO califica.
+    try {
+      const FRESH_INSTALL_TTL_MS = 24 * 3600 * 1000;
+      const userDoc = await User.findOne({ id: userId }, { fcmTokens: 1 }).lean();
+      if (userDoc && Array.isArray(userDoc.fcmTokens)) {
+        let oldestTokenAt = null;
+        for (const t of userDoc.fcmTokens) {
+          const ts = t && t.createdAt ? new Date(t.createdAt).getTime() : 0;
+          if (ts && (oldestTokenAt == null || ts < oldestTokenAt)) oldestTokenAt = ts;
+        }
+        if (oldestTokenAt && (Date.now() - oldestTokenAt) > FRESH_INSTALL_TTL_MS) {
+          return res.json({
+            amount: WELCOME_BONUS_AMOUNT,
+            claimed: true,
+            claimedAt: null,
+            status: 'blocked_already_had_app',
+            blockedReason: 'already_had_app',
+            alreadyHadApp: true,
+            eligible: false,
+            notEnoughDeposits: false,
+            depositCount: 0,
+            requiredDeposits: WELCOME_BONUS_MIN_DEPOSITS,
+            windowDays: WELCOME_BONUS_DEPOSIT_WINDOW_DAYS
+          });
+        }
+      }
+    } catch (_) { /* best-effort */ }
 
     // Bloqueo por IP duplicada — cuenta JUGAYGANA nueva pero mismo router.
     // También chequeamos huella del dispositivo si el front la pasó por query.
@@ -15765,13 +15797,16 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
 
       const periodKey = computePeriodKey('welcome_install');
 
-      // Pre-check rapido por userId O username. Sin filtrar por periodKey:
-      // el bono es one-time absoluto, cualquier claim previo del tipo
-      // 'welcome_install' bloquea para siempre, sin importar que en algun
-      // momento se haya cambiado la convencion de periodKey.
+      // Pre-check rapido por userId O username (case-insensitive). Sin
+      // filtrar por periodKey: el bono es one-time absoluto, cualquier claim
+      // previo del tipo 'welcome_install' bloquea para siempre.
+      const safeUsername = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const existing = await RefundClaim.findOne({
         type: 'welcome_install',
-        $or: [{ userId }, { username }]
+        $or: [
+          { userId },
+          { username: { $regex: '^' + safeUsername + '$', $options: 'i' } }
+        ]
       }).lean();
       if (existing) {
         logger.warn(`[BONUS] welcome — pre-check rechazo por claim existente para ${username}`);
@@ -15781,6 +15816,41 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
           canClaim: false,
           claimed: true
         });
+      }
+
+      // GATE: el bono es para NUEVAS instalaciones. Si la cuenta ya tiene
+      // tokens FCM registrados desde hace > 24h, la app ya estaba instalada
+      // antes de hoy y NO califica para el bono. Evita el caso "user veterano
+      // borra cache + reinstala + reclama de nuevo".
+      try {
+        const FRESH_INSTALL_TTL_MS = 24 * 3600 * 1000;
+        const userDoc = await User.findOne(
+          { id: userId },
+          { fcmTokens: 1, fcmTokenCreatedAt: 1, createdAt: 1 }
+        ).lean();
+        if (userDoc) {
+          // Tomamos la fecha MÁS VIEJA de FCM token registrado. Si tiene un
+          // token con > 24h de antigüedad, la app ya estaba.
+          let oldestTokenAt = null;
+          if (Array.isArray(userDoc.fcmTokens)) {
+            for (const t of userDoc.fcmTokens) {
+              const ts = t && t.createdAt ? new Date(t.createdAt).getTime() : 0;
+              if (ts && (oldestTokenAt == null || ts < oldestTokenAt)) oldestTokenAt = ts;
+            }
+          }
+          if (oldestTokenAt && (Date.now() - oldestTokenAt) > FRESH_INSTALL_TTL_MS) {
+            logger.warn(`[BONUS] welcome — bloqueado: ${username} ya tenía la app instalada hace ${Math.floor((Date.now()-oldestTokenAt)/3600000)}h (no es instalación nueva)`);
+            return res.json({
+              success: false,
+              message: 'Este bono es solo para nuevas instalaciones. Ya tenías la app instalada con notificaciones aceptadas.',
+              canClaim: false,
+              claimed: true,
+              alreadyHadApp: true
+            });
+          }
+        }
+      } catch (e) {
+        logger.warn(`[BONUS] check de fresh-install falló para ${username}: ${e.message}`);
       }
 
       // Anti-fraude por IP: si otra cuenta ya cobró desde la misma IP,
