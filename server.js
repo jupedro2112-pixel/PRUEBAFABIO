@@ -19350,11 +19350,11 @@ const DailyRouletteSpin = require('./src/models/DailyRouletteSpin');
 // Más alto el premio → más baja la probabilidad. Transparente para el user
 // (la PWA muestra las % al lado de cada premio).
 const ROULETTE_PRIZES = [
-  { value: 10000, weight: 5,  emoji: '💰', label: '$10.000' },
-  { value: 2000,  weight: 10, emoji: '💎', label: '$2.000' },
-  { value: 1000,  weight: 15, emoji: '🥇', label: '$1.000' },
-  { value: 500,   weight: 20, emoji: '🥈', label: '$500' },
-  { value: 0,     weight: 50, emoji: '😔', label: 'SIN PREMIO' }
+  { value: 10000, weight: 2,  emoji: '💰', label: '$10.000' },
+  { value: 2000,  weight: 4,  emoji: '💎', label: '$2.000' },
+  { value: 1000,  weight: 6,  emoji: '🥇', label: '$1.000' },
+  { value: 500,   weight: 8,  emoji: '🥈', label: '$500' },
+  { value: 0,     weight: 80, emoji: '😔', label: 'SIN PREMIO' }
 ];
 
 // dateKey YYYY-MM-DD en hora Argentina (ART, UTC-3).
