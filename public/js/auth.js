@@ -581,10 +581,15 @@ VIP.auth = (function () {
                 const newPhone = d.phone || null;
                 VIP.state.linePhone = newPhone;
                 VIP.state.communityLink = d.communityLink || null;
+                VIP.state.communityLabel = d.communityLabel || null;
+                VIP.state.communityStatus = d.communityStatus || 'active';
+                VIP.state.communityReplacementLink = d.communityReplacementLink || null;
+                VIP.state.communityReplacementLabel = d.communityReplacementLabel || null;
                 VIP.state.teamName = d.teamName || null;
                 renderRefundsHomeUI();
                 renderTeamName();
                 checkLineChange(newPhone);
+                try { showCommunityJoinAlert(); } catch (_) {}
             }
         } catch (_) { /* ignore */ }
     }
@@ -617,6 +622,69 @@ VIP.auth = (function () {
     // Compara el número que devolvió el server con el que vimos por última
     // vez (localStorage). Si cambió, muestra el banner rojo grande para
     // que el usuario sepa que tiene que agendar el nuevo y borrar el viejo.
+    // Alerta "revisá si estás unido a la comunidad". Se muestra al entrar
+    // a la app. Anti-spam: 1 vez cada 5 días por usuario (localStorage).
+    // Si la comunidad está marcada DOWN, se muestra siempre hasta que
+    // toque el link de la nueva (variante "comunidad cambió").
+    function showCommunityJoinAlert() {
+        const link = VIP.state.communityLink;
+        const status = VIP.state.communityStatus || 'active';
+        const label = VIP.state.communityLabel || '';
+        const replacementLink = VIP.state.communityReplacementLink;
+        const replacementLabel = VIP.state.communityReplacementLabel || '';
+        if (!link && !replacementLink) return;
+        const username = (VIP.state.currentUser && VIP.state.currentUser.username) || '_anon';
+        const isDown = status === 'down' && !!replacementLink;
+        const lsKey = isDown
+            ? ('commAlertDown:' + username + ':' + (replacementLink || ''))
+            : ('commAlertSeen:' + username + ':' + (link || ''));
+        // Si está active: respetar cooldown de 5 días entre mostradas.
+        if (!isDown) {
+            try {
+                const last = parseInt(localStorage.getItem(lsKey) || '0', 10);
+                if (last && (Date.now() - last) < 5 * 24 * 3600 * 1000) return;
+            } catch (_) {}
+        } else {
+            // Down: si ya tocaron el link nuevo, no mostramos más.
+            try { if (localStorage.getItem(lsKey) === 'tapped') return; } catch (_) {}
+        }
+        // No duplicar si ya está en pantalla.
+        if (document.getElementById('communityJoinAlert')) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'communityJoinAlert';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:center;justify-content:center;padding:14px;';
+        const tappedHref = isDown ? replacementLink : link;
+        const titleTxt = isDown ? '⚠️ Tu comunidad cerró' : '🔔 Revisá tu comunidad';
+        const labelTxt = isDown ? (replacementLabel || 'la nueva comunidad') : (label || 'la comunidad de tu equipo');
+        const bodyTxt = isDown
+            ? 'La comunidad anterior fue cerrada. Sumate a la nueva para no perderte regalos y novedades.'
+            : 'Revisá si estás unido a la comunidad de tu equipo para recibir contenido exclusivo y novedades.';
+
+        function dismiss() {
+            try {
+                if (isDown) localStorage.setItem(lsKey, 'tapped');
+                else localStorage.setItem(lsKey, String(Date.now()));
+            } catch (_) {}
+            overlay.remove();
+        }
+        overlay.onclick = (e) => { if (e.target === overlay) dismiss(); };
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:3px solid ' + (isDown ? '#ff8080' : '#25d366') + ';border-radius:18px;padding:22px 18px;max-width:420px;width:100%;text-align:center;box-shadow:0 0 30px rgba(' + (isDown ? '255,128,128' : '37,211,102') + ',0.40);">' +
+                '<div style="font-size:56px;line-height:1;margin-bottom:8px;">' + (isDown ? '⚠️' : '🔔') + '</div>' +
+                '<div style="color:' + (isDown ? '#ff8080' : '#25d366') + ';font-weight:900;font-size:15px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;">' + titleTxt + '</div>' +
+                '<div style="color:#fff;font-size:14px;line-height:1.5;margin-bottom:14px;">' + bodyTxt + '</div>' +
+                '<a href="' + tappedHref + '" target="_blank" rel="noopener" id="commAlertJoinBtn" style="display:block;text-decoration:none;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;padding:14px;border-radius:11px;font-weight:900;font-size:14px;letter-spacing:0.5px;margin-bottom:8px;box-shadow:0 4px 14px rgba(37,211,102,0.35);">💬 ENTRAR A ' + (labelTxt || 'la comunidad').toUpperCase() + '</a>' +
+                '<button type="button" id="commAlertCloseBtn" style="width:100%;background:transparent;color:#aaa;border:1px solid rgba(255,255,255,0.20);padding:9px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar · ya estoy unido</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
+        // El botón "ENTRAR" abre el link y a la vez marca como visto.
+        const joinBtn = document.getElementById('commAlertJoinBtn');
+        if (joinBtn) joinBtn.addEventListener('click', dismiss);
+        const closeBtn = document.getElementById('commAlertCloseBtn');
+        if (closeBtn) closeBtn.addEventListener('click', dismiss);
+    }
+
     // En el primer login (no hay valor previo) NO mostramos el banner —
     // solo guardamos para futuras comparaciones.
     function checkLineChange(currentPhone) {

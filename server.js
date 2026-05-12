@@ -11172,6 +11172,57 @@ app.post(
   }
 );
 
+// POST /api/admin/user-communities/notify-prefix — manda push a todos
+// los users cuyo username empieza con el prefijo dado, recordando que se
+// sumen a su comunidad. Usado desde la sección legacy de prefijos.
+app.post('/api/admin/user-communities/notify-prefix', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const prefix = String((req.body && req.body.prefix) || '').toLowerCase().trim();
+    const communityLink = String((req.body && req.body.communityLink) || '').trim();
+    const communityLabel = String((req.body && req.body.communityLabel) || '').trim().slice(0, 60);
+    if (!prefix) return res.status(400).json({ error: 'Falta prefix' });
+    if (!communityLink) return res.status(400).json({ error: 'Falta communityLink' });
+
+    // Buscar users con FCM tokens cuyo username empieza con el prefijo.
+    const safe = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter = {
+      username: { $regex: '^' + safe, $options: 'i' },
+      $or: [
+        { fcmToken: { $exists: true, $ne: null } },
+        { 'fcmTokens.0': { $exists: true } }
+      ]
+    };
+    const users = await User.find(filter, { fcmToken: 1, fcmTokens: 1, username: 1 }).lean();
+    const audience = users.length;
+    const title = '🔔 Sumate a tu comunidad';
+    const body = communityLabel
+      ? `Revisá si estás unido a "${communityLabel}" para recibir contenido exclusivo y novedades.`
+      : 'Revisá si estás unido a la comunidad de tu equipo para no perderte regalos y novedades.';
+    let pushed = 0;
+    const sendPromises = [];
+    for (const u of users) {
+      const tokens = [];
+      if (u.fcmToken) tokens.push(u.fcmToken);
+      if (Array.isArray(u.fcmTokens)) {
+        for (const tk of u.fcmTokens) { const t = tk && tk.token ? tk.token : tk; if (t && !tokens.includes(t)) tokens.push(t); }
+      }
+      for (const tk of tokens) {
+        sendPromises.push(
+          _sendPushToUser(tk, title, body, { source: 'community-reminder', communityLink, prefix })
+            .then(r => { if (r && r.success) pushed++; })
+            .catch(() => {})
+        );
+      }
+    }
+    await Promise.all(sendPromises);
+    logger.info(`[community-notify-prefix] prefix=${prefix} audience=${audience} pushed=${pushed} by=${req.user.username}`);
+    res.json({ success: true, audience, pushed });
+  } catch (err) {
+    logger.error(`/api/admin/user-communities/notify-prefix: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/user-communities/mark-down — marca una comunidad como
 // caída y avisa a los users asignados con replacement link.
 app.post('/api/admin/user-communities/mark-down', authMiddleware, adminMiddleware, async (req, res) => {

@@ -756,8 +756,34 @@ function communitySlotHtml(i, prefix, link) {
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Link de comunidad</label>
                 <input type="text" class="user-community-link" placeholder="https://chat.whatsapp.com/..." value="${escapeHtml(link)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(37,211,102,0.25);background:rgba(0,0,0,0.5);color:#25d366;font-size:13px;font-weight:600;font-family:monospace;width:100%;box-sizing:border-box;">
             </div>
+            <button type="button" onclick="notifyCommunityPrefix(${i})" style="margin-top:4px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:8px;border-radius:7px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;" title="Mandar push a TODOS los users de este equipo recordandoles que se sumen a la comunidad">📢 Avisar push a este equipo</button>
         </div>
     `;
+}
+
+async function notifyCommunityPrefix(idx) {
+    const container = document.getElementById('userCommunitiesSlots');
+    if (!container) return;
+    const slots = container.querySelectorAll('.user-community-slot');
+    const slot = slots[idx];
+    if (!slot) return;
+    const prefix = (slot.querySelector('.user-community-prefix')?.value || '').trim();
+    const link = (slot.querySelector('.user-community-link')?.value || '').trim();
+    if (!prefix) { showToast('Falta el inicio de usuario', 'error'); return; }
+    if (!link) { showToast('Falta el link de la comunidad', 'error'); return; }
+    if (!/^https?:\/\//i.test(link)) { showToast('Link inválido', 'error'); return; }
+    const label = prompt('Nombre display de la comunidad para el push (ej: "Comunidad Royal"):', 'Comunidad de tu equipo') || '';
+    if (!confirm('¿Mandar push a TODOS los users que empiezan con "' + prefix + '"?\n\nTexto: "Revisá si estás unido a ' + label + ' para recibir contenido exclusivo y novedades."')) return;
+    try {
+        const r = await authFetch('/api/admin/user-communities/notify-prefix', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prefix, communityLink: link, communityLabel: label })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Push enviado · ' + (d.pushed || 0) + '/' + (d.audience || 0), 'success');
+    } catch (e) { alert('Error: ' + (e.message || '')); }
 }
 
 function currentCommunitySlotsCount() {
