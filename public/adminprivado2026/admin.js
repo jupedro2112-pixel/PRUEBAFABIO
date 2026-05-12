@@ -16613,11 +16613,43 @@ async function confirmDrawFinal(raffleId, lotteryNumber, force) {
         msg += '🎫 Número: #' + d.winningTicketNumber + (d.lotteryWasMapped ? ' (mapeado del ' + d.lotteryDrawNumber + ')' : '') + '\n';
         msg += '📊 ' + d.totalCuposSold + ' cupos vendidos\n';
         msg += '💎 Premio: ' + _fmtMoney(d.prizeValueARS) + '\n';
-        if (d.pushNotifications) msg += '\n📲 Push enviadas: ganador ' + (d.pushNotifications.winnerPushed||0) + ' · perdedores ' + (d.pushNotifications.losersPushed||0);
+        if (d.pushNotifications) {
+            const wd = d.pushNotifications.winnerDiag || {};
+            msg += '\n📲 Push al ganador: ';
+            if (wd.reason === 'sent_ok') msg += '✅ enviada (tokens: ' + wd.tokensCount + ', success: ' + wd.successCount + (wd.failureCount ? ', fail: ' + wd.failureCount : '') + ')';
+            else if (wd.reason === 'no_fcm_tokens') msg += '⚠️ NO LLEGÓ — el ganador no tiene la PWA con notifs (0 tokens FCM). Avisale por WhatsApp.';
+            else if (wd.reason === 'user_not_found') msg += '⚠️ NO LLEGÓ — el usuario ganador no figura en Users.';
+            else if (wd.reason === 'fcm_failed') msg += '⚠️ FCM rechazó: tokens=' + wd.tokensCount + ' fallidos=' + wd.failureCount + ' (probablemente expirados).';
+            else if (wd.reason === 'skipped_by_admin') msg += 'omitida (apagaste el toggle).';
+            else msg += JSON.stringify(wd);
+            msg += '\n📲 Push a perdedores: ' + (d.pushNotifications.losersPushed||0);
+        }
         msg += '\n\nEl ganador puede acreditar el premio a su saldo desde la app.';
         alert(msg);
         document.getElementById('drawWizardModal')?.remove();
         loadRafflesAdmin();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+
+// Reenvía push al ganador de un sorteo ya sorteado (botón en el histórico).
+async function resendWinnerPush(raffleId) {
+    if (!confirm('¿Reenviar push al ganador?\n\nÚtil si la primera no llegó porque el user instaló la PWA después del sorteo.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/resend-winner-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        if (!d.success) {
+            alert('⚠️ No se pudo enviar: ' + (d.error || 'sin detalle') + '\nTokens FCM del ganador: ' + (d.tokensCount || 0));
+            return;
+        }
+        let msg = '✅ Push reenviada al ganador\n\n';
+        msg += 'Tokens registrados: ' + d.tokensCount + '\n';
+        msg += 'Destinatarios: ' + d.sent + (d.failed ? ' · fallidos: ' + d.failed : '') + '\n';
+        if (d.previewBody) msg += '\n📲 Mensaje:\n' + d.previewBody;
+        alert(msg);
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
 
@@ -17387,7 +17419,7 @@ async function viewArchivedRaffles(kind) {
                 html += '<button type="button" onclick="reopenRaffle(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:7px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">♻️ Reabrir</button>';
             }
             if (hasWinner) {
-                html += '<div style="color:#888;font-size:10.5px;">(ganador asignado)</div>';
+                html += '<button type="button" onclick="resendWinnerPush(\'' + escapeHtml(r.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 12px;border-radius:7px;font-size:11.5px;font-weight:700;cursor:pointer;" title="Reenviar push al ganador si la primera no le llegó">📲 Reenviar push</button>';
             }
             if (sold === 0 && !hasWinner) {
                 html += '<div style="color:#888;font-size:10.5px;">(sin participantes)</div>';
@@ -17455,14 +17487,76 @@ async function openBatchDrawModal(kind) {
             html += '<label style="color:#bbb;font-size:11px;">Nro Lotería:</label>';
             html += '<input type="number" min="1" data-field="lottery" placeholder="ej: 1234" style="background:#0a0a0a;color:#ffd700;border:1.5px solid rgba(212,175,55,0.40);padding:7px 10px;border-radius:7px;font-size:14px;font-weight:800;font-family:monospace;width:110px;text-align:center;">';
             html += '<label style="display:flex;align-items:center;gap:5px;color:#bbb;font-size:11.5px;cursor:pointer;"><input type="checkbox" data-field="notify" checked> 📲 Notificar</label>';
+            html += '<button type="button" onclick="batchRowVerify(\'' + escapeHtml(r.id) + '\')" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:6px 11px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="Ver ganador previsto sin sortear">🔍 Verificar</button>';
+            html += '<button type="button" onclick="batchRowDrawOne(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:6px 11px;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;" title="Sortear sólo este (con preview)">🎰 Sortear este</button>';
             html += '<button type="button" onclick="testWinnerPush(\'' + escapeHtml(r.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 11px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="Mandar push de prueba a un usuario">🧪 Test push</button>';
             html += '</div>';
+            html += '<div data-rowresult style="margin-top:6px;font-size:11px;"></div>';
             html += '</div>';
         }
         list.innerHTML = html;
         document.getElementById('batchDrawActions').style.display = '';
     } catch (e) {
         document.getElementById('batchDrawList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+// Verifica el ganador previsto del sorteo (sin mutar nada) usando el número
+// que el admin escribió en la fila del batch. Muestra inline en la fila.
+async function batchRowVerify(raffleId) {
+    const row = document.querySelector('#batchDrawList [data-rid="' + raffleId + '"]');
+    if (!row) return;
+    const lotInput = row.querySelector('[data-field="lottery"]');
+    const resBox = row.querySelector('[data-rowresult]');
+    const lotteryNumber = parseInt((lotInput && lotInput.value) || '', 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        resBox.innerHTML = '<span style="color:#ff8080;">Falta el número de Lotería en esta fila.</span>';
+        return;
+    }
+    resBox.innerHTML = '<span style="color:#aaa;">⏳ Verificando…</span>';
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/preview-draw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lotteryNumber })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            resBox.innerHTML = '<span style="color:#ff8080;">❌ ' + escapeHtml(d.error || 'Error') + '</span>';
+            return;
+        }
+        const w = d.winner || {};
+        const mapNote = d.wasMapped ? ' (mapeado del ' + d.lotteryNumber + ')' : '';
+        resBox.innerHTML =
+            '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:6px;padding:7px 9px;">' +
+                '<strong style="color:#66ff66;">🏆 Ganador previsto: @' + escapeHtml(w.username) + '</strong>' +
+                ' · #' + d.mappedNumber + mapNote +
+                ' · tickets: ' + (w.ticketNumbers || []).map(n => '#' + n).join(', ') +
+            '</div>';
+    } catch (e) {
+        resBox.innerHTML = '<span style="color:#ff8080;">Error de conexión</span>';
+    }
+}
+
+// Sortea solo ESTA fila — abre el wizard completo (preview + confirm) para
+// el sorteo individual.
+async function batchRowDrawOne(raffleId) {
+    const row = document.querySelector('#batchDrawList [data-rid="' + raffleId + '"]');
+    if (!row) return;
+    const lotInput = row.querySelector('[data-field="lottery"]');
+    const lotteryNumber = parseInt((lotInput && lotInput.value) || '', 10);
+    // Cerrar el batch modal y abrir el wizard del sorteo individual, con el
+    // número precargado si lo tipearon.
+    document.getElementById('batchDrawModal')?.remove();
+    drawRaffle(raffleId);
+    if (Number.isFinite(lotteryNumber) && lotteryNumber >= 1) {
+        setTimeout(() => {
+            const wizInput = document.getElementById('drawWiz_lottery');
+            if (wizInput) {
+                wizInput.value = lotteryNumber;
+                previewDraw(raffleId);
+            }
+        }, 120);
     }
 }
 

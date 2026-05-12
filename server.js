@@ -20207,6 +20207,41 @@ async function _ensureActiveRafflesSeeded() {
 // Boot: 5s después arranca el seed para tener los 4 sorteos activos.
 setTimeout(() => { _ensureActiveRafflesSeeded().catch(() => {}); }, 5000);
 
+// Boot: auto-migración a NETWIN — para sorteos GRATIS activos que se crearon
+// con gate por cargas (sin minNetLossARS), inyectar el threshold de netwin
+// que define el config. Idempotente: si ya tienen minNetLossARS > 0, no toca.
+// Esto evita que el owner tenga que apretar el botón "🔁 Migrar a NETWIN" a
+// mano cada vez que despliega un sorteo viejo siga corriendo con gate antiguo.
+setTimeout(async () => {
+  try {
+    const freeTypes = FREE_RAFFLE_TYPES.map(t => t.type);
+    const candidates = await Raffle.find(
+      {
+        raffleType: { $in: freeTypes },
+        status: { $in: ['active', 'closed'] },
+        $or: [{ minNetLossARS: { $exists: false } }, { minNetLossARS: 0 }, { minNetLossARS: null }]
+      },
+      { id: 1, name: 1, raffleType: 1 }
+    ).lean();
+    if (candidates.length === 0) return;
+    let migrated = 0;
+    for (const r of candidates) {
+      const cfg = FREE_RAFFLE_TYPES.find(t => t.type === r.raffleType);
+      if (!cfg || !(cfg.minNetLossARS > 0)) continue;
+      const newDesc = `Sorteo GRATIS por NETWIN. Si perdiste $${cfg.minNetLossARS.toLocaleString('es-AR')} esta semana, podés reclamar tu número. ${cfg.totalTickets} cupos, 1 número por persona.`;
+      await Raffle.updateOne(
+        { id: r.id },
+        { $set: { minNetLossARS: cfg.minNetLossARS, description: newDesc } }
+      );
+      migrated++;
+      logger.info(`[raffles] auto-migrate-netwin ${r.name} -> minNetLossARS=$${cfg.minNetLossARS}`);
+    }
+    if (migrated > 0) logger.info(`[raffles] boot auto-migrate-netwin: ${migrated} sorteo(s) actualizados a netwin`);
+  } catch (e) {
+    logger.warn(`[raffles] boot auto-migrate-netwin fail: ${e.message}`);
+  }
+}, 8000);
+
 // =============================
 // AUTO-ENROLLMENT EN FREE RAFFLES (DESHABILITADO)
 // =============================
@@ -22611,24 +22646,56 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     const notifyLosers = (req.body && req.body.notifyLosers) === true;  // default false
 
     let winnerPushed = 0, losersPushed = 0;
+    let winnerPushDiag = null;
     if (notifyWinner) {
       try {
-        const wp = _buildWinnerPush(raffle, mappedNumber, {
-          prizeAutoCredited,
-          lightningForfeited,
-          lightningCargasCount
-        });
-        const winRes = await sendNotificationToAllUsers(
-          User,
-          wp.title,
-          wp.body,
-          wp.data,
-          { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
-        );
-        winnerPushed = (winRes && winRes.successCount) || 0;
-      } catch (e) { logger.warn(`[raffles] notif ganador: ${e.message}`); }
+        // Pre-chequeo: contar cuántos FCM tokens tiene el ganador. Si tiene 0,
+        // sabemos que la push NO va a llegar — el admin lo ve en la respuesta
+        // y puede contactar al user por otra vía.
+        const winnerUserDoc = await User.findOne(
+          { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } },
+          { fcmToken: 1, fcmTokens: 1, username: 1 }
+        ).lean();
+        const tokensCount =
+          (winnerUserDoc && winnerUserDoc.fcmTokens ? winnerUserDoc.fcmTokens.filter(t => t && t.token).length : 0) +
+          (winnerUserDoc && winnerUserDoc.fcmToken && !(winnerUserDoc.fcmTokens && winnerUserDoc.fcmTokens.some(t => t && t.token === winnerUserDoc.fcmToken)) ? 1 : 0);
+
+        if (!winnerUserDoc) {
+          winnerPushDiag = { tokensCount: 0, reason: 'user_not_found', error: 'El ganador no aparece en la colección Users.' };
+          logger.warn(`[raffles] notif ganador SKIP — user ${winner.username} no existe en Users`);
+        } else if (tokensCount === 0) {
+          winnerPushDiag = { tokensCount: 0, reason: 'no_fcm_tokens', error: 'El ganador no tiene la PWA instalada con notificaciones aceptadas (0 tokens FCM).' };
+          logger.warn(`[raffles] notif ganador SKIP — user ${winner.username} sin tokens FCM`);
+        } else {
+          const wp = _buildWinnerPush(raffle, mappedNumber, {
+            prizeAutoCredited,
+            lightningForfeited,
+            lightningCargasCount
+          });
+          const winRes = await sendNotificationToAllUsers(
+            User,
+            wp.title,
+            wp.body,
+            wp.data,
+            { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+          );
+          winnerPushed = (winRes && winRes.successCount) || 0;
+          const failureCount = (winRes && winRes.failureCount) || 0;
+          winnerPushDiag = {
+            tokensCount,
+            successCount: winnerPushed,
+            failureCount,
+            error: (winRes && !winRes.success) ? winRes.error : null,
+            reason: winnerPushed > 0 ? 'sent_ok' : (failureCount > 0 ? 'fcm_failed' : (winRes && winRes.error) ? 'fcm_error' : 'no_recipients')
+          };
+        }
+      } catch (e) {
+        logger.warn(`[raffles] notif ganador: ${e.message}`);
+        winnerPushDiag = { tokensCount: 0, reason: 'exception', error: e.message };
+      }
     } else {
       logger.info(`[raffles] notif ganador SKIPPED (notifyWinner=false) — ${raffle.name}`);
+      winnerPushDiag = { reason: 'skipped_by_admin' };
     }
 
     if (notifyLosers) {
@@ -22688,10 +22755,55 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       lightningForfeited,
       lightningCargasCount: raffle.raffleType === 'relampago' ? lightningCargasCount : null,
       lightningMinCargas: raffle.raffleType === 'relampago' ? LIGHTNING_MIN_CARGAS : null,
-      pushNotifications: { winnerPushed, losersPushed }
+      pushNotifications: { winnerPushed, losersPushed, winnerDiag: winnerPushDiag }
     });
   } catch (err) {
     logger.error(`/api/admin/raffles/draw: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/:id/resend-winner-push
+// Reenvía la notificación al ganador YA sorteado. Útil cuando la primera no
+// llegó (user instaló la PWA recién después, o tokens expirados se renovaron).
+// Idempotente — no toca status ni acredita premio.
+app.post('/api/admin/raffles/:id/resend-winner-push', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status !== 'drawn' || !raffle.winnerUsername) {
+      return res.status(400).json({ error: 'Este sorteo no tiene ganador sorteado todavía.' });
+    }
+    const winnerUserDoc = await User.findOne(
+      { username: { $regex: '^' + String(raffle.winnerUsername).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } },
+      { fcmToken: 1, fcmTokens: 1, username: 1 }
+    ).lean();
+    const tokensCount =
+      (winnerUserDoc && winnerUserDoc.fcmTokens ? winnerUserDoc.fcmTokens.filter(t => t && t.token).length : 0) +
+      (winnerUserDoc && winnerUserDoc.fcmToken && !(winnerUserDoc.fcmTokens && winnerUserDoc.fcmTokens.some(t => t && t.token === winnerUserDoc.fcmToken)) ? 1 : 0);
+    if (!winnerUserDoc) return res.json({ success: false, error: 'El ganador no existe en Users.', tokensCount: 0 });
+    if (tokensCount === 0) return res.json({ success: false, error: 'El ganador no tiene tokens FCM (no instaló PWA con notifs).', tokensCount: 0 });
+
+    const prizeAutoCredited = !!raffle.prizeClaimedAt;
+    const wp = _buildWinnerPush(raffle, Number(raffle.winningTicketNumber || 0), {
+      prizeAutoCredited,
+      lightningForfeited: !!raffle.prizeForfeitedAt
+    });
+    const winRes = await sendNotificationToAllUsers(
+      User, wp.title, wp.body, wp.data,
+      { username: { $regex: '^' + String(raffle.winnerUsername).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+    );
+    res.json({
+      success: !!(winRes && winRes.successCount > 0),
+      tokensCount,
+      sent: (winRes && winRes.successCount) || 0,
+      failed: (winRes && winRes.failureCount) || 0,
+      error: (winRes && !winRes.success) ? winRes.error : null,
+      previewTitle: wp.title,
+      previewBody: wp.body
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/resend-winner-push: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
