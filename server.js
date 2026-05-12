@@ -22189,6 +22189,164 @@ app.get('/api/admin/master-analysis/:section', authMiddleware, adminMiddleware, 
   }
 });
 
+// Helper compartido: dado un raffle + estado del draw, devuelve {title, body, data}
+// EXACTAMENTE igual que la notificación que recibe el ganador real. Lo usan tanto
+// /draw (real) como /test-winner-push (test) — el dueño quiere ver el texto tal
+// cual lo va a leer el ganador, sin marcas "[TEST]" en el cuerpo. La señal de
+// "esto es un test" va solo en el campo `data.source` para tracking interno.
+function _buildWinnerPush(raffle, mappedNumber, opts) {
+  const prize = Number(raffle.prizeValueARS) || 0;
+  const prizeAutoCredited = !!(opts && opts.prizeAutoCredited);
+  const forfeited = !!(opts && opts.forfeited);
+  const cargasCount = Number((opts && opts.cargasCount) || 0);
+  const MIN_CARGAS = 5;
+  const title = forfeited
+    ? '🎲 Salió tu número pero…'
+    : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
+  const body = forfeited
+    ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${MIN_CARGAS} cargas ANTES del sorteo. Tenés ${cargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. Reclamá al agente si querés explicarlo.`
+    : (prizeAutoCredited
+      ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
+      : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
+  const data = {
+    source: (opts && opts.source) || (forfeited ? 'raffle-win-forfeit' : 'raffle-win'),
+    raffleId: raffle.id,
+    isWinner: 'true',
+    autoCredited: prizeAutoCredited ? 'true' : 'false',
+    forfeited: forfeited ? 'true' : 'false',
+    winningTicketNumber: String(mappedNumber)
+  };
+  return { title, body, data };
+}
+
+// Helper compartido: dado un raffle + lotteryNumber, devuelve el mapping +
+// ganador SIN tocar state. Lo usan /preview-draw y el /draw real.
+async function _computeRaffleDrawWinner(raffle, lotteryNumber, explicitWinner) {
+  const parts = await RaffleParticipation.find({ raffleId: raffle.id }).sort({ joinedAt: 1 }).lean();
+  let totalCuposSold = 0;
+  for (const p of parts) totalCuposSold += (p.cuposCount || 1);
+  if (totalCuposSold === 0) return { error: 'No hay cupos vendidos.' };
+  const soldNumbers = [];
+  for (const p of parts) {
+    if (Array.isArray(p.ticketNumbers)) for (const n of p.ticketNumbers) soldNumbers.push(Number(n));
+  }
+  soldNumbers.sort((a, b) => a - b);
+  if (soldNumbers.length === 0) return { error: 'No hay números asignados a participantes.' };
+  let mappedNumber;
+  let wasMapped;
+  if (soldNumbers.includes(lotteryNumber)) {
+    mappedNumber = lotteryNumber;
+    wasMapped = false;
+  } else {
+    const idx = ((lotteryNumber - 1) % soldNumbers.length + soldNumbers.length) % soldNumbers.length;
+    mappedNumber = soldNumbers[idx];
+    wasMapped = true;
+  }
+  let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(mappedNumber));
+  if (explicitWinner) {
+    const found = parts.find(p => p.username.toLowerCase() === String(explicitWinner).toLowerCase());
+    if (!found) return { error: `El usuario "${explicitWinner}" no participa en este sorteo.` };
+    winner = found;
+    if (Array.isArray(found.ticketNumbers) && found.ticketNumbers.length > 0) {
+      mappedNumber = Number(found.ticketNumbers[0]);
+      wasMapped = (mappedNumber !== lotteryNumber);
+    }
+  }
+  if (!winner) return { error: `No se encontró ganador para el número ${mappedNumber}.` };
+  return { parts, totalCuposSold, soldNumbers, mappedNumber, wasMapped, winner };
+}
+
+// POST /api/admin/raffles/:id/preview-draw
+// MISMA lógica de mapping que /draw, pero NO modifica nada. Devuelve quién
+// ganaría con ese número de lotería + cargas vigentes + texto exacto del
+// push que va a recibir. Sirve para que el admin VERIFIQUE antes de sortear.
+app.post('/api/admin/raffles/:id/preview-draw', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    const lotteryNumber = parseInt(req.body && req.body.lotteryNumber, 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+      return res.status(400).json({ error: 'Falta lotteryNumber (entero ≥ 1).' });
+    }
+    const explicitWinner = String((req.body && req.body.winnerUsername) || '').trim();
+    const calc = await _computeRaffleDrawWinner(raffle, lotteryNumber, explicitWinner);
+    if (calc.error) return res.status(400).json({ error: calc.error });
+    const { winner, mappedNumber, wasMapped, totalCuposSold } = calc;
+
+    // 5 cargas vigentes: ahora aplica a TODOS los tipos (free, paid, relámpago).
+    const REQUIRED_CARGAS = 5;
+    const cargasCount = await _getLightningCargasCount(winner.username, Date.now()).catch(() => 0);
+    const qualifies = cargasCount >= REQUIRED_CARGAS;
+
+    const previewPushOK = _buildWinnerPush(raffle, mappedNumber, {
+      prizeAutoCredited: qualifies, forfeited: !qualifies, cargasCount
+    });
+    const previewPushManual = _buildWinnerPush(raffle, mappedNumber, {
+      prizeAutoCredited: false, forfeited: !qualifies, cargasCount
+    });
+
+    res.json({
+      success: true,
+      raffle: {
+        id: raffle.id, name: raffle.name, emoji: raffle.emoji,
+        prizeName: raffle.prizeName, prizeValueARS: raffle.prizeValueARS || 0,
+        raffleType: raffle.raffleType, status: raffle.status,
+        totalTickets: raffle.totalTickets, cuposSold: raffle._ticketCounter || 0
+      },
+      winner: {
+        username: winner.username,
+        ticketNumbers: (winner.ticketNumbers || []).slice().sort((a, b) => a - b),
+        joinedAt: winner.joinedAt || null,
+        cuposCount: winner.cuposCount || 0,
+        entryCostPaid: winner.entryCostPaid || 0
+      },
+      mappedNumber, wasMapped, lotteryNumber, totalCuposSold,
+      cargasCheck: { cargasCount, required: REQUIRED_CARGAS, qualifies },
+      previewPush: previewPushOK,
+      previewPushManual
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/preview-draw: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/:id/test-winner-push
+// Manda el push EXACTO del ganador a un usuario de prueba (ej. lalodj) SIN
+// hacer draw ni modificar el sorteo. Sirve para verificar que el push llega
+// + ver el texto tal cual lo recibe el ganador.
+app.post('/api/admin/raffles/:id/test-winner-push', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado' });
+    const testUsername = String((req.body && req.body.username) || '').trim();
+    if (!testUsername) return res.status(400).json({ error: 'Falta username' });
+    const testTicket = parseInt((req.body && req.body.ticketNumber) || 42, 10) || 42;
+    const autoCredited = (req.body && req.body.autoCredited) !== false;
+    const wp = _buildWinnerPush(raffle, testTicket, {
+      prizeAutoCredited: autoCredited,
+      forfeited: false,
+      source: 'raffle-win-test'
+    });
+    const res2 = await sendNotificationToAllUsers(
+      User, wp.title, wp.body, wp.data,
+      { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+    );
+    logger.info(`[raffles] TEST push winner a ${testUsername} (${raffle.name}) success=${res2 && res2.successCount}`);
+    res.json({
+      success: !!(res2 && res2.successCount > 0),
+      sent: (res2 && res2.successCount) || 0,
+      failed: (res2 && res2.failureCount) || 0,
+      previewTitle: wp.title,
+      previewBody: wp.body,
+      diagnostic: `Push enviado a ${testUsername} con el TEXTO EXACTO que recibe el ganador. Si no le llega: verificar PWA standalone instalada con notifs aceptadas.`
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/test-winner-push: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/:id/draw
 // El admin carga (a) lotteryNumber: numero crudo de la Loteria Nacional
 // Nocturna (1er premio); el sistema mapea por modulo si el cupo esta
@@ -22289,40 +22447,37 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     }
     await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
 
-    // === Regla del relampago: ganador necesita >= 5 cargas REALES con
-    // timestamp ANTERIOR al drawnAt. Cargas posteriores al sorteo NO cuentan.
-    // Si no califica, premio se "forfeit": no se acredita ni queda reclamable.
-    // Aplica solo a raffleType='relampago' (los pagos no tienen este gate).
-    const LIGHTNING_MIN_CARGAS = 5;
-    let lightningForfeited = false;
-    let lightningCargasCount = 0;
-    if (raffle.raffleType === 'relampago') {
+    // === Gate de 5 cargas vigentes: ahora aplica a TODOS los tipos (free,
+    // paid, relámpago). El ganador necesita >= 5 cargas REALES con
+    // timestamp ANTERIOR al drawnAt. Si no califica, el premio NO se
+    // auto-acredita — queda como prizeClaimable=true para que el admin
+    // (o el agente vía WA) lo revise y lo acredite manualmente.
+    const MIN_CARGAS = 5;
+    let forfeited = false;
+    let cargasCount = 0;
+    try {
       const drawnAtTs = drawLock.drawnAt || new Date();
-      lightningCargasCount = await _getLightningCargasCount(
-        winner.username,
-        new Date(drawnAtTs).getTime()
-      );
-      if (lightningCargasCount < LIGHTNING_MIN_CARGAS) {
-        lightningForfeited = true;
-        await Raffle.updateOne(
-          { id: raffle.id },
-          { $set: {
-            prizeForfeitedAt: new Date(),
-            prizeForfeitedReason: `winner cargas=${lightningCargasCount} < ${LIGHTNING_MIN_CARGAS}`,
-            prizeClaimable: false
-          }}
-        ).catch(() => {});
-        logger.info(`[raffles] LIGHTNING FORFEIT ${winner.username} cargas=${lightningCargasCount}/${LIGHTNING_MIN_CARGAS} ${raffle.name}`);
-      } else {
-        logger.info(`[raffles] LIGHTNING winner OK ${winner.username} cargas=${lightningCargasCount}/${LIGHTNING_MIN_CARGAS}`);
-      }
+      cargasCount = await _getLightningCargasCount(winner.username, new Date(drawnAtTs).getTime());
+    } catch (e) {
+      logger.warn(`[raffles] check cargas fail ${winner.username}: ${e.message}`);
+    }
+    const qualifies = cargasCount >= MIN_CARGAS;
+    if (!qualifies) {
+      // NO marcamos prizeForfeitedAt — el premio queda PENDIENTE en
+      // prizeClaimable=true para que el agente lo evalúe manualmente.
+      forfeited = false; // semánticamente "pending agent review"
+      await Raffle.updateOne(
+        { id: raffle.id },
+        { $set: { prizeClaimable: true } }
+      ).catch(() => {});
+      logger.info(`[raffles] WIN PENDING-AGENT ${winner.username} cargas=${cargasCount}/${MIN_CARGAS} (${raffle.name}) — admin revisa`);
     }
 
-    // === AUTO-CREDIT del premio al ganador ===
+    // === AUTO-CREDIT del premio al ganador (solo si tiene 5+ cargas) ===
     let prizeAutoCredited = false;
     let autoCreditError = null;
     const prize = Number(raffle.prizeValueARS) || 0;
-    if (prize > 0 && !lightningForfeited) {
+    if (prize > 0 && qualifies) {
       try {
         const credit = await jugaygana.creditUserBalance(winner.username, prize);
         if (credit && credit.success) {
@@ -22337,7 +22492,6 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
           prizeAutoCredited = true;
           logger.info(`[raffles] AUTO-CREDIT OK ${winner.username} +$${prize} (${raffle.name})`);
         } else {
-          // Credit fallo: marcar reclamable para que el user pueda intentar manualmente
           autoCreditError = (credit && credit.error) || 'Error desconocido al acreditar';
           await Raffle.updateOne(
             { id: raffle.id },
@@ -22355,69 +22509,60 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       }
     }
 
-    let winnerPushed = 0, losersPushed = 0;
-    try {
-      const winTitle = lightningForfeited
-        ? '🎲 Salió tu número pero…'
-        : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
-      const winBody = lightningForfeited
-        ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
-        : (prizeAutoCredited
-          ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
-          : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
-      const winRes = await sendNotificationToAllUsers(
-        User,
-        winTitle,
-        winBody,
-        {
-          source: lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win',
-          raffleId: raffle.id,
-          isWinner: 'true',
-          autoCredited: prizeAutoCredited ? 'true' : 'false',
-          forfeited: lightningForfeited ? 'true' : 'false',
-          winningTicketNumber: String(mappedNumber)
-        },
-        { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
-      );
-      winnerPushed = (winRes && winRes.successCount) || 0;
-    } catch (e) { logger.warn(`[raffles] notif ganador: ${e.message}`); }
+    // Toggles de notificación del body. Default: notificar al ganador,
+    // NO notificar perdedores. El admin puede sobreescribir desde el modal.
+    const notifyWinner = (req.body && req.body.notifyWinner) !== false;
+    const notifyLosers = (req.body && req.body.notifyLosers) === true;
 
-    try {
-      // Todos los participantes que no son el ganador. Dedup por username
-      // (por si una participation tiene el username con casing distinto).
-      const seen = new Set();
-      const loserUsernames = [];
-      for (const p of parts) {
-        const uname = String(p.username || '').trim();
-        if (!uname) continue;
-        const key = uname.toLowerCase();
-        if (key === String(winner.username).toLowerCase()) continue;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        loserUsernames.push(uname);
-      }
-      if (loserUsernames.length > 0) {
-        const mapNote = wasMapped ? ` (mapeado a #${mappedNumber} dentro del cupo vendido)` : '';
-        const loseBody = lightningForfeited
-          ? `🎰 Número ganador: #${mappedNumber}${mapNote}. Salió @${winner.username} pero NO podía reclamar (no tenía ${LIGHTNING_MIN_CARGAS} cargas antes del sorteo). El premio quedó sin acreditar. Cargá ANTES del próximo para tener derecho.`
-          : `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`;
-        const loseRes = await sendNotificationToAllUsers(
-          User,
-          (raffle.emoji || '🎁') + ' Salió el ' + raffle.prizeName,
-          loseBody,
-          {
-            source: lightningForfeited ? 'raffle-lose-forfeit' : 'raffle-lose',
-            raffleId: raffle.id,
-            isWinner: 'false',
-            forfeited: lightningForfeited ? 'true' : 'false',
-            winningTicketNumber: String(mappedNumber),
-            lotteryDrawNumber: String(lotteryNumber)
-          },
-          { username: { $in: loserUsernames } }
+    let winnerPushed = 0, losersPushed = 0;
+    if (notifyWinner) {
+      try {
+        const wp = _buildWinnerPush(raffle, mappedNumber, {
+          prizeAutoCredited,
+          forfeited: !qualifies,
+          cargasCount
+        });
+        const winRes = await sendNotificationToAllUsers(
+          User, wp.title, wp.body, wp.data,
+          { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
         );
-        losersPushed = (loseRes && loseRes.successCount) || 0;
-      }
-    } catch (e) { logger.warn(`[raffles] notif perdedores: ${e.message}`); }
+        winnerPushed = (winRes && winRes.successCount) || 0;
+      } catch (e) { logger.warn(`[raffles] notif ganador: ${e.message}`); }
+    }
+
+    if (notifyLosers) {
+      try {
+        const seen = new Set();
+        const loserUsernames = [];
+        for (const p of parts) {
+          const uname = String(p.username || '').trim();
+          if (!uname) continue;
+          const key = uname.toLowerCase();
+          if (key === String(winner.username).toLowerCase()) continue;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          loserUsernames.push(uname);
+        }
+        if (loserUsernames.length > 0) {
+          const mapNote = wasMapped ? ` (mapeado a #${mappedNumber} dentro del cupo vendido)` : '';
+          const loseBody = `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`;
+          const loseRes = await sendNotificationToAllUsers(
+            User,
+            (raffle.emoji || '🎁') + ' Salió el ' + raffle.prizeName,
+            loseBody,
+            {
+              source: 'raffle-lose',
+              raffleId: raffle.id,
+              isWinner: 'false',
+              winningTicketNumber: String(mappedNumber),
+              lotteryDrawNumber: String(lotteryNumber)
+            },
+            { username: { $in: loserUsernames } }
+          );
+          losersPushed = (loseRes && loseRes.successCount) || 0;
+        }
+      } catch (e) { logger.warn(`[raffles] notif perdedores: ${e.message}`); }
+    }
 
     // Asegurar que el tipo siga teniendo una instancia activa.
     try { await _ensureActiveRafflesSeeded(); } catch (_) {}
@@ -22432,13 +22577,82 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       prizeValueARS: raffle.prizeValueARS,
       prizeAutoCredited,
       autoCreditError,
-      lightningForfeited,
-      lightningCargasCount: raffle.raffleType === 'relampago' ? lightningCargasCount : null,
-      lightningMinCargas: raffle.raffleType === 'relampago' ? LIGHTNING_MIN_CARGAS : null,
+      cargasCheck: { cargasCount, required: MIN_CARGAS, qualifies },
+      pendingAgentReview: !qualifies,
       pushNotifications: { winnerPushed, losersPushed }
     });
   } catch (err) {
     logger.error(`/api/admin/raffles/draw: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/draw-batch
+// Body: { draws: [{ raffleId, lotteryNumber, notifyWinner?, notifyLosers? }] }
+// Sortea N sorteos en una sola llamada. Para cada uno, hace una request
+// interna a /api/admin/raffles/:id/draw (con el mismo token), captura
+// resultado y devuelve un resumen con éxitos y errores.
+app.post('/api/admin/raffles/draw-batch', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const draws = Array.isArray(req.body && req.body.draws) ? req.body.draws : [];
+    if (draws.length === 0) return res.status(400).json({ error: 'Falta draws[].' });
+    if (draws.length > 20) return res.status(400).json({ error: 'Máximo 20 sorteos por batch.' });
+
+    const results = [];
+    for (const item of draws) {
+      const raffleId = String(item.raffleId || '').trim();
+      const lotteryNumber = parseInt(item.lotteryNumber, 10);
+      const notifyWinner = item.notifyWinner !== false;
+      const notifyLosers = item.notifyLosers === true;
+      if (!raffleId || !Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        results.push({ raffleId, error: 'raffleId o lotteryNumber inválidos' });
+        continue;
+      }
+      try {
+        const raffle = await Raffle.findOne({ id: raffleId }).lean();
+        if (!raffle) { results.push({ raffleId, error: 'Sorteo no encontrado' }); continue; }
+        if (raffle.status === 'drawn' || raffle.status === 'archived' || raffle.status === 'cancelled') {
+          results.push({ raffleId, name: raffle.name, error: `Estado "${raffle.status}" — no se puede sortear` });
+          continue;
+        }
+
+        // Si está en archived/drawn sin ganador, lo reabrimos primero
+        // (el flujo del histórico permite esto en el panel del admin).
+        if ((raffle.status === 'archived' || raffle.status === 'drawn') && !raffle.winnerUsername) {
+          await Raffle.updateOne({ id: raffleId }, { $set: { status: 'closed', archivedAt: null } });
+        }
+
+        // Pegada interna al endpoint /draw. Reusamos toda su lógica (mapping,
+        // cargas check, auto-credit, push) sin duplicar.
+        const intRes = await axios.post(
+          (process.env.SELF_URL || ('http://localhost:' + (process.env.PORT || 3000))) + '/api/admin/raffles/' + encodeURIComponent(raffleId) + '/draw',
+          {
+            lotteryNumber,
+            lotteryDrawSource: 'Lotería Nacional Nocturna - 1° premio',
+            lotteryDrawDate: new Date().toISOString(),
+            notifyWinner,
+            notifyLosers
+          },
+          {
+            headers: { Authorization: req.headers.authorization || '', 'Content-Type': 'application/json' },
+            timeout: 30000,
+            validateStatus: () => true
+          }
+        );
+        if (intRes.status >= 200 && intRes.status < 300 && intRes.data && intRes.data.success) {
+          results.push({ raffleId, name: raffle.name, ...intRes.data });
+        } else {
+          results.push({ raffleId, name: raffle.name, error: (intRes.data && intRes.data.error) || ('HTTP ' + intRes.status) });
+        }
+      } catch (e) {
+        results.push({ raffleId, error: e.message });
+      }
+    }
+
+    const okCount = results.filter(r => r.success).length;
+    res.json({ success: true, total: draws.length, ok: okCount, fail: draws.length - okCount, results });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/draw-batch: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
