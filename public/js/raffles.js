@@ -205,42 +205,39 @@ VIP.raffles = (function () {
         const drawn = r.status === 'drawn';
         const canAfford = balance >= (r.entryCost || 0);
 
-        let html = '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:12px;padding:14px;margin-bottom:12px;">';
-        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
-        html += '<div style="font-size:34px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
+        let html = '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:9px 11px;margin-bottom:7px;">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">';
+        html += '<div style="font-size:24px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
         html += '<div style="flex:1;min-width:0;">';
-        html += '<div style="color:#ffd700;font-size:15px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
-        html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · Cupo: ' + total + ' núm. × $' + _fmt(r.entryCost) + '</div>';
+        html += '<div style="color:#ffd700;font-size:13px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
+        html += '<div style="color:#bbb;font-size:10.5px;line-height:1.3;"><strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · ' + total + '×$' + _fmt(r.entryCost) + '</div>';
         html += '</div></div>';
 
-        html += '<div style="height:8px;background:rgba(0,0,0,0.30);border-radius:4px;overflow:hidden;margin:8px 0;">';
+        html += '<div style="height:5px;background:rgba(0,0,0,0.30);border-radius:3px;overflow:hidden;margin:5px 0 3px;">';
         html += '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#d4af37,#ffd700);"></div></div>';
-        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#999;margin-bottom:10px;">';
-        html += '<span>' + sold + '/' + total + ' vendidos (' + fillPct + '%)</span>';
-        html += '<span>' + remaining + ' disponibles</span></div>';
+        html += '<div style="display:flex;justify-content:space-between;font-size:10px;color:#999;margin-bottom:6px;">';
+        html += '<span>' + sold + '/' + total + ' (' + fillPct + '%)</span>';
+        html += '<span>' + remaining + ' disp.</span></div>';
 
         if (myNums.length > 0) {
-            html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px;margin-bottom:10px;">';
-            html += '<div style="color:#ffd700;font-size:11px;font-weight:800;margin-bottom:4px;">TUS NÚMEROS (' + myNums.length + ')</div>';
-            html += '<div style="color:#fff;font-size:13px;font-weight:700;word-break:break-word;">' + _esc(_formatNumbers(myNums)) + '</div></div>';
+            html += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.30);border-radius:6px;padding:6px 8px;margin-bottom:6px;">';
+            html += '<span style="color:#ffd700;font-size:10px;font-weight:800;">TUS NÚMEROS (' + myNums.length + '): </span>';
+            html += '<span style="color:#fff;font-size:12px;font-weight:700;word-break:break-word;">' + _esc(_formatNumbers(myNums)) + '</span></div>';
         }
 
         if (drawn) {
             const youWon = r.iAmWinner;
-            html += '<div style="background:' + (youWon ? 'rgba(102,255,102,0.10)' : 'rgba(255,107,53,0.10)') + ';border-radius:8px;padding:10px;font-size:12px;line-height:1.4;color:#ddd;">';
+            html += '<div style="background:' + (youWon ? 'rgba(102,255,102,0.10)' : 'rgba(255,107,53,0.10)') + ';border-radius:6px;padding:7px 9px;font-size:11.5px;line-height:1.35;color:#ddd;">';
             html += youWon
-                ? '🏆 <strong style="color:#66ff66;">¡Ganaste!</strong> Número ' + r.winningTicketNumber + '. ' + (r.prizeClaimedAt ? 'Premio acreditado a tu saldo.' : 'Si no se acreditó automático, tocá Reclamar arriba.')
-                : '🎲 Sorteado · número ganador <strong>#' + r.winningTicketNumber + '</strong> — ganó @' + _esc(r.winnerUsername || '');
+                ? '🏆 <strong style="color:#66ff66;">¡Ganaste!</strong> #' + r.winningTicketNumber + '. ' + (r.prizeClaimedAt ? 'Acreditado.' : 'Tocá Reclamar arriba.')
+                : '🎲 #' + r.winningTicketNumber + ' — @' + _esc(r.winnerUsername || '');
             html += '</div>';
         } else if (closed) {
             const myCount = myNums.length;
             const partLabel = myCount > 0 ? 'Tenés ' + myCount + (myCount === 1 ? ' número en juego' : ' números en juego') : (sold + ' jugadores anotados');
             html += _renderPendingBlock(r, '#ffaa66', partLabel);
         } else {
-            html += '<div style="background:rgba(212,175,55,0.05);border:1px dashed rgba(212,175,55,0.30);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
-            html += '💡 <strong style="color:#ffd700;">Tip:</strong> tocá <strong>"Elegir números"</strong> y elegí los que quieras del 1 al 100. Si no querés elegir, podés pedir aleatorio. Hasta 50 números por compra.';
-            html += '</div>';
-            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" ' + (canAfford ? '' : 'disabled') + ' style="width:100%;background:' + (canAfford ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:11px;border-radius:8px;font-weight:900;font-size:13px;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + (canAfford ? '🎫 ELEGIR NÚMEROS' : '🔒 SIN SALDO ($' + _fmt(r.entryCost) + ' por número)') + '</button>';
+            html += '<button type="button" data-raffle-action="open-picker" data-raffle-id="' + _esc(r.id) + '" ' + (canAfford ? '' : 'disabled') + ' style="width:100%;background:' + (canAfford ? 'linear-gradient(135deg,#d4af37,#f7931e)' : 'rgba(120,120,120,0.40)') + ';color:#000;border:none;padding:8px;border-radius:7px;font-weight:900;font-size:12px;cursor:' + (canAfford ? 'pointer' : 'not-allowed') + ';letter-spacing:0.5px;">' + (canAfford ? '🎫 ELEGIR NÚMEROS' : '🔒 SIN SALDO') + '</button>';
         }
 
         html += '</div>';
@@ -257,38 +254,35 @@ VIP.raffles = (function () {
         const drawn = r.status === 'drawn';
         const enrolled = myNums.length > 0;
 
-        let html = '<div style="background:rgba(77,171,255,0.06);border:1px solid rgba(77,171,255,0.40);border-radius:12px;padding:14px;margin-bottom:12px;">';
-        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
-        html += '<div style="font-size:34px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
+        let html = '<div style="background:rgba(77,171,255,0.06);border:1px solid rgba(77,171,255,0.40);border-radius:10px;padding:9px 11px;margin-bottom:7px;">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">';
+        html += '<div style="font-size:24px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
         html += '<div style="flex:1;min-width:0;">';
-        html += '<div style="color:#4dabff;font-size:15px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
-        // Si el sorteo está en modo NETWIN (minNetLossARS > 0) mostramos
-        // "Si perdiste $X" en vez de "Mín. carga: $X" — la lógica de gate
-        // ahora es perdida neta, no cargas brutas.
+        html += '<div style="color:#4dabff;font-size:13px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
         const _byNetLoss = Number(r.minNetLossARS || 0) > 0;
         if (_byNetLoss) {
-            html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS si perdiste <strong style="color:#ffaa66;">$' + _fmt(r.minNetLossARS) + '</strong> esta semana · Tope ' + total + ' personas</div>';
+            html += '<div style="color:#bbb;font-size:10.5px;line-height:1.3;"><strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · perdiste ≥ <strong style="color:#ffaa66;">$' + _fmt(r.minNetLossARS) + '</strong></div>';
         } else {
-            html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS para activos · Mín. carga: <strong style="color:#4dabff;">$' + _fmt(r.minCargasARS) + '</strong> · Tope ' + total + ' personas</div>';
+            html += '<div style="color:#bbb;font-size:10.5px;line-height:1.3;"><strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · cargaste ≥ <strong style="color:#4dabff;">$' + _fmt(r.minCargasARS) + '</strong></div>';
         }
         html += '</div></div>';
 
-        html += '<div style="height:8px;background:rgba(0,0,0,0.30);border-radius:4px;overflow:hidden;margin:8px 0;">';
+        html += '<div style="height:5px;background:rgba(0,0,0,0.30);border-radius:3px;overflow:hidden;margin:5px 0 3px;">';
         html += '<div style="height:100%;width:' + fillPct + '%;background:linear-gradient(90deg,#4dabff,#79c2ff);"></div></div>';
-        html += '<div style="display:flex;justify-content:space-between;font-size:11px;color:#999;margin-bottom:10px;">';
-        html += '<span>' + sold + '/' + total + ' anotados (' + fillPct + '%)</span>';
+        html += '<div style="display:flex;justify-content:space-between;font-size:10px;color:#999;margin-bottom:6px;">';
+        html += '<span>' + sold + '/' + total + ' (' + fillPct + '%)</span>';
         html += '<span>' + remaining + ' lugares</span></div>';
 
-        // Caja "estas anotado" cuando aplica (independiente del estado del sorteo).
+        // Caja "estás anotado" compacta.
         if (enrolled) {
-            html += '<div style="background:rgba(77,171,255,0.15);border:1px solid #4dabff;border-radius:8px;padding:10px;text-align:center;margin-bottom:8px;">';
-            html += '<div style="color:#4dabff;font-size:11px;font-weight:800;letter-spacing:1px;margin-bottom:4px;">✅ ESTÁS ANOTADO</div>';
-            html += '<div style="color:#fff;font-size:18px;font-weight:900;">Número <strong>#' + myNums[0] + '</strong></div>';
+            html += '<div style="background:rgba(77,171,255,0.15);border:1px solid #4dabff;border-radius:6px;padding:6px 8px;text-align:center;margin-bottom:6px;">';
+            html += '<span style="color:#4dabff;font-size:10px;font-weight:800;letter-spacing:1px;">✅ ANOTADO · </span>';
+            html += '<span style="color:#fff;font-size:14px;font-weight:900;">#' + myNums[0] + '</span>';
             html += '</div>';
         }
 
         if (drawn) {
-            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:10px;font-size:12px;color:#aaa;">🎲 Sorteado · ganó @' + _esc(r.winnerUsername || '') + ' con #' + r.winningTicketNumber + '</div>';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px 9px;font-size:11.5px;color:#aaa;">🎲 #' + r.winningTicketNumber + ' — @' + _esc(r.winnerUsername || '') + '</div>';
         } else if (closed) {
             const partLabel = enrolled ? 'Tu #' + myNums[0] + ' está en carrera' : (sold + ' personas en carrera');
             html += _renderPendingBlock(r, '#4dabff', partLabel);
