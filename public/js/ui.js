@@ -906,7 +906,12 @@ window.showInstallInstructions = VIP.ui.showInstallInstructions;
 
 // ---- PWA install prompt event handlers (must be top-level) ----
 
-window.deferredPrompt = null;
+// CRITICAL: NO sobreescribir window.deferredPrompt si ya está seteado.
+// El script inline del <head> de index.html puede haber capturado el
+// evento `beforeinstallprompt` antes de que este script (deferred)
+// corra. Si lo seteamos a null acá, perdemos el prompt para siempre y
+// el botón Instalar cae al fallback de instrucciones manuales en Android.
+window.deferredPrompt = window.deferredPrompt || null;
 
 window.addEventListener('beforeinstallprompt', (e) => {
     if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
