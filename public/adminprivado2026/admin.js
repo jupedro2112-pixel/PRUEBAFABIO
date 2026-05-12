@@ -17205,7 +17205,24 @@ async function viewArchivedRaffles(kind) {
             html += '</div>';
             html += '<div style="color:#aaa;font-size:11px;margin-top:3px;">Premio: ' + escapeHtml(fmtMoney(r.prizeValueARS)) + ' · Vendidos: ' + sold + '/' + (r.totalTickets || 100) + ' · Recaudó: ' + escapeHtml(fmtMoney(r.revenue || 0)) + '</div>';
             if (r.weekKey) html += '<div style="color:#888;font-size:10.5px;">Semana: ' + escapeHtml(r.weekKey) + (r.drawDate ? ' · Sorteo: ' + escapeHtml(fmtDate(r.drawDate)) : '') + '</div>';
-            if (hasWinner) html += '<div style="color:#66ff66;font-size:11px;margin-top:3px;">🏆 Ganador: ' + escapeHtml(r.winnerUsername) + ' (#' + r.winningTicketNumber + ')</div>';
+            if (hasWinner) {
+                // Estado del premio: pendiente de reclamar / acreditado / forfeit
+                let claimState = '';
+                if (r.prizeForfeitedAt) {
+                    claimState = '<span style="color:#ff8080;"> · ❌ Forfeit' + (r.prizeForfeitedReason ? ' (' + escapeHtml(r.prizeForfeitedReason) + ')' : '') + '</span>';
+                } else if (r.prizeClaimedAt) {
+                    claimState = '<span style="color:#66ff66;"> · ✅ Acreditado ' + escapeHtml(fmtDate(r.prizeClaimedAt)) + '</span>';
+                } else if (r.prizeClaimable) {
+                    claimState = '<span style="color:#ffaa66;"> · ⏳ Esperando reclamo del ganador</span>';
+                } else {
+                    claimState = '<span style="color:#aaa;"> · Sin acreditar</span>';
+                }
+                html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:7px;padding:7px 10px;margin-top:5px;color:#fff;font-size:11.5px;line-height:1.5;">';
+                html += '🏆 <strong>' + escapeHtml(r.winnerUsername) + '</strong> · número <strong>#' + r.winningTicketNumber + '</strong>';
+                if (r.drawnAt) html += ' <span style="color:#888;">(sorteado ' + escapeHtml(fmtDate(r.drawnAt)) + ')</span>';
+                html += '<br>' + claimState;
+                html += '</div>';
+            }
             html += '</div>';
             html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
             // Ver participantes: SIEMPRE disponible si hay vendidos.

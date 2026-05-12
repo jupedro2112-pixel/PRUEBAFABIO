@@ -21389,6 +21389,8 @@ app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) 
         lotteryDrawSource: r.lotteryDrawSource,
         prizeClaimable: r.prizeClaimable || false,
         prizeClaimedAt: r.prizeClaimedAt,
+        prizeForfeitedAt: r.prizeForfeitedAt || null,
+        prizeForfeitedReason: r.prizeForfeitedReason || null,
         drawnAt: r.drawnAt
       }))
     });
