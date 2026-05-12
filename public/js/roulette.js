@@ -46,36 +46,38 @@
         if (!_state || !_state.eligible) { c.style.display = 'none'; c.innerHTML = ''; return; }
 
         const spin = _state.spin;
+        // Render compacto: banda fina arriba del home con CTA en una sola
+        // línea. Tap → abre el modal con el detalle / giro real.
         let html = '';
         if (_state.alreadySpun && spin) {
-            // Ya giró hoy. Mostramos resultado compacto en el home.
             const won = Number(spin.prizeARS || 0) > 0;
             if (won && spin.status === 'credited') {
-                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00 0%,#1a8200 50%,#ffd700 100%);border:2px solid #ffd700;border-radius:14px;padding:13px 14px;margin:10px auto;max-width:560px;box-shadow:0 0 20px rgba(255,215,0,0.40);">';
-                html += '<div style="color:#ffd700;font-weight:900;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;">🎰 GIRASTE LA RULETA HOY</div>';
-                html += '<div style="color:#fff;font-size:17px;font-weight:900;">✅ GANASTE $' + _fmt(spin.prizeARS) + ' — ya acreditado a tu saldo</div>';
-                html += '<div style="color:#fff;font-size:11px;margin-top:3px;opacity:0.85;">Volvé mañana a partir de las 00:00 para girar otra vez.</div>';
+                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200);border:1px solid #ffd700;border-radius:8px;padding:6px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
+                html += '<span style="font-size:16px;">🎰</span>';
+                html += '<span style="color:#fff;font-weight:800;flex:1;">Ganaste <strong style="color:#ffd700;">$' + _fmt(spin.prizeARS) + '</strong> hoy · acreditado</span>';
+                html += '<span style="color:#ffd700;font-size:11px;">›</span>';
                 html += '</div>';
             } else if (won && spin.status === 'credit_failed') {
-                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(135deg,#2a1500,#4a2500);border:2px solid #ffaa66;border-radius:14px;padding:13px 14px;margin:10px auto;max-width:560px;">';
-                html += '<div style="color:#ffaa66;font-weight:900;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;">🎰 RULETA — ATENCIÓN</div>';
-                html += '<div style="color:#fff;font-size:14px;font-weight:800;">Ganaste $' + _fmt(spin.prizeARS) + ' pero la acreditación falló. Escribí al número principal — te lo cargamos manual.</div>';
+                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:rgba(255,170,102,0.10);border:1px solid #ffaa66;border-radius:8px;padding:6px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
+                html += '<span style="font-size:16px;">⚠️</span>';
+                html += '<span style="color:#fff;font-weight:700;flex:1;">Ganaste $' + _fmt(spin.prizeARS) + ' — acreditación falló, escribinos</span>';
+                html += '<span style="color:#ffaa66;font-size:11px;">›</span>';
                 html += '</div>';
             } else {
-                // Sin premio
-                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);border-radius:14px;padding:11px 14px;margin:10px auto;max-width:560px;">';
-                html += '<div style="color:#aaa;font-weight:800;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;">🎰 RULETA DIARIA</div>';
-                html += '<div style="color:#ddd;font-size:13px;">Hoy no ganaste. Volvé mañana para girar otra vez.</div>';
+                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.18);border-radius:8px;padding:6px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
+                html += '<span style="font-size:16px;opacity:0.7;">🎰</span>';
+                html += '<span style="color:#ccc;flex:1;">Hoy no ganaste · volvé mañana</span>';
+                html += '<span style="color:#888;font-size:11px;">›</span>';
                 html += '</div>';
             }
         } else {
-            // No giró todavía → CTA grande, pulse animation.
-            html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(135deg,#4a0080 0%,#7c00cc 50%,#ffd700 100%);background-size:200% 200%;border:3px solid #ffd700;border-radius:16px;padding:16px 14px;margin:10px auto;max-width:560px;box-shadow:0 0 26px rgba(255,215,0,0.45);text-align:center;animation:roulettePulseHome 2.2s ease-in-out infinite;">';
-            html += '<div style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;">🎰 RULETA DIARIA · GRATIS</div>';
-            html += '<div style="color:#fff;font-size:22px;font-weight:900;line-height:1.1;margin-bottom:4px;text-shadow:0 1px 3px rgba(0,0,0,0.50);">¡GIRÁ Y GANÁ HASTA $10.000!</div>';
-            html += '<div style="color:#fff;font-size:12px;font-weight:600;opacity:0.92;">Toca para girar — 1 vez al día</div>';
+            // No giró → banda fina con CTA + pulse sutil
+            html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(90deg,#4a0080,#7c00cc);border:1.5px solid #ffd700;border-radius:8px;padding:7px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;box-shadow:0 0 10px rgba(255,215,0,0.30);animation:roulettePulseHome 2.2s ease-in-out infinite;">';
+            html += '<span style="font-size:16px;">🎰</span>';
+            html += '<span style="color:#fff;font-weight:800;flex:1;">Ruleta diaria · <span style="color:#ffd700;">girá y ganá hasta $10.000</span></span>';
+            html += '<span style="background:#ffd700;color:#000;font-weight:900;padding:3px 9px;border-radius:6px;font-size:11px;letter-spacing:0.5px;">GIRAR</span>';
             html += '</div>';
-            html += '<style>@keyframes roulettePulseHome { 0%, 100% { box-shadow: 0 0 26px rgba(255,215,0,0.45); transform: scale(1); } 50% { box-shadow: 0 0 36px rgba(255,215,0,0.80); transform: scale(1.015); } }</style>';
+            html += '<style>@keyframes roulettePulseHome { 0%,100% { box-shadow: 0 0 10px rgba(255,215,0,0.30); } 50% { box-shadow: 0 0 16px rgba(255,215,0,0.55); } }</style>';
         }
         c.innerHTML = html;
         c.style.display = '';

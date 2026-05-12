@@ -1721,68 +1721,65 @@
            pulsante para llamar la atencion. order:1.65 para quedar entre
            userBalanceCard (1.5) y welcomeBonusCard (1.7). */
         .giveaway-card {
-            text-align: center;
+            text-align: left;
             width: 100%;
-            max-width: 380px;
-            margin: 0 auto 12px;
-            padding: 12px 14px;
-            background: linear-gradient(135deg, rgba(37,211,102,0.20), rgba(0,200,100,0.08));
-            border: 2px solid #25d366;
-            border-radius: 14px;
+            max-width: 560px;
+            margin: 6px auto;
+            padding: 7px 38px 7px 10px;
+            background: linear-gradient(90deg, rgba(37,211,102,0.20), rgba(0,200,100,0.08));
+            border: 1.5px solid #25d366;
+            border-radius: 8px;
             color: #fff;
             box-sizing: border-box;
-            box-shadow: 0 6px 20px rgba(37,211,102,0.30);
+            box-shadow: 0 0 10px rgba(37,211,102,0.30);
             order: 1.65;
             position: relative;
             flex: 0 0 auto !important;
-            /* display lo controla JS via setProperty('display', X, 'important').
-               No ponemos display:block !important aqui porque pisaria el
-               style="display:none;" inline del HTML y haria que el card se vea
-               vacio con $0 mientras la API responde en cold-start. */
             overflow: hidden;
+            display: flex !important;
+            align-items: center;
+            gap: 8px;
+            font-size: 12.5px;
             animation: giveawayPulse 2.2s ease-in-out infinite;
         }
         @keyframes giveawayPulse {
-            0%, 100% { box-shadow: 0 6px 20px rgba(37,211,102,0.30); }
-            50%      { box-shadow: 0 8px 28px rgba(37,211,102,0.55); }
+            0%, 100% { box-shadow: 0 0 10px rgba(37,211,102,0.30); }
+            50%      { box-shadow: 0 0 16px rgba(37,211,102,0.55); }
         }
         .giveaway-card-flag {
-            font-size: clamp(10px, 2.6vw, 12px);
+            font-size: 11px;
             font-weight: 900;
-            letter-spacing: 2px;
+            letter-spacing: 0.8px;
             color: #cffae0;
             text-transform: uppercase;
-            margin-bottom: 4px;
+            flex-shrink: 0;
+            margin: 0;
         }
         .giveaway-card-amount {
-            font-size: clamp(22px, 7vw, 30px);
+            font-size: 13.5px;
             font-weight: 900;
             color: #fff;
-            text-shadow: 0 2px 6px rgba(0,150,75,0.55);
-            line-height: 1.1;
-            letter-spacing: 0.5px;
+            line-height: 1;
+            letter-spacing: 0.3px;
+            flex: 1;
+            min-width: 0;
         }
-        .giveaway-card-sub {
-            font-size: clamp(11px, 3vw, 12px);
-            color: #d0f5e0;
-            margin: 4px 0 8px;
-        }
+        .giveaway-card-sub { display: none; }
         .giveaway-card-btn {
-            width: 100%;
-            max-width: 280px;
             background: linear-gradient(135deg, #fff 0%, #d4f5e0 100%);
             color: #0a4a2e;
             border: none;
-            padding: 10px 14px;
-            border-radius: 10px;
+            padding: 5px 11px;
+            border-radius: 6px;
             font-weight: 900;
-            font-size: clamp(13px, 3.6vw, 15px);
+            font-size: 11.5px;
             cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
             -webkit-tap-highlight-color: rgba(255,255,255,0.2);
             touch-action: manipulation;
-            white-space: normal;
-            line-height: 1.2;
+            white-space: nowrap;
+            line-height: 1.1;
+            flex-shrink: 0;
         }
         .giveaway-card-btn:active { transform: scale(0.97); }
         .giveaway-card-btn:disabled {
@@ -1792,10 +1789,12 @@
             box-shadow: none;
         }
         .giveaway-card-timer {
-            font-size: 11px;
+            font-size: 10px;
             color: #cffae0;
-            margin-top: 6px;
             font-weight: 600;
+            flex-shrink: 0;
+            white-space: nowrap;
+            margin: 0;
         }
         .giveaway-card.claimed {
             animation: none;
@@ -2641,7 +2640,7 @@
         <div class="giveaway-card" id="giveawayCard" style="display:none;position:relative;">
             <button type="button" id="giveawayDismissBtn" aria-label="Cerrar regalo"
                     onclick="VIP.refunds.dismissGiveaway && VIP.refunds.dismissGiveaway()"
-                    style="position:absolute;top:6px;right:8px;width:28px;height:28px;border-radius:50%;background:rgba(0,0,0,0.45);color:#fff;border:1px solid rgba(255,255,255,0.25);font-size:16px;font-weight:900;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;z-index:5;">×</button>
+                    style="position:absolute;top:50%;right:6px;transform:translateY(-50%);width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,0.45);color:#fff;border:1px solid rgba(255,255,255,0.25);font-size:14px;font-weight:900;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;z-index:5;">×</button>
             <div class="giveaway-card-flag">🎉 REGALO ACTIVO</div>
             <div class="giveaway-card-amount" id="giveawayAmount">$0</div>
             <div class="giveaway-card-sub" id="giveawaySub">Tocá el botón para reclamar</div>
