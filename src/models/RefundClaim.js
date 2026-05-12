@@ -111,7 +111,12 @@ const refundClaimSchema = new mongoose.Schema({
   // IP del cliente al momento del claim. Se usa para anti-fraude del welcome
   // bonus: bloqueamos múltiples claims desde la misma IP (uninstall +
   // reinstall + cuenta JUGAYGANA nueva → mismo router/red).
-  clientIp: { type: String, default: null, index: true }
+  clientIp: { type: String, default: null, index: true },
+  // Huella del dispositivo (hash SHA-256 del UA + pantalla + idioma + tz +
+  // canvas hash) al momento del claim. Permite detectar el mismo dispositivo
+  // aunque el user borre caché/cookies y cree cuenta nueva. Si otro usuario
+  // intenta reclamar con la misma huella → fraudBlocked.
+  deviceFingerprint: { type: String, default: null, index: true }
 }, {
   timestamps: true
 });

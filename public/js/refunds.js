@@ -431,9 +431,16 @@ VIP.refunds = (function () {
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
             claimBtn.onclick = null;
         } else if (typeData.potentialAmount <= 0) {
-            extraInfo.innerHTML = '<span style="color: #ff8888;">⚠️ No tienes saldo neto positivo para reclamar reembolso</span>';
+            // Mensaje claro: el reembolso es SOBRE LA PÉRDIDA. Si el user
+            // ganó o no jugó, no hay nada que reembolsar.
+            const periodLabel = type === 'daily' ? 'ayer' : (type === 'weekly' ? 'esta última semana' : 'este último mes');
+            extraInfo.innerHTML =
+                '<div style="background:rgba(255,170,68,0.08);border:1px solid rgba(255,170,68,0.40);border-radius:8px;padding:10px 12px;color:#ffaa44;font-size:12.5px;line-height:1.5;">' +
+                '<strong>Hoy no te corresponde reembolso.</strong><br>' +
+                'El reembolso se calcula sobre la <strong>plata que perdiste</strong> ' + periodLabel + ' (cargas − retiros). Si ganaste o no jugaste, no hay nada para reembolsar. Probá cargar y jugar — si te va mal, mañana podés reclamar.' +
+                '</div>';
             claimBtn.disabled = true;
-            claimBtn.textContent = '❌ Sin saldo para reembolso';
+            claimBtn.textContent = '😐 No te corresponde reembolso';
             claimBtn.style.background = 'linear-gradient(135deg, #666 0%, #444 100%)';
             claimBtn.onclick = null;
         } else if (!typeData.canClaim) {
@@ -684,7 +691,13 @@ VIP.refunds = (function () {
             renderWelcomeBonusCard();
         }
         try {
-            const r = await fetch(`${VIP.config.API_URL}/api/refunds/welcome/status`, {
+            // Huella del dispositivo: si el front la pudo calcular, la mandamos
+            // como query param para que el server pueda bloquear ANTES de
+            // mostrar el botón si detecta cuenta duplicada en el mismo celular.
+            const fp = (window.VIP && VIP.fingerprint && typeof VIP.fingerprint.get === 'function')
+                ? await VIP.fingerprint.get().catch(() => null) : null;
+            const fpQuery = fp ? ('?deviceFingerprint=' + encodeURIComponent(fp)) : '';
+            const r = await fetch(`${VIP.config.API_URL}/api/refunds/welcome/status${fpQuery}`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (!r.ok) return;
@@ -781,6 +794,17 @@ VIP.refunds = (function () {
         }
         btn.disabled = false;
         btn.onclick = handleWelcomeBonusClick;
+
+        // Stepper: pinta cada badge según el estado real. Usuarios que se
+        // pierden en el modal de pasos ahora ven la checklist directo en el card.
+        try {
+            const b1 = document.getElementById('welcomeStep1Badge');
+            const b2 = document.getElementById('welcomeStep2Badge');
+            const b3 = document.getElementById('welcomeStep3Badge');
+            if (b1) b1.textContent = installed ? '✅' : '⏳';
+            if (b2) b2.textContent = inApp    ? '✅' : '⏳';
+            if (b3) b3.textContent = notifOk  ? '✅' : '⏳';
+        } catch (_) {}
     }
 
     function handleWelcomeBonusClick() {
@@ -801,9 +825,15 @@ VIP.refunds = (function () {
             btn.textContent = '⏳ Procesando...';
         }
         try {
+            const fp = (window.VIP && VIP.fingerprint && typeof VIP.fingerprint.get === 'function')
+                ? await VIP.fingerprint.get().catch(() => null) : null;
             const response = await fetch(`${VIP.config.API_URL}/api/refunds/claim/welcome`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+                headers: {
+                    'Authorization': `Bearer ${VIP.state.currentToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ deviceFingerprint: fp || null })
             });
             const data = await response.json();
             if (data.success) {
@@ -979,11 +1009,18 @@ VIP.refunds = (function () {
             }
             if (timerEl) timerEl.style.display = '';
         } else {
-            if (amountEl) amountEl.textContent = amountStr + ' GRATIS';
-            if (subEl) subEl.textContent = 'Tocá ahora antes que se acabe.';
+            // Si el giveaway es broadcastAll y tiene customMessage, usamos
+            // el texto y emoji del admin. Si no, fallback al texto default.
+            const emoji = g.customEmoji || '🎁';
+            if (amountEl) amountEl.textContent = emoji + ' ' + amountStr + ' GRATIS';
+            if (subEl) {
+                subEl.textContent = (g.customMessage && g.customMessage.trim())
+                    ? g.customMessage.trim()
+                    : 'Tocá ahora antes que se acabe.';
+            }
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = '🎁 RECLAMAR ' + amountStr;
+                btn.textContent = 'RECLAMÁ ' + amountStr + ' AQUÍ';
                 btn.style.opacity = '';
                 btn.style.cursor = '';
             }

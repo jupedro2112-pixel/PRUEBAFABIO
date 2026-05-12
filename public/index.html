@@ -2550,6 +2550,18 @@
             <div class="welcome-bonus-title">BONO POR BAJAR LA APP</div>
             <div class="welcome-bonus-amount" id="welcomeBonusAmount">$5.000 GRATIS</div>
             <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Por única vez por tener la app instalada.</div>
+
+            <!-- Stepper de los 3 pasos obligatorios. JS actualiza cada badge
+                 con ✅ o ⏳ según el estado real (isAppInstalled/isStandalone/
+                 isNotifGranted) en cada render del card. -->
+            <div id="welcomeBonusSteps" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,215,0,0.30);border-radius:9px;padding:10px 11px;margin:10px 0 8px;text-align:left;font-size:12px;line-height:1.6;">
+                <div style="color:#ffd700;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;text-align:center;">⚠️ TENÉS QUE HACER LOS 3 PASOS</div>
+                <div id="welcomeStep1" style="color:#fff;"><span id="welcomeStep1Badge">⏳</span> <strong>1.</strong> Instalá la app en el celular</div>
+                <div id="welcomeStep2" style="color:#fff;"><span id="welcomeStep2Badge">⏳</span> <strong>2.</strong> Abrila desde el ícono (no desde el navegador)</div>
+                <div id="welcomeStep3" style="color:#fff;"><span id="welcomeStep3Badge">⏳</span> <strong>3.</strong> Aceptá las notificaciones</div>
+                <div style="color:#ffaa44;font-size:11px;margin-top:7px;text-align:center;font-weight:700;">👇 Recién después tocá el botón de abajo</div>
+            </div>
+
             <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn" onclick="VIP.refunds.handleWelcomeBonusClick()">🎁 RECLAMAR $5.000</button>
         </div>
 
@@ -2593,7 +2605,85 @@
                 <li>⚡ Sorteos relámpago en vivo</li>
             </ul>
             <button type="button" id="installHeroBtn" class="install-hero-btn">💡 CÓMO INSTALAR — paso a paso</button>
-            <div class="install-hero-foot">Si tenés dudas tocá el botón — te muestra el procedimiento exacto para tu celular.</div>
+            <button type="button" id="installCantInstallBtn" onclick="(function(){var m=document.getElementById('cantInstallHelpModal');if(m){m.style.display='flex';}})()" style="display:block;width:100%;margin-top:8px;background:rgba(255,170,102,0.10);color:#ffaa66;border:1px dashed rgba(255,170,102,0.55);padding:9px 12px;border-radius:9px;font-weight:800;font-size:12px;cursor:pointer;letter-spacing:0.3px;">❓ NO ME DEJA INSTALAR — ayuda para borrar caché</button>
+            <div class="install-hero-foot">Si tenés dudas tocá los botones — te mostramos el procedimiento exacto para tu celular.</div>
+        </div>
+
+        <!-- Refunds-only: Modal de ayuda "no me deja instalar". Muestra cómo
+             borrar caché por plataforma (iOS Safari, iOS Chrome, Android
+             Chrome). Se dispara desde el botón de arriba o desde otros
+             puntos donde el user se atasque. Cierra con × o tocando fuera. -->
+        <div id="cantInstallHelpModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:10001;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;" onclick="if(event.target===this)this.style.display='none';">
+            <div style="background:linear-gradient(135deg,#1a0033 0%,#0a0015 100%);border:2px solid #ffaa66;border-radius:18px;max-width:480px;width:100%;margin:18px auto;padding:22px 18px;color:#fff;box-shadow:0 20px 60px rgba(0,0,0,0.6);">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px;">
+                    <h3 style="color:#ffaa66;margin:0;font-size:17px;font-weight:900;letter-spacing:0.5px;">❓ No me deja instalar la app</h3>
+                    <button type="button" onclick="document.getElementById('cantInstallHelpModal').style.display='none'" style="background:transparent;color:#aaa;border:none;font-size:24px;cursor:pointer;line-height:1;">×</button>
+                </div>
+                <p style="margin:0 0 14px;color:#eee;font-size:13px;line-height:1.5;">
+                    Casi siempre se soluciona <strong style="color:#ffd700;">borrando la caché del navegador</strong> y entrando de nuevo. Elegí tu sistema:
+                </p>
+
+                <!-- ANDROID CHROME -->
+                <div style="background:rgba(102,204,0,0.10);border:1px solid rgba(102,204,0,0.45);border-radius:11px;padding:12px;margin-bottom:10px;">
+                    <div style="color:#66ff66;font-weight:900;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>🤖</span><span>Android · Chrome (lo más común)</span>
+                    </div>
+                    <ol style="margin:0;padding-left:18px;color:#ddd;font-size:12.5px;line-height:1.7;">
+                        <li>Abrí <strong>Chrome</strong> y tocá los <strong>3 puntitos</strong> arriba a la derecha.</li>
+                        <li>Tocá <strong>Configuración</strong> → <strong>Privacidad y seguridad</strong> → <strong>Borrar datos de navegación</strong>.</li>
+                        <li>Elegí <strong>"Cookies y datos del sitio"</strong> + <strong>"Imágenes y archivos almacenados en caché"</strong>.</li>
+                        <li>Tocá <strong>Borrar datos</strong>.</li>
+                        <li>Volvé a entrar a la página y tocá <strong>💡 CÓMO INSTALAR</strong> de nuevo.</li>
+                    </ol>
+                </div>
+
+                <!-- IOS SAFARI -->
+                <div style="background:rgba(0,150,255,0.10);border:1px solid rgba(0,150,255,0.45);border-radius:11px;padding:12px;margin-bottom:10px;">
+                    <div style="color:#4dabff;font-weight:900;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>🍎</span><span>iPhone · Safari</span>
+                    </div>
+                    <ol style="margin:0;padding-left:18px;color:#ddd;font-size:12.5px;line-height:1.7;">
+                        <li>Cerrá Safari (deslizá hacia arriba la app).</li>
+                        <li>Abrí <strong>Ajustes</strong> del iPhone → <strong>Safari</strong>.</li>
+                        <li>Bajá hasta <strong>"Borrar historial y datos"</strong> y confirmá.</li>
+                        <li>Abrí <strong>Safari</strong> (NO desde otra app — directamente desde el ícono) y volvé a entrar a la página.</li>
+                        <li>Tocá el botón <strong>Compartir</strong> (cuadradito con flecha hacia arriba) → <strong>"Añadir a pantalla de inicio"</strong>.</li>
+                    </ol>
+                    <div style="background:rgba(255,170,102,0.10);border-left:3px solid #ffaa66;border-radius:0 6px 6px 0;padding:6px 9px;margin-top:7px;font-size:11.5px;color:#ffd0a0;">
+                        ⚠️ <strong>Importante en iPhone:</strong> la app SOLO se instala desde Safari. Si abriste el link desde WhatsApp/Instagram/Facebook, primero copiá el link y abrílo en Safari.
+                    </div>
+                </div>
+
+                <!-- IOS CHROME (rara vez funciona, derivamos a Safari) -->
+                <div style="background:rgba(255,128,128,0.08);border:1px solid rgba(255,128,128,0.40);border-radius:11px;padding:12px;margin-bottom:10px;">
+                    <div style="color:#ff9999;font-weight:900;font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                        <span>🚫</span><span>iPhone · Chrome / Firefox</span>
+                    </div>
+                    <div style="color:#ddd;font-size:12.5px;line-height:1.6;">
+                        En iPhone, <strong style="color:#ff9999;">Chrome y Firefox NO pueden instalar PWAs</strong> — es una restricción de Apple. Tenés que abrir el link en <strong>Safari</strong> (mirá los pasos de arriba 👆).
+                    </div>
+                </div>
+
+                <!-- ANDROID OTROS -->
+                <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.40);border-radius:11px;padding:12px;margin-bottom:14px;">
+                    <div style="color:#d4af37;font-weight:900;font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                        <span>📱</span><span>Android · Samsung Internet / Firefox / otros</span>
+                    </div>
+                    <div style="color:#ddd;font-size:12.5px;line-height:1.6;">
+                        Funciona también, pero te recomendamos <strong style="color:#ffd700;">abrir el link en Chrome</strong> que es el más estable. Los pasos para borrar caché son parecidos: Ajustes → Privacidad → Borrar datos del navegador.
+                    </div>
+                </div>
+
+                <!-- TODAVÍA NO ANDA: WhatsApp directo -->
+                <div style="background:rgba(37,211,102,0.12);border:1px solid #25d366;border-radius:11px;padding:12px;text-align:center;">
+                    <div style="color:#fff;font-size:12.5px;line-height:1.5;margin-bottom:9px;">
+                        Si seguís sin poder instalar, escribinos por WhatsApp y te ayudamos.
+                    </div>
+                    <a href="https://wa.link/metawin2026?text=Hola%2C%20no%20puedo%20instalar%20la%20app%20para%20reclamar%20el%20regalo%20de%20%245.000.%20%C2%BFMe%20ayudan%3F" target="_blank" rel="noopener" style="display:inline-block;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;text-decoration:none;padding:11px 20px;border-radius:9px;font-weight:900;font-size:13px;letter-spacing:0.3px;box-shadow:0 3px 10px rgba(37,211,102,0.50);">
+                        💬 PEDIR AYUDA POR WHATSAPP
+                    </a>
+                </div>
+            </div>
         </div>
 
         <!-- Refunds-only: Resumen chico de opiniones — aparece solo después
@@ -2834,6 +2924,11 @@
                     <div style="color:#aaa;font-size:11.5px;margin-top:2px;line-height:1.4;">Si tuviste un problema, contanos qué pasó. Lo revisamos todos.</div>
                 </div>
                 <button type="button" onclick="closeComplaintBookModal()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
+            </div>
+
+            <!-- Aviso del horario de atención. -->
+            <div style="background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.35);border-radius:9px;padding:9px 11px;margin-bottom:12px;color:#ffd700;font-size:11.5px;line-height:1.5;">
+                🕙 <strong>Horario de respuesta:</strong> martes a domingo de 10 a 18 hs. ¡Gracias!
             </div>
 
             <!-- Form -->
@@ -3726,6 +3821,11 @@
                 <h2 id="refundModalTitle">🎁 Reembolso</h2>
             </div>
             <div class="refund-details">
+                <!-- Cómo funciona el reembolso (banner fijo, siempre visible) -->
+                <div style="background: linear-gradient(135deg,rgba(255,170,68,0.10),rgba(255,215,0,0.08));border:1px solid rgba(255,215,0,0.40);border-radius:9px;padding:11px 13px;margin-bottom:14px;color:#ffe7a8;font-size:12px;line-height:1.5;">
+                    💡 <strong>¿Cómo funciona?</strong> El reembolso es <strong>un % de la plata que perdiste</strong> en el período (cargas menos retiros). <strong>Si ganaste o no jugaste, no hay reembolso.</strong> Es un porcentaje sobre la pérdida — no es plata extra.
+                </div>
+
                 <!-- Balance actual -->
                 <div class="refund-info-row" style="background: rgba(0,255,136,0.1); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
                     <span style="font-weight: bold; color: #00ff88;">💰 Tu Balance Actual:</span>
@@ -3978,6 +4078,7 @@
          referencia VIP.* solo dentro de event handlers (no en top-level). -->
     <script src="/socket.io/socket.io.js" defer></script>
     <script src="/js/config.js" defer></script>
+    <script src="/js/fingerprint.js" defer></script>
     <script src="/js/auth.js" defer></script>
     <script src="/js/socket.js" defer></script>
     <script src="/js/chat.js" defer></script>
