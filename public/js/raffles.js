@@ -248,7 +248,15 @@ VIP.raffles = (function () {
         html += '<div style="font-size:34px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
         html += '<div style="flex:1;min-width:0;">';
         html += '<div style="color:#4dabff;font-size:15px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
-        html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS para activos · Mín. carga: <strong style="color:#4dabff;">$' + _fmt(r.minCargasARS) + '</strong> · Tope ' + total + ' personas</div>';
+        // Si el sorteo está en modo NETWIN (minNetLossARS > 0) mostramos
+        // "Si perdiste $X" en vez de "Mín. carga: $X" — la lógica de gate
+        // ahora es perdida neta, no cargas brutas.
+        const _byNetLoss = Number(r.minNetLossARS || 0) > 0;
+        if (_byNetLoss) {
+            html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS si perdiste <strong style="color:#ffaa66;">$' + _fmt(r.minNetLossARS) + '</strong> esta semana · Tope ' + total + ' personas</div>';
+        } else {
+            html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS para activos · Mín. carga: <strong style="color:#4dabff;">$' + _fmt(r.minCargasARS) + '</strong> · Tope ' + total + ' personas</div>';
+        }
         html += '</div></div>';
 
         html += '<div style="height:8px;background:rgba(0,0,0,0.30);border-radius:4px;overflow:hidden;margin:8px 0;">';
@@ -277,18 +285,32 @@ VIP.raffles = (function () {
             // confundia a los users que pensaban "no me deja elegir el
             // numero" cuando en realidad les faltaban cargas. Mostrar el
             // boton + aviso lateral es mas transparente.
-            const wd = (_data && Number(_data.weeklyDeposits)) || 0;
-            const threshold = r.minCargasARS || 0;
-            const reached = threshold > 0 ? wd >= threshold : true;
-            const shortfall = Math.max(0, threshold - wd);
+            // Si el sorteo está por NETWIN, miramos perdida neta (cargas −
+            // retiros). Si está por CARGAS legacy, miramos solo cargas.
+            const useNetLoss = Number(r.minNetLossARS || 0) > 0;
+            const threshold = useNetLoss ? Number(r.minNetLossARS || 0) : Number(r.minCargasARS || 0);
+            const have = useNetLoss
+                ? ((_data && Number(_data.weeklyNetLoss)) || 0)
+                : ((_data && Number(_data.weeklyDeposits)) || 0);
+            const reached = threshold > 0 ? have >= threshold : true;
+            const shortfall = Math.max(0, threshold - have);
             if (reached) {
                 html += '<div style="background:rgba(102,255,102,0.08);border:1px dashed rgba(102,255,102,0.40);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
-                html += '✅ <strong style="color:#66ff66;">¡Calificás!</strong> Llegaste al mínimo de cargas. Tocá <strong>"Elegir mi número"</strong> y reservá tu cupo (1 por persona).';
+                if (useNetLoss) {
+                    html += '✅ <strong style="color:#66ff66;">¡Tenés número!</strong> Perdiste <strong style="color:#fff;">$' + _fmt(have) + '</strong> esta semana. Tocá <strong>"Elegir mi número"</strong> y reclamá tu cupo (1 por persona). Aunque después ganes, el número queda para vos.';
+                } else {
+                    html += '✅ <strong style="color:#66ff66;">¡Calificás!</strong> Llegaste al mínimo de cargas. Tocá <strong>"Elegir mi número"</strong> y reservá tu cupo (1 por persona).';
+                }
                 html += '</div>';
             } else {
                 html += '<div style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.30);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ffaa66;line-height:1.5;">';
-                html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom).<br>';
-                html += '<span style="color:#ddd;">Llevás <strong style="color:#fff;">$' + _fmt(wd) + '</strong> de $' + _fmt(threshold) + '. Podés intentar elegir, pero el sistema rechaza si no llegaste.</span>';
+                if (useNetLoss) {
+                    html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de pérdida neta esta semana (lun-dom).<br>';
+                    html += '<span style="color:#ddd;">Llevás perdidos <strong style="color:#fff;">$' + _fmt(have) + '</strong> de $' + _fmt(threshold) + '. Si seguís jugando y perdés, te toca número.</span>';
+                } else {
+                    html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom).<br>';
+                    html += '<span style="color:#ddd;">Llevás <strong style="color:#fff;">$' + _fmt(have) + '</strong> de $' + _fmt(threshold) + '. Podés intentar elegir, pero el sistema rechaza si no llegaste.</span>';
+                }
                 html += '</div>';
             }
             const ctaBg = reached
@@ -641,7 +663,15 @@ VIP.raffles = (function () {
             html += '<h3 style="margin:0;color:#4dabff;font-size:14px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
             html += '<div style="background:rgba(77,171,255,0.06);border-left:3px solid #4dabff;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
-            html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> Si llegás al mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
+            // Si AL MENOS uno de los free sorteos esta en modo NETWIN,
+            // mostramos el mensaje nuevo. Si todos son legacy por cargas,
+            // dejamos el de cargas.
+            const _anyByNetLoss = free.some(r => Number(r.minNetLossARS || 0) > 0);
+            if (_anyByNetLoss) {
+                html += '<strong style="color:#4dabff;">💎 Sorteos por NETWIN.</strong> Si en la semana <strong>(lunes a domingo)</strong> perdiste el monto del nivel, podés <strong>reclamar tu número</strong>. Aunque después ganes, el número queda para vos. 1 número por persona y por nivel.';
+            } else {
+                html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> Si llegás al mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
+            }
             html += '</div>';
             for (const r of free) html += _renderFreeCard(r);
         }

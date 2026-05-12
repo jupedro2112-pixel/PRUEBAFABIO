@@ -19852,14 +19852,19 @@ const LIGHTNING_RAFFLE_CONFIG = {
 // el user abre el modal: si tuvo >= minCargasARS de cargas en los ultimos
 // 30 dias y todavia hay cupo (1 numero por persona, 100 personas tope),
 // se le asigna automaticamente un numero secuencial. Mismo draw que paid.
+// FREE_RAFFLE_TYPES — sorteos gratis por NETWIN.
+// El user entra si perdió >= minNetLossARS en la última semana (cargas −
+// retiros > threshold). minCargasARS queda como legacy (se ignora cuando
+// minNetLossARS está seteado en el raffle). El user elige a qué nivel(es)
+// reclamar entre los que califica.
 const FREE_RAFFLE_TYPES = [
-  { type: 'free_p2m',  prize: 2000000, totalTickets: 100, minCargasARS: 200000, emoji: '👑',
+  { type: 'free_p2m',  prize: 2000000, totalTickets: 100, minNetLossARS: 200000, minCargasARS: 200000, emoji: '👑',
     name: 'Sorteo Gratis $2.000.000', prizeName: '$2.000.000 en saldo' },
-  { type: 'free_p1m',  prize: 1000000, totalTickets: 100, minCargasARS: 100000, emoji: '💎',
+  { type: 'free_p1m',  prize: 1000000, totalTickets: 100, minNetLossARS: 100000, minCargasARS: 100000, emoji: '💎',
     name: 'Sorteo Gratis $1.000.000', prizeName: '$1.000.000 en saldo' },
-  { type: 'free_p500', prize: 500000,  totalTickets: 100, minCargasARS: 100000, emoji: '💰',
+  { type: 'free_p500', prize: 500000,  totalTickets: 100, minNetLossARS:  50000, minCargasARS: 100000, emoji: '💰',
     name: 'Sorteo Gratis $500.000',   prizeName: '$500.000 en saldo' },
-  { type: 'free_p100', prize: 100000,  totalTickets: 100, minCargasARS: 50000,  emoji: '🎯',
+  { type: 'free_p100', prize: 100000,  totalTickets: 100, minNetLossARS:  20000, minCargasARS:  50000, emoji: '🎯',
     name: 'Sorteo Gratis $100.000',   prizeName: '$100.000 en saldo' }
 ];
 
@@ -20122,8 +20127,12 @@ async function _spawnRaffleInstance(typeCfg, instanceNumber) {
   const weekKey = _isoWeekKey(drawArg);
   const id = uuidv4();
   const isFree = !!FREE_RAFFLE_TYPE_SET.has(typeCfg.type);
+  const netLossGate = Number(typeCfg.minNetLossARS || 0);
+  const cargasGate = Number(typeCfg.minCargasARS || 0);
   const description = isFree
-    ? `Sorteo GRATIS. Necesitás $${(typeCfg.minCargasARS||0).toLocaleString('es-AR')} de cargas en los últimos 30 días para entrar. ${typeCfg.totalTickets} cupos, 1 número por persona.`
+    ? (netLossGate > 0
+        ? `Sorteo GRATIS por NETWIN. Si perdiste $${netLossGate.toLocaleString('es-AR')} esta semana, podés reclamar tu número. ${typeCfg.totalTickets} cupos, 1 número por persona.`
+        : `Sorteo GRATIS. Necesitás $${cargasGate.toLocaleString('es-AR')} de cargas en los últimos 30 días para entrar. ${typeCfg.totalTickets} cupos, 1 número por persona.`)
     : `Premio ${typeCfg.prizeName}. ${typeCfg.totalTickets} números a $${(typeCfg.entryCost||0).toLocaleString('es-AR')}.`;
   // Audiencia heredada del config global por kind (paid o free). Asi el
   // admin define una sola vez "los pagos no van a crazy" y se aplica a
@@ -20146,6 +20155,7 @@ async function _spawnRaffleInstance(typeCfg, instanceNumber) {
     status: 'active',
     isFree,
     minCargasARS: isFree ? (typeCfg.minCargasARS || 0) : 0,
+    minNetLossARS: isFree ? (typeCfg.minNetLossARS || 0) : 0,
     audienceMode: aud.mode,
     audienceTeams: aud.teams
   });
@@ -20241,6 +20251,11 @@ async function _autoEnrollFreeRaffles_LEGACY_DISABLED(username) {
     try { linesCfg = await getConfig('userLinesByPrefix'); } catch (_) {}
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const r of freeRaffles) {
+      // Modelo netwin: el user ELIGE qué nivel reclamar (no auto-enroll).
+      // Si el sorteo está en modo netwin (minNetLossARS > 0), saltamos: el
+      // user va a entrar al modal y pulsar "Elegir mi número" en el nivel
+      // que prefiera. La validación de netLoss la hace /buy.
+      if (Number(r.minNetLossARS || 0) > 0) continue;
       if (weeklyDeposits < (r.minCargasARS || 0)) continue;
       // Si el sorteo tiene audienceMode restringido y este user no entra,
       // skip (no se le asigna numero ni le aparece como "anotado").
@@ -20515,10 +20530,13 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     // user no entra, lo sacamos de la lista (no lo ve siquiera).
     const raffles = rafflesRes.filter(r => _userInRaffleAudience(r, username, linesConfig));
 
-    // Cargas semanales del user — solo las consultamos si hay al menos un
-    // free raffle visible. Para que el front sepa si el user llego al
-    // threshold de cada sorteo gratis (y muestre picker o "te faltan $X").
+    // Cargas / retiros semanales del user — solo los consultamos si hay al
+    // menos un free raffle visible. Para que el front sepa si el user llego
+    // al threshold de cada sorteo gratis (cargas o netwin) y muestre picker
+    // o "te faltan $X" / "perdiste $X y tenes numero".
     let weeklyDeposits = 0;
+    let weeklyWithdrawals = 0;
+    let weeklyNetLoss = 0;
     const hasFreeWeekly = raffles.some(r =>
       r.raffleType !== 'relampago'
       && (r.isFree || FREE_RAFFLE_TYPE_SET.has(r.raffleType))
@@ -20528,8 +20546,12 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       try {
         const m = await getRealMovementsTotals(username, 'weekly');
         weeklyDeposits = Number(m && m.deposits) || 0;
+        weeklyWithdrawals = Number(m && m.withdrawals) || 0;
+        weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
       } catch (_) {
         weeklyDeposits = 0;
+        weeklyWithdrawals = 0;
+        weeklyNetLoss = 0;
       }
     }
     // Cargas REALES del user (misma fuente que el panel de cargas del admin
@@ -20606,6 +20628,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       lotteryRule: RAFFLE_LOTTERY_RULE,
       autoEnrolled,
       weeklyDeposits,
+      weeklyWithdrawals,
+      weeklyNetLoss,
       lightningCargasCount,
       lightningCargasRequired: 5,
       raffles: raffles.map(r => ({
@@ -20621,6 +20645,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         prizeValueARS: r.prizeValueARS,
         isFree: !!r.isFree,
         minCargasARS: r.minCargasARS || 0,
+        minNetLossARS: r.minNetLossARS || 0,
         cuposSold: r._ticketCounter || 0,
         cuposRemaining: Math.max(0, (r.totalTickets || 0) - (r._ticketCounter || 0)),
         claimedNumbers: r.claimedNumbers || [],
@@ -20829,8 +20854,40 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
     const isFreeWeekly = raffle.raffleType !== 'relampago'
       && (raffle.isFree || FREE_RAFFLE_TYPE_SET.has(raffle.raffleType));
     if (isFreeWeekly) {
-      // Threshold check
-      if ((raffle.minCargasARS || 0) > 0) {
+      // Threshold check: si el sorteo tiene minNetLossARS, usamos NETWIN
+      // (cargas − retiros = lo perdido). Si solo tiene minCargasARS (legacy),
+      // usamos el filtro de cargas como antes. Hoy todos los free_* nuevos
+      // se crean con minNetLossARS → política netwin.
+      const minNetLoss = Number(raffle.minNetLossARS || 0);
+      const minCargas = Number(raffle.minCargasARS || 0);
+      if (minNetLoss > 0) {
+        let weeklyNetLoss = 0;
+        let weeklyDeposits = 0;
+        let weeklyWithdrawals = 0;
+        try {
+          const m = await getRealMovementsTotals(username, 'weekly');
+          weeklyDeposits = Number(m && m.deposits) || 0;
+          weeklyWithdrawals = Number(m && m.withdrawals) || 0;
+          weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
+        } catch (e) {
+          logger.warn(`[raffles] FREE buy netloss check fail ${username}: ${e.message}`);
+          return res.status(503).json({ error: 'No pudimos verificar tu actividad. Probá en un minuto.' });
+        }
+        if (weeklyNetLoss < minNetLoss) {
+          const falta = minNetLoss - weeklyNetLoss;
+          return res.status(403).json({
+            error: `Para este sorteo necesitás haber perdido al menos $${minNetLoss.toLocaleString('es-AR')} esta semana. Llevás $${weeklyNetLoss.toLocaleString('es-AR')} de pérdida — te faltan $${falta.toLocaleString('es-AR')}.`,
+            notEnoughNetLoss: true,
+            weeklyNetLoss,
+            weeklyDeposits,
+            weeklyWithdrawals,
+            requiredNetLoss: minNetLoss,
+            shortfall: falta
+          });
+        }
+      } else if (minCargas > 0) {
+        // Fallback legacy: filtro por cargas (sorteos free creados antes del
+        // cambio a netwin no tienen minNetLossARS, siguen con cargas).
         let weeklyDeposits = 0;
         try {
           const m = await getRealMovementsTotals(username, 'weekly');
@@ -20839,13 +20896,13 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
           logger.warn(`[raffles] FREE buy threshold check fail ${username}: ${e.message}`);
           return res.status(503).json({ error: 'No pudimos verificar tus cargas. Probá en un minuto.' });
         }
-        if (weeklyDeposits < raffle.minCargasARS) {
-          const falta = raffle.minCargasARS - weeklyDeposits;
+        if (weeklyDeposits < minCargas) {
+          const falta = minCargas - weeklyDeposits;
           return res.status(403).json({
             error: `Te faltan $${falta.toLocaleString('es-AR')} de cargas esta semana para entrar a este sorteo gratis.`,
             notEnoughDeposits: true,
             weeklyDeposits,
-            requiredDeposits: raffle.minCargasARS,
+            requiredDeposits: minCargas,
             shortfall: falta
           });
         }
@@ -20861,6 +20918,36 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
           error: `Ya estás anotado en este sorteo gratis con el número #${already.ticketNumbers && already.ticketNumbers[0]}. Es 1 cupo por persona.`,
           alreadyEnrolledNumber: already.ticketNumbers && already.ticketNumbers[0]
         });
+      }
+      // En modo NETWIN el user elige UN solo nivel (1 número total entre los
+      // 4 niveles activos por netwin de la misma semana). Si ya reclamó en
+      // otro nivel, lo informamos para que vaya a ese.
+      if (minNetLoss > 0) {
+        const otherNetLossRaffles = await Raffle.find(
+          {
+            raffleType: { $in: Array.from(FREE_RAFFLE_TYPE_SET) },
+            status: { $in: ['active', 'closed', 'drawn'] },
+            minNetLossARS: { $gt: 0 },
+            weekKey: raffle.weekKey,
+            id: { $ne: raffle.id }
+          },
+          { id: 1, name: 1 }
+        ).lean();
+        if (otherNetLossRaffles.length > 0) {
+          const otherIds = otherNetLossRaffles.map(x => x.id);
+          const otherPart = await RaffleParticipation.findOne({
+            raffleId: { $in: otherIds },
+            username: { $regex: '^' + safeBuy + '$', $options: 'i' }
+          }, { raffleId: 1, ticketNumbers: 1 }).lean();
+          if (otherPart) {
+            const otherRaffle = otherNetLossRaffles.find(x => x.id === otherPart.raffleId);
+            return res.status(400).json({
+              error: `Ya reclamaste tu número en otro nivel (${otherRaffle ? otherRaffle.name : 'otro sorteo'}, #${otherPart.ticketNumbers && otherPart.ticketNumbers[0]}). Es 1 número por persona entre todos los niveles.`,
+              alreadyEnrolledOtherRaffleId: otherPart.raffleId,
+              alreadyEnrolledNumber: otherPart.ticketNumbers && otherPart.ticketNumbers[0]
+            });
+          }
+        }
       }
       if (quantity > 1) {
         return res.status(400).json({ error: 'En los sorteos gratis solo se permite 1 número por persona.' });
@@ -21589,6 +21676,7 @@ app.get('/api/admin/raffles/:id/participants', authMiddleware, adminMiddleware, 
         winningTicketNumber: raffle.winningTicketNumber,
         drawDate: raffle.drawDate, lotteryRule: raffle.lotteryRule,
         isFree: !!raffle.isFree, minCargasARS: raffle.minCargasARS || 0,
+        minNetLossARS: raffle.minNetLossARS || 0,
         raffleType: raffle.raffleType, instanceNumber: raffle.instanceNumber,
         weekKey: raffle.weekKey,
         prizeClaimedAt: raffle.prizeClaimedAt,
@@ -21755,6 +21843,7 @@ app.post(
           winningTicketNumber: raffle.winningTicketNumber,
           drawDate: raffle.drawDate, lotteryRule: raffle.lotteryRule,
           isFree: !!raffle.isFree, minCargasARS: raffle.minCargasARS || 0,
+          minNetLossARS: raffle.minNetLossARS || 0,
           raffleType: raffle.raffleType, instanceNumber: raffle.instanceNumber,
           weekKey: raffle.weekKey,
           prizeClaimedAt: raffle.prizeClaimedAt,
@@ -22730,6 +22819,45 @@ app.post('/api/admin/raffles/draw-batch', authMiddleware, superAdminMiddleware, 
     res.json({ success: true, ...results });
   } catch (err) {
     logger.error(`/api/admin/raffles/draw-batch: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/migrate-free-to-netwin
+// One-shot migración: setea minNetLossARS en los sorteos free actualmente
+// activos para que la gate pase a ser por NETWIN (pérdida neta semanal) en
+// vez de cargas brutas. No toca a los participantes ya enrolados — solo
+// cambia la regla de admisión para nuevos. Idempotente: si ya tiene
+// minNetLossARS > 0, lo saltea.
+app.post('/api/admin/raffles/migrate-free-to-netwin', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const freeTypes = FREE_RAFFLE_TYPES.map(t => t.type);
+    const actives = await Raffle.find(
+      {
+        raffleType: { $in: freeTypes },
+        status: { $in: ['active', 'closed'] }
+      },
+      { id: 1, name: 1, raffleType: 1, minNetLossARS: 1, minCargasARS: 1 }
+    ).lean();
+    let migrated = 0;
+    let skipped = 0;
+    const log = [];
+    for (const r of actives) {
+      if ((r.minNetLossARS || 0) > 0) { skipped++; continue; }
+      const cfg = FREE_RAFFLE_TYPES.find(t => t.type === r.raffleType);
+      if (!cfg || !(cfg.minNetLossARS > 0)) { skipped++; continue; }
+      const newDesc = `Sorteo GRATIS por NETWIN. Si perdiste $${cfg.minNetLossARS.toLocaleString('es-AR')} esta semana, podés reclamar tu número. ${cfg.totalTickets} cupos, 1 número por persona.`;
+      await Raffle.updateOne(
+        { id: r.id },
+        { $set: { minNetLossARS: cfg.minNetLossARS, description: newDesc } }
+      );
+      migrated++;
+      log.push({ id: r.id, name: r.name, newNetLoss: cfg.minNetLossARS });
+    }
+    logger.info(`[raffles] migrate-free-to-netwin migrated=${migrated} skipped=${skipped}`);
+    res.json({ success: true, migrated, skipped, raffles: log });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/migrate-free-to-netwin: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

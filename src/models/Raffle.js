@@ -54,8 +54,12 @@ const raffleSchema = new mongoose.Schema({
     index: true
   },
   // Costo minimo de cargas en los ultimos 30 dias para entrar al sorteo
-  // gratis. Solo aplica a free_*.
+  // gratis. Solo aplica a free_*. Legacy: ahora preferimos minNetLossARS.
   minCargasARS: { type: Number, default: 0, min: 0 },
+  // Perdida neta minima (deposits - withdrawals, clamp >= 0) en la ventana
+  // semanal para entrar al sorteo gratis. Si > 0 reemplaza a minCargasARS
+  // como gating para los free_*. La idea: "si perdiste $X, tenes 1 numero".
+  minNetLossARS: { type: Number, default: 0, min: 0 },
   // Si entryCost === 0 Y minCargasARS > 0 -> es un sorteo gratis exclusivo.
   // Lo marcamos explicito tambien para queries faciles.
   isFree: { type: Boolean, default: false, index: true },

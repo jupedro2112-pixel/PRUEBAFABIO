@@ -16266,7 +16266,9 @@ function _renderRaffleDetail(d) {
         'Premio <strong style="color:#fff;">' + _fmtMoney(r.prizeValueARS) + '</strong>',
         '<strong style="color:#fff;">' + r.cuposSold + '/' + r.totalTickets + '</strong> cupos',
         isFree
-            ? 'Mín. carga: <strong style="color:#fff;">' + _fmtMoney(r.minCargasARS) + '</strong>'
+            ? (Number(r.minNetLossARS || 0) > 0
+                ? 'Netwin mín.: <strong style="color:#ffaa66;">' + _fmtMoney(r.minNetLossARS) + '</strong>'
+                : 'Mín. carga: <strong style="color:#fff;">' + _fmtMoney(r.minCargasARS) + '</strong>')
             : _fmtMoney(r.entryCost) + ' por número',
         '<strong style="color:#fff;">' + parts.length + '</strong> personas',
         'Sorteo: ' + (r.drawDate ? new Date(r.drawDate).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—')
@@ -17201,6 +17203,9 @@ async function viewArchivedRaffles(kind) {
             summary += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
             summary += '<button type="button" onclick="openBatchDrawModal(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">🎰 Sortear semana pasada</button>';
             summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Solo reabrir sin cargar ganador">♻️ Solo reabrir</button>';
+            if (k === 'free') {
+                summary += '<button type="button" onclick="migrateFreeRafflesToNetwin()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Pasar de gate por cargas a gate por NETWIN">🔁 Migrar a NETWIN</button>';
+            }
             summary += '</div>';
             summary += '</div>';
         }
@@ -17401,6 +17406,22 @@ async function runBatchDraw() {
         loadRafflesAdmin();
     } catch (e) {
         resultBox.innerHTML = '<div style="color:#ff8080;padding:12px;">Error de conexión</div>';
+    }
+}
+
+async function migrateFreeRafflesToNetwin() {
+    if (!confirm('¿Migrar los sorteos GRATIS activos a modo NETWIN?\n\nLa regla pasa de "mínimo de cargas" a "perdiste $X en la semana → tenés número".\n\nLos participantes ya enrolados conservan su número. Solo cambia la regla para nuevos.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/migrate-free-to-netwin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✅ Migrados: ' + d.migrated + (d.skipped ? ' (saltados: ' + d.skipped + ')' : ''), 'success');
+        loadRafflesAdmin();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
     }
 }
 
