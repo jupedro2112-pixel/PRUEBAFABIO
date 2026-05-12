@@ -819,27 +819,33 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: clamp(18px, 5vw, 22px);
-            font-weight: 800;
-            font-family: monospace;
-            letter-spacing: 1px;
+            font-size: clamp(24px, 7vw, 32px);
+            font-weight: 900;
+            font-family: inherit;
+            letter-spacing: 1.5px;
             word-break: break-all;
         }
         .user-line-vigente .line-phone a {
             display: inline-flex;
             align-items: center;
-            gap: 10px;
+            gap: 14px;
             color: #fff;
             text-decoration: none;
-            padding: 10px 18px;
-            border-radius: 14px;
+            padding: 20px 32px;
+            border-radius: 18px;
             background: linear-gradient(135deg, #25d366 0%, #128c7e 100%);
-            border: 1px solid rgba(255,255,255,0.15);
-            box-shadow: 0 4px 14px rgba(37, 211, 102, 0.25);
+            border: 2px solid rgba(255,255,255,0.22);
+            box-shadow: 0 6px 26px rgba(37, 211, 102, 0.55), inset 0 0 14px rgba(255,255,255,0.08);
             transition: transform 0.12s ease, box-shadow 0.18s ease;
             -webkit-tap-highlight-color: rgba(255,255,255,0.2);
             touch-action: manipulation;
             cursor: pointer;
+            animation: cargarPulse 2.2s ease-in-out infinite;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.30);
+        }
+        @keyframes cargarPulse {
+            0%, 100% { box-shadow: 0 6px 26px rgba(37, 211, 102, 0.55), inset 0 0 14px rgba(255,255,255,0.08); transform: scale(1); }
+            50%      { box-shadow: 0 8px 34px rgba(37, 211, 102, 0.85), inset 0 0 18px rgba(255,255,255,0.14); transform: scale(1.025); }
         }
 
         /* PROMO TEMPORAL — reemplaza el boton verde de QUIERO CARGAR
@@ -904,8 +910,8 @@
             transform: scale(0.97);
         }
         .user-line-vigente .line-phone a svg {
-            width: 18px;
-            height: 18px;
+            width: 32px;
+            height: 32px;
             flex-shrink: 0;
             fill: currentColor;
         }
@@ -2861,14 +2867,14 @@
       </div>
 
       <!-- ============================================================
-           LIBRO DE QUEJAS — botón centrado AL FONDO de la home, debajo
-           del número opcional. Diseño premium dorado, prominente.
-           Click → abre el modal con form completo (fecha, hora, foto,
-           detalle). El user ve el mensaje "en breve nos contactamos"
-           al enviar.
+           LIBRO DE QUEJAS — botón centrado AL FONDO de la home, después
+           del Total Devuelto (que tiene order:99). Por eso este wrapper
+           usa order:200 para quedar literalmente al final. Diseño
+           discreto: el dueño quiere darle protagonismo al "CARGUE AQUÍ"
+           que está arriba, y este queda solo para quien lo busca al pie.
            ============================================================ -->
-      <div style="display:flex;justify-content:center;margin:18px 0 24px;padding:0 14px;">
-          <button id="complaintsBookBtn" type="button" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:linear-gradient(135deg,rgba(0,0,0,0.50) 0%,rgba(40,15,0,0.65) 100%);border:1.5px solid #d4af37;color:#d4af37;border-radius:14px;cursor:pointer;font-size:14px;padding:11px 28px;font-weight:900;letter-spacing:0.5px;display:inline-flex;align-items:center;gap:8px;line-height:1;box-shadow:0 4px 18px rgba(212,175,55,0.30), inset 0 0 12px rgba(212,175,55,0.10);text-shadow:0 0 8px rgba(212,175,55,0.40);max-width:360px;width:100%;justify-content:center;">📖 LIBRO DE QUEJAS</button>
+      <div style="display:flex;justify-content:center;margin:24px 0 14px;padding:0 14px;order:200;width:100%;">
+          <button id="complaintsBookBtn" type="button" onclick="window.openComplaintBookModal && window.openComplaintBookModal()" style="background:rgba(0,0,0,0.30);border:1px solid rgba(212,175,55,0.55);color:#d4af37;border-radius:10px;cursor:pointer;font-size:12px;padding:8px 18px;font-weight:700;letter-spacing:0.5px;display:inline-flex;align-items:center;gap:6px;line-height:1;opacity:0.78;max-width:280px;width:100%;justify-content:center;">📖 LIBRO DE QUEJAS</button>
       </div>
 
       <div class="drawer-overlay" id="drawerOverlay" onclick="VIP.ui.toggleDrawer()"></div>

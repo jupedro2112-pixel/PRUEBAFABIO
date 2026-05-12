@@ -344,14 +344,14 @@ VIP.auth = (function () {
                     '<a href="https://wa.me/' + waNumber + '" target="_blank" rel="noopener noreferrer" ' +
                       'aria-label="Abrir WhatsApp con el número ' + safePhone + '">' +
                         waIcon +
-                        '<span>QUIERO CARGAR</span>' +
+                        '<span>CARGUE AQUÍ</span>' +
                     '</a>';
             } else {
                 phoneEl.innerHTML =
                     '<a href="javascript:void(0)" role="button" aria-disabled="true" ' +
                       'aria-label="Linea de WhatsApp no configurada">' +
                         waIcon +
-                        '<span>QUIERO CARGAR</span>' +
+                        '<span>CARGUE AQUÍ</span>' +
                     '</a>';
             }
         }
