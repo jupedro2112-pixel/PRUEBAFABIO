@@ -648,114 +648,49 @@ VIP.raffles = (function () {
             html += _renderDrawnSummary(allDrawn);
         }
 
-        // === HERO RELAMPAGO === (debajo de resultados — el foco visual del
-        // user que entra es "qué hay para reclamar / qué se sorteó" arriba,
-        // y abajo "los sorteos vigentes a los que me puedo anotar").
-        if (heroLightning) {
-            html += _renderLightningHero(heroLightning, balance);
-        }
-        // Otros relampagos (cerrados/sorteados): mini-cards debajo del hero,
-        // SOLO si el user esta anotado en alguno (para que siga viendo su
-        // numero + estado). Si no esta anotado en el cerrado, no le mostramos
-        // info que ya no puede aprovechar.
-        for (const ol of otherLightnings) {
+        // HERO RELAMPAGO oculto por pedido del dueño 2026-05-12. Los
+        // resultados de relámpagos ya sorteados siguen apareciendo en el
+        // bloque unificado "Sorteos resueltos" arriba — los ganadores
+        // pueden reclamar desde ahí. Para usuarios ya inscriptos en un
+        // relámpago activo, mostramos solo la mini-card (no el hero
+        // gigante) para que sigan viendo su número.
+        for (const ol of allLightnings) {
             const myNums = ol.myTicketNumbers || [];
-            if (myNums.length === 0 && !ol.iAmWinner) continue;
+            if (myNums.length === 0 && !ol.iAmWinner) continue; // solo enrollados/ganadores
             html += _renderLightningMini(ol);
         }
 
-        // Header con saldo + boton refrescar. El boton es util cuando el
-        // user creo cuenta nueva o cargo plata y quiere ver el sorteo
-        // actualizado sin esperar el polling de 20s.
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;gap:10px;">';
-        html += '<div><div style="color:#aaa;font-size:11px;font-weight:700;letter-spacing:1px;">SALDO DISPONIBLE</div><div style="color:#ffd700;font-size:20px;font-weight:900;">$' + _fmt(balance) + '</div></div>';
-        html += '<button type="button" data-raffle-action="refresh" id="rafflesRefreshBtn" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;flex-shrink:0;" title="Forzar actualización">🔄 Refrescar</button>';
+        // Header compacto con saldo + refrescar.
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;background:rgba(212,175,55,0.08);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:9px 13px;margin-bottom:12px;gap:10px;">';
+        html += '<div><div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:1.2px;">SALDO</div><div style="color:#ffd700;font-size:19px;font-weight:900;line-height:1.1;">$' + _fmt(balance) + '</div></div>';
+        html += '<button type="button" data-raffle-action="refresh" id="rafflesRefreshBtn" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:7px;font-weight:800;font-size:11px;cursor:pointer;letter-spacing:0.4px;flex-shrink:0;" title="Forzar actualización">🔄</button>';
         html += '</div>';
 
-        // === GRATIS === (arriba — sorteos vigentes y proximos)
+        // === GRATIS === (sorteos vigentes, layout limpio)
         if (free.length > 0) {
-            html += '<div style="margin:18px 0 8px;display:flex;align-items:center;gap:8px;">';
+            html += '<div style="margin:14px 0 8px;display:flex;align-items:center;gap:8px;">';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#4dabff);"></div>';
-            html += '<h3 style="margin:0;color:#4dabff;font-size:14px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
+            html += '<h3 style="margin:0;color:#4dabff;font-size:13px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
-            // Explainer dual: mostramos los niveles de CADA gate (cargas y
-            // netwin) en su propio bloque. El dueño tiene ambos tipos
-            // corriendo en paralelo. Agrupamos por prize+gate (porque hay
-            // múltiples instancias del mismo nivel — 5× $100K) y mostramos
-            // un solo row con badge "5×" en lugar de 5 rows iguales.
+            // Mini-leyenda compacta en una línea (antes era un bloque grande
+            // con tablas — 90% del espacio era texto explicativo). Ahora va
+            // un chip discreto al lado del titulo y los detalles por nivel
+            // viven dentro de cada card. Menos ruido, mas data util.
             const _myCargas = (_data && Number(_data.weeklyDeposits)) || 0;
             const _myNet = (_data && Number(_data.weeklyNetLoss)) || 0;
-            const _activeFree = free.filter(r => r.status === 'active');
-            const _byNetGroup = {};
-            const _byCargasGroup = {};
-            for (const r of _activeFree) {
-                if (Number(r.minNetLossARS || 0) > 0) {
-                    const key = (r.minNetLossARS || 0) + '_' + (r.prizeValueARS || 0);
-                    if (!_byNetGroup[key]) _byNetGroup[key] = { prize: r.prizeValueARS||0, threshold: r.minNetLossARS||0, count: 0 };
-                    _byNetGroup[key].count++;
-                } else if (Number(r.minCargasARS || 0) > 0) {
-                    const key = (r.minCargasARS || 0) + '_' + (r.prizeValueARS || 0);
-                    if (!_byCargasGroup[key]) _byCargasGroup[key] = { prize: r.prizeValueARS||0, threshold: r.minCargasARS||0, count: 0 };
-                    _byCargasGroup[key].count++;
-                }
-            }
-            const _cargasLevels = Object.values(_byCargasGroup).sort((a,b) => b.prize - a.prize);
-            const _netLevels = Object.values(_byNetGroup).sort((a,b) => b.prize - a.prize);
-
-            if (_cargasLevels.length > 0 || _netLevels.length > 0) {
-                html += '<div style="background:linear-gradient(135deg,rgba(77,171,255,0.10),rgba(77,171,255,0.04));border:1px solid rgba(77,171,255,0.40);border-radius:10px;padding:11px 12px;margin-bottom:10px;font-size:12px;color:#eee;line-height:1.55;">';
-                html += '<div style="color:#4dabff;font-weight:900;font-size:12.5px;letter-spacing:0.5px;margin-bottom:6px;">💎 SORTEOS GRATIS — 2 formas de entrar</div>';
-
-                if (_cargasLevels.length > 0) {
-                    html += '<div style="margin-bottom:8px;">';
-                    html += '<div style="color:#66ff66;font-weight:800;font-size:11.5px;margin-bottom:3px;">🟢 Por CARGAS (lun-dom):</div>';
-                    html += '<div style="color:#ccc;font-size:11px;margin-bottom:4px;">Te anotamos <strong>automáticamente</strong> si llegás al mínimo de cargas. 1 número por sorteo.</div>';
-                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:6px 9px;">';
-                    for (const lvl of _cargasLevels) {
-                        const ok = _myCargas >= lvl.threshold;
-                        const countBadge = lvl.count > 1 ? ' <span style="color:#4dabff;font-size:10px;font-weight:800;">(' + lvl.count + ' simultáneos)</span>' : '';
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;">';
-                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prize) + '</strong>' + countBadge + '</span>';
-                        html += '<span style="color:#bbb;">cargaste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.threshold) + '</strong></span>';
-                        html += '</div>';
-                    }
-                    html += '</div>';
-                    html += '</div>';
-                }
-
-                if (_netLevels.length > 0) {
-                    html += '<div>';
-                    html += '<div style="color:#ffaa66;font-weight:800;font-size:11.5px;margin-bottom:3px;">🟠 Por NETWIN (pérdida neta lun-dom):</div>';
-                    html += '<div style="color:#ccc;font-size:11px;margin-bottom:4px;">Si perdiste plata, <strong>vos elegís</strong> tu nivel. Aunque después ganes, el número queda para vos.</div>';
-                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:6px 9px;">';
-                    for (const lvl of _netLevels) {
-                        const ok = _myNet >= lvl.threshold;
-                        const countBadge = lvl.count > 1 ? ' <span style="color:#ffaa66;font-size:10px;font-weight:800;">(' + lvl.count + ' simultáneos)</span>' : '';
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;">';
-                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prize) + '</strong>' + countBadge + '</span>';
-                        html += '<span style="color:#bbb;">perdiste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.threshold) + '</strong></span>';
-                        html += '</div>';
-                    }
-                    html += '</div>';
-                    html += '<div style="color:#ffaa66;font-size:10.5px;font-weight:700;letter-spacing:0.5px;margin-top:5px;">⚠️ NETWIN: es <strong>1 número total</strong> entre todos los niveles netwin de la semana.</div>';
-                    html += '</div>';
-                }
-
-                html += '</div>';
-            }
+            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:10.5px;">';
+            html += '<span style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);border-radius:14px;padding:3px 10px;color:#aaffaa;font-weight:700;">🟢 Cargaste: $' + _fmt(_myCargas) + '</span>';
+            html += '<span style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.30);border-radius:14px;padding:3px 10px;color:#ffd0a0;font-weight:700;">🟠 Perdiste neto: $' + _fmt(_myNet) + '</span>';
+            html += '</div>';
             for (const r of free) html += _renderFreeCard(r);
         }
 
-        // === PAGOS === (abajo — los activos siguen corriendo hasta sortearse;
-        // no se crean nuevos. Cuando todos terminen, esta seccion desaparece.)
+        // === PAGOS === sin explainer arriba (la info ya esta en las cards)
         if (paid.length > 0) {
-            html += '<div style="margin:22px 0 8px;display:flex;align-items:center;gap:8px;">';
+            html += '<div style="margin:18px 0 8px;display:flex;align-items:center;gap:8px;">';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#d4af37);"></div>';
-            html += '<h3 style="margin:0;color:#ffd700;font-size:14px;font-weight:900;letter-spacing:2px;">💰 SORTEOS PAGOS</h3>';
+            html += '<h3 style="margin:0;color:#ffd700;font-size:13px;font-weight:900;letter-spacing:2px;">💰 SORTEOS PAGOS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#d4af37,transparent);"></div></div>';
-            html += '<div style="background:rgba(255,255,255,0.03);border-left:3px solid #d4af37;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
-            html += '<strong style="color:#ffd700;">💡 Podés elegir tu/s número/s favorito/s</strong> del 1 al 100. Si no querés elegir, pedí aleatorio. Hasta 50 por compra. Si ganás, te <strong>acreditamos el premio automáticamente</strong> a tu saldo.';
-            html += '</div>';
             for (const r of paid) html += _renderPaidCard(r, balance);
         }
 

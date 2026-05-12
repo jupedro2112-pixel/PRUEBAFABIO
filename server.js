@@ -20984,13 +20984,15 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     // Tipos LEGACY (free_p2m/p1m/p500/p100 + iphone/caribe/auto/other) que
     // todavía pueden existir en DB con status drawn — necesitan aparecer en
     // el banner "🏆 Resultados sorteos" de la PWA aunque ya no se respawnean.
+    // Sorteos legacy ocultos por pedido del dueño 2026-05-12: iphone /
+    // caribe / auto / other ya no aparecen en la PWA (ni activos ni en el
+    // listado de resultados). Las free legacy quedan visibles solo si
+    // tienen ganador para que la gente vea el resultado y reclame.
     const FREE_LEGACY_PWA = ['free_p2m', 'free_p1m', 'free_p500', 'free_p100'];
-    const PAID_LEGACY_PWA = ['iphone', 'caribe', 'auto', 'other'];
     const allTypes = [
       ...RAFFLE_TYPES.map(t => t.type),
       ...FREE_RAFFLE_TYPES.map(t => t.type),
       ...FREE_LEGACY_PWA,
-      ...PAID_LEGACY_PWA,
       'relampago'
     ];
     const safe = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
