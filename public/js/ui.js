@@ -604,29 +604,42 @@ CBU activo: ${cbuNumber}`;
         // Plataformas móviles: se muestra el aviso de notificaciones
         const isMobilePlatform = platform === 'ios' || platform === 'android' || platform === 'android-notif';
 
-        // Pantalla dedicada de recordatorio de notificaciones post-instalación (Android nativo)
+        // Pantalla dedicada de recordatorio POST-INSTALACIÓN. Grande, claro,
+        // con el hook del $5K — el user acaba de instalar la app y necesita
+        // entender 2 cosas: ABRIR la app desde el ícono Y aceptar notifs.
+        // Sin esto, no puede reclamar el bono.
         if (platform === 'android-notif') {
             modal.innerHTML = `
-                <div class="ios-install-content">
+                <div class="ios-install-content" style="max-width:440px;background:linear-gradient(180deg,#1a0033,#0a001a);border:3px solid #ffd700;box-shadow:0 0 40px rgba(255,215,0,0.45);">
                     <button type="button" class="ios-install-close" aria-label="Cerrar" onclick="this.closest('.ios-install-modal').remove()">×</button>
-                    <h3>🔔 Un paso más</h3>
-                    <div style="
-                        background: rgba(255, 107, 53, 0.15);
-                        border: 2px solid #ff6b35;
-                        border-radius: 10px;
-                        padding: 14px 16px;
-                        text-align: left;
-                    ">
-                        <p style="margin: 0; color: #ff6b35; font-weight: bold; font-size: 15px;">
-                            🔔 LO MÁS IMPORTANTE: PERMITIR NOTIFICACIONES
-                        </p>
-                        <p style="margin: 10px 0 0; color: #fff; font-size: 13px;">
-                            Cuando abras la app instalada y te pida acceso,
-                            <strong>aceptá y permitir notificaciones</strong>.<br>
-                            Sin esto, <u>no te van a llegar los avisos importantes</u>.
-                        </p>
+                    <div style="text-align:center;font-size:58px;line-height:1;margin-bottom:6px;">🎁</div>
+                    <h3 style="color:#ffd700;text-align:center;font-size:20px;letter-spacing:1px;margin:0 0 4px;">¡LA APP YA ESTÁ INSTALADA!</h3>
+                    <p style="text-align:center;color:#fff;font-size:14.5px;line-height:1.5;margin:0 0 14px;">Falta poco para reclamar tu <strong style="color:#ffd700;font-size:18px;">$5.000 GRATIS</strong>.</p>
+
+                    <!-- Paso 1: abrir desde el ícono -->
+                    <div style="background:rgba(37,211,102,0.10);border:2px solid #25d366;border-radius:12px;padding:14px;margin-bottom:10px;text-align:left;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                            <div style="flex-shrink:0;width:34px;height:34px;border-radius:50%;background:#25d366;color:#000;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:18px;">1</div>
+                            <strong style="color:#25d366;font-size:15px;">ABRÍ LA APP DESDE EL ÍCONO</strong>
+                        </div>
+                        <p style="margin:0 0 0 44px;color:#fff;font-size:13px;line-height:1.5;">Buscá el ícono <strong>nuevo</strong> que quedó en la pantalla de tu celular y abrilo desde ahí. <span style="color:#ffaa44;">NO la abras desde Chrome.</span></p>
                     </div>
-                    <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="margin-top:15px;">Entendido</button>
+
+                    <!-- Paso 2: aceptar notificaciones -->
+                    <div style="background:rgba(0,212,255,0.10);border:2px solid #00d4ff;border-radius:12px;padding:14px;margin-bottom:14px;text-align:left;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                            <div style="flex-shrink:0;width:34px;height:34px;border-radius:50%;background:#00d4ff;color:#000;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:18px;">2</div>
+                            <strong style="color:#00d4ff;font-size:15px;">ACTIVÁ LAS NOTIFICACIONES</strong>
+                        </div>
+                        <p style="margin:0 0 0 44px;color:#fff;font-size:13px;line-height:1.5;">Cuando entres a la app por primera vez te va a pedir permiso de notificaciones. Tocá <strong style="color:#00d4ff;">PERMITIR</strong>.</p>
+                    </div>
+
+                    <div style="background:linear-gradient(135deg,rgba(255,215,0,0.18),rgba(255,136,0,0.10));border:2px dashed #ffd700;border-radius:12px;padding:12px;text-align:center;margin-bottom:12px;">
+                        <div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:0.5px;">👇 Hechos los 2 pasos te aparece</div>
+                        <div style="color:#fff;font-weight:900;font-size:18px;margin-top:3px;">🎁 RECLAMAR $5.000</div>
+                    </div>
+
+                    <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary" style="width:100%;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;font-weight:900;font-size:15px;letter-spacing:0.5px;padding:13px;border-radius:11px;border:none;cursor:pointer;box-shadow:0 4px 14px rgba(255,215,0,0.40);">ENTENDIDO, VOY A ABRIR LA APP</button>
                 </div>
             `;
             document.body.appendChild(modal);
@@ -944,7 +957,14 @@ window.addEventListener('appinstalled', () => {
     if (loginInstallBtn)  { loginInstallBtn.style.display = 'none'; loginInstallBtn.classList.add('hidden'); }
     if (headerInstallBtn) { headerInstallBtn.style.display = 'none'; headerInstallBtn.classList.add('hidden'); }
     window.deferredPrompt = null;
-    VIP.ui.showToast('✅ App instalada exitosamente', 'success');
+    // Mostrar el modal POST-INSTALL grande con los 2 pasos restantes
+    // (abrir desde el ícono + activar notificaciones) y el hook $5K.
+    // Defer un toque para no pisar al toast del Chrome nativo de "App
+    // agregada al inicio".
+    setTimeout(() => {
+        try { VIP.ui.showInstallInstructions('android-notif'); }
+        catch (_) {}
+    }, 1500);
 });
 
 // Hide install buttons if already running as standalone
