@@ -17752,13 +17752,16 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, bulkLaunc
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin principal puede crear regalos de plata.' });
     }
-    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId, requireZeroBalance, targetUsername, audienceWhitelist } = req.body || {};
+    const { amount, totalBudget, maxClaims, durationMinutes, prefix, notificationHistoryId, requireZeroBalance, targetUsername, audienceWhitelist, customMessage, customEmoji } = req.body || {};
     const a = Number(amount), b = Number(totalBudget), m = Number(maxClaims), d = Number(durationMinutes);
     if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto por persona inválido' });
     if (!isFinite(b) || b < a) return res.status(400).json({ error: 'Presupuesto total inválido (debe ser >= monto por persona)' });
     if (!isFinite(m) || m < 1) return res.status(400).json({ error: 'Cantidad máxima inválida' });
-    if (!isFinite(d) || d < 10 || d > 60 || d % 10 !== 0) {
-      return res.status(400).json({ error: 'Duración inválida (10-60 minutos en bloques de 10)' });
+    // Duración 10-360 min (6hs máximo) en bloques de 10. Antes era 10-60.
+    // Extendido 2026-05-12: dueño quiere ver la conversión en ventanas
+    // más largas que 1h.
+    if (!isFinite(d) || d < 10 || d > 360 || d % 10 !== 0) {
+      return res.status(400).json({ error: 'Duración inválida (10-360 minutos en bloques de 10)' });
     }
     // Caps anti-fat-finger / anti-cookie-robada. Si el admin necesita superarlos
     // hay que tocar el server a proposito — un typo o un atacante con la cookie
@@ -17828,6 +17831,12 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, bulkLaunc
       );
     }
 
+    // customMessage: el texto que el admin escribió en la notif también
+    // se guarda en el giveaway → la PWA lo muestra como subtitle de la
+    // card "RECLAMAR". Antes este campo solo se usaba en broadcast.
+    const msgClean = (customMessage && typeof customMessage === 'string') ? String(customMessage).slice(0, 200).trim() : '';
+    const emojiClean = (customEmoji && typeof customEmoji === 'string') ? String(customEmoji).slice(0, 8) : '🎁';
+
     const g = await MoneyGiveaway.create({
       id: uuidv4(),
       amount: a,
@@ -17839,6 +17848,8 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, bulkLaunc
       audienceWhitelist: whitelist.length > 0 ? whitelist : null,
       notificationHistoryId: notificationHistoryId || null,
       requireZeroBalance: !!requireZeroBalance,
+      customMessage: msgClean || null,
+      customEmoji: emojiClean,
       strategySource: whitelist.length > 0 ? 'individual_grant' : 'manual',
       status: 'active'
     });

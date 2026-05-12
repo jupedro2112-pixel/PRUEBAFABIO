@@ -2974,7 +2974,7 @@ async function sendBulkNotification() {
         if (!isFinite(giveawayMaxClaims) || giveawayMaxClaims < 1) {
             showToast('Falta la cantidad máxima de personas', 'error'); return;
         }
-        if (![10, 20, 30, 40, 50, 60].includes(giveawayDurationMinutes)) {
+        if (![10, 20, 30, 40, 50, 60, 90, 120, 180, 240, 300, 360].includes(giveawayDurationMinutes)) {
             showToast('Duración del regalo inválida', 'error'); return;
         }
         // Auto-mencionar el monto en el body del push (solo para envio
@@ -3159,6 +3159,12 @@ async function sendBulkNotification() {
         // 2b) Si hay regalo, crear el giveaway vinculado al historyId.
         if (giveawayEnabled && r.ok && data.success) {
             try {
+                // Le pasamos el BODY de la notif como customMessage del
+                // giveaway. Así cuando el user entre a la app, ve EL MISMO
+                // texto que vio en el push (no solo "Tocá para reclamar").
+                // Pedido del dueño 2026-05-12 — quería que la información
+                // del push aparezca también dentro de la app.
+                const notifBody = (document.getElementById('notifBody')?.value || '').trim();
                 const gR = await authFetch('/api/admin/money-giveaway', {
                     method: 'POST',
                     body: JSON.stringify({
@@ -3168,7 +3174,9 @@ async function sendBulkNotification() {
                         durationMinutes: giveawayDurationMinutes,
                         prefix: prefix || null,
                         notificationHistoryId: data.historyId || null,
-                        requireZeroBalance: giveawayRequireZeroBalance
+                        requireZeroBalance: giveawayRequireZeroBalance,
+                        customMessage: notifBody,
+                        customEmoji: '🎁'
                     })
                 });
                 if (!gR.ok) {
