@@ -17513,23 +17513,30 @@ async function openDrawAllUnifiedModal() {
         //   - drawn (sin winner): caso raro, status drawn pero sin winner
         // Excluye cancelled y los que ya tengan ganador. /draw-batch reabre
         // archived/drawn automáticamente antes de sortearlos.
-        // Solo sorteos de la SEMANA PASADA pendientes. Estados:
-        //   closed: cerrados (cupo lleno o drawDate pasada) — los principales
+        // Sorteos de la SEMANA PASADA pendientes de sortear:
+        //   closed: cerrados (cupo lleno o drawDate pasada — el caso normal)
         //   archived: limpiados por cleanup pero sin ganador
         //   drawn-sin-winner: race con un draw abortado (raros)
-        // NO 'active' — esos son los que abriste hoy/esta semana para la
-        // próxima nocturna. No se sortean en este modal.
-        const pendingStatuses = ['closed', 'archived', 'drawn'];
-        // Excluye tipos legacy MUY viejos que el dueño NO quiere sortear:
-        //   iphone / caribe / auto / other — esos eran premios físicos del
-        //   modelo loss-credit antiguo. No se sortean más.
+        //   active + drawDate < hoy: caso "el cron no auto-cerró" — el sorteo
+        //     era de la semana pasada pero quedó colgado en 'active'. Lo
+        //     incluimos así no se nos escapan.
+        // EXCLUYE 'active' con drawDate FUTURO — esos son los que abriste
+        // hoy/esta semana para la próxima nocturna, no se sortean en este modal.
         const EXCLUDED_LEGACY_TYPES = ['iphone', 'caribe', 'auto', 'other'];
-        const closed = (d.raffles || []).filter(x =>
-            pendingStatuses.includes(x.status) &&
-            !x.winnerUsername &&
-            (x.cuposSold || 0) > 0 &&
-            !EXCLUDED_LEGACY_TYPES.includes(x.raffleType)
-        );
+        const nowMs = Date.now();
+        const closed = (d.raffles || []).filter(x => {
+            if (x.winnerUsername) return false;
+            if ((x.cuposSold || 0) === 0) return false;
+            if (EXCLUDED_LEGACY_TYPES.includes(x.raffleType)) return false;
+            if (x.status === 'closed' || x.status === 'archived' || x.status === 'drawn') return true;
+            if (x.status === 'active') {
+                // active SOLO si su drawDate ya pasó (es de semana pasada
+                // pero el cron de cierre no lo movió a closed).
+                const dd = x.drawDate ? new Date(x.drawDate).getTime() : 0;
+                return dd > 0 && dd < nowMs;
+            }
+            return false;
+        });
         if (closed.length === 0) {
             statsEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">No hay sorteos pendientes de sortear (todos los que tenían participantes ya tienen ganador).</div>';
             return;
