@@ -21531,6 +21531,26 @@ app.get('/api/admin/raffles/winner-claims', authMiddleware, adminMiddleware, asy
       }
     ).sort({ drawnAt: -1 }).limit(200).lean();
 
+    // Para cada ganador: cargo teléfono (User) y conteo de cargas vigentes
+    // (mismo helper que usa lightning). En paralelo para no pagar serial.
+    const REQUIRED_CARGAS = 5;
+    const usernames = Array.from(new Set(raffles.map(r => String(r.winnerUsername || '').trim()).filter(Boolean)));
+    const safeRegexes = usernames.map(u => ({
+      username: { $regex: '^' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' }
+    }));
+    const userDocs = usernames.length > 0
+      ? await User.find({ $or: safeRegexes }, { username: 1, phone: 1, _id: 0 }).lean()
+      : [];
+    const phoneByUser = {};
+    for (const u of userDocs) phoneByUser[(u.username || '').toLowerCase()] = u.phone || null;
+
+    // Cargas vigentes — solo del último mes (mismo lookback que lightning).
+    const cargasByUser = {};
+    await Promise.all(usernames.map(async (u) => {
+      try { cargasByUser[u.toLowerCase()] = await _getLightningCargasCount(u, null); }
+      catch (_) { cargasByUser[u.toLowerCase()] = 0; }
+    }));
+
     const items = raffles.map(r => {
       const claimed = !!r.prizeClaimedAt;
       const forfeited = !!r.prizeForfeitedAt;
@@ -21544,11 +21564,19 @@ app.get('/api/admin/raffles/winner-claims', authMiddleware, adminMiddleware, asy
       else if (r.prizeClaimable) status = 'pending';
       else if (expired) status = 'expired';
       else status = 'pending';
+      const lowerUser = String(r.winnerUsername || '').toLowerCase();
+      const cargasCount = cargasByUser[lowerUser] || 0;
+      const phone = phoneByUser[lowerUser] || null;
+      const eligible = cargasCount >= REQUIRED_CARGAS;
       return {
         id: r.id, name: r.name, prizeName: r.prizeName, emoji: r.emoji || '🎁',
         prizeValueARS: r.prizeValueARS || 0,
         raffleType: r.raffleType, instanceNumber: r.instanceNumber,
         winnerUsername: r.winnerUsername,
+        winnerPhone: phone,
+        winnerCargasCount: cargasCount,
+        winnerCargasRequired: REQUIRED_CARGAS,
+        winnerEligible: eligible,
         winningTicketNumber: r.winningTicketNumber,
         drawnAt: r.drawnAt, drawnBy: r.drawnBy,
         prizeClaimable: !!r.prizeClaimable,

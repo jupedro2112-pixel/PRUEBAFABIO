@@ -15392,6 +15392,13 @@ function _renderRafflesAdmin() {
     // "Reclamos ganadores": ventana 24h con los ganadores sorteados, su
     // estado de reclamo y acción de acreditar manualmente.
     html += '      <button type="button" onclick="viewWinnerClaims()" style="background:linear-gradient(135deg,rgba(102,255,102,0.20),rgba(255,215,0,0.18));color:#ffd700;border:1px solid #ffd700;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Reclamos de ganadores en ventana 24h">🏆 Reclamos ganadores</button>';
+    // "Sortear semana pasada": batch modal directo desde el dashboard. Antes
+    // estaba enterrado en el histórico — ahora va arriba para que el flujo
+    // semanal (sortear el lunes nocturna) sea 1 click.
+    if (!isLightning) {
+        const kindForBatch = isFree ? 'free' : 'paid';
+        html += '      <button type="button" onclick="openBatchDrawModal(\'' + kindForBatch + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;" title="Cargar el número de Lotería + sortear los pendientes (closed) en un solo flujo">🎰 Sortear semana pasada</button>';
+    }
     // Crear sorteo relampago: SOLO en la seccion de relampago.
     if (isLightning) {
         html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO (premio configurable, hasta 3 simultáneos por auto-respawn)">⚡ Crear sorteo relámpago</button>';
@@ -17746,6 +17753,12 @@ async function viewWinnerClaims() {
             html += statusBadge;
             html += '</div>';
             html += '<div style="color:#ddd;font-size:12px;">🏆 <strong>@' + escapeHtml(it.winnerUsername) + '</strong> con número <strong>#' + it.winningTicketNumber + '</strong> · premio <strong style="color:#ffd700;">' + escapeHtml(fmtMoney(it.prizeValueARS)) + '</strong></div>';
+            // Datos para el agente: teléfono + check de 5 cargas vigentes.
+            const phoneTxt = it.winnerPhone ? '📞 <strong style="color:#fff;">' + escapeHtml(it.winnerPhone) + '</strong>' : '📞 <span style="color:#888;">sin teléfono</span>';
+            const eligColor = it.winnerEligible ? '#66ff66' : '#ff8080';
+            const eligIcon = it.winnerEligible ? '✅' : '❌';
+            const eligTxt = '<span style="color:' + eligColor + ';font-weight:800;">' + eligIcon + ' ' + it.winnerCargasCount + '/' + it.winnerCargasRequired + ' cargas vigentes</span>';
+            html += '<div style="color:#ddd;font-size:11.5px;margin-top:3px;display:flex;gap:14px;flex-wrap:wrap;">' + phoneTxt + ' · ' + eligTxt + '</div>';
             html += '<div style="color:#888;font-size:11px;margin-top:2px;">Sorteado ' + escapeHtml(fmtDate(it.drawnAt)) + (it.drawnBy ? ' por ' + escapeHtml(it.drawnBy) : '') + (it.lotteryDrawNumber ? ' · loto #' + it.lotteryDrawNumber : '') + timeLeft + '</div>';
             if (it.prizeClaimedAt) {
                 html += '<div style="color:#66ff66;font-size:11px;margin-top:3px;">✅ Acreditado ' + escapeHtml(fmtDate(it.prizeClaimedAt)) + (it.prizeClaimTxId ? ' · txId ' + escapeHtml(it.prizeClaimTxId) : '') + '</div>';
@@ -17756,6 +17769,11 @@ async function viewWinnerClaims() {
             html += '</div>';
             html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;">';
             if (it.status === 'pending') {
+                if (it.winnerPhone) {
+                    const cleanPhone = String(it.winnerPhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
+                    const waMsg = encodeURIComponent('Hola @' + (it.winnerUsername || '') + ', ganaste el sorteo "' + (it.name || '') + '" con el número #' + (it.winningTicketNumber || '') + '. Para acreditarte el premio de ' + fmtMoney(it.prizeValueARS) + ' verificamos que tengas 5 cargas vigentes.');
+                    html += '<a href="https://wa.me/' + escapeHtml(cleanPhone) + '?text=' + waMsg + '" target="_blank" rel="noopener" style="display:inline-block;text-decoration:none;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11px;">💬 Contactar</a>';
+                }
                 html += '<button type="button" onclick="adminCreditPrize(\'' + escapeHtml(it.id) + '\', \'' + escapeHtml(it.winnerUsername) + '\', ' + it.prizeValueARS + ')" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Acreditar el premio manualmente al saldo del ganador">💰 Acreditar manual</button>';
                 html += '<button type="button" onclick="resendWinnerPush(\'' + escapeHtml(it.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Reenviar push al ganador">📲 Reenviar push</button>';
             } else if (it.status === 'credited') {

@@ -627,7 +627,10 @@ VIP.raffles = (function () {
         });
         const heroLightning = allLightnings[0] || null;
         const otherLightnings = allLightnings.slice(1);
-        const otherDrawn = drawn.filter(r => r.raffleType !== 'relampago');
+        // Resultados UNIFICADOS: incluye relámpago + pagos + gratis sorteados
+        // — el dueño quiere "todo unificado y prolijo con sus ganadores" arriba
+        // de los sorteos vigentes.
+        const allDrawn = drawn.slice().sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
         const paid = liveRaffles.filter(r => !r.isFree && r.raffleType !== 'relampago');
         const free = liveRaffles.filter(r => r.isFree && r.raffleType !== 'relampago');
 
@@ -637,7 +640,17 @@ VIP.raffles = (function () {
         html += _renderClaimableBanner(_data.claimable || [], recentWins.map(w => w.id));
         html += _renderAutoEnrolledBanner(_data.autoEnrolled || []);
 
-        // === HERO RELAMPAGO === (arriba de todo)
+        // === RESULTADOS UNIFICADOS (compacto, arriba de todo) ===
+        // Listado mini con los 3 tipos (relámpago + pagos + gratis). Cada
+        // línea: emoji + nombre + #ganador + @ganador (tapado 80%). Si VOS
+        // sos el ganador, ves tu nombre completo + estado del reclamo.
+        if (allDrawn.length > 0) {
+            html += _renderDrawnSummary(allDrawn);
+        }
+
+        // === HERO RELAMPAGO === (debajo de resultados — el foco visual del
+        // user que entra es "qué hay para reclamar / qué se sorteó" arriba,
+        // y abajo "los sorteos vigentes a los que me puedo anotar").
         if (heroLightning) {
             html += _renderLightningHero(heroLightning, balance);
         }
@@ -649,15 +662,6 @@ VIP.raffles = (function () {
             const myNums = ol.myTicketNumbers || [];
             if (myNums.length === 0 && !ol.iAmWinner) continue;
             html += _renderLightningMini(ol);
-        }
-
-        // === SORTEADOS RECIENTES (compacto, arriba) ===
-        // Ordena mas reciente primero. Mostramos los ultimos 2 expandidos y
-        // el resto colapsado tras un toggle "Ver todos (N)". Asi le damos
-        // visibilidad al historial sin que invada los sorteos vivos.
-        if (otherDrawn.length > 0) {
-            otherDrawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
-            html += _renderDrawnSummary(otherDrawn);
         }
 
         // Header con saldo + boton refrescar. El boton es util cuando el
@@ -755,7 +759,7 @@ VIP.raffles = (function () {
             for (const r of paid) html += _renderPaidCard(r, balance);
         }
 
-        if (paid.length === 0 && free.length === 0 && otherDrawn.length === 0 && !heroLightning) {
+        if (paid.length === 0 && free.length === 0 && allDrawn.length === 0 && !heroLightning) {
             html += '<div style="text-align:center;color:#aaa;padding:30px 0;">No hay sorteos disponibles en este momento.</div>';
         } else if (paid.length === 0 && free.length === 0 && !heroLightning) {
             // Hay drawn pero no hay activos: mensaje claro de "vuelve pronto"
