@@ -18073,7 +18073,13 @@ async function runFixLotteryDiagnose() {
             html += '<td style="padding:7px 8px;text-align:center;">' + (claimed
                 ? '<span style="background:rgba(255,170,68,0.18);color:#ffaa66;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;">⚠️ YA COBRÓ</span>'
                 : '<span style="background:rgba(102,255,102,0.15);color:#66ff66;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ sin cobrar</span>'
-            ) + '</td>';
+            );
+            // Acción rápida individual: quitar el reclamo del ganador
+            // equivocado sin necesidad de ejecutar el batch completo.
+            if (!claimed) {
+                html += '<br><button type="button" onclick="revokeClaimSingle(\'' + escapeJsArg(x.id) + '\',\'' + escapeJsArg(x.currentWinner || '?') + '\')" style="background:rgba(255,68,68,0.15);color:#ff8888;border:1px solid rgba(255,68,68,0.40);padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;cursor:pointer;margin-top:4px;" title="Quitar el botón RECLAMAR del usuario equivocado">🚫 Quitar reclamo</button>';
+            }
+            html += '</td>';
             html += '</tr>';
         }
         html += '</tbody></table></div>';
@@ -18084,6 +18090,24 @@ async function runFixLotteryDiagnose() {
         body.innerHTML = html;
     } catch (e) {
         body.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+async function revokeClaimSingle(raffleId, winnerUsername) {
+    if (!confirm('¿Quitarle el reclamo a @' + winnerUsername + '?\n\n• Le desaparece el botón "🎁 RECLAMAR" de la PWA\n• Recibe push de "Corrección sorteo"\n• El sorteo queda forfeited (no acreditable)\n\nDespués podés hacer fix-lottery o sortearlo de nuevo si querés.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/revoke-prize-claim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'wrong_winner', notifyUser: true })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        showToast('✅ Reclamo revocado · push enviado=' + (d.pushed || 0), 'success');
+        // Re-correr el diagnóstico para refrescar la tabla.
+        runFixLotteryDiagnose();
+    } catch (e) {
+        showToast('Error: ' + (e.message || ''), 'error');
     }
 }
 

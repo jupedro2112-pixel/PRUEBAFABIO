@@ -24189,6 +24189,80 @@ app.post('/api/admin/raffles/fix-lottery', authMiddleware, superAdminMiddleware,
   }
 });
 
+// ============================================================================
+// POST /api/admin/raffles/:id/revoke-prize-claim
+// ============================================================================
+// Forfeit manual: el admin quita el reclamo del ganador (en la PWA del user
+// desaparece el botón "🎁 RECLAMAR"). Sirve cuando el ganador es equivocado
+// y todavía no cobró — antes de o en lugar de /fix-lottery. Si ya cobró,
+// devuelve 400 (el admin tiene que debitar manual).
+app.post('/api/admin/raffles/:id/revoke-prize-claim', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const raffleId = req.params.id;
+    const reason = String((req.body && req.body.reason) || 'admin_revoked').slice(0, 200);
+    const notifyUser = (req.body && req.body.notifyUser) !== false;
+    const r = await Raffle.findOne({ id: raffleId }).lean();
+    if (!r) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (r.status !== 'drawn') return res.status(400).json({ error: 'Este sorteo no está en drawn.' });
+    if (r.prizeClaimedAt) {
+      return res.status(400).json({
+        error: 'Este premio ya fue acreditado — no se puede revocar sin debit manual. Debitá la plata en JUGAYGANA primero, después usá fix-lottery o admin-credit-prize.',
+        claimedBy: r.winnerUsername, claimedAt: r.prizeClaimedAt, prize: r.prizeValueARS
+      });
+    }
+    if (!r.prizeClaimable) return res.json({ success: true, alreadyRevoked: true });
+
+    const updated = await Raffle.findOneAndUpdate(
+      { id: raffleId, status: 'drawn', prizeClaimedAt: null },
+      { $set: {
+        prizeClaimable: false,
+        prizeForfeitedAt: new Date(),
+        prizeForfeitedReason: 'admin_revoke: ' + reason,
+        prizeClaimLastError: null
+      }},
+      { new: true }
+    );
+    if (!updated) return res.status(409).json({ error: 'Race: el sorteo cambió antes del revoke.' });
+
+    // Push opcional al user revocado para que sepa que el reclamo desapareció.
+    let pushed = 0;
+    if (notifyUser && r.winnerUsername) {
+      try {
+        const safeUser = String(r.winnerUsername).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const u = await User.findOne(
+          { username: { $regex: '^' + safeUser + '$', $options: 'i' } },
+          { fcmToken: 1, fcmTokens: 1 }
+        ).lean();
+        const tokens = [];
+        if (u && u.fcmToken) tokens.push(u.fcmToken);
+        if (u && Array.isArray(u.fcmTokens)) {
+          for (const tk of u.fcmTokens) {
+            const t = tk && tk.token ? tk.token : tk;
+            if (t && !tokens.includes(t)) tokens.push(t);
+          }
+        }
+        const title = '⚠️ Corrección sorteo';
+        const body = `Hubo un error en el sorteo "${r.name}". El N° #${r.winningTicketNumber} no era el ganador. Disculpá las molestias.`;
+        await Promise.all(tokens.map(tk =>
+          _sendPushToUser(tk, title, body, { source: 'raffle-claim-revoked', raffleId: r.id })
+            .then(x => { if (x && x.success) pushed++; })
+            .catch(() => {})
+        ));
+      } catch (e) { logger.warn(`[revoke-prize] push: ${e.message}`); }
+    }
+
+    logger.warn(`[raffles] CLAIM REVOKED ${r.name} winner=${r.winnerUsername} #${r.winningTicketNumber} reason=${reason}`);
+    res.json({
+      success: true,
+      raffleId, name: r.name, oldWinner: r.winnerUsername,
+      oldNumber: r.winningTicketNumber, pushed
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/revoke-prize-claim: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/apply-new-structure
 // One-shot: aplica el downgrade de premios sobre los sorteos free ACTIVOS
 // que están en los tipos legacy (free_p2m / free_p1m / free_p500 / free_p100)
