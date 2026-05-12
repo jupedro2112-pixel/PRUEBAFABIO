@@ -2082,26 +2082,55 @@ async function pgvTestPush() {
 
 async function pgvViewClaims(giveawayId) {
     try {
-        const r = await authFetch('/api/admin/money-giveaway/' + encodeURIComponent(giveawayId) + '/claims');
-        const d = await r.json();
-        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        const [claimsResp, tapsResp] = await Promise.all([
+            authFetch('/api/admin/money-giveaway/' + encodeURIComponent(giveawayId) + '/claims'),
+            authFetch('/api/admin/money-giveaway/' + encodeURIComponent(giveawayId) + '/taps')
+        ]);
+        const d = await claimsResp.json();
+        if (!claimsResp.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        let tapsData = { taps: [], total: 0, conversionPct: 0 };
+        try { tapsData = await tapsResp.json(); } catch (_) {}
         const claims = d.claims || [];
+        const taps = tapsData.taps || [];
+        const claimedSet = new Set(claims.map(c => String(c.username || '').toLowerCase()));
+        // Tappers que NO reclamaron — los que apretaron el push pero no
+        // llegaron a tocar "RECLAMAR" después.
+        const tappedNotClaimed = taps.filter(t => !t.claimed);
+
         document.getElementById('pgvClaimsModal')?.remove();
         const modal = document.createElement('div');
         modal.id = 'pgvClaimsModal';
         modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
         modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-        let html = '<div style="background:#0a0a14;border:2px solid #25d366;border-radius:14px;padding:18px;max-width:680px;width:100%;color:#fff;margin:14px auto;">';
+        let html = '<div style="background:#0a0a14;border:2px solid #25d366;border-radius:14px;padding:18px;max-width:720px;width:100%;color:#fff;margin:14px auto;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">';
-        html += '<h3 style="margin:0;color:#25d366;font-size:15px;">📋 Quiénes reclamaron · ' + claims.length + ' personas · $' + Number(d.giveaway.totalGiven || 0).toLocaleString('es-AR') + '</h3>';
+        html += '<h3 style="margin:0;color:#25d366;font-size:15px;">📋 Push de plata · detalle</h3>';
         html += '<button type="button" onclick="document.getElementById(\'pgvClaimsModal\').remove()" style="background:transparent;color:#aaa;border:none;font-size:22px;cursor:pointer;">×</button>';
         html += '</div>';
+
+        // === KPIs arriba: tappers, claims, conversion ===
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:14px;">';
+        html += '<div style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">👆 Tocaron el push</div><div style="color:#00d4ff;font-size:22px;font-weight:900;">' + Number(tapsData.total || 0).toLocaleString('es-AR') + '</div></div>';
+        html += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">💰 Reclamaron</div><div style="color:#66ff66;font-size:22px;font-weight:900;">' + claims.length.toLocaleString('es-AR') + '</div></div>';
+        html += '<div style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">Conversión</div><div style="color:#ffd700;font-size:22px;font-weight:900;">' + (tapsData.conversionPct || 0) + '%</div></div>';
+        html += '<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.20);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">$ Repartido</div><div style="color:#fff;font-size:18px;font-weight:900;">$' + Number(d.giveaway.totalGiven || 0).toLocaleString('es-AR') + '</div></div>';
+        html += '</div>';
+
+        // === Tabs ===
+        html += '<div style="display:flex;gap:6px;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.10);">';
+        html += '<button onclick="_pgvSwitchTab(\'claims\')" id="pgvTab_claims" style="background:rgba(102,255,102,0.10);color:#66ff66;border:none;border-bottom:2px solid #66ff66;padding:8px 14px;font-weight:900;font-size:12px;cursor:pointer;">💰 Reclamaron (' + claims.length + ')</button>';
+        html += '<button onclick="_pgvSwitchTab(\'taps\')" id="pgvTab_taps" style="background:transparent;color:#aaa;border:none;border-bottom:2px solid transparent;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer;">👆 Tocaron el push (' + (tapsData.total || 0) + ')</button>';
+        html += '<button onclick="_pgvSwitchTab(\'notclaimed\')" id="pgvTab_notclaimed" style="background:transparent;color:#aaa;border:none;border-bottom:2px solid transparent;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer;">🚪 Tocaron pero NO reclamaron (' + tappedNotClaimed.length + ')</button>';
+        html += '</div>';
+
+        // === Tab content: claims ===
+        html += '<div id="pgvTabContent_claims">';
         if (claims.length === 0) {
             html += '<div style="color:#aaa;text-align:center;padding:18px;">Todavía nadie reclamó este push.</div>';
         } else {
-            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;max-height:60vh;overflow:auto;">';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;max-height:55vh;overflow:auto;">';
             for (const c of claims) {
-                const d2 = c.claimedAt ? new Date(c.claimedAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+                const d2 = c.claimedAt ? new Date(c.claimedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
                 html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 9px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;">';
                 html += '<div style="color:#fff;font-weight:700;">@' + escapeHtml(c.username || '?') + '</div>';
                 html += '<div style="color:#ddd;">$' + Number(c.amount || 0).toLocaleString('es-AR') + ' · ' + escapeHtml(d2) + '</div>';
@@ -2110,10 +2139,65 @@ async function pgvViewClaims(giveawayId) {
             html += '</div>';
         }
         html += '</div>';
+
+        // === Tab content: all taps ===
+        html += '<div id="pgvTabContent_taps" style="display:none;">';
+        if (taps.length === 0) {
+            html += '<div style="color:#aaa;text-align:center;padding:18px;">Todavía nadie tocó el push. El tracking se registra cuando el user lo abre desde la notif (no es lo mismo que recibido).</div>';
+        } else {
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;max-height:55vh;overflow:auto;">';
+            for (const t of taps) {
+                const d2 = t.tappedAt ? new Date(t.tappedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+                const claimedBadge = t.claimed
+                    ? '<span style="background:rgba(102,255,102,0.18);color:#66ff66;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:800;">✅ reclamó</span>'
+                    : '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:800;">🚪 sin reclamar</span>';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 9px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;">';
+                html += '<div style="color:#fff;font-weight:700;">@' + escapeHtml(t.username || '?') + ' ' + claimedBadge + '</div>';
+                html += '<div style="color:#aaa;font-size:11px;">' + escapeHtml(d2) + '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // === Tab content: tapped not claimed ===
+        html += '<div id="pgvTabContent_notclaimed" style="display:none;">';
+        if (tappedNotClaimed.length === 0) {
+            html += '<div style="color:#aaa;text-align:center;padding:18px;">Todos los que tocaron el push también reclamaron 🎯 — conversión 100%.</div>';
+        } else {
+            html += '<div style="color:#ffd0a0;font-size:11.5px;padding:10px 12px;background:rgba(255,170,102,0.06);border:1px dashed rgba(255,170,102,0.40);border-radius:8px;margin-bottom:8px;line-height:1.4;">Estos usuarios <strong>abrieron el push pero NO llegaron a tocar RECLAMAR</strong>. Posibles causas: vencía el regalo, no entendieron el botón, lo dejaron para después.</div>';
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;max-height:50vh;overflow:auto;">';
+            for (const t of tappedNotClaimed) {
+                const d2 = t.tappedAt ? new Date(t.tappedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 9px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;">';
+                html += '<div style="color:#fff;font-weight:700;">@' + escapeHtml(t.username || '?') + '</div>';
+                html += '<div style="color:#aaa;font-size:11px;">' + escapeHtml(d2) + '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+
+        html += '</div>';
         modal.innerHTML = html;
         document.body.appendChild(modal);
     } catch (e) {
         alert('Error de conexión');
+    }
+}
+
+function _pgvSwitchTab(which) {
+    const tabs = ['claims', 'taps', 'notclaimed'];
+    for (const t of tabs) {
+        const btn = document.getElementById('pgvTab_' + t);
+        const content = document.getElementById('pgvTabContent_' + t);
+        if (btn) {
+            btn.style.background = (t === which) ? 'rgba(102,255,102,0.10)' : 'transparent';
+            btn.style.color = (t === which) ? '#66ff66' : '#aaa';
+            btn.style.borderBottom = (t === which) ? '2px solid #66ff66' : '2px solid transparent';
+            btn.style.fontWeight = (t === which) ? '900' : '700';
+        }
+        if (content) content.style.display = (t === which) ? '' : 'none';
     }
 }
 

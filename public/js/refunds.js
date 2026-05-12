@@ -1209,6 +1209,25 @@ VIP.refunds = (function () {
             const msg = event && event.data;
             if (!msg || msg.type !== 'PUSH_NOTIFICATION_CLICK') return;
             const d = msg.data || {};
+            // Tracking: registramos que el user tapeó este push. El backend
+            // hace dedup por (userId, source, giveawayId) — no contamos taps
+            // duplicados aunque el postMessage llegue 2 veces.
+            try {
+                if (d.source && VIP && VIP.state && VIP.state.currentToken) {
+                    fetch(`${VIP.config.API_URL}/api/push/tap-track`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${VIP.state.currentToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            source: d.source,
+                            giveawayId: d.giveawayId || null,
+                            raffleId: d.raffleId || null
+                        })
+                    }).catch(() => {});
+                }
+            } catch (_) {}
             // Forzar fetch INMEDIATO de ambos estados (promo y giveaway)
             // independientemente de que campos vengan en data — el server
             // es la fuente de verdad. Esto reemplaza la espera al polling.

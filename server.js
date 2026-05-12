@@ -18090,6 +18090,71 @@ app.get('/api/admin/money-giveaway/history', authMiddleware, adminMiddleware, as
 
 // GET /api/admin/money-giveaway/:id/claims — lista de usuarios que reclamaron
 // un giveaway puntual (con username, fecha, monto). Para el panel "Stats".
+// =========================================================================
+// PUSH TAP TRACKING — registrar cuando un user toca el push notification.
+// =========================================================================
+const PushTapLog = require('./src/models/PushTapLog');
+
+// POST /api/push/tap-track — el cliente lo llama cuando el SW envia el
+// postMessage de notificationclick. Idempotente via unique index
+// (userId, source, giveawayId).
+app.post('/api/push/tap-track', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = String(req.user.username || '').toLowerCase();
+    const source = String((req.body && req.body.source) || '').slice(0, 80).trim();
+    const giveawayId = (req.body && req.body.giveawayId) ? String(req.body.giveawayId).slice(0, 64) : null;
+    const raffleId = (req.body && req.body.raffleId) ? String(req.body.raffleId).slice(0, 64) : null;
+    if (!source) return res.status(400).json({ error: 'Falta source' });
+    try {
+      await PushTapLog.create({
+        source,
+        giveawayId,
+        raffleId,
+        userId,
+        username,
+        tappedAt: new Date(),
+        ipAddress: (req.ip || '').slice(0, 60)
+      });
+    } catch (e) {
+      // Duplicate key = ya registrado, OK.
+      if (!String(e.message || '').includes('duplicate key')) throw e;
+    }
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/push/tap-track: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/money-giveaway/:id/taps — lista de tappers de un giveaway.
+app.get('/api/admin/money-giveaway/:id/taps', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const giveawayId = req.params.id;
+    const taps = await PushTapLog.find({ giveawayId })
+      .sort({ tappedAt: -1 })
+      .lean();
+    // Cross-reference con claims para saber quién tapeó y luego reclamó.
+    const claims = await MoneyGiveawayClaim.find({ giveawayId }, { username: 1, _id: 0 }).lean();
+    const claimedSet = new Set(claims.map(c => String(c.username || '').toLowerCase()));
+    res.json({
+      success: true,
+      total: taps.length,
+      claimedCount: claims.length,
+      conversionPct: taps.length > 0 ? Math.round((claims.length / taps.length) * 100) : 0,
+      taps: taps.map(t => ({
+        username: t.username,
+        userId: t.userId,
+        tappedAt: t.tappedAt,
+        claimed: claimedSet.has(String(t.username || '').toLowerCase())
+      }))
+    });
+  } catch (err) {
+    logger.error(`/api/admin/money-giveaway/:id/taps: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.get('/api/admin/money-giveaway/:id/claims', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const giveawayId = req.params.id;
