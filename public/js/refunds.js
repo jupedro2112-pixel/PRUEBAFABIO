@@ -1081,22 +1081,37 @@ VIP.refunds = (function () {
                 renderGiveawayCard();
                 if (typeof loadRefundStatus === 'function') loadRefundStatus();
             } else {
-                VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
-                if (data.alreadyClaimed) {
-                    _giveawayState = { ...(_giveawayState || {}), alreadyClaimed: true };
-                    renderGiveawayCard();
-                } else if (data.closed) {
-                    // Cupo o presupuesto agotado: refetch para que el server
-                    // devuelva soldOut + claimedCount actualizados, así el
-                    // card se queda visible hasta expiresAt en modo "agotado".
-                    loadGiveawayStatus();
+                // Modal informativo según razón. No alcanza con un toast —
+                // el user debe entender exactamente por qué no puede reclamar
+                // y qué tiene que hacer para destrabar.
+                if (data.needsAppNotifs || r.status === 403 && /app|notific/i.test(data.error || '')) {
+                    _showGiveawayBlockedModal({
+                        kind: 'needsAppNotifs',
+                        amount: (_giveawayState && _giveawayState.amount) || data.amount || null
+                    });
                 } else if (data.notEligible && data.reason === 'has_balance') {
-                    // Servidor confirmó que el user tiene saldo — actualizar
-                    // el card para mostrar "no disponible" sin que tenga que
-                    // refrescar la app.
                     _giveawayState = { ...(_giveawayState || {}), notEligibleReason: 'has_balance' };
                     renderGiveawayCard();
-                } else if (btn) {
+                    _showGiveawayBlockedModal({ kind: 'hasBalance', message: data.message });
+                } else if (data.notEligible) {
+                    _showGiveawayBlockedModal({ kind: 'notEligible', message: data.message });
+                } else if (data.retry) {
+                    _showGiveawayBlockedModal({ kind: 'retry', message: data.message });
+                } else if (data.alreadyClaimed) {
+                    _giveawayState = { ...(_giveawayState || {}), alreadyClaimed: true };
+                    renderGiveawayCard();
+                    VIP.ui.showToast('✅ Ya reclamaste este regalo', 'success');
+                } else if (data.closed) {
+                    loadGiveawayStatus();
+                    VIP.ui.showToast('⚠️ ' + (data.message || 'Regalo cerrado'), 'error');
+                } else {
+                    VIP.ui.showToast('⚠️ ' + (data.message || data.error || 'No se pudo reclamar'), 'error');
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = '🎁 RECLAMAR';
+                    }
+                }
+                if (btn && data.kind !== 'retry') {
                     btn.disabled = false;
                     btn.textContent = '🎁 RECLAMAR';
                 }
@@ -1109,6 +1124,87 @@ VIP.refunds = (function () {
                 btn.textContent = '🎁 RECLAMAR';
             }
         }
+    }
+
+    // Modal informativo cuando el reclamo del regalo se rechaza. Muestra
+    // el motivo real (sin app, sin notifs, saldo, retry, etc.) y un CTA
+    // accionable — el toast solo NO alcanza porque desaparece y no
+    // explica qué tiene que hacer el user.
+    function _showGiveawayBlockedModal(opts) {
+        const kind = (opts && opts.kind) || 'notEligible';
+        const amount = (opts && opts.amount) || null;
+        const customMsg = (opts && opts.message) || '';
+
+        // Detectar estado de app + notifs para guiar al user con un CTA
+        // concreto ("instalá la app" / "activá notifs" / ambas).
+        const isStandalone =
+            (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+            window.navigator.standalone === true;
+        const notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'default';
+        const ua = navigator.userAgent || '';
+        const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+
+        document.getElementById('giveawayBlockedModal')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'giveawayBlockedModal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99998;display:flex;align-items:center;justify-content:center;padding:16px;';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        let icon = '⚠️';
+        let title = 'No se pudo reclamar';
+        let body = customMsg || 'No pudimos procesar el reclamo en este momento.';
+        let primaryBtn = null;
+        let secondaryBtn = null;
+        const fmtAmt = amount ? '$' + Number(amount).toLocaleString('es-AR') : 'el regalo';
+
+        if (kind === 'needsAppNotifs') {
+            icon = '📱';
+            title = 'Falta instalar la app';
+            const missing = [];
+            if (!isStandalone) missing.push('• <strong>Instalar la app</strong> en tu celular');
+            if (notifPerm !== 'granted') missing.push('• <strong>Activar las notificaciones</strong> en la app');
+            const stepsHtml = missing.length > 0
+                ? '<div style="text-align:left;background:rgba(255,255,255,0.05);border-radius:9px;padding:10px 12px;margin:10px 0;line-height:1.7;color:#fff;font-size:13px;">' + missing.join('<br>') + '</div>'
+                : '';
+            body = 'Para reclamar <strong style="color:#ffd700;">' + fmtAmt + '</strong> necesitás tener la app abierta como aplicación (no desde el navegador) y con notificaciones activas.' + stepsHtml + '<div style="color:#aaa;font-size:11.5px;margin-top:4px;">Esto evita reclamos duplicados y nos permite avisarte cuando hay nuevos regalos.</div>';
+            // CTA: si no esta en standalone -> install. Si ya esta -> activar notifs.
+            if (!isStandalone) {
+                primaryBtn = { txt: (isIOS ? '📲 Cómo instalar en iPhone' : '📲 Instalar app'), onclick: 'window.VIP&&VIP.ui&&VIP.ui.installApp&&VIP.ui.installApp();document.getElementById(\'giveawayBlockedModal\').remove();' };
+            } else if (notifPerm !== 'granted') {
+                primaryBtn = { txt: '🔔 Activar notificaciones', onclick: '(async()=>{try{await Notification.requestPermission();}catch(_){}document.getElementById(\'giveawayBlockedModal\').remove();})()' };
+            }
+        } else if (kind === 'hasBalance') {
+            icon = '💰';
+            title = 'Ya tenés saldo';
+            body = 'Este regalo es <strong>exclusivo para clientes sin saldo</strong>. Como tu cuenta tiene saldo disponible, no podés reclamarlo esta vez.<div style="color:#aaa;font-size:12px;margin-top:8px;">Vamos a avisarte cuando salga otro regalo abierto para todos.</div>';
+        } else if (kind === 'retry') {
+            icon = '⏳';
+            title = 'Probá de nuevo en un minuto';
+            body = (customMsg || 'No pudimos verificar tu cuenta ahora.') + '<div style="color:#aaa;font-size:12px;margin-top:8px;">Es un problema temporal de conexión con el sistema. Tu regalo sigue disponible — volvé a tocar RECLAMAR en unos segundos.</div>';
+            primaryBtn = { txt: '🔄 Probar de nuevo', onclick: 'document.getElementById(\'giveawayBlockedModal\').remove();document.getElementById(\'giveawayBtn\')?.click();' };
+        } else if (kind === 'notEligible') {
+            icon = '🚫';
+            title = 'Reclamo no disponible';
+            body = (customMsg || 'Tu cuenta no califica para este regalo en este momento.') + '<div style="color:#aaa;font-size:12px;margin-top:8px;">Si creés que es un error, escribinos por WhatsApp y lo revisamos.</div>';
+        }
+
+        const primaryHtml = primaryBtn
+            ? '<button onclick="' + primaryBtn.onclick + '" style="width:100%;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;padding:13px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;margin-bottom:8px;letter-spacing:0.4px;">' + primaryBtn.txt + '</button>'
+            : '';
+        const secondaryHtml = secondaryBtn
+            ? '<button onclick="' + secondaryBtn.onclick + '" style="width:100%;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:11px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer;margin-bottom:6px;">' + secondaryBtn.txt + '</button>'
+            : '';
+
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2.5px solid #ffd700;border-radius:16px;padding:22px 18px;max-width:420px;width:100%;text-align:center;color:#fff;box-shadow:0 0 30px rgba(255,215,0,0.30);">' +
+                '<div style="font-size:54px;line-height:1;margin-bottom:6px;">' + icon + '</div>' +
+                '<div style="color:#ffd700;font-weight:900;font-size:15.5px;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px;">' + title + '</div>' +
+                '<div style="color:#fff;font-size:13.5px;line-height:1.55;margin-bottom:14px;">' + body + '</div>' +
+                primaryHtml +
+                secondaryHtml +
+                '<button onclick="document.getElementById(\'giveawayBlockedModal\').remove();" style="width:100%;background:transparent;color:#aaa;border:1px solid rgba(255,255,255,0.18);padding:9px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
     }
 
     // ---- Prefill desde cache para evitar el flash de $0 en cold-start ----
