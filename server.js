@@ -22091,15 +22091,19 @@ app.post('/api/admin/raffles/:id/admin-credit-prize', authMiddleware, superAdmin
     const prize = Number(raffle.prizeValueARS) || 0;
     if (prize <= 0) return res.status(400).json({ error: 'Premio inválido.' });
 
+    // Atomic guard: incluímos prizeForfeitedAt:null para cerrar la ventana
+    // TOCTOU entre la pre-check de la línea 22087 y este reserve. Si un
+    // forfeit se escribió entre medio, este update no matchea y caemos al
+    // path de "race en curso".
     const reserved = await Raffle.findOneAndUpdate(
-      { id: raffleId, status: 'drawn', prizeClaimedAt: null },
+      { id: raffleId, status: 'drawn', prizeClaimedAt: null, prizeForfeitedAt: null },
       { $set: { prizeClaimedAt: new Date(), prizeClaimable: false } },
       { new: true }
     );
     if (!reserved) {
-      // Otro caller llegó primero. Re-leemos para distinguir "ya acreditado"
-      // (idempotente OK) de "race en curso" (devolver 409 explícito).
-      const fresh = await Raffle.findOne({ id: raffleId }, { prizeClaimedAt: 1, prizeClaimTxId: 1 }).lean();
+      // Otro caller llegó primero o el premio fue forfeit entre medio.
+      // Re-leemos para distinguir los 3 casos.
+      const fresh = await Raffle.findOne({ id: raffleId }, { prizeClaimedAt: 1, prizeClaimTxId: 1, prizeForfeitedAt: 1 }).lean();
       if (fresh && fresh.prizeClaimedAt) {
         return res.json({
           success: true,
@@ -22107,6 +22111,9 @@ app.post('/api/admin/raffles/:id/admin-credit-prize', authMiddleware, superAdmin
           prizeClaimedAt: fresh.prizeClaimedAt,
           transactionId: fresh.prizeClaimTxId || null
         });
+      }
+      if (fresh && fresh.prizeForfeitedAt) {
+        return res.status(400).json({ error: 'Este premio fue forfeit — no se puede acreditar.' });
       }
       return res.status(409).json({ error: 'Race: otro proceso está acreditando este premio. Reintentá en unos segundos.' });
     }
