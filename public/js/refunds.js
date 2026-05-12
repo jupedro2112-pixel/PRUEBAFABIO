@@ -691,7 +691,13 @@ VIP.refunds = (function () {
             renderWelcomeBonusCard();
         }
         try {
-            const r = await fetch(`${VIP.config.API_URL}/api/refunds/welcome/status`, {
+            // Huella del dispositivo: si el front la pudo calcular, la mandamos
+            // como query param para que el server pueda bloquear ANTES de
+            // mostrar el botón si detecta cuenta duplicada en el mismo celular.
+            const fp = (window.VIP && VIP.fingerprint && typeof VIP.fingerprint.get === 'function')
+                ? await VIP.fingerprint.get().catch(() => null) : null;
+            const fpQuery = fp ? ('?deviceFingerprint=' + encodeURIComponent(fp)) : '';
+            const r = await fetch(`${VIP.config.API_URL}/api/refunds/welcome/status${fpQuery}`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (!r.ok) return;
@@ -819,9 +825,15 @@ VIP.refunds = (function () {
             btn.textContent = '⏳ Procesando...';
         }
         try {
+            const fp = (window.VIP && VIP.fingerprint && typeof VIP.fingerprint.get === 'function')
+                ? await VIP.fingerprint.get().catch(() => null) : null;
             const response = await fetch(`${VIP.config.API_URL}/api/refunds/claim/welcome`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+                headers: {
+                    'Authorization': `Bearer ${VIP.state.currentToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ deviceFingerprint: fp || null })
             });
             const data = await response.json();
             if (data.success) {

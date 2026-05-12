@@ -15642,6 +15642,32 @@ async function _isWelcomeBlockedByIp(userId, username, req) {
   }
 }
 
+// Si este dispositivo (huella) ya cobró el welcome bonus desde otra cuenta,
+// bloquear. Detecta el escenario "el user cobró, borró caché/desinstaló,
+// creó otra cuenta JUGAYGANA y volvió a instalar la PWA en el mismo
+// celular". La huella se recolecta en el frontend (userAgent + screen +
+// timezone + language + canvas hash → SHA-256). Es razonablemente estable
+// salvo factory reset / reemplazo del dispositivo.
+async function _isWelcomeBlockedByFingerprint(userId, username, fingerprint) {
+  try {
+    if (!fingerprint || typeof fingerprint !== 'string' || fingerprint.length < 16) {
+      return { blocked: false };
+    }
+    const prior = await RefundClaim.findOne({
+      type: 'welcome_install',
+      deviceFingerprint: fingerprint,
+      userId: { $ne: userId },
+      username: { $ne: username }
+    }).lean();
+    if (!prior) return { blocked: false };
+    logger.warn(`[BONUS] welcome bloqueado por dispositivo duplicado. ${username} (fp=${fingerprint.slice(0,12)}…) — ya cobró ${prior.username}`);
+    return { blocked: true, otherUsername: prior.username, claimedAt: prior.claimedAt, fingerprint };
+  } catch (e) {
+    logger.warn(`[BONUS] _isWelcomeBlockedByFingerprint error: ${e.message}`);
+    return { blocked: false };
+  }
+}
+
 app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -15667,14 +15693,20 @@ app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
     }
 
     // Bloqueo por IP duplicada — cuenta JUGAYGANA nueva pero mismo router.
+    // También chequeamos huella del dispositivo si el front la pasó por query.
+    const fingerprintQ = String((req.query && req.query.deviceFingerprint) || '').trim().slice(0, 128);
+    const fpBlock = fingerprintQ
+      ? await _isWelcomeBlockedByFingerprint(userId, username, fingerprintQ)
+      : { blocked: false };
     const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
-    if (ipBlock.blocked) {
+    if (ipBlock.blocked || fpBlock.blocked) {
+      const reason = fpBlock.blocked ? 'duplicate_device' : 'duplicate_ip';
       return res.json({
         amount: WELCOME_BONUS_AMOUNT,
         claimed: true,
-        claimedAt: ipBlock.claimedAt || null,
-        status: 'blocked_duplicate_ip',
-        blockedReason: 'duplicate_ip',
+        claimedAt: (fpBlock.claimedAt || ipBlock.claimedAt) || null,
+        status: 'blocked_' + reason,
+        blockedReason: reason,
         eligible: false,
         notEnoughDeposits: false,
         depositCount: 0,
@@ -15757,19 +15789,29 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
       // futuro también. El acto de intentar reclamar desde una IP donde
       // ya cobraron es la evidencia del intento de estafa.
       const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
-      if (ipBlock.blocked) {
-        const fraudReason = 'Intento de reclamo de bono desde IP duplicada (cobrado previamente por ' + (ipBlock.otherUsername || '?') + ').';
+      const fingerprint = String((req.body && req.body.deviceFingerprint) || '').trim().slice(0, 128);
+      // Anti-fraude por DISPOSITIVO: misma lógica que IP, con la huella del
+      // navegador. Detecta el caso "borró caché + creó cuenta nueva + volvió
+      // a instalar PWA en el mismo celular". La huella la calcula el front
+      // y la manda en cada request relevante.
+      const fpBlock = fingerprint
+        ? await _isWelcomeBlockedByFingerprint(userId, username, fingerprint)
+        : { blocked: false };
+      if (ipBlock.blocked || fpBlock.blocked) {
+        const reasons = [];
+        if (ipBlock.blocked) reasons.push('IP duplicada (' + ipBlock.otherUsername + ')');
+        if (fpBlock.blocked) reasons.push('dispositivo duplicado (' + fpBlock.otherUsername + ')');
+        const fraudReason = 'Intento de reclamo de bono desde ' + reasons.join(' + ') + '.';
         try {
-          await User.updateOne(
-            { id: userId },
-            { $set: {
-                fraudBlocked: true,
-                fraudReason,
-                fraudBlockedAt: new Date(),
-                fraudBlockedIp: ipBlock.ip || _getClientIp(req)
-              } }
-          );
-          logger.warn(`[FRAUD-BLOCK] ${username} bloqueado por intento de reclamo duplicado de welcome bonus desde ${ipBlock.ip} (otro user previo: ${ipBlock.otherUsername})`);
+          const setFields = {
+            fraudBlocked: true,
+            fraudReason,
+            fraudBlockedAt: new Date(),
+            fraudBlockedIp: ipBlock.ip || _getClientIp(req)
+          };
+          if (fingerprint) setFields.deviceFingerprint = fingerprint;
+          await User.updateOne({ id: userId }, { $set: setFields });
+          logger.warn(`[FRAUD-BLOCK] ${username} bloqueado por ${reasons.join(' + ')}`);
         } catch (e) {
           logger.warn(`[FRAUD-BLOCK] no se pudo flaggear ${username}: ${e.message}`);
         }
@@ -15803,8 +15845,17 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
           periodKey,
           status: 'pending',
           claimedAt: new Date(),
-          clientIp: _getClientIp(req)
+          clientIp: _getClientIp(req),
+          deviceFingerprint: fingerprint || null
         });
+        // Persistir huella en el User para que próximos chequeos sean
+        // O(1) sin tener que joinear con RefundClaim.
+        if (fingerprint) {
+          await User.updateOne(
+            { id: userId },
+            { $set: { deviceFingerprint: fingerprint, deviceFingerprintAt: new Date() } }
+          ).catch(() => {});
+        }
       } catch (e) {
         if (e && e.code === 11000) {
           logger.warn(`[BONUS] welcome — duplicado bloqueado por indice unique para ${username} (key: ${JSON.stringify(e.keyValue || e.keyPattern || {})})`);
