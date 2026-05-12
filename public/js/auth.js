@@ -625,17 +625,30 @@ VIP.auth = (function () {
     // vez (localStorage). Si cambió, muestra el banner rojo grande para
     // que el usuario sepa que tiene que agendar el nuevo y borrar el viejo.
     // Pinta/oculta el banner rojo "No te olvides de unirte" debajo del
-    // bloque "Unite a la comunidad". Visible solo durante la ventana de
-    // 24hs activada cuando admin manda push de comunidad por equipo.
+    // bloque "Unite a la comunidad". Visible durante la ventana de 24hs
+    // activada cuando admin manda push de comunidad por equipo (o desde
+    // el toggle manual).
     function renderCommunityForceBanner() {
         const el = document.getElementById('communityForceReminderBanner');
         if (!el) return;
         const until = Number(VIP.state.communityAlertForceUntilMs || 0);
         const active = until > Date.now();
-        const link = VIP.state.communityLink || VIP.state.communityReplacementLink;
-        if (active && link) el.style.display = '';
+        if (active) el.style.display = '';
         else el.style.display = 'none';
+        try { console.log('[community-banner] active=' + active + ' until=' + (until ? new Date(until).toISOString() : 'null')); } catch (_) {}
     }
+
+    // Re-check periódico cada 60s: si la ventana de 24hs venció, ocultar.
+    // También fuerza re-fetch del flag cada 5 min por si admin lo activó
+    // mientras el user estaba con la app abierta.
+    setInterval(() => {
+        try { renderCommunityForceBanner(); } catch (_) {}
+    }, 60 * 1000);
+    setInterval(() => {
+        if (document.visibilityState === 'visible' && VIP.state && VIP.state.currentToken) {
+            try { refreshLinePhone(); } catch (_) {}
+        }
+    }, 5 * 60 * 1000);
 
     // Alerta "revisá si estás unido a la comunidad". Se muestra al entrar
     // a la app. Anti-spam: 1 vez cada 5 días por usuario (localStorage).
