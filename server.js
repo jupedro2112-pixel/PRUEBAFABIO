@@ -23641,8 +23641,15 @@ app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddle
 
     const safe = testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const filter = { username: { $regex: '^' + safe + '$', $options: 'i' } };
-    const results = [];
-    for (const r of raffles) {
+    // Pushes en PARALELO (antes era loop serial con 600ms delay c/u que
+    // causaba timeouts del proxy 504 si había muchos sorteos). FCM acepta
+    // bien hits paralelos al mismo token. Capeamos a 25 sorteos por request
+    // por seguridad — más que eso es raro y conviene paginarlo.
+    const MAX_RAFFLES_PER_BATCH = 25;
+    if (raffles.length > MAX_RAFFLES_PER_BATCH) {
+      raffles = raffles.slice(0, MAX_RAFFLES_PER_BATCH);
+    }
+    const results = await Promise.all(raffles.map(async (r) => {
       const wp = _buildWinnerPush(r, ticketNumber, {
         prizeAutoCredited: true,
         lightningForfeited: false,
@@ -23650,7 +23657,7 @@ app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddle
       });
       try {
         const res2 = await sendNotificationToAllUsers(User, wp.title, wp.body, wp.data, filter);
-        results.push({
+        return {
           raffleId: r.id,
           raffleName: r.name,
           prizeValueARS: r.prizeValueARS || 0,
@@ -23663,13 +23670,11 @@ app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddle
           failed: (res2 && res2.failureCount) || 0,
           title: wp.title,
           body: wp.body
-        });
+        };
       } catch (e) {
-        results.push({ raffleId: r.id, raffleName: r.name, error: e.message });
+        return { raffleId: r.id, raffleName: r.name, error: e.message };
       }
-      // Pequeño delay entre pushes para no saturar FCM ni el panel del user.
-      await new Promise(resolve => setTimeout(resolve, 600));
-    }
+    }));
     const totalSent = results.reduce((s, x) => s + (x.sent || 0), 0);
     logger.info(`[raffles] TEST-PUSH-ALL a ${testUsername} ticket=#${ticketNumber} onlyFree=${onlyFree}: ${raffles.length} sorteos, ${totalSent} pushes enviadas`);
     res.json({

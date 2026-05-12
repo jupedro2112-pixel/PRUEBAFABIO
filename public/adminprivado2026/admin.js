@@ -17862,8 +17862,19 @@ async function testPushAllToUser() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: u, ticketNumber, onlyFree: true, includeDrawn: false })
         });
-        const d = await r.json();
-        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        // Si el server devolvió HTML (timeout del proxy) en vez de JSON,
+        // mostramos un mensaje claro en lugar de "JSON.parse: unexpected character".
+        const ctype = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+        let d = null;
+        if (ctype.includes('application/json')) {
+            d = await r.json().catch(() => null);
+        } else {
+            const txt = await r.text().catch(() => '');
+            alert('❌ El servidor no respondió JSON (HTTP ' + r.status + '). Probablemente timeout. ' +
+                  (txt ? 'Primeros chars: ' + txt.slice(0, 120) : ''));
+            return;
+        }
+        if (!d || !r.ok || !d.success) { alert('❌ ' + ((d && d.error) || 'Error')); return; }
 
         // Modal de resultados — bonito, muestra qué push se mandó por cada sorteo
         document.getElementById('testPushAllModal')?.remove();
