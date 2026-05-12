@@ -15396,6 +15396,7 @@ function _renderRafflesAdmin() {
     // estado de reclamo y acción de acreditar manualmente.
     html += '      <button type="button" onclick="viewWinnerClaims()" style="background:linear-gradient(135deg,rgba(102,255,102,0.20),rgba(255,215,0,0.18));color:#ffd700;border:1px solid #ffd700;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Reclamos de ganadores en ventana 24h">🏆 Reclamos ganadores</button>';
     html += '      <button type="button" onclick="testPushAllToUser()" style="background:rgba(102,255,255,0.10);color:#66ffff;border:1px solid rgba(102,255,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar el push de GANASTE de TODOS los sorteos activos a un user de prueba (ej. lalodj)">🧪 Test masivo a usuario</button>';
+    html += '      <button type="button" onclick="openDrawAllUnifiedModal()" style="background:linear-gradient(135deg,#d4af37,#ff6b00);color:#000;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Un solo número de Lotería para TODOS los sorteos cerrados (pagos + gratis + relámpago) — verificar previo y resumen final">🎰 Sortear TODO juntos</button>';
     // "Sortear semana pasada": batch modal directo desde el dashboard. Antes
     // estaba enterrado en el histórico — ahora va arriba para que el flujo
     // semanal (sortear el lunes nocturna) sea 1 click.
@@ -17456,6 +17457,230 @@ async function viewArchivedRaffles(kind) {
 
 // Modal "Sortear semana pasada": carga los pendientes de cargar ganador,
 // permite ingresar el número de Lotería para cada uno y dispara el batch.
+// Modal UNIFICADO: sortear todos los tipos (pagos + gratis + relámpago) con
+// UN solo número de Lotería. Flujo:
+//   1) Carga lista de CLOSED de los 3 tipos.
+//   2) Admin escribe el número de lotería del 1° premio nocturna.
+//   3) "🔍 Verificar todo" → llama /preview-draw para cada raffle con ese
+//      número y muestra tabla con ganador previsto + premio.
+//   4) "✅ SORTEAR TODOS" → arma payload de draws[] y llama /draw-batch.
+//   5) Vista final: resumen con quién ganó qué, push enviadas, totales.
+async function openDrawAllUnifiedModal() {
+    const modalId = 'drawAllUnifiedModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML =
+        '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #d4af37;border-radius:14px;padding:20px;max-width:900px;width:100%;color:#fff;margin:14px auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;">' +
+                '<div>' +
+                    '<h3 style="margin:0;color:#ffd700;font-size:18px;letter-spacing:1px;">🎰 Sortear TODO juntos · semana pasada</h3>' +
+                    '<div style="color:#aaa;font-size:11.5px;margin-top:4px;line-height:1.4;max-width:660px;">' +
+                        'UN solo número de Lotería se aplica a TODOS los sorteos <strong style="color:#ffd700;">CLOSED</strong> (pagos + gratis + relámpago). ' +
+                        'Cada sorteo encuentra su ganador con ese número (o mapeo por módulo si no fue vendido). ' +
+                        'Primero <strong>Verificás todo</strong>, después <strong>sorteás todos</strong> con un click.' +
+                    '</div>' +
+                '</div>' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:24px;cursor:pointer;line-height:1;">×</button>' +
+            '</div>' +
+            '<div id="drawAllStatsBar" style="margin-bottom:10px;font-size:11.5px;color:#ddd;"></div>' +
+            '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.40);border-radius:10px;padding:12px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+                '<label style="color:#aaa;font-size:11.5px;font-weight:800;letter-spacing:0.5px;">N° de Lotería Nacional Nocturna (1° premio):</label>' +
+                '<input type="number" id="drawAllLottery" min="1" max="99999" placeholder="ej. 4267" style="background:rgba(0,0,0,0.40);border:1.5px solid #d4af3760;border-radius:7px;color:#ffd700;padding:9px 12px;font-size:16px;font-weight:800;width:130px;text-align:center;font-family:monospace;">' +
+                '<button type="button" onclick="previewDrawAllUnified()" style="background:linear-gradient(135deg,#4dabff,#0080ff);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">🔍 VERIFICAR TODO</button>' +
+                '<div style="flex-basis:100%;color:#aaa;font-size:10.5px;line-height:1.4;margin-top:4px;">' +
+                    '📲 <strong style="color:#66ff66;">El push se envía solo al ganador</strong>. Los demás ven el resultado al entrar a la PWA con los usernames tapados al 80%.' +
+                '</div>' +
+            '</div>' +
+            '<div id="drawAllPreviewBox"></div>' +
+            '<div id="drawAllResultsBox" style="margin-top:12px;"></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    // Cargar el listado de CLOSED de los 3 tipos.
+    const statsEl = document.getElementById('drawAllStatsBar');
+    statsEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:8px;">⏳ Cargando sorteos cerrados…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles?include=history&kind=all');
+        if (!r.ok) { statsEl.innerHTML = '<div style="color:#ff8080;text-align:center;padding:8px;">Error cargando</div>'; return; }
+        const d = await r.json();
+        const closed = (d.raffles || []).filter(x => x.status === 'closed' && !x.winnerUsername && (x.cuposSold || 0) > 0);
+        if (closed.length === 0) {
+            statsEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">No hay sorteos cerrados pendientes de sortear. (Los <strong>active</strong> son para la próxima semana — no entran acá.)</div>';
+            return;
+        }
+        // Stash en el overlay para reusar después.
+        overlay._closedRaffles = closed;
+        const byKind = { paid: 0, free: 0, relampago: 0 };
+        let totalPrize = 0;
+        for (const r of closed) {
+            totalPrize += Number(r.prizeValueARS || 0);
+            if (r.raffleType === 'relampago') byKind.relampago++;
+            else if (r.isFree) byKind.free++;
+            else byKind.paid++;
+        }
+        statsEl.innerHTML =
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+                '<span style="background:rgba(255,215,0,0.12);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:5px 11px;border-radius:7px;font-weight:800;font-size:12px;">' + closed.length + ' sorteos cerrados</span>' +
+                (byKind.paid ? '<span style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:4px 9px;border-radius:6px;font-weight:700;">💎 ' + byKind.paid + ' pagos</span>' : '') +
+                (byKind.free ? '<span style="background:rgba(77,171,255,0.10);color:#4dabff;border:1px solid rgba(77,171,255,0.40);padding:4px 9px;border-radius:6px;font-weight:700;">🎁 ' + byKind.free + ' gratis</span>' : '') +
+                (byKind.relampago ? '<span style="background:rgba(255,235,59,0.10);color:#ffeb3b;border:1px solid rgba(255,235,59,0.40);padding:4px 9px;border-radius:6px;font-weight:700;">⚡ ' + byKind.relampago + ' relámpago</span>' : '') +
+                '<span style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:4px 9px;border-radius:6px;font-weight:700;margin-left:auto;">💰 Total a entregar: $' + Number(totalPrize).toLocaleString('es-AR') + '</span>' +
+            '</div>';
+        setTimeout(() => { try { document.getElementById('drawAllLottery').focus(); } catch (_) {} }, 60);
+    } catch (e) {
+        statsEl.innerHTML = '<div style="color:#ff8080;text-align:center;padding:8px;">Error de conexión</div>';
+    }
+}
+
+// Verifica TODOS los sorteos cerrados con el mismo número de lotería.
+// Para cada uno: llama a /preview-draw + arma tabla con ganador previsto.
+async function previewDrawAllUnified() {
+    const overlay = document.getElementById('drawAllUnifiedModal');
+    if (!overlay || !overlay._closedRaffles) return;
+    const lotInput = document.getElementById('drawAllLottery');
+    const box = document.getElementById('drawAllPreviewBox');
+    const lotteryNumber = parseInt((lotInput && lotInput.value) || '', 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        showToast('Entrá el número de Lotería antes', 'error');
+        return;
+    }
+    const raffles = overlay._closedRaffles;
+    box.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">⏳ Verificando ' + raffles.length + ' sorteos con el #' + lotteryNumber + '…</div>';
+    const previews = [];
+    let errCount = 0, totalWinners = 0, totalPrize = 0;
+    for (const r of raffles) {
+        try {
+            const pr = await authFetch('/api/admin/raffles/' + encodeURIComponent(r.id) + '/preview-draw', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lotteryNumber })
+            });
+            const data = await pr.json();
+            if (pr.ok && data.success) {
+                previews.push({ raffle: r, preview: data });
+                totalWinners++;
+                totalPrize += Number(r.prizeValueARS || 0);
+            } else {
+                previews.push({ raffle: r, error: (data && data.error) || 'Error' });
+                errCount++;
+            }
+        } catch (e) {
+            previews.push({ raffle: r, error: e.message });
+            errCount++;
+        }
+    }
+    overlay._previews = previews;
+    overlay._lotteryNumber = lotteryNumber;
+
+    // Render tabla resumen
+    let html = '<div style="background:rgba(102,255,102,0.06);border:2px solid #66ff66;border-radius:10px;padding:12px;margin-bottom:10px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">';
+    html += '<div style="color:#66ff66;font-size:13px;font-weight:900;letter-spacing:0.5px;">✅ Vista previa con N° #' + lotteryNumber + ' · ' + totalWinners + ' ganadores · $' + Number(totalPrize).toLocaleString('es-AR') + ' a entregar</div>';
+    if (errCount > 0) html += '<span style="color:#ff8080;font-size:11px;font-weight:800;">⚠️ ' + errCount + ' con error</span>';
+    html += '</div>';
+    html += '<div style="background:rgba(0,0,0,0.25);border-radius:8px;padding:6px;max-height:50vh;overflow:auto;">';
+    for (const p of previews) {
+        const r = p.raffle;
+        if (p.error) {
+            html += '<div style="padding:7px 9px;border-bottom:1px solid rgba(255,255,255,0.06);color:#ff8080;font-size:11.5px;"><strong>' + escapeHtml(r.name) + '</strong> · ❌ ' + escapeHtml(p.error) + '</div>';
+            continue;
+        }
+        const w = p.preview.winner || {};
+        const cargasOK = p.preview.cargasCheck && p.preview.cargasCheck.qualifies;
+        const cargasC = (p.preview.cargasCheck && p.preview.cargasCheck.cargasCount) || 0;
+        const mapNote = p.preview.wasMapped ? ' (mapeado de ' + lotteryNumber + ')' : '';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 9px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;">';
+        html += '<div style="flex:1;min-width:170px;"><strong style="color:#fff;">' + escapeHtml((r.emoji||'🎁') + ' ' + r.name) + '</strong> · <span style="color:#ffd700;">$' + Number(r.prizeValueARS||0).toLocaleString('es-AR') + '</span></div>';
+        html += '<div style="color:#ddd;">🏆 <strong>@' + escapeHtml(w.username || '?') + '</strong> · #' + p.preview.mappedNumber + mapNote + '</div>';
+        html += '<div style="color:' + (cargasOK ? '#66ff66' : '#ff8080') + ';font-weight:800;font-size:10.5px;white-space:nowrap;">' + (cargasOK ? '✅' : '⚠️') + ' ' + cargasC + '/5 cargas</div>';
+        html += '</div>';
+    }
+    html += '</div></div>';
+    if (totalWinners > 0) {
+        html += '<button type="button" onclick="confirmDrawAllUnified()" style="width:100%;background:linear-gradient(135deg,#d4af37,#ff6b00);color:#000;border:none;padding:14px;border-radius:10px;font-weight:900;font-size:15px;cursor:pointer;letter-spacing:1.5px;box-shadow:0 4px 14px rgba(212,175,55,0.40);">✅ SORTEAR TODOS LOS ' + totalWinners + ' SORTEOS</button>';
+    }
+    box.innerHTML = html;
+}
+
+// Confirma y dispara el sorteo de TODOS los previews válidos vía /draw-batch.
+async function confirmDrawAllUnified() {
+    const overlay = document.getElementById('drawAllUnifiedModal');
+    if (!overlay || !overlay._previews || !overlay._lotteryNumber) return;
+    const previews = overlay._previews.filter(p => !p.error);
+    if (previews.length === 0) return;
+    // Política firme: push SOLO al ganador. El resto ve el resultado al
+    // entrar a la PWA (banner unificado con username tapado al 80%).
+    const notifyLosers = false;
+    if (!confirm('¿Confirmás sortear ' + previews.length + ' sorteos con el número ' + overlay._lotteryNumber + '?\n\n📲 Push solo al ganador. Los demás ven el resultado al entrar a la PWA.')) return;
+    const resultsBox = document.getElementById('drawAllResultsBox');
+    resultsBox.innerHTML = '<div style="background:rgba(255,215,0,0.06);border:1px solid rgba(255,215,0,0.40);border-radius:10px;padding:14px;text-align:center;color:#ffd700;font-weight:800;">⏳ Sorteando ' + previews.length + ' sorteos… puede tardar un toque</div>';
+    const draws = previews.map(p => ({
+        raffleId: p.raffle.id,
+        lotteryNumber: overlay._lotteryNumber,
+        notifyWinner: true,
+        notifyLosers
+    }));
+    try {
+        const r = await authFetch('/api/admin/raffles/draw-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ draws })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            resultsBox.innerHTML = '<div style="background:rgba(255,128,128,0.10);border:1px solid #ff8080;border-radius:10px;padding:12px;color:#ff8080;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+
+        // Resumen final con cada ganador y el push diagnóstico
+        let totalCredited = 0, totalPending = 0, totalPushed = 0;
+        let html = '<div style="background:linear-gradient(135deg,rgba(102,255,102,0.10),rgba(255,215,0,0.08));border:2px solid #66ff66;border-radius:12px;padding:14px;">';
+        html += '<div style="color:#66ff66;font-size:14px;font-weight:900;letter-spacing:1px;margin-bottom:8px;">🏆 RESULTADO FINAL · ' + d.ok + '/' + d.total + ' sorteados</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:8px;max-height:55vh;overflow:auto;">';
+        for (const res of (d.results || [])) {
+            if (res.error) {
+                html += '<div style="padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.06);color:#ff8080;font-size:11.5px;">❌ <strong>' + escapeHtml(res.name || res.raffleId) + '</strong> — ' + escapeHtml(res.error) + '</div>';
+                continue;
+            }
+            const credited = !!res.prizeAutoCredited;
+            const pending = !!res.pendingAgentReview;
+            if (credited) totalCredited++;
+            if (pending) totalPending++;
+            const wd = res.pushNotifications && res.pushNotifications.winnerDiag;
+            const winnerPushed = (res.pushNotifications && res.pushNotifications.winnerPushed) || 0;
+            totalPushed += winnerPushed;
+            const statusBadge = credited
+                ? '<span style="background:rgba(102,255,102,0.18);color:#66ff66;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">✅ ACREDITADO</span>'
+                : pending
+                ? '<span style="background:rgba(255,170,102,0.18);color:#ffaa66;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">⏳ AGENTE REVISA (sin 5 cargas)</span>'
+                : '<span style="background:rgba(255,128,128,0.18);color:#ff8080;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">⚠️ PENDIENTE</span>';
+            html += '<div style="padding:9px 10px;border-bottom:1px solid rgba(255,255,255,0.06);">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:180px;font-size:11.5px;">';
+            html += '<div style="color:#fff;font-weight:700;">' + escapeHtml(res.name || res.raffleId) + ' · $' + Number(res.prizeValueARS||0).toLocaleString('es-AR') + '</div>';
+            html += '<div style="color:#ddd;margin-top:2px;">🏆 <strong>@' + escapeHtml(res.winnerUsername || '?') + '</strong> con #' + (res.winningTicketNumber || '?') + ((res.cargasCheck && res.cargasCheck.cargasCount != null) ? ' · ' + res.cargasCheck.cargasCount + '/5 cargas' : '') + '</div>';
+            html += '<div style="color:#888;font-size:10.5px;margin-top:2px;">📲 push: ' + winnerPushed + (wd && wd.reason && wd.reason !== 'sent_ok' ? ' (' + escapeHtml(wd.reason) + ')' : '') + '</div>';
+            html += '</div>';
+            html += '<div>' + statusBadge + '</div>';
+            html += '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
+        html += '<div style="margin-top:10px;color:#ddd;font-size:12px;line-height:1.5;">';
+        html += '✅ <strong>' + totalCredited + '</strong> acreditados automático · ⏳ <strong>' + totalPending + '</strong> pendientes para agente · 📲 <strong>' + totalPushed + '</strong> pushes al ganador';
+        html += '</div>';
+        html += '</div>';
+        resultsBox.innerHTML = html;
+        // Refrescar dashboard atrás.
+        try { loadRafflesAdmin(); } catch (_) {}
+    } catch (e) {
+        resultsBox.innerHTML = '<div style="background:rgba(255,128,128,0.10);border:1px solid #ff8080;border-radius:10px;padding:12px;color:#ff8080;">Error de conexión</div>';
+    }
+}
+
 async function openBatchDrawModal(kind) {
     const k = (kind === 'free') ? 'free' : 'paid';
     const modalId = 'batchDrawModal';
