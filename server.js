@@ -11214,6 +11214,52 @@ app.get('/api/admin/community-alert/status', authMiddleware, adminMiddleware, as
   }
 });
 
+// POST /api/admin/user-communities/notify-prefix-test — manda el push
+// EXACTO que recibirian los users del prefix, pero a UN solo usuario
+// de prueba. Sirve para ver como queda el texto antes del broadcast real.
+app.post('/api/admin/user-communities/notify-prefix-test', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const testUsername = String((req.body && req.body.testUsername) || '').trim();
+    const communityLink = String((req.body && req.body.communityLink) || '').trim();
+    const communityLabel = String((req.body && req.body.communityLabel) || '').trim().slice(0, 60);
+    const customTitle = String((req.body && req.body.customTitle) || '').slice(0, 100).trim();
+    const customBody = String((req.body && req.body.customBody) || '').slice(0, 200).trim();
+    if (!testUsername) return res.status(400).json({ error: 'Falta testUsername' });
+    if (!communityLink) return res.status(400).json({ error: 'Falta communityLink' });
+
+    const safeUser = testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const u = await User.findOne(
+      { username: { $regex: '^' + safeUser + '$', $options: 'i' } },
+      { fcmToken: 1, fcmTokens: 1, username: 1 }
+    ).lean();
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado en la base' });
+    const tokens = [];
+    if (u.fcmToken) tokens.push(u.fcmToken);
+    if (Array.isArray(u.fcmTokens)) {
+      for (const tk of u.fcmTokens) { const t = tk && tk.token ? tk.token : tk; if (t && !tokens.includes(t)) tokens.push(t); }
+    }
+    if (tokens.length === 0) return res.status(400).json({ error: 'El user no tiene FCM tokens activos' });
+
+    const title = customTitle || '🔔 Nueva comunidad · canal informativo';
+    const body = customBody || (communityLabel
+      ? `Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite a "${communityLabel}"!`
+      : 'Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite!');
+
+    let pushed = 0;
+    const sendPromises = tokens.map(tk =>
+      _sendPushToUser(tk, title, body, { source: 'community-reminder-test', communityLink })
+        .then(r => { if (r && r.success) pushed++; })
+        .catch(() => {})
+    );
+    await Promise.all(sendPromises);
+    logger.info(`[community-notify-prefix TEST] target=${u.username} pushed=${pushed}/${tokens.length} by=${req.user.username}`);
+    res.json({ success: true, target: u.username, tokensSent: pushed, tokensTotal: tokens.length, previewTitle: title, previewBody: body });
+  } catch (err) {
+    logger.error(`/api/admin/user-communities/notify-prefix-test: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/user-communities/notify-prefix — manda push a todos
 // los users cuyo username empieza con el prefijo dado, recordando que se
 // sumen a su comunidad. Usado desde la sección legacy de prefijos.
@@ -11236,10 +11282,16 @@ app.post('/api/admin/user-communities/notify-prefix', authMiddleware, adminMiddl
     };
     const users = await User.find(filter, { fcmToken: 1, fcmTokens: 1, username: 1 }).lean();
     const audience = users.length;
-    const title = '🔔 Sumate a tu comunidad';
-    const body = communityLabel
-      ? `Revisá si estás unido a "${communityLabel}" para recibir contenido exclusivo y novedades.`
-      : 'Revisá si estás unido a la comunidad de tu equipo para no perderte regalos y novedades.';
+    // Texto default unificado pedido por el dueño 2026-05-12: "estamos
+    // trabajando en una nueva comunidad / canal informativo". Si el admin
+    // pasó customTitle/customBody en el body, se usa eso; si no, el
+    // texto por defecto.
+    const customTitle = String((req.body && req.body.customTitle) || '').slice(0, 100).trim();
+    const customBody = String((req.body && req.body.customBody) || '').slice(0, 200).trim();
+    const title = customTitle || '🔔 Nueva comunidad · canal informativo';
+    const body = customBody || (communityLabel
+      ? `Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite a "${communityLabel}"!`
+      : 'Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite!');
     let pushed = 0;
     const sendPromises = [];
     for (const u of users) {

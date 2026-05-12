@@ -772,18 +772,122 @@ async function notifyCommunityPrefix(idx) {
     if (!prefix) { showToast('Falta el inicio de usuario', 'error'); return; }
     if (!link) { showToast('Falta el link de la comunidad', 'error'); return; }
     if (!/^https?:\/\//i.test(link)) { showToast('Link inválido', 'error'); return; }
-    const label = prompt('Nombre display de la comunidad para el push (ej: "Comunidad Royal"):', 'Comunidad de tu equipo') || '';
-    if (!confirm('¿Mandar push a TODOS los users que empiezan con "' + prefix + '"?\n\nTexto: "Revisá si estás unido a ' + label + ' para recibir contenido exclusivo y novedades."')) return;
+
+    // Modal con preview del título + body editables + botones Test/Enviar.
+    document.getElementById('commPushPreviewModal')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'commPushPreviewModal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+    const defaultTitle = '🔔 Nueva comunidad · canal informativo';
+    const defaultBody = '[NOMBRE_LABEL]'
+        ? 'Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite a "[NOMBRE_LABEL]"!'
+        : 'Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite!';
+
+    overlay.innerHTML =
+        '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #25d366;border-radius:14px;padding:18px;max-width:600px;width:100%;color:#fff;margin:14px auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;">' +
+                '<div><h3 style="margin:0;color:#25d366;font-size:16px;">📢 Avisar push · Equipo "' + escapeHtml(prefix) + '"</h3>' +
+                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;">Revisá / editá el texto. Podés mandar un test a 1 usuario antes del broadcast real.</div></div>' +
+                '<button onclick="document.getElementById(\'commPushPreviewModal\').remove()" style="background:transparent;color:#aaa;border:none;font-size:22px;cursor:pointer;">×</button>' +
+            '</div>' +
+            '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Nombre display de la comunidad</label>' +
+            '<input id="cpvLabel" type="text" maxlength="60" placeholder="ej: Comunidad Royal" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(37,211,102,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
+            '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Título del push</label>' +
+            '<input id="cpvTitle" type="text" maxlength="100" value="' + defaultTitle.replace(/"/g, '&quot;') + '" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(37,211,102,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">' +
+            '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Mensaje del push <span style="color:#888;font-weight:600;">(si dejás vacío, usa el default unificado)</span></label>' +
+            '<textarea id="cpvBody" maxlength="200" rows="3" placeholder="Default: Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite!" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(37,211,102,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;font-family:inherit;resize:vertical;"></textarea>' +
+            // Preview render
+            '<div style="background:rgba(0,212,255,0.08);border:1px dashed #00d4ff;border-radius:10px;padding:11px;margin-bottom:12px;">' +
+                '<div style="color:#00d4ff;font-size:10px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px;">👁 PREVIEW · CÓMO LO VA A VER EL USER</div>' +
+                '<div style="background:rgba(0,0,0,0.50);border-radius:8px;padding:10px 12px;border-left:3px solid #25d366;">' +
+                    '<div id="cpvPreviewTitle" style="color:#fff;font-weight:900;font-size:13.5px;margin-bottom:3px;"></div>' +
+                    '<div id="cpvPreviewBody" style="color:#ddd;font-size:12px;line-height:1.4;"></div>' +
+                '</div>' +
+            '</div>' +
+            // Test button
+            '<div style="background:rgba(102,255,255,0.06);border:1px dashed rgba(102,255,255,0.40);border-radius:8px;padding:10px;margin-bottom:12px;">' +
+                '<div style="color:#66ffff;font-size:11.5px;font-weight:800;margin-bottom:5px;">🧪 Mandar test a 1 usuario primero</div>' +
+                '<div style="display:flex;gap:6px;">' +
+                    '<input id="cpvTestUser" type="text" placeholder="lalodj" style="flex:1;background:rgba(0,0,0,0.40);border:1px solid rgba(102,255,255,0.40);color:#fff;padding:8px 11px;border-radius:6px;font-size:12.5px;box-sizing:border-box;">' +
+                    '<button onclick="commPushSendTest(\'' + escapeJsArg(prefix) + '\', \'' + escapeJsArg(link) + '\')" style="background:rgba(102,255,255,0.15);color:#66ffff;border:1px solid rgba(102,255,255,0.55);padding:8px 14px;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer;">🧪 ENVIAR TEST</button>' +
+                '</div>' +
+            '</div>' +
+            // Final send button
+            '<button onclick="commPushSendBroadcast(\'' + escapeJsArg(prefix) + '\', \'' + escapeJsArg(link) + '\')" style="width:100%;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;padding:13px;border-radius:9px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;">🚀 ENVIAR A TODOS LOS DE "' + escapeHtml(prefix) + '"</button>' +
+            '<div id="cpvResult" style="margin-top:10px;"></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    // Live preview de title/body — refresca al tipear.
+    function refreshPreview() {
+        const lbl = (document.getElementById('cpvLabel')?.value || '').trim();
+        const title = (document.getElementById('cpvTitle')?.value || '').trim() || defaultTitle;
+        let body = (document.getElementById('cpvBody')?.value || '').trim();
+        if (!body) {
+            body = lbl
+                ? 'Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite a "' + lbl + '"!'
+                : 'Estamos unificando una nueva comunidad y canal informativo. Estamos trabajando para eso, ¡unite!';
+        }
+        const pt = document.getElementById('cpvPreviewTitle');
+        const pb = document.getElementById('cpvPreviewBody');
+        if (pt) pt.textContent = title;
+        if (pb) pb.textContent = body;
+    }
+    ['cpvLabel','cpvTitle','cpvBody'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', refreshPreview);
+    });
+    refreshPreview();
+}
+
+function _cpvReadForm() {
+    return {
+        communityLabel: (document.getElementById('cpvLabel')?.value || '').trim(),
+        customTitle: (document.getElementById('cpvTitle')?.value || '').trim(),
+        customBody: (document.getElementById('cpvBody')?.value || '').trim()
+    };
+}
+
+async function commPushSendTest(prefix, link) {
+    const f = _cpvReadForm();
+    const testUsername = (document.getElementById('cpvTestUser')?.value || '').trim();
+    if (!testUsername) { showToast('Poné el username de prueba', 'error'); return; }
+    const resBox = document.getElementById('cpvResult');
+    resBox.innerHTML = '<div style="color:#aaa;text-align:center;padding:8px;">⏳ Enviando test…</div>';
+    try {
+        const r = await authFetch('/api/admin/user-communities/notify-prefix-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ testUsername, communityLink: link, ...f })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { resBox.innerHTML = '<div style="color:#ff8080;padding:8px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        resBox.innerHTML = '<div style="background:rgba(102,255,255,0.10);border:1px solid #66ffff;border-radius:8px;padding:10px;color:#aaffff;font-size:12px;">✅ Test enviado a <strong>@' + escapeHtml(d.target) + '</strong> · ' + d.tokensSent + '/' + d.tokensTotal + ' tokens recibieron el push</div>';
+    } catch (e) {
+        resBox.innerHTML = '<div style="color:#ff8080;padding:8px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+async function commPushSendBroadcast(prefix, link) {
+    const f = _cpvReadForm();
+    if (!confirm('¿Mandar el push a TODOS los users que empiezan con "' + prefix + '"?\n\nTexto:\n' + (f.customTitle || '🔔 Nueva comunidad · canal informativo') + '\n' + (f.customBody || 'Estamos unificando una nueva comunidad...'))) return;
+    const resBox = document.getElementById('cpvResult');
+    resBox.innerHTML = '<div style="color:#aaa;text-align:center;padding:8px;">⏳ Enviando broadcast…</div>';
     try {
         const r = await authFetch('/api/admin/user-communities/notify-prefix', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prefix, communityLink: link, communityLabel: label })
+            body: JSON.stringify({ prefix, communityLink: link, ...f })
         });
         const d = await r.json();
-        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
-        showToast('✅ Push enviado · ' + (d.pushed || 0) + '/' + (d.audience || 0), 'success');
-    } catch (e) { alert('Error: ' + (e.message || '')); }
+        if (!r.ok || !d.success) { resBox.innerHTML = '<div style="color:#ff8080;padding:8px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        resBox.innerHTML = '<div style="background:rgba(102,255,102,0.10);border:1px solid #66ff66;border-radius:8px;padding:10px;color:#aaffaa;font-size:12px;">✅ Push enviado · <strong>' + d.pushed + '/' + d.audience + '</strong> usuarios · alerta forzada activada por <strong>24hs</strong></div>';
+        showToast('✅ Broadcast enviado', 'success');
+    } catch (e) {
+        resBox.innerHTML = '<div style="color:#ff8080;padding:8px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
 }
 
 function currentCommunitySlotsCount() {
