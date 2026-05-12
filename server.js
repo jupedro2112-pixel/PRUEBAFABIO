@@ -23107,23 +23107,25 @@ function _buildWinnerPush(raffle, mappedNumber, opts) {
   const prizeAutoCredited = !!(opts && opts.prizeAutoCredited);
   const lightningForfeited = !!(opts && opts.lightningForfeited);
   const lightningCargasCount = Number((opts && opts.lightningCargasCount) || 0);
-  // Flag para los casos "ganó pero NO tiene 5 cargas vigentes" — el dueño
-  // quiere que el mensaje le sugiera contactar al número principal para
-  // que el agente verifique sus cargas y decida acreditar. NO es un forfeit
-  // estricto — el premio queda en pending agent review.
+  // Flag para los casos "ganó pero el detector de cargas devolvió < 5". El
+  // dueño decidió (2026-05-12) NO mencionarle al user que detectamos pocas
+  // cargas — la detección via JUGAYGANA movements no es 100% confiable y
+  // muchos users SÍ tienen sus cargas. Le pedimos a TODOS que reclamen
+  // directo desde la app; la verificación final la hace el agente desde el
+  // panel Pagos antes de habilitar el retiro.
   const cargasInsuficientes = !!(opts && opts.cargasInsuficientes);
   const cargasCountActual = Number((opts && opts.cargasCountActual) || 0);
   const MIN_CARGAS_LOCAL = 5;
   const title = lightningForfeited
     ? '🎲 Salió tu número pero…'
     : (cargasInsuficientes
-      ? '🏆 ¡Ganaste! Pero verificamos algo…'
+      ? '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁')
       : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'));
   let body;
   if (lightningForfeited) {
     body = `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${MIN_CARGAS_LOCAL} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`;
   } else if (cargasInsuficientes) {
-    body = `¡Salió tu número #${mappedNumber} y ganaste $${prize.toLocaleString('es-AR')}! Pero detectamos ${cargasCountActual}/${MIN_CARGAS_LOCAL} cargas vigentes. Hablá con el NÚMERO PRINCIPAL por WhatsApp para que el agente verifique tus cargas y te acrediten el premio.`;
+    body = `¡Salió tu número #${mappedNumber} y ganaste $${prize.toLocaleString('es-AR')}! Reclamá directo desde la aplicación.`;
   } else {
     body = `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá el botón de WhatsApp del agente para reclamar. Recordá: necesitás tener 5 cargas vigentes.`;
   }
