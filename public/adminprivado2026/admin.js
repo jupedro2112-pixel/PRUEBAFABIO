@@ -15389,6 +15389,9 @@ function _renderRafflesAdmin() {
         const kindForArchived = isFree ? 'free' : 'paid';
         html += '      <button type="button" onclick="viewArchivedRaffles(\'' + kindForArchived + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver sorteos archivados — útil para reabrir uno y cargarle ganador">🗄 Ver archivados</button>';
     }
+    // "Reclamos ganadores": ventana 24h con los ganadores sorteados, su
+    // estado de reclamo y acción de acreditar manualmente.
+    html += '      <button type="button" onclick="viewWinnerClaims()" style="background:linear-gradient(135deg,rgba(102,255,102,0.20),rgba(255,215,0,0.18));color:#ffd700;border:1px solid #ffd700;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Reclamos de ganadores en ventana 24h">🏆 Reclamos ganadores</button>';
     // Crear sorteo relampago: SOLO en la seccion de relampago.
     if (isLightning) {
         html += '      <button type="button" onclick="seedLightningRaffle()" style="background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(255,235,59,0.18));color:#fff7c2;border:1px solid #ffeb3b;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Crear un sorteo RELÁMPAGO (premio configurable, hasta 3 simultáneos por auto-respawn)">⚡ Crear sorteo relámpago</button>';
@@ -17347,19 +17350,24 @@ async function viewArchivedRaffles(kind) {
             summary += '</div>';
         }
 
-        // Botón "Sortear TODOS los pendientes": cuenta cuántos sorteos
-        // archived/drawn/active/closed tienen participantes y NO tienen ganador.
-        const pending = all.filter(x =>
-            ['archived','drawn','active','closed'].includes(x.status) &&
-            !x.winnerUsername &&
-            (x.cuposSold || 0) > 0
-        );
-        if (pending.length > 0) {
+        // Botón "Sortear semana pasada": cuenta solo CLOSED (sorteos cerrados,
+        // cupo lleno o drawDate pasada). Los ACTIVE son los de la semana
+        // próxima — no se sortean acá. archived/drawn sin ganador van a
+        // "♻️ Solo reabrir" (se cuentan aparte).
+        const pendingClosed = all.filter(x => x.status === 'closed' && !x.winnerUsername && (x.cuposSold || 0) > 0);
+        const pendingReopen = all.filter(x => (x.status === 'archived' || x.status === 'drawn') && !x.winnerUsername && (x.cuposSold || 0) > 0);
+        if (pendingClosed.length > 0 || pendingReopen.length > 0) {
             summary += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.50);border-radius:9px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
-            summary += '<div style="color:#ffd700;font-size:12px;line-height:1.4;"><strong>' + pending.length + ' sorteo(s) pendientes</strong> de cargarles ganador.</div>';
+            summary += '<div style="color:#ffd700;font-size:12px;line-height:1.4;"><strong>' + pendingClosed.length + ' cerrado(s)</strong> para sortear';
+            if (pendingReopen.length > 0) summary += ' · <span style="color:#aaa;">+ ' + pendingReopen.length + ' archivado(s)/sin ganador</span>';
+            summary += '</div>';
             summary += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-            summary += '<button type="button" onclick="openBatchDrawModal(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">🎰 Sortear semana pasada</button>';
-            summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Solo reabrir sin cargar ganador">♻️ Solo reabrir</button>';
+            if (pendingClosed.length > 0) {
+                summary += '<button type="button" onclick="openBatchDrawModal(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">🎰 Sortear semana pasada</button>';
+            }
+            if (pendingReopen.length > 0) {
+                summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Solo reabrir sin cargar ganador">♻️ Solo reabrir</button>';
+            }
             if (k === 'free') {
                 summary += '<button type="button" onclick="applyNewRaffleStructure()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Bajar premios al esquema nuevo (2M→1M, 1M→500K, 500K→100K) y arrancar estructura nueva">💰 Aplicar estructura nueva</button>';
             }
@@ -17464,8 +17472,12 @@ async function openBatchDrawModal(kind) {
         const r = await authFetch('/api/admin/raffles?include=history&kind=' + k);
         if (!r.ok) { document.getElementById('batchDrawList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error cargando</div>'; return; }
         const d = await r.json();
+        // Solo CLOSED: los sorteos cerrados (cupo lleno o drawDate pasada) son
+        // los que corresponden sortear esta semana. Los ACTIVE son para la
+        // próxima — no entran acá. archived/drawn sin ganador se reabren con
+        // "♻️ Solo reabrir" en el histórico, no acá.
         const pending = (d.raffles || []).filter(x =>
-            ['archived','drawn','active','closed'].includes(x.status) &&
+            x.status === 'closed' &&
             !x.winnerUsername &&
             (x.cuposSold || 0) > 0
         );
@@ -17663,6 +17675,117 @@ async function applyNewRaffleStructure() {
         loadRafflesAdmin();
     } catch (e) {
         showToast('Error de conexión', 'error');
+    }
+}
+
+// Modal "🏆 Reclamos ganadores": ventana 24h, lista los ganadores y su estado
+// de reclamo. Permite al admin acreditar manualmente el premio si auto-credit
+// falló o si el ganador no abrió la app.
+async function viewWinnerClaims() {
+    document.getElementById('winnerClaimsModal')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'winnerClaimsModal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML =
+        '<div style="background:#1a0033;border:1.5px solid #ffd700;border-radius:14px;padding:18px;max-width:920px;width:100%;color:#fff;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px;">' +
+                '<div><h3 style="margin:0;color:#ffd700;font-size:16px;">🏆 Reclamos ganadores · ventana 24h</h3>' +
+                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;line-height:1.4;">Sorteos sorteados en las últimas 24h o con premio pendiente. Si pasa más de 24h sin reclamar y el premio se acreditó, se oculta del listado.</div></div>' +
+                '<button type="button" onclick="document.getElementById(\'winnerClaimsModal\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>' +
+            '</div>' +
+            '<div id="winnerClaimsStats" style="margin-bottom:10px;font-size:11.5px;color:#ddd;"></div>' +
+            '<div id="winnerClaimsList" style="font-size:12px;"><div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    try {
+        const r = await authFetch('/api/admin/raffles/winner-claims');
+        if (!r.ok) { document.getElementById('winnerClaimsList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error cargando</div>'; return; }
+        const d = await r.json();
+        const items = d.items || [];
+        // Stats arriba
+        const stats = d.counts || {};
+        document.getElementById('winnerClaimsStats').innerHTML =
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:4px 9px;border-radius:6px;font-weight:800;">⏳ Pendientes: ' + (stats.pending||0) + '</span>' +
+                '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:4px 9px;border-radius:6px;font-weight:800;">✅ Acreditados: ' + (stats.credited||0) + '</span>' +
+                (stats.expired ? '<span style="background:rgba(136,136,136,0.15);color:#aaa;border:1px solid rgba(136,136,136,0.40);padding:4px 9px;border-radius:6px;font-weight:800;">⏰ Expirados: ' + stats.expired + '</span>' : '') +
+                (stats.forfeited ? '<span style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.40);padding:4px 9px;border-radius:6px;font-weight:800;">❌ Forfeit: ' + stats.forfeited + '</span>' : '') +
+            '</div>';
+        const list = document.getElementById('winnerClaimsList');
+        if (items.length === 0) {
+            list.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">No hay ganadores en la ventana de 24h.</div>';
+            return;
+        }
+        const fmtMoney = (n) => '$' + Number(n||0).toLocaleString('es-AR');
+        const fmtDate = (d) => { try { return new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); } catch(_) { return ''; } };
+        // Orden: pendientes arriba, después acreditados, después expirados/forfeit
+        const orderKey = (st) => ({ pending: 0, credited: 1, expired: 2, forfeited: 3 }[st] || 9);
+        items.sort((a, b) => {
+            const d = orderKey(a.status) - orderKey(b.status);
+            if (d !== 0) return d;
+            return new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0);
+        });
+        let html = '';
+        for (const it of items) {
+            const statusBadge = {
+                pending:   '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid #ffaa66;padding:3px 8px;border-radius:5px;font-size:10px;font-weight:800;">⏳ PENDIENTE</span>',
+                credited:  '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:3px 8px;border-radius:5px;font-size:10px;font-weight:800;">✅ ACREDITADO</span>',
+                expired:   '<span style="background:rgba(136,136,136,0.15);color:#aaa;border:1px solid #888;padding:3px 8px;border-radius:5px;font-size:10px;font-weight:800;">⏰ EXPIRADO</span>',
+                forfeited: '<span style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid #ff8080;padding:3px 8px;border-radius:5px;font-size:10px;font-weight:800;">❌ FORFEIT</span>'
+            }[it.status] || '';
+            const timeLeft = it.status === 'pending' && it.hoursRemaining != null
+                ? '<span style="color:#888;font-size:11px;"> · queda ' + (it.hoursRemaining >= 1 ? it.hoursRemaining + 'hs' : it.minutesRemaining + 'min') + '</span>'
+                : '';
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:11px 12px;margin-bottom:8px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:230px;">';
+            html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">';
+            html += '<div style="color:#fff;font-weight:800;font-size:13px;">' + escapeHtml((it.emoji||'🎁') + ' ' + it.name) + ' · #' + it.instanceNumber + '</div>';
+            html += statusBadge;
+            html += '</div>';
+            html += '<div style="color:#ddd;font-size:12px;">🏆 <strong>@' + escapeHtml(it.winnerUsername) + '</strong> con número <strong>#' + it.winningTicketNumber + '</strong> · premio <strong style="color:#ffd700;">' + escapeHtml(fmtMoney(it.prizeValueARS)) + '</strong></div>';
+            html += '<div style="color:#888;font-size:11px;margin-top:2px;">Sorteado ' + escapeHtml(fmtDate(it.drawnAt)) + (it.drawnBy ? ' por ' + escapeHtml(it.drawnBy) : '') + (it.lotteryDrawNumber ? ' · loto #' + it.lotteryDrawNumber : '') + timeLeft + '</div>';
+            if (it.prizeClaimedAt) {
+                html += '<div style="color:#66ff66;font-size:11px;margin-top:3px;">✅ Acreditado ' + escapeHtml(fmtDate(it.prizeClaimedAt)) + (it.prizeClaimTxId ? ' · txId ' + escapeHtml(it.prizeClaimTxId) : '') + '</div>';
+            }
+            if (it.prizeForfeitedAt) {
+                html += '<div style="color:#ff8080;font-size:11px;margin-top:3px;">❌ Forfeit ' + escapeHtml(fmtDate(it.prizeForfeitedAt)) + (it.prizeForfeitedReason ? ' — ' + escapeHtml(it.prizeForfeitedReason) : '') + '</div>';
+            }
+            html += '</div>';
+            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;">';
+            if (it.status === 'pending') {
+                html += '<button type="button" onclick="adminCreditPrize(\'' + escapeHtml(it.id) + '\', \'' + escapeHtml(it.winnerUsername) + '\', ' + it.prizeValueARS + ')" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Acreditar el premio manualmente al saldo del ganador">💰 Acreditar manual</button>';
+                html += '<button type="button" onclick="resendWinnerPush(\'' + escapeHtml(it.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Reenviar push al ganador">📲 Reenviar push</button>';
+            } else if (it.status === 'credited') {
+                html += '<span style="color:#66ff66;font-size:11px;font-weight:700;">Listo</span>';
+            }
+            html += '</div></div></div>';
+        }
+        list.innerHTML = html;
+    } catch (e) {
+        document.getElementById('winnerClaimsList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+async function adminCreditPrize(raffleId, winnerUsername, prize) {
+    if (!confirm('¿Acreditar manualmente $' + Number(prize||0).toLocaleString('es-AR') + ' a @' + winnerUsername + '?\n\nEl premio entra directo al saldo en JUGAYGANA. Solo hacelo si confirmaste con el user.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/admin-credit-prize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        if (d.alreadyCredited) {
+            alert('ℹ️ El premio ya estaba acreditado.');
+        } else {
+            alert('✅ Acreditado $' + Number(d.amount||0).toLocaleString('es-AR') + ' a @' + winnerUsername + (d.transactionId ? '\n\nTx: ' + d.transactionId : ''));
+        }
+        viewWinnerClaims();
+    } catch (e) {
+        alert('Error de conexión');
     }
 }
 

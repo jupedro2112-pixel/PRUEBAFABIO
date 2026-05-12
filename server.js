@@ -21499,6 +21499,151 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/admin/raffles/winner-claims
+// Lista los sorteos ya sorteados de las últimas 24h con info del estado de
+// reclamo del premio. Sirve para que el admin tenga un panel separado de
+// "qué hay pendiente de reclamar / quién ya reclamó". Filtro por ventana de
+// 24h: si pasaron >24h y no se reclamó, no aparece (el dueño quiere que
+// "desaparezca").
+app.get('/api/admin/raffles/winner-claims', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const WINDOW_MS = 24 * 3600 * 1000;
+    const cutoff = new Date(Date.now() - WINDOW_MS);
+    // Drawn en las últimas 24h O drawn pendiente de acreditar (sin importar
+    // antigüedad — esos no expiran hasta que alguien los toque).
+    const raffles = await Raffle.find(
+      {
+        status: 'drawn',
+        winnerUsername: { $ne: null },
+        $or: [
+          { drawnAt: { $gte: cutoff } },
+          { prizeClaimable: true, prizeClaimedAt: null }
+        ]
+      },
+      {
+        id: 1, name: 1, prizeName: 1, prizeValueARS: 1, emoji: 1,
+        raffleType: 1, instanceNumber: 1,
+        winnerUsername: 1, winningTicketNumber: 1,
+        drawnAt: 1, drawnBy: 1,
+        prizeClaimable: 1, prizeClaimedAt: 1, prizeClaimTxId: 1,
+        prizeForfeitedAt: 1, prizeForfeitedReason: 1,
+        lotteryDrawNumber: 1
+      }
+    ).sort({ drawnAt: -1 }).limit(200).lean();
+
+    const items = raffles.map(r => {
+      const claimed = !!r.prizeClaimedAt;
+      const forfeited = !!r.prizeForfeitedAt;
+      const drawnAtMs = r.drawnAt ? new Date(r.drawnAt).getTime() : 0;
+      const ageMs = Date.now() - drawnAtMs;
+      const expiresInMs = Math.max(0, WINDOW_MS - ageMs);
+      const expired = ageMs > WINDOW_MS && !claimed && !forfeited;
+      let status;
+      if (forfeited) status = 'forfeited';
+      else if (claimed) status = 'credited';
+      else if (r.prizeClaimable) status = 'pending';
+      else if (expired) status = 'expired';
+      else status = 'pending';
+      return {
+        id: r.id, name: r.name, prizeName: r.prizeName, emoji: r.emoji || '🎁',
+        prizeValueARS: r.prizeValueARS || 0,
+        raffleType: r.raffleType, instanceNumber: r.instanceNumber,
+        winnerUsername: r.winnerUsername,
+        winningTicketNumber: r.winningTicketNumber,
+        drawnAt: r.drawnAt, drawnBy: r.drawnBy,
+        prizeClaimable: !!r.prizeClaimable,
+        prizeClaimedAt: r.prizeClaimedAt || null,
+        prizeClaimTxId: r.prizeClaimTxId || null,
+        prizeForfeitedAt: r.prizeForfeitedAt || null,
+        prizeForfeitedReason: r.prizeForfeitedReason || null,
+        lotteryDrawNumber: r.lotteryDrawNumber || null,
+        status,
+        expiresInMs,
+        hoursRemaining: Math.max(0, Math.floor(expiresInMs / 3600000)),
+        minutesRemaining: Math.max(0, Math.floor(expiresInMs / 60000))
+      };
+    });
+
+    res.json({
+      success: true,
+      windowHours: 24,
+      counts: {
+        pending: items.filter(i => i.status === 'pending').length,
+        credited: items.filter(i => i.status === 'credited').length,
+        expired: items.filter(i => i.status === 'expired').length,
+        forfeited: items.filter(i => i.status === 'forfeited').length
+      },
+      items
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/winner-claims: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/:id/admin-credit-prize
+// Admin acredita manualmente el premio al ganador. Usa el mismo flujo que el
+// claim del user pero sin pasar por el frontend del ganador — útil cuando el
+// auto-credit falló o el user no abrió la app y el admin quiere cerrar el
+// reclamo a mano. Idempotente: si ya está acreditado, devuelve success.
+app.post('/api/admin/raffles/:id/admin-credit-prize', authMiddleware, superAdminMiddleware, async (req, res) => {
+  let claimReserved = false;
+  const raffleId = req.params.id;
+  try {
+    const raffle = await Raffle.findOne({ id: raffleId }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status !== 'drawn') return res.status(400).json({ error: 'Este sorteo no está en estado drawn.' });
+    if (!raffle.winnerUsername) return res.status(400).json({ error: 'Este sorteo no tiene ganador.' });
+    if (raffle.prizeForfeitedAt) return res.status(400).json({ error: 'Este premio fue forfeit — no se puede acreditar.' });
+    if (raffle.prizeClaimedAt) {
+      return res.json({ success: true, alreadyCredited: true, prizeClaimedAt: raffle.prizeClaimedAt });
+    }
+    const prize = Number(raffle.prizeValueARS) || 0;
+    if (prize <= 0) return res.status(400).json({ error: 'Premio inválido.' });
+
+    const reserved = await Raffle.findOneAndUpdate(
+      { id: raffleId, status: 'drawn', prizeClaimedAt: null },
+      { $set: { prizeClaimedAt: new Date(), prizeClaimable: false } },
+      { new: true }
+    );
+    if (!reserved) return res.status(400).json({ error: 'Race: ya se está acreditando o ya fue acreditado.' });
+    claimReserved = true;
+
+    const credit = await jugaygana.creditUserBalance(raffle.winnerUsername, prize);
+    if (!credit || !credit.success) {
+      // Rollback
+      await Raffle.updateOne(
+        { id: raffleId },
+        { $set: { prizeClaimedAt: null, prizeClaimable: true } }
+      ).catch(() => {});
+      const msg = (credit && credit.error) || 'Error desconocido al acreditar';
+      logger.error(`[raffles] admin-credit-prize fail ${raffle.winnerUsername} ${raffle.name}: ${msg}`);
+      return res.status(503).json({ error: msg });
+    }
+    await Raffle.updateOne(
+      { id: raffleId },
+      { $set: { prizeClaimTxId: (credit.transactionId || credit.transferId) || null } }
+    ).catch(() => {});
+    logger.info(`[raffles] ADMIN-CREDIT: ${raffle.winnerUsername} +$${prize} (${raffle.name}) by ${req.user.username}`);
+    res.json({
+      success: true,
+      credited: true,
+      amount: prize,
+      winnerUsername: raffle.winnerUsername,
+      transactionId: (credit.transactionId || credit.transferId) || null
+    });
+  } catch (err) {
+    if (claimReserved) {
+      await Raffle.updateOne(
+        { id: raffleId },
+        { $set: { prizeClaimedAt: null, prizeClaimable: true } }
+      ).catch(() => {});
+    }
+    logger.error(`/api/admin/raffles/:id/admin-credit-prize: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // =============================
 // ADMIN ENDPOINTS
 // =============================
