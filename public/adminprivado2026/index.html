@@ -355,6 +355,20 @@
                     <button class="btn-primary" onclick="saveUserCommunities()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
                         💾 Guardar links de comunidad
                     </button>
+
+                    <!-- Toggle manual: activar/desactivar alerta 24h sin mandar push -->
+                    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed rgba(255,255,255,0.10);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <div>
+                                <div style="color:#ff8080;font-weight:800;font-size:12px;letter-spacing:0.5px;">🚨 Alerta visual 24hs</div>
+                                <div id="commForceStatus" style="color:#aaa;font-size:11px;margin-top:2px;">Estado: cargando…</div>
+                            </div>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                <button onclick="forceCommunityAlert(24)" style="background:rgba(255,68,68,0.15);color:#ff8080;border:1px solid rgba(255,68,68,0.45);padding:7px 12px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">🚨 Activar 24h</button>
+                                <button onclick="forceCommunityAlert(0)" style="background:rgba(136,136,136,0.10);color:#aaa;border:1px solid rgba(136,136,136,0.40);padding:7px 12px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">⏹ Desactivar</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- ============================================

@@ -11252,8 +11252,32 @@ app.post('/api/admin/user-communities/notify-prefix-test', authMiddleware, admin
         .catch(() => {})
     );
     await Promise.all(sendPromises);
+
+    // Activar también el flag de 24hs cuando se manda test — así el admin
+    // ve el banner rojo + modal en su propia PWA enseguida para verificar
+    // cómo queda. Si querés solo el push sin activar la alerta visual,
+    // pasá { skipForceFlag: true } en el body.
+    let alertForceActivated = false;
+    if (!(req.body && req.body.skipForceFlag === true)) {
+      try {
+        const until = Date.now() + 24 * 3600 * 1000;
+        await setConfig('communityAlertForceUntil', until);
+        alertForceActivated = true;
+        logger.info(`[community-notify-prefix TEST] auto-activated force-alert 24h until=${new Date(until).toISOString()}`);
+      } catch (e) { logger.warn(`[community-notify-prefix TEST] no se pudo activar force-alert: ${e.message}`); }
+    }
+
     logger.info(`[community-notify-prefix TEST] target=${u.username} pushed=${pushed}/${tokens.length} by=${req.user.username}`);
-    res.json({ success: true, target: u.username, tokensSent: pushed, tokensTotal: tokens.length, previewTitle: title, previewBody: body });
+    res.json({
+      success: true,
+      target: u.username,
+      tokensSent: pushed,
+      tokensTotal: tokens.length,
+      previewTitle: title,
+      previewBody: body,
+      alertForceActivated,
+      alertForceHours: alertForceActivated ? 24 : 0
+    });
   } catch (err) {
     logger.error(`/api/admin/user-communities/notify-prefix-test: ${err.message}`);
     res.status(500).json({ error: err.message });

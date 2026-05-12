@@ -864,7 +864,10 @@ async function commPushSendTest(prefix, link) {
         });
         const d = await r.json();
         if (!r.ok || !d.success) { resBox.innerHTML = '<div style="color:#ff8080;padding:8px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>'; return; }
-        resBox.innerHTML = '<div style="background:rgba(102,255,255,0.10);border:1px solid #66ffff;border-radius:8px;padding:10px;color:#aaffff;font-size:12px;">✅ Test enviado a <strong>@' + escapeHtml(d.target) + '</strong> · ' + d.tokensSent + '/' + d.tokensTotal + ' tokens recibieron el push</div>';
+        const forceLine = d.alertForceActivated
+            ? '<br><span style="color:#ff8080;">🚨 Alerta 24h ACTIVADA</span> — refrescá la PWA (cerrar+abrir) para ver el banner rojo + modal.'
+            : '';
+        resBox.innerHTML = '<div style="background:rgba(102,255,255,0.10);border:1px solid #66ffff;border-radius:8px;padding:10px;color:#aaffff;font-size:12px;">✅ Test enviado a <strong>@' + escapeHtml(d.target) + '</strong> · ' + d.tokensSent + '/' + d.tokensTotal + ' tokens recibieron el push' + forceLine + '</div>';
     } catch (e) {
         resBox.innerHTML = '<div style="color:#ff8080;padding:8px;">Error: ' + escapeHtml(e.message || '') + '</div>';
     }
@@ -962,10 +965,44 @@ async function loadUserCommunities() {
         renderUserCommunitiesSlots(data.slots || []);
         const def = document.getElementById('userCommunitiesDefaultLink');
         if (def) def.value = data.defaultLink || '';
+        loadCommunityForceStatus();
     } catch (err) {
         console.error('loadUserCommunities error:', err);
         renderUserCommunitiesSlots([]);
     }
+}
+
+async function loadCommunityForceStatus() {
+    const el = document.getElementById('commForceStatus');
+    if (!el) return;
+    try {
+        const r = await authFetch('/api/admin/community-alert/status');
+        const d = await r.json();
+        if (!r.ok || !d.success) { el.textContent = 'Estado: error'; return; }
+        if (d.active) {
+            const until = new Date(d.untilMs).toLocaleString('es-AR', { hour: '2-digit', minute: '2-digit', day:'2-digit', month:'2-digit' });
+            const hoursLeft = Math.max(0, Math.floor((d.untilMs - Date.now()) / 3600000));
+            el.innerHTML = '<span style="color:#ff8080;font-weight:800;">🟢 ACTIVA</span> · hasta ' + escapeHtml(until) + ' (' + hoursLeft + 'hs restantes)';
+        } else {
+            el.innerHTML = '<span style="color:#aaa;">⚪ Desactivada</span> — se activa sola al mandar push o test';
+        }
+    } catch (e) { el.textContent = 'Estado: error'; }
+}
+
+async function forceCommunityAlert(hours) {
+    if (hours === 0 && !confirm('¿Desactivar la alerta? El banner rojo y el modal van a desaparecer para todos los users.')) return;
+    if (hours > 0 && !confirm('¿Activar la alerta por ' + hours + 'hs?\n\nDurante esa ventana, todos los users que entren ven:\n• Modal pop-up "Revisá tu comunidad"\n• Banner rojo persistente abajo del CARGUE AQUI')) return;
+    try {
+        const r = await authFetch('/api/admin/community-alert/force', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hours })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast(hours > 0 ? '🚨 Alerta activada por ' + hours + 'hs' : '⏹ Alerta desactivada', 'success');
+        loadCommunityForceStatus();
+    } catch (e) { alert('Error: ' + (e.message || '')); }
 }
 
 // =========================================================================
