@@ -2625,6 +2625,11 @@
             <div class="giveaway-card-timer" id="giveawayTimer">⏰ vence en —</div>
         </div>
 
+        <!-- Ruleta diaria — 1 giro/día por user con PWA + notifs. Render
+             dinámico desde js/roulette.js; oculto por default. -->
+        <div id="rouletteHomeCard" style="display:none;"></div>
+        <div id="rouletteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:25500;align-items:flex-start;justify-content:center;padding:8px;overflow-y:auto;-webkit-overflow-scrolling:touch;" onclick="if(event.target===event.currentTarget)VIP.roulette && VIP.roulette.close()"></div>
+
         <!-- Refunds-only: Cartel GRANDE de instalación. Se muestra solo si
              el user entró desde el browser (no en modo standalone). En
              cuanto la app está instalada, este bloque se oculta solo y NO
@@ -4124,6 +4129,7 @@
     <script src="/js/refunds.js" defer></script>
     <script src="/js/reviews.js" defer></script>
     <script src="/js/raffles.js" defer></script>
+    <script src="/js/roulette.js" defer></script>
     <script src="/js/fire.js" defer></script>
     <script src="/js/notifications.js" defer></script>
     <script src="/js/ui.js" defer></script>

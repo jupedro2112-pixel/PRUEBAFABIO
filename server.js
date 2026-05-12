@@ -18394,6 +18394,322 @@ app.delete('/api/admin/money-giveaway', authMiddleware, adminMiddleware, async (
   }
 });
 
+// ============================================================================
+// RULETA DIARIA — 1 giro/día por user con PWA + notifs. Auto-credit JUGAYGANA.
+// ============================================================================
+const DailyRouletteSpin = require('./src/models/DailyRouletteSpin');
+
+// Tabla de premios — pirámide (decisión dueño 2026-05-12).
+// Suma de weights = 100. Valor esperado por giro: ~$950.
+// Más alto el premio → más baja la probabilidad. Transparente para el user
+// (la PWA muestra las % al lado de cada premio).
+const ROULETTE_PRIZES = [
+  { value: 10000, weight: 5,  emoji: '💰', label: '$10.000' },
+  { value: 2000,  weight: 10, emoji: '💎', label: '$2.000' },
+  { value: 1000,  weight: 15, emoji: '🥇', label: '$1.000' },
+  { value: 500,   weight: 20, emoji: '🥈', label: '$500' },
+  { value: 0,     weight: 50, emoji: '😔', label: 'SIN PREMIO' }
+];
+
+// dateKey YYYY-MM-DD en hora Argentina (ART, UTC-3).
+function _rouletteDateKeyART(now) {
+  const d = now || new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  });
+  return formatter.format(d); // "YYYY-MM-DD"
+}
+
+function _rouletteWeightedPick() {
+  const total = ROULETTE_PRIZES.reduce((s, p) => s + p.weight, 0);
+  let r = Math.random() * total;
+  for (const p of ROULETTE_PRIZES) {
+    r -= p.weight;
+    if (r <= 0) return p;
+  }
+  return ROULETTE_PRIZES[ROULETTE_PRIZES.length - 1];
+}
+
+function _rouletteUserFcmTokens(u) {
+  if (!u) return [];
+  const tokens = [];
+  if (u.fcmToken) tokens.push(u.fcmToken);
+  if (Array.isArray(u.fcmTokens)) {
+    for (const tk of u.fcmTokens) {
+      const t = tk && tk.token ? tk.token : tk;
+      if (t && !tokens.includes(t)) tokens.push(t);
+    }
+  }
+  return tokens;
+}
+
+// GET /api/roulette/status — estado del giro de HOY del user actual.
+app.get('/api/roulette/status', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const dateKey = _rouletteDateKeyART();
+    // FCM token gate: solo users con PWA instalada + notifs activadas.
+    const u = await User.findOne({ id: userId }, { fcmToken: 1, fcmTokens: 1 }).lean();
+    const tokens = _rouletteUserFcmTokens(u);
+    const eligible = tokens.length > 0;
+    const spin = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+    res.json({
+      success: true,
+      eligible,
+      needsAppNotifs: !eligible,
+      dateKey,
+      prizes: ROULETTE_PRIZES,
+      alreadySpun: !!spin,
+      spin: spin ? {
+        prizeARS: spin.prizeARS,
+        prizeLabel: spin.prizeLabel,
+        status: spin.status,
+        spunAt: spin.spunAt,
+        creditedAt: spin.creditedAt,
+        creditTxId: spin.creditTxId
+      } : null
+    });
+  } catch (err) {
+    logger.error(`/api/roulette/status: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/roulette/spin — el user gira la ruleta del día.
+app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const dateKey = _rouletteDateKeyART();
+
+    // Gate: solo PWA + notifs activadas.
+    const u = await User.findOne({ id: userId }, { fcmToken: 1, fcmTokens: 1 }).lean();
+    const tokens = _rouletteUserFcmTokens(u);
+    if (tokens.length === 0) {
+      return res.status(403).json({
+        error: 'Solo podés girar si tenés la app instalada con notificaciones aceptadas.',
+        needsAppNotifs: true
+      });
+    }
+
+    // Pre-check: ya giró hoy? (el unique index igual cubre el race)
+    const already = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+    if (already) {
+      return res.status(409).json({
+        error: 'Ya giraste la ruleta hoy. Volvé mañana.',
+        alreadySpun: true,
+        spin: {
+          prizeARS: already.prizeARS,
+          prizeLabel: already.prizeLabel,
+          status: already.status,
+          spunAt: already.spunAt
+        }
+      });
+    }
+
+    // Pick + insert (status='won' o 'no_prize') con unique index protegiendo race.
+    const pick = _rouletteWeightedPick();
+    const prizeARS = Number(pick.value) || 0;
+    const initialStatus = prizeARS > 0 ? 'won' : 'no_prize';
+    let spinDoc;
+    try {
+      spinDoc = await DailyRouletteSpin.create({
+        id: uuidv4(),
+        userId,
+        username: String(username || '').toLowerCase(),
+        dateKey,
+        spunAt: new Date(),
+        prizeARS,
+        prizeLabel: pick.label,
+        ipAddress: (req.ip || '').slice(0, 60),
+        userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
+        status: initialStatus,
+        creditAttempts: 0
+      });
+    } catch (e) {
+      // El unique index disparó (otro tab del mismo user llegó primero).
+      if (String(e.message || '').includes('duplicate key')) {
+        const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+        return res.status(409).json({
+          error: 'Ya giraste la ruleta hoy.',
+          alreadySpun: true,
+          spin: existing ? {
+            prizeARS: existing.prizeARS, prizeLabel: existing.prizeLabel,
+            status: existing.status, spunAt: existing.spunAt
+          } : null
+        });
+      }
+      throw e;
+    }
+
+    // Si no hay premio, devolvemos el resultado y terminamos.
+    if (prizeARS === 0) {
+      logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
+      return res.json({
+        success: true,
+        prize: { prizeARS: 0, prizeLabel: pick.label, emoji: pick.emoji, status: 'no_prize' }
+      });
+    }
+
+    // Hay premio → auto-credit jugaygana.
+    let credit;
+    try {
+      credit = await jugaygana.creditUserBalance(username, prizeARS);
+    } catch (e) {
+      credit = { success: false, error: e.message };
+    }
+    if (!credit || !credit.success) {
+      // Marcamos credit_failed para retry manual desde panel admin.
+      await DailyRouletteSpin.updateOne(
+        { id: spinDoc.id },
+        {
+          $set: {
+            status: 'credit_failed',
+            creditError: String((credit && credit.error) || 'unknown').slice(0, 300)
+          },
+          $inc: { creditAttempts: 1 }
+        }
+      ).catch(() => {});
+      logger.error(`[ROULETTE] credit FAIL ${username} $${prizeARS}: ${(credit && credit.error) || 'unknown'}`);
+      return res.status(503).json({
+        success: false,
+        prize: { prizeARS, prizeLabel: pick.label, emoji: pick.emoji, status: 'credit_failed' },
+        error: 'Ganaste pero hubo un problema al acreditar. Avisanos por WhatsApp y lo resolvemos.'
+      });
+    }
+
+    const txId = credit.transactionId || credit.transferId || null;
+    await DailyRouletteSpin.updateOne(
+      { id: spinDoc.id },
+      {
+        $set: { status: 'credited', creditTxId: txId, creditedAt: new Date() },
+        $inc: { creditAttempts: 1 }
+      }
+    ).catch(() => {});
+    logger.info(`[ROULETTE] ${username} → $${prizeARS} acreditado tx=${txId}`);
+    return res.json({
+      success: true,
+      prize: {
+        prizeARS, prizeLabel: pick.label, emoji: pick.emoji,
+        status: 'credited', transactionId: txId
+      }
+    });
+  } catch (err) {
+    logger.error(`/api/roulette/spin: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/roulette/stats — agregados para el dashboard admin.
+app.get('/api/admin/roulette/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(90, Number(req.query.days) || 14));
+    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000);
+
+    const [byDay, byPrize, totals] = await Promise.all([
+      DailyRouletteSpin.aggregate([
+        { $match: { spunAt: { $gte: cutoff } } },
+        { $group: {
+          _id: '$dateKey',
+          spins: { $sum: 1 },
+          winners: { $sum: { $cond: [{ $gt: ['$prizeARS', 0] }, 1, 0] } },
+          totalGiven: { $sum: { $cond: [{ $eq: ['$status', 'credited'] }, '$prizeARS', 0] } },
+          totalPending: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } }
+        }},
+        { $sort: { _id: -1 } }
+      ]),
+      DailyRouletteSpin.aggregate([
+        { $match: { spunAt: { $gte: cutoff } } },
+        { $group: { _id: '$prizeARS', count: { $sum: 1 } } },
+        { $sort: { _id: -1 } }
+      ]),
+      DailyRouletteSpin.aggregate([
+        { $match: { spunAt: { $gte: cutoff } } },
+        { $group: {
+          _id: null,
+          spinsTotal: { $sum: 1 },
+          winnersTotal: { $sum: { $cond: [{ $gt: ['$prizeARS', 0] }, 1, 0] } },
+          givenTotal: { $sum: { $cond: [{ $eq: ['$status', 'credited'] }, '$prizeARS', 0] } },
+          pendingTotal: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } }
+        }}
+      ])
+    ]);
+
+    res.json({
+      success: true,
+      days,
+      since: cutoff.toISOString(),
+      prizes: ROULETTE_PRIZES,
+      byDay,
+      byPrize,
+      totals: totals[0] || { spinsTotal: 0, winnersTotal: 0, givenTotal: 0, pendingTotal: 0 }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/stats: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/roulette/history — listado paginado de spins.
+app.get('/api/admin/roulette/history', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.max(10, Math.min(200, Number(req.query.pageSize) || 50));
+    const filter = {};
+    if (req.query.status) filter.status = String(req.query.status);
+    if (req.query.minPrize) filter.prizeARS = { $gte: Number(req.query.minPrize) };
+    if (req.query.username) filter.username = String(req.query.username).toLowerCase();
+
+    const [items, total] = await Promise.all([
+      DailyRouletteSpin.find(filter)
+        .sort({ spunAt: -1 })
+        .skip((page - 1) * pageSize).limit(pageSize)
+        .lean(),
+      DailyRouletteSpin.countDocuments(filter)
+    ]);
+    res.json({ success: true, total, page, pageSize, items });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/history: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/roulette/:id/retry-credit — reintentar acreditar un
+// spin que quedó en credit_failed.
+app.post('/api/admin/roulette/:id/retry-credit', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const spin = await DailyRouletteSpin.findOne({ id: req.params.id });
+    if (!spin) return res.status(404).json({ error: 'Spin no encontrado' });
+    if (spin.status === 'credited') return res.json({ success: true, alreadyCredited: true });
+    if (spin.prizeARS <= 0) return res.status(400).json({ error: 'Este spin no tiene premio.' });
+
+    let credit;
+    try {
+      credit = await jugaygana.creditUserBalance(spin.username, spin.prizeARS);
+    } catch (e) {
+      credit = { success: false, error: e.message };
+    }
+    if (!credit || !credit.success) {
+      await DailyRouletteSpin.updateOne(
+        { id: spin.id },
+        { $set: { creditError: String((credit && credit.error) || 'unknown').slice(0, 300) }, $inc: { creditAttempts: 1 } }
+      );
+      return res.status(503).json({ error: (credit && credit.error) || 'Error acreditando' });
+    }
+    const txId = credit.transactionId || credit.transferId || null;
+    await DailyRouletteSpin.updateOne(
+      { id: spin.id },
+      { $set: { status: 'credited', creditTxId: txId, creditedAt: new Date() }, $inc: { creditAttempts: 1 } }
+    );
+    res.json({ success: true, transactionId: txId });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/:id/retry-credit: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // ============================================
 // NOTIFICACIONES PROGRAMADAS (hasta 1 semana adelante)
 // El admin crea una scheduledNotification con todo el payload (titulo,
