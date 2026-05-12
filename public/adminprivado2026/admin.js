@@ -838,6 +838,131 @@ async function loadUserCommunities() {
     }
 }
 
+// =========================================================================
+// Subir xlsx de usernames → asignar comunidad específica + push.
+// =========================================================================
+async function uploadCommunityList(dryRun) {
+    const label = (document.getElementById('ucImportLabel')?.value || '').trim();
+    const link = (document.getElementById('ucImportLink')?.value || '').trim();
+    const notify = !!(document.getElementById('ucImportNotify') && document.getElementById('ucImportNotify').checked);
+    const fileEl = document.getElementById('ucImportFile');
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    const resultBox = document.getElementById('ucImportResult');
+
+    if (!link) { showToast('Falta el link de la comunidad', 'error'); return; }
+    if (!/^https?:\/\//i.test(link)) { showToast('Link debe empezar con http:// o https://', 'error'); return; }
+    if (!file) { showToast('Subí el archivo .xlsx', 'error'); return; }
+
+    resultBox.innerHTML = '<div style="color:#aaa;text-align:center;padding:14px;">⏳ Procesando…</div>';
+
+    try {
+        const buf = await file.arrayBuffer();
+        const params = new URLSearchParams({
+            communityLink: link,
+            communityLabel: label,
+            notify: String(notify),
+            dryRun: String(!!dryRun)
+        });
+        const r = await fetch('/api/admin/user-communities/import-list?' + params.toString(), {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + (window.ADMIN_TOKEN || localStorage.getItem('adminToken') || ''),
+                'Content-Type': 'application/octet-stream'
+            },
+            body: buf
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            resultBox.innerHTML = '<div style="color:#ff8080;padding:10px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        if (d.dryRun) {
+            const sample = (d.sample || []).slice(0, 10);
+            resultBox.innerHTML = '<div style="background:rgba(255,170,102,0.10);border:1px solid #ffaa66;border-radius:8px;padding:11px;color:#ffd0a0;font-size:12px;">' +
+                '👁 PREVIEW · ' + d.totalRowsRead + ' usernames detectados. <strong>NO se escribió nada.</strong>' +
+                (sample.length > 0 ? '<br><small style="color:#bbb;">Primeros: ' + escapeHtml(sample.join(', ')) + '</small>' : '') +
+                '</div>';
+            return;
+        }
+        resultBox.innerHTML = '<div style="background:rgba(102,255,102,0.10);border:1px solid #66ff66;border-radius:8px;padding:11px;color:#aaffaa;font-size:12px;">' +
+            '✅ Asignados: <strong>' + d.assigned + '</strong> · Nuevos: <strong>' + d.upserted + '</strong> · Actualizados: <strong>' + d.modified + '</strong> · Push enviados: <strong>' + d.pushed + '</strong>' +
+            '</div>';
+        showToast('✅ Lista cargada · ' + d.assigned + ' usuarios', 'success');
+        loadCommunityLookups();
+    } catch (e) {
+        resultBox.innerHTML = '<div style="color:#ff8080;padding:10px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+async function loadCommunityLookups() {
+    const box = document.getElementById('ucLookupsBody');
+    if (!box) return;
+    box.innerHTML = '<div style="color:#aaa;text-align:center;padding:14px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/user-communities/lookups?pageSize=50');
+        const d = await r.json();
+        if (!r.ok || !d.success) { box.innerHTML = '<div style="color:#ff8080;padding:10px;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        const groups = d.byCommunity || [];
+        const items = d.items || [];
+        let html = '';
+        if (groups.length === 0) {
+            box.innerHTML = '<div style="color:#aaa;text-align:center;padding:14px;">Todavía no cargaste ninguna lista de comunidad.</div>';
+            return;
+        }
+        html += '<div style="margin-bottom:12px;color:#bbb;font-size:11px;">Total asignaciones: <strong>' + Number(d.total || 0).toLocaleString('es-AR') + '</strong></div>';
+        for (const g of groups) {
+            const link = (g._id && g._id.link) || '';
+            const label = (g._id && g._id.label) || '(sin nombre)';
+            const status = (g._id && g._id.status) || 'active';
+            const isDown = status === 'down';
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid ' + (isDown ? '#ff8080' : '#25d366') + ';border-radius:9px;padding:11px;margin-bottom:8px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:200px;">';
+            html += '<div style="color:#fff;font-weight:800;font-size:13px;">' + escapeHtml(label);
+            html += isDown ? ' <span style="background:rgba(255,128,128,0.18);color:#ff8080;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;margin-left:4px;">❌ CAÍDA</span>'
+                           : ' <span style="background:rgba(37,211,102,0.18);color:#25d366;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;margin-left:4px;">✅ ACTIVA</span>';
+            html += '</div>';
+            html += '<div style="color:#aaa;font-size:11px;margin-top:2px;font-family:monospace;word-break:break-all;">' + escapeHtml(link) + '</div>';
+            html += '<div style="color:#ddd;font-size:11.5px;margin-top:4px;">👥 ' + Number(g.count || 0).toLocaleString('es-AR') + ' usuarios asignados</div>';
+            html += '</div>';
+            html += '<div style="display:flex;flex-direction:column;gap:5px;">';
+            if (!isDown) html += '<button onclick="markCommunityDown(\'' + escapeJsArg(link) + '\', \'' + escapeJsArg(label) + '\')" style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.40);padding:5px 10px;border-radius:6px;font-size:10.5px;font-weight:700;cursor:pointer;">⚠️ Marcar caída</button>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+        }
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:10px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+async function markCommunityDown(link, oldLabel) {
+    const replacementLink = prompt(
+        '⚠️ Marcar comunidad como CAÍDA y avisar a los users\n\n' +
+        'Comunidad anterior: ' + (oldLabel || link) + '\n\n' +
+        'Link de la NUEVA comunidad (deja vacío si todavía no tenés):', ''
+    );
+    if (replacementLink === null) return;
+    if (replacementLink && !/^https?:\/\//i.test(replacementLink)) {
+        alert('El link nuevo debe empezar con http:// o https://');
+        return;
+    }
+    const replacementLabel = replacementLink ? prompt('Nombre display de la NUEVA comunidad (opcional):', '') : '';
+    if (!confirm('¿Confirmás?\n\n• La comunidad anterior queda marcada CAÍDA\n• Los users asignados reciben push "⚠️ Cambio de comunidad" con el link nuevo\n• La PWA les muestra alerta con el link de la nueva')) return;
+    try {
+        const r = await authFetch('/api/admin/user-communities/mark-down', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ communityLink: link, replacementLink: replacementLink || '', replacementLabel: replacementLabel || '', notify: true })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Marcada caída · push ' + (d.pushed || 0) + '/' + (d.modified || 0), 'success');
+        loadCommunityLookups();
+    } catch (e) { alert('Error'); }
+}
+
 async function saveUserCommunities() {
     const container = document.getElementById('userCommunitiesSlots');
     if (!container) return;

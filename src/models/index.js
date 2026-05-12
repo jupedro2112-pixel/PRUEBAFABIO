@@ -32,6 +32,7 @@ const DailyAppOpen = require('./DailyAppOpen');
 const QuinielaResult = require('./QuinielaResult');
 const UserNotification = require('./UserNotification');
 const UserLineLookup = require('./UserLineLookup');
+const UserCommunityLookup = require('./UserCommunityLookup');
 const AppNotifSnapshot = require('./AppNotifSnapshot');
 const NotificationRule = require('./NotificationRule');
 const NotificationRuleSuggestion = require('./NotificationRuleSuggestion');
@@ -461,6 +462,7 @@ module.exports = {
   QuinielaResult,
   UserNotification,
   UserLineLookup,
+  UserCommunityLookup,
   AppNotifSnapshot,
   NotificationRule,
   NotificationRuleSuggestion,

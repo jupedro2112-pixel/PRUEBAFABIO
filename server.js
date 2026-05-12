@@ -69,6 +69,7 @@ const {
   QuinielaResult,
   UserNotification,
   UserLineLookup,
+  UserCommunityLookup,
   AppNotifSnapshot,
   NotificationRule,
   NotificationRuleSuggestion,
@@ -2510,14 +2511,41 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       }
     }
 
-    // En el mismo response devolvemos el link de comunidad correspondiente
-    // para evitar un round-trip adicional desde el cliente.
-    const communitiesConfig = await getConfig('userCommunitiesByPrefix');
-    const communityLink = pickCommunityLinkForUsername(communitiesConfig, req.user.username);
+    // Resolución de comunidad: prioridad a la asignación EXPLÍCITA por
+    // username (UserCommunityLookup, subida por xlsx). Si no, cae al
+    // fallback de prefijo (userCommunitiesByPrefix). Si la asignación
+    // explícita está marcada 'down', devolvemos link + replacementLink
+    // para que la PWA muestre alerta "tu comunidad cerró, sumate acá".
+    let communityLink = null;
+    let communityLabel = null;
+    let communityStatus = 'active';
+    let communityReplacementLink = null;
+    let communityReplacementLabel = null;
+    try {
+      const safeUser = String(req.user.username || '').toLowerCase().trim();
+      if (safeUser) {
+        const explicit = await UserCommunityLookup.findOne({ usernameNorm: safeUser }).lean();
+        if (explicit) {
+          communityLink = explicit.communityLink || null;
+          communityLabel = explicit.communityLabel || null;
+          communityStatus = explicit.status || 'active';
+          communityReplacementLink = explicit.replacementLink || null;
+          communityReplacementLabel = explicit.replacementLabel || null;
+        }
+      }
+    } catch (e) { /* fall through to prefix */ }
+    if (!communityLink) {
+      const communitiesConfig = await getConfig('userCommunitiesByPrefix');
+      communityLink = pickCommunityLinkForUsername(communitiesConfig, req.user.username);
+    }
     res.json({
       phone: phone || null,
       teamName: teamName || null,
-      communityLink: communityLink || null
+      communityLink: communityLink || null,
+      communityLabel: communityLabel || null,
+      communityStatus,
+      communityReplacementLink: communityReplacementLink || null,
+      communityReplacementLabel: communityReplacementLabel || null
     });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
@@ -10986,6 +11014,250 @@ app.get('/api/admin/user-lines/stats', authMiddleware, adminMiddleware, async (r
 
 // ============================================
 // LINKS DE COMUNIDAD POR USUARIO (mapeo prefijo -> link)
+// ============================================================================
+// POST /api/admin/user-communities/import-list — sube xlsx con usernames
+// para asignarlos a una comunidad específica + manda push notif.
+// ============================================================================
+// Body params (query):
+//   communityLink  = wa.me/... o link de invitación al grupo (REQUIRED)
+//   communityLabel = nombre display (opcional, ej "Comunidad Sur")
+//   notify         = "true" para mandar push a los users asignados (default true)
+//   dryRun         = "true" para preview sin escribir DB
+// Body raw: archivo .xlsx con una columna "name" (usernames)
+app.post(
+  '/api/admin/user-communities/import-list',
+  authMiddleware,
+  adminMiddleware,
+  express.raw({ limit: '8mb', type: '*/*' }),
+  async (req, res) => {
+    let XLSX;
+    try { XLSX = require('xlsx'); }
+    catch (e) { return res.status(503).json({ error: 'Falta xlsx en server' }); }
+
+    try {
+      const communityLink = String((req.query.communityLink || '')).trim();
+      const communityLabel = String((req.query.communityLabel || '')).trim().slice(0, 60);
+      const notify = String(req.query.notify || 'true').toLowerCase() !== 'false';
+      const dryRun = String(req.query.dryRun || 'false').toLowerCase() === 'true';
+
+      if (!communityLink) return res.status(400).json({ error: 'Falta communityLink' });
+      if (!/^https?:\/\//i.test(communityLink)) {
+        return res.status(400).json({ error: 'communityLink debe empezar con http:// o https://' });
+      }
+
+      const buf = req.body;
+      if (!buf || !Buffer.isBuffer(buf) || buf.length < 50) {
+        return res.status(400).json({ error: 'Archivo vacío o muy chico' });
+      }
+
+      let workbook;
+      try { workbook = XLSX.read(buf, { type: 'buffer', cellDates: false }); }
+      catch (e) { return res.status(400).json({ error: `No se pudo leer xlsx: ${e.message}` }); }
+
+      // Recolectar usernames (columna "name" o primera columna).
+      const usernames = new Set();
+      for (const sheetName of (workbook.SheetNames || [])) {
+        const ws = workbook.Sheets[sheetName];
+        if (!ws) continue;
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, defval: '' });
+        if (rows.length === 0) continue;
+        // Detectar header: si primera fila parece "name"/"username"/"usuario", saltearla.
+        const firstCell = String((rows[0] && rows[0][0]) || '').trim().toLowerCase();
+        const startIdx = ['name','username','usuario','user'].includes(firstCell) ? 1 : 0;
+        for (let i = startIdx; i < rows.length; i++) {
+          const cell = rows[i] && rows[i][0];
+          if (!cell) continue;
+          const u = String(cell).trim();
+          if (u) usernames.add(u);
+        }
+      }
+
+      if (usernames.size === 0) {
+        return res.status(400).json({ error: 'No se encontraron usernames en el xlsx' });
+      }
+      if (usernames.size > 5000) {
+        return res.status(400).json({ error: 'Máximo 5000 usernames por import' });
+      }
+
+      const list = Array.from(usernames);
+      const adminUser = req.user.username || null;
+
+      if (dryRun) {
+        return res.json({
+          success: true,
+          dryRun: true,
+          totalRowsRead: list.length,
+          sample: list.slice(0, 20)
+        });
+      }
+
+      // Upsert por usernameNorm.
+      let upserted = 0, modified = 0;
+      const ops = [];
+      for (const u of list) {
+        const norm = u.toLowerCase().trim();
+        ops.push({
+          updateOne: {
+            filter: { usernameNorm: norm },
+            update: {
+              $set: {
+                username: u,
+                usernameNorm: norm,
+                communityLink,
+                communityLabel: communityLabel || null,
+                status: 'active',
+                replacementLink: null,
+                replacementLabel: null,
+                assignedAt: new Date(),
+                assignedBy: adminUser
+              },
+              $inc: { version: 1 }
+            },
+            upsert: true
+          }
+        });
+      }
+      try {
+        const r = await UserCommunityLookup.bulkWrite(ops, { ordered: false });
+        upserted = (r && r.upsertedCount) || 0;
+        modified = (r && r.modifiedCount) || 0;
+      } catch (e) {
+        logger.error(`[user-communities] bulkWrite: ${e.message}`);
+        return res.status(500).json({ error: 'Error guardando asignaciones' });
+      }
+
+      // Push notif a los usuarios asignados.
+      let pushed = 0;
+      if (notify && list.length > 0) {
+        try {
+          const norms = list.map(u => u.toLowerCase().trim());
+          const users = await User.find(
+            { username: { $in: list.map(u => new RegExp('^' + u.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '$', 'i')) } },
+            { fcmToken: 1, fcmTokens: 1, username: 1 }
+          ).lean();
+          const title = '🎉 Nueva comunidad';
+          const body = communityLabel
+            ? `Te sumamos a "${communityLabel}". Entrá desde la app para no perderte los regalos y avisos.`
+            : 'Te sumamos a una nueva comunidad. Entrá desde la app para no perderte regalos y avisos.';
+          const sendPromises = [];
+          for (const u of users) {
+            const tokens = [];
+            if (u.fcmToken) tokens.push(u.fcmToken);
+            if (Array.isArray(u.fcmTokens)) {
+              for (const tk of u.fcmTokens) { const t = tk && tk.token ? tk.token : tk; if (t && !tokens.includes(t)) tokens.push(t); }
+            }
+            for (const tk of tokens) {
+              sendPromises.push(
+                _sendPushToUser(tk, title, body, { source: 'new-community', communityLink })
+                  .then(r => { if (r && r.success) pushed++; })
+                  .catch(() => {})
+              );
+            }
+          }
+          await Promise.all(sendPromises);
+        } catch (e) { logger.warn(`[user-communities] push falló: ${e.message}`); }
+      }
+
+      logger.info(`[user-communities] import label="${communityLabel}" assigned=${list.length} upserted=${upserted} modified=${modified} pushed=${pushed} by=${adminUser}`);
+      res.json({
+        success: true,
+        assigned: list.length,
+        upserted, modified, pushed,
+        communityLabel, communityLink
+      });
+    } catch (err) {
+      logger.error(`/api/admin/user-communities/import-list: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// POST /api/admin/user-communities/mark-down — marca una comunidad como
+// caída y avisa a los users asignados con replacement link.
+app.post('/api/admin/user-communities/mark-down', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const communityLink = String((req.body && req.body.communityLink) || '').trim();
+    const replacementLink = String((req.body && req.body.replacementLink) || '').trim();
+    const replacementLabel = String((req.body && req.body.replacementLabel) || '').trim().slice(0, 60);
+    const notify = (req.body && req.body.notify) !== false;
+    if (!communityLink) return res.status(400).json({ error: 'Falta communityLink' });
+    if (replacementLink && !/^https?:\/\//i.test(replacementLink)) {
+      return res.status(400).json({ error: 'replacementLink inválido' });
+    }
+    const r = await UserCommunityLookup.updateMany(
+      { communityLink },
+      { $set: {
+        status: 'down',
+        replacementLink: replacementLink || null,
+        replacementLabel: replacementLabel || null
+      }}
+    );
+    let pushed = 0;
+    if (notify && replacementLink && r.modifiedCount > 0) {
+      try {
+        const affected = await UserCommunityLookup.find({ communityLink, status: 'down' }, { username: 1, _id: 0 }).lean();
+        const norms = affected.map(a => a.username);
+        if (norms.length > 0) {
+          const users = await User.find(
+            { username: { $in: norms.map(u => new RegExp('^' + u.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '$', 'i')) } },
+            { fcmToken: 1, fcmTokens: 1 }
+          ).lean();
+          const title = '⚠️ Cambio de comunidad';
+          const body = replacementLabel
+            ? `Tu comunidad anterior cerró. Sumate a la nueva: ${replacementLabel}`
+            : 'Tu comunidad anterior cerró. Entrá a la app para sumarte a la nueva.';
+          const sendPromises = [];
+          for (const u of users) {
+            const tokens = [];
+            if (u.fcmToken) tokens.push(u.fcmToken);
+            if (Array.isArray(u.fcmTokens)) {
+              for (const tk of u.fcmTokens) { const t = tk && tk.token ? tk.token : tk; if (t && !tokens.includes(t)) tokens.push(t); }
+            }
+            for (const tk of tokens) {
+              sendPromises.push(
+                _sendPushToUser(tk, title, body, { source: 'community-down', replacementLink })
+                  .then(r => { if (r && r.success) pushed++; })
+                  .catch(() => {})
+              );
+            }
+          }
+          await Promise.all(sendPromises);
+        }
+      } catch (e) { logger.warn(`[community-down] push: ${e.message}`); }
+    }
+    res.json({ success: true, modified: r.modifiedCount || 0, pushed });
+  } catch (err) {
+    logger.error(`/api/admin/user-communities/mark-down: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/user-communities/lookups — lista paginada de asignaciones
+app.get('/api/admin/user-communities/lookups', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.max(10, Math.min(200, Number(req.query.pageSize) || 50));
+    const filter = {};
+    if (req.query.communityLink) filter.communityLink = String(req.query.communityLink);
+    if (req.query.status) filter.status = String(req.query.status);
+    const [items, total, byCommunity] = await Promise.all([
+      UserCommunityLookup.find(filter).sort({ assignedAt: -1 }).skip((page-1)*pageSize).limit(pageSize).lean(),
+      UserCommunityLookup.countDocuments(filter),
+      UserCommunityLookup.aggregate([
+        { $group: {
+          _id: { link: '$communityLink', label: '$communityLabel', status: '$status' },
+          count: { $sum: 1 }
+        }},
+        { $sort: { count: -1 } }
+      ])
+    ]);
+    res.json({ success: true, total, page, pageSize, items, byCommunity });
+  } catch (err) {
+    logger.error(`/api/admin/user-communities/lookups: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Mismo patron que user-lines pero para links de WhatsApp/comunidades.
 // ============================================
 const USER_COMMUNITIES_MAX_SLOTS = 30;

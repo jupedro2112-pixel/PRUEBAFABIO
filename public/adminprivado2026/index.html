@@ -356,6 +356,39 @@
                         💾 Guardar links de comunidad
                     </button>
                 </div>
+
+                <!-- ============================================
+                     SUBIR XLSX: asignar comunidad a usuarios específicos
+                     Reusa el mismo flujo pero por listado en vez de prefijo.
+                     ============================================ -->
+                <div style="margin-top:24px;background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.30);border-radius:12px;padding:16px;max-width:720px;">
+                    <h3 style="margin:0 0 6px;color:#00d4ff;font-size:14px;">📂 Subir lista de usuarios → comunidad específica</h3>
+                    <p style="color:#bbb;font-size:11.5px;line-height:1.5;margin:0 0 12px;">Subí un <strong>.xlsx</strong> con una columna <code style="background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;">name</code> que tenga los usernames. A esos usuarios les asignamos la comunidad que indiques abajo y les mandamos push avisando de la nueva comunidad.</p>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <input id="ucImportLabel" type="text" maxlength="60" placeholder="Nombre display (ej: Comunidad Sur · Octubre)" style="padding:9px 12px;border-radius:7px;border:1px solid rgba(0,212,255,0.40);background:rgba(0,0,0,0.4);color:#fff;font-size:13px;box-sizing:border-box;">
+                        <input id="ucImportLink" type="text" placeholder="https://chat.whatsapp.com/..." style="padding:9px 12px;border-radius:7px;border:1px solid rgba(0,212,255,0.40);background:rgba(0,0,0,0.4);color:#00d4ff;font-size:13px;font-family:monospace;box-sizing:border-box;">
+                        <label style="display:flex;align-items:center;gap:6px;color:#bbb;font-size:11.5px;cursor:pointer;">
+                            <input type="checkbox" id="ucImportNotify" checked> Mandar push avisando "🎉 Nueva comunidad"
+                        </label>
+                        <input id="ucImportFile" type="file" accept=".xlsx,.xls" style="padding:9px;border-radius:7px;background:rgba(0,0,0,0.4);color:#fff;font-size:12px;border:1px solid rgba(0,212,255,0.40);">
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button onclick="uploadCommunityList(true)" style="flex:1;background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:10px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">👁 PREVIEW (dry run)</button>
+                            <button onclick="uploadCommunityList(false)" style="flex:1;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:10px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;">🚀 ASIGNAR + AVISAR</button>
+                        </div>
+                    </div>
+                    <div id="ucImportResult" style="margin-top:10px;"></div>
+                </div>
+
+                <!-- ============================================
+                     Lista de asignaciones cargadas + botón "marcar caída"
+                     ============================================ -->
+                <div style="margin-top:24px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:16px;max-width:720px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">
+                        <h3 style="margin:0;color:#fff;font-size:14px;">📊 Comunidades cargadas por listado</h3>
+                        <button onclick="loadCommunityLookups()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 11px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">🔄 Refrescar</button>
+                    </div>
+                    <div id="ucLookupsBody" style="color:#aaa;font-size:12px;">Tocá refrescar para cargar.</div>
+                </div>
             </section>
 
             <!-- ============================================
