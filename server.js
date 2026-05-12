@@ -22375,69 +22375,82 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       }
     }
 
-    let winnerPushed = 0, losersPushed = 0;
-    try {
-      const winTitle = lightningForfeited
-        ? '🎲 Salió tu número pero…'
-        : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
-      const winBody = lightningForfeited
-        ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
-        : (prizeAutoCredited
-          ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
-          : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
-      const winRes = await sendNotificationToAllUsers(
-        User,
-        winTitle,
-        winBody,
-        {
-          source: lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win',
-          raffleId: raffle.id,
-          isWinner: 'true',
-          autoCredited: prizeAutoCredited ? 'true' : 'false',
-          forfeited: lightningForfeited ? 'true' : 'false',
-          winningTicketNumber: String(mappedNumber)
-        },
-        { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
-      );
-      winnerPushed = (winRes && winRes.successCount) || 0;
-    } catch (e) { logger.warn(`[raffles] notif ganador: ${e.message}`); }
+    // Toggles de notificación del body (default: notificar al ganador, NO a
+    // los perdedores). El admin puede sobreescribir desde el modal del draw.
+    const notifyWinner = (req.body && req.body.notifyWinner) !== false; // default true
+    const notifyLosers = (req.body && req.body.notifyLosers) === true;  // default false
 
-    try {
-      // Todos los participantes que no son el ganador. Dedup por username
-      // (por si una participation tiene el username con casing distinto).
-      const seen = new Set();
-      const loserUsernames = [];
-      for (const p of parts) {
-        const uname = String(p.username || '').trim();
-        if (!uname) continue;
-        const key = uname.toLowerCase();
-        if (key === String(winner.username).toLowerCase()) continue;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        loserUsernames.push(uname);
-      }
-      if (loserUsernames.length > 0) {
-        const mapNote = wasMapped ? ` (mapeado a #${mappedNumber} dentro del cupo vendido)` : '';
-        const loseBody = lightningForfeited
-          ? `🎰 Número ganador: #${mappedNumber}${mapNote}. Salió @${winner.username} pero NO podía reclamar (no tenía ${LIGHTNING_MIN_CARGAS} cargas antes del sorteo). El premio quedó sin acreditar. Cargá ANTES del próximo para tener derecho.`
-          : `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`;
-        const loseRes = await sendNotificationToAllUsers(
+    let winnerPushed = 0, losersPushed = 0;
+    if (notifyWinner) {
+      try {
+        const winTitle = lightningForfeited
+          ? '🎲 Salió tu número pero…'
+          : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
+        const winBody = lightningForfeited
+          ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
+          : (prizeAutoCredited
+            ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
+            : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
+        const winRes = await sendNotificationToAllUsers(
           User,
-          (raffle.emoji || '🎁') + ' Salió el ' + raffle.prizeName,
-          loseBody,
+          winTitle,
+          winBody,
           {
-            source: lightningForfeited ? 'raffle-lose-forfeit' : 'raffle-lose',
+            source: lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win',
             raffleId: raffle.id,
-            isWinner: 'false',
+            isWinner: 'true',
+            autoCredited: prizeAutoCredited ? 'true' : 'false',
             forfeited: lightningForfeited ? 'true' : 'false',
-            winningTicketNumber: String(mappedNumber),
-            lotteryDrawNumber: String(lotteryNumber)
+            winningTicketNumber: String(mappedNumber)
           },
-          { username: { $in: loserUsernames } }
+          { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
         );
-        losersPushed = (loseRes && loseRes.successCount) || 0;
-      }
-    } catch (e) { logger.warn(`[raffles] notif perdedores: ${e.message}`); }
+        winnerPushed = (winRes && winRes.successCount) || 0;
+      } catch (e) { logger.warn(`[raffles] notif ganador: ${e.message}`); }
+    } else {
+      logger.info(`[raffles] notif ganador SKIPPED (notifyWinner=false) — ${raffle.name}`);
+    }
+
+    if (notifyLosers) {
+      try {
+        // Todos los participantes que no son el ganador. Dedup por username
+        // (por si una participation tiene el username con casing distinto).
+        const seen = new Set();
+        const loserUsernames = [];
+        for (const p of parts) {
+          const uname = String(p.username || '').trim();
+          if (!uname) continue;
+          const key = uname.toLowerCase();
+          if (key === String(winner.username).toLowerCase()) continue;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          loserUsernames.push(uname);
+        }
+        if (loserUsernames.length > 0) {
+          const mapNote = wasMapped ? ` (mapeado a #${mappedNumber} dentro del cupo vendido)` : '';
+          const loseBody = lightningForfeited
+            ? `🎰 Número ganador: #${mappedNumber}${mapNote}. Salió @${winner.username} pero NO podía reclamar (no tenía ${LIGHTNING_MIN_CARGAS} cargas antes del sorteo). El premio quedó sin acreditar. Cargá ANTES del próximo para tener derecho.`
+            : `🎰 Número ganador: #${mappedNumber}${mapNote}. Ganó @${winner.username} y se llevó $${prize.toLocaleString('es-AR')}. ¡Ya hay cupos nuevos! Entrá y elegí tu próximo número.`;
+          const loseRes = await sendNotificationToAllUsers(
+            User,
+            (raffle.emoji || '🎁') + ' Salió el ' + raffle.prizeName,
+            loseBody,
+            {
+              source: lightningForfeited ? 'raffle-lose-forfeit' : 'raffle-lose',
+              raffleId: raffle.id,
+              isWinner: 'false',
+              forfeited: lightningForfeited ? 'true' : 'false',
+              winningTicketNumber: String(mappedNumber),
+              lotteryDrawNumber: String(lotteryNumber)
+            },
+            { username: { $in: loserUsernames } }
+          );
+          losersPushed = (loseRes && loseRes.successCount) || 0;
+        }
+      } catch (e) { logger.warn(`[raffles] notif perdedores: ${e.message}`); }
+    } else {
+      logger.info(`[raffles] notif perdedores SKIPPED (notifyLosers=false) — ${raffle.name}`);
+    }
 
     // Asegurar que el tipo siga teniendo una instancia activa.
     try { await _ensureActiveRafflesSeeded(); } catch (_) {}
@@ -22593,6 +22606,130 @@ app.post('/api/admin/raffles/:id/reopen', authMiddleware, superAdminMiddleware, 
     res.json({ success: true, raffleId: raffle.id, newStatus, cuposSold: sold });
   } catch (err) {
     logger.error(`/api/admin/raffles/:id/reopen: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/:id/test-winner-push
+// Manda el push de "GANASTE" a un username de prueba (ej. lalodj) SIN
+// hacer draw ni modificar el sorteo. Sirve para verificar que el push
+// llega antes de sortear de verdad. NO afecta status, NO acredita premio.
+app.post('/api/admin/raffles/:id/test-winner-push', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado' });
+    const testUsername = String((req.body && req.body.username) || '').trim();
+    if (!testUsername) return res.status(400).json({ error: 'Falta username' });
+    const testTicket = parseInt((req.body && req.body.ticketNumber) || 42, 10) || 42;
+    const prize = Number(raffle.prizeValueARS) || 0;
+    const title = '🧪 [TEST] 🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
+    const body = `TEST: ¡Salió tu número #${testTicket}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio".`;
+    try {
+      const res2 = await sendNotificationToAllUsers(
+        User,
+        title, body,
+        { source: 'raffle-win-test', raffleId: raffle.id, isWinner: 'true', winningTicketNumber: String(testTicket) },
+        { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+      );
+      logger.info(`[raffles] TEST push winner a ${testUsername} (${raffle.name}) success=${res2 && res2.successCount}`);
+      return res.json({
+        success: true,
+        sent: (res2 && res2.successCount) || 0,
+        failed: (res2 && res2.failureCount) || 0,
+        diagnostic: `Push de prueba enviado a ${testUsername}. Si no le llega: verificar que tenga PWA standalone instalada con notifs aceptadas.`
+      });
+    } catch (e) {
+      return res.json({ success: false, error: e.message });
+    }
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/test-winner-push: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/raffles/draw-batch
+// Body: { draws: [{ raffleId, lotteryNumber, notifyWinner?, notifyLosers? }] }
+// Sortea N sorteos en una sola llamada. Si alguno está en archived/drawn
+// sin ganador, lo reabre primero. Devuelve resumen con ganadores y errores.
+app.post('/api/admin/raffles/draw-batch', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const draws = Array.isArray(req.body && req.body.draws) ? req.body.draws : [];
+    if (draws.length === 0) return res.status(400).json({ error: 'No se enviaron sorteos' });
+    if (draws.length > 50) return res.status(400).json({ error: 'Máximo 50 sorteos por batch' });
+
+    const results = { drawn: [], failed: [] };
+    for (const item of draws) {
+      const raffleId = String((item && item.raffleId) || '').trim();
+      const lotteryNumber = parseInt(item && item.lotteryNumber, 10);
+      const notifyWinner = item.notifyWinner !== false;
+      const notifyLosers = item.notifyLosers === true;
+      if (!raffleId || !Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        results.failed.push({ raffleId, error: 'raffleId o lotteryNumber inválido' });
+        continue;
+      }
+      try {
+        const existing = await Raffle.findOne({ id: raffleId }).lean();
+        if (!existing) { results.failed.push({ raffleId, error: 'No encontrado' }); continue; }
+        if (existing.winnerUsername) {
+          results.failed.push({ raffleId, name: existing.name, error: 'Ya tiene ganador: ' + existing.winnerUsername });
+          continue;
+        }
+        // Si está archived/drawn (sin ganador), reabrirlo primero.
+        if (existing.status === 'archived' || existing.status === 'drawn') {
+          const partsAgg = await RaffleParticipation.aggregate([
+            { $match: { raffleId } },
+            { $group: { _id: '$raffleId', cuposSold: { $sum: '$cuposCount' } } }
+          ]);
+          const sold = (partsAgg[0] && partsAgg[0].cuposSold) || 0;
+          if (sold === 0) { results.failed.push({ raffleId, name: existing.name, error: 'Sin participantes' }); continue; }
+          const newStatus = sold >= (existing.totalTickets || 100) ? 'closed' : 'active';
+          await Raffle.updateOne({ id: raffleId }, { $set: { status: newStatus, archivedAt: null } });
+        }
+        // Llamar al endpoint draw internamente con fetch local sería raro;
+        // mejor replicar la lógica esencial inline. Para mantener simple,
+        // forward al endpoint draw vía HTTP no es ideal. Mejor: re-leer y
+        // hacer un draw inline pero respetando los pushes/auto-credit.
+        // Hacemos una request interna a /api/admin/raffles/:id/draw pasando
+        // los flags. Como estamos en el mismo proceso, usamos axios local.
+        const url = `http://127.0.0.1:${process.env.PORT || 5000}/api/admin/raffles/${encodeURIComponent(raffleId)}/draw`;
+        try {
+          // Forward de la cookie/Authorization del request original
+          const axios = require('axios');
+          const headers = {};
+          if (req.headers.authorization) headers.Authorization = req.headers.authorization;
+          if (req.headers.cookie) headers.cookie = req.headers.cookie;
+          const drawResp = await axios.post(url, {
+            lotteryNumber,
+            notifyWinner,
+            notifyLosers,
+            lotteryDrawSource: 'Batch · Lotería Nacional Nocturna',
+            lotteryDrawDate: new Date().toISOString()
+          }, { headers, timeout: 30000, validateStatus: () => true });
+          if (drawResp.status >= 200 && drawResp.status < 300 && drawResp.data && drawResp.data.success) {
+            const d = drawResp.data;
+            results.drawn.push({
+              raffleId,
+              name: existing.name,
+              winner: d.winnerUsername,
+              ticket: d.winningTicketNumber,
+              prize: d.prizeValueARS,
+              autoCredited: !!d.prizeAutoCredited,
+              winnerPushed: (d.pushNotifications && d.pushNotifications.winnerPushed) || 0
+            });
+          } else {
+            results.failed.push({ raffleId, name: existing.name, error: (drawResp.data && drawResp.data.error) || ('HTTP ' + drawResp.status) });
+          }
+        } catch (e) {
+          results.failed.push({ raffleId, name: existing.name, error: 'Error interno: ' + e.message });
+        }
+      } catch (e) {
+        results.failed.push({ raffleId, error: e.message });
+      }
+    }
+    logger.info(`[raffles] draw-batch — drawn=${results.drawn.length} failed=${results.failed.length}`);
+    res.json({ success: true, ...results });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/draw-batch: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

@@ -17170,17 +17170,38 @@ async function viewArchivedRaffles(kind) {
         }
         summary += '</div>';
 
-        // Botón "Reabrir TODOS los pendientes": cuenta cuántos sorteos
-        // archived/drawn tienen participantes y NO tienen ganador todavía.
+        // RESUMEN MINIMIZADO arriba: últimos N sorteos con ganador ya cargado,
+        // formato compacto. Para que el admin tenga vista rápida del histórico.
+        const withWinners = all.filter(x => x.winnerUsername).slice(0, 8);
+        if (withWinners.length > 0) {
+            summary += '<div style="background:rgba(102,255,102,0.04);border:1px solid rgba(102,255,102,0.20);border-radius:9px;padding:8px 11px;margin-bottom:12px;">';
+            summary += '<div style="color:#66ff66;font-size:10.5px;text-transform:uppercase;letter-spacing:1px;font-weight:800;margin-bottom:6px;">📜 Últimos sorteados</div>';
+            for (const w of withWinners) {
+                const claimEmoji = w.prizeForfeitedAt ? '❌' : (w.prizeClaimedAt ? '✅' : (w.prizeClaimable ? '⏳' : '·'));
+                summary += '<div style="font-size:11px;color:#ddd;padding:3px 0;border-bottom:1px dashed rgba(255,255,255,0.05);">';
+                summary += '<span style="color:#ffd700;font-family:monospace;font-weight:800;">#' + w.winningTicketNumber + '</span> ';
+                summary += '· ' + escapeHtml(w.name || '') + ' · ';
+                summary += '🏆 <strong>' + escapeHtml(w.winnerUsername) + '</strong> ';
+                summary += '<span style="color:#888;">' + claimEmoji + '</span>';
+                summary += '</div>';
+            }
+            summary += '</div>';
+        }
+
+        // Botón "Sortear TODOS los pendientes": cuenta cuántos sorteos
+        // archived/drawn/active/closed tienen participantes y NO tienen ganador.
         const pending = all.filter(x =>
-            (x.status === 'archived' || x.status === 'drawn') &&
+            ['archived','drawn','active','closed'].includes(x.status) &&
             !x.winnerUsername &&
             (x.cuposSold || 0) > 0
         );
         if (pending.length > 0) {
             summary += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.50);border-radius:9px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
-            summary += '<div style="color:#ffd700;font-size:12px;line-height:1.4;"><strong>' + pending.length + ' sorteo(s) pendientes</strong> de cargarles ganador. Reabrilos todos juntos y después cargás el número uno por uno.</div>';
-            summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">♻️ Reabrir TODOS</button>';
+            summary += '<div style="color:#ffd700;font-size:12px;line-height:1.4;"><strong>' + pending.length + ' sorteo(s) pendientes</strong> de cargarles ganador.</div>';
+            summary += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+            summary += '<button type="button" onclick="openBatchDrawModal(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">🎰 Sortear semana pasada</button>';
+            summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Solo reabrir sin cargar ganador">♻️ Solo reabrir</button>';
+            summary += '</div>';
             summary += '</div>';
         }
 
@@ -17249,6 +17270,137 @@ async function viewArchivedRaffles(kind) {
     } catch (e) {
         const l = document.getElementById('archivedRafflesList');
         if (l) l.innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+// Modal "Sortear semana pasada": carga los pendientes de cargar ganador,
+// permite ingresar el número de Lotería para cada uno y dispara el batch.
+async function openBatchDrawModal(kind) {
+    const k = (kind === 'free') ? 'free' : 'paid';
+    const modalId = 'batchDrawModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML =
+        '<div style="background:#1a0033;border:1.5px solid #d4af37;border-radius:14px;padding:18px;max-width:820px;width:100%;color:#fff;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px;">' +
+                '<div><h3 style="margin:0;color:#ffd700;font-size:15px;">🎰 Sortear pendientes · ' + (k === 'free' ? 'gratis' : 'pagos') + '</h3>' +
+                '<div style="color:#aaa;font-size:11.5px;margin-top:3px;line-height:1.4;">Por cada sorteo, ingresá el número de Lotería ganador. Tildá <strong>Notificar</strong> para mandar push al ganador. Apretá <strong>🧪</strong> para mandar un push de prueba a un usuario antes de sortear.</div></div>' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>' +
+            '</div>' +
+            '<div id="batchDrawList" style="font-size:12px;"><div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div></div>' +
+            '<div id="batchDrawActions" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.10);text-align:right;">' +
+                '<button type="button" onclick="runBatchDraw()" style="background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:11px 22px;border-radius:8px;font-size:13.5px;font-weight:900;cursor:pointer;">🚀 Sortear TODOS los que tengan número</button>' +
+            '</div>' +
+            '<div id="batchDrawResult" style="margin-top:12px;"></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    try {
+        const r = await authFetch('/api/admin/raffles?include=history&kind=' + k);
+        if (!r.ok) { document.getElementById('batchDrawList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error cargando</div>'; return; }
+        const d = await r.json();
+        const pending = (d.raffles || []).filter(x =>
+            ['archived','drawn','active','closed'].includes(x.status) &&
+            !x.winnerUsername &&
+            (x.cuposSold || 0) > 0
+        );
+        const list = document.getElementById('batchDrawList');
+        if (pending.length === 0) {
+            list.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">No hay sorteos pendientes de cargar ganador.</div>';
+            return;
+        }
+        const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+        let html = '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:8px 11px;margin-bottom:10px;font-size:11.5px;color:#ddd;"><strong>' + pending.length + '</strong> sorteo(s) pendientes. Completá el número de Lotería en cada uno.</div>';
+        for (const r of pending) {
+            html += '<div data-rid="' + escapeHtml(r.id) + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:11px 12px;margin-bottom:8px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">';
+            html += '<div style="flex:1;min-width:180px;">';
+            html += '<div style="color:#fff;font-weight:700;font-size:13px;">' + escapeHtml((r.emoji||'🎯') + ' ' + r.name) + ' · #' + r.instanceNumber + '</div>';
+            html += '<div style="color:#aaa;font-size:11px;margin-top:2px;">Premio: ' + escapeHtml(fmtMoney(r.prizeValueARS)) + ' · Vendidos: ' + (r.cuposSold||0) + '/' + (r.totalTickets||100) + ' · Semana: ' + escapeHtml(r.weekKey || '—') + '</div>';
+            html += '</div></div>';
+            html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+            html += '<label style="color:#bbb;font-size:11px;">Nro Lotería:</label>';
+            html += '<input type="number" min="1" data-field="lottery" placeholder="ej: 1234" style="background:#0a0a0a;color:#ffd700;border:1.5px solid rgba(212,175,55,0.40);padding:7px 10px;border-radius:7px;font-size:14px;font-weight:800;font-family:monospace;width:110px;text-align:center;">';
+            html += '<label style="display:flex;align-items:center;gap:5px;color:#bbb;font-size:11.5px;cursor:pointer;"><input type="checkbox" data-field="notify" checked> 📲 Notificar</label>';
+            html += '<button type="button" onclick="testWinnerPush(\'' + escapeHtml(r.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 11px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;" title="Mandar push de prueba a un usuario">🧪 Test push</button>';
+            html += '</div>';
+            html += '</div>';
+        }
+        list.innerHTML = html;
+        document.getElementById('batchDrawActions').style.display = '';
+    } catch (e) {
+        document.getElementById('batchDrawList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+async function testWinnerPush(raffleId) {
+    const username = prompt('Usuario al que mandar el push de PRUEBA (ej: lalodj):', 'lalodj');
+    if (!username || !username.trim()) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/test-winner-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username.trim(), ticketNumber: 42 })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            alert('❌ No se envió: ' + (d.error || 'error'));
+            return;
+        }
+        alert('✅ Push de prueba enviado.\n\nDestinatarios: ' + d.sent + '\nFallidos: ' + (d.failed || 0) + '\n\n' + (d.diagnostic || ''));
+    } catch (e) {
+        alert('Error de conexión');
+    }
+}
+
+async function runBatchDraw() {
+    const items = document.querySelectorAll('#batchDrawList [data-rid]');
+    const draws = [];
+    items.forEach(el => {
+        const raffleId = el.getAttribute('data-rid');
+        const lotteryInput = el.querySelector('[data-field="lottery"]');
+        const notifyInput = el.querySelector('[data-field="notify"]');
+        const ln = parseInt((lotteryInput && lotteryInput.value) || '', 10);
+        if (Number.isFinite(ln) && ln >= 1) {
+            draws.push({ raffleId, lotteryNumber: ln, notifyWinner: !!(notifyInput && notifyInput.checked), notifyLosers: false });
+        }
+    });
+    if (draws.length === 0) { alert('Completá al menos un número de Lotería antes de sortear.'); return; }
+    if (!confirm('¿Sortear ' + draws.length + ' sorteo(s)?\n\nLos que tildaste "Notificar" van a recibir push al ganador. Los demás quedan sorteados pero sin notif.')) return;
+    const resultBox = document.getElementById('batchDrawResult');
+    resultBox.innerHTML = '<div style="color:#aaa;padding:12px;text-align:center;">⏳ Sorteando ' + draws.length + '…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/draw-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ draws })
+        });
+        const d = await r.json();
+        if (!r.ok) { resultBox.innerHTML = '<div style="color:#ff8080;padding:12px;">❌ ' + (d.error || 'Error') + '</div>'; return; }
+        let html = '';
+        if (d.drawn && d.drawn.length > 0) {
+            html += '<div style="background:rgba(102,255,102,0.08);border:1px solid rgba(102,255,102,0.40);border-radius:9px;padding:11px;margin-bottom:8px;">';
+            html += '<div style="color:#66ff66;font-weight:800;font-size:12px;margin-bottom:6px;">✅ ' + d.drawn.length + ' sorteo(s) cerrados</div>';
+            for (const x of d.drawn) {
+                html += '<div style="color:#fff;font-size:11.5px;padding:3px 0;">🏆 <strong>' + escapeHtml(x.name) + '</strong> · #' + x.ticket + ' → <strong>' + escapeHtml(x.winner) + '</strong>' + (x.autoCredited ? ' ✅ acreditado' : '') + (x.winnerPushed ? ' · 📲' : '') + '</div>';
+            }
+            html += '</div>';
+        }
+        if (d.failed && d.failed.length > 0) {
+            html += '<div style="background:rgba(255,128,128,0.08);border:1px solid rgba(255,128,128,0.40);border-radius:9px;padding:11px;">';
+            html += '<div style="color:#ff8080;font-weight:800;font-size:12px;margin-bottom:6px;">❌ ' + d.failed.length + ' fallaron</div>';
+            for (const x of d.failed) {
+                html += '<div style="color:#fff;font-size:11.5px;padding:3px 0;">· ' + escapeHtml(x.name || x.raffleId) + ': ' + escapeHtml(x.error) + '</div>';
+            }
+            html += '</div>';
+        }
+        resultBox.innerHTML = html;
+        loadRafflesAdmin();
+    } catch (e) {
+        resultBox.innerHTML = '<div style="color:#ff8080;padding:12px;">Error de conexión</div>';
     }
 }
 
