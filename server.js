@@ -22541,9 +22541,7 @@ function _buildWinnerPush(raffle, mappedNumber, opts) {
     : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
   const body = lightningForfeited
     ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS_LOCAL} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
-    : (prizeAutoCredited
-      ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
-      : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
+    : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá el botón de WhatsApp del agente para reclamar. Recordá: necesitás tener 5 cargas vigentes.`;
   const data = {
     source: (opts && opts.source) || (lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win'),
     raffleId: raffle.id,
@@ -22795,41 +22793,22 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
       }
     }
 
-    // === AUTO-CREDIT del premio al ganador ===
+    // === RECLAMO POR AGENTE (no auto-credit) ===
+    // Por decisión del dueño (2026-05): el ganador NO recibe el premio
+    // automático. Tiene que escribirle al agente por WhatsApp con el
+    // texto "Gané el sorteo semanal con mi número #N" y demostrar que
+    // tiene 5 cargas vigentes. El agente verifica y acredita desde el
+    // panel admin → "🏆 Reclamos ganadores" → "💰 Acreditar manual".
+    // Acá solo marcamos el sorteo como reclamable.
     let prizeAutoCredited = false;
     let autoCreditError = null;
     const prize = Number(raffle.prizeValueARS) || 0;
     if (prize > 0 && !lightningForfeited) {
-      try {
-        const credit = await jugaygana.creditUserBalance(winner.username, prize);
-        if (credit && credit.success) {
-          await Raffle.updateOne(
-            { id: raffle.id },
-            { $set: {
-              prizeClaimedAt: new Date(),
-              prizeClaimable: false,
-              prizeClaimTxId: (credit.transactionId || credit.transferId) || null
-            }}
-          );
-          prizeAutoCredited = true;
-          logger.info(`[raffles] AUTO-CREDIT OK ${winner.username} +$${prize} (${raffle.name})`);
-        } else {
-          // Credit fallo: marcar reclamable para que el user pueda intentar manualmente
-          autoCreditError = (credit && credit.error) || 'Error desconocido al acreditar';
-          await Raffle.updateOne(
-            { id: raffle.id },
-            { $set: { prizeClaimable: true } }
-          );
-          logger.error(`[raffles] AUTO-CREDIT FAIL ${winner.username} ${raffle.name}: ${autoCreditError} — marcado prizeClaimable para retry manual`);
-        }
-      } catch (e) {
-        autoCreditError = e.message;
-        await Raffle.updateOne(
-          { id: raffle.id },
-          { $set: { prizeClaimable: true } }
-        ).catch(() => {});
-        logger.error(`[raffles] AUTO-CREDIT EXC ${winner.username} ${raffle.name}: ${e.message}`);
-      }
+      await Raffle.updateOne(
+        { id: raffle.id },
+        { $set: { prizeClaimable: true } }
+      ).catch(() => {});
+      logger.info(`[raffles] WIN PENDING-AGENT: ${winner.username} +$${prize} (${raffle.name}) — esperando reclamo por wa.link`);
     }
 
     // Toggles de notificación del body (default: notificar al ganador, NO a

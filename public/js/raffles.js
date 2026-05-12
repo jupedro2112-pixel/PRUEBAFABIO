@@ -369,7 +369,8 @@ VIP.raffles = (function () {
         const bg = youWon ? 'rgba(102,255,102,0.08)' : 'rgba(255,255,255,0.03)';
         let right;
         if (youWon && claimable && !credited) {
-            right = '<button type="button" data-raffle-action="claim" data-raffle-id="' + _esc(r.id) + '" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:5px 10px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;letter-spacing:0.5px;">🎁 RECLAMAR $' + _fmt(r.prizeValueARS) + '</button>';
+            const _waHref = _winnerAgentHref(r.winningTicketNumber, r.name);
+            right = '<a href="' + _waHref + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="display:inline-block;text-decoration:none;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;padding:5px 10px;border-radius:6px;font-weight:900;font-size:11px;letter-spacing:0.5px;">💬 RECLAMAR POR WA · #' + (r.winningTicketNumber || '?') + '</a>';
         } else if (youWon && credited) {
             right = '<span style="color:#66ff66;font-size:11px;font-weight:800;">✅ Acreditado</span>';
         } else if (youWon) {
@@ -1425,17 +1426,38 @@ VIP.raffles = (function () {
         '</div>';
     }
 
+    // wa.link del agente para reclamar el premio. Texto prefilled: "Gané el
+    // sorteo semanal con mi número #N". El número va del winningTicketNumber.
+    // Toma el teléfono soporte de VIP.state.linePhone (mismo helper que el
+    // banner relámpago). Fallback: wa.link/metawin2026.
+    function _winnerAgentHref(ticketN, raffleName) {
+        const linePhone = (VIP && VIP.state && VIP.state.linePhone) || '';
+        const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
+        const msg = 'Gané el sorteo semanal con mi número #' + (ticketN || '') + (raffleName ? ' (' + raffleName + ')' : '');
+        const text = encodeURIComponent(msg);
+        if (waNum) return 'https://wa.me/' + waNum + '?text=' + text;
+        return 'https://wa.link/metawin2026?text=' + text;
+    }
+
     function _renderHomeWinnerMine(w) {
         const credited = !!w.prizeClaimedAt;
         const needsClaim = !credited && w.prizeClaimable;
         const ago = w.minutesAgo < 60 ? (w.minutesAgo + ' min') : (w.hoursAgo + ' h');
+        const waHref = _winnerAgentHref(w.winningTicketNumber, w.name);
         let body;
         if (credited) {
             body = '<div style="background:rgba(102,255,102,0.18);border:1px solid #66ff66;border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">✅ Premio acreditado a tu saldo · hace ' + ago + '</div>';
         } else if (needsClaim) {
-            body = '<button type="button" onclick="VIP.raffles && VIP.raffles.open()" style="width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;box-shadow:0 3px 10px rgba(255,215,0,0.40);">🎁 RECLAMAR $' + _fmt(w.prizeValueARS) + '</button>';
+            // CTA principal: WhatsApp al agente con texto prefilled
+            // "Gané el sorteo semanal con mi número #N".
+            body = '<a href="' + waHref + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="display:block;text-decoration:none;width:100%;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;text-align:center;padding:12px;border-radius:9px;font-weight:900;font-size:14px;letter-spacing:0.5px;box-shadow:0 3px 12px rgba(37,211,102,0.45);">' +
+                    '💬 RECLAMAR POR WHATSAPP — número #' + (w.winningTicketNumber || '?') +
+                '</a>' +
+                '<div style="background:rgba(255,170,102,0.12);border:1px dashed rgba(255,170,102,0.55);border-radius:8px;padding:7px 9px;margin-top:7px;font-size:11px;color:#ffd0a0;line-height:1.4;text-align:center;">' +
+                    '⚠️ Necesitás <strong style="color:#ffd700;">5 cargas vigentes</strong> para que te acreditemos el premio. El agente las verifica.' +
+                '</div>';
         } else {
-            body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Estamos acreditando tu premio…</div>';
+            body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Confirmá con el agente para acreditar tu premio.</div>';
         }
         // Countdown post-cobro: 30 min con timer mm:ss desde que cobro.
         let timer = '';
@@ -1443,7 +1465,7 @@ VIP.raffles = (function () {
             const expiresAt = Date.now() + w.secondsRemaining * 1000;
             timer = '<div data-claim-countdown="' + expiresAt + '" style="color:#fff;font-size:11px;text-align:center;margin-top:8px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.50);">⏱ Esta felicitación queda <span class="claim-countdown-text">30:00</span> más</div>';
         }
-        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
+        return '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🏆</div>' +
             '<div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎉 ¡FELICITACIONES, GANASTE!</div>' +
             '<div style="color:#fff;font-size:18px;font-weight:900;margin:4px 0 8px;">' + (w.emoji || '🏆') + ' ' + _esc(w.name) + ' — $' + _fmt(w.prizeValueARS) + '</div>' +
