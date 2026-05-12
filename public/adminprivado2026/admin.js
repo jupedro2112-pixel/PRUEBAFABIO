@@ -966,9 +966,96 @@ async function loadUserCommunities() {
         const def = document.getElementById('userCommunitiesDefaultLink');
         if (def) def.value = data.defaultLink || '';
         loadCommunityForceStatus();
+        loadCommunityLinkStats();
     } catch (err) {
         console.error('loadUserCommunities error:', err);
         renderUserCommunitiesSlots([]);
+    }
+}
+
+async function loadCommunityLinkStats() {
+    const box = document.getElementById('commClickStatsBody');
+    if (!box) return;
+    const daysEl = document.getElementById('commClickDays');
+    const days = parseInt((daysEl && daysEl.value) || '14', 10) || 14;
+    box.innerHTML = '<div style="color:#aaa;text-align:center;padding:14px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/community/link-stats?days=' + days);
+        const d = await r.json();
+        if (!r.ok || !d.success) { box.innerHTML = '<div style="color:#ff8080;padding:10px;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        const byDay = d.byDay || [];
+        const byTeam = d.byTeam || [];
+        const topUsers = d.topUsers || [];
+        const fmt = (n) => Number(n || 0).toLocaleString('es-AR');
+        let html = '';
+
+        // KPI total
+        html += '<div style="background:rgba(155,48,255,0.10);border:1px solid rgba(155,48,255,0.40);border-radius:10px;padding:11px;text-align:center;margin-bottom:14px;">';
+        html += '<div style="color:#c89bff;font-size:11px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;">Total clicks (últimos ' + days + ' días)</div>';
+        html += '<div style="color:#fff;font-size:28px;font-weight:900;margin-top:2px;">' + fmt(d.total) + '</div>';
+        html += '</div>';
+
+        if (d.total === 0) {
+            html += '<div style="color:#aaa;text-align:center;padding:14px;background:rgba(255,255,255,0.03);border-radius:8px;">Todavía nadie tocó el link en esta ventana de tiempo.</div>';
+            box.innerHTML = html;
+            return;
+        }
+
+        // Por equipo
+        if (byTeam.length > 0) {
+            html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">📊 Por equipo</h4>';
+            html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr style="background:rgba(155,48,255,0.08);color:#c89bff;text-align:left;">';
+            html += '<th style="padding:7px 10px;font-weight:800;">Equipo (prefix)</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Clicks</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Users únicos</th>';
+            html += '</tr></thead><tbody>';
+            for (const t of byTeam) {
+                html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+                html += '<td style="padding:6px 10px;color:#fff;font-weight:700;">' + escapeHtml(t.teamPrefix || '(sin prefijo)') + '</td>';
+                html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;font-weight:800;">' + fmt(t.clicks) + '</td>';
+                html += '<td style="padding:6px 10px;text-align:right;color:#aaffaa;">' + fmt(t.uniqueUsers) + '</td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+
+        // Por día
+        if (byDay.length > 0) {
+            html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">📅 Por día</h4>';
+            html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            html += '<thead><tr style="background:rgba(155,48,255,0.08);color:#c89bff;text-align:left;">';
+            html += '<th style="padding:7px 10px;font-weight:800;">Fecha</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Clicks</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Users únicos</th>';
+            html += '</tr></thead><tbody>';
+            for (const day of byDay) {
+                html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+                html += '<td style="padding:6px 10px;color:#fff;font-weight:700;">' + escapeHtml(day.dateKey || '?') + '</td>';
+                html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;font-weight:800;">' + fmt(day.clicks) + '</td>';
+                html += '<td style="padding:6px 10px;text-align:right;color:#aaffaa;">' + fmt(day.uniqueUsers) + '</td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+
+        // Top users
+        if (topUsers.length > 0) {
+            html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">⭐ Top 10 usuarios (más clicks)</h4>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+            for (let i = 0; i < topUsers.length; i++) {
+                const u = topUsers[i];
+                const medal = i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '⭐'));
+                html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(155,48,255,0.30);border-radius:6px;padding:5px 9px;font-size:11px;color:#fff;font-weight:700;">' + medal + ' @' + escapeHtml(u._id || '?') + ' <span style="color:#c89bff;">×' + u.clicks + '</span></div>';
+            }
+            html += '</div>';
+        }
+
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:10px;">Error: ' + escapeHtml(e.message || '') + '</div>';
     }
 }
 

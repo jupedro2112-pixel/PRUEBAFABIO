@@ -11183,6 +11183,111 @@ app.post(
   }
 );
 
+// ============================================================================
+// COMMUNITY LINK CLICK TRACKING — cuenta cuántos users tappean el link.
+// ============================================================================
+const CommunityLinkClick = require('./src/models/CommunityLinkClick');
+
+function _communityDateKeyART() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  });
+  return formatter.format(new Date());
+}
+
+// POST /api/community/link-click — user tappea el link. Fire and forget.
+app.post('/api/community/link-click', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = String(req.user.username || '').toLowerCase();
+    const source = String((req.body && req.body.source) || 'home_button').trim();
+    const communityLink = String((req.body && req.body.communityLink) || '').slice(0, 300).trim();
+    const validSources = ['home_button', 'modal_join', 'replacement'];
+    const safeSource = validSources.includes(source) ? source : 'home_button';
+    // Calculamos teamPrefix: el match más largo contra userCommunitiesByPrefix,
+    // o fallback a los 3 primeros chars.
+    let teamPrefix = '';
+    try {
+      const cfg = await getConfig('userCommunitiesByPrefix');
+      if (cfg && Array.isArray(cfg.slots)) {
+        let best = null;
+        for (const s of cfg.slots) {
+          if (!s || !s.prefix) continue;
+          const p = String(s.prefix).toLowerCase().trim();
+          if (username.startsWith(p) && (!best || p.length > best.length)) best = p;
+        }
+        if (best) teamPrefix = best;
+      }
+    } catch (_) {}
+    if (!teamPrefix) teamPrefix = username.slice(0, 3);
+
+    await CommunityLinkClick.create({
+      userId, username,
+      teamPrefix,
+      communityLink,
+      source: safeSource,
+      dateKey: _communityDateKeyART(),
+      clickedAt: new Date()
+    });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/community/link-click: ${err.message}`);
+    res.status(500).json({ error: 'Error' });
+  }
+});
+
+// GET /api/admin/community/link-stats — agregados por día + por equipo
+// + top users + total general.
+app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(60, Number(req.query.days) || 14));
+    const sinceDate = new Date(Date.now() - days * 24 * 3600 * 1000);
+
+    const [byDay, byTeam, byDayTeam, topUsers, total] = await Promise.all([
+      // Total clicks por día (últimos N días).
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate } } },
+        { $group: { _id: '$dateKey', clicks: { $sum: 1 }, uniqueUsers: { $addToSet: '$userId' } } },
+        { $project: { dateKey: '$_id', clicks: 1, uniqueUsers: { $size: '$uniqueUsers' } } },
+        { $sort: { dateKey: -1 } }
+      ]),
+      // Total clicks por equipo/prefijo.
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate } } },
+        { $group: { _id: '$teamPrefix', clicks: { $sum: 1 }, uniqueUsers: { $addToSet: '$userId' } } },
+        { $project: { teamPrefix: '$_id', clicks: 1, uniqueUsers: { $size: '$uniqueUsers' } } },
+        { $sort: { clicks: -1 } }
+      ]),
+      // Cruzado día x equipo (para tabla detallada).
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate } } },
+        { $group: { _id: { dateKey: '$dateKey', teamPrefix: '$teamPrefix' }, clicks: { $sum: 1 } } },
+        { $project: { dateKey: '$_id.dateKey', teamPrefix: '$_id.teamPrefix', clicks: 1, _id: 0 } },
+        { $sort: { dateKey: -1, clicks: -1 } }
+      ]),
+      // Top 10 users que más click hicieron.
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate } } },
+        { $group: { _id: '$username', clicks: { $sum: 1 }, lastClick: { $max: '$clickedAt' } } },
+        { $sort: { clicks: -1, lastClick: -1 } },
+        { $limit: 10 }
+      ]),
+      CommunityLinkClick.countDocuments({ clickedAt: { $gte: sinceDate } })
+    ]);
+
+    res.json({
+      success: true,
+      days,
+      total,
+      byDay, byTeam, byDayTeam, topUsers
+    });
+  } catch (err) {
+    logger.error(`/api/admin/community/link-stats: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /api/admin/community-alert/force — fuerza que la alerta "revisá
 // si estás unido a la comunidad" se muestre en la PWA sin respetar
 // cooldown durante N horas. Config key: communityAlertForceUntil.

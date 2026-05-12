@@ -370,6 +370,7 @@ VIP.auth = (function () {
                     .replace(/"/g, '&quot;');
                 communityEl.innerHTML =
                     '<a href="' + safeLink + '" target="_blank" rel="noopener noreferrer" ' +
+                      'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + safeLink + '\')" ' +
                       'aria-label="Abrir link de comunidad">' +
                         waIcon +
                         '<span>LINK COMUNIDAD</span>' +
@@ -624,6 +625,25 @@ VIP.auth = (function () {
     // Compara el número que devolvió el server con el que vimos por última
     // vez (localStorage). Si cambió, muestra el banner rojo grande para
     // que el usuario sepa que tiene que agendar el nuevo y borrar el viejo.
+    // Track clicks en el link de comunidad. Fire-and-forget — no bloquea
+    // la navegación al link. Backend agrega el click al CommunityLinkClick
+    // y lo agrega por día/equipo para el panel admin.
+    window.VIP = window.VIP || {};
+    VIP.communityClick = function (source, link) {
+        try {
+            if (!VIP.state || !VIP.state.currentToken) return;
+            fetch(`${VIP.config.API_URL}/api/community/link-click`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${VIP.state.currentToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ source: source || 'home_button', communityLink: link || VIP.state.communityLink || '' }),
+                keepalive: true
+            }).catch(() => {});
+        } catch (_) {}
+    };
+
     // Pinta/oculta el banner rojo "No te olvides de unirte" debajo del
     // bloque "Unite a la comunidad". Visible durante la ventana de 24hs
     // activada cuando admin manda push de comunidad por equipo (o desde
@@ -720,7 +740,11 @@ VIP.auth = (function () {
         document.body.appendChild(overlay);
         // El botón "ENTRAR" abre el link y a la vez marca como visto.
         const joinBtn = document.getElementById('commAlertJoinBtn');
-        if (joinBtn) joinBtn.addEventListener('click', dismiss);
+        if (joinBtn) joinBtn.addEventListener('click', () => {
+            // Track click vía endpoint dedicado.
+            try { VIP.communityClick(isDown ? 'replacement' : 'modal_join', tappedHref); } catch (_) {}
+            dismiss();
+        });
         const closeBtn = document.getElementById('commAlertCloseBtn');
         if (closeBtn) closeBtn.addEventListener('click', dismiss);
     }
