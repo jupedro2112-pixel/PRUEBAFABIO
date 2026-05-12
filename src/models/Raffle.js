@@ -155,6 +155,14 @@ const raffleSchema = new mongoose.Schema({
   prizeClaimLastError: { type: String, default: null, maxlength: 320 },
   prizeClaimLastAttemptAt: { type: Date, default: null },
 
+  // Cuando el admin marca un premio como "pagado por fuera" (efectivo /
+  // transfer manual / etc), seteamos prizeClaimedAt + estos flags. JUGAYGANA
+  // NO se toca. La PWA ve el premio como acreditado y no muestra el botón
+  // de reclamo — evita doble pago.
+  paidOutsideSystem: { type: Boolean, default: false, index: true },
+  paidOutsideNote: { type: String, default: null, maxlength: 320 },
+  paidOutsideBy: { type: String, default: null },
+
   // ===== Campos legacy (no se usan en el modelo nuevo, mantenidos para
   // compat con documentos antiguos). =====
   monthKey: { type: String, default: '', index: true },

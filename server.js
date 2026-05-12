@@ -22837,6 +22837,56 @@ app.get('/api/admin/raffles/winner-claims', authMiddleware, adminMiddleware, asy
   }
 });
 
+// POST /api/admin/raffles/:id/mark-paid-manual
+// El admin marca el premio como YA PAGADO POR FUERA (efectivo / transfer
+// manual / etc). NO toca JUGAYGANA. Solo bloquea el reclamo desde la PWA
+// para que no haya doble pago. Marca prizeClaimedAt + flag de auditoría
+// paidOutsideSystem y deja un note opcional.
+app.post('/api/admin/raffles/:id/mark-paid-manual', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const raffleId = req.params.id;
+    const note = String((req.body && req.body.note) || '').slice(0, 300).trim();
+    const raffle = await Raffle.findOne({ id: raffleId }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    if (raffle.status !== 'drawn') return res.status(400).json({ error: 'Este sorteo no está en drawn.' });
+    if (!raffle.winnerUsername) return res.status(400).json({ error: 'No tiene ganador.' });
+    if (raffle.prizeClaimedAt) {
+      return res.status(400).json({
+        error: 'Este premio ya estaba marcado como pagado.',
+        prizeClaimedAt: raffle.prizeClaimedAt
+      });
+    }
+
+    // Atomic guard: solo si todavía está claimable + sin claim previo.
+    const updated = await Raffle.findOneAndUpdate(
+      { id: raffleId, status: 'drawn', prizeClaimedAt: null },
+      { $set: {
+        prizeClaimedAt: new Date(),
+        prizeClaimable: false,
+        prizeClaimTxId: 'manual_offline:' + (req.user.username || 'admin'),
+        prizeClaimLastError: null,
+        paidOutsideSystem: true,
+        paidOutsideNote: note || null,
+        paidOutsideBy: req.user.username || null
+      }},
+      { new: true }
+    );
+    if (!updated) return res.status(409).json({ error: 'Race: el premio cambió antes del marcado.' });
+
+    logger.info(`[raffles] MARK PAID OFFLINE ${raffle.winnerUsername} ${raffle.name} prize=$${raffle.prizeValueARS} by=${req.user.username} note="${note}"`);
+    res.json({
+      success: true,
+      raffleId,
+      winnerUsername: raffle.winnerUsername,
+      prize: raffle.prizeValueARS || 0,
+      markedAt: updated.prizeClaimedAt
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/mark-paid-manual: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/:id/admin-credit-prize
 // Admin acredita manualmente el premio al ganador. Usa el mismo flujo que el
 // claim del user pero sin pasar por el frontend del ganador — útil cuando el

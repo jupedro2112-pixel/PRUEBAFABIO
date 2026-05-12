@@ -19054,6 +19054,7 @@ async function viewWinnerClaims() {
                     html += '<a href="https://wa.me/' + escapeHtml(cleanPhone) + '?text=' + waMsg + '" target="_blank" rel="noopener" style="display:inline-block;text-decoration:none;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11px;">💬 Contactar</a>';
                 }
                 html += '<button type="button" onclick="adminCreditPrize(\'' + escapeHtml(it.id) + '\', \'' + escapeHtml(it.winnerUsername) + '\', ' + it.prizeValueARS + ')" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Acreditar el premio manualmente al saldo del ganador">💰 Acreditar manual</button>';
+                html += '<button type="button" onclick="markPaidManual(\'' + escapeJsArg(it.id) + '\', \'' + escapeJsArg(it.winnerUsername) + '\', ' + it.prizeValueARS + ')" style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid rgba(102,255,102,0.55);padding:6px 10px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Marcar como ya pagado por fuera (cash/transfer manual). No toca JUGAYGANA — solo bloquea el reclamo en la PWA para evitar doble pago.">✅ Anotar pago externo</button>';
                 html += '<button type="button" onclick="resendWinnerPush(\'' + escapeHtml(it.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Reenviar push al ganador">📲 Reenviar push</button>';
                 html += '<button type="button" onclick="anularPremio(\'' + escapeJsArg(it.id) + '\', \'' + escapeJsArg(it.winnerUsername) + '\')" style="background:rgba(255,68,68,0.15);color:#ff8888;border:1px solid rgba(255,68,68,0.55);padding:6px 10px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Anular el premio por no cumplir requisitos (forfeit). Le desaparece el botón RECLAMAR y le llega push de aviso.">❌ Anular</button>';
             } else if (it.status === 'credited') {
@@ -19064,6 +19065,30 @@ async function viewWinnerClaims() {
         list.innerHTML = html;
     } catch (e) {
         document.getElementById('winnerClaimsList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+async function markPaidManual(raffleId, winnerUsername, prize) {
+    const note = prompt(
+        '✅ Marcar como YA PAGADO POR FUERA\n\n' +
+        '@' + winnerUsername + ' · $' + Number(prize || 0).toLocaleString('es-AR') + '\n\n' +
+        '⚠️ Esto NO acredita en JUGAYGANA. Solo bloquea el reclamo en la PWA para evitar doble pago.\n' +
+        'Usalo cuando YA le pagaste por fuera (efectivo / transfer manual).\n\n' +
+        'Nota interna (opcional):', '');
+    if (note === null) return; // cancelled
+    if (!confirm('¿Confirmás? El user va a ver el premio como "✅ Acreditado" en la PWA y NO va a poder reclamar.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/mark-paid-manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: note || '' })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Marcado como pagado por fuera', 'success');
+        viewWinnerClaims();
+    } catch (e) {
+        alert('Error: ' + (e.message || ''));
     }
 }
 
