@@ -17865,8 +17865,13 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, bulkLaunc
           { fcmToken: 1, fcmTokens: 1, username: 1 }
         ).lean();
         audienceTotal = targets.length;
-        const title = `🎁 Te regalamos $${a.toLocaleString('es-AR')}`;
-        const body = 'Entrá a la app y tocá "Reclamá $' + a.toLocaleString('es-AR') + ' aquí" antes de que se venza.';
+        const title = (emojiClean || '🎁') + ` Te regalamos $${a.toLocaleString('es-AR')}`;
+        // Si el admin escribió customMessage, lo usamos como body del push;
+        // si no, fallback al texto default. Así el push coincide con lo
+        // que el user ve dentro de la app.
+        const body = msgClean
+          ? msgClean + ' — Reclamá $' + a.toLocaleString('es-AR') + ' aquí'
+          : 'Entrá a la app y tocá "Reclamá $' + a.toLocaleString('es-AR') + ' aquí" antes de que se venza.';
         const sendPromises = [];
         for (const u of targets) {
           const tokens = [];
@@ -18850,8 +18855,8 @@ app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, b
       if (!isFinite(a) || a <= 0) return res.status(400).json({ error: 'Monto del regalo inválido' });
       if (!isFinite(bg) || bg < a) return res.status(400).json({ error: 'Tope de plata inválido' });
       if (!isFinite(mc) || mc < 1) return res.status(400).json({ error: 'Cantidad máxima inválida' });
-      if (!isFinite(d) || d < 10 || d > 60 || d % 10 !== 0) {
-        return res.status(400).json({ error: 'Duración de regalo inválida (10-60 min en bloques de 10)' });
+      if (!isFinite(d) || d < 10 || d > 360 || d % 10 !== 0) {
+        return res.status(400).json({ error: 'Duración de regalo inválida (10-360 min en bloques de 10)' });
       }
       // Mismos caps anti-fat-finger que el POST inmediato — ver comentario alla.
       if (a > GIVEAWAY_MAX_AMOUNT_PER_USER) {
@@ -18868,6 +18873,14 @@ app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, b
       doc.giveawayMaxClaims = mc;
       doc.giveawayDurationMinutes = d;
       doc.giveawayRequireZeroBalance = !!b.giveawayRequireZeroBalance;
+      // El BODY de la notif también se guarda para que en la app aparezca
+      // el mismo mensaje (pedido dueño 2026-05-12).
+      const giveawayMsgRaw = (b.giveawayCustomMessage != null) ? b.giveawayCustomMessage : b.body;
+      doc.giveawayCustomMessage = (giveawayMsgRaw && typeof giveawayMsgRaw === 'string')
+        ? String(giveawayMsgRaw).slice(0, 200).trim() || null
+        : null;
+      doc.giveawayCustomEmoji = (b.giveawayCustomEmoji && typeof b.giveawayCustomEmoji === 'string')
+        ? String(b.giveawayCustomEmoji).slice(0, 8) : '🎁';
     }
 
     const created = await ScheduledNotification.create(doc);
@@ -19101,6 +19114,10 @@ async function _executeScheduledNotification(sched) {
         prefix: null,
         notificationHistoryId: historyId,
         requireZeroBalance: !!sched.giveawayRequireZeroBalance,
+        // Propagamos el texto del push al card de la app (pedido dueño
+        // 2026-05-12: que cuando el user entre vea el mismo mensaje del push).
+        customMessage: sched.giveawayCustomMessage || null,
+        customEmoji: sched.giveawayCustomEmoji || '🎁',
         strategySource: 'individual_grant',
         audienceWhitelist: [targetUser],
         status: 'active'
@@ -19121,6 +19138,8 @@ async function _executeScheduledNotification(sched) {
         prefix: sched.audiencePrefix,
         notificationHistoryId: historyId,
         requireZeroBalance: !!sched.giveawayRequireZeroBalance,
+        customMessage: sched.giveawayCustomMessage || null,
+        customEmoji: sched.giveawayCustomEmoji || '🎁',
         strategySource: 'manual',
         status: 'active'
       });
@@ -22318,8 +22337,49 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
     // requisitos". Esto vale para TODOS los tipos de sorteo, no solo
     // relámpago (relámpago ya forfeitea en /draw — esto cubre los demás).
     const MIN_CARGAS_REQUIRED = 5;
-    let userCargasCount = 0;
-    try { userCargasCount = await _getLightningCargasCount(username, null); } catch (_) {}
+    // Llamamos directo a jugayganaMovements para poder distinguir entre
+    // "JUGAYGANA OK, 0 cargas" vs "JUGAYGANA falló — no podemos verificar".
+    // El helper _getLightningCargasCount swallowea errores y devuelve 0, lo
+    // cual antes hacía que un blip de red dejara el premio forfeit
+    // permanente. Acá: si JUGAYGANA no responde, devolvemos 503 "reintentá"
+    // sin tocar el sorteo. Si responde con éxito y hay < 5 cargas, forfeit.
+    let userCargasCount = null;
+    let jugayganaErr = null;
+    try {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const fmt = (d) => {
+        const dt = new Date(d);
+        return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+      };
+      const startMs = today.getTime() - 365 * 24 * 3600 * 1000;
+      const r = await jugayganaMovements.getUserMovements(username, {
+        startDate: fmt(startMs), endDate: `${yyyy}-${mm}-${dd}`, pageSize: 500
+      });
+      if (!r || !r.success) { jugayganaErr = (r && r.error) || 'unknown'; }
+      else {
+        let count = 0;
+        for (const m of (r.movements || [])) {
+          const type = String(m.type || m.operation || m.OperationType || m.Type || m.Operation || '').toLowerCase();
+          let amount = 0;
+          if (m.amount !== undefined) amount = parseFloat(m.amount);
+          else if (m.Amount !== undefined) amount = parseFloat(m.Amount);
+          const isDep = type.includes('deposit') || type.includes('credit') ||
+                        type.includes('carga') || type.includes('recarga') || amount > 0;
+          if (isDep) count++;
+        }
+        userCargasCount = count;
+      }
+    } catch (e) { jugayganaErr = e.message; }
+    if (jugayganaErr) {
+      logger.warn(`[raffles] CARGAS check transient fail ${username}: ${jugayganaErr} — devolviendo 503 sin forfeit`);
+      return res.status(503).json({
+        error: 'No pudimos verificar tus cargas en este momento. Probá de nuevo en un minuto.',
+        cargasCheckUnavailable: true
+      });
+    }
     if (userCargasCount < MIN_CARGAS_REQUIRED) {
       // Marcar el premio como forfeit + clear claimable así desaparece el
       // botón de la PWA. Atomic update: solo aplica si todavía está drawn

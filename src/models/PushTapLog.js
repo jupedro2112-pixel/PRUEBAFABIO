@@ -32,11 +32,12 @@ const tapSchema = new mongoose.Schema({
   ipAddress: { type: String, default: null }
 }, { timestamps: false });
 
-// Solo 1 tap por (user, source, giveawayId). Si el user toca el push 2
-// veces, solo cuenta el primer tap.
+// Solo 1 tap por (user, source, giveawayId, raffleId). Si el user toca el
+// mismo push 2 veces, solo cuenta el primer tap. Para pushes de sorteos
+// (giveawayId=null, raffleId=<id>) cada sorteo es independiente.
 tapSchema.index(
-  { userId: 1, source: 1, giveawayId: 1 },
-  { name: 'unique_user_source_giveaway', unique: true }
+  { userId: 1, source: 1, giveawayId: 1, raffleId: 1 },
+  { name: 'unique_user_source_giveaway_raffle', unique: true }
 );
 
 module.exports = mongoose.models['PushTapLog'] ||

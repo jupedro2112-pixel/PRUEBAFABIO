@@ -52,6 +52,10 @@ const scheduledNotificationSchema = new mongoose.Schema({
   giveawayBudget:           { type: Number, default: null },
   giveawayMaxClaims:        { type: Number, default: null },
   giveawayDurationMinutes:  { type: Number, default: null },
+  // Texto que se muestra en el card de la PWA del giveaway cuando el
+  // user entra a reclamar. Si null → fallback al texto genérico.
+  giveawayCustomMessage:    { type: String, default: null },
+  giveawayCustomEmoji:      { type: String, default: null },
   // Si está en true, el regalo creado por esta notif programada solo lo
   // pueden reclamar usuarios con saldo <= 0 en JUGAYGANA.
   giveawayRequireZeroBalance: { type: Boolean, default: false },
