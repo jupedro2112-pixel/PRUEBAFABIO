@@ -16455,31 +16455,155 @@ function _toggleParticipantPurchases(btn) {
     btn.textContent = isOpen ? '+' : '−';
 }
 
+// Modal de sorteo en 2 pasos:
+//   1. Admin entra el número de lotería → "Verificar ganador" llama a
+//      /preview-draw y muestra quién ganaría, su numero, sus tickets, el premio
+//      y el TEXTO EXACTO del push que va a recibir.
+//   2. Admin puede mandarse un push de prueba con ese mismo texto a cualquier
+//      usuario (default: el ganador previsto) antes de sortear de verdad.
+//   3. Recién entonces tocá "Sortear y notificar" para ejecutar el draw real.
 async function drawRaffle(id) {
     const r = (_rafflesAdminCache && _rafflesAdminCache.raffles || []).find(x => x.id === id);
     if (!r) return;
-    const lotteryNumberStr = prompt(
-        '🎟️ Sorteo de ' + r.name + '\n\n' +
-        'Entrá el NÚMERO que salió en el 1° premio de la Lotería Nacional Nocturna del lunes:'
-    );
-    if (lotteryNumberStr === null) return;
-    const lotteryNumber = parseInt(String(lotteryNumberStr).replace(/[^\d]/g, ''), 10);
+    document.getElementById('drawWizardModal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'drawWizardModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:34000;display:flex;align-items:center;justify-content:center;padding:14px;';
+    modal.innerHTML =
+        '<div style="background:linear-gradient(135deg,#1a0f00,#3a1f00);border:2px solid #d4af37;border-radius:14px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:18px;">' +
+        '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;">' +
+        '    <div style="color:#d4af37;font-size:16px;font-weight:900;">🎰 Sortear · ' + escapeHtml(r.name) + '</div>' +
+        '    <button type="button" onclick="document.getElementById(\'drawWizardModal\').remove()" style="background:transparent;color:#aaa;border:none;font-size:22px;cursor:pointer;">×</button>' +
+        '  </div>' +
+        '  <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.30);border-radius:9px;padding:10px;margin-bottom:12px;color:#ddd;font-size:12px;line-height:1.5;">' +
+        '    Premio: <strong style="color:#ffd700;">' + _fmtMoney(r.prizeValueARS) + '</strong> · Cupos: <strong>' + (r.cuposSold||0) + '/' + (r.totalTickets||100) + '</strong>' +
+        '  </div>' +
+        '  <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">' +
+        '    <label style="color:#aaa;font-size:11.5px;font-weight:800;letter-spacing:0.5px;">N° de Lotería Nacional Nocturna (1° premio):</label>' +
+        '    <input type="number" id="drawWiz_lottery" min="1" max="99999" placeholder="ej. 4267" style="background:rgba(0,0,0,0.40);border:1px solid #d4af3760;border-radius:7px;color:#ffd700;padding:8px 10px;font-size:14px;font-weight:800;width:130px;">' +
+        '    <input type="text" id="drawWiz_force" placeholder="(opcional) forzar usuario" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.20);border-radius:7px;color:#fff;padding:8px 10px;font-size:12px;flex:1;min-width:140px;">' +
+        '    <button type="button" onclick="previewDraw(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#4dabff,#0080ff);color:#fff;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🔍 Verificar ganador</button>' +
+        '  </div>' +
+        '  <div id="drawWiz_preview"></div>' +
+        '</div>';
+    modal.onclick = function (e) { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+    setTimeout(() => { try { document.getElementById('drawWiz_lottery').focus(); } catch (_) {} }, 60);
+}
+
+async function previewDraw(raffleId) {
+    const lotInput = document.getElementById('drawWiz_lottery');
+    const forceInput = document.getElementById('drawWiz_force');
+    const previewBox = document.getElementById('drawWiz_preview');
+    const lotteryNumber = parseInt((lotInput && lotInput.value) || '', 10);
     if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
-        showToast('Número de lotería inválido', 'error');
+        showToast('Entrá el número de lotería antes', 'error');
         return;
     }
-    const winnerUsername = (prompt('Usuario ganador (opcional — si lo dejás vacío, lo busca el sistema por el número):') || '').trim();
-    const lotteryDrawSource = (prompt('Descripción del sorteo (opcional):', 'Lotería Nacional Nocturna - 1° premio') || '').trim();
-    if (!confirm('¿Cargar ganador con número ' + lotteryNumber + (winnerUsername ? ' (forzado: ' + winnerUsername + ')' : '') + '?')) return;
+    const force = (forceInput && forceInput.value || '').trim();
+    previewBox.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">⏳ Calculando ganador…</div>';
     try {
-        const resp = await authFetch('/api/admin/raffles/' + id + '/draw', {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/preview-draw', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lotteryNumber, winnerUsername: force || undefined })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            previewBox.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        const w = d.winner || {};
+        const mapNote = d.wasMapped ? '<span style="color:#ffaa66;font-size:11px;"> (mapeado del ' + d.lotteryNumber + ')</span>' : '';
+        const lightningBlock = d.lightning
+            ? '<div style="background:' + (d.lightning.qualifies ? 'rgba(102,255,102,0.10)' : 'rgba(255,128,128,0.10)') + ';border:1px solid ' + (d.lightning.qualifies ? '#66ff66' : '#ff8080') + ';border-radius:7px;padding:8px;margin:8px 0;color:' + (d.lightning.qualifies ? '#66ff66' : '#ff8080') + ';font-size:12px;font-weight:800;">' +
+                (d.lightning.qualifies ? '✅' : '⚠️') + ' Cargas previas del ganador: ' + d.lightning.cargasCount + '/' + d.lightning.required +
+                (d.lightning.qualifies ? ' — califica para reclamar.' : ' — NO califica. El premio quedaría sin acreditar (forfeit).') +
+                '</div>'
+            : '';
+        let html = '<div style="background:rgba(0,255,0,0.06);border:2px solid #66ff66;border-radius:10px;padding:14px;margin-bottom:12px;">';
+        html += '<div style="color:#66ff66;font-size:12px;font-weight:800;letter-spacing:1px;margin-bottom:6px;">🏆 GANADOR PREVISTO</div>';
+        html += '<div style="color:#fff;font-size:18px;font-weight:900;margin-bottom:4px;">@' + escapeHtml(w.username) + '</div>';
+        html += '<div style="color:#ddd;font-size:13px;">Número ganador: <strong style="color:#ffd700;font-size:16px;">#' + d.mappedNumber + '</strong>' + mapNote + '</div>';
+        html += '<div style="color:#aaa;font-size:11.5px;margin-top:4px;">Tickets del usuario: ' + (w.ticketNumbers || []).map(n => '#' + n).join(', ') + ' · Pagó: ' + _fmtMoney(w.entryCostPaid || 0) + ' · Anotado: ' + (w.joinedAt ? new Date(w.joinedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—') + '</div>';
+        html += lightningBlock;
+        html += '</div>';
+
+        // Preview del PUSH exacto que va a recibir el ganador (acreditado automático)
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:12px;margin-bottom:12px;">';
+        html += '<div style="color:#00d4ff;font-size:11px;font-weight:800;letter-spacing:1px;margin-bottom:6px;">📲 EL GANADOR VA A RECIBIR ESTE PUSH</div>';
+        html += '<div style="background:rgba(255,255,255,0.05);border-radius:7px;padding:10px;margin-bottom:6px;">';
+        html += '<div style="color:#fff;font-weight:900;font-size:13px;margin-bottom:4px;">' + escapeHtml(d.previewPush.title) + '</div>';
+        html += '<div style="color:#ddd;font-size:12px;line-height:1.5;">' + escapeHtml(d.previewPush.body) + '</div>';
+        html += '</div>';
+        html += '<div style="color:#888;font-size:10.5px;">Variante si el auto-credit falla: <em>' + escapeHtml(d.previewPushManual.body) + '</em></div>';
+        html += '</div>';
+
+        // Bloque test push (con el TEXTO REAL del ganador)
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px dashed rgba(0,212,255,0.40);border-radius:9px;padding:10px;margin-bottom:12px;">';
+        html += '<div style="color:#00d4ff;font-size:11px;font-weight:800;margin-bottom:6px;">🧪 Probar el push antes de sortear (mismo texto que el real)</div>';
+        html += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+        html += '<input type="text" id="drawWiz_testUser" value="' + escapeHtml(w.username) + '" placeholder="usuario (ej. lalodj)" style="flex:1;min-width:140px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.20);border-radius:6px;color:#fff;padding:7px 9px;font-size:12px;">';
+        html += '<button type="button" onclick="sendTestWinnerPushPreview(\'' + escapeHtml(raffleId) + '\', ' + d.mappedNumber + ')" style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid #00d4ff;padding:7px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">📲 Enviar prueba</button>';
+        html += '</div>';
+        html += '<div id="drawWiz_testResult" style="margin-top:6px;font-size:11px;"></div>';
+        html += '</div>';
+
+        // Toggle notif perdedores
+        html += '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;color:#ddd;font-size:12px;">';
+        html += '<label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" id="drawWiz_notifyWinner" checked> Notificar al ganador</label>';
+        html += '<label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" id="drawWiz_notifyLosers"> Notificar a los demás participantes</label>';
+        html += '</div>';
+
+        // CTA final
+        html += '<button type="button" onclick="confirmDrawFinal(\'' + escapeHtml(raffleId) + '\', ' + d.lotteryNumber + ', ' + JSON.stringify(force).replace(/"/g, '&quot;') + ')" style="width:100%;background:linear-gradient(135deg,#d4af37,#f7931e);color:#1a0033;border:none;padding:12px;border-radius:9px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:1px;">✅ SORTEAR Y NOTIFICAR</button>';
+
+        previewBox.innerHTML = html;
+    } catch (e) {
+        previewBox.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">Error de conexión</div>';
+    }
+}
+
+async function sendTestWinnerPushPreview(raffleId, ticketNumber) {
+    const userInput = document.getElementById('drawWiz_testUser');
+    const resBox = document.getElementById('drawWiz_testResult');
+    const username = (userInput && userInput.value || '').trim();
+    if (!username) { resBox.innerHTML = '<span style="color:#ff8080;">Falta usuario</span>'; return; }
+    resBox.innerHTML = '<span style="color:#aaa;">⏳ Enviando…</span>';
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/test-winner-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, ticketNumber, autoCredited: true })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            resBox.innerHTML = '<span style="color:#ff8080;">❌ ' + escapeHtml(d.error || 'error') + '</span>';
+            return;
+        }
+        resBox.innerHTML = '<span style="color:#66ff66;">✅ Enviado a ' + escapeHtml(username) + ' · destinatarios: ' + (d.sent||0) + (d.failed ? ' · fallidos: ' + d.failed : '') + '</span>';
+    } catch (e) {
+        resBox.innerHTML = '<span style="color:#ff8080;">Error de conexión</span>';
+    }
+}
+
+async function confirmDrawFinal(raffleId, lotteryNumber, force) {
+    const notifyWinner = !!document.getElementById('drawWiz_notifyWinner')?.checked;
+    const notifyLosers = !!document.getElementById('drawWiz_notifyLosers')?.checked;
+    if (!confirm('¿Confirmás? Sortear ' + lotteryNumber + (force ? ' (forzado: ' + force + ')' : '') + '\n\n' +
+                 'Notificar ganador: ' + (notifyWinner ? 'SÍ' : 'NO') + '\n' +
+                 'Notificar perdedores: ' + (notifyLosers ? 'SÍ' : 'NO'))) return;
+    try {
+        const resp = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/draw', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 lotteryNumber,
-                winnerUsername: winnerUsername || undefined,
-                lotteryDrawSource,
-                lotteryDrawDate: new Date().toISOString()
+                winnerUsername: force || undefined,
+                lotteryDrawSource: 'Lotería Nacional Nocturna - 1° premio',
+                lotteryDrawDate: new Date().toISOString(),
+                notifyWinner,
+                notifyLosers
             })
         });
         const d = await resp.json();
@@ -16490,8 +16614,9 @@ async function drawRaffle(id) {
         msg += '📊 ' + d.totalCuposSold + ' cupos vendidos\n';
         msg += '💎 Premio: ' + _fmtMoney(d.prizeValueARS) + '\n';
         if (d.pushNotifications) msg += '\n📲 Push enviadas: ganador ' + (d.pushNotifications.winnerPushed||0) + ' · perdedores ' + (d.pushNotifications.losersPushed||0);
-        msg += '\n\nEl ganador verá un botón en la app para acreditar el premio a su saldo.';
+        msg += '\n\nEl ganador puede acreditar el premio a su saldo desde la app.';
         alert(msg);
+        document.getElementById('drawWizardModal')?.remove();
         loadRafflesAdmin();
     } catch (e) { showToast('Error de conexión', 'error'); }
 }
@@ -17342,20 +17467,25 @@ async function openBatchDrawModal(kind) {
 }
 
 async function testWinnerPush(raffleId) {
-    const username = prompt('Usuario al que mandar el push de PRUEBA (ej: lalodj):', 'lalodj');
+    const username = prompt('Usuario al que mandar el push de PRUEBA (ej: lalodj):\n\nVa a recibir el TEXTO EXACTO que recibe el ganador real.', 'lalodj');
     if (!username || !username.trim()) return;
     try {
         const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/test-winner-push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: username.trim(), ticketNumber: 42 })
+            body: JSON.stringify({ username: username.trim(), ticketNumber: 42, autoCredited: true })
         });
         const d = await r.json();
         if (!r.ok || !d.success) {
             alert('❌ No se envió: ' + (d.error || 'error'));
             return;
         }
-        alert('✅ Push de prueba enviado.\n\nDestinatarios: ' + d.sent + '\nFallidos: ' + (d.failed || 0) + '\n\n' + (d.diagnostic || ''));
+        let msg = '✅ Push enviado a ' + username + '\n\n';
+        msg += 'Destinatarios: ' + d.sent + '\nFallidos: ' + (d.failed || 0) + '\n\n';
+        if (d.previewTitle) msg += '📲 Title:\n' + d.previewTitle + '\n\n';
+        if (d.previewBody) msg += '📲 Body:\n' + d.previewBody + '\n\n';
+        msg += d.diagnostic || '';
+        alert(msg);
     } catch (e) {
         alert('Error de conexión');
     }

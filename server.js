@@ -22298,6 +22298,147 @@ app.get('/api/admin/master-analysis/:section', authMiddleware, adminMiddleware, 
   }
 });
 
+// Helper compartido: dado un raffle + estado del draw, devuelve {title, body, data}
+// EXACTAMENTE igual que la notificación que recibe el ganador real. Lo usan tanto
+// /draw (real) como /test-winner-push (test) — el dueño quiere ver el texto tal
+// cual lo va a leer el ganador, sin marcas "[TEST]" en el cuerpo. La señal de
+// "esto es un test" va solo en el campo `data.source` para tracking interno.
+function _buildWinnerPush(raffle, mappedNumber, opts) {
+  const prize = Number(raffle.prizeValueARS) || 0;
+  const prizeAutoCredited = !!(opts && opts.prizeAutoCredited);
+  const lightningForfeited = !!(opts && opts.lightningForfeited);
+  const lightningCargasCount = Number((opts && opts.lightningCargasCount) || 0);
+  const LIGHTNING_MIN_CARGAS_LOCAL = 5;
+  const title = lightningForfeited
+    ? '🎲 Salió tu número pero…'
+    : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
+  const body = lightningForfeited
+    ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS_LOCAL} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
+    : (prizeAutoCredited
+      ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
+      : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
+  const data = {
+    source: (opts && opts.source) || (lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win'),
+    raffleId: raffle.id,
+    isWinner: 'true',
+    autoCredited: prizeAutoCredited ? 'true' : 'false',
+    forfeited: lightningForfeited ? 'true' : 'false',
+    winningTicketNumber: String(mappedNumber)
+  };
+  return { title, body, data };
+}
+
+// Helper: dado un raffle y un lotteryNumber, devuelve el mapeo a número
+// vendido + el ganador (sin tocar state). Lo usan /preview-draw y el draw real.
+async function _computeRaffleDrawWinner(raffle, lotteryNumber, explicitWinner) {
+  const parts = await RaffleParticipation.find({ raffleId: raffle.id }).sort({ joinedAt: 1 }).lean();
+  let totalCuposSold = 0;
+  for (const p of parts) totalCuposSold += (p.cuposCount || 1);
+  if (totalCuposSold === 0) return { error: 'No hay cupos vendidos.' };
+  const soldNumbers = [];
+  for (const p of parts) {
+    if (Array.isArray(p.ticketNumbers)) for (const n of p.ticketNumbers) soldNumbers.push(Number(n));
+  }
+  soldNumbers.sort((a, b) => a - b);
+  if (soldNumbers.length === 0) return { error: 'No hay números asignados a participantes.' };
+
+  let mappedNumber;
+  let wasMapped;
+  if (soldNumbers.includes(lotteryNumber)) {
+    mappedNumber = lotteryNumber;
+    wasMapped = false;
+  } else {
+    const idx = ((lotteryNumber - 1) % soldNumbers.length + soldNumbers.length) % soldNumbers.length;
+    mappedNumber = soldNumbers[idx];
+    wasMapped = true;
+  }
+  let winner = parts.find(p => Array.isArray(p.ticketNumbers) && p.ticketNumbers.includes(mappedNumber));
+  if (explicitWinner) {
+    const found = parts.find(p => p.username.toLowerCase() === String(explicitWinner).toLowerCase());
+    if (!found) return { error: `El usuario "${explicitWinner}" no participa en este sorteo.` };
+    winner = found;
+    if (Array.isArray(found.ticketNumbers) && found.ticketNumbers.length > 0) {
+      mappedNumber = Number(found.ticketNumbers[0]);
+      wasMapped = (mappedNumber !== lotteryNumber);
+    }
+  }
+  if (!winner) return { error: `No se encontró ganador para el número ${mappedNumber}.` };
+  return { parts, totalCuposSold, soldNumbers, mappedNumber, wasMapped, winner };
+}
+
+// POST /api/admin/raffles/:id/preview-draw
+// MISMA lógica de mapping que /draw, pero NO modifica nada. Sirve para que el
+// admin escriba el número de lotería, vea quién ganaría, qué premio recibe, y
+// pueda mandarse un push de prueba con el TEXTO EXACTO antes de sortear de
+// verdad. Para relámpago también devuelve la elegibilidad de cargas previas.
+app.post('/api/admin/raffles/:id/preview-draw', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const raffle = await Raffle.findOne({ id: req.params.id }).lean();
+    if (!raffle) return res.status(404).json({ error: 'Sorteo no encontrado.' });
+    const lotteryNumber = parseInt(req.body && req.body.lotteryNumber, 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+      return res.status(400).json({ error: 'Falta lotteryNumber (entero ≥ 1).' });
+    }
+    const explicitWinner = String((req.body && req.body.winnerUsername) || '').trim();
+    const calc = await _computeRaffleDrawWinner(raffle, lotteryNumber, explicitWinner);
+    if (calc.error) return res.status(400).json({ error: calc.error });
+    const { winner, mappedNumber, wasMapped, totalCuposSold, soldNumbers } = calc;
+
+    // Lightning gate (solo informativo en preview — no marca forfeit).
+    const LIGHTNING_MIN_CARGAS_LOCAL = 5;
+    let lightning = null;
+    if (raffle.raffleType === 'relampago') {
+      const cargasCount = await _getLightningCargasCount(winner.username, Date.now()).catch(() => 0);
+      lightning = {
+        cargasCount,
+        required: LIGHTNING_MIN_CARGAS_LOCAL,
+        qualifies: cargasCount >= LIGHTNING_MIN_CARGAS_LOCAL
+      };
+    }
+
+    // Texto del push EXACTAMENTE como lo va a recibir el ganador. Asumimos
+    // auto-credit OK (caso más común) — en el draw real, si falla el credit
+    // se manda otro texto con "Reclamar premio". Mostramos AMBAS variantes
+    // para que el admin vea las dos posibilidades.
+    const previewPushOK = _buildWinnerPush(raffle, mappedNumber, {
+      prizeAutoCredited: true,
+      lightningForfeited: !!(lightning && !lightning.qualifies)
+    });
+    const previewPushManual = _buildWinnerPush(raffle, mappedNumber, {
+      prizeAutoCredited: false,
+      lightningForfeited: !!(lightning && !lightning.qualifies)
+    });
+
+    res.json({
+      success: true,
+      raffle: {
+        id: raffle.id, name: raffle.name, emoji: raffle.emoji,
+        prizeName: raffle.prizeName, prizeValueARS: raffle.prizeValueARS || 0,
+        raffleType: raffle.raffleType, status: raffle.status,
+        totalTickets: raffle.totalTickets, cuposSold: raffle._ticketCounter || 0
+      },
+      winner: {
+        username: winner.username,
+        ticketNumbers: (winner.ticketNumbers || []).slice().sort((a, b) => a - b),
+        joinedAt: winner.joinedAt || null,
+        cuposCount: winner.cuposCount || 0,
+        entryCostPaid: winner.entryCostPaid || 0
+      },
+      mappedNumber,
+      wasMapped,
+      lotteryNumber,
+      totalCuposSold,
+      soldNumbers,
+      lightning,
+      previewPush: previewPushOK,
+      previewPushManual
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/:id/preview-draw: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/:id/draw
 // El admin carga (a) lotteryNumber: numero crudo de la Loteria Nacional
 // Nocturna (1er premio); el sistema mapea por modulo si el cupo esta
@@ -22472,26 +22613,16 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     let winnerPushed = 0, losersPushed = 0;
     if (notifyWinner) {
       try {
-        const winTitle = lightningForfeited
-          ? '🎲 Salió tu número pero…'
-          : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
-        const winBody = lightningForfeited
-          ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
-          : (prizeAutoCredited
-            ? `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')} y ya te lo acreditamos. Entrá a la app a ver tu felicitación 🎉 (queda 24hs)`
-            : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio" para acreditarlo a tu saldo.`);
+        const wp = _buildWinnerPush(raffle, mappedNumber, {
+          prizeAutoCredited,
+          lightningForfeited,
+          lightningCargasCount
+        });
         const winRes = await sendNotificationToAllUsers(
           User,
-          winTitle,
-          winBody,
-          {
-            source: lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win',
-            raffleId: raffle.id,
-            isWinner: 'true',
-            autoCredited: prizeAutoCredited ? 'true' : 'false',
-            forfeited: lightningForfeited ? 'true' : 'false',
-            winningTicketNumber: String(mappedNumber)
-          },
+          wp.title,
+          wp.body,
+          wp.data,
           { username: { $regex: '^' + String(winner.username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
         );
         winnerPushed = (winRes && winRes.successCount) || 0;
@@ -22701,8 +22832,12 @@ app.post('/api/admin/raffles/:id/reopen', authMiddleware, superAdminMiddleware, 
 
 // POST /api/admin/raffles/:id/test-winner-push
 // Manda el push de "GANASTE" a un username de prueba (ej. lalodj) SIN
-// hacer draw ni modificar el sorteo. Sirve para verificar que el push
-// llega antes de sortear de verdad. NO afecta status, NO acredita premio.
+// hacer draw ni modificar el sorteo. Sirve para verificar que el push llega
+// antes de sortear de verdad — y para que el admin vea EL TEXTO TAL CUAL lo
+// recibe el ganador. Por eso usa _buildWinnerPush (mismo title/body que /draw).
+// La única diferencia con el real va en data.source ('raffle-win-test') para
+// que el cliente pueda omitir flujos de claim si quisiera. NO afecta status,
+// NO acredita premio.
 app.post('/api/admin/raffles/:id/test-winner-push', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const raffle = await Raffle.findOne({ id: req.params.id }).lean();
@@ -22710,14 +22845,19 @@ app.post('/api/admin/raffles/:id/test-winner-push', authMiddleware, adminMiddlew
     const testUsername = String((req.body && req.body.username) || '').trim();
     if (!testUsername) return res.status(400).json({ error: 'Falta username' });
     const testTicket = parseInt((req.body && req.body.ticketNumber) || 42, 10) || 42;
-    const prize = Number(raffle.prizeValueARS) || 0;
-    const title = '🧪 [TEST] 🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
-    const body = `TEST: ¡Salió tu número #${testTicket}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá "Reclamar premio".`;
+    // Mismo helper que el /draw real. Default: simulamos auto-credit OK
+    // (es el caso más común que ve el ganador). El admin puede pasar
+    // `autoCredited=false` para previsualizar la variante con "Reclamar premio".
+    const autoCredited = (req.body && req.body.autoCredited) !== false;
+    const wp = _buildWinnerPush(raffle, testTicket, {
+      prizeAutoCredited: autoCredited,
+      lightningForfeited: false,
+      source: 'raffle-win-test'
+    });
     try {
       const res2 = await sendNotificationToAllUsers(
         User,
-        title, body,
-        { source: 'raffle-win-test', raffleId: raffle.id, isWinner: 'true', winningTicketNumber: String(testTicket) },
+        wp.title, wp.body, wp.data,
         { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
       );
       logger.info(`[raffles] TEST push winner a ${testUsername} (${raffle.name}) success=${res2 && res2.successCount}`);
@@ -22725,7 +22865,9 @@ app.post('/api/admin/raffles/:id/test-winner-push', authMiddleware, adminMiddlew
         success: true,
         sent: (res2 && res2.successCount) || 0,
         failed: (res2 && res2.failureCount) || 0,
-        diagnostic: `Push de prueba enviado a ${testUsername}. Si no le llega: verificar que tenga PWA standalone instalada con notifs aceptadas.`
+        previewTitle: wp.title,
+        previewBody: wp.body,
+        diagnostic: `Push enviado a ${testUsername} con el TEXTO EXACTO que recibe el ganador. Si no le llega: verificar PWA standalone instalada con notifs aceptadas.`
       });
     } catch (e) {
       return res.json({ success: false, error: e.message });
