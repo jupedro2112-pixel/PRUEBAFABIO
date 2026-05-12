@@ -19852,23 +19852,42 @@ const LIGHTNING_RAFFLE_CONFIG = {
 // el user abre el modal: si tuvo >= minCargasARS de cargas en los ultimos
 // 30 dias y todavia hay cupo (1 numero por persona, 100 personas tope),
 // se le asigna automaticamente un numero secuencial. Mismo draw que paid.
-// FREE_RAFFLE_TYPES — sorteos gratis por NETWIN.
-// El user entra si perdió >= minNetLossARS en la última semana (cargas −
-// retiros > threshold). minCargasARS queda como legacy (se ignora cuando
-// minNetLossARS está seteado en el raffle). El user elige a qué nivel(es)
-// reclamar entre los que califica.
+// FREE_RAFFLE_TYPES — sorteos gratis (gate por CARGAS o NETWIN).
+// Cada entry define cómo se entra (minCargasARS o minNetLossARS) y cuántas
+// instancias activas simultáneas se mantienen (`parallelInstances`). Cuando
+// una instancia se llena, el seed crea otra hasta llegar a `parallelInstances`.
+//
+// Estructura ACTUAL (definida por el dueño 2026-05):
+//   • Por CARGAS: 1× $1M, 1× $500K, 5× $100K  (entra si cargó >= threshold)
+//   • Por NETWIN: 1× $500K, 5× $100K          (entra si perdió >= threshold)
+//
+// IMPORTANTE: los tipos legacy 'free_p2m'/'free_p1m'/'free_p500'/'free_p100'
+// quedan en el enum de Raffle.js para que las instancias activas existentes
+// no rompan validación, pero ya NO se respawnean (no figuran acá). Cuando
+// el admin las sortee, no spawnea otra del mismo tipo legacy — empieza a
+// spawnear las nuevas (free_*_cargas / free_*_netwin).
 const FREE_RAFFLE_TYPES = [
-  { type: 'free_p2m',  prize: 2000000, totalTickets: 100, minNetLossARS: 200000, minCargasARS: 200000, emoji: '👑',
-    name: 'Sorteo Gratis $2.000.000', prizeName: '$2.000.000 en saldo' },
-  { type: 'free_p1m',  prize: 1000000, totalTickets: 100, minNetLossARS: 100000, minCargasARS: 100000, emoji: '💎',
-    name: 'Sorteo Gratis $1.000.000', prizeName: '$1.000.000 en saldo' },
-  { type: 'free_p500', prize: 500000,  totalTickets: 100, minNetLossARS:  50000, minCargasARS: 100000, emoji: '💰',
-    name: 'Sorteo Gratis $500.000',   prizeName: '$500.000 en saldo' },
-  { type: 'free_p100', prize: 100000,  totalTickets: 100, minNetLossARS:  20000, minCargasARS:  50000, emoji: '🎯',
-    name: 'Sorteo Gratis $100.000',   prizeName: '$100.000 en saldo' }
+  // === Por CARGAS ===
+  { type: 'free_1m_cargas',   prize: 1000000, totalTickets: 100, minCargasARS: 100000, minNetLossARS: 0, parallelInstances: 1, emoji: '👑',
+    name: 'Sorteo $1.000.000', prizeName: '$1.000.000 en saldo' },
+  { type: 'free_500k_cargas', prize:  500000, totalTickets: 100, minCargasARS:  50000, minNetLossARS: 0, parallelInstances: 1, emoji: '💎',
+    name: 'Sorteo $500.000',   prizeName: '$500.000 en saldo' },
+  { type: 'free_100k_cargas', prize:  100000, totalTickets: 100, minCargasARS:  20000, minNetLossARS: 0, parallelInstances: 5, emoji: '🎯',
+    name: 'Sorteo $100.000',   prizeName: '$100.000 en saldo' },
+  // === Por NETWIN ===
+  { type: 'free_500k_netwin', prize:  500000, totalTickets: 100, minCargasARS: 0, minNetLossARS:  50000, parallelInstances: 1, emoji: '💰',
+    name: 'Sorteo NETWIN $500.000', prizeName: '$500.000 en saldo' },
+  { type: 'free_100k_netwin', prize:  100000, totalTickets: 100, minCargasARS: 0, minNetLossARS:  20000, parallelInstances: 5, emoji: '🎁',
+    name: 'Sorteo NETWIN $100.000', prizeName: '$100.000 en saldo' }
 ];
 
-const FREE_RAFFLE_TYPE_SET = new Set(FREE_RAFFLE_TYPES.map(t => t.type));
+// Incluye también los tipos legacy (todavía activos hasta que el admin los
+// sortee) — para que código que valida "es un free raffle?" siga
+// reconociéndolos. Los nuevos respawnean acá.
+const FREE_RAFFLE_TYPE_SET = new Set([
+  ...FREE_RAFFLE_TYPES.map(t => t.type),
+  'free_p2m', 'free_p1m', 'free_p500', 'free_p100'
+]);
 
 const RAFFLE_LOTTERY_RULE = '1° premio de la Lotería Nacional Nocturna del lunes próximo. Resultado oficial publicado por Lotería Nacional — verificable. Si el número sale fuera del rango vendido, se cicla al rango vendido por módulo.';
 
@@ -20165,39 +20184,57 @@ async function _spawnRaffleInstance(typeCfg, instanceNumber) {
 async function _ensureActiveRafflesSeeded() {
   // POLITICA: solo se seedean sorteos GRATIS. Los pagos activos se dejan
   // correr hasta sortearse; cuando se llenan, no se respawnean (ver el
-  // bloque de cupo lleno en /buy). Los proximos sorteos van a ser todos
-  // gratis (luego: por netwin).
+  // bloque de cupo lleno en /buy). Los free se respawnean según
+  // `parallelInstances` (cuántos activos del mismo tipo se mantienen).
   const allTypes = [...FREE_RAFFLE_TYPES];
   for (const cfg of allTypes) {
     try {
-      const existing = await Raffle.findOne(
-        { raffleType: cfg.type, status: 'active' },
-        { id: 1, drawDate: 1, name: 1 }
-      ).lean();
+      const target = Math.max(1, Number(cfg.parallelInstances) || 1);
 
-      // Auto-fix: si el sorteo activo tiene drawDate en el pasado (cron del
-      // martes no corrio o boot tardio), lo cerramos y dejamos que se cree
-      // uno nuevo abajo. Sin esto el cutoff de 3hs pre-draw bloquea las
-      // compras y el usuario ve "Este sorteo cerro las ventas".
-      if (existing) {
-        if (existing.drawDate && new Date(existing.drawDate).getTime() < Date.now()) {
-          await Raffle.updateOne(
-            { id: existing.id, status: 'active' },
-            { $set: { status: 'closed' } }
-          );
-          logger.warn(`[raffles] auto-rotate stale ${cfg.type} (drawDate paso): ${existing.name}`);
-        } else {
-          continue;
-        }
+      // Auto-rotate: cualquier activo con drawDate en el pasado se cierra
+      // para que arranque uno nuevo (cutoff de 3hs pre-draw no bloquee).
+      const stale = await Raffle.find(
+        { raffleType: cfg.type, status: 'active', drawDate: { $lt: new Date() } },
+        { id: 1, name: 1 }
+      ).lean();
+      for (const s of stale) {
+        await Raffle.updateOne({ id: s.id, status: 'active' }, { $set: { status: 'closed' } });
+        logger.warn(`[raffles] auto-rotate stale ${cfg.type} (drawDate pasó): ${s.name}`);
       }
+
+      // Conteo de activos. Si tenemos menos que target, creamos los faltantes.
+      const activeCount = await Raffle.countDocuments({ raffleType: cfg.type, status: 'active' });
+      const missing = target - activeCount;
+      if (missing <= 0) continue;
 
       const last = await Raffle.findOne(
         { raffleType: cfg.type },
         { instanceNumber: 1 }
       ).sort({ instanceNumber: -1 }).lean();
-      const next = ((last && last.instanceNumber) || 0) + 1;
-      await _spawnRaffleInstance(cfg, next);
-      logger.info(`[raffles] seed ${cfg.type} #${next}`);
+      let next = ((last && last.instanceNumber) || 0) + 1;
+      for (let i = 0; i < missing; i++) {
+        try {
+          await _spawnRaffleInstance(cfg, next);
+          logger.info(`[raffles] seed ${cfg.type} #${next} (target=${target}, activos+=${i + 1}/${missing})`);
+        } catch (spawnErr) {
+          // Si choca con el índice viejo (todavía no se dropeó), lo dropeamos
+          // y reintentamos una vez. Después de la primera vez ya no entra acá.
+          if (String(spawnErr.message || '').includes('duplicate key')) {
+            try {
+              await Raffle.collection.dropIndex('unique_active_per_type');
+              logger.warn(`[raffles] dropé índice viejo unique_active_per_type — reintentando spawn`);
+              await _spawnRaffleInstance(cfg, next);
+            } catch (retryErr) {
+              logger.warn(`[raffles] seed retry ${cfg.type} #${next}: ${retryErr.message}`);
+              break;
+            }
+          } else {
+            logger.warn(`[raffles] seed ${cfg.type} #${next}: ${spawnErr.message}`);
+            break;
+          }
+        }
+        next++;
+      }
     } catch (e) {
       logger.warn(`[raffles] seed ${cfg.type}: ${e.message}`);
     }
@@ -20207,40 +20244,22 @@ async function _ensureActiveRafflesSeeded() {
 // Boot: 5s después arranca el seed para tener los 4 sorteos activos.
 setTimeout(() => { _ensureActiveRafflesSeeded().catch(() => {}); }, 5000);
 
-// Boot: auto-migración a NETWIN — para sorteos GRATIS activos que se crearon
-// con gate por cargas (sin minNetLossARS), inyectar el threshold de netwin
-// que define el config. Idempotente: si ya tienen minNetLossARS > 0, no toca.
-// Esto evita que el owner tenga que apretar el botón "🔁 Migrar a NETWIN" a
-// mano cada vez que despliega un sorteo viejo siga corriendo con gate antiguo.
+// Boot: drop one-time del índice viejo `unique_active_per_type`. La estructura
+// nueva permite N instancias activas por tipo (parallelInstances), así que el
+// índice unique partial bloquea el seed. Idempotente — si ya está borrado,
+// captura el error y sigue.
 setTimeout(async () => {
   try {
-    const freeTypes = FREE_RAFFLE_TYPES.map(t => t.type);
-    const candidates = await Raffle.find(
-      {
-        raffleType: { $in: freeTypes },
-        status: { $in: ['active', 'closed'] },
-        $or: [{ minNetLossARS: { $exists: false } }, { minNetLossARS: 0 }, { minNetLossARS: null }]
-      },
-      { id: 1, name: 1, raffleType: 1 }
-    ).lean();
-    if (candidates.length === 0) return;
-    let migrated = 0;
-    for (const r of candidates) {
-      const cfg = FREE_RAFFLE_TYPES.find(t => t.type === r.raffleType);
-      if (!cfg || !(cfg.minNetLossARS > 0)) continue;
-      const newDesc = `Sorteo GRATIS por NETWIN. Si perdiste $${cfg.minNetLossARS.toLocaleString('es-AR')} esta semana, podés reclamar tu número. ${cfg.totalTickets} cupos, 1 número por persona.`;
-      await Raffle.updateOne(
-        { id: r.id },
-        { $set: { minNetLossARS: cfg.minNetLossARS, description: newDesc } }
-      );
-      migrated++;
-      logger.info(`[raffles] auto-migrate-netwin ${r.name} -> minNetLossARS=$${cfg.minNetLossARS}`);
-    }
-    if (migrated > 0) logger.info(`[raffles] boot auto-migrate-netwin: ${migrated} sorteo(s) actualizados a netwin`);
+    await Raffle.collection.dropIndex('unique_active_per_type');
+    logger.info('[raffles] boot: índice unique_active_per_type borrado (soporta parallelInstances)');
   } catch (e) {
-    logger.warn(`[raffles] boot auto-migrate-netwin fail: ${e.message}`);
+    if (String(e.message || '').includes('index not found') || String(e.codeName || '') === 'IndexNotFound') {
+      // ya estaba borrado
+    } else {
+      logger.warn(`[raffles] boot dropIndex fail: ${e.message}`);
+    }
   }
-}, 8000);
+}, 4000);
 
 // =============================
 // AUTO-ENROLLMENT EN FREE RAFFLES (DESHABILITADO)
@@ -23105,41 +23124,72 @@ app.post('/api/admin/raffles/draw-batch', authMiddleware, superAdminMiddleware, 
   }
 });
 
-// POST /api/admin/raffles/migrate-free-to-netwin
-// One-shot migración: setea minNetLossARS en los sorteos free actualmente
-// activos para que la gate pase a ser por NETWIN (pérdida neta semanal) en
-// vez de cargas brutas. No toca a los participantes ya enrolados — solo
-// cambia la regla de admisión para nuevos. Idempotente: si ya tiene
-// minNetLossARS > 0, lo saltea.
-app.post('/api/admin/raffles/migrate-free-to-netwin', authMiddleware, superAdminMiddleware, async (req, res) => {
+// POST /api/admin/raffles/apply-new-structure
+// One-shot: aplica el downgrade de premios sobre los sorteos free ACTIVOS
+// que están en los tipos legacy (free_p2m / free_p1m / free_p500 / free_p100)
+// según el mapeo:
+//    free_p2m  ($2M)  → $1M  (gate por cargas, threshold $100k)
+//    free_p1m  ($1M)  → $500K (gate por cargas, threshold $50k)
+//    free_p500 ($500K)→ $100K (gate por cargas, threshold $20k)
+//    free_p100 ($100K)→ $100K (gate por cargas, threshold $20k)
+//
+// No toca participantes ya enrolados — solo baja prizeValueARS, name,
+// description, prizeName y setea gate por cargas. Cuando el admin sortee
+// estos, NO se respawnea otro del mismo tipo legacy (porque ya no están en
+// FREE_RAFFLE_TYPES). El seed nuevo arranca con la estructura nueva
+// (free_1m_cargas/free_500k_cargas/free_100k_cargas + netwin variants).
+//
+// Idempotente: si ya está aplicado el nuevo prize, lo saltea.
+app.post('/api/admin/raffles/apply-new-structure', authMiddleware, superAdminMiddleware, async (req, res) => {
   try {
-    const freeTypes = FREE_RAFFLE_TYPES.map(t => t.type);
+    const downgradeMap = {
+      free_p2m:  { prize: 1000000, minCargas: 100000, name: 'Sorteo $1.000.000',  prizeName: '$1.000.000 en saldo', emoji: '👑' },
+      free_p1m:  { prize:  500000, minCargas:  50000, name: 'Sorteo $500.000',    prizeName: '$500.000 en saldo',   emoji: '💎' },
+      free_p500: { prize:  100000, minCargas:  20000, name: 'Sorteo $100.000',    prizeName: '$100.000 en saldo',   emoji: '🎯' },
+      free_p100: { prize:  100000, minCargas:  20000, name: 'Sorteo $100.000',    prizeName: '$100.000 en saldo',   emoji: '🎯' }
+    };
+    const legacyTypes = Object.keys(downgradeMap);
     const actives = await Raffle.find(
       {
-        raffleType: { $in: freeTypes },
+        raffleType: { $in: legacyTypes },
         status: { $in: ['active', 'closed'] }
       },
-      { id: 1, name: 1, raffleType: 1, minNetLossARS: 1, minCargasARS: 1 }
+      { id: 1, name: 1, raffleType: 1, prizeValueARS: 1, instanceNumber: 1 }
     ).lean();
-    let migrated = 0;
+
+    let downgraded = 0;
     let skipped = 0;
     const log = [];
     for (const r of actives) {
-      if ((r.minNetLossARS || 0) > 0) { skipped++; continue; }
-      const cfg = FREE_RAFFLE_TYPES.find(t => t.type === r.raffleType);
-      if (!cfg || !(cfg.minNetLossARS > 0)) { skipped++; continue; }
-      const newDesc = `Sorteo GRATIS por NETWIN. Si perdiste $${cfg.minNetLossARS.toLocaleString('es-AR')} esta semana, podés reclamar tu número. ${cfg.totalTickets} cupos, 1 número por persona.`;
+      const target = downgradeMap[r.raffleType];
+      if (!target) { skipped++; continue; }
+      if ((r.prizeValueARS || 0) === target.prize) { skipped++; continue; }
+      const newDesc = `Sorteo GRATIS por CARGAS. Si en la semana cargaste $${target.minCargas.toLocaleString('es-AR')} o más, te anotamos. 100 cupos, 1 número por persona.`;
+      const newName = target.name + ' #' + (r.instanceNumber || 1);
       await Raffle.updateOne(
         { id: r.id },
-        { $set: { minNetLossARS: cfg.minNetLossARS, description: newDesc } }
+        { $set: {
+            prizeValueARS: target.prize,
+            prizeName: target.prizeName,
+            name: newName,
+            description: newDesc,
+            emoji: target.emoji,
+            minCargasARS: target.minCargas,
+            minNetLossARS: 0  // legacy va por CARGAS, no por netwin
+          }}
       );
-      migrated++;
-      log.push({ id: r.id, name: r.name, newNetLoss: cfg.minNetLossARS });
+      downgraded++;
+      log.push({ id: r.id, oldType: r.raffleType, oldPrize: r.prizeValueARS, newPrize: target.prize, newName });
+      logger.info(`[raffles] apply-new-structure ${r.name} ($${r.prizeValueARS} -> $${target.prize}) [${r.raffleType}]`);
     }
-    logger.info(`[raffles] migrate-free-to-netwin migrated=${migrated} skipped=${skipped}`);
-    res.json({ success: true, migrated, skipped, raffles: log });
+
+    // Después del downgrade, asegurar que el seed corra para crear los
+    // tipos nuevos faltantes (free_1m_cargas, free_500k_cargas, etc.).
+    try { await _ensureActiveRafflesSeeded(); } catch (_) {}
+
+    res.json({ success: true, downgraded, skipped, raffles: log });
   } catch (err) {
-    logger.error(`/api/admin/raffles/migrate-free-to-netwin: ${err.message}`);
+    logger.error(`/api/admin/raffles/apply-new-structure: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

@@ -17361,7 +17361,7 @@ async function viewArchivedRaffles(kind) {
             summary += '<button type="button" onclick="openBatchDrawModal(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">🎰 Sortear semana pasada</button>';
             summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Solo reabrir sin cargar ganador">♻️ Solo reabrir</button>';
             if (k === 'free') {
-                summary += '<button type="button" onclick="migrateFreeRafflesToNetwin()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Pasar de gate por cargas a gate por NETWIN">🔁 Migrar a NETWIN</button>';
+                summary += '<button type="button" onclick="applyNewRaffleStructure()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:8px 12px;border-radius:7px;font-weight:700;font-size:11.5px;cursor:pointer;white-space:nowrap;" title="Bajar premios al esquema nuevo (2M→1M, 1M→500K, 500K→100K) y arrancar estructura nueva">💰 Aplicar estructura nueva</button>';
             }
             summary += '</div>';
             summary += '</div>';
@@ -17633,16 +17633,33 @@ async function runBatchDraw() {
     }
 }
 
-async function migrateFreeRafflesToNetwin() {
-    if (!confirm('¿Migrar los sorteos GRATIS activos a modo NETWIN?\n\nLa regla pasa de "mínimo de cargas" a "perdiste $X en la semana → tenés número".\n\nLos participantes ya enrolados conservan su número. Solo cambia la regla para nuevos.')) return;
+async function applyNewRaffleStructure() {
+    if (!confirm('¿Aplicar la estructura NUEVA de premios?\n\n' +
+                 '• Sorteo $2.000.000 → baja a $1.000.000 (por cargas)\n' +
+                 '• Sorteo $1.000.000 → baja a $500.000 (por cargas)\n' +
+                 '• Sorteo $500.000 → baja a $100.000 (por cargas)\n' +
+                 '• Sorteo $100.000 → queda en $100.000 (por cargas)\n\n' +
+                 'Los participantes ya anotados SE QUEDAN con su número — pero el premio que pueden ganar baja al nuevo monto.\n\n' +
+                 'Después del downgrade, el sistema spawnea la estructura nueva:\n' +
+                 '  CARGAS: 1× $1M + 1× $500K + 5× $100K\n' +
+                 '  NETWIN: 1× $500K + 5× $100K')) return;
     try {
-        const r = await authFetch('/api/admin/raffles/migrate-free-to-netwin', {
+        const r = await authFetch('/api/admin/raffles/apply-new-structure', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
         const d = await r.json();
         if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
-        showToast('✅ Migrados: ' + d.migrated + (d.skipped ? ' (saltados: ' + d.skipped + ')' : ''), 'success');
+        let msg = '✅ Estructura aplicada\n\n';
+        msg += 'Sorteos modificados: ' + d.downgraded + '\n';
+        if (d.skipped) msg += 'Saltados (ya estaban): ' + d.skipped + '\n';
+        if (Array.isArray(d.raffles) && d.raffles.length > 0) {
+            msg += '\nDetalle:\n';
+            for (const r of d.raffles) {
+                msg += '• ' + r.newName + ' ($' + (r.oldPrize||0).toLocaleString('es-AR') + ' → $' + r.newPrize.toLocaleString('es-AR') + ')\n';
+            }
+        }
+        alert(msg);
         loadRafflesAdmin();
     } catch (e) {
         showToast('Error de conexión', 'error');

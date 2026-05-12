@@ -673,35 +673,69 @@ VIP.raffles = (function () {
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#4dabff);"></div>';
             html += '<h3 style="margin:0;color:#4dabff;font-size:14px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
-            // Explainer NETWIN: el dueño quiere que cada user entienda cómo
-            // funciona ahora. Si TODOS los free son por netwin, mostramos el
-            // banner nuevo con la tabla de los 4 niveles. Si alguno es legacy
-            // (cargas), caemos al texto viejo.
-            const _anyByNetLoss = free.some(r => Number(r.minNetLossARS || 0) > 0);
-            if (_anyByNetLoss) {
-                const _myNet = (_data && Number(_data.weeklyNetLoss)) || 0;
+            // Explainer dual: mostramos los niveles de CADA gate (cargas y
+            // netwin) en su propio bloque. El dueño tiene ambos tipos
+            // corriendo en paralelo. Agrupamos por prize+gate (porque hay
+            // múltiples instancias del mismo nivel — 5× $100K) y mostramos
+            // un solo row con badge "5×" en lugar de 5 rows iguales.
+            const _myCargas = (_data && Number(_data.weeklyDeposits)) || 0;
+            const _myNet = (_data && Number(_data.weeklyNetLoss)) || 0;
+            const _activeFree = free.filter(r => r.status === 'active');
+            const _byNetGroup = {};
+            const _byCargasGroup = {};
+            for (const r of _activeFree) {
+                if (Number(r.minNetLossARS || 0) > 0) {
+                    const key = (r.minNetLossARS || 0) + '_' + (r.prizeValueARS || 0);
+                    if (!_byNetGroup[key]) _byNetGroup[key] = { prize: r.prizeValueARS||0, threshold: r.minNetLossARS||0, count: 0 };
+                    _byNetGroup[key].count++;
+                } else if (Number(r.minCargasARS || 0) > 0) {
+                    const key = (r.minCargasARS || 0) + '_' + (r.prizeValueARS || 0);
+                    if (!_byCargasGroup[key]) _byCargasGroup[key] = { prize: r.prizeValueARS||0, threshold: r.minCargasARS||0, count: 0 };
+                    _byCargasGroup[key].count++;
+                }
+            }
+            const _cargasLevels = Object.values(_byCargasGroup).sort((a,b) => b.prize - a.prize);
+            const _netLevels = Object.values(_byNetGroup).sort((a,b) => b.prize - a.prize);
+
+            if (_cargasLevels.length > 0 || _netLevels.length > 0) {
                 html += '<div style="background:linear-gradient(135deg,rgba(77,171,255,0.10),rgba(77,171,255,0.04));border:1px solid rgba(77,171,255,0.40);border-radius:10px;padding:11px 12px;margin-bottom:10px;font-size:12px;color:#eee;line-height:1.55;">';
-                html += '<div style="color:#4dabff;font-weight:900;font-size:12.5px;letter-spacing:0.5px;margin-bottom:6px;">💎 SORTEOS POR NETWIN — así funciona</div>';
-                html += '<div style="color:#ddd;font-size:11.5px;margin-bottom:6px;">📌 Si esta semana (lun-dom) <strong>perdiste plata</strong> (cargaste más de lo que retiraste) podés reclamar <strong>UN número gratis</strong> en el nivel que te corresponda. Aunque después ganes, el número <strong>queda para vos</strong>.</div>';
-                // Tabla compacta de niveles
-                const _levels = free.filter(r => Number(r.minNetLossARS || 0) > 0)
-                    .sort((a, b) => (b.minNetLossARS || 0) - (a.minNetLossARS || 0));
-                if (_levels.length > 0) {
-                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:7px 9px;margin-bottom:6px;">';
-                    for (const lvl of _levels) {
-                        const ok = _myNet >= (lvl.minNetLossARS || 0);
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:3px 0;">';
-                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prizeValueARS) + '</strong></span>';
-                        html += '<span style="color:#bbb;">perdiste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.minNetLossARS) + '</strong></span>';
+                html += '<div style="color:#4dabff;font-weight:900;font-size:12.5px;letter-spacing:0.5px;margin-bottom:6px;">💎 SORTEOS GRATIS — 2 formas de entrar</div>';
+
+                if (_cargasLevels.length > 0) {
+                    html += '<div style="margin-bottom:8px;">';
+                    html += '<div style="color:#66ff66;font-weight:800;font-size:11.5px;margin-bottom:3px;">🟢 Por CARGAS (lun-dom):</div>';
+                    html += '<div style="color:#ccc;font-size:11px;margin-bottom:4px;">Te anotamos <strong>automáticamente</strong> si llegás al mínimo de cargas. 1 número por sorteo.</div>';
+                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:6px 9px;">';
+                    for (const lvl of _cargasLevels) {
+                        const ok = _myCargas >= lvl.threshold;
+                        const countBadge = lvl.count > 1 ? ' <span style="color:#4dabff;font-size:10px;font-weight:800;">(' + lvl.count + ' simultáneos)</span>' : '';
+                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;">';
+                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prize) + '</strong>' + countBadge + '</span>';
+                        html += '<span style="color:#bbb;">cargaste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.threshold) + '</strong></span>';
                         html += '</div>';
                     }
                     html += '</div>';
-                    html += '<div style="color:#ffaa66;font-size:10.5px;font-weight:700;letter-spacing:0.5px;">⚠️ Es <strong>1 número total</strong> entre todos los niveles esta semana — elegí en cuál querés reclamar.</div>';
+                    html += '</div>';
                 }
-                html += '</div>';
-            } else {
-                html += '<div style="background:rgba(77,171,255,0.06);border-left:3px solid #4dabff;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
-                html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> Si llegás al mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
+
+                if (_netLevels.length > 0) {
+                    html += '<div>';
+                    html += '<div style="color:#ffaa66;font-weight:800;font-size:11.5px;margin-bottom:3px;">🟠 Por NETWIN (pérdida neta lun-dom):</div>';
+                    html += '<div style="color:#ccc;font-size:11px;margin-bottom:4px;">Si perdiste plata, <strong>vos elegís</strong> tu nivel. Aunque después ganes, el número queda para vos.</div>';
+                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:6px 9px;">';
+                    for (const lvl of _netLevels) {
+                        const ok = _myNet >= lvl.threshold;
+                        const countBadge = lvl.count > 1 ? ' <span style="color:#ffaa66;font-size:10px;font-weight:800;">(' + lvl.count + ' simultáneos)</span>' : '';
+                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;">';
+                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prize) + '</strong>' + countBadge + '</span>';
+                        html += '<span style="color:#bbb;">perdiste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.threshold) + '</strong></span>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                    html += '<div style="color:#ffaa66;font-size:10.5px;font-weight:700;letter-spacing:0.5px;margin-top:5px;">⚠️ NETWIN: es <strong>1 número total</strong> entre todos los niveles netwin de la semana.</div>';
+                    html += '</div>';
+                }
+
                 html += '</div>';
             }
             for (const r of free) html += _renderFreeCard(r);
