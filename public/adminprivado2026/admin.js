@@ -15649,6 +15649,7 @@ function _renderRafflesAdmin() {
     html += '      <button type="button" onclick="viewWinnerClaims()" style="background:linear-gradient(135deg,rgba(102,255,102,0.20),rgba(255,215,0,0.18));color:#ffd700;border:1px solid #ffd700;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Reclamos de ganadores en ventana 24h">🏆 Reclamos ganadores</button>';
     html += '      <button type="button" onclick="testPushAllToUser()" style="background:rgba(102,255,255,0.10);color:#66ffff;border:1px solid rgba(102,255,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar el push de GANASTE de TODOS los sorteos activos a un user de prueba (ej. lalodj)">🧪 Test masivo a usuario</button>';
     html += '      <button type="button" onclick="openDrawAllUnifiedModal()" style="background:linear-gradient(135deg,#d4af37,#ff6b00);color:#000;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Un solo número de Lotería para TODOS los sorteos cerrados (pagos + gratis + relámpago) — verificar previo y resumen final">🎰 Sortear TODO juntos</button>';
+    html += '      <button type="button" onclick="openFixLotteryModal()" style="background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff;border:none;padding:7px 11px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;" title="Corregir ganadores de sorteos ya sorteados con un N° de Lotería equivocado — recalcula con el N° real y avisa a los afectados">🚨 Corregir sorteos</button>';
     // "Sortear semana pasada": batch modal directo desde el dashboard. Antes
     // estaba enterrado en el histórico — ahora va arriba para que el flujo
     // semanal (sortear el lunes nocturna) sea 1 click.
@@ -17968,6 +17969,191 @@ async function confirmDrawAllUnified() {
         try { loadRafflesAdmin(); } catch (_) {}
     } catch (e) {
         resultsBox.innerHTML = '<div style="background:rgba(255,128,128,0.10);border:1px solid #ff8080;border-radius:10px;padding:12px;color:#ff8080;">Error de conexión</div>';
+    }
+}
+
+// =========================================================================
+// CORREGIR SORTEOS CON N° DE LOTERÍA EQUIVOCADO
+// =========================================================================
+// Si el admin tipeó mal el N° en "Sortear TODO juntos" y varios sorteos
+// quedaron con ganador equivocado, este modal:
+//   1) pide el N° REAL de la Lotería
+//   2) llama a /diagnose-lottery para listar mismatches (current vs computed)
+//   3) tilda por default los UNCLAIMED, deja sin tildar los YA reclamados
+//      (esos requieren manejo manual de debit/recredit)
+//   4) /fix-lottery aplica el cambio + manda push al falso + push al verdadero
+async function openFixLotteryModal() {
+    const modalId = 'fixLotteryModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    overlay.innerHTML =
+        '<div style="background:linear-gradient(180deg,#2a0010,#0a0005);border:2px solid #ff4444;border-radius:14px;padding:20px;max-width:980px;width:100%;color:#fff;margin:14px auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;">' +
+                '<div>' +
+                    '<h3 style="margin:0;color:#ff8888;font-size:17px;letter-spacing:1px;">🚨 Corregir sorteos con N° de Lotería equivocado</h3>' +
+                    '<div style="color:#ccc;font-size:11.5px;margin-top:4px;line-height:1.4;max-width:740px;">' +
+                        'Ingresá el N° REAL de la Lotería. El sistema recalcula los ganadores de los sorteos de las últimas 24h y te muestra cuáles tenés que corregir. Push de corrección al equivocado + push de ganador al verdadero. Los que ya cobraron quedan flaggeados para que los manejes manual.' +
+                    '</div>' +
+                '</div>' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:24px;cursor:pointer;line-height:1;">×</button>' +
+            '</div>' +
+            '<div style="background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.40);border-radius:10px;padding:11px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+                '<label style="color:#ffaaaa;font-size:11.5px;font-weight:800;letter-spacing:0.5px;">N° REAL de Lotería:</label>' +
+                '<input type="number" id="fixLotInput" min="1" max="99999" placeholder="ej. 64" style="background:rgba(0,0,0,0.40);border:1.5px solid #ff444460;border-radius:7px;color:#ffeeee;padding:9px 12px;font-size:16px;font-weight:800;width:130px;text-align:center;font-family:monospace;">' +
+                '<label style="color:#ccc;font-size:11px;display:flex;align-items:center;gap:4px;"><input type="number" id="fixLotHours" min="1" max="168" value="24" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.20);border-radius:5px;color:#fff;padding:5px 8px;width:65px;text-align:center;font-family:monospace;"> hs atrás</label>' +
+                '<button type="button" onclick="runFixLotteryDiagnose()" style="background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff;border:none;padding:9px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">🔍 DIAGNOSTICAR</button>' +
+            '</div>' +
+            '<div id="fixLotteryBody"></div>' +
+            '<div id="fixLotteryResultBox" style="margin-top:12px;"></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+    setTimeout(() => { try { document.getElementById('fixLotInput').focus(); } catch (_) {} }, 60);
+}
+
+async function runFixLotteryDiagnose() {
+    const overlay = document.getElementById('fixLotteryModal');
+    if (!overlay) return;
+    const lotInput = document.getElementById('fixLotInput');
+    const hoursInput = document.getElementById('fixLotHours');
+    const lotteryNumber = parseInt((lotInput && lotInput.value) || '', 10);
+    const lookbackHours = Math.max(1, parseInt((hoursInput && hoursInput.value) || '24', 10) || 24);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        showToast('Entrá el N° de Lotería antes', 'error');
+        return;
+    }
+    const body = document.getElementById('fixLotteryBody');
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">⏳ Diagnosticando con N° ' + lotteryNumber + ' (últimas ' + lookbackHours + ' hs)…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/diagnose-lottery', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lotteryNumber, lookbackHours })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { body.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        overlay._diagnosis = d;
+        const mismatches = (d.raffles || []).filter(x => x.isMismatch);
+        let html = '';
+        html += '<div style="background:linear-gradient(135deg,rgba(255,68,68,0.08),rgba(255,170,68,0.05));border:1px solid rgba(255,68,68,0.40);border-radius:10px;padding:11px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+        html += '<div style="color:#ffaaaa;font-size:12.5px;font-weight:900;letter-spacing:0.5px;">📊 Diagnóstico con N° <strong style="color:#fff;">#' + lotteryNumber + '</strong></div>';
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;">';
+        html += '<span style="background:rgba(255,255,255,0.05);padding:4px 9px;border-radius:5px;color:#ddd;">Total: <strong style="color:#fff;">' + d.total + '</strong></span>';
+        html += '<span style="background:rgba(255,68,68,0.18);padding:4px 9px;border-radius:5px;color:#ff8888;">Equivocados: <strong>' + d.mismatchCount + '</strong></span>';
+        html += '<span style="background:rgba(255,170,68,0.18);padding:4px 9px;border-radius:5px;color:#ffaa66;">Ya cobraron: <strong>' + d.claimedMismatchCount + '</strong></span>';
+        html += '</div></div>';
+
+        if (mismatches.length === 0) {
+            html += '<div style="background:rgba(102,255,102,0.06);border:1px solid #66ff66;border-radius:10px;padding:14px;color:#bbffbb;text-align:center;">✅ Ningún sorteo tiene ganador equivocado. Todos los ' + d.total + ' coinciden con el N° ' + lotteryNumber + '.</div>';
+            body.innerHTML = html;
+            return;
+        }
+
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:8px;max-height:55vh;overflow:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '<thead><tr style="color:#ffaaaa;text-align:left;border-bottom:1px solid rgba(255,68,68,0.30);">';
+        html += '<th style="padding:6px 8px;width:34px;"><input type="checkbox" id="fixSelectAll" onchange="fixSelectAllToggle(this.checked)" checked></th>';
+        html += '<th style="padding:6px 8px;">Sorteo</th>';
+        html += '<th style="padding:6px 8px;">Ahora (mal)</th>';
+        html += '<th style="padding:6px 8px;">Verdadero</th>';
+        html += '<th style="padding:6px 8px;text-align:right;">Premio</th>';
+        html += '<th style="padding:6px 8px;text-align:center;">Estado</th>';
+        html += '</tr></thead><tbody>';
+        for (const x of mismatches) {
+            const claimed = !!x.isClaimed;
+            const checked = !claimed; // ya cobrados van DEStildados por seguridad
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">';
+            html += '<td style="padding:7px 8px;"><input type="checkbox" class="fix-raffle-check" data-raffleid="' + escapeHtml(x.id) + '"' + (checked ? ' checked' : '') + (claimed ? ' data-claimed="1"' : '') + '></td>';
+            html += '<td style="padding:7px 8px;color:#fff;font-weight:700;"><span style="margin-right:4px;">' + (x.emoji || '🎁') + '</span>' + escapeHtml(x.name) + '</td>';
+            html += '<td style="padding:7px 8px;color:#ff8888;">@' + escapeHtml(x.currentWinner || '?') + ' · <span style="color:#888;">#' + escapeHtml(String(x.currentNumber || '?')) + '</span></td>';
+            html += '<td style="padding:7px 8px;color:#66ff66;">@' + escapeHtml(x.computedWinner || '?') + ' · <span style="color:#aaa;">#' + escapeHtml(String(x.computedNumber || '?')) + '</span>' + (x.wasMapped ? ' <span style="color:#888;font-size:10px;">(mapeado)</span>' : '') + '</td>';
+            html += '<td style="padding:7px 8px;text-align:right;color:#ffd700;font-weight:800;">$' + Number(x.prize || 0).toLocaleString('es-AR') + '</td>';
+            html += '<td style="padding:7px 8px;text-align:center;">' + (claimed
+                ? '<span style="background:rgba(255,170,68,0.18);color:#ffaa66;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;">⚠️ YA COBRÓ</span>'
+                : '<span style="background:rgba(102,255,102,0.15);color:#66ff66;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ sin cobrar</span>'
+            ) + '</td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        html += '<div style="margin-top:10px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;align-items:center;">';
+        html += '<label style="color:#ffaa66;font-size:11px;display:flex;gap:5px;align-items:center;"><input type="checkbox" id="fixAlsoClaimed"> incluir los que YA cobraron (necesita debit manual después)</label>';
+        html += '<button type="button" onclick="runFixLotteryApply()" style="background:linear-gradient(135deg,#ff4444,#cc0000);color:#fff;border:none;padding:11px 18px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🔧 APLICAR CORRECCIÓN + MANDAR PUSHES</button>';
+        html += '</div>';
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function fixSelectAllToggle(checked) {
+    document.querySelectorAll('.fix-raffle-check').forEach(el => {
+        if (checked && el.getAttribute('data-claimed') === '1') return; // los ya cobrados no se auto-tildan
+        el.checked = !!checked;
+    });
+}
+
+async function runFixLotteryApply() {
+    const overlay = document.getElementById('fixLotteryModal');
+    if (!overlay || !overlay._diagnosis) return;
+    const lotteryNumber = overlay._diagnosis.lotteryNumber;
+    const checked = Array.from(document.querySelectorAll('.fix-raffle-check')).filter(el => el.checked);
+    if (checked.length === 0) { showToast('Tildá al menos un sorteo', 'error'); return; }
+    const alsoClaimed = !!(document.getElementById('fixAlsoClaimed') && document.getElementById('fixAlsoClaimed').checked);
+    const raffleIds = checked.map(el => el.getAttribute('data-raffleid'));
+    const hasClaimed = checked.some(el => el.getAttribute('data-claimed') === '1');
+    let msg = '¿Aplicar la corrección con N° ' + lotteryNumber + ' a ' + raffleIds.length + ' sorteos?\n\n' +
+              '• Push de corrección al ganador equivocado\n' +
+              '• Push de ganador al verdadero\n' +
+              '• El sorteo queda marcado con winnerCorrectedFrom (auditoría)';
+    if (hasClaimed && !alsoClaimed) {
+        msg += '\n\n⚠️ Hay sorteos en la selección que ya cobraron. Si NO tildaste "incluir los que ya cobraron", esos se van a saltar y los manejás manual.';
+    }
+    if (hasClaimed && alsoClaimed) {
+        msg += '\n\n🚨 PELIGRO: marcaste "incluir los que ya cobraron". La corrección NO debita la plata del equivocado — eso lo tenés que hacer manual desde JUGAYGANA. Acá solo cambia el ganador en la app y manda los pushes.';
+    }
+    if (!confirm(msg)) return;
+    const resBox = document.getElementById('fixLotteryResultBox');
+    resBox.innerHTML = '<div style="color:#ffaaaa;text-align:center;padding:14px;">⏳ Aplicando corrección…</div>';
+    try {
+        const r = await authFetch('/api/admin/raffles/fix-lottery', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lotteryNumber, raffleIds, alsoFixClaimed: alsoClaimed, notifyOldWinner: true, notifyNewWinner: true })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { resBox.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        let h = '<div style="background:linear-gradient(135deg,rgba(102,255,102,0.08),rgba(212,175,55,0.06));border:2px solid #66ff66;border-radius:12px;padding:14px;">';
+        h += '<div style="color:#66ff66;font-size:14px;font-weight:900;letter-spacing:1px;margin-bottom:8px;">✅ Resultado · corregidos: ' + (d.fixed||[]).length + ' · saltados: ' + (d.skipped||[]).length + ' · fallidos: ' + (d.failed||[]).length + '</div>';
+        if ((d.fixed||[]).length > 0) {
+            h += '<div style="margin-top:8px;color:#66ff66;font-weight:800;">Corregidos:</div>';
+            for (const f of d.fixed) {
+                h += '<div style="padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;color:#ddd;">';
+                h += '<strong style="color:#fff;">' + escapeHtml(f.name) + '</strong> — <span style="color:#ff8888;">@' + escapeHtml(f.oldWinner) + ' (#' + escapeHtml(String(f.oldNumber)) + ')</span> → <span style="color:#66ff66;">@' + escapeHtml(f.newWinner) + ' (#' + escapeHtml(String(f.newNumber)) + ')</span>';
+                h += '<span style="color:#aaa;font-size:10px;margin-left:8px;">push old=' + f.oldPushed + ' new=' + f.newPushed + (f.wasClaimed ? ' · ⚠️ ya había cobrado' : '') + '</span>';
+                h += '</div>';
+            }
+        }
+        if ((d.skipped||[]).length > 0) {
+            h += '<div style="margin-top:8px;color:#ffaa66;font-weight:800;">Saltados (ver razón):</div>';
+            for (const s of d.skipped) {
+                h += '<div style="padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:11.5px;color:#ffd0a0;">';
+                h += '<strong>' + escapeHtml(s.name) + '</strong> — ' + escapeHtml(s.reason);
+                if (s.reason === 'already_claimed') h += ' · @' + escapeHtml(s.oldWinner) + ' cobró $' + Number(s.prize||0).toLocaleString('es-AR') + ' — debitalo manual y reacreditá a @' + escapeHtml(s.newWinner);
+                h += '</div>';
+            }
+        }
+        if ((d.failed||[]).length > 0) {
+            h += '<div style="margin-top:8px;color:#ff8080;font-weight:800;">Fallidos:</div>';
+            for (const f of d.failed) {
+                h += '<div style="padding:5px 8px;font-size:11.5px;color:#ffb0b0;">' + escapeHtml(f.name || f.raffleId) + ' — ' + escapeHtml(f.error || '') + '</div>';
+            }
+        }
+        h += '</div>';
+        resBox.innerHTML = h;
+    } catch (e) {
+        resBox.innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">Error: ' + escapeHtml(e.message || '') + '</div>';
     }
 }
 

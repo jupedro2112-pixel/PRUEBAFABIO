@@ -23955,6 +23955,240 @@ app.post('/api/admin/raffles/draw-batch', authMiddleware, superAdminMiddleware, 
   }
 });
 
+// ============================================================================
+// POST /api/admin/raffles/diagnose-lottery
+// ============================================================================
+// Dado un lotteryNumber (el N° REAL de la Lotería Nacional), recorre todos
+// los sorteos DRAWN en las últimas N horas (default 24h) y calcula quién
+// DEBERÍA haber sido ganador. Reporta los mismatches sin tocar nada.
+// Sirve para detectar errores de tipeo del admin que sorteó con un N° mal
+// (ej. tipear "18" en vez de "64") y permitir corrección posterior.
+app.post('/api/admin/raffles/diagnose-lottery', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const lotteryNumber = parseInt(req.body && req.body.lotteryNumber, 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+      return res.status(400).json({ error: 'Falta lotteryNumber (entero ≥ 1).' });
+    }
+    const lookbackHours = Math.max(1, Math.min(168, Number(req.body && req.body.lookbackHours) || 24));
+    const cutoff = new Date(Date.now() - lookbackHours * 3600 * 1000);
+    const drawnRaffles = await Raffle.find(
+      { status: 'drawn', drawnAt: { $gte: cutoff }, winnerUsername: { $ne: null } }
+    ).sort({ drawnAt: -1 }).lean();
+
+    const report = [];
+    for (const r of drawnRaffles) {
+      try {
+        const calc = await _computeRaffleDrawWinner(r, lotteryNumber, null);
+        if (calc.error) {
+          report.push({
+            id: r.id, name: r.name, error: calc.error,
+            currentWinner: r.winnerUsername, currentNumber: r.winningTicketNumber
+          });
+          continue;
+        }
+        const newW = calc.winner.username;
+        const newN = calc.mappedNumber;
+        const isMismatch = String(newW || '').toLowerCase() !== String(r.winnerUsername || '').toLowerCase();
+        report.push({
+          id: r.id,
+          name: r.name,
+          emoji: r.emoji,
+          raffleType: r.raffleType,
+          prize: r.prizeValueARS || 0,
+          drawnAt: r.drawnAt,
+          currentWinner: r.winnerUsername,
+          currentNumber: r.winningTicketNumber,
+          computedWinner: newW,
+          computedNumber: newN,
+          wasMapped: calc.wasMapped,
+          isMismatch,
+          isClaimed: !!r.prizeClaimedAt,
+          claimedAt: r.prizeClaimedAt || null,
+          prizeClaimable: !!r.prizeClaimable,
+          totalCuposSold: calc.totalCuposSold
+        });
+      } catch (e) {
+        report.push({ id: r.id, name: r.name, error: e.message });
+      }
+    }
+
+    const mismatches = report.filter(x => x.isMismatch);
+    const claimedMismatches = mismatches.filter(x => x.isClaimed);
+    res.json({
+      success: true,
+      lotteryNumber,
+      lookbackHours,
+      total: report.length,
+      mismatchCount: mismatches.length,
+      claimedMismatchCount: claimedMismatches.length,
+      raffles: report
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/diagnose-lottery: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// POST /api/admin/raffles/fix-lottery
+// ============================================================================
+// Corrige el/los ganador(es) de uno o más sorteos recalculando con el
+// lotteryNumber REAL. SOLO actualiza los que están "drawn" sin reclamo
+// procesado. Los que ya tienen prizeClaimedAt se SALTAN por defecto (la
+// plata ya entró a la cuenta del falso ganador — el admin tiene que
+// debitar y re-acreditar manualmente). Push de corrección al falso
+// ganador + push de ganador al verdadero.
+app.post('/api/admin/raffles/fix-lottery', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const lotteryNumber = parseInt(req.body && req.body.lotteryNumber, 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+      return res.status(400).json({ error: 'Falta lotteryNumber (entero ≥ 1).' });
+    }
+    const raffleIds = Array.isArray(req.body && req.body.raffleIds) ? req.body.raffleIds : [];
+    if (raffleIds.length === 0) return res.status(400).json({ error: 'No se especificaron sorteos a corregir.' });
+    if (raffleIds.length > 50) return res.status(400).json({ error: 'Máximo 50 por batch.' });
+    const alsoFixClaimed = !!(req.body && req.body.alsoFixClaimed);
+    const notifyOldWinner = (req.body && req.body.notifyOldWinner) !== false;
+    const notifyNewWinner = (req.body && req.body.notifyNewWinner) !== false;
+
+    const results = { fixed: [], skipped: [], failed: [] };
+    for (const rid of raffleIds) {
+      try {
+        const raffle = await Raffle.findOne({ id: String(rid).trim() }).lean();
+        if (!raffle) { results.failed.push({ raffleId: rid, error: 'No encontrado' }); continue; }
+        if (raffle.status !== 'drawn') {
+          results.failed.push({ raffleId: rid, name: raffle.name, error: 'Status ≠ drawn — ya fue cambiado o no se sorteó' });
+          continue;
+        }
+        const oldWinner = raffle.winnerUsername;
+        const oldNumber = raffle.winningTicketNumber;
+        const calc = await _computeRaffleDrawWinner(raffle, lotteryNumber, null);
+        if (calc.error) { results.failed.push({ raffleId: rid, name: raffle.name, error: calc.error }); continue; }
+        const newWinner = calc.winner.username;
+        const newNumber = calc.mappedNumber;
+        if (String(newWinner || '').toLowerCase() === String(oldWinner || '').toLowerCase()) {
+          results.skipped.push({ raffleId: rid, name: raffle.name, reason: 'no_mismatch', winner: oldWinner });
+          continue;
+        }
+        if (raffle.prizeClaimedAt && !alsoFixClaimed) {
+          results.skipped.push({
+            raffleId: rid, name: raffle.name, reason: 'already_claimed',
+            oldWinner, oldNumber, newWinner, newNumber,
+            prize: raffle.prizeValueARS || 0, prizeClaimedAt: raffle.prizeClaimedAt
+          });
+          continue;
+        }
+
+        // Update atómico: solo aplica si todavía está en drawn con el mismo
+        // winnerUsername (defensa contra race con otro fix concurrente).
+        const safeOldUser = String(oldWinner || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const update = {
+          winnerUsername: newWinner,
+          winningTicketNumber: String(newNumber),
+          prizeClaimable: true,        // el nuevo ganador puede reclamar
+          prizeClaimedAt: null,         // limpiamos el reclamo del falso (si lo hubo)
+          prizeClaimTxId: null,
+          prizeClaimLastError: null,
+          prizeForfeitedAt: null,
+          prizeForfeitedReason: null,
+          lotteryCorrectedAt: new Date(),
+          lotteryCorrectedFrom: oldWinner,
+          lotteryCorrectedFromNumber: String(oldNumber || ''),
+          lotteryCorrectedLottery: String(lotteryNumber)
+        };
+        const updated = await Raffle.findOneAndUpdate(
+          { id: raffle.id, status: 'drawn', winnerUsername: { $regex: '^' + safeOldUser + '$', $options: 'i' } },
+          { $set: update },
+          { new: true }
+        );
+        if (!updated) {
+          results.failed.push({ raffleId: rid, name: raffle.name, error: 'Race: el sorteo cambió antes del fix' });
+          continue;
+        }
+
+        // Sincronizar isWinner en RaffleParticipation: viejo=false, nuevo=true.
+        try {
+          await RaffleParticipation.updateOne(
+            { raffleId: raffle.id, username: { $regex: '^' + safeOldUser + '$', $options: 'i' } },
+            { $set: { isWinner: false } }
+          );
+          const safeNewUser = String(newWinner || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          await RaffleParticipation.updateOne(
+            { raffleId: raffle.id, username: { $regex: '^' + safeNewUser + '$', $options: 'i' } },
+            { $set: { isWinner: true } }
+          );
+        } catch (e) { logger.warn(`[fix-lottery] sync isWinner: ${e.message}`); }
+
+        // PUSH al ganador EQUIVOCADO con la corrección.
+        let oldPushed = 0, newPushed = 0;
+        if (notifyOldWinner && oldWinner) {
+          try {
+            const oldUserDoc = await User.findOne(
+              { username: { $regex: '^' + safeOldUser + '$', $options: 'i' } },
+              { fcmToken: 1, fcmTokens: 1 }
+            ).lean();
+            const oldTokens = [];
+            if (oldUserDoc && oldUserDoc.fcmToken) oldTokens.push(oldUserDoc.fcmToken);
+            if (oldUserDoc && Array.isArray(oldUserDoc.fcmTokens)) {
+              for (const tk of oldUserDoc.fcmTokens) {
+                const t = tk && tk.token ? tk.token : tk;
+                if (t && !oldTokens.includes(t)) oldTokens.push(t);
+              }
+            }
+            const corrTitle = '⚠️ Corrección sorteo';
+            const corrBody = `Hubo un error en el sorteo "${raffle.name}". El N° ganador real era #${lotteryNumber}, no el #${oldNumber}. Disculpá las molestias.`;
+            await Promise.all(oldTokens.map(tk =>
+              _sendPushToUser(tk, corrTitle, corrBody, { source: 'raffle-correction', raffleId: raffle.id })
+                .then(r => { if (r && r.success) oldPushed++; })
+                .catch(() => {})
+            ));
+          } catch (e) { logger.warn(`[fix-lottery] push old: ${e.message}`); }
+        }
+
+        // PUSH al ganador VERDADERO con el mensaje estándar de ganador.
+        if (notifyNewWinner && newWinner) {
+          try {
+            const safeNewUser = String(newWinner || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const newUserDoc = await User.findOne(
+              { username: { $regex: '^' + safeNewUser + '$', $options: 'i' } },
+              { fcmToken: 1, fcmTokens: 1 }
+            ).lean();
+            const newTokens = [];
+            if (newUserDoc && newUserDoc.fcmToken) newTokens.push(newUserDoc.fcmToken);
+            if (newUserDoc && Array.isArray(newUserDoc.fcmTokens)) {
+              for (const tk of newUserDoc.fcmTokens) {
+                const t = tk && tk.token ? tk.token : tk;
+                if (t && !newTokens.includes(t)) newTokens.push(t);
+              }
+            }
+            const wp = _buildWinnerPush(raffle, newNumber, { prizeAutoCredited: false, source: 'raffle-win-corrected' });
+            await Promise.all(newTokens.map(tk =>
+              _sendPushToUser(tk, wp.title, wp.body, wp.data)
+                .then(r => { if (r && r.success) newPushed++; })
+                .catch(() => {})
+            ));
+          } catch (e) { logger.warn(`[fix-lottery] push new: ${e.message}`); }
+        }
+
+        logger.info(`[fix-lottery] ${raffle.name}: ${oldWinner} (#${oldNumber}) → ${newWinner} (#${newNumber}) | claimed=${!!raffle.prizeClaimedAt} pushed old=${oldPushed} new=${newPushed}`);
+        results.fixed.push({
+          raffleId: rid, name: raffle.name,
+          oldWinner, oldNumber, newWinner, newNumber,
+          wasClaimed: !!raffle.prizeClaimedAt,
+          oldPushed, newPushed,
+          prize: raffle.prizeValueARS || 0
+        });
+      } catch (e) {
+        results.failed.push({ raffleId: rid, error: e.message });
+      }
+    }
+    res.json({ success: true, ...results });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/fix-lottery: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/apply-new-structure
 // One-shot: aplica el downgrade de premios sobre los sorteos free ACTIVOS
 // que están en los tipos legacy (free_p2m / free_p1m / free_p500 / free_p100)
