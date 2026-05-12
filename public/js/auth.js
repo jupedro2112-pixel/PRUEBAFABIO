@@ -295,6 +295,10 @@ VIP.auth = (function () {
             // a /api/user-lines/me. Sin esto el header arranca vacío y
             // recién aparece tras un visibility-change.
             refreshLinePhone();
+            // Si el user entra desde la PWA instalada (standalone), reportarlo
+            // al backend para destrabar el reclamo del money giveaway aunque
+            // no haya concedido notifs.
+            try { reportPwaInstalledIfStandalone(); } catch (_) {}
         } catch (error) {
             if (error.name === 'AbortError') {
                 errorDiv.textContent = 'La conexión tardó demasiado. Intenta nuevamente.';
@@ -646,6 +650,26 @@ VIP.auth = (function () {
             el.textContent = '';
             el.style.display = 'none';
         }
+    }
+
+    // Si el cliente está corriendo en modo standalone (PWA instalada),
+    // reportarlo al backend. Setea pwaInstalledAt en User. Sirve para
+    // destrabar el reclamo del money giveaway en users que instalaron
+    // la app pero no concedieron notificaciones (el gate previo los
+    // bloqueaba aunque sí tuvieran la app puesta).
+    function reportPwaInstalledIfStandalone() {
+        try {
+            const isStandalone =
+                (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                window.navigator.standalone === true;
+            if (!isStandalone) return;
+            if (!VIP.state || !VIP.state.currentToken) return;
+            fetch(`${VIP.config.API_URL}/api/me/pwa-installed`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` },
+                keepalive: true
+            }).catch(() => {});
+        } catch (_) {}
     }
 
     // Compara el número que devolvió el server con el que vimos por última

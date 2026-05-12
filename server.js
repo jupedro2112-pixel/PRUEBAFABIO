@@ -18144,27 +18144,109 @@ app.get('/api/money-giveaway/active', authMiddleware, async (req, res) => {
 });
 
 // POST claim: el user reclama el regalo activo.
+// POST /api/admin/push-install-bonus — broadcast a TODOS los users con
+// FCM token pero sin la app instalada (no standalone, no pwaInstalledAt).
+// Mensaje: "Instalá la app y reclamá $5.000 GRATIS". El user toca el
+// push, vuelve a la web, ve el banner grande + 3 pasos, instala, abre
+// la app y reclama el welcome bonus.
+app.post('/api/admin/push-install-bonus', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const title = (req.body && req.body.title) || '🎁 $5.000 GRATIS por instalar la app';
+    const body = (req.body && req.body.body) || 'Instalá la app en tu celular y reclamá tu bono de bienvenida de $5.000 ARS. Tarda 30 segundos.';
+
+    // Candidatos: tienen al menos un FCM token NO-standalone, y no se
+    // los marcó como pwaInstalledAt. Filtra a los que ya tienen la app.
+    const users = await User.find({
+      $and: [
+        { $or: [
+          { 'fcmTokens.0': { $exists: true } },
+          { fcmToken: { $exists: true, $ne: null } }
+        ]},
+        { $or: [
+          { pwaInstalledAt: { $exists: false } },
+          { pwaInstalledAt: null }
+        ]}
+      ]
+    }).select('_id id username fcmToken fcmTokens fcmTokenContext').lean();
+
+    let candidates = 0;
+    let sent = 0;
+    let failed = 0;
+
+    for (const u of users) {
+      // Filtrar tokens no-standalone. Si todos sus tokens son standalone,
+      // skipear — significa que ya tiene la app (aunque pwaInstalledAt
+      // todavía no se haya seteado por backfill).
+      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+      const nonStandalone = tokens.filter(t => t && t.token && t.context !== 'standalone');
+      const legacyStandalone = u.fcmTokenContext === 'standalone';
+      const hasUsableToken = nonStandalone.length > 0 || (u.fcmToken && !legacyStandalone);
+      if (!hasUsableToken) continue;
+      candidates++;
+      try {
+        await _sendPushToUser(u, title, body, {
+          icon: '/icons/icon-192x192.png',
+          tag: 'install-bonus',
+          requireInteraction: 'true',
+          action: 'install_bonus'
+        });
+        sent++;
+      } catch (e) {
+        failed++;
+      }
+    }
+
+    res.json({ success: true, candidates, sent, failed, totalScanned: users.length });
+  } catch (err) {
+    logger.error(`/api/admin/push-install-bonus: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/me/pwa-installed — el cliente lo llama al detectar que está
+// corriendo en standalone (PWA instalada). Setea pwaInstalledAt una vez
+// y refresca el timestamp en subsiguientes pings. No requiere notifs.
+// Sirve para que el reclamo del money giveaway destrabe a users que
+// instalaron la app pero no concedieron notificaciones.
+app.post('/api/me/pwa-installed', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const now = new Date();
+    await User.updateOne(
+      { id: userId },
+      { $set: { pwaInstalledAt: now } }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/me/pwa-installed: ${err.message}`);
+    res.status(500).json({ error: 'Error' });
+  }
+});
+
 app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
 
-    // GATE: solo users con tokens FCM pueden reclamar el push de plata
-    // (decisión del dueño 2026-05: "el reclamo es parte de la notificación,
-    // solo lo recibe quien tiene la app con notifs"). Si no hay tokens,
-    // significa que no instaló la PWA con notifs aceptadas — el regalo
-    // mide adopción de la app, así que reclamar sin notif desvirtúa la
-    // métrica y abre la puerta a abuso vía API directa.
+    // GATE: solo users con la PWA instalada pueden reclamar el push de
+    // plata. Aceptamos cualquiera de estas dos pruebas de instalación:
+    //   1) Tener al menos un FCM token registrado (notifs OK), o
+    //   2) Tener pwaInstalledAt seteado (cliente reportó estar en
+    //      standalone aunque no haya concedido notifs).
+    // Cambio 2026-05: antes solo aceptaba (1), lo que dejaba afuera a
+    // users que instalaron la app pero negaron notificaciones. El
+    // owner pidió destrabar a ese segmento.
     const meDoc = await User.findOne(
       { id: userId },
-      { fcmToken: 1, fcmTokens: 1 }
+      { fcmToken: 1, fcmTokens: 1, pwaInstalledAt: 1 }
     ).lean();
     const meTokens =
       (meDoc && meDoc.fcmTokens ? meDoc.fcmTokens.filter(t => t && t.token).length : 0) +
       (meDoc && meDoc.fcmToken ? 1 : 0);
-    if (meTokens === 0) {
+    const hasPwaInstalled = !!(meDoc && meDoc.pwaInstalledAt);
+    if (meTokens === 0 && !hasPwaInstalled) {
       return res.status(403).json({
-        error: 'Solo podés reclamar si tenés la app instalada con notificaciones aceptadas.',
+        error: 'Solo podés reclamar si tenés la app instalada.',
         needsAppNotifs: true
       });
     }

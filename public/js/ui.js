@@ -757,12 +757,13 @@ CBU activo: ${cbuNumber}`;
 
         if (platform === 'android') {
             title = '📱 Instalar en Android';
-            note  = '⚠️ <strong>Solo funciona desde Google Chrome.</strong>';
+            note  = '⚠️ <strong>Si abriste el link desde WhatsApp/Instagram/Facebook, primero copialo y pegalo en Chrome</strong> — desde el navegador interno de esas apps no se puede instalar.';
             steps = [
-                'Abrí esta página en <strong>Google Chrome</strong>',
-                'Tocá el ícono <strong>⋮</strong> (tres puntos) en la esquina superior derecha',
-                'Seleccioná <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong>',
-                'Presioná <strong>"Agregar"</strong> o <strong>"Instalar"</strong>'
+                'Abrí esta página en <strong>Google Chrome</strong> (NO en el navegador de WhatsApp/Instagram/Facebook)',
+                'Tocá el botón <strong>⋮</strong> (tres puntos) que está <strong>arriba a la derecha</strong> de Chrome',
+                'En el menú que se abre, tocá <strong>"Instalar app"</strong> o <strong>"Agregar a pantalla principal"</strong>',
+                'Confirmá tocando <strong>"Instalar"</strong> o <strong>"Agregar"</strong>',
+                'Te queda un ícono en la pantalla de tu celular — abrílo desde ahí, no desde Chrome'
             ];
         } else if (platform === 'windows') {
             title = '💻 Instalar en Windows (PC)';

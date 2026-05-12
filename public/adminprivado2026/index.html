@@ -488,6 +488,18 @@
                 <div class="panel-header">
                     <h2>🔔 Enviar notificaciones</h2>
                 </div>
+
+                <!-- Acción rápida: push "Instalá la app y reclamá $5.000" a
+                     users SIN la app (tienen FCM token de browser, pero no
+                     standalone ni pwaInstalledAt). Hits a no-installers para
+                     levantar adopción de la PWA + welcome bonus. -->
+                <div style="background:linear-gradient(135deg,rgba(255,215,0,0.12),rgba(37,211,102,0.10));border:1.5px dashed rgba(255,215,0,0.55);border-radius:12px;padding:14px 16px;margin-bottom:18px;max-width:680px;">
+                    <div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:0.5px;margin-bottom:5px;">🎁 Promo instalación — push $5.000</div>
+                    <div style="color:#ddd;font-size:11.5px;line-height:1.5;margin-bottom:10px;">Manda un push a TODOS los usuarios que <strong>no tienen la app instalada</strong>: "Instalá la app y reclamá $5.000 GRATIS". Solo llega a los que tienen un FCM token de browser registrado.</div>
+                    <button type="button" onclick="sendInstallBonusPush()" style="width:100%;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.4px;">🚀 ENVIAR PUSH "INSTALÁ Y RECLAMÁ $5.000"</button>
+                    <div id="installBonusPushResult" style="margin-top:8px;font-size:12px;"></div>
+                </div>
+
                 <div class="cbu-form" style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.18);border-radius:12px;padding:18px;max-width:680px;">
                     <div style="background:rgba(0,0,0,0.30);border-left:3px solid #d4af37;padding:10px 12px;margin-bottom:16px;border-radius:6px;">
                         <p style="margin:0;color:#bbb;font-size:11px;line-height:1.55;">

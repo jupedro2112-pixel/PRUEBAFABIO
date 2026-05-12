@@ -180,6 +180,15 @@ const userSchema = new mongoose.Schema({
   // este timestamp marca cuándo. NO se reescribe en re-installs.
   appFirstInstalledAt: { type: Date, default: null, index: true },
 
+  // Última vez que el cliente reportó estar corriendo en modo standalone
+  // (PWA instalada). El client lo postea a /api/me/pwa-installed cuando
+  // detecta `display-mode: standalone` o `navigator.standalone === true`.
+  // No requiere notifs aceptadas. Sirve para destrabar el reclamo del
+  // money giveaway en users que instalaron la app pero no concedieron
+  // notificaciones (la gating previa los bloqueaba aunque sí tuvieran
+  // la app puesta).
+  pwaInstalledAt: { type: Date, default: null, index: true },
+
   // =============================================
   // Campos de sistema de referidos
   // =============================================

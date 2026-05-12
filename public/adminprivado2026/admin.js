@@ -902,6 +902,30 @@ async function commPushSendBroadcast(prefix, link) {
     }
 }
 
+// Push masivo "Instalá la app y reclamá $5.000" a todos los users sin
+// la app instalada. Dispara el endpoint /api/admin/push-install-bonus.
+async function sendInstallBonusPush() {
+    if (!confirm('¿Mandar push "Instalá la app y reclamá $5.000" a TODOS los usuarios que NO tienen la app instalada?')) return;
+    const box = document.getElementById('installBonusPushResult');
+    if (box) box.innerHTML = '<div style="color:#aaa;text-align:center;padding:6px;">⏳ Enviando…</div>';
+    try {
+        const r = await authFetch('/api/admin/push-install-bonus', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        if (box) box.innerHTML = '<div style="background:rgba(102,255,102,0.10);border:1px solid #66ff66;border-radius:8px;padding:10px;color:#aaffaa;">✅ Push enviado a <strong>' + d.sent + '/' + d.candidates + '</strong> users sin app · ' + d.failed + ' fallaron · ' + d.totalScanned + ' scaneados</div>';
+        showToast('✅ Push install-bonus enviado', 'success');
+    } catch (e) {
+        if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
 function currentCommunitySlotsCount() {
     const c = document.getElementById('userCommunitiesSlots');
     return c ? c.querySelectorAll('.user-community-slot').length : 0;

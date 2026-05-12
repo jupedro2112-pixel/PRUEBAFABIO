@@ -2642,19 +2642,27 @@
              abre el modal con instrucciones paso-a-paso por plataforma
              (iOS Safari, iOS Chrome, Android, Windows, Mac). -->
         <div class="install-hero-card" id="installHeroCard" hidden>
-            <div class="install-hero-pulse">📱</div>
-            <div class="install-hero-title">INSTALÁ LA APP</div>
-            <div class="install-hero-sub">
-                Para recibir <strong>notificaciones de bonos, regalos y reembolsos</strong> directo en tu celular. Tarda 30 segundos.
+            <div class="install-hero-pulse">🎁</div>
+            <div class="install-hero-title" style="color:#ffd700;">INSTALÁ Y GANÁ $5.000</div>
+            <div class="install-hero-sub" style="font-size:14px;">
+                Por instalar la app te regalamos <strong style="color:#ffd700;">$5.000 ARS</strong> de bono de bienvenida. Tarda 30 segundos.
+            </div>
+            <div style="background:linear-gradient(135deg,rgba(37,211,102,0.12),rgba(0,212,255,0.10));border:1.5px dashed rgba(255,215,0,0.55);border-radius:12px;padding:12px 14px;margin:10px 0;text-align:left;">
+                <div style="color:#ffd700;font-weight:900;font-size:12px;letter-spacing:1px;margin-bottom:8px;">🧭 3 PASOS</div>
+                <ol style="margin:0;padding-left:22px;color:#fff;font-size:13px;line-height:1.7;">
+                    <li>Tocá <strong>"CÓMO INSTALAR"</strong> acá abajo</li>
+                    <li>Seguí los pasos para tu celular (Android o iPhone)</li>
+                    <li>Abrí la app desde el ícono nuevo y reclamá <strong style="color:#ffd700;">los $5.000</strong></li>
+                </ol>
             </div>
             <ul class="install-hero-perks">
+                <li>💰 <strong>$5.000 de bono</strong> apenas instalás</li>
                 <li>🔔 Avisos de regalos de plata (solo clientes activos)</li>
-                <li>🎁 Bonos semanales</li>
                 <li>🔥 Reembolsos automáticos diarios</li>
                 <li>⚡ Sorteos relámpago en vivo</li>
             </ul>
             <button type="button" id="installHeroBtn" class="install-hero-btn">💡 CÓMO INSTALAR — paso a paso</button>
-            <div class="install-hero-foot">Si tenés dudas tocá el botón — te mostramos el procedimiento exacto para tu celular.</div>
+            <div class="install-hero-foot">El bono se desbloquea cuando entrás a la app instalada.</div>
         </div>
 
         <!-- Refunds-only: Resumen chico de opiniones — aparece solo después
@@ -5342,15 +5350,16 @@
             modal.innerHTML = `
                 <div class="ios-install-content">
                     <h3>📱 Instalar App en Android</h3>
-                    <p>Para instalar esta app en tu celular:</p>
+                    <div style="background:rgba(255,107,53,0.12);border:1px solid #ff6b35;border-radius:8px;padding:9px 11px;margin-bottom:12px;font-size:12.5px;color:#ffd0a0;line-height:1.5;">
+                        ⚠️ <strong>Si abriste este link desde WhatsApp / Instagram / Facebook</strong>, no se va a poder instalar desde ahí. Primero <strong>copiá el link</strong> y pegalo en <strong>Google Chrome</strong>.
+                    </div>
                     <ol>
-                        <li>Presiona el botón <strong>⋮</strong> (tres puntos) en Chrome</li>
-                        <li>Selecciona <strong>"Agregar a pantalla de inicio"</strong> o <strong>"Instalar app"</strong></li>
-                        <li>Presiona <strong>"Agregar"</strong> o <strong>"Instalar"</strong></li>
+                        <li>Abrí esta página en <strong>Google Chrome</strong> (el ícono redondo de colores)</li>
+                        <li>Tocá los <strong>3 puntos ⋮</strong> arriba a la derecha de Chrome</li>
+                        <li>En el menú, tocá <strong>"Instalar app"</strong> o <strong>"Agregar a pantalla principal"</strong></li>
+                        <li>Confirmá tocando <strong>"Instalar"</strong> o <strong>"Agregar"</strong></li>
+                        <li>Abrí la app desde el <strong>ícono nuevo</strong> que quedó en tu pantalla — no desde Chrome</li>
                     </ol>
-                    <p style="margin-top: 15px; font-size: 14px; color: #888;">
-                        💡 También puedes buscar el ícono de instalación en la barra de direcciones
-                    </p>
                     <button onclick="this.closest('.ios-install-modal').remove()" class="btn btn-primary">Entendido</button>
                 </div>
             `;
