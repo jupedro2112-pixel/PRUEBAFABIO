@@ -20667,7 +20667,21 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
       weeklyNetLoss,
       lightningCargasCount,
       lightningCargasRequired: 5,
-      raffles: raffles.map(r => ({
+      raffles: raffles.map(r => {
+        // Tapar 80% del username del ganador para vista publica. Si el caller
+        // es el ganador, devolvemos su username completo (lo necesita el flujo
+        // de reclamar premio y la pantalla "GANASTE").
+        const _isMe = !!(r.winnerUsername && r.winnerUsername.toLowerCase() === username.toLowerCase());
+        let _exposedWinner = r.winnerUsername || null;
+        if (_exposedWinner && !_isMe) {
+          const s = String(_exposedWinner);
+          const len = s.length;
+          const maskN = Math.max(1, Math.floor(len * 0.8));
+          const visibleN = Math.max(2, len - maskN);
+          const startVisible = len - visibleN;
+          _exposedWinner = '*'.repeat(startVisible) + s.slice(startVisible);
+        }
+        return {
         id: r.id,
         name: r.name,
         prizeName: r.prizeName,
@@ -20688,7 +20702,7 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         drawnAt: r.drawnAt || null,
         lotteryRule: r.lotteryRule,
         status: r.status,
-        winnerUsername: r.winnerUsername,
+        winnerUsername: _exposedWinner,
         winningTicketNumber: r.winningTicketNumber,
         prizeClaimable: !!r.prizeClaimable,
         prizeClaimedAt: r.prizeClaimedAt || null,
@@ -20697,7 +20711,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
         iAmWinner: (myByRaffle[r.id] && myByRaffle[r.id].isWinner) || false,
         requiresPaidTicket: !!r.requiresPaidTicket,
         requiresMinChargesLastWeek: r.requiresMinChargesLastWeek || 0
-      })),
+        };
+      }),
       claimable,
       recentWins
     });
@@ -20744,13 +20759,26 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
       if (isMe && r.prizeClaimedAt) {
         secondsRemaining = Math.max(0, Math.floor((POSTCLAIM_TTL_MS - (Date.now() - new Date(r.prizeClaimedAt).getTime())) / 1000));
       }
+      // Para el publico general tapamos el 80% inicial del username del
+      // ganador (social proof sin exponer la identidad). Si soy YO el
+      // ganador, devuelvo mi nombre completo. Min 2 chars visibles al final.
+      const _maskWinner = (u) => {
+        const s = String(u || '').trim();
+        if (!s) return '—';
+        const len = s.length;
+        const maskN = Math.max(1, Math.floor(len * 0.8));
+        const visibleN = Math.max(2, len - maskN);
+        const startVisible = len - visibleN;
+        return '*'.repeat(startVisible) + s.slice(startVisible);
+      };
+      const exposedUsername = isMe ? r.winnerUsername : _maskWinner(r.winnerUsername);
       winners.push({
         id: r.id,
         name: r.name,
         prizeName: r.prizeName,
         prizeValueARS: r.prizeValueARS || 0,
         emoji: r.emoji || '🏆',
-        winnerUsername: r.winnerUsername,
+        winnerUsername: exposedUsername,
         winningTicketNumber: r.winningTicketNumber,
         drawnAt: r.drawnAt,
         prizeClaimedAt: r.prizeClaimedAt || null,
