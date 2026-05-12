@@ -19014,9 +19014,181 @@ function _renderEncuesta() {
 function _renderEncuestaTabEstrategia(d, respondedTotal) {
     const strategy = d.strategy || null;
     let html = '';
+    // Acceso rápido a vista previa simulada: cómo se vería el menú PWA si
+    // sortearas TODOS los pendientes ahora. No toca DB y no manda push —
+    // solo simula visualmente con los participantes reales.
+    html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(212,175,55,0.04));border:1px solid rgba(0,212,255,0.35);border-radius:10px;padding:11px 13px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
+    html += '<div style="flex:1;min-width:220px;"><div style="color:#00d4ff;font-size:12.5px;font-weight:900;letter-spacing:0.5px;">🎬 Vista previa post-sorteo</div><div style="color:#aaa;font-size:11px;margin-top:2px;line-height:1.4;">Simula cómo se vería el menú PWA si sortearas <strong>todos los pendientes ahora</strong>. No toca DB, no manda push — solo visual.</div></div>';
+    html += '<button type="button" onclick="openPostSorteoPreviewModal()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:9px 14px;border-radius:8px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🎬 Ver vista previa</button>';
+    html += '</div>';
     html += _renderSurveyQuestion();
     html += _renderStrategyEditor(strategy, respondedTotal);
     return html;
+}
+
+// Mismo enmascarado que la PWA (public/js/raffles.js _maskUsername): tapa
+// el 80% inicial del username dejando mínimo 2 chars visibles al final.
+function _pwaMaskUsername(u) {
+    const s = String(u || '').trim();
+    if (!s) return '—';
+    const len = s.length;
+    const mask = Math.max(1, Math.floor(len * 0.8));
+    const visible = Math.max(2, len - mask);
+    const visibleStart = len - visible;
+    return '*'.repeat(visibleStart) + s.slice(visibleStart);
+}
+
+// Vista previa simulada del menú PWA post-sorteo. No toca DB y NO manda
+// push — usa /preview-draw (read-only) para calcular ganadores reales y
+// los pinta como los vería la PWA (cards "Sorteos resueltos" con username
+// tapado al 80%). Sirve para chequear cómo le quedaría el menú al usuario
+// común si sortearas ahora mismo todos los pendientes.
+async function openPostSorteoPreviewModal() {
+    const modalId = 'postSorteoPreviewModal';
+    document.getElementById(modalId)?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = modalId;
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    // N° random para la simulación (1-9999). El user puede cambiarlo.
+    const randomLot = Math.floor(Math.random() * 9999) + 1;
+
+    overlay.innerHTML =
+        '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #00d4ff;border-radius:14px;padding:20px;max-width:820px;width:100%;color:#fff;margin:14px auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;">' +
+                '<div>' +
+                    '<h3 style="margin:0;color:#00d4ff;font-size:17px;letter-spacing:1px;">🎬 Vista previa post-sorteo · simulado</h3>' +
+                    '<div style="color:#aaa;font-size:11.5px;margin-top:4px;line-height:1.4;max-width:660px;">' +
+                        '<strong style="color:#66ff66;">No toca DB · no manda push</strong>. Calcula ganadores reales con un número de lotería de prueba y muestra cómo se vería el bloque "Sorteos resueltos" en la PWA del usuario común (con el username del ganador tapado al 80%).' +
+                    '</div>' +
+                '</div>' +
+                '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:24px;cursor:pointer;line-height:1;">×</button>' +
+            '</div>' +
+            '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.35);border-radius:10px;padding:11px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+                '<label style="color:#aaa;font-size:11.5px;font-weight:800;letter-spacing:0.5px;">N° de lotería simulado:</label>' +
+                '<input type="number" id="postSorteoLotInput" min="1" max="99999" value="' + randomLot + '" style="background:rgba(0,0,0,0.40);border:1.5px solid #00d4ff60;border-radius:7px;color:#00d4ff;padding:8px 10px;font-size:15px;font-weight:800;width:110px;text-align:center;font-family:monospace;">' +
+                '<button type="button" onclick="runPostSorteoPreview()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;letter-spacing:0.5px;">🎬 Simular</button>' +
+                '<div style="flex-basis:100%;color:#888;font-size:10.5px;margin-top:2px;">Cambialo si querés probar con otro número. Cualquier valor entre 1 y 99999.</div>' +
+            '</div>' +
+            '<div id="postSorteoPreviewBody"><div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando sorteos pendientes…</div></div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+
+    // Pre-carga los pendientes para tenerlos cacheados en el overlay.
+    try {
+        const r = await authFetch('/api/admin/raffles?include=history&kind=all');
+        if (!r.ok) {
+            document.getElementById('postSorteoPreviewBody').innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">Error cargando sorteos</div>';
+            return;
+        }
+        const d = await r.json();
+        const EXCLUDED_LEGACY_TYPES = ['iphone', 'caribe', 'auto', 'other'];
+        const nowMs = Date.now();
+        const pending = (d.raffles || []).filter(x => {
+            if (x.winnerUsername) return false;
+            if ((x.cuposSold || 0) === 0) return false;
+            if (EXCLUDED_LEGACY_TYPES.includes(x.raffleType)) return false;
+            if (x.status === 'closed' || x.status === 'archived' || x.status === 'drawn') return true;
+            if (x.status === 'active') {
+                const dd = x.drawDate ? new Date(x.drawDate).getTime() : 0;
+                return dd > 0 && dd < nowMs;
+            }
+            return false;
+        });
+        overlay._pending = pending;
+        if (pending.length === 0) {
+            document.getElementById('postSorteoPreviewBody').innerHTML = '<div style="color:#aaa;text-align:center;padding:20px;background:rgba(255,255,255,0.03);border-radius:10px;">No hay sorteos pendientes para simular (todos los que tenían participantes ya tienen ganador).</div>';
+            return;
+        }
+        document.getElementById('postSorteoPreviewBody').innerHTML = '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(0,212,255,0.30);border-radius:10px;padding:14px;color:#aaa;text-align:center;font-size:12px;">' + pending.length + ' sorteos pendientes detectados. Tocá <strong style="color:#00d4ff;">🎬 Simular</strong> para ver cómo se verían sorteados.</div>';
+    } catch (e) {
+        document.getElementById('postSorteoPreviewBody').innerHTML = '<div style="color:#ff8080;text-align:center;padding:14px;">Error de conexión</div>';
+    }
+}
+
+async function runPostSorteoPreview() {
+    const overlay = document.getElementById('postSorteoPreviewModal');
+    if (!overlay) return;
+    const pending = overlay._pending || [];
+    if (pending.length === 0) return;
+    const lotInput = document.getElementById('postSorteoLotInput');
+    const lotteryNumber = parseInt((lotInput && lotInput.value) || '', 10);
+    if (!Number.isFinite(lotteryNumber) || lotteryNumber < 1) {
+        showToast('Entrá un número de lotería válido', 'error');
+        return;
+    }
+    const body = document.getElementById('postSorteoPreviewBody');
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">⏳ Simulando ' + pending.length + ' sorteos con el #' + lotteryNumber + '…</div>';
+
+    // /preview-draw es READ-ONLY: solo calcula quién ganaría con ese número
+    // sin tocar el sorteo. No manda push. Lo usamos para tener ganadores
+    // reales en la simulación.
+    const previews = [];
+    for (const r of pending) {
+        try {
+            const pr = await authFetch('/api/admin/raffles/' + encodeURIComponent(r.id) + '/preview-draw', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lotteryNumber })
+            });
+            const data = await pr.json();
+            previews.push({ raffle: r, ok: pr.ok && data.success, data });
+        } catch (e) {
+            previews.push({ raffle: r, ok: false, data: { error: e.message } });
+        }
+    }
+
+    // Pintamos como lo vería la PWA: un banner "Sorteos resueltos" arriba
+    // y abajo cada sorteo como card con username tapado al 80%.
+    let html = '';
+    html += '<div style="background:rgba(255,170,68,0.08);border:1px dashed #ffaa44;border-radius:8px;padding:10px 12px;margin-bottom:10px;color:#ffd699;font-size:11.5px;line-height:1.5;">';
+    html += '⚠️ <strong style="color:#ffaa44;">VISTA SIMULADA</strong> — no se sorteó nada, no se mandó ningún push. Esto solo te muestra cómo se vería el menú de la PWA para un usuario común si sortearas ahora todos los pendientes con el N° <strong style="color:#fff;">#' + lotteryNumber + '</strong>.';
+    html += '</div>';
+
+    // Mock del bloque "Sorteos resueltos" de la PWA (estilo similar a
+    // _renderDrawnLine de public/js/raffles.js).
+    html += '<div style="background:linear-gradient(180deg,#0a001a,#1a0033);border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:14px;">';
+    html += '<div style="color:#d4af37;font-size:13px;font-weight:900;letter-spacing:1.2px;margin-bottom:10px;text-transform:uppercase;">🎲 Sorteos resueltos · vista del usuario</div>';
+
+    const okOnes = previews.filter(p => p.ok);
+    const errOnes = previews.filter(p => !p.ok);
+
+    if (okOnes.length === 0) {
+        html += '<div style="color:#aaa;text-align:center;padding:14px;font-size:12px;">No se pudo simular ningún sorteo. Probá con otro número de lotería.</div>';
+    } else {
+        for (const p of okOnes) {
+            const r = p.raffle;
+            const w = p.data.winner || {};
+            const mapped = p.data.mappedNumber || '?';
+            const wasMapped = !!p.data.wasMapped;
+            const maskedUser = _pwaMaskUsername(w.username || '');
+            // Card mimicking _renderDrawnLine del PWA (loser-view: username tapado).
+            html += '<div style="background:rgba(255,255,255,0.03);border:1px solid #888;border-radius:8px;padding:7px 10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:12px;">';
+            html += '<span style="font-size:14px;flex-shrink:0;">' + escapeHtml(r.emoji || '🎁') + '</span>';
+            html += '<span style="color:#888;font-weight:900;letter-spacing:0.5px;flex-shrink:0;">#' + mapped + '</span>';
+            html += '<span style="color:#fff;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(r.name) + '</span>';
+            html += '<span style="color:#aaa;font-size:11px;">🏆 @' + escapeHtml(maskedUser) + '</span>';
+            html += '</div>';
+            // Mini fila de debug (admin-only, no se ve en PWA real)
+            html += '<div style="font-size:10px;color:#666;padding:0 6px 6px 30px;font-family:monospace;">';
+            html += 'real: @' + escapeHtml(w.username || '?') + (wasMapped ? ' (mapeado de ' + lotteryNumber + ')' : '') + ' · premio $' + Number(r.prizeValueARS || 0).toLocaleString('es-AR');
+            html += '</div>';
+        }
+    }
+
+    html += '</div>';
+
+    if (errOnes.length > 0) {
+        html += '<div style="margin-top:10px;background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.35);border-radius:8px;padding:10px;color:#ff8080;font-size:11px;">';
+        html += '<div style="font-weight:800;margin-bottom:4px;">⚠️ ' + errOnes.length + ' sorteo(s) no se pudieron simular:</div>';
+        for (const p of errOnes) {
+            html += '<div style="margin-left:8px;color:#ffb0b0;">• ' + escapeHtml(p.raffle.name) + ' — ' + escapeHtml((p.data && p.data.error) || 'error') + '</div>';
+        }
+        html += '</div>';
+    }
+
+    body.innerHTML = html;
 }
 
 // Tab 2: Gente que se va uniendo. KPI + filtros + tabla en orden cronológico

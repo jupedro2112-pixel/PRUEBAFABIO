@@ -17452,11 +17452,30 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
 
+    // GATE: solo users con tokens FCM pueden reclamar el push de plata
+    // (decisión del dueño 2026-05: "el reclamo es parte de la notificación,
+    // solo lo recibe quien tiene la app con notifs"). Si no hay tokens,
+    // significa que no instaló la PWA con notifs aceptadas — el regalo
+    // mide adopción de la app, así que reclamar sin notif desvirtúa la
+    // métrica y abre la puerta a abuso vía API directa.
+    const meDoc = await User.findOne(
+      { id: userId },
+      { fcmToken: 1, fcmTokens: 1 }
+    ).lean();
+    const meTokens =
+      (meDoc && meDoc.fcmTokens ? meDoc.fcmTokens.filter(t => t && t.token).length : 0) +
+      (meDoc && meDoc.fcmToken ? 1 : 0);
+    if (meTokens === 0) {
+      return res.status(403).json({
+        error: 'Solo podés reclamar si tenés la app instalada con notificaciones aceptadas.',
+        needsAppNotifs: true
+      });
+    }
+
     // Buscar EL giveaway destinado a ESTE user (mismo criterio que /active):
-    // 1) whitelist explícito → 2) público con prefix match → 3) público sin prefix.
-    // Sin esto, si la estrategia automática creó varios giveaways en
-    // paralelo (uno por tier), users de tiers anteriores quedaban
-    // afuera por el .sort createdAt:-1 y no podían reclamar.
+    // 1) whitelist explícito → 2) broadcastAll respetando excludeTeams →
+    // 3) público con prefix match. Sin esto, si la estrategia automática
+    // creó varios giveaways en paralelo, users quedaban afuera.
     const usernameLower = username.toLowerCase();
     const baseFilter = { status: 'active' };
     let g = await MoneyGiveaway.findOne({
@@ -17473,7 +17492,19 @@ app.post('/api/money-giveaway/claim', authMiddleware, async (req, res) => {
           { audienceWhitelist: { $exists: false } }
         ]
       }).sort({ createdAt: -1 }).limit(10);
+      let linesCfg = null;
+      try { linesCfg = await getConfig('userLinesByPrefix'); } catch (_) {}
       for (const c of candidates) {
+        // Modo broadcast: aplica a todos EXCEPTO equipos en excludeTeams.
+        if (c.broadcastAll) {
+          const myTeam = (linesCfg && pickTeamNameForUsername(linesCfg, username)) || null;
+          const excluded = Array.isArray(c.excludeTeams) ? c.excludeTeams : [];
+          const myTeamLower = String(myTeam || '').toLowerCase();
+          const isExcluded = excluded.some(t => String(t || '').toLowerCase() === myTeamLower);
+          if (!isExcluded) { g = c; break; }
+          continue;
+        }
+        // Modo legacy prefix.
         if (!c.prefix || usernameLower.startsWith(String(c.prefix).toLowerCase())) {
           g = c;
           break;
@@ -17803,8 +17834,46 @@ app.post('/api/admin/money-giveaway', authMiddleware, adminMiddleware, bulkLaunc
       strategySource: whitelist.length > 0 ? 'individual_grant' : 'manual',
       status: 'active'
     });
-    logger.info(`[GIVEAWAY-MANUAL] created amount=${a} audience=${whitelist.length > 0 ? whitelist.join(',') : 'prefix:' + prefixTrimmed} by=${req.user.username}`);
-    res.json({ success: true, giveaway: g.toObject() });
+    // Push notification a los users de la whitelist (regalo dirigido).
+    // Sin esto, el user solo ve la card cuando la PWA pollea /active —
+    // no recibe ninguna notificación. Para el flow "Probar reclamo completo"
+    // y los grants individuales esto es crítico.
+    let pushed = 0, audienceTotal = 0;
+    if (whitelist.length > 0) {
+      try {
+        const targets = await User.find(
+          { username: { $in: whitelist.map(u => new RegExp('^' + u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i')) } },
+          { fcmToken: 1, fcmTokens: 1, username: 1 }
+        ).lean();
+        audienceTotal = targets.length;
+        const title = `🎁 Te regalamos $${a.toLocaleString('es-AR')}`;
+        const body = 'Entrá a la app y tocá "Reclamá $' + a.toLocaleString('es-AR') + ' aquí" antes de que se venza.';
+        const sendPromises = [];
+        for (const u of targets) {
+          const tokens = [];
+          if (u.fcmToken) tokens.push(u.fcmToken);
+          if (Array.isArray(u.fcmTokens)) {
+            for (const tk of u.fcmTokens) {
+              const t = tk && tk.token ? tk.token : tk;
+              if (t && !tokens.includes(t)) tokens.push(t);
+            }
+          }
+          for (const tk of tokens) {
+            sendPromises.push(
+              _sendPushToUser(tk, title, body, { source: 'money-giveaway', giveawayId: g.id, amount: String(a) })
+                .then(r => { if (r && r.success) pushed++; })
+                .catch(e => logger.warn(`[GIVEAWAY-MANUAL] push fail ${u.username}: ${e.message}`))
+            );
+          }
+        }
+        await Promise.all(sendPromises);
+      } catch (e) {
+        logger.warn(`[GIVEAWAY-MANUAL] push targeted falló: ${e.message}`);
+      }
+    }
+
+    logger.info(`[GIVEAWAY-MANUAL] created amount=${a} audience=${whitelist.length > 0 ? whitelist.join(',') : 'prefix:' + prefixTrimmed} pushed=${pushed}/${audienceTotal} by=${req.user.username}`);
+    res.json({ success: true, giveaway: g.toObject(), pushNotifications: { sent: pushed, audienceTotal } });
   } catch (error) {
     logger.error(`POST /api/admin/money-giveaway error: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
