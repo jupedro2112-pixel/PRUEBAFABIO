@@ -17506,29 +17506,49 @@ async function openDrawAllUnifiedModal() {
         const r = await authFetch('/api/admin/raffles?include=history&kind=all');
         if (!r.ok) { statsEl.innerHTML = '<div style="color:#ff8080;text-align:center;padding:8px;">Error cargando</div>'; return; }
         const d = await r.json();
-        const closed = (d.raffles || []).filter(x => x.status === 'closed' && !x.winnerUsername && (x.cuposSold || 0) > 0);
+        // Incluye TODOS los sorteos sin ganador con participantes:
+        //   - closed: cerrado (cupo lleno o drawDate pasada)
+        //   - active: todavía recibiendo, el dueño quiere sortear igual
+        //   - archived: limpiado por cleanup pero sin ganador
+        //   - drawn (sin winner): caso raro, status drawn pero sin winner
+        // Excluye cancelled y los que ya tengan ganador. /draw-batch reabre
+        // archived/drawn automáticamente antes de sortearlos.
+        const pendingStatuses = ['closed', 'active', 'archived', 'drawn'];
+        const closed = (d.raffles || []).filter(x =>
+            pendingStatuses.includes(x.status) &&
+            !x.winnerUsername &&
+            (x.cuposSold || 0) > 0
+        );
         if (closed.length === 0) {
-            statsEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">No hay sorteos cerrados pendientes de sortear. (Los <strong>active</strong> son para la próxima semana — no entran acá.)</div>';
+            statsEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">No hay sorteos pendientes de sortear (todos los que tenían participantes ya tienen ganador).</div>';
             return;
         }
         // Stash en el overlay para reusar después.
         overlay._closedRaffles = closed;
         const byKind = { paid: 0, free: 0, relampago: 0 };
+        const byStatus = { closed: 0, active: 0, archived: 0, drawn: 0 };
         let totalPrize = 0;
         for (const r of closed) {
             totalPrize += Number(r.prizeValueARS || 0);
             if (r.raffleType === 'relampago') byKind.relampago++;
             else if (r.isFree) byKind.free++;
             else byKind.paid++;
+            if (byStatus[r.status] != null) byStatus[r.status]++;
         }
+        const statusChips = [];
+        if (byStatus.closed > 0)   statusChips.push('<span style="background:rgba(255,215,0,0.12);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:3px 8px;border-radius:5px;font-weight:700;font-size:10.5px;">' + byStatus.closed + ' closed</span>');
+        if (byStatus.active > 0)   statusChips.push('<span style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:3px 8px;border-radius:5px;font-weight:700;font-size:10.5px;">' + byStatus.active + ' active</span>');
+        if (byStatus.archived > 0) statusChips.push('<span style="background:rgba(136,136,136,0.10);color:#aaa;border:1px solid rgba(136,136,136,0.40);padding:3px 8px;border-radius:5px;font-weight:700;font-size:10.5px;">' + byStatus.archived + ' archived</span>');
+        if (byStatus.drawn > 0)    statusChips.push('<span style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-weight:700;font-size:10.5px;">' + byStatus.drawn + ' drawn sin ganador (reabre)</span>');
         statsEl.innerHTML =
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
-                '<span style="background:rgba(255,215,0,0.12);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:5px 11px;border-radius:7px;font-weight:800;font-size:12px;">' + closed.length + ' sorteos cerrados</span>' +
+                '<span style="background:rgba(255,215,0,0.18);color:#ffd700;border:1px solid #ffd700;padding:5px 11px;border-radius:7px;font-weight:900;font-size:12px;">' + closed.length + ' sorteos pendientes</span>' +
                 (byKind.paid ? '<span style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:4px 9px;border-radius:6px;font-weight:700;">💎 ' + byKind.paid + ' pagos</span>' : '') +
                 (byKind.free ? '<span style="background:rgba(77,171,255,0.10);color:#4dabff;border:1px solid rgba(77,171,255,0.40);padding:4px 9px;border-radius:6px;font-weight:700;">🎁 ' + byKind.free + ' gratis</span>' : '') +
                 (byKind.relampago ? '<span style="background:rgba(255,235,59,0.10);color:#ffeb3b;border:1px solid rgba(255,235,59,0.40);padding:4px 9px;border-radius:6px;font-weight:700;">⚡ ' + byKind.relampago + ' relámpago</span>' : '') +
                 '<span style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:4px 9px;border-radius:6px;font-weight:700;margin-left:auto;">💰 Total a entregar: $' + Number(totalPrize).toLocaleString('es-AR') + '</span>' +
-            '</div>';
+            '</div>' +
+            (statusChips.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">' + statusChips.join('') + '</div>' : '');
         setTimeout(() => { try { document.getElementById('drawAllLottery').focus(); } catch (_) {} }, 60);
     } catch (e) {
         statsEl.innerHTML = '<div style="color:#ff8080;text-align:center;padding:8px;">Error de conexión</div>';
