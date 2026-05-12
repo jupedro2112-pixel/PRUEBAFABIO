@@ -407,6 +407,7 @@ function showSection(sectionKey) {
         rafflesFree: 'rafflesFreeSection',
         rafflesLightning: 'rafflesLightningSection',
         roulette: 'rouletteSection',
+        notifCheck: 'notifCheckSection',
         quiniela: 'quinielaSection',
         campaigns: 'campaignsSection',
         recovery: 'recoverySection',
@@ -448,6 +449,8 @@ function showSection(sectionKey) {
         loadPushGiveawaySection();
     } else if (sectionKey === 'roulette') {
         loadRouletteAdmin();
+    } else if (sectionKey === 'notifCheck') {
+        loadNotifCheckAdmin();
     } else if (sectionKey === 'recontact') {
         loadRecontactSection();
     } else if (sectionKey === 'recontactConversions') {
@@ -1746,6 +1749,163 @@ async function retryWelcomeBonusCredit(username) {
 // Crea un MoneyGiveaway con broadcastAll=true. Manda push a todos los
 // users con FCM tokens (excepto equipos excluidos). Mide cuánta gente
 // realmente tiene la app reclamando una recompensa real ($500 default).
+
+// =========================================================================
+// TEST DE NOTIFICACIONES — panel admin
+// =========================================================================
+async function loadNotifCheckAdmin() {
+    const body = document.getElementById('notifCheckBody');
+    if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/notif-check/stats');
+        const d = await r.json();
+        if (!r.ok || !d.success) { body.innerHTML = '<div style="color:#ff8080;padding:14px;">' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        const checks = d.checks || [];
+        const latest = checks[0];
+
+        let html = '';
+
+        // === Form para mandar nuevo check ===
+        html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.08),rgba(0,212,255,0.03));border:1px solid rgba(0,212,255,0.40);border-radius:12px;padding:14px;margin-bottom:14px;">';
+        html += '<h3 style="margin:0 0 8px;color:#00d4ff;font-size:14px;letter-spacing:1px;">📤 Enviar nuevo test</h3>';
+        html += '<div style="color:#bbb;font-size:11.5px;line-height:1.4;margin-bottom:10px;">Mandá un push a TODOS los users con FCM tokens. El user va a ver un card "🔔 CONFIRMAR" en la PWA. Sirve para medir cuántos efectivamente reciben las notifs.</div>';
+        html += '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Título (default: 🔔 Test de notificaciones)</label>';
+        html += '<input id="ncTitle" type="text" placeholder="🔔 Test de notificaciones" maxlength="100" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;">';
+        html += '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Mensaje del test (máx 200 chars) *</label>';
+        html += '<textarea id="ncMessage" placeholder="Ej: Probando que te lleguen las notificaciones de regalos. Tocá CONFIRMAR si te llegó." maxlength="200" rows="3" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;box-sizing:border-box;font-family:inherit;resize:vertical;"></textarea>';
+        html += '<label style="color:#aaa;font-size:11px;font-weight:800;letter-spacing:0.5px;display:block;margin-bottom:3px;">Duración (hs)</label>';
+        html += '<input id="ncTtl" type="number" min="1" max="72" value="24" style="width:100px;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:9px 11px;border-radius:7px;font-size:13px;margin-bottom:10px;">';
+        html += '<div><button onclick="sendNotifCheck()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:11px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 ENVIAR TEST A TODOS</button></div>';
+        html += '</div>';
+
+        // === Último check (si existe) ===
+        if (latest) {
+            const isActive = latest.status === 'active' && new Date(latest.expiresAt) > new Date();
+            const sentPct = latest.audienceTotal > 0 ? Math.round(latest.sentCount * 100 / latest.audienceTotal) : 0;
+            const confPct = latest.sentCount > 0 ? Math.round(latest.confirmedCount * 100 / latest.sentCount) : 0;
+            html += '<div style="background:rgba(0,0,0,0.30);border:2px solid ' + (isActive ? '#66ff66' : '#888') + ';border-radius:12px;padding:14px;margin-bottom:14px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:8px;">';
+            html += '<div><h3 style="margin:0;color:#fff;font-size:14px;">' + escapeHtml(latest.title || '🔔 Test') + ' <span style="background:' + (isActive ? 'rgba(102,255,102,0.18)' : 'rgba(136,136,136,0.18)') + ';color:' + (isActive ? '#66ff66' : '#aaa') + ';padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;letter-spacing:1px;margin-left:6px;">' + (isActive ? 'ACTIVO' : 'CERRADO') + '</span></h3>';
+            html += '<div style="color:#bbb;font-size:11px;margin-top:3px;">' + escapeHtml(new Date(latest.createdAt).toLocaleString('es-AR')) + (latest.createdBy ? ' · por ' + escapeHtml(latest.createdBy) : '') + '</div></div>';
+            if (isActive) html += '<button onclick="closeNotifCheck(\'' + escapeJsArg(latest.id) + '\')" style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:6px 12px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">⏹ Cerrar</button>';
+            html += '</div>';
+            html += '<div style="background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;margin-bottom:10px;color:#ddd;font-size:12.5px;line-height:1.4;font-style:italic;">"' + escapeHtml(latest.message) + '"</div>';
+
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;">';
+            html += '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">👥 Audiencia</div><div style="color:#fff;font-size:20px;font-weight:900;">' + Number(latest.audienceTotal || 0).toLocaleString('es-AR') + '</div></div>';
+            html += '<div style="background:rgba(77,171,255,0.10);border:1px solid rgba(77,171,255,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">📤 Enviados</div><div style="color:#4dabff;font-size:20px;font-weight:900;">' + Number(latest.sentCount || 0).toLocaleString('es-AR') + '</div><div style="color:#888;font-size:10px;">' + sentPct + '% audiencia</div></div>';
+            html += '<div style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">👆 Tocaron push</div><div style="color:#ffd700;font-size:20px;font-weight:900;">' + Number(latest.tappedCount || 0).toLocaleString('es-AR') + '</div></div>';
+            html += '<div style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.40);border-radius:8px;padding:9px;text-align:center;"><div style="color:#aaa;font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">✅ Confirmaron</div><div style="color:#66ff66;font-size:20px;font-weight:900;">' + Number(latest.confirmedCount || 0).toLocaleString('es-AR') + '</div><div style="color:#888;font-size:10px;">' + confPct + '% de enviados</div></div>';
+            html += '</div>';
+            html += '<div style="margin-top:10px;text-align:right;"><button onclick="viewNotifCheckConfirmers(\'' + escapeJsArg(latest.id) + '\')" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:6px 12px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">👥 Ver lista de confirmaciones</button></div>';
+            html += '</div>';
+        }
+
+        // === Historial ===
+        if (checks.length > 1) {
+            html += '<h3 style="color:#fff;font-size:13px;margin:14px 0 8px;letter-spacing:1px;">📋 Tests anteriores</h3>';
+            html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;overflow:hidden;">';
+            html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+            html += '<thead><tr style="background:rgba(0,212,255,0.06);color:#00d4ff;text-align:left;">';
+            html += '<th style="padding:8px 10px;font-weight:800;">Fecha</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;">Mensaje</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Audiencia</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Enviados</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;text-align:right;">Confirmaron</th>';
+            html += '<th style="padding:8px 10px;font-weight:800;"></th>';
+            html += '</tr></thead><tbody>';
+            for (let i = 1; i < checks.length; i++) {
+                const c = checks[i];
+                html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+                html += '<td style="padding:7px 10px;color:#aaa;font-size:10.5px;white-space:nowrap;">' + escapeHtml(new Date(c.createdAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })) + '</td>';
+                html += '<td style="padding:7px 10px;color:#ddd;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(c.message) + '</td>';
+                html += '<td style="padding:7px 10px;text-align:right;color:#ddd;">' + Number(c.audienceTotal || 0).toLocaleString('es-AR') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:right;color:#4dabff;font-weight:700;">' + Number(c.sentCount || 0).toLocaleString('es-AR') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:right;color:#66ff66;font-weight:800;">' + Number(c.confirmedCount || 0).toLocaleString('es-AR') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:right;"><button onclick="viewNotifCheckConfirmers(\'' + escapeJsArg(c.id) + '\')" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">Ver</button></td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table></div>';
+        }
+
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:14px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+async function sendNotifCheck() {
+    const title = (document.getElementById('ncTitle')?.value || '').trim();
+    const message = (document.getElementById('ncMessage')?.value || '').trim();
+    const ttlHours = parseInt(document.getElementById('ncTtl')?.value || '24', 10) || 24;
+    if (!message) { showToast('Escribí el mensaje del test', 'error'); return; }
+    if (!confirm('¿Mandar este test a TODOS los users con notifs?\n\n' + (title || '🔔 Test') + '\n' + message + '\n\nDura ' + ttlHours + 'hs.')) return;
+    try {
+        const r = await authFetch('/api/admin/notif-check/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, message, ttlHours })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Test enviado · push ' + (d.check.sentCount || 0) + '/' + (d.check.audienceTotal || 0), 'success');
+        loadNotifCheckAdmin();
+    } catch (e) {
+        alert('Error: ' + (e.message || ''));
+    }
+}
+
+async function closeNotifCheck(checkId) {
+    if (!confirm('¿Cerrar este test? Los users no verán más el card de confirmar.')) return;
+    try {
+        const r = await authFetch('/api/admin/notif-check/' + encodeURIComponent(checkId) + '/close', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Test cerrado', 'success');
+        loadNotifCheckAdmin();
+    } catch (e) { alert('Error'); }
+}
+
+async function viewNotifCheckConfirmers(checkId) {
+    try {
+        const r = await authFetch('/api/admin/notif-check/' + encodeURIComponent(checkId) + '/confirmers');
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        const items = d.items || [];
+        document.getElementById('ncConfirmersModal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'ncConfirmersModal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+        let html = '<div style="background:#0a0a14;border:2px solid #66ff66;border-radius:14px;padding:18px;max-width:580px;width:100%;color:#fff;margin:14px auto;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">';
+        html += '<h3 style="margin:0;color:#66ff66;font-size:15px;">✅ Confirmaron · ' + items.length + ' usuarios</h3>';
+        html += '<button onclick="document.getElementById(\'ncConfirmersModal\').remove()" style="background:transparent;color:#aaa;border:none;font-size:22px;cursor:pointer;">×</button>';
+        html += '</div>';
+        if (items.length === 0) {
+            html += '<div style="color:#aaa;text-align:center;padding:18px;">Todavía nadie confirmó este test.</div>';
+        } else {
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;max-height:60vh;overflow:auto;">';
+            for (const c of items) {
+                const t = c.confirmedAt ? new Date(c.confirmedAt).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+                const srcBadge = c.source === 'push_tap'
+                    ? '<span style="background:rgba(255,215,0,0.18);color:#ffd700;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;">push tap</span>'
+                    : '<span style="background:rgba(102,255,102,0.18);color:#66ff66;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800;">botón</span>';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 9px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;">';
+                html += '<div style="color:#fff;font-weight:700;">@' + escapeHtml(c.username || '?') + ' ' + srcBadge + '</div>';
+                html += '<div style="color:#aaa;font-size:11px;">' + escapeHtml(t) + '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+        modal.innerHTML = html;
+        document.body.appendChild(modal);
+    } catch (e) { alert('Error'); }
+}
 
 // =========================================================================
 // RULETA DIARIA — panel admin: stats + historial

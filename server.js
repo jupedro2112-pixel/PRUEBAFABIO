@@ -18171,6 +18171,184 @@ app.get('/api/admin/money-giveaway/:id/taps', authMiddleware, adminMiddleware, a
   }
 });
 
+// ============================================================================
+// NOTIF CHECK — Verificación de notificaciones (admin manda push de test,
+// users con app + notifs ven un card "CONFIRMAR" en la PWA).
+// ============================================================================
+const NotifCheck = require('./src/models/NotifCheck');
+const NotifCheckConfirm = require('./src/models/NotifCheckConfirm');
+
+// POST /api/admin/notif-check/send — admin envía un check broadcast.
+app.post('/api/admin/notif-check/send', authMiddleware, adminMiddleware, bulkLaunchLimiter, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Solo el admin principal puede mandar notif-check.' });
+    }
+    const message = String((req.body && req.body.message) || '').slice(0, 200).trim();
+    const title = String((req.body && req.body.title) || '').slice(0, 100).trim() || '🔔 Test de notificaciones';
+    if (!message) return res.status(400).json({ error: 'Falta el mensaje del check' });
+    const ttlHours = Math.max(1, Math.min(72, Number(req.body && req.body.ttlHours) || 24));
+
+    // Cerrar checks anteriores activos.
+    await NotifCheck.updateMany({ status: 'active' }, { $set: { status: 'closed' } });
+
+    // Audiencia: todos con FCM tokens.
+    const filter = { $or: [
+      { fcmToken: { $exists: true, $ne: null } },
+      { 'fcmTokens.0': { $exists: true } }
+    ]};
+    const audienceTotal = await User.countDocuments(filter);
+
+    const check = await NotifCheck.create({
+      id: uuidv4(),
+      title, message, audienceTotal,
+      sentCount: 0, tappedCount: 0, confirmedCount: 0,
+      status: 'active',
+      expiresAt: new Date(Date.now() + ttlHours * 3600 * 1000),
+      createdBy: req.user.username || null
+    });
+
+    // Disparar push a todos.
+    let sent = 0;
+    try {
+      const pushRes = await sendNotificationToAllUsers(
+        User, title, message,
+        { source: 'notif-check', checkId: check.id },
+        filter
+      );
+      sent = (pushRes && pushRes.successCount) || 0;
+    } catch (e) {
+      logger.warn(`[NOTIF-CHECK] push falló: ${e.message}`);
+    }
+    await NotifCheck.updateOne({ id: check.id }, { $set: { sentCount: sent } });
+
+    logger.info(`[NOTIF-CHECK] sent check=${check.id} audience=${audienceTotal} pushed=${sent} by=${req.user.username}`);
+    res.json({
+      success: true,
+      check: { ...check.toObject(), sentCount: sent }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-check/send: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/notif-check/stats — stats del check activo + historial.
+app.get('/api/admin/notif-check/stats', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const recent = await NotifCheck.find({}).sort({ createdAt: -1 }).limit(10).lean();
+    // Para el más reciente, recomputar counters from source of truth.
+    if (recent.length > 0) {
+      const top = recent[0];
+      const [confirmedCount, taps] = await Promise.all([
+        NotifCheckConfirm.countDocuments({ checkId: top.id }),
+        PushTapLog.countDocuments({ source: 'notif-check', giveawayId: null })
+      ]);
+      top.confirmedCount = confirmedCount;
+      top.tappedCount = taps;
+      await NotifCheck.updateOne({ id: top.id }, { $set: { confirmedCount, tappedCount: taps } }).catch(() => {});
+    }
+    res.json({ success: true, checks: recent });
+  } catch (err) {
+    logger.error(`/api/admin/notif-check/stats: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/notif-check/:id/confirmers — lista de quien confirmó.
+app.get('/api/admin/notif-check/:id/confirmers', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const confirms = await NotifCheckConfirm.find({ checkId: req.params.id })
+      .sort({ confirmedAt: -1 })
+      .lean();
+    res.json({ success: true, total: confirms.length, items: confirms });
+  } catch (err) {
+    logger.error(`/api/admin/notif-check/:id/confirmers: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/notif-check/:id/close — cerrar manualmente.
+app.post('/api/admin/notif-check/:id/close', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await NotifCheck.updateOne({ id: req.params.id }, { $set: { status: 'closed' } });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/admin/notif-check/:id/close: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/notif-check/active — para la PWA: hay un check activo?
+app.get('/api/notif-check/active', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const check = await NotifCheck.findOne({
+      status: 'active',
+      expiresAt: { $gt: new Date() }
+    }).sort({ createdAt: -1 }).lean();
+    if (!check) return res.json({ success: true, active: null });
+    // Ya confirmó este check?
+    const already = await NotifCheckConfirm.findOne({ checkId: check.id, userId }).lean();
+    res.json({
+      success: true,
+      active: {
+        id: check.id,
+        title: check.title,
+        message: check.message,
+        createdAt: check.createdAt,
+        expiresAt: check.expiresAt,
+        alreadyConfirmed: !!already
+      }
+    });
+  } catch (err) {
+    logger.error(`/api/notif-check/active: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/notif-check/confirm — el user toca "CONFIRMAR" en la PWA.
+app.post('/api/notif-check/confirm', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = String(req.user.username || '').toLowerCase();
+    const checkId = String((req.body && req.body.checkId) || '').trim();
+    const source = String((req.body && req.body.source) || 'manual_button').trim();
+    if (!checkId) return res.status(400).json({ error: 'Falta checkId' });
+
+    const check = await NotifCheck.findOne({ id: checkId }).lean();
+    if (!check) return res.status(404).json({ error: 'Check no encontrado' });
+    if (check.status !== 'active') return res.status(400).json({ error: 'Este check ya está cerrado.' });
+
+    // FCM token check (saber si tiene app + notifs)
+    const u = await User.findOne({ id: userId }, { fcmToken: 1, fcmTokens: 1 }).lean();
+    const tokens = [];
+    if (u && u.fcmToken) tokens.push(u.fcmToken);
+    if (u && Array.isArray(u.fcmTokens)) {
+      for (const tk of u.fcmTokens) { const t = tk && tk.token ? tk.token : tk; if (t) tokens.push(t); }
+    }
+    const hasNotifs = tokens.length > 0;
+    const hasApp = hasNotifs;
+
+    try {
+      await NotifCheckConfirm.create({
+        checkId, userId, username,
+        source: source === 'push_tap' ? 'push_tap' : 'manual_button',
+        confirmedAt: new Date(),
+        hasApp, hasNotifs
+      });
+      await NotifCheck.updateOne({ id: checkId }, { $inc: { confirmedCount: 1 } });
+    } catch (e) {
+      if (!String(e.message || '').includes('duplicate key')) throw e;
+      // Ya confirmado, OK.
+    }
+    res.json({ success: true, hasApp, hasNotifs });
+  } catch (err) {
+    logger.error(`/api/notif-check/confirm: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.get('/api/admin/money-giveaway/:id/claims', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const giveawayId = req.params.id;

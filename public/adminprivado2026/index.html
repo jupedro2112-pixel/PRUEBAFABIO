@@ -102,6 +102,10 @@
                     <span>🎰</span>
                     <span><strong>Ruleta diaria</strong></span>
                 </a>
+                <a href="#" class="nav-item" data-section="notifCheck" style="background:rgba(0,212,255,0.08);border-left:3px solid #00d4ff;">
+                    <span>🔔</span>
+                    <span><strong>Test notificaciones</strong></span>
+                </a>
                 <a href="#" class="nav-item" data-section="teams" data-protected-pin="teams" style="background:rgba(212,175,55,0.06);border-left:3px solid #d4af37;">
                     <span>📊</span>
                     <span><strong>Equipos</strong> <span style="margin-left:auto;font-size:10px;opacity:0.7;" title="Esta sección requiere clave">🔑</span></span>
@@ -809,6 +813,25 @@
                 <h3 style="color:#fff;font-size:13px;margin:14px 0 8px;letter-spacing:1px;">📊 Historial</h3>
                 <div id="pushGiveawayHistoryBox">
                     <div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: TEST DE NOTIFICACIONES
+                 Admin manda un push de prueba a TODOS los users con FCM
+                 tokens. El user en la PWA ve un card "CONFIRMAR" que
+                 registra la confirmación. Sirve para chequear que las
+                 notificaciones efectivamente llegan.
+                 ============================================ -->
+            <section id="notifCheckSection" class="section">
+                <div class="panel-header">
+                    <h2>🔔 Test de notificaciones</h2>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="refresh-btn" onclick="loadNotifCheckAdmin()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div id="notifCheckBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>
 
