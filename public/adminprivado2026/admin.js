@@ -1013,23 +1013,40 @@ async function loadCommunityLinkStats() {
             return;
         }
 
-        // Breakdown por origen del click — Comunidad 1 vs Comunidad 2 vs
-        // modal forzado vs reemplazo.
-        if (bySource.length > 0) {
+        // Contadores GRANDES de Comunidad 1 vs Comunidad 2 (el dato más
+        // importante: cuánta gente entra a cada una). Resto de sources
+        // (modal, replacement) van abajo como secundarios.
+        const srcMap = {};
+        for (const s of bySource) srcMap[s.source] = s;
+        const c1 = srcMap['home_button'] || { clicks: 0, uniqueUsers: 0 };
+        const c2 = srcMap['home_button_2'] || { clicks: 0, uniqueUsers: 0 };
+        html += '<h4 style="color:#fff;font-size:12px;margin:6px 0 6px;letter-spacing:0.5px;">👥 Gente que entró a cada comunidad</h4>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">';
+        html += '<div style="background:linear-gradient(135deg,rgba(37,211,102,0.15),rgba(37,211,102,0.04));border:2px solid #25d366;border-radius:12px;padding:13px;text-align:center;">';
+        html += '<div style="color:#25d366;font-weight:900;font-size:12px;letter-spacing:0.6px;margin-bottom:4px;">📍 COMUNIDAD 1</div>';
+        html += '<div style="color:#fff;font-size:32px;font-weight:900;line-height:1;">' + fmt(c1.clicks) + '</div>';
+        html += '<div style="color:#aaffaa;font-size:11px;margin-top:4px;font-weight:600;">' + fmt(c1.uniqueUsers) + ' usuarios únicos</div>';
+        html += '</div>';
+        html += '<div style="background:linear-gradient(135deg,rgba(0,212,255,0.15),rgba(0,212,255,0.04));border:2px solid #00d4ff;border-radius:12px;padding:13px;text-align:center;">';
+        html += '<div style="color:#00d4ff;font-weight:900;font-size:12px;letter-spacing:0.6px;margin-bottom:4px;">📍 COMUNIDAD 2</div>';
+        html += '<div style="color:#fff;font-size:32px;font-weight:900;line-height:1;">' + fmt(c2.clicks) + '</div>';
+        html += '<div style="color:#aaffff;font-size:11px;margin-top:4px;font-weight:600;">' + fmt(c2.uniqueUsers) + ' usuarios únicos</div>';
+        html += '</div>';
+        html += '</div>';
+
+        // Resto de sources (modal forzado, replacement) chiquitos abajo
+        const otherSources = bySource.filter(s => s.source !== 'home_button' && s.source !== 'home_button_2');
+        if (otherSources.length > 0) {
             const SRC_LABELS = {
-                home_button: { label: '📍 Comunidad 1 (home)', color: '#25d366' },
-                home_button_2: { label: '📍 Comunidad 2 (home)', color: '#00d4ff' },
                 modal_join: { label: '🔔 Modal "Revisá tu comunidad"', color: '#ffd700' },
                 replacement: { label: '♻️ Link de reemplazo (down)', color: '#ff8080' }
             };
-            html += '<h4 style="color:#fff;font-size:12px;margin:6px 0 6px;letter-spacing:0.5px;">🎯 Por origen del click</h4>';
-            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:14px;">';
-            for (const s of bySource) {
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:6px;margin-bottom:14px;">';
+            for (const s of otherSources) {
                 const meta = SRC_LABELS[s.source] || { label: s.source || '(otro)', color: '#aaa' };
-                html += '<div style="background:rgba(0,0,0,0.30);border:1px solid ' + meta.color + '55;border-radius:9px;padding:9px 11px;">';
-                html += '<div style="color:' + meta.color + ';font-weight:800;font-size:11px;letter-spacing:0.4px;">' + escapeHtml(meta.label) + '</div>';
-                html += '<div style="color:#fff;font-size:20px;font-weight:900;margin-top:2px;">' + fmt(s.clicks) + '</div>';
-                html += '<div style="color:#aaa;font-size:10.5px;">' + fmt(s.uniqueUsers) + ' users únicos</div>';
+                html += '<div style="background:rgba(0,0,0,0.30);border:1px solid ' + meta.color + '55;border-radius:8px;padding:7px 9px;">';
+                html += '<div style="color:' + meta.color + ';font-weight:700;font-size:10.5px;letter-spacing:0.3px;">' + escapeHtml(meta.label) + '</div>';
+                html += '<div style="color:#fff;font-size:15px;font-weight:900;margin-top:1px;">' + fmt(s.clicks) + ' clicks · ' + fmt(s.uniqueUsers) + ' users</div>';
                 html += '</div>';
             }
             html += '</div>';
@@ -1088,19 +1105,33 @@ async function loadCommunityLinkStats() {
             }
         }
 
-        // Por equipo
+        // Por equipo — con split C1 / C2
         if (byTeam.length > 0) {
-            html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">📊 Por equipo</h4>';
+            // Indexar byTeamSource por team+source para lookup rápido.
+            const byTeamSource = d.byTeamSource || [];
+            const teamSrcMap = {};
+            for (const r of byTeamSource) {
+                if (!teamSrcMap[r.teamPrefix]) teamSrcMap[r.teamPrefix] = {};
+                teamSrcMap[r.teamPrefix][r.source] = r;
+            }
+            html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">📊 Por equipo (Comunidad 1 vs Comunidad 2)</h4>';
             html += '<div style="background:rgba(0,0,0,0.20);border-radius:8px;overflow:hidden;margin-bottom:14px;">';
             html += '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
             html += '<thead><tr style="background:rgba(155,48,255,0.08);color:#c89bff;text-align:left;">';
             html += '<th style="padding:7px 10px;font-weight:800;">Equipo (prefix)</th>';
-            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Clicks</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;color:#25d366;">📍 C1</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;color:#00d4ff;">📍 C2</th>';
+            html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Total</th>';
             html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">Users únicos</th>';
             html += '</tr></thead><tbody>';
             for (const t of byTeam) {
+                const srcs = teamSrcMap[t.teamPrefix] || {};
+                const c1Clicks = (srcs['home_button'] && srcs['home_button'].clicks) || 0;
+                const c2Clicks = (srcs['home_button_2'] && srcs['home_button_2'].clicks) || 0;
                 html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
                 html += '<td style="padding:6px 10px;color:#fff;font-weight:700;">' + escapeHtml(t.teamPrefix || '(sin prefijo)') + '</td>';
+                html += '<td style="padding:6px 10px;text-align:right;color:#25d366;font-weight:800;">' + fmt(c1Clicks) + '</td>';
+                html += '<td style="padding:6px 10px;text-align:right;color:#00d4ff;font-weight:800;">' + fmt(c2Clicks) + '</td>';
                 html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;font-weight:800;">' + fmt(t.clicks) + '</td>';
                 html += '<td style="padding:6px 10px;text-align:right;color:#aaffaa;">' + fmt(t.uniqueUsers) + '</td>';
                 html += '</tr>';

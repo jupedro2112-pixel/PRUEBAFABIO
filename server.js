@@ -11280,7 +11280,7 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
     const days = Math.max(1, Math.min(60, Number(req.query.days) || 14));
     const sinceDate = new Date(Date.now() - days * 24 * 3600 * 1000);
 
-    const [byDay, byTeam, byDayTeam, byCommunity, byCommunityDay, topUsers, total, bySource] = await Promise.all([
+    const [byDay, byTeam, byDayTeam, byCommunity, byCommunityDay, topUsers, total, bySource, byTeamSource] = await Promise.all([
       // Total clicks por día (últimos N días).
       CommunityLinkClick.aggregate([
         { $match: { clickedAt: { $gte: sinceDate } } },
@@ -11352,6 +11352,23 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
         { $group: { _id: '$source', clicks: { $sum: 1 }, uniqueUsers: { $addToSet: '$userId' } } },
         { $project: { source: '$_id', clicks: 1, uniqueUsers: { $size: '$uniqueUsers' }, _id: 0 } },
         { $sort: { clicks: -1 } }
+      ]),
+      // Cruzado team x source (para mostrar por cada equipo cuántos
+      // entraron a Comunidad 1 vs Comunidad 2).
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate } } },
+        { $group: {
+          _id: { teamPrefix: '$teamPrefix', source: '$source' },
+          clicks: { $sum: 1 },
+          uniqueUsers: { $addToSet: '$userId' }
+        }},
+        { $project: {
+          teamPrefix: '$_id.teamPrefix',
+          source: '$_id.source',
+          clicks: 1,
+          uniqueUsers: { $size: '$uniqueUsers' },
+          _id: 0
+        }}
       ])
     ]);
 
@@ -11394,6 +11411,7 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
       byDay, byTeam, byDayTeam,
       byCommunity: byCommunityEnriched, byCommunityDay,
       bySource,
+      byTeamSource,
       topUsers
     });
   } catch (err) {
