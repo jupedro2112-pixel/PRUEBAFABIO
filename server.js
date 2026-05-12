@@ -18087,12 +18087,18 @@ app.post('/api/admin/money-giveaway/broadcast/test-push', authMiddleware, adminM
 app.get('/api/admin/money-giveaway/history', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    // Antes filtraba solo broadcastAll. Ahora mostramos TODOS los
+    // giveaways que el admin inició manualmente (manual o individual_grant) —
+    // así aparecen tanto los broadcast como los del panel de notifs +
+    // grants individuales. Excluimos los auto-strategy/auto-rule que tienen
+    // su propio carril.
     const items = await MoneyGiveaway.find(
-      { broadcastAll: true },
+      { strategySource: { $in: ['manual', 'individual_grant', null] } },
       {
         id: 1, amount: 1, customMessage: 1, customEmoji: 1,
         excludeTeams: 1, totalBudget: 1, maxClaims: 1,
         claimedCount: 1, totalGiven: 1,
+        broadcastAll: 1, audienceWhitelist: 1, prefix: 1, strategySource: 1,
         status: 1, expiresAt: 1, createdAt: 1, createdBy: 1
       }
     ).sort({ createdAt: -1 }).limit(limit).lean();

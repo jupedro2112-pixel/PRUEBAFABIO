@@ -2057,9 +2057,12 @@ async function loadPushGiveawaySection() {
             return;
         }
         const d = await r.json();
-        const items = (d.items || []).filter(x => x.broadcastAll);
+        // Antes filtrábamos solo broadcastAll: los giveaways del panel de
+        // notifs (con prefix o whitelist) NO aparecían. Decisión dueño
+        // 2026-05-12: mostrar TODOS los giveaways con badge para diferenciar.
+        const items = (d.items || []);
         if (items.length === 0) {
-            box.innerHTML = '<div style="color:#aaa;text-align:center;padding:20px;">Todavía no enviaste ningún push de plata broadcast. Usá el formulario de arriba 👆</div>';
+            box.innerHTML = '<div style="color:#aaa;text-align:center;padding:20px;">Todavía no enviaste ningún push de plata. Usá el formulario de arriba 👆</div>';
             return;
         }
         const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
@@ -2082,7 +2085,17 @@ async function loadPushGiveawaySection() {
             html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:11px 13px;margin-bottom:8px;">';
             html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:5px;">';
             html += '<div style="flex:1;min-width:220px;">';
-            html += '<div style="color:#fff;font-weight:800;font-size:13px;">' + escapeHtml((g.customEmoji || '🎁') + ' ' + fmtMoney(g.amount) + ' x persona') + ' ' + statusBadge(g.status) + '</div>';
+            // Badge del tipo de audiencia: broadcast vs prefix vs whitelist.
+            let audienceBadge = '';
+            if (g.broadcastAll) {
+                audienceBadge = '<span style="background:rgba(0,212,255,0.15);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:1px 6px;border-radius:4px;font-size:9.5px;font-weight:800;letter-spacing:0.5px;margin-left:5px;">📢 BROADCAST</span>';
+            } else if (g.audienceWhitelist && g.audienceWhitelist.length > 0) {
+                const isOne = g.audienceWhitelist.length === 1;
+                audienceBadge = '<span style="background:rgba(255,215,0,0.15);color:#ffd700;border:1px solid rgba(255,215,0,0.40);padding:1px 6px;border-radius:4px;font-size:9.5px;font-weight:800;letter-spacing:0.5px;margin-left:5px;">🎯 ' + (isOne ? 'A 1 USER' : 'WHITELIST ' + g.audienceWhitelist.length) + '</span>';
+            } else if (g.prefix) {
+                audienceBadge = '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:1px 6px;border-radius:4px;font-size:9.5px;font-weight:800;letter-spacing:0.5px;margin-left:5px;">📞 ' + escapeHtml(g.prefix) + '</span>';
+            }
+            html += '<div style="color:#fff;font-weight:800;font-size:13px;">' + escapeHtml((g.customEmoji || '🎁') + ' ' + fmtMoney(g.amount) + ' x persona') + audienceBadge + ' ' + statusBadge(g.status) + '</div>';
             if (g.customMessage) html += '<div style="color:#ddd;font-size:11.5px;margin-top:3px;line-height:1.4;">"' + escapeHtml(g.customMessage) + '"</div>';
             html += '<div style="color:#888;font-size:11px;margin-top:3px;">Creado ' + escapeHtml(fmtDate(g.createdAt)) + (g.createdBy ? ' por ' + escapeHtml(g.createdBy) : '') + (ex.length > 0 ? ' · excluyó: ' + escapeHtml(ex.join(', ')) : '') + '</div>';
             html += '</div>';
