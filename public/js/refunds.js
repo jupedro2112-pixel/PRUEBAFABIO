@@ -745,19 +745,12 @@ VIP.refunds = (function () {
             return;
         }
 
-        // Coordinación con installHeroCard:
-        //   - browser (no standalone): mostramos el hero card (big $5K visual)
-        //     ADEMÁS del welcomeBonusCard (que tiene el progreso real). El user
-        //     ve el hook y el stepper.
-        //   - standalone (app abierta): ocultamos el hero card. El user ya
-        //     instaló — el welcomeBonusCard alcanza para guiarlo a notifs +
-        //     reclamar.
+        // Este card YA tiene todo: hook \$5.000 + 3 pasos + botón dinámico.
+        // Ocultamos installHeroCard para no duplicar boxes con los mismos
+        // pasos. Un solo recuadro con todo adentro.
         try {
             const heroCard = document.getElementById('installHeroCard');
-            if (heroCard) {
-                if (isStandalone()) heroCard.hidden = true;
-                else heroCard.hidden = false;
-            }
+            if (heroCard) heroCard.hidden = true;
         } catch (_) {}
 
         // NOTA: antes este bloque ocultaba el card si isAppInstalled() === true,
