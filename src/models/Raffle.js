@@ -147,6 +147,13 @@ const raffleSchema = new mongoose.Schema({
   prizeClaimable: { type: Boolean, default: false, index: true },
   prizeClaimedAt: { type: Date, default: null },
   prizeClaimTxId: { type: String, default: null },
+  // Auditoría de intentos de acreditación. Se popula cuando el credit a
+  // JUGAYGANA falla — sirve para que el admin reconcilie con el log de
+  // JUGAYGANA si sospechás defasaje (plata aplicada del lado de JUGAYGANA
+  // pero credit.success=false del lado nuestro).
+  prizeClaimAttempts: { type: Number, default: 0 },
+  prizeClaimLastError: { type: String, default: null, maxlength: 320 },
+  prizeClaimLastAttemptAt: { type: Date, default: null },
 
   // ===== Campos legacy (no se usan en el modelo nuevo, mantenidos para
   // compat con documentos antiguos). =====

@@ -21794,9 +21794,17 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
     const prize = Number(raffleRead.prizeValueARS) || 0;
     if (prize <= 0) return res.status(400).json({ error: 'Este sorteo no tiene premio configurado.' });
 
-    // Reserva atomica: solo un request gana esta carrera.
+    // Reserva atomica: solo un request gana esta carrera. Filtramos también
+    // por winnerUsername para evitar que un cambio de winner entre el read
+    // (línea 21788) y este findOneAndUpdate permita a un user reclamar un
+    // premio que ya no le corresponde.
+    const safeWinnerUser = String(username).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const reservedClaim = await Raffle.findOneAndUpdate(
-      { id: raffleId, status: 'drawn', prizeClaimedAt: null, prizeClaimable: true },
+      {
+        id: raffleId, status: 'drawn',
+        prizeClaimedAt: null, prizeClaimable: true,
+        winnerUsername: { $regex: '^' + safeWinnerUser + '$', $options: 'i' }
+      },
       { $set: { prizeClaimedAt: new Date(), prizeClaimable: false } },
       { new: true }
     );
@@ -21807,10 +21815,21 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
 
     const credit = await jugaygana.creditUserBalance(username, prize);
     if (!credit || !credit.success) {
-      // Rollback: liberar el marker para que el user pueda reintentar.
+      // Credit FALLÓ explícito (success:false). Es relativamente seguro
+      // liberar el marker porque jugaygana respondió "no apliqué la plata".
+      // Pero igualmente persistimos el intento fallido para auditoría.
       await Raffle.updateOne(
         { id: raffleId },
-        { $set: { prizeClaimedAt: null, prizeClaimable: true } }
+        {
+          $set: {
+            prizeClaimedAt: null,
+            prizeClaimable: true,
+            prizeClaimTxId: null,
+            prizeClaimLastError: String((credit && credit.error) || 'unknown').slice(0, 300),
+            prizeClaimLastAttemptAt: new Date()
+          },
+          $inc: { prizeClaimAttempts: 1 }
+        }
       ).catch(() => {});
       claimReserved = false;
       const msg = (credit && credit.error) || 'Error al acreditar premio';
@@ -21818,12 +21837,20 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
       return res.status(503).json({ error: `No se pudo acreditar el premio: ${msg}. Reintentá en unos segundos.` });
     }
 
-    // Persistir el txId del credit para auditoria.
-    await Raffle.updateOne(
-      { id: raffleId },
-      { $set: { prizeClaimTxId: (credit.transactionId || credit.transferId) || null } }
-    ).catch(() => {});
-    logger.info(`[raffles] PREMIO ACREDITADO: ${username} +$${prize} (${reservedClaim.name})`);
+    // CREDIT OK — la plata YA entró a JUGAYGANA. A partir de acá, NO podemos
+    // hacer rollback porque jugaygana no es idempotente: liberar el marker
+    // permitiría doble acreditación. Cualquier excepción posterior (al
+    // guardar el txId, al responder al cliente) debe DEJAR el marker seteado.
+    // Por eso marcamos claimReserved=false ANTES de tocar más nada.
+    claimReserved = false;
+    const txId = (credit.transactionId || credit.transferId) || null;
+    try {
+      await Raffle.updateOne(
+        { id: raffleId },
+        { $set: { prizeClaimTxId: txId, prizeClaimLastError: null } }
+      );
+    } catch (_) { /* el credit ya entró — no rollback */ }
+    logger.info(`[raffles] PREMIO ACREDITADO: ${username} +$${prize} (${reservedClaim.name}) tx=${txId}`);
 
     res.json({
       success: true,
@@ -21831,12 +21858,22 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
       message: `¡Premio de $${prize.toLocaleString('es-AR')} acreditado a tu saldo!`
     });
   } catch (err) {
-    // Si reservamos el claim pero algo explotó después, liberamos para que
-    // pueda reintentar (best-effort).
+    // Si la excepción saltó ANTES del credit (claimReserved=true), liberamos
+    // el marker para que el user pueda reintentar — la plata NO entró.
+    // Si la excepción saltó DESPUÉS del credit (ya pusimos claimReserved=false
+    // arriba), NO tocamos nada: la plata YA entró y no queremos doble crédito.
     if (claimReserved) {
       await Raffle.updateOne(
         { id: raffleId },
-        { $set: { prizeClaimedAt: null, prizeClaimable: true } }
+        {
+          $set: {
+            prizeClaimedAt: null,
+            prizeClaimable: true,
+            prizeClaimLastError: ('exception: ' + (err.message || 'unknown')).slice(0, 300),
+            prizeClaimLastAttemptAt: new Date()
+          },
+          $inc: { prizeClaimAttempts: 1 }
+        }
       ).catch(() => {});
     }
     logger.error(`/api/raffles/claim-prize: ${err.message}`);
@@ -21979,37 +22016,76 @@ app.post('/api/admin/raffles/:id/admin-credit-prize', authMiddleware, superAdmin
       { $set: { prizeClaimedAt: new Date(), prizeClaimable: false } },
       { new: true }
     );
-    if (!reserved) return res.status(400).json({ error: 'Race: ya se está acreditando o ya fue acreditado.' });
+    if (!reserved) {
+      // Otro caller llegó primero. Re-leemos para distinguir "ya acreditado"
+      // (idempotente OK) de "race en curso" (devolver 409 explícito).
+      const fresh = await Raffle.findOne({ id: raffleId }, { prizeClaimedAt: 1, prizeClaimTxId: 1 }).lean();
+      if (fresh && fresh.prizeClaimedAt) {
+        return res.json({
+          success: true,
+          alreadyCredited: true,
+          prizeClaimedAt: fresh.prizeClaimedAt,
+          transactionId: fresh.prizeClaimTxId || null
+        });
+      }
+      return res.status(409).json({ error: 'Race: otro proceso está acreditando este premio. Reintentá en unos segundos.' });
+    }
     claimReserved = true;
 
     const credit = await jugaygana.creditUserBalance(raffle.winnerUsername, prize);
     if (!credit || !credit.success) {
-      // Rollback
+      // Credit FALLÓ explícito: liberamos marker y registramos el intento.
       await Raffle.updateOne(
         { id: raffleId },
-        { $set: { prizeClaimedAt: null, prizeClaimable: true } }
+        {
+          $set: {
+            prizeClaimedAt: null,
+            prizeClaimable: true,
+            prizeClaimTxId: null,
+            prizeClaimLastError: String((credit && credit.error) || 'unknown').slice(0, 300),
+            prizeClaimLastAttemptAt: new Date()
+          },
+          $inc: { prizeClaimAttempts: 1 }
+        }
       ).catch(() => {});
       const msg = (credit && credit.error) || 'Error desconocido al acreditar';
       logger.error(`[raffles] admin-credit-prize fail ${raffle.winnerUsername} ${raffle.name}: ${msg}`);
       return res.status(503).json({ error: msg });
     }
-    await Raffle.updateOne(
-      { id: raffleId },
-      { $set: { prizeClaimTxId: (credit.transactionId || credit.transferId) || null } }
-    ).catch(() => {});
-    logger.info(`[raffles] ADMIN-CREDIT: ${raffle.winnerUsername} +$${prize} (${raffle.name}) by ${req.user.username}`);
+    // CREDIT OK — plata ya entró a JUGAYGANA. NO se puede revertir. Marcamos
+    // claimReserved=false ANTES de tocar nada para que cualquier excepción
+    // posterior (al guardar txId, al responder) NO libere el marker → no
+    // habilita doble crédito.
+    claimReserved = false;
+    const txId = (credit.transactionId || credit.transferId) || null;
+    try {
+      await Raffle.updateOne(
+        { id: raffleId },
+        { $set: { prizeClaimTxId: txId, prizeClaimLastError: null } }
+      );
+    } catch (_) { /* el credit ya entró — no rollback */ }
+    logger.info(`[raffles] ADMIN-CREDIT: ${raffle.winnerUsername} +$${prize} (${raffle.name}) by ${req.user.username} tx=${txId}`);
     res.json({
       success: true,
       credited: true,
       amount: prize,
       winnerUsername: raffle.winnerUsername,
-      transactionId: (credit.transactionId || credit.transferId) || null
+      transactionId: txId
     });
   } catch (err) {
     if (claimReserved) {
+      // La excepción saltó ANTES del credit OK: liberamos marker.
       await Raffle.updateOne(
         { id: raffleId },
-        { $set: { prizeClaimedAt: null, prizeClaimable: true } }
+        {
+          $set: {
+            prizeClaimedAt: null,
+            prizeClaimable: true,
+            prizeClaimLastError: ('exception: ' + (err.message || 'unknown')).slice(0, 300),
+            prizeClaimLastAttemptAt: new Date()
+          },
+          $inc: { prizeClaimAttempts: 1 }
+        }
       ).catch(() => {});
     }
     logger.error(`/api/admin/raffles/:id/admin-credit-prize: ${err.message}`);
