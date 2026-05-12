@@ -15395,6 +15395,7 @@ function _renderRafflesAdmin() {
     // "Reclamos ganadores": ventana 24h con los ganadores sorteados, su
     // estado de reclamo y acción de acreditar manualmente.
     html += '      <button type="button" onclick="viewWinnerClaims()" style="background:linear-gradient(135deg,rgba(102,255,102,0.20),rgba(255,215,0,0.18));color:#ffd700;border:1px solid #ffd700;padding:7px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Reclamos de ganadores en ventana 24h">🏆 Reclamos ganadores</button>';
+    html += '      <button type="button" onclick="testPushAllToUser()" style="background:rgba(102,255,255,0.10);color:#66ffff;border:1px solid rgba(102,255,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar el push de GANASTE de TODOS los sorteos activos a un user de prueba (ej. lalodj)">🧪 Test masivo a usuario</button>';
     // "Sortear semana pasada": batch modal directo desde el dashboard. Antes
     // estaba enterrado en el histórico — ahora va arriba para que el flujo
     // semanal (sortear el lunes nocturna) sea 1 click.
@@ -17579,6 +17580,59 @@ async function batchRowDrawOne(raffleId) {
                 previewDraw(raffleId);
             }
         }, 120);
+    }
+}
+
+// Manda el push EXACTO de "GANASTE" para cada sorteo activo/cerrado al
+// user de prueba. Sirve para previsualizar el orden y el texto que recibiría
+// el ganador real. Va con un delay entre pushes para no saturar.
+async function testPushAllToUser() {
+    const username = prompt('Test masivo: mandar push de "GANASTE" de TODOS los sorteos al usuario:', 'lalodj');
+    if (!username || !username.trim()) return;
+    const includeDrawn = confirm('¿Incluir también sorteos ya sorteados (drawn)?\n\nOK = sí · Cancelar = solo activos y cerrados.');
+    const u = username.trim();
+    showToast('⏳ Disparando pushes a ' + u + '… puede tardar unos segundos', 'info');
+    try {
+        const r = await authFetch('/api/admin/raffles/test-push-all-to-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u, includeDrawn })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+
+        // Modal de resultados — bonito, muestra qué push se mandó por cada sorteo
+        document.getElementById('testPushAllModal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'testPushAllModal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+        let body = '<div style="background:#0a0a14;border:2px solid #66ffff;border-radius:14px;padding:18px;max-width:680px;width:100%;color:#fff;margin:14px auto;">';
+        body += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">';
+        body += '<h3 style="margin:0;color:#66ffff;font-size:16px;">🧪 Test masivo · @' + escapeHtml(u) + '</h3>';
+        body += '<button type="button" onclick="document.getElementById(\'testPushAllModal\').remove()" style="background:transparent;color:#aaa;border:none;font-size:22px;cursor:pointer;">×</button>';
+        body += '</div>';
+        body += '<div style="background:rgba(102,255,255,0.06);border:1px solid rgba(102,255,255,0.30);border-radius:8px;padding:10px 12px;margin-bottom:10px;color:#dfffff;font-size:12px;line-height:1.5;">';
+        body += '✅ <strong>' + (d.totalSent || 0) + '</strong> pushes enviadas en <strong>' + (d.total || 0) + '</strong> sorteos. ';
+        body += 'Si el user no las recibe, verificá que tenga la PWA standalone instalada con notifs aceptadas (la huella debe estar registrada).';
+        body += '</div>';
+        body += '<div style="max-height:60vh;overflow:auto;">';
+        for (const it of (d.results || [])) {
+            const sentOk = (it.sent || 0) > 0;
+            body += '<div style="background:rgba(0,0,0,0.30);border:1px solid ' + (sentOk ? '#66ff66' : '#ff8080') + '40;border-radius:8px;padding:9px 11px;margin-bottom:7px;">';
+            body += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">';
+            body += '<div style="color:#fff;font-weight:700;font-size:12.5px;">' + escapeHtml(it.raffleName || it.raffleId) + (it.prizeValueARS ? ' · $' + Number(it.prizeValueARS).toLocaleString("es-AR") : '') + '</div>';
+            body += '<span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:' + (sentOk ? 'rgba(102,255,102,0.15)' : 'rgba(255,128,128,0.15)') + ';color:' + (sentOk ? '#66ff66' : '#ff8080') + ';">' + (sentOk ? '✅ ENVIADO' : '⚠️ ' + (it.error || 'fail')) + '</span>';
+            body += '</div>';
+            if (it.title) body += '<div style="color:#ddd;font-size:11.5px;margin-top:3px;"><strong>' + escapeHtml(it.title) + '</strong></div>';
+            if (it.body)  body += '<div style="color:#aaa;font-size:11px;margin-top:2px;line-height:1.4;">' + escapeHtml(it.body) + '</div>';
+            body += '</div>';
+        }
+        body += '</div></div>';
+        modal.innerHTML = body;
+        document.body.appendChild(modal);
+    } catch (e) {
+        alert('Error de conexión: ' + (e && e.message ? e.message : ''));
     }
 }
 

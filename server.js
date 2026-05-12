@@ -23486,6 +23486,66 @@ app.post('/api/admin/raffles/:id/reopen', authMiddleware, superAdminMiddleware, 
   }
 });
 
+// POST /api/admin/raffles/test-push-all-to-user
+// Manda el push EXACTO de "GANASTE" para CADA sorteo activo/cerrado al user
+// de prueba (ej. lalodj). Simula que el user ganó cada uno. NO toca state
+// de los sorteos ni acredita premio. Sirve para probar visualmente cómo le
+// va a llegar la lluvia de notificaciones al ganador real.
+app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const testUsername = String((req.body && req.body.username) || '').trim();
+    if (!testUsername) return res.status(400).json({ error: 'Falta username' });
+    const includeDrawn = !!(req.body && req.body.includeDrawn);
+    const statuses = includeDrawn ? ['active', 'closed', 'drawn'] : ['active', 'closed'];
+    const raffles = await Raffle.find(
+      { status: { $in: statuses } },
+      { id: 1, name: 1, emoji: 1, prizeName: 1, prizeValueARS: 1, raffleType: 1, status: 1 }
+    ).sort({ prizeValueARS: -1 }).lean();
+    if (raffles.length === 0) return res.json({ success: true, total: 0, results: [], message: 'No hay sorteos activos para testear.' });
+
+    const safe = testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter = { username: { $regex: '^' + safe + '$', $options: 'i' } };
+    const results = [];
+    for (const r of raffles) {
+      const wp = _buildWinnerPush(r, 42, {
+        prizeAutoCredited: true,
+        lightningForfeited: false,
+        source: 'raffle-win-test-batch'
+      });
+      try {
+        const res2 = await sendNotificationToAllUsers(User, wp.title, wp.body, wp.data, filter);
+        results.push({
+          raffleId: r.id,
+          raffleName: r.name,
+          prizeValueARS: r.prizeValueARS || 0,
+          raffleType: r.raffleType,
+          status: r.status,
+          sent: (res2 && res2.successCount) || 0,
+          failed: (res2 && res2.failureCount) || 0,
+          title: wp.title,
+          body: wp.body
+        });
+      } catch (e) {
+        results.push({ raffleId: r.id, raffleName: r.name, error: e.message });
+      }
+      // Pequeño delay entre pushes para no saturar FCM ni el panel del user.
+      await new Promise(resolve => setTimeout(resolve, 600));
+    }
+    const totalSent = results.reduce((s, x) => s + (x.sent || 0), 0);
+    logger.info(`[raffles] TEST-PUSH-ALL a ${testUsername}: ${raffles.length} sorteos, ${totalSent} pushes enviadas`);
+    res.json({
+      success: true,
+      total: raffles.length,
+      totalSent,
+      destinatario: testUsername,
+      results
+    });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/test-push-all-to-user: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/:id/test-winner-push
 // Manda el push de "GANASTE" a un username de prueba (ej. lalodj) SIN
 // hacer draw ni modificar el sorteo. Sirve para verificar que el push llega
