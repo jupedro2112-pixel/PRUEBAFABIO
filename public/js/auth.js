@@ -585,6 +585,7 @@ VIP.auth = (function () {
                 VIP.state.communityStatus = d.communityStatus || 'active';
                 VIP.state.communityReplacementLink = d.communityReplacementLink || null;
                 VIP.state.communityReplacementLabel = d.communityReplacementLabel || null;
+                VIP.state.communityAlertForceUntilMs = d.communityAlertForceUntilMs || 0;
                 VIP.state.teamName = d.teamName || null;
                 renderRefundsHomeUI();
                 renderTeamName();
@@ -638,11 +639,22 @@ VIP.auth = (function () {
         const lsKey = isDown
             ? ('commAlertDown:' + username + ':' + (replacementLink || ''))
             : ('commAlertSeen:' + username + ':' + (link || ''));
-        // Si está active: respetar cooldown de 5 días entre mostradas.
-        if (!isDown) {
+        // Si está active: respetar cooldown de 5 días entre mostradas,
+        // PERO si el admin activó "force alert" via push de prefijo,
+        // ignoramos el cooldown durante la ventana forzada.
+        const forceUntil = Number(VIP.state.communityAlertForceUntilMs || 0);
+        const forceActive = forceUntil > Date.now();
+        if (!isDown && !forceActive) {
             try {
                 const last = parseInt(localStorage.getItem(lsKey) || '0', 10);
                 if (last && (Date.now() - last) < 5 * 24 * 3600 * 1000) return;
+            } catch (_) {}
+        } else if (forceActive && !isDown) {
+            // Dentro de la ventana forzada, solo respetar dismiss explícito
+            // hecho DENTRO de esa misma ventana (no el cooldown viejo).
+            try {
+                const dismissedAt = parseInt(localStorage.getItem(lsKey + ':force') || '0', 10);
+                if (dismissedAt && dismissedAt > (forceUntil - 24 * 3600 * 1000)) return;
             } catch (_) {}
         } else {
             // Down: si ya tocaron el link nuevo, no mostramos más.
@@ -664,6 +676,7 @@ VIP.auth = (function () {
         function dismiss() {
             try {
                 if (isDown) localStorage.setItem(lsKey, 'tapped');
+                else if (forceActive) localStorage.setItem(lsKey + ':force', String(Date.now()));
                 else localStorage.setItem(lsKey, String(Date.now()));
             } catch (_) {}
             overlay.remove();

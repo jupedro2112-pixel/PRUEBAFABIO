@@ -2538,6 +2538,16 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       const communitiesConfig = await getConfig('userCommunitiesByPrefix');
       communityLink = pickCommunityLinkForUsername(communitiesConfig, req.user.username);
     }
+    // Flag de "alerta forzada" — si el admin activó el reminder por N hs
+    // (vía /api/admin/community-alert/force o automáticamente al apretar
+    // 📢 Avisar push), la PWA ignora el cooldown de 5 días.
+    let alertForceUntilMs = 0;
+    try {
+      const raw = await getConfig('communityAlertForceUntil').catch(() => null);
+      const n = Number(raw) || 0;
+      if (n > Date.now()) alertForceUntilMs = n;
+    } catch (_) {}
+
     res.json({
       phone: phone || null,
       teamName: teamName || null,
@@ -2545,7 +2555,8 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       communityLabel: communityLabel || null,
       communityStatus,
       communityReplacementLink: communityReplacementLink || null,
-      communityReplacementLabel: communityReplacementLabel || null
+      communityReplacementLabel: communityReplacementLabel || null,
+      communityAlertForceUntilMs: alertForceUntilMs || null
     });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
@@ -11172,6 +11183,37 @@ app.post(
   }
 );
 
+// POST /api/admin/community-alert/force — fuerza que la alerta "revisá
+// si estás unido a la comunidad" se muestre en la PWA sin respetar
+// cooldown durante N horas. Config key: communityAlertForceUntil.
+app.post('/api/admin/community-alert/force', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const hours = Math.max(0, Math.min(168, Number((req.body && req.body.hours)) || 24));
+    if (hours === 0) {
+      await setConfig('communityAlertForceUntil', null);
+      return res.json({ success: true, active: false });
+    }
+    const until = Date.now() + hours * 3600 * 1000;
+    await setConfig('communityAlertForceUntil', until);
+    logger.info(`[community-alert] FORCE ON hours=${hours} until=${new Date(until).toISOString()} by=${req.user.username}`);
+    res.json({ success: true, active: true, untilMs: until, untilISO: new Date(until).toISOString() });
+  } catch (err) {
+    logger.error(`/api/admin/community-alert/force: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/community-alert/status', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const until = await getConfig('communityAlertForceUntil').catch(() => null);
+    const ms = Number(until) || 0;
+    const active = ms > Date.now();
+    res.json({ success: true, active, untilMs: active ? ms : null, untilISO: active ? new Date(ms).toISOString() : null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/user-communities/notify-prefix — manda push a todos
 // los users cuyo username empieza con el prefijo dado, recordando que se
 // sumen a su comunidad. Usado desde la sección legacy de prefijos.
@@ -11215,8 +11257,19 @@ app.post('/api/admin/user-communities/notify-prefix', authMiddleware, adminMiddl
       }
     }
     await Promise.all(sendPromises);
+
+    // Auto-activar la alerta de "revisá tu comunidad" en la PWA por 24hs.
+    // Cuando el user entre, se le muestra el modal SIN respetar el
+    // cooldown de 5 días — pedido del dueño 2026-05-12. La idea es que
+    // todos los del prefijo vean el reminder dentro de la ventana del push.
+    try {
+      const until = Date.now() + 24 * 3600 * 1000;
+      await setConfig('communityAlertForceUntil', until);
+      logger.info(`[community-notify-prefix] auto-activated force-alert 24h until=${new Date(until).toISOString()}`);
+    } catch (e) { logger.warn(`[community-notify-prefix] no se pudo activar force-alert: ${e.message}`); }
+
     logger.info(`[community-notify-prefix] prefix=${prefix} audience=${audience} pushed=${pushed} by=${req.user.username}`);
-    res.json({ success: true, audience, pushed });
+    res.json({ success: true, audience, pushed, alertForceActivated: true, alertForceHours: 24 });
   } catch (err) {
     logger.error(`/api/admin/user-communities/notify-prefix: ${err.message}`);
     res.status(500).json({ error: err.message });
