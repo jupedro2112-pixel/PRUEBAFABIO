@@ -98,6 +98,10 @@
                     <span>📲</span>
                     <span><strong>Push de plata</strong></span>
                 </a>
+                <a href="#" class="nav-item" data-section="roulette" style="background:rgba(255,215,0,0.08);border-left:3px solid #ffd700;">
+                    <span>🎰</span>
+                    <span><strong>Ruleta diaria</strong></span>
+                </a>
                 <a href="#" class="nav-item" data-section="teams" data-protected-pin="teams" style="background:rgba(212,175,55,0.06);border-left:3px solid #d4af37;">
                     <span>📊</span>
                     <span><strong>Equipos</strong> <span style="margin-left:auto;font-size:10px;opacity:0.7;" title="Esta sección requiere clave">🔑</span></span>
@@ -801,6 +805,30 @@
                 <h3 style="color:#fff;font-size:13px;margin:14px 0 8px;letter-spacing:1px;">📊 Historial</h3>
                 <div id="pushGiveawayHistoryBox">
                     <div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: RULETA DIARIA — stats + historial
+                 1 giro/día por user con PWA + notifs. Auto-credit JUGAYGANA.
+                 Vemos quién ganó qué, totales diarios, y reintentar
+                 créditos que fallaron.
+                 ============================================ -->
+            <section id="rouletteSection" class="section">
+                <div class="panel-header">
+                    <h2>🎰 Ruleta diaria</h2>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <select id="rouletteDays" onchange="loadRouletteAdmin()" style="background:rgba(0,0,0,0.40);border:1px solid rgba(212,175,55,0.40);color:#fff;padding:6px 10px;border-radius:6px;font-weight:700;">
+                            <option value="7">Últimos 7 días</option>
+                            <option value="14" selected>Últimos 14 días</option>
+                            <option value="30">Últimos 30 días</option>
+                            <option value="90">Últimos 90 días</option>
+                        </select>
+                        <button class="refresh-btn" onclick="loadRouletteAdmin()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div id="rouletteAdminBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>
 
