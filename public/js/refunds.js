@@ -787,16 +787,16 @@ VIP.refunds = (function () {
         const installed = isAppInstalled();
         const notifOk = isNotifGranted();
         if (!installed) {
-            subtitleEl.textContent = 'Tocá el botón y empezá por instalar la app.';
-            btn.textContent = '🎁 RECLAMAR $' + amountNum.toLocaleString('es-AR');
+            subtitleEl.textContent = 'Paso 1: tocá para instalar la app en tu celular.';
+            btn.textContent = '📲 INSTALAR LA APP';
         } else if (!inApp) {
-            subtitleEl.textContent = 'Abrí la app desde el ícono de tu celular.';
-            btn.textContent = '📱 ABRIR DESDE LA APP';
+            subtitleEl.textContent = 'Paso 2: cerrá esta pantalla y abrí la app desde el ícono nuevo de tu celular.';
+            btn.textContent = '📱 ABRIR DESDE EL ÍCONO';
         } else if (!notifOk) {
-            subtitleEl.textContent = 'Último paso: activá las notificaciones.';
-            btn.textContent = '🔔 ACTIVAR NOTIFS';
+            subtitleEl.textContent = 'Paso 3: activá las notificaciones desde acá adentro de la app.';
+            btn.textContent = '🔔 ACTIVAR NOTIFICACIONES';
         } else {
-            subtitleEl.textContent = '🎉 ¡Listo! Tocá para acreditar.';
+            subtitleEl.textContent = '🎉 ¡Listo! Tocá el botón para acreditarte $' + amountNum.toLocaleString('es-AR') + '.';
             btn.textContent = '🎁 RECLAMAR $' + amountNum.toLocaleString('es-AR');
         }
         btn.disabled = false;
@@ -1123,7 +1123,11 @@ VIP.refunds = (function () {
                 renderGiveawayCard();
                 if (typeof loadRefundStatus === 'function') loadRefundStatus();
             } else {
-                VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
+                if (data.needsAppNotifs) {
+                    _showGiveawayNeedsAppModal(_giveawayState && _giveawayState.amount);
+                } else {
+                    VIP.ui.showToast('⚠️ ' + (data.message || 'No se pudo reclamar'), 'error');
+                }
                 if (data.alreadyClaimed) {
                     _giveawayState = { ...(_giveawayState || {}), alreadyClaimed: true };
                     renderGiveawayCard();
@@ -1151,6 +1155,80 @@ VIP.refunds = (function () {
                 btn.textContent = '🎁 RECLAMAR';
             }
         }
+    }
+
+    // Modal cuando el user toca "RECLAMAR" en el regalo de plata pero no
+    // tiene la app instalada / sin notifs. Explica los 3 pasos clarito.
+    // Detecta plataforma y estado actual para dar el siguiente paso correcto:
+    //   - sin app -> botón "Instalar la app" (dispara installApp)
+    //   - app instalada pero browser -> "Abrí desde el ícono"
+    //   - en standalone sin notifs -> "Activar notificaciones"
+    function _showGiveawayNeedsAppModal(amount) {
+        const inApp = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                       window.navigator.standalone === true;
+        const notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'default';
+        const amtTxt = amount ? '$' + Number(amount).toLocaleString('es-AR') : 'este regalo';
+
+        document.getElementById('giveawayNeedsAppModal')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'giveawayNeedsAppModal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99998;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;-webkit-overflow-scrolling:touch;';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        // Determinar el paso actual y el CTA primario.
+        let step1Badge, step2Badge, step3Badge;
+        let primaryTxt, primaryAction;
+        if (!inApp) {
+            // Browser: paso 1 (instalar) pendiente
+            step1Badge = '⏳'; step2Badge = '⏳'; step3Badge = '⏳';
+            primaryTxt = '📲 INSTALAR LA APP AHORA';
+            primaryAction = 'window.VIP&&VIP.ui&&VIP.ui.installApp&&VIP.ui.installApp();document.getElementById(\'giveawayNeedsAppModal\').remove();';
+        } else if (notifPerm !== 'granted') {
+            // Standalone pero sin notifs: pasos 1 y 2 OK, falta 3
+            step1Badge = '✅'; step2Badge = '✅'; step3Badge = '⏳';
+            primaryTxt = '🔔 ACTIVAR NOTIFICACIONES';
+            primaryAction = '(async()=>{try{const p=await Notification.requestPermission();if(p===\'granted\')VIP.ui.showToast(\'✅ Notificaciones activadas — tocá RECLAMAR de nuevo\',\'success\');}catch(_){}document.getElementById(\'giveawayNeedsAppModal\').remove();})();';
+        } else {
+            // Edge case: standalone + notifs OK pero igual rebota — algo más
+            // raro (sin token FCM por timing). Le pedimos refrescar.
+            step1Badge = '✅'; step2Badge = '✅'; step3Badge = '⚠️';
+            primaryTxt = '🔄 REFRESCAR LA APP';
+            primaryAction = 'location.reload();';
+        }
+
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2.5px solid #ffd700;border-radius:18px;padding:22px 18px;max-width:440px;width:100%;color:#fff;margin:16px auto;box-shadow:0 0 40px rgba(255,215,0,0.35);">' +
+                '<div style="text-align:center;font-size:54px;line-height:1;margin-bottom:6px;">🎁</div>' +
+                '<div style="text-align:center;color:#ffd700;font-weight:900;font-size:17px;letter-spacing:1px;margin-bottom:4px;">Para reclamar ' + amtTxt + '</div>' +
+                '<div style="text-align:center;color:#fff;font-size:13.5px;line-height:1.55;margin-bottom:14px;">Necesitamos asegurarnos que sos vos el que reclama. Por eso, primero tenés que tener <strong>la app instalada con notificaciones activas</strong>.</div>' +
+
+                // Stepper visual con los 3 pasos clarísimos
+                '<div style="background:rgba(255,215,0,0.06);border:1px dashed rgba(255,215,0,0.45);border-radius:12px;padding:14px;margin-bottom:14px;">' +
+                    '<div style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1.5px;text-align:center;margin-bottom:10px;">🧭 SEGUÍ ESTOS 3 PASOS</div>' +
+
+                    '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:9px;">' +
+                        '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:14px;">' + step1Badge + '</div>' +
+                        '<div style="flex:1;font-size:12.5px;line-height:1.5;color:#fff;"><strong>Instalá la app</strong> en tu celular (tocá el botón de abajo — Android lo hace solo, iPhone te muestra un video).</div>' +
+                    '</div>' +
+
+                    '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:9px;">' +
+                        '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:14px;">' + step2Badge + '</div>' +
+                        '<div style="flex:1;font-size:12.5px;line-height:1.5;color:#fff;"><strong>Abrí la app desde el ícono</strong> nuevo que te quedó en la pantalla del celular — no desde Chrome.</div>' +
+                    '</div>' +
+
+                    '<div style="display:flex;gap:10px;align-items:flex-start;">' +
+                        '<div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:14px;">' + step3Badge + '</div>' +
+                        '<div style="flex:1;font-size:12.5px;line-height:1.5;color:#fff;"><strong>Dentro de la app, aceptá las notificaciones</strong> cuando te aparezca el pedido. Después tocá RECLAMAR.</div>' +
+                    '</div>' +
+                '</div>' +
+
+                // Bonus: mención del $5K si todavía no instalan
+                (!inApp ? '<div style="background:linear-gradient(135deg,rgba(37,211,102,0.15),rgba(0,212,255,0.12));border:1px solid rgba(37,211,102,0.45);border-radius:10px;padding:10px 12px;margin-bottom:12px;text-align:center;font-size:12.5px;color:#aaffaa;">🎁 <strong style="color:#ffd700;">Bonus extra:</strong> si instalás la app por primera vez, también te llevás <strong style="color:#ffd700;">$5.000 GRATIS</strong> de bienvenida.</div>' : '') +
+
+                '<button onclick="' + primaryAction + '" style="width:100%;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:13px;border-radius:11px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;margin-bottom:8px;box-shadow:0 4px 14px rgba(255,215,0,0.40);">' + primaryTxt + '</button>' +
+                '<button onclick="document.getElementById(\'giveawayNeedsAppModal\').remove();" style="width:100%;background:transparent;color:#aaa;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
     }
 
     // ---- Prefill desde cache para evitar el flash de $0 en cold-start ----
