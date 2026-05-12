@@ -1542,5 +1542,21 @@ VIP.raffles = (function () {
         }
     }
 
-    return { open, close, prefetch, openPicker, openAndPickRaffle, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize, loadHomeWinnerBanner };
+    // refresh(): forzar refetch de raffles y re-render del modal. Lo usa
+    // el handler de push (cuando llega un sorteo nuevo) y el visibility
+    // change para que el user vea el estado actualizado sin tener que
+    // cerrar y abrir la app.
+    async function refresh() {
+        try {
+            const d = await _fetchActive();
+            if (d) {
+                _data = d;
+                // Solo re-render si el modal está abierto — si no, basta
+                // con que la data quede fresca para el próximo open().
+                const m = document.getElementById('rafflesModal');
+                if (m && m.style.display !== 'none') _render();
+            }
+        } catch (e) { /* best-effort */ }
+    }
+    return { open, close, prefetch, openPicker, openAndPickRaffle, closePicker, togglePick, pickRandom, clearPick, confirmPickerBuy, claimPrize, loadHomeWinnerBanner, refresh };
 })();

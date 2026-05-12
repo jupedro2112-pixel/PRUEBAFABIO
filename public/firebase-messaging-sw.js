@@ -137,6 +137,30 @@ messaging.onBackgroundMessage(function(payload) {
     vibrate: [200, 100, 200]
   };
 
+  // Si la push es de sorteos (win/lose/test), avisamos a la(s) ventana(s)
+  // abierta(s) para que refresquen el banner del home y el modal de sorteos
+  // sin esperar a que el user lo cierre y abra. Mismo patrón que ya
+  // usamos en notificationclick para regalos.
+  const _src = String(_data.source || '');
+  if (_src.startsWith('raffle-win') || _src.startsWith('raffle-lose')) {
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then(function (cls) {
+        for (const c of cls) {
+          try {
+            c.postMessage({
+              type: 'raffle-update',
+              source: _src,
+              raffleId: _data.raffleId || null,
+              isWinner: _data.isWinner === 'true',
+              autoCredited: _data.autoCredited === 'true',
+              winningTicketNumber: _data.winningTicketNumber || null
+            });
+          } catch (_) { /* ignore */ }
+        }
+      })
+      .catch(function (e) { console.warn('[FCM-SW] postMessage raffle-update falló:', e && e.message); });
+  }
+
   return self.registration.showNotification(title, options);
 });
 

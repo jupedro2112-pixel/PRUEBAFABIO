@@ -2512,6 +2512,33 @@
             try { if (window.VIP && VIP.raffles && typeof VIP.raffles.loadHomeWinnerBanner === 'function') VIP.raffles.loadHomeWinnerBanner(); } catch (_) {}
             try { if (window.VIP && VIP.refunds && typeof VIP.refunds.renderWelcomeBonusCard === 'function') VIP.refunds.renderWelcomeBonusCard(); } catch (_) {}
         };
+
+        // Auto-refresh cuando llega push de sorteo. El SW emite postMessage
+        // con type:'raffle-update' cuando recibe un payload con
+        // source:raffle-win/lose. Refrescamos el banner del home + el modal
+        // de sorteos (si está abierto) para que el ganador NO tenga que
+        // cerrar y abrir la app para ver su felicitación / botón de reclamo.
+        // Mismo handler también dispara en visibilitychange por si el SW
+        // ya entregó el mensaje pero la página estaba dormida.
+        function _refreshRafflesUIFromPush() {
+            try { if (window.VIP && VIP.raffles && typeof VIP.raffles.loadHomeWinnerBanner === 'function') VIP.raffles.loadHomeWinnerBanner(); } catch (_) {}
+            // Si el modal de sorteos está abierto, fuerza fetch nuevo.
+            try {
+                const m = document.getElementById('rafflesModal');
+                if (m && m.style.display !== 'none' && window.VIP && VIP.raffles && typeof VIP.raffles.refresh === 'function') {
+                    VIP.raffles.refresh();
+                }
+            } catch (_) {}
+        }
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', function (event) {
+                const d = (event && event.data) || {};
+                if (d.type === 'raffle-update') _refreshRafflesUIFromPush();
+            });
+        }
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') _refreshRafflesUIFromPush();
+        });
         </script>
 
         <!-- Refunds-only: Aviso GRANDE cuando cambia el número principal -->
