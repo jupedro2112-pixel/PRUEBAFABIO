@@ -11244,7 +11244,7 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
     const days = Math.max(1, Math.min(60, Number(req.query.days) || 14));
     const sinceDate = new Date(Date.now() - days * 24 * 3600 * 1000);
 
-    const [byDay, byTeam, byDayTeam, topUsers, total] = await Promise.all([
+    const [byDay, byTeam, byDayTeam, byCommunity, byCommunityDay, topUsers, total] = await Promise.all([
       // Total clicks por día (últimos N días).
       CommunityLinkClick.aggregate([
         { $match: { clickedAt: { $gte: sinceDate } } },
@@ -11266,6 +11266,41 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
         { $project: { dateKey: '$_id.dateKey', teamPrefix: '$_id.teamPrefix', clicks: 1, _id: 0 } },
         { $sort: { dateKey: -1, clicks: -1 } }
       ]),
+      // Total clicks por COMUNIDAD (link) — sirve para comparar
+      // cuál comunidad performa mejor, independiente del prefijo.
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate }, communityLink: { $ne: '' } } },
+        { $group: {
+          _id: '$communityLink',
+          clicks: { $sum: 1 },
+          uniqueUsers: { $addToSet: '$userId' },
+          uniqueTeams: { $addToSet: '$teamPrefix' },
+          firstClick: { $min: '$clickedAt' },
+          lastClick: { $max: '$clickedAt' }
+        }},
+        { $project: {
+          communityLink: '$_id',
+          clicks: 1,
+          uniqueUsers: { $size: '$uniqueUsers' },
+          uniqueTeams: { $size: '$uniqueTeams' },
+          firstClick: 1, lastClick: 1, _id: 0
+        }},
+        { $sort: { clicks: -1 } }
+      ]),
+      // Cruzado comunidad x día (para chart por comunidad).
+      CommunityLinkClick.aggregate([
+        { $match: { clickedAt: { $gte: sinceDate }, communityLink: { $ne: '' } } },
+        { $group: {
+          _id: { communityLink: '$communityLink', dateKey: '$dateKey' },
+          clicks: { $sum: 1 }
+        }},
+        { $project: {
+          communityLink: '$_id.communityLink',
+          dateKey: '$_id.dateKey',
+          clicks: 1, _id: 0
+        }},
+        { $sort: { dateKey: -1 } }
+      ]),
       // Top 10 users que más click hicieron.
       CommunityLinkClick.aggregate([
         { $match: { clickedAt: { $gte: sinceDate } } },
@@ -11276,11 +11311,37 @@ app.get('/api/admin/community/link-stats', authMiddleware, adminMiddleware, asyn
       CommunityLinkClick.countDocuments({ clickedAt: { $gte: sinceDate } })
     ]);
 
+    // Enriquecemos byCommunity con el label desde userCommunitiesByPrefix
+    // y desde UserCommunityLookup (asignaciones explícitas por xlsx).
+    let communityLabels = new Map(); // link -> label
+    try {
+      const cfg = await getConfig('userCommunitiesByPrefix').catch(() => null);
+      if (cfg && Array.isArray(cfg.slots)) {
+        for (const s of cfg.slots) {
+          if (s && s.link) communityLabels.set(s.link, s.prefix ? `Equipo "${s.prefix}"` : 'Sin nombre');
+        }
+      }
+      // Labels desde UserCommunityLookup (más prioritario porque suele
+      // tener label real cargado por el admin al subir xlsx).
+      const explicits = await UserCommunityLookup.aggregate([
+        { $group: { _id: '$communityLink', label: { $first: '$communityLabel' } } }
+      ]);
+      for (const e of explicits) {
+        if (e._id && e.label) communityLabels.set(e._id, e.label);
+      }
+    } catch (_) {}
+    const byCommunityEnriched = byCommunity.map(c => ({
+      ...c,
+      communityLabel: communityLabels.get(c.communityLink) || ''
+    }));
+
     res.json({
       success: true,
       days,
       total,
-      byDay, byTeam, byDayTeam, topUsers
+      byDay, byTeam, byDayTeam,
+      byCommunity: byCommunityEnriched, byCommunityDay,
+      topUsers
     });
   } catch (err) {
     logger.error(`/api/admin/community/link-stats: ${err.message}`);

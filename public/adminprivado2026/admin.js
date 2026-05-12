@@ -1001,6 +1001,59 @@ async function loadCommunityLinkStats() {
             return;
         }
 
+        // Por comunidad (cada link único = comunidad distinta).
+        const byCommunity = d.byCommunity || [];
+        const byCommunityDay = d.byCommunityDay || [];
+        if (byCommunity.length > 0) {
+            html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">🌐 Por comunidad (cada link = comunidad distinta)</h4>';
+            // Agrupamos los breakdowns diarios por comunidad para mostrar
+            // sparkline-like (últimos 7 días).
+            const byLink = {};
+            for (const r of byCommunityDay) {
+                if (!byLink[r.communityLink]) byLink[r.communityLink] = {};
+                byLink[r.communityLink][r.dateKey] = r.clicks;
+            }
+            // Obtener últimas N fechas (max 14) para mostrar columnas.
+            const allDates = [...new Set(byCommunityDay.map(r => r.dateKey))]
+                .sort()
+                .reverse()
+                .slice(0, 7)
+                .reverse();
+            for (const c of byCommunity) {
+                const label = c.communityLabel || '(sin nombre)';
+                const link = c.communityLink || '';
+                const dailyTotals = allDates.map(dk => (byLink[link] && byLink[link][dk]) || 0);
+                const maxDaily = Math.max(...dailyTotals, 1);
+                html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(155,48,255,0.30);border-radius:9px;padding:11px;margin-bottom:8px;">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:6px;">';
+                html += '<div style="flex:1;min-width:200px;">';
+                html += '<div style="color:#c89bff;font-weight:900;font-size:13px;">' + escapeHtml(label) + '</div>';
+                html += '<div style="color:#888;font-size:10.5px;margin-top:2px;font-family:monospace;word-break:break-all;">' + escapeHtml(link) + '</div>';
+                html += '</div>';
+                html += '<div style="text-align:right;min-width:130px;">';
+                html += '<div style="color:#ffd700;font-size:22px;font-weight:900;line-height:1;">' + fmt(c.clicks) + '</div>';
+                html += '<div style="color:#aaa;font-size:10.5px;">clicks · ' + fmt(c.uniqueUsers) + ' users únicos · ' + fmt(c.uniqueTeams) + ' equipos</div>';
+                html += '</div></div>';
+                // Mini barchart de últimos 7 días
+                if (allDates.length > 0) {
+                    html += '<div style="display:flex;align-items:flex-end;gap:3px;height:40px;margin-top:6px;">';
+                    for (let i = 0; i < allDates.length; i++) {
+                        const dk = allDates[i];
+                        const cnt = dailyTotals[i];
+                        const pct = Math.max(3, Math.round((cnt / maxDaily) * 100));
+                        const dayLabel = (dk || '').slice(5); // MM-DD
+                        html += '<div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;" title="' + escapeHtml(dk) + ': ' + cnt + '">';
+                        html += '<div style="color:#c89bff;font-size:9px;font-weight:900;margin-bottom:1px;">' + cnt + '</div>';
+                        html += '<div style="width:100%;background:linear-gradient(180deg,#c89bff,#9b30ff);border-radius:2px 2px 0 0;height:' + pct + '%;"></div>';
+                        html += '<div style="color:#666;font-size:8.5px;margin-top:1px;font-family:monospace;">' + dayLabel + '</div>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+        }
+
         // Por equipo
         if (byTeam.length > 0) {
             html += '<h4 style="color:#fff;font-size:12px;margin:14px 0 6px;letter-spacing:0.5px;">📊 Por equipo</h4>';
