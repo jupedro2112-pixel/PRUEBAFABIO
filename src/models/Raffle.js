@@ -44,11 +44,6 @@ const raffleSchema = new mongoose.Schema({
       'p1m', 'p2m', 'p500', 'p100',
       // Modelo free (clientes activos, auto-enrollment por carga):
       'free_p2m', 'free_p1m', 'free_p500', 'free_p100',
-      // Estructura nueva (2026-05): gates explícitos en el nombre del tipo.
-      // Por cargas: 1× $1M, 1× $500K, 5× $100K (parallelInstances=5)
-      // Por netwin: 1× $500K, 5× $100K (parallelInstances=5)
-      'free_1m_cargas', 'free_500k_cargas', 'free_100k_cargas',
-      'free_500k_netwin', 'free_100k_netwin',
       // Sorteo de prueba (admin lo seedea on-demand para validar el flujo
       // buy -> draw -> auto-credit con poca plata real). No auto-respawnea.
       'test',
@@ -59,12 +54,8 @@ const raffleSchema = new mongoose.Schema({
     index: true
   },
   // Costo minimo de cargas en los ultimos 30 dias para entrar al sorteo
-  // gratis. Solo aplica a free_*. Legacy: ahora preferimos minNetLossARS.
+  // gratis. Solo aplica a free_*.
   minCargasARS: { type: Number, default: 0, min: 0 },
-  // Perdida neta minima (deposits - withdrawals, clamp >= 0) en la ventana
-  // semanal para entrar al sorteo gratis. Si > 0 reemplaza a minCargasARS
-  // como gating para los free_*. La idea: "si perdiste $X, tenes 1 numero".
-  minNetLossARS: { type: Number, default: 0, min: 0 },
   // Si entryCost === 0 Y minCargasARS > 0 -> es un sorteo gratis exclusivo.
   // Lo marcamos explicito tambien para queries faciles.
   isFree: { type: Boolean, default: false, index: true },
@@ -159,12 +150,17 @@ const raffleSchema = new mongoose.Schema({
 raffleSchema.index({ raffleType: 1, status: 1, instanceNumber: -1 });
 raffleSchema.index({ status: 1, drawDate: 1 });
 
-// NOTA: el indice partial-unique `unique_active_per_type` fue REMOVIDO en
-// la estructura nueva (2026-05) porque ahora soportamos N instancias activas
-// del mismo raffleType en paralelo (ej. 5× $100K por cargas). El seed
-// mantiene el conteo via findOne + create iterativo. Si querés revivir la
-// restricción para un tipo puntual, hacelo a nivel de spawn config (no de
-// índice).
-// Boot script borra el índice físico si todavía existe (drop-once).
+// Indice parcial unique: como mucho 1 sorteo 'active' por raffleType. Si dos
+// workers arrancan al mismo tiempo y ambos disparan el seed, este indice
+// rechaza la segunda insercion con duplicate key error y _ensureActive
+// captura el error en su catch — quedando 1 sola instancia activa por tipo.
+raffleSchema.index(
+  { raffleType: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: 'active' },
+    name: 'unique_active_per_type'
+  }
+);
 
 module.exports = mongoose.models['Raffle'] || mongoose.model('Raffle', raffleSchema);

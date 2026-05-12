@@ -57,20 +57,6 @@ VIP.raffles = (function () {
         return Number(n || 0).toLocaleString('es-AR');
     }
 
-    // Tapamos el 80% inicial del username del ganador en la vista pública,
-    // dejando los últimos chars visibles. Privacidad: cualquiera ve "Ganó
-    // @****dj" sin poder identificar al user completo. Mínimo 2 chars
-    // visibles para que el ganador real se reconozca.
-    function _maskUsername(u) {
-        const s = String(u || '').trim();
-        if (!s) return '—';
-        const len = s.length;
-        const mask = Math.max(1, Math.floor(len * 0.8));
-        const visible = Math.max(2, len - mask);
-        const visibleStart = len - visible;
-        return '*'.repeat(visibleStart) + s.slice(visibleStart);
-    }
-
     function _formatNumbers(nums) {
         if (!nums || !nums.length) return '';
         const sorted = nums.slice().sort((a, b) => a - b);
@@ -262,15 +248,7 @@ VIP.raffles = (function () {
         html += '<div style="font-size:34px;line-height:1;">' + (r.emoji || '🎁') + '</div>';
         html += '<div style="flex:1;min-width:0;">';
         html += '<div style="color:#4dabff;font-size:15px;font-weight:900;line-height:1.2;">' + _esc(r.name) + '</div>';
-        // Si el sorteo está en modo NETWIN (minNetLossARS > 0) mostramos
-        // "Si perdiste $X" en vez de "Mín. carga: $X" — la lógica de gate
-        // ahora es perdida neta, no cargas brutas.
-        const _byNetLoss = Number(r.minNetLossARS || 0) > 0;
-        if (_byNetLoss) {
-            html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS si perdiste <strong style="color:#ffaa66;">$' + _fmt(r.minNetLossARS) + '</strong> esta semana · Tope ' + total + ' personas</div>';
-        } else {
-            html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS para activos · Mín. carga: <strong style="color:#4dabff;">$' + _fmt(r.minCargasARS) + '</strong> · Tope ' + total + ' personas</div>';
-        }
+        html += '<div style="color:#bbb;font-size:11px;line-height:1.3;">Premio: <strong style="color:#fff;">$' + _fmt(r.prizeValueARS) + '</strong> · GRATIS para activos · Mín. carga: <strong style="color:#4dabff;">$' + _fmt(r.minCargasARS) + '</strong> · Tope ' + total + ' personas</div>';
         html += '</div></div>';
 
         html += '<div style="height:8px;background:rgba(0,0,0,0.30);border-radius:4px;overflow:hidden;margin:8px 0;">';
@@ -299,32 +277,18 @@ VIP.raffles = (function () {
             // confundia a los users que pensaban "no me deja elegir el
             // numero" cuando en realidad les faltaban cargas. Mostrar el
             // boton + aviso lateral es mas transparente.
-            // Si el sorteo está por NETWIN, miramos perdida neta (cargas −
-            // retiros). Si está por CARGAS legacy, miramos solo cargas.
-            const useNetLoss = Number(r.minNetLossARS || 0) > 0;
-            const threshold = useNetLoss ? Number(r.minNetLossARS || 0) : Number(r.minCargasARS || 0);
-            const have = useNetLoss
-                ? ((_data && Number(_data.weeklyNetLoss)) || 0)
-                : ((_data && Number(_data.weeklyDeposits)) || 0);
-            const reached = threshold > 0 ? have >= threshold : true;
-            const shortfall = Math.max(0, threshold - have);
+            const wd = (_data && Number(_data.weeklyDeposits)) || 0;
+            const threshold = r.minCargasARS || 0;
+            const reached = threshold > 0 ? wd >= threshold : true;
+            const shortfall = Math.max(0, threshold - wd);
             if (reached) {
                 html += '<div style="background:rgba(102,255,102,0.08);border:1px dashed rgba(102,255,102,0.40);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ddd;line-height:1.5;">';
-                if (useNetLoss) {
-                    html += '✅ <strong style="color:#66ff66;">¡Tenés número!</strong> Perdiste <strong style="color:#fff;">$' + _fmt(have) + '</strong> esta semana. Tocá <strong>"Elegir mi número"</strong> y reclamá tu cupo (1 por persona). Aunque después ganes, el número queda para vos.';
-                } else {
-                    html += '✅ <strong style="color:#66ff66;">¡Calificás!</strong> Llegaste al mínimo de cargas. Tocá <strong>"Elegir mi número"</strong> y reservá tu cupo (1 por persona).';
-                }
+                html += '✅ <strong style="color:#66ff66;">¡Calificás!</strong> Llegaste al mínimo de cargas. Tocá <strong>"Elegir mi número"</strong> y reservá tu cupo (1 por persona).';
                 html += '</div>';
             } else {
                 html += '<div style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.30);border-radius:6px;padding:8px;margin:6px 0 8px;font-size:11px;color:#ffaa66;line-height:1.5;">';
-                if (useNetLoss) {
-                    html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de pérdida neta esta semana (lun-dom).<br>';
-                    html += '<span style="color:#ddd;">Llevás perdidos <strong style="color:#fff;">$' + _fmt(have) + '</strong> de $' + _fmt(threshold) + '. Si seguís jugando y perdés, te toca número.</span>';
-                } else {
-                    html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom).<br>';
-                    html += '<span style="color:#ddd;">Llevás <strong style="color:#fff;">$' + _fmt(have) + '</strong> de $' + _fmt(threshold) + '. Podés intentar elegir, pero el sistema rechaza si no llegaste.</span>';
-                }
+                html += '⚠️ <strong>Te faltan $' + _fmt(shortfall) + '</strong> de cargas esta semana (lun-dom).<br>';
+                html += '<span style="color:#ddd;">Llevás <strong style="color:#fff;">$' + _fmt(wd) + '</strong> de $' + _fmt(threshold) + '. Podés intentar elegir, pero el sistema rechaza si no llegaste.</span>';
                 html += '</div>';
             }
             const ctaBg = reached
@@ -337,30 +301,36 @@ VIP.raffles = (function () {
         return html;
     }
 
-    // Renderiza el bloque "RESULTADOS" arriba del modal — listado general,
-    // compacto, con TODOS los sorteos sorteados. El dueño pidio "uno general
-    // con todos los sorteos" en lugar del antiguo collapsable de 2+expandir.
-    // Cada linea muestra: emoji · nombre · #ganador · ganador con username
-    // tapado al 80%. Si el caller GANO, ve su nombre completo + boton claim.
+    // Renderiza el bloque "SORTEADOS RECIENTES" arriba del modal. Por
+    // defecto muestra los 2 mas recientes y un boton "Ver todos (N)" que
+    // expande el resto. Estado expandido vive en _drawnExpanded.
+    let _drawnExpanded = false;
     function _renderDrawnSummary(drawnList) {
         const totalCount = drawnList.length;
+        const visibleN = _drawnExpanded ? totalCount : Math.min(2, totalCount);
+        const visible = drawnList.slice(0, visibleN);
+        const hidden = totalCount - visibleN;
         const myWins = drawnList.filter(r => r.iAmWinner).length;
 
         let html = '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;margin-bottom:14px;">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
-        html += '<div style="color:#aaa;font-size:10.5px;font-weight:800;letter-spacing:2px;text-transform:uppercase;">🏆 Resultados sorteos' + (myWins > 0 ? ' · <span style="color:#66ff66;">' + myWins + ' ganaste</span>' : '') + '</div>';
-        html += '<div style="color:#666;font-size:10px;">' + totalCount + ' total</div>';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+        html += '<div style="color:#aaa;font-size:10.5px;font-weight:800;letter-spacing:2px;text-transform:uppercase;">🎲 Sorteados recientes' + (myWins > 0 ? ' · <span style="color:#66ff66;">' + myWins + ' ganaste</span>' : '') + '</div>';
+        html += '<div style="color:#666;font-size:10px;">' + totalCount + ' sorteo' + (totalCount === 1 ? '' : 's') + '</div>';
         html += '</div>';
-        // Mostramos TODOS por default — el dueno quiere una vista general.
-        for (const r of drawnList) html += _renderDrawnLine(r);
+        for (const r of visible) html += _renderDrawnLine(r);
+        if (hidden > 0) {
+            html += '<button type="button" data-raffle-action="toggle-drawn" style="width:100%;background:rgba(0,212,255,0.08);color:#00d4ff;border:1px dashed rgba(0,212,255,0.40);padding:7px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;margin-top:4px;">▼ Ver todos (' + hidden + ' más)</button>';
+        } else if (_drawnExpanded && totalCount > 2) {
+            html += '<button type="button" data-raffle-action="toggle-drawn" style="width:100%;background:rgba(255,255,255,0.04);color:#aaa;border:1px dashed rgba(255,255,255,0.20);padding:7px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;margin-top:4px;">▲ Mostrar solo los más recientes</button>';
+        }
         html += '</div>';
         return html;
     }
 
-    // Linea compacta para sorteos ya sorteados. Para el publico general
-    // mostramos el ganador con username tapado al 80% inicial — el dueño
-    // quiere social proof "ganó alguien" sin exponer al user completo. Si
-    // VOS sos el ganador, ves tu nombre completo + boton de reclamo.
+    // Linea compacta para sorteos ya sorteados ('drawn'). Antes ocupaban
+    // una card entera al lado de los activos y se mezclaban; ahora van
+    // al final del modal en una sola linea ("ganaste/cerrado") para no
+    // robar atencion a los sorteos vivos.
     function _renderDrawnLine(r) {
         const youWon = !!r.iAmWinner;
         const credited = !!r.prizeClaimedAt;
@@ -369,23 +339,19 @@ VIP.raffles = (function () {
         const bg = youWon ? 'rgba(102,255,102,0.08)' : 'rgba(255,255,255,0.03)';
         let right;
         if (youWon && claimable && !credited) {
-            const _waHref = _winnerAgentHref(r.winningTicketNumber, r.name);
-            right = '<a href="' + _waHref + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="display:inline-block;text-decoration:none;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;padding:5px 10px;border-radius:6px;font-weight:900;font-size:11px;letter-spacing:0.5px;">💬 RECLAMAR POR WA · #' + (r.winningTicketNumber || '?') + '</a>';
+            right = '<button type="button" data-raffle-action="claim" data-raffle-id="' + _esc(r.id) + '" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:5px 10px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;letter-spacing:0.5px;">🎁 RECLAMAR $' + _fmt(r.prizeValueARS) + '</button>';
         } else if (youWon && credited) {
             right = '<span style="color:#66ff66;font-size:11px;font-weight:800;">✅ Acreditado</span>';
         } else if (youWon) {
             right = '<span style="color:#ffaa66;font-size:11px;font-weight:800;">⏳ Acreditando…</span>';
-        } else if (r.winnerUsername) {
-            // Tapamos 80% inicial del nombre. Ej: "lalodj" -> "****dj"
-            right = '<span style="color:#aaa;font-size:11px;">🏆 @' + _esc(_maskUsername(r.winnerUsername)) + '</span>';
         } else {
-            right = '<span style="color:#888;font-size:11px;">sin ganador</span>';
+            right = '<span style="color:#aaa;font-size:11px;">@' + _esc(r.winnerUsername || '—') + '</span>';
         }
-        const label = youWon ? '🏆 GANASTE' : ('#' + (r.winningTicketNumber || '?'));
+        const label = youWon ? '🏆 GANASTE' : 'Cerrado';
         return '<div style="background:' + bg + ';border:1px solid ' + accent + ';border-radius:8px;padding:7px 10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;font-size:12px;">' +
             '<span style="font-size:14px;flex-shrink:0;">' + (r.emoji || '🎁') + '</span>' +
             '<span style="color:' + accent + ';font-weight:900;letter-spacing:0.5px;flex-shrink:0;">' + label + '</span>' +
-            '<span style="color:#fff;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(r.name) + '</span>' +
+            '<span style="color:#fff;font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(r.name) + ' · #' + r.winningTicketNumber + '</span>' +
             right +
             '</div>';
     }
@@ -627,10 +593,7 @@ VIP.raffles = (function () {
         });
         const heroLightning = allLightnings[0] || null;
         const otherLightnings = allLightnings.slice(1);
-        // Resultados UNIFICADOS: incluye relámpago + pagos + gratis sorteados
-        // — el dueño quiere "todo unificado y prolijo con sus ganadores" arriba
-        // de los sorteos vigentes.
-        const allDrawn = drawn.slice().sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
+        const otherDrawn = drawn.filter(r => r.raffleType !== 'relampago');
         const paid = liveRaffles.filter(r => !r.isFree && r.raffleType !== 'relampago');
         const free = liveRaffles.filter(r => r.isFree && r.raffleType !== 'relampago');
 
@@ -640,17 +603,7 @@ VIP.raffles = (function () {
         html += _renderClaimableBanner(_data.claimable || [], recentWins.map(w => w.id));
         html += _renderAutoEnrolledBanner(_data.autoEnrolled || []);
 
-        // === RESULTADOS UNIFICADOS (compacto, arriba de todo) ===
-        // Listado mini con los 3 tipos (relámpago + pagos + gratis). Cada
-        // línea: emoji + nombre + #ganador + @ganador (tapado 80%). Si VOS
-        // sos el ganador, ves tu nombre completo + estado del reclamo.
-        if (allDrawn.length > 0) {
-            html += _renderDrawnSummary(allDrawn);
-        }
-
-        // === HERO RELAMPAGO === (debajo de resultados — el foco visual del
-        // user que entra es "qué hay para reclamar / qué se sorteó" arriba,
-        // y abajo "los sorteos vigentes a los que me puedo anotar").
+        // === HERO RELAMPAGO === (arriba de todo)
         if (heroLightning) {
             html += _renderLightningHero(heroLightning, balance);
         }
@@ -662,6 +615,15 @@ VIP.raffles = (function () {
             const myNums = ol.myTicketNumbers || [];
             if (myNums.length === 0 && !ol.iAmWinner) continue;
             html += _renderLightningMini(ol);
+        }
+
+        // === SORTEADOS RECIENTES (compacto, arriba) ===
+        // Ordena mas reciente primero. Mostramos los ultimos 2 expandidos y
+        // el resto colapsado tras un toggle "Ver todos (N)". Asi le damos
+        // visibilidad al historial sin que invada los sorteos vivos.
+        if (otherDrawn.length > 0) {
+            otherDrawn.sort((a, b) => new Date(b.drawnAt || 0) - new Date(a.drawnAt || 0));
+            html += _renderDrawnSummary(otherDrawn);
         }
 
         // Header con saldo + boton refrescar. El boton es util cuando el
@@ -678,71 +640,9 @@ VIP.raffles = (function () {
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#4dabff);"></div>';
             html += '<h3 style="margin:0;color:#4dabff;font-size:14px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
-            // Explainer dual: mostramos los niveles de CADA gate (cargas y
-            // netwin) en su propio bloque. El dueño tiene ambos tipos
-            // corriendo en paralelo. Agrupamos por prize+gate (porque hay
-            // múltiples instancias del mismo nivel — 5× $100K) y mostramos
-            // un solo row con badge "5×" en lugar de 5 rows iguales.
-            const _myCargas = (_data && Number(_data.weeklyDeposits)) || 0;
-            const _myNet = (_data && Number(_data.weeklyNetLoss)) || 0;
-            const _activeFree = free.filter(r => r.status === 'active');
-            const _byNetGroup = {};
-            const _byCargasGroup = {};
-            for (const r of _activeFree) {
-                if (Number(r.minNetLossARS || 0) > 0) {
-                    const key = (r.minNetLossARS || 0) + '_' + (r.prizeValueARS || 0);
-                    if (!_byNetGroup[key]) _byNetGroup[key] = { prize: r.prizeValueARS||0, threshold: r.minNetLossARS||0, count: 0 };
-                    _byNetGroup[key].count++;
-                } else if (Number(r.minCargasARS || 0) > 0) {
-                    const key = (r.minCargasARS || 0) + '_' + (r.prizeValueARS || 0);
-                    if (!_byCargasGroup[key]) _byCargasGroup[key] = { prize: r.prizeValueARS||0, threshold: r.minCargasARS||0, count: 0 };
-                    _byCargasGroup[key].count++;
-                }
-            }
-            const _cargasLevels = Object.values(_byCargasGroup).sort((a,b) => b.prize - a.prize);
-            const _netLevels = Object.values(_byNetGroup).sort((a,b) => b.prize - a.prize);
-
-            if (_cargasLevels.length > 0 || _netLevels.length > 0) {
-                html += '<div style="background:linear-gradient(135deg,rgba(77,171,255,0.10),rgba(77,171,255,0.04));border:1px solid rgba(77,171,255,0.40);border-radius:10px;padding:11px 12px;margin-bottom:10px;font-size:12px;color:#eee;line-height:1.55;">';
-                html += '<div style="color:#4dabff;font-weight:900;font-size:12.5px;letter-spacing:0.5px;margin-bottom:6px;">💎 SORTEOS GRATIS — 2 formas de entrar</div>';
-
-                if (_cargasLevels.length > 0) {
-                    html += '<div style="margin-bottom:8px;">';
-                    html += '<div style="color:#66ff66;font-weight:800;font-size:11.5px;margin-bottom:3px;">🟢 Por CARGAS (lun-dom):</div>';
-                    html += '<div style="color:#ccc;font-size:11px;margin-bottom:4px;">Te anotamos <strong>automáticamente</strong> si llegás al mínimo de cargas. 1 número por sorteo.</div>';
-                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:6px 9px;">';
-                    for (const lvl of _cargasLevels) {
-                        const ok = _myCargas >= lvl.threshold;
-                        const countBadge = lvl.count > 1 ? ' <span style="color:#4dabff;font-size:10px;font-weight:800;">(' + lvl.count + ' simultáneos)</span>' : '';
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;">';
-                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prize) + '</strong>' + countBadge + '</span>';
-                        html += '<span style="color:#bbb;">cargaste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.threshold) + '</strong></span>';
-                        html += '</div>';
-                    }
-                    html += '</div>';
-                    html += '</div>';
-                }
-
-                if (_netLevels.length > 0) {
-                    html += '<div>';
-                    html += '<div style="color:#ffaa66;font-weight:800;font-size:11.5px;margin-bottom:3px;">🟠 Por NETWIN (pérdida neta lun-dom):</div>';
-                    html += '<div style="color:#ccc;font-size:11px;margin-bottom:4px;">Si perdiste plata, <strong>vos elegís</strong> tu nivel. Aunque después ganes, el número queda para vos.</div>';
-                    html += '<div style="background:rgba(0,0,0,0.30);border-radius:7px;padding:6px 9px;">';
-                    for (const lvl of _netLevels) {
-                        const ok = _myNet >= lvl.threshold;
-                        const countBadge = lvl.count > 1 ? ' <span style="color:#ffaa66;font-size:10px;font-weight:800;">(' + lvl.count + ' simultáneos)</span>' : '';
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:2px 0;">';
-                        html += '<span style="color:' + (ok ? '#66ff66' : '#aaa') + ';">' + (ok ? '✅' : '○') + ' Premio <strong>$' + _fmt(lvl.prize) + '</strong>' + countBadge + '</span>';
-                        html += '<span style="color:#bbb;">perdiste ≥ <strong style="color:#ffd700;">$' + _fmt(lvl.threshold) + '</strong></span>';
-                        html += '</div>';
-                    }
-                    html += '</div>';
-                    html += '<div style="color:#ffaa66;font-size:10.5px;font-weight:700;letter-spacing:0.5px;margin-top:5px;">⚠️ NETWIN: es <strong>1 número total</strong> entre todos los niveles netwin de la semana.</div>';
-                    html += '</div>';
-                }
-
-                html += '</div>';
-            }
+            html += '<div style="background:rgba(77,171,255,0.06);border-left:3px solid #4dabff;border-radius:0 8px 8px 0;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:#ccc;line-height:1.5;">';
+            html += '<strong style="color:#4dabff;">💎 Exclusivo para clientes activos.</strong> Si llegás al mínimo de cargas <strong>de esta semana (lunes a domingo)</strong>, te anotamos <strong>automáticamente</strong>. 1 número por persona, máximo 100 personas por sorteo.';
+            html += '</div>';
             for (const r of free) html += _renderFreeCard(r);
         }
 
@@ -759,7 +659,7 @@ VIP.raffles = (function () {
             for (const r of paid) html += _renderPaidCard(r, balance);
         }
 
-        if (paid.length === 0 && free.length === 0 && allDrawn.length === 0 && !heroLightning) {
+        if (paid.length === 0 && free.length === 0 && otherDrawn.length === 0 && !heroLightning) {
             html += '<div style="text-align:center;color:#aaa;padding:30px 0;">No hay sorteos disponibles en este momento.</div>';
         } else if (paid.length === 0 && free.length === 0 && !heroLightning) {
             // Hay drawn pero no hay activos: mensaje claro de "vuelve pronto"
@@ -799,10 +699,11 @@ VIP.raffles = (function () {
                 if (m) m.style.display = 'none';
                 return;
             }
-            // toggle-drawn: legacy — el bloque ahora muestra todos los
-            // sorteados siempre. Se deja el no-op para no romper si quedó
-            // algún botón viejo en cache.
-            if (action === 'toggle-drawn') return;
+            if (action === 'toggle-drawn') {
+                _drawnExpanded = !_drawnExpanded;
+                _render();
+                return;
+            }
             if (action === 'refresh') {
                 // Forzar refetch saltando cualquier cache. Mostramos feedback
                 // visual cambiando el texto del boton mientras esta en vuelo.
@@ -1430,38 +1331,17 @@ VIP.raffles = (function () {
         '</div>';
     }
 
-    // wa.link del agente para reclamar el premio. Texto prefilled: "Gané el
-    // sorteo semanal con mi número #N". El número va del winningTicketNumber.
-    // Toma el teléfono soporte de VIP.state.linePhone (mismo helper que el
-    // banner relámpago). Fallback: wa.link/metawin2026.
-    function _winnerAgentHref(ticketN, raffleName) {
-        const linePhone = (VIP && VIP.state && VIP.state.linePhone) || '';
-        const waNum = String(linePhone).replace(/[^\d+]/g, '').replace(/^\+/, '');
-        const msg = 'Gané el sorteo semanal con mi número #' + (ticketN || '') + (raffleName ? ' (' + raffleName + ')' : '');
-        const text = encodeURIComponent(msg);
-        if (waNum) return 'https://wa.me/' + waNum + '?text=' + text;
-        return 'https://wa.link/metawin2026?text=' + text;
-    }
-
     function _renderHomeWinnerMine(w) {
         const credited = !!w.prizeClaimedAt;
         const needsClaim = !credited && w.prizeClaimable;
         const ago = w.minutesAgo < 60 ? (w.minutesAgo + ' min') : (w.hoursAgo + ' h');
-        const waHref = _winnerAgentHref(w.winningTicketNumber, w.name);
         let body;
         if (credited) {
             body = '<div style="background:rgba(102,255,102,0.18);border:1px solid #66ff66;border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">✅ Premio acreditado a tu saldo · hace ' + ago + '</div>';
         } else if (needsClaim) {
-            // CTA principal: WhatsApp al agente con texto prefilled
-            // "Gané el sorteo semanal con mi número #N".
-            body = '<a href="' + waHref + '" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="display:block;text-decoration:none;width:100%;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;text-align:center;padding:12px;border-radius:9px;font-weight:900;font-size:14px;letter-spacing:0.5px;box-shadow:0 3px 12px rgba(37,211,102,0.45);">' +
-                    '💬 RECLAMAR POR WHATSAPP — número #' + (w.winningTicketNumber || '?') +
-                '</a>' +
-                '<div style="background:rgba(255,170,102,0.12);border:1px dashed rgba(255,170,102,0.55);border-radius:8px;padding:7px 9px;margin-top:7px;font-size:11px;color:#ffd0a0;line-height:1.4;text-align:center;">' +
-                    '⚠️ Necesitás <strong style="color:#ffd700;">5 cargas vigentes</strong> para que te acreditemos el premio. El agente las verifica.' +
-                '</div>';
+            body = '<button type="button" onclick="VIP.raffles && VIP.raffles.open()" style="width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;box-shadow:0 3px 10px rgba(255,215,0,0.40);">🎁 RECLAMAR $' + _fmt(w.prizeValueARS) + '</button>';
         } else {
-            body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Confirmá con el agente para acreditar tu premio.</div>';
+            body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Estamos acreditando tu premio…</div>';
         }
         // Countdown post-cobro: 30 min con timer mm:ss desde que cobro.
         let timer = '';
@@ -1469,7 +1349,7 @@ VIP.raffles = (function () {
             const expiresAt = Date.now() + w.secondsRemaining * 1000;
             timer = '<div data-claim-countdown="' + expiresAt + '" style="color:#fff;font-size:11px;text-align:center;margin-top:8px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.50);">⏱ Esta felicitación queda <span class="claim-countdown-text">30:00</span> más</div>';
         }
-        return '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
+        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🏆</div>' +
             '<div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎉 ¡FELICITACIONES, GANASTE!</div>' +
             '<div style="color:#fff;font-size:18px;font-weight:900;margin:4px 0 8px;">' + (w.emoji || '🏆') + ' ' + _esc(w.name) + ' — $' + _fmt(w.prizeValueARS) + '</div>' +

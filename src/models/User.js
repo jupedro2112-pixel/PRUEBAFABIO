@@ -342,13 +342,6 @@ const userSchema = new mongoose.Schema({
   fraudReason: { type: String, default: null },
   fraudBlockedAt: { type: Date, default: null },
   fraudBlockedIp: { type: String, default: null },
-  // Huella del dispositivo del último login del usuario (hash SHA-256 de
-  // userAgent + pantalla + idioma + timezone + canvas hash). Permite
-  // detectar el mismo dispositivo aunque el user borre caché/cookies y
-  // cree cuenta nueva. Si dos users con huella idéntica intentan reclamar
-  // el welcome bonus → fraudBlocked en el segundo.
-  deviceFingerprint: { type: String, default: null, index: true },
-  deviceFingerprintAt: { type: Date, default: null },
 
   // Win-back automático (estrategia de recuperación). Tier actual:
   //   0 = activo / nunca disparado
