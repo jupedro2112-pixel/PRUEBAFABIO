@@ -23487,27 +23487,55 @@ app.post('/api/admin/raffles/:id/reopen', authMiddleware, superAdminMiddleware, 
 });
 
 // POST /api/admin/raffles/test-push-all-to-user
-// Manda el push EXACTO de "GANASTE" para CADA sorteo activo/cerrado al user
-// de prueba (ej. lalodj). Simula que el user ganó cada uno. NO toca state
-// de los sorteos ni acredita premio. Sirve para probar visualmente cómo le
-// va a llegar la lluvia de notificaciones al ganador real.
+// Manda el push EXACTO de "GANASTE" para cada sorteo activo/cerrado al user
+// de prueba (ej. lalodj). Simula que el user ganó cada uno con el N° que
+// indique. NO toca state ni acredita premio. Body:
+//   { username, ticketNumber?=42, includeDrawn?=false, onlyFree?=false }
+// onlyFree: si true, excluye sorteos pagos (entryCost > 0 + no relámpago).
+// Orden de envío: gratis-por-cargas → gratis-por-netwin → relámpago (sin
+// pagos cuando onlyFree). Dentro de cada bucket, premio MÁS ALTO primero.
 app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const testUsername = String((req.body && req.body.username) || '').trim();
     if (!testUsername) return res.status(400).json({ error: 'Falta username' });
+    const ticketNumber = parseInt((req.body && req.body.ticketNumber) || 42, 10) || 42;
     const includeDrawn = !!(req.body && req.body.includeDrawn);
+    const onlyFree = !!(req.body && req.body.onlyFree);
     const statuses = includeDrawn ? ['active', 'closed', 'drawn'] : ['active', 'closed'];
-    const raffles = await Raffle.find(
+    let raffles = await Raffle.find(
       { status: { $in: statuses } },
-      { id: 1, name: 1, emoji: 1, prizeName: 1, prizeValueARS: 1, raffleType: 1, status: 1 }
-    ).sort({ prizeValueARS: -1 }).lean();
-    if (raffles.length === 0) return res.json({ success: true, total: 0, results: [], message: 'No hay sorteos activos para testear.' });
+      { id: 1, name: 1, emoji: 1, prizeName: 1, prizeValueARS: 1, raffleType: 1, status: 1, isFree: 1, minNetLossARS: 1, entryCost: 1 }
+    ).lean();
+    if (onlyFree) {
+      raffles = raffles.filter(r =>
+        r.isFree === true ||
+        r.raffleType === 'relampago' ||
+        (Number(r.entryCost) || 0) === 0
+      );
+    }
+    if (raffles.length === 0) return res.json({ success: true, total: 0, results: [], message: 'No hay sorteos para testear con esos filtros.' });
+
+    // Orden: bucket 0 = gratis por cargas (free + minNetLossARS===0);
+    // bucket 1 = gratis por netwin (free + minNetLossARS>0);
+    // bucket 2 = relámpago; bucket 3 = pagos. Dentro de cada bucket,
+    // mayor premio primero.
+    const bucketOf = (r) => {
+      if (r.raffleType === 'relampago') return 2;
+      if (r.isFree && (r.minNetLossARS || 0) > 0) return 1;
+      if (r.isFree) return 0;
+      return 3;
+    };
+    raffles.sort((a, b) => {
+      const ba = bucketOf(a), bb = bucketOf(b);
+      if (ba !== bb) return ba - bb;
+      return (b.prizeValueARS || 0) - (a.prizeValueARS || 0);
+    });
 
     const safe = testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const filter = { username: { $regex: '^' + safe + '$', $options: 'i' } };
     const results = [];
     for (const r of raffles) {
-      const wp = _buildWinnerPush(r, 42, {
+      const wp = _buildWinnerPush(r, ticketNumber, {
         prizeAutoCredited: true,
         lightningForfeited: false,
         source: 'raffle-win-test-batch'
@@ -23520,6 +23548,9 @@ app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddle
           prizeValueARS: r.prizeValueARS || 0,
           raffleType: r.raffleType,
           status: r.status,
+          isFree: !!r.isFree,
+          minNetLossARS: r.minNetLossARS || 0,
+          bucket: bucketOf(r),
           sent: (res2 && res2.successCount) || 0,
           failed: (res2 && res2.failureCount) || 0,
           title: wp.title,
@@ -23532,12 +23563,14 @@ app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddle
       await new Promise(resolve => setTimeout(resolve, 600));
     }
     const totalSent = results.reduce((s, x) => s + (x.sent || 0), 0);
-    logger.info(`[raffles] TEST-PUSH-ALL a ${testUsername}: ${raffles.length} sorteos, ${totalSent} pushes enviadas`);
+    logger.info(`[raffles] TEST-PUSH-ALL a ${testUsername} ticket=#${ticketNumber} onlyFree=${onlyFree}: ${raffles.length} sorteos, ${totalSent} pushes enviadas`);
     res.json({
       success: true,
       total: raffles.length,
       totalSent,
       destinatario: testUsername,
+      ticketNumber,
+      onlyFree,
       results
     });
   } catch (err) {

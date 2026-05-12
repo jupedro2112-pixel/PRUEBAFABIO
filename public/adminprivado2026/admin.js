@@ -17587,16 +17587,17 @@ async function batchRowDrawOne(raffleId) {
 // user de prueba. Sirve para previsualizar el orden y el texto que recibiría
 // el ganador real. Va con un delay entre pushes para no saturar.
 async function testPushAllToUser() {
-    const username = prompt('Test masivo: mandar push de "GANASTE" de TODOS los sorteos al usuario:', 'lalodj');
+    const username = prompt('Test masivo: mandar push de "GANASTE" de TODOS los sorteos GRATIS + NETWIN al usuario:', 'lalodj');
     if (!username || !username.trim()) return;
-    const includeDrawn = confirm('¿Incluir también sorteos ya sorteados (drawn)?\n\nOK = sí · Cancelar = solo activos y cerrados.');
+    const ticketStr = prompt('Número ganador que va a aparecer en cada push:', '64');
+    const ticketNumber = parseInt(String(ticketStr || '').replace(/[^\d]/g, ''), 10) || 64;
     const u = username.trim();
-    showToast('⏳ Disparando pushes a ' + u + '… puede tardar unos segundos', 'info');
+    showToast('⏳ Disparando pushes a ' + u + ' con número #' + ticketNumber + '… puede tardar', 'info');
     try {
         const r = await authFetch('/api/admin/raffles/test-push-all-to-user', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: u, includeDrawn })
+            body: JSON.stringify({ username: u, ticketNumber, onlyFree: true, includeDrawn: false })
         });
         const d = await r.json();
         if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
