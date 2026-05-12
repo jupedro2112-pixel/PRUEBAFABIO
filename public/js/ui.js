@@ -534,6 +534,30 @@ CBU activo: ${cbuNumber}`;
         const isWindows = /Windows/.test(ua);
         const isMac     = /Macintosh|MacIntel/.test(ua) && !isIOS;
 
+        // Si la app ya está instalada (standalone), no hacemos nada.
+        const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                              window.navigator.standalone === true;
+        if (isStandalone) {
+            showToast('✅ Ya tenés la app instalada', 'success');
+            return;
+        }
+
+        // En Android, esperar hasta 2.5s a que `beforeinstallprompt` se
+        // dispare (Chrome lo emite asincrónico después de validar el
+        // manifest + SW). Sin esto, un tap muy temprano caía siempre al
+        // fallback de instrucciones manuales aunque el evento llegara
+        // 800ms después.
+        if (!window.deferredPrompt && isAndroid) {
+            await new Promise((resolve) => {
+                const t = setTimeout(resolve, 2500);
+                window.addEventListener('pwa-prompt-ready', function once() {
+                    window.removeEventListener('pwa-prompt-ready', once);
+                    clearTimeout(t);
+                    resolve();
+                }, { once: true });
+            });
+        }
+
         if (!window.deferredPrompt) {
             if (isIOS)          showInstallInstructions('ios');
             else if (isAndroid) showInstallInstructions('android');

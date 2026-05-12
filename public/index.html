@@ -136,6 +136,29 @@
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32x32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180x180.png">
+
+    <!-- CRITICAL: Capturar beforeinstallprompt LO MÁS TEMPRANO POSIBLE.
+         El evento se dispara una sola vez muy temprano en el lifecycle de
+         la página. Si los listeners (ui.js, app.js) se registran después
+         de que el evento ya pasó, nunca recuperamos el prompt y caemos
+         al fallback de instrucciones manuales. Este script inline corre
+         antes que cualquier otro JS, garantizando que el evento siempre
+         sea capturado. -->
+    <script>
+      window.deferredPrompt = window.deferredPrompt || null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        // Guardar el evento — el botón Instalar app lo va a usar.
+        window.deferredPrompt = e;
+        try { console.log('[PWA] beforeinstallprompt capturado (head)'); } catch (_) {}
+        // Notificar a otros scripts que ya hay prompt disponible (por si
+        // re-bindean botones que dependían de ese estado).
+        try { window.dispatchEvent(new CustomEvent('pwa-prompt-ready')); } catch (_) {}
+      });
+      window.addEventListener('appinstalled', function () {
+        window.deferredPrompt = null;
+        try { console.log('[PWA] app instalada'); } catch (_) {}
+      });
+    </script>
     
     <!-- Firebase SDK (self-hosted para evitar bloqueos de red/CDN/CSP)
          PERF: async asi no bloquean el parser del head. El loader inline
