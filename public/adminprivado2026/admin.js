@@ -1737,6 +1737,184 @@ async function retryWelcomeBonusCredit(username) {
     }
 }
 
+// ============================================================
+// PUSH DE PLATA (broadcast) — sección admin
+// ============================================================
+// Crea un MoneyGiveaway con broadcastAll=true. Manda push a todos los
+// users con FCM tokens (excepto equipos excluidos). Mide cuánta gente
+// realmente tiene la app reclamando una recompensa real ($500 default).
+
+async function loadPushGiveawaySection() {
+    const box = document.getElementById('pushGiveawayHistoryBox');
+    if (!box) return;
+    box.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/money-giveaway/history?limit=30');
+        const ctype = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+        if (!r.ok || !ctype.includes('application/json')) {
+            box.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">Error: HTTP ' + r.status + '</div>';
+            return;
+        }
+        const d = await r.json();
+        const items = (d.items || []).filter(x => x.broadcastAll);
+        if (items.length === 0) {
+            box.innerHTML = '<div style="color:#aaa;text-align:center;padding:20px;">Todavía no enviaste ningún push de plata broadcast. Usá el formulario de arriba 👆</div>';
+            return;
+        }
+        const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+        const fmtDate = (d) => { try { return new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } };
+        const statusBadge = (s) => {
+            const map = {
+                active: '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">✅ ACTIVO</span>',
+                closed_expired: '<span style="background:rgba(136,136,136,0.15);color:#aaa;border:1px solid rgba(136,136,136,0.40);padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">⏰ EXPIRADO</span>',
+                closed_budget: '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">💰 SIN PRESUPUESTO</span>',
+                closed_max: '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">👥 LLENO</span>',
+                cancelled: '<span style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid rgba(255,128,128,0.40);padding:2px 8px;border-radius:5px;font-size:10px;font-weight:800;">❌ CANCELADO</span>'
+            };
+            return map[s] || s;
+        };
+        let html = '';
+        for (const g of items) {
+            const claimed = g.claimedCount || 0;
+            const total = g.totalGiven || 0;
+            const ex = Array.isArray(g.excludeTeams) ? g.excludeTeams : [];
+            html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:11px 13px;margin-bottom:8px;">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:5px;">';
+            html += '<div style="flex:1;min-width:220px;">';
+            html += '<div style="color:#fff;font-weight:800;font-size:13px;">' + escapeHtml((g.customEmoji || '🎁') + ' ' + fmtMoney(g.amount) + ' x persona') + ' ' + statusBadge(g.status) + '</div>';
+            if (g.customMessage) html += '<div style="color:#ddd;font-size:11.5px;margin-top:3px;line-height:1.4;">"' + escapeHtml(g.customMessage) + '"</div>';
+            html += '<div style="color:#888;font-size:11px;margin-top:3px;">Creado ' + escapeHtml(fmtDate(g.createdAt)) + (g.createdBy ? ' por ' + escapeHtml(g.createdBy) : '') + (ex.length > 0 ? ' · excluyó: ' + escapeHtml(ex.join(', ')) : '') + '</div>';
+            html += '</div>';
+            html += '<div style="text-align:right;">';
+            html += '<div style="color:#66ff66;font-size:18px;font-weight:900;">' + claimed + '</div>';
+            html += '<div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;">reclamaron</div>';
+            html += '<div style="color:#ffd700;font-size:11px;font-weight:700;margin-top:3px;">' + fmtMoney(total) + ' entregado</div>';
+            html += '</div>';
+            html += '</div>';
+            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;">';
+            html += '<button type="button" onclick="pgvViewClaims(\'' + escapeHtml(g.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:5px 10px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">📋 Ver quién reclamó</button>';
+            if (g.status === 'active') html += '<button type="button" onclick="pgvClose(\'' + escapeHtml(g.id) + '\')" style="background:rgba(255,128,128,0.10);color:#ff8080;border:1px solid rgba(255,128,128,0.40);padding:5px 10px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">❌ Cerrar ahora</button>';
+            html += '</div>';
+            html += '</div>';
+        }
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;padding:14px;text-align:center;">Error de conexión: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+function _pgvReadForm() {
+    const amount = parseInt(document.getElementById('pgvAmount').value, 10);
+    const durationHours = parseInt(document.getElementById('pgvDuration').value, 10);
+    const customMessage = (document.getElementById('pgvMessage').value || '').trim();
+    const customEmoji = (document.getElementById('pgvEmoji').value || '🎁').trim();
+    const excludeTeams = (document.getElementById('pgvExcludeTeams').value || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+    return { amount, durationHours, customMessage, customEmoji, excludeTeams };
+}
+
+async function pgvSendBroadcast() {
+    const f = _pgvReadForm();
+    if (!Number.isFinite(f.amount) || f.amount <= 0) return showToast('Monto inválido', 'error');
+    if (!Number.isFinite(f.durationHours) || f.durationHours < 1) return showToast('Duración inválida', 'error');
+    const exTxt = f.excludeTeams.length > 0 ? '\nExcluyendo: ' + f.excludeTeams.join(', ') : '';
+    if (!confirm('¿Mandar push de $' + f.amount.toLocaleString('es-AR') + ' a TODOS los users con app + notifs?\n\nDura ' + f.durationHours + 'hs' + exTxt + '\n\nMensaje: "' + (f.customMessage || '(default)') + '"')) return;
+    try {
+        const r = await authFetch('/api/admin/money-giveaway/broadcast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(f)
+        });
+        const ctype = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+        if (!ctype.includes('application/json')) {
+            const txt = await r.text().catch(() => '');
+            alert('❌ HTTP ' + r.status + ': ' + (txt.slice(0, 150) || 'sin detalle'));
+            return;
+        }
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        const pn = d.pushNotifications || {};
+        alert('✅ Push de plata enviado\n\nDestinatarios alcanzados: ' + (pn.sent || 0) + ' / ' + (pn.audienceTotal || 0) +
+              '\n\nLos users van a ver el banner en el home y pueden reclamar tocando.');
+        loadPushGiveawaySection();
+    } catch (e) {
+        alert('Error de conexión: ' + (e && e.message ? e.message : ''));
+    }
+}
+
+async function pgvTestPush() {
+    const username = prompt('Test push: usuario destino para previsualizar el mensaje:', 'lalodj');
+    if (!username || !username.trim()) return;
+    const f = _pgvReadForm();
+    if (!Number.isFinite(f.amount) || f.amount <= 0) return showToast('Monto inválido', 'error');
+    try {
+        const r = await authFetch('/api/admin/money-giveaway/broadcast/test-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username.trim(), amount: f.amount, customMessage: f.customMessage, customEmoji: f.customEmoji })
+        });
+        const ctype = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+        if (!ctype.includes('application/json')) {
+            const txt = await r.text().catch(() => '');
+            alert('❌ HTTP ' + r.status + ': ' + (txt.slice(0, 150) || ''));
+            return;
+        }
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('⚠️ ' + (d.error || 'No llegó. Verificá tokens FCM del user.')); return; }
+        alert('✅ Test push enviado a ' + username.trim() + '\n\nTítulo: ' + (d.previewTitle || '') + '\n\nBody:\n' + (d.previewBody || ''));
+    } catch (e) {
+        alert('Error de conexión: ' + (e && e.message ? e.message : ''));
+    }
+}
+
+async function pgvViewClaims(giveawayId) {
+    try {
+        const r = await authFetch('/api/admin/money-giveaway/' + encodeURIComponent(giveawayId) + '/claims');
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        const claims = d.claims || [];
+        document.getElementById('pgvClaimsModal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'pgvClaimsModal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding:18px;overflow-y:auto;';
+        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+        let html = '<div style="background:#0a0a14;border:2px solid #25d366;border-radius:14px;padding:18px;max-width:680px;width:100%;color:#fff;margin:14px auto;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;">';
+        html += '<h3 style="margin:0;color:#25d366;font-size:15px;">📋 Quiénes reclamaron · ' + claims.length + ' personas · $' + Number(d.giveaway.totalGiven || 0).toLocaleString('es-AR') + '</h3>';
+        html += '<button type="button" onclick="document.getElementById(\'pgvClaimsModal\').remove()" style="background:transparent;color:#aaa;border:none;font-size:22px;cursor:pointer;">×</button>';
+        html += '</div>';
+        if (claims.length === 0) {
+            html += '<div style="color:#aaa;text-align:center;padding:18px;">Todavía nadie reclamó este push.</div>';
+        } else {
+            html += '<div style="background:rgba(0,0,0,0.30);border-radius:8px;padding:6px;max-height:60vh;overflow:auto;">';
+            for (const c of claims) {
+                const d2 = c.claimedAt ? new Date(c.claimedAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 9px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:12px;">';
+                html += '<div style="color:#fff;font-weight:700;">@' + escapeHtml(c.username || '?') + '</div>';
+                html += '<div style="color:#ddd;">$' + Number(c.amount || 0).toLocaleString('es-AR') + ' · ' + escapeHtml(d2) + '</div>';
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+        modal.innerHTML = html;
+        document.body.appendChild(modal);
+    } catch (e) {
+        alert('Error de conexión');
+    }
+}
+
+async function pgvClose(giveawayId) {
+    if (!confirm('¿Cerrar este push de plata? Ya no se podrá reclamar más.')) return;
+    try {
+        const r = await authFetch('/api/admin/money-giveaway/' + encodeURIComponent(giveawayId) + '/close', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('Cerrado', 'success');
+        loadPushGiveawaySection();
+    } catch (e) { alert('Error de conexión'); }
+}
+
 async function loadWelcomeBonusReport() {
     const container = document.getElementById('welcomeBonusReportContent');
     if (!container) return;
