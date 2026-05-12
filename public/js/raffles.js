@@ -1224,7 +1224,7 @@ VIP.raffles = (function () {
     function _renderHomeDefaultCta() {
         return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.40);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🎁</div>' +
-            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 Sorteos semanales gratis dependiendo tu actividad y sorteos pagos</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 SORTEOS SEMANALES GRATIS POR CARGAS Y POR NETWIN — ¡PARTICIPÁ!</div>' +
             '<div style="color:#fff;font-size:11.5px;font-weight:600;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);opacity:0.92;">Sortea lunes nocturna · Lotería Nacional</div>' +
             '<div style="background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);">👉 ENTRÁ ACÁ</div>' +
             '</div>';
@@ -1237,7 +1237,7 @@ VIP.raffles = (function () {
     function _renderHomeGreenWithLightning(lightning, balance) {
         return '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.40);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;pointer-events:none;">🎁</div>' +
-            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 Sorteos semanales gratis dependiendo tu actividad y sorteos pagos</div>' +
+            '<div style="color:#ffd700;font-weight:900;font-size:13px;letter-spacing:1.5px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎁 SORTEOS SEMANALES GRATIS POR CARGAS Y POR NETWIN — ¡PARTICIPÁ!</div>' +
             '<div style="color:#fff;font-size:11.5px;font-weight:600;margin:4px 0 10px;line-height:1.4;text-shadow:0 1px 2px rgba(0,0,0,0.40);opacity:0.92;">Sortea lunes nocturna · Lotería Nacional</div>' +
             _renderHomeLightningEmbedded(lightning, balance) +
             '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:rgba(255,215,0,0.20);border:2px solid #ffd700;border-radius:10px;padding:11px;text-align:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;text-shadow:0 1px 2px rgba(0,0,0,0.50);margin-top:10px;">👉 VER TODOS LOS SORTEOS</div>' +
@@ -1419,7 +1419,10 @@ VIP.raffles = (function () {
                     '⚠️ Necesitás <strong style="color:#ffd700;">5 cargas vigentes</strong> para que te acreditemos el premio. El agente las verifica.' +
                 '</div>';
         } else {
-            body = '<div style="background:rgba(255,170,102,0.18);border:1px solid rgba(255,170,102,0.50);border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">⏳ Confirmá con el agente para acreditar tu premio.</div>';
+            // Mensaje genérico (CTA participativo) — antes decía "Confirmá
+            // con el agente" lo cual era confuso. Decisión dueño 2026-05-12:
+            // que invite a seguir participando.
+            body = '<div style="background:rgba(77,171,255,0.15);border:1px solid #4dabff;border-radius:8px;padding:9px 11px;font-size:12.5px;color:#fff;text-align:center;font-weight:800;line-height:1.4;">🎁 SORTEOS SEMANALES GRATIS<br><span style="color:#4dabff;">POR CARGAS Y POR NETWIN</span><br><span style="color:#ffd700;font-size:13px;">¡PARTICIPÁ!</span></div>';
         }
         // Countdown post-cobro: 30 min con timer mm:ss desde que cobro.
         let timer = '';
