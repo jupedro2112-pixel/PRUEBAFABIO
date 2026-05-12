@@ -17194,6 +17194,10 @@ async function viewArchivedRaffles(kind) {
             if (hasWinner) html += '<div style="color:#66ff66;font-size:11px;margin-top:3px;">🏆 Ganador: ' + escapeHtml(r.winnerUsername) + ' (#' + r.winningTicketNumber + ')</div>';
             html += '</div>';
             html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+            // Ver participantes: SIEMPRE disponible si hay vendidos.
+            if (sold > 0) {
+                html += '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove();viewRaffleParticipants(\'' + escapeHtml(r.id) + '\')" style="background:rgba(255,255,255,0.06);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:7px 12px;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;" title="Ver lista de participantes y números comprados">📋 Participantes</button>';
+            }
             if (isActive && sold > 0 && !hasWinner) {
                 html += '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove();drawRaffle(\'' + escapeHtml(r.id) + '\')" style="background:linear-gradient(135deg,#d4af37,#f7931e);color:#000;border:none;padding:7px 14px;border-radius:7px;font-weight:800;font-size:12px;cursor:pointer;">🎰 Sortear</button>';
             }
