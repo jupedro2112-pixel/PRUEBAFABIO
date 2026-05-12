@@ -784,12 +784,16 @@
                         </div>
                     </div>
                     <div style="margin-bottom:10px;">
-                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Equipos a EXCLUIR (opcional · separados por coma)</label>
-                        <input type="text" id="pgvExcludeTeams" placeholder="Ej: Equipo Test, Interno" style="width:100%;background:rgba(0,0,0,0.40);color:#fff;border:1px solid rgba(255,255,255,0.20);border-radius:7px;padding:9px 10px;font-size:13px;box-sizing:border-box;">
+                        <label style="display:block;color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Equipos a EXCLUIR del push (opcional)</label>
+                        <div id="pgvTeamsBox" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:7px;padding:9px 10px;max-height:140px;overflow-y:auto;">
+                            <div style="color:#888;font-size:11px;">⏳ Cargando equipos…</div>
+                        </div>
+                        <div style="color:#888;font-size:10.5px;margin-top:4px;">Los users de los equipos tildados NO van a recibir el push ni ver el regalo.</div>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button type="button" onclick="pgvTestPush()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:10px 16px;border-radius:8px;font-weight:800;font-size:12.5px;cursor:pointer;">🧪 Test push a usuario</button>
-                        <button type="button" onclick="pgvSendBroadcast()" style="background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;padding:10px 18px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;margin-left:auto;">🚀 ENVIAR PUSH A TODOS</button>
+                        <button type="button" onclick="pgvTestPush()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:10px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;" title="Manda solo el push de notificación al user que elijas (no crea giveaway)">🧪 Test push a usuario</button>
+                        <button type="button" onclick="pgvTestClaimFlow()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:10px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;" title="Crea un giveaway visible SOLO para el user de prueba — para testear push + ver card en home + reclamar">🎯 Probar reclamo completo</button>
+                        <button type="button" onclick="pgvSendBroadcast()" style="background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;border:none;padding:10px 16px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;margin-left:auto;">🚀 ENVIAR A TODOS</button>
                     </div>
                 </div>
 

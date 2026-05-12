@@ -137,9 +137,9 @@ messaging.onBackgroundMessage(function(payload) {
     vibrate: [200, 100, 200]
   };
 
-  // Si la push es de sorteos (win/lose/test), avisamos a la(s) ventana(s)
-  // abierta(s) para que refresquen el banner del home y el modal de sorteos
-  // sin esperar a que el user lo cierre y abra. Mismo patrón que ya
+  // Si la push es de sorteos (win/lose/test) o de giveaway (push de plata),
+  // avisamos a la(s) ventana(s) abierta(s) para que refresquen sus banners
+  // sin esperar a que el user cierre y abra la app. Mismo patrón que ya
   // usamos en notificationclick para regalos.
   const _src = String(_data.source || '');
   if (_src.startsWith('raffle-win') || _src.startsWith('raffle-lose')) {
@@ -159,6 +159,24 @@ messaging.onBackgroundMessage(function(payload) {
         }
       })
       .catch(function (e) { console.warn('[FCM-SW] postMessage raffle-update falló:', e && e.message); });
+  }
+  // Push de plata (money-giveaway broadcast / test): refrescar el card
+  // del home así el user ve el botón "RECLAMAR" inmediatamente.
+  if (_src.startsWith('money-giveaway')) {
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then(function (cls) {
+        for (const c of cls) {
+          try {
+            c.postMessage({
+              type: 'giveaway-update',
+              source: _src,
+              giveawayId: _data.giveawayId || null,
+              amount: _data.amount || null
+            });
+          } catch (_) {}
+        }
+      })
+      .catch(function (e) { console.warn('[FCM-SW] postMessage giveaway-update falló:', e && e.message); });
   }
 
   return self.registration.showNotification(title, options);

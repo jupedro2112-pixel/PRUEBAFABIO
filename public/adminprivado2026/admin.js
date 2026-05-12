@@ -1747,6 +1747,8 @@ async function retryWelcomeBonusCredit(username) {
 async function loadPushGiveawaySection() {
     const box = document.getElementById('pushGiveawayHistoryBox');
     if (!box) return;
+    // Cargar equipos para checkboxes (en paralelo con historial).
+    _pgvLoadTeams().catch(() => {});
     box.innerHTML = '<div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div>';
     try {
         const r = await authFetch('/api/admin/money-giveaway/history?limit=30');
@@ -1803,14 +1805,86 @@ async function loadPushGiveawaySection() {
     }
 }
 
+// Carga los equipos REALES desde el backend (sin PIN) y los renderiza
+// como checkboxes en #pgvTeamsBox. Ahorra typos del input libre + permite
+// ver de un vistazo todos los equipos disponibles.
+async function _pgvLoadTeams() {
+    const box = document.getElementById('pgvTeamsBox');
+    if (!box) return;
+    try {
+        const r = await authFetch('/api/admin/teams/names');
+        const d = await r.json();
+        const teams = (d && d.teams) || [];
+        if (teams.length === 0) {
+            box.innerHTML = '<div style="color:#888;font-size:11px;">No hay equipos configurados — el push va a todos.</div>';
+            return;
+        }
+        let html = '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+        for (const t of teams) {
+            const name = t.teamName || '';
+            if (!name) continue;
+            html += '<label style="display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:5px 9px;cursor:pointer;font-size:11.5px;color:#ddd;">';
+            html += '<input type="checkbox" class="pgv-team-cb" value="' + escapeHtml(name) + '"> ' + escapeHtml(name);
+            html += '</label>';
+        }
+        html += '</div>';
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="color:#ff8080;font-size:11px;">Error cargando equipos: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
 function _pgvReadForm() {
     const amount = parseInt(document.getElementById('pgvAmount').value, 10);
     const durationHours = parseInt(document.getElementById('pgvDuration').value, 10);
     const customMessage = (document.getElementById('pgvMessage').value || '').trim();
     const customEmoji = (document.getElementById('pgvEmoji').value || '🎁').trim();
-    const excludeTeams = (document.getElementById('pgvExcludeTeams').value || '')
-        .split(',').map(s => s.trim()).filter(Boolean);
+    // Equipos a excluir: leer checkboxes seleccionados.
+    const checks = document.querySelectorAll('#pgvTeamsBox .pgv-team-cb:checked');
+    const excludeTeams = Array.from(checks).map(el => el.value).filter(Boolean);
     return { amount, durationHours, customMessage, customEmoji, excludeTeams };
+}
+
+// "Probar reclamo completo": crea un giveaway visible SOLO para el user
+// de prueba (lalodj) vía audienceWhitelist. Sirve para testear el flujo
+// completo end-to-end: recibís push → ves la card en home → tocás
+// reclamar → ves la plata acreditada en JUGAYGANA. Sin afectar a nadie más.
+async function pgvTestClaimFlow() {
+    const username = prompt('Probar reclamo completo (push + card + acreditación):\n\n¿A qué usuario? El giveaway va a ser visible SOLO para él.', 'lalodj');
+    if (!username || !username.trim()) return;
+    const f = _pgvReadForm();
+    if (!Number.isFinite(f.amount) || f.amount <= 0) return showToast('Monto inválido', 'error');
+    if (!confirm('¿Crear un giveaway de $' + f.amount.toLocaleString('es-AR') + ' SOLO visible para @' + username.trim() + '?\n\nVa a recibir el push y va a poder reclamar desde el home. La plata sale de JUGAYGANA al reclamar.')) return;
+    try {
+        // Reusamos el endpoint legacy POST /api/admin/money-giveaway que
+        // soporta targetUsername (whitelist de 1 user). Setea audiencia
+        // estricta — el regalo NO es visible a nadie más.
+        const r = await authFetch('/api/admin/money-giveaway', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                amount: f.amount,
+                totalBudget: f.amount,
+                maxClaims: 1,
+                durationMinutes: 30,
+                targetUsername: username.trim(),
+                notificationHistoryId: null,
+                requireZeroBalance: false
+            })
+        });
+        const ctype = (r.headers && r.headers.get && r.headers.get('content-type')) || '';
+        if (!ctype.includes('application/json')) {
+            const txt = await r.text().catch(() => '');
+            alert('❌ HTTP ' + r.status + ': ' + (txt.slice(0, 150) || ''));
+            return;
+        }
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        alert('✅ Giveaway de prueba creado para @' + username.trim() + '\n\n• Va a recibir un push (si tiene la app con notifs)\n• Va a ver la card "RECLAMAR $' + f.amount.toLocaleString('es-AR') + '" en el home\n• Al tocarla, la plata se acredita a su saldo\n\nVencimiento: 30 min.');
+        loadPushGiveawaySection();
+    } catch (e) {
+        alert('Error de conexión: ' + (e && e.message ? e.message : ''));
+    }
 }
 
 async function pgvSendBroadcast() {

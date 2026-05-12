@@ -2534,10 +2534,16 @@
             navigator.serviceWorker.addEventListener('message', function (event) {
                 const d = (event && event.data) || {};
                 if (d.type === 'raffle-update') _refreshRafflesUIFromPush();
+                if (d.type === 'giveaway-update') {
+                    try { if (window.VIP && VIP.refunds && typeof VIP.refunds.loadGiveawayStatus === 'function') VIP.refunds.loadGiveawayStatus(); } catch (_) {}
+                }
             });
         }
         document.addEventListener('visibilitychange', function () {
-            if (document.visibilityState === 'visible') _refreshRafflesUIFromPush();
+            if (document.visibilityState === 'visible') {
+                _refreshRafflesUIFromPush();
+                try { if (window.VIP && VIP.refunds && typeof VIP.refunds.loadGiveawayStatus === 'function') VIP.refunds.loadGiveawayStatus(); } catch (_) {}
+            }
         });
         </script>
 

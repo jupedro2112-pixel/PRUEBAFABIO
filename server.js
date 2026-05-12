@@ -23012,19 +23012,33 @@ function _buildWinnerPush(raffle, mappedNumber, opts) {
   const prizeAutoCredited = !!(opts && opts.prizeAutoCredited);
   const lightningForfeited = !!(opts && opts.lightningForfeited);
   const lightningCargasCount = Number((opts && opts.lightningCargasCount) || 0);
-  const LIGHTNING_MIN_CARGAS_LOCAL = 5;
+  // Flag para los casos "ganó pero NO tiene 5 cargas vigentes" — el dueño
+  // quiere que el mensaje le sugiera contactar al número principal para
+  // que el agente verifique sus cargas y decida acreditar. NO es un forfeit
+  // estricto — el premio queda en pending agent review.
+  const cargasInsuficientes = !!(opts && opts.cargasInsuficientes);
+  const cargasCountActual = Number((opts && opts.cargasCountActual) || 0);
+  const MIN_CARGAS_LOCAL = 5;
   const title = lightningForfeited
     ? '🎲 Salió tu número pero…'
-    : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁');
-  const body = lightningForfeited
-    ? `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${LIGHTNING_MIN_CARGAS_LOCAL} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`
-    : `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá el botón de WhatsApp del agente para reclamar. Recordá: necesitás tener 5 cargas vigentes.`;
+    : (cargasInsuficientes
+      ? '🏆 ¡Ganaste! Pero verificamos algo…'
+      : '🏆 ¡GANASTE EL SORTEO! ' + (raffle.emoji || '🎁'));
+  let body;
+  if (lightningForfeited) {
+    body = `Tu número #${mappedNumber} fue el ganador, PERO necesitabas mínimo ${MIN_CARGAS_LOCAL} cargas ANTES del sorteo. Tenés ${lightningCargasCount}. Por eso no podemos acreditarte $${prize.toLocaleString('es-AR')}. La próxima cargá antes para asegurarlo.`;
+  } else if (cargasInsuficientes) {
+    body = `¡Salió tu número #${mappedNumber} y ganaste $${prize.toLocaleString('es-AR')}! Pero detectamos ${cargasCountActual}/${MIN_CARGAS_LOCAL} cargas vigentes. Hablá con el NÚMERO PRINCIPAL por WhatsApp para que el agente verifique tus cargas y te acrediten el premio.`;
+  } else {
+    body = `¡Salió tu número #${mappedNumber}! Ganaste $${prize.toLocaleString('es-AR')}. Entrá a la app y tocá el botón de WhatsApp del agente para reclamar. Recordá: necesitás tener 5 cargas vigentes.`;
+  }
   const data = {
-    source: (opts && opts.source) || (lightningForfeited ? 'raffle-win-forfeit' : 'raffle-win'),
+    source: (opts && opts.source) || (lightningForfeited ? 'raffle-win-forfeit' : (cargasInsuficientes ? 'raffle-win-needs-verify' : 'raffle-win')),
     raffleId: raffle.id,
     isWinner: 'true',
     autoCredited: prizeAutoCredited ? 'true' : 'false',
     forfeited: lightningForfeited ? 'true' : 'false',
+    needsCargasVerify: cargasInsuficientes ? 'true' : 'false',
     winningTicketNumber: String(mappedNumber)
   };
   return { title, body, data };
@@ -23241,34 +23255,46 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
     }
     await RaffleParticipation.updateOne({ id: winner.id }, { $set: { isWinner: true } });
 
-    // === Regla del relampago: ganador necesita >= 5 cargas REALES con
-    // timestamp ANTERIOR al drawnAt. Cargas posteriores al sorteo NO cuentan.
-    // Si no califica, premio se "forfeit": no se acredita ni queda reclamable.
-    // Aplica solo a raffleType='relampago' (los pagos no tienen este gate).
+    // === Cargas vigentes del ganador (común a todos los tipos) ===
+    // Para relámpago: si no califica → forfeit estricto (no se acredita).
+    // Para otros tipos: si no califica → push con sugerencia de contactar
+    // al número principal para verificar (no forfeit — solo "pending review"
+    // ya está cubierto por prizeClaimable=true).
     const LIGHTNING_MIN_CARGAS = 5;
     let lightningForfeited = false;
-    let lightningCargasCount = 0;
-    if (raffle.raffleType === 'relampago') {
+    let winnerCargasCount = 0;
+    let winnerCargasInsuficientes = false;
+    {
       const drawnAtTs = drawLock.drawnAt || new Date();
-      lightningCargasCount = await _getLightningCargasCount(
-        winner.username,
-        new Date(drawnAtTs).getTime()
-      );
-      if (lightningCargasCount < LIGHTNING_MIN_CARGAS) {
+      try {
+        winnerCargasCount = await _getLightningCargasCount(
+          winner.username,
+          new Date(drawnAtTs).getTime()
+        );
+      } catch (e) {
+        logger.warn(`[raffles] check cargas ${winner.username}: ${e.message}`);
+      }
+      winnerCargasInsuficientes = winnerCargasCount < LIGHTNING_MIN_CARGAS;
+      if (raffle.raffleType === 'relampago' && winnerCargasInsuficientes) {
+        // Relámpago: forfeit estricto.
         lightningForfeited = true;
         await Raffle.updateOne(
           { id: raffle.id },
           { $set: {
             prizeForfeitedAt: new Date(),
-            prizeForfeitedReason: `winner cargas=${lightningCargasCount} < ${LIGHTNING_MIN_CARGAS}`,
+            prizeForfeitedReason: `winner cargas=${winnerCargasCount} < ${LIGHTNING_MIN_CARGAS}`,
             prizeClaimable: false
           }}
         ).catch(() => {});
-        logger.info(`[raffles] LIGHTNING FORFEIT ${winner.username} cargas=${lightningCargasCount}/${LIGHTNING_MIN_CARGAS} ${raffle.name}`);
+        logger.info(`[raffles] LIGHTNING FORFEIT ${winner.username} cargas=${winnerCargasCount}/${LIGHTNING_MIN_CARGAS} ${raffle.name}`);
+      } else if (winnerCargasInsuficientes) {
+        logger.info(`[raffles] WIN cargas insuficientes ${winner.username} cargas=${winnerCargasCount}/${LIGHTNING_MIN_CARGAS} ${raffle.name} — sugerimos contactar agente para verificar`);
       } else {
-        logger.info(`[raffles] LIGHTNING winner OK ${winner.username} cargas=${lightningCargasCount}/${LIGHTNING_MIN_CARGAS}`);
+        logger.info(`[raffles] WIN cargas OK ${winner.username} cargas=${winnerCargasCount}/${LIGHTNING_MIN_CARGAS}`);
       }
     }
+    // Alias por compat con código abajo que usaba lightningCargasCount.
+    const lightningCargasCount = winnerCargasCount;
 
     // === RECLAMO POR AGENTE (no auto-credit) ===
     // Por decisión del dueño (2026-05): el ganador NO recibe el premio
@@ -23318,7 +23344,12 @@ app.post('/api/admin/raffles/:id/draw', authMiddleware, superAdminMiddleware, as
           const wp = _buildWinnerPush(raffle, mappedNumber, {
             prizeAutoCredited,
             lightningForfeited,
-            lightningCargasCount
+            lightningCargasCount,
+            // Solo aplicamos "needs verify" para tipos NO-relámpago. Para
+            // relámpago con cargas insuficientes ya entramos al forfeit
+            // estricto arriba (lightningForfeited=true).
+            cargasInsuficientes: winnerCargasInsuficientes && raffle.raffleType !== 'relampago',
+            cargasCountActual: winnerCargasCount
           });
           const winRes = await sendNotificationToAllUsers(
             User,
