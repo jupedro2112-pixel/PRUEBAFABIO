@@ -1380,11 +1380,24 @@ VIP.raffles = (function () {
 
     function _renderHomeWinnerMine(w) {
         const credited = !!w.prizeClaimedAt;
-        const needsClaim = !credited && w.prizeClaimable;
+        const forfeited = !!w.prizeForfeitedAt;
+        const needsClaim = !credited && !forfeited && w.prizeClaimable;
         const ago = w.minutesAgo < 60 ? (w.minutesAgo + ' min') : (w.hoursAgo + ' h');
         const waHref = _winnerAgentHref(w.winningTicketNumber, w.name);
         let body;
-        if (credited) {
+        if (forfeited) {
+            // Premio anulado por no cumplir requisitos (5 cargas vigentes
+            // mínimo, decisión del dueño). El user ve el motivo y se entera
+            // qué tiene que hacer para la próxima.
+            const reasonClean = (w.prizeForfeitedReason || '').includes('carga')
+                ? 'No cumpliste con el mínimo de 5 cargas vigentes'
+                : 'No cumpliste con los requisitos del sorteo';
+            body = '<div style="background:rgba(255,68,68,0.18);border:1px solid #ff8080;border-radius:8px;padding:10px;font-size:12px;color:#fff;text-align:center;line-height:1.5;">' +
+                   '<div style="color:#ff8080;font-weight:900;font-size:13px;margin-bottom:4px;">❌ PREMIO ANULADO</div>' +
+                   '<div style="color:#ffd0d0;font-size:11.5px;">' + reasonClean + '</div>' +
+                   '<div style="color:#ddd;font-size:10.5px;margin-top:4px;">Para próximos sorteos cargá 5 veces o más durante la semana.</div>' +
+                   '</div>';
+        } else if (credited) {
             body = '<div style="background:rgba(102,255,102,0.18);border:1px solid #66ff66;border-radius:8px;padding:8px 10px;font-size:12px;color:#fff;text-align:center;font-weight:800;">✅ Premio acreditado a tu saldo · hace ' + ago + '</div>';
         } else if (needsClaim) {
             // CTA principal: WhatsApp al agente con texto prefilled
@@ -1403,6 +1416,18 @@ VIP.raffles = (function () {
         if (credited && typeof w.secondsRemaining === 'number' && w.secondsRemaining > 0) {
             const expiresAt = Date.now() + w.secondsRemaining * 1000;
             timer = '<div data-claim-countdown="' + expiresAt + '" style="color:#fff;font-size:11px;text-align:center;margin-top:8px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.50);">⏱ Esta felicitación queda <span class="claim-countdown-text">30:00</span> más</div>';
+        }
+        // Si el premio fue anulado, mostramos el banner con look apagado/
+        // rojo en vez del verde dorado celebratorio. El user no debe
+        // sentir que "ganó" cuando el premio fue anulado.
+        if (forfeited) {
+            return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#2a0010,#0a0005);border:2px solid #ff8080;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 4px 16px rgba(255,68,68,0.30);position:relative;overflow:hidden;">' +
+                '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🎲</div>' +
+                '<div style="color:#ff8080;font-weight:900;font-size:13px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎲 Salió tu número</div>' +
+                '<div style="color:#fff;font-size:16px;font-weight:900;margin:4px 0 8px;">' + (w.emoji || '🎲') + ' ' + _esc(w.name) + ' — $' + _fmt(w.prizeValueARS) + '</div>' +
+                body +
+                '<div style="text-align:center;margin-top:8px;color:#aaa;font-size:11px;font-weight:700;letter-spacing:0.5px;">👉 Tocá para ver todos los sorteos</div>' +
+                '</div>';
         }
         // El banner abre el modal de sorteos al tocarlo (en cualquier parte que
         // no sea el CTA de WA o el countdown). Antes no tenía onclick y el user

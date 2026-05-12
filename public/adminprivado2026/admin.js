@@ -18570,6 +18570,7 @@ async function viewWinnerClaims() {
                 }
                 html += '<button type="button" onclick="adminCreditPrize(\'' + escapeHtml(it.id) + '\', \'' + escapeHtml(it.winnerUsername) + '\', ' + it.prizeValueARS + ')" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Acreditar el premio manualmente al saldo del ganador">💰 Acreditar manual</button>';
                 html += '<button type="button" onclick="resendWinnerPush(\'' + escapeHtml(it.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 10px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Reenviar push al ganador">📲 Reenviar push</button>';
+                html += '<button type="button" onclick="anularPremio(\'' + escapeJsArg(it.id) + '\', \'' + escapeJsArg(it.winnerUsername) + '\')" style="background:rgba(255,68,68,0.15);color:#ff8888;border:1px solid rgba(255,68,68,0.55);padding:6px 10px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;" title="Anular el premio por no cumplir requisitos (forfeit). Le desaparece el botón RECLAMAR y le llega push de aviso.">❌ Anular</button>';
             } else if (it.status === 'credited') {
                 html += '<span style="color:#66ff66;font-size:11px;font-weight:700;">Listo</span>';
             }
@@ -18578,6 +18579,25 @@ async function viewWinnerClaims() {
         list.innerHTML = html;
     } catch (e) {
         document.getElementById('winnerClaimsList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+async function anularPremio(raffleId, winnerUsername) {
+    const reason = prompt('Anular premio de @' + winnerUsername + '\n\nMotivo del rechazo (se loguea para auditoría, no se le manda al user):', 'No cumple con 5 cargas vigentes');
+    if (reason === null) return; // canceló el prompt
+    if (!confirm('¿Anular el premio de @' + winnerUsername + '?\n\n• Le desaparece el botón "RECLAMAR" de la PWA\n• Recibe push de "Premio anulado por no cumplir requisitos"\n• Queda registrado en el historial como forfeit\n\nMotivo: ' + (reason || 'admin_revoke'))) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/' + encodeURIComponent(raffleId) + '/revoke-prize-claim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: reason || 'no_requisitos', notifyUser: true })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Premio anulado · push enviado=' + (d.pushed || 0), 'success');
+        viewWinnerClaims();
+    } catch (e) {
+        alert('Error de conexión: ' + (e.message || ''));
     }
 }
 

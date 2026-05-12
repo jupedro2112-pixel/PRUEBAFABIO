@@ -21110,6 +21110,8 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
           drawnAt: r.drawnAt,
           prizeClaimedAt: r.prizeClaimedAt || null,
           prizeClaimable: !!r.prizeClaimable,
+          prizeForfeitedAt: r.prizeForfeitedAt || null,
+          prizeForfeitedReason: r.prizeForfeitedReason || null,
           expiresAt: expiresAt.toISOString(),
           secondsRemaining,
           // Para compat con el render viejo: si ya cobro, mostramos minutos.
@@ -21894,6 +21896,36 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
     }
     const prize = Number(raffleRead.prizeValueARS) || 0;
     if (prize <= 0) return res.status(400).json({ error: 'Este sorteo no tiene premio configurado.' });
+
+    // GATE de 5 cargas vigentes — decisión dueño 2026-05-12. Si el ganador
+    // no tiene mínimo 5 cargas en JUGAYGANA, NO se acredita: el premio
+    // queda forfeit automático con motivo. El user recibe el mensaje cuando
+    // intente reclamar y desde la PWA ve "Premio anulado por no cumplir
+    // requisitos". Esto vale para TODOS los tipos de sorteo, no solo
+    // relámpago (relámpago ya forfeitea en /draw — esto cubre los demás).
+    const MIN_CARGAS_REQUIRED = 5;
+    let userCargasCount = 0;
+    try { userCargasCount = await _getLightningCargasCount(username, null); } catch (_) {}
+    if (userCargasCount < MIN_CARGAS_REQUIRED) {
+      // Marcar el premio como forfeit + clear claimable así desaparece el
+      // botón de la PWA. Atomic update: solo aplica si todavía está drawn
+      // sin claim — defensa contra race.
+      await Raffle.updateOne(
+        { id: raffleId, status: 'drawn', prizeClaimedAt: null },
+        { $set: {
+          prizeClaimable: false,
+          prizeForfeitedAt: new Date(),
+          prizeForfeitedReason: `cargas insuficientes (${userCargasCount}/${MIN_CARGAS_REQUIRED})`
+        }}
+      ).catch(() => {});
+      logger.warn(`[raffles] CLAIM REJECTED ${username} cargas=${userCargasCount}/${MIN_CARGAS_REQUIRED} ${raffleRead.name}`);
+      return res.status(403).json({
+        error: `Premio anulado: necesitás mínimo ${MIN_CARGAS_REQUIRED} cargas vigentes. Tenés ${userCargasCount}.`,
+        cargasInsuficientes: true,
+        cargasCount: userCargasCount,
+        cargasRequired: MIN_CARGAS_REQUIRED
+      });
+    }
 
     // Reserva atomica: solo un request gana esta carrera. Filtramos también
     // por winnerUsername para evitar que un cambio de winner entre el read
@@ -24243,8 +24275,15 @@ app.post('/api/admin/raffles/:id/revoke-prize-claim', authMiddleware, superAdmin
             if (t && !tokens.includes(t)) tokens.push(t);
           }
         }
-        const title = '⚠️ Corrección sorteo';
-        const body = `Hubo un error en el sorteo "${r.name}". El N° #${r.winningTicketNumber} no era el ganador. Disculpá las molestias.`;
+        // Mensaje adaptado al motivo: si dice "carga" o "requisito", el
+        // user recibe el aviso de premio anulado por no cumplir; cualquier
+        // otro motivo se trata como "corrección por error del sorteo".
+        const reasonLower = String(reason || '').toLowerCase();
+        const isRequisitos = reasonLower.includes('carga') || reasonLower.includes('requisit') || reasonLower.includes('no_requisitos') || reasonLower.includes('5');
+        const title = isRequisitos ? '⚠️ Premio anulado' : '⚠️ Corrección sorteo';
+        const body = isRequisitos
+          ? `Tu premio del sorteo "${r.name}" fue anulado porque no cumpliste con los requisitos (mínimo 5 cargas vigentes). Cargá esta semana y participá en los próximos sorteos.`
+          : `Hubo un error en el sorteo "${r.name}". El N° #${r.winningTicketNumber} no era el ganador. Disculpá las molestias.`;
         await Promise.all(tokens.map(tk =>
           _sendPushToUser(tk, title, body, { source: 'raffle-claim-revoked', raffleId: r.id })
             .then(x => { if (x && x.success) pushed++; })
