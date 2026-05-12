@@ -1469,12 +1469,17 @@ VIP.raffles = (function () {
             const expiresAt = Date.now() + w.secondsRemaining * 1000;
             timer = '<div data-claim-countdown="' + expiresAt + '" style="color:#fff;font-size:11px;text-align:center;margin-top:8px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.50);">⏱ Esta felicitación queda <span class="claim-countdown-text">30:00</span> más</div>';
         }
-        return '<div style="background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
+        // El banner abre el modal de sorteos al tocarlo (en cualquier parte que
+        // no sea el CTA de WA o el countdown). Antes no tenía onclick y el user
+        // quedaba bloqueado mirando "FELICITACIONES" sin poder abrir el menú
+        // de sorteos para ver los demás pendientes — reportado 2026-05-12.
+        return '<div onclick="VIP.raffles && VIP.raffles.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200,#ffd700);background-size:200% 200%;border:3px solid #ffd700;border-radius:14px;padding:14px;margin:10px auto;max-width:560px;box-shadow:0 0 24px rgba(255,215,0,0.50);position:relative;overflow:hidden;">' +
             '<div style="position:absolute;top:-12px;right:-12px;font-size:90px;opacity:0.10;">🏆</div>' +
             '<div style="color:#ffd700;font-weight:900;font-size:14px;letter-spacing:2px;text-transform:uppercase;text-shadow:0 1px 2px rgba(0,0,0,0.50);">🎉 ¡FELICITACIONES, GANASTE!</div>' +
             '<div style="color:#fff;font-size:18px;font-weight:900;margin:4px 0 8px;">' + (w.emoji || '🏆') + ' ' + _esc(w.name) + ' — $' + _fmt(w.prizeValueARS) + '</div>' +
             body +
             timer +
+            '<div style="text-align:center;margin-top:8px;color:#ffd700;font-size:11px;font-weight:800;letter-spacing:0.5px;opacity:0.85;">👉 Tocá para ver todos los sorteos</div>' +
             '</div>';
     }
 
