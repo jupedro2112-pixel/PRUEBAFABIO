@@ -587,6 +587,7 @@ VIP.auth = (function () {
                 VIP.state.communityReplacementLabel = d.communityReplacementLabel || null;
                 VIP.state.communityAlertForceUntilMs = d.communityAlertForceUntilMs || 0;
                 VIP.state.teamName = d.teamName || null;
+                try { renderCommunityForceBanner(); } catch (_) {}
                 renderRefundsHomeUI();
                 renderTeamName();
                 checkLineChange(newPhone);
@@ -623,6 +624,19 @@ VIP.auth = (function () {
     // Compara el número que devolvió el server con el que vimos por última
     // vez (localStorage). Si cambió, muestra el banner rojo grande para
     // que el usuario sepa que tiene que agendar el nuevo y borrar el viejo.
+    // Pinta/oculta el banner rojo "No te olvides de unirte" debajo del
+    // bloque "Unite a la comunidad". Visible solo durante la ventana de
+    // 24hs activada cuando admin manda push de comunidad por equipo.
+    function renderCommunityForceBanner() {
+        const el = document.getElementById('communityForceReminderBanner');
+        if (!el) return;
+        const until = Number(VIP.state.communityAlertForceUntilMs || 0);
+        const active = until > Date.now();
+        const link = VIP.state.communityLink || VIP.state.communityReplacementLink;
+        if (active && link) el.style.display = '';
+        else el.style.display = 'none';
+    }
+
     // Alerta "revisá si estás unido a la comunidad". Se muestra al entrar
     // a la app. Anti-spam: 1 vez cada 5 días por usuario (localStorage).
     // Si la comunidad está marcada DOWN, se muestra siempre hasta que
