@@ -37,7 +37,7 @@ VIP.ui = (function () {
 
     // ---- Toast & copy ----
 
-    function showToast(message, type = 'success') {
+    function showToast(message, type = 'success', durationMs) {
         const existing = document.querySelector('.toast');
         if (existing) existing.remove();
 
@@ -46,7 +46,8 @@ VIP.ui = (function () {
         toast.textContent = message;
         document.body.appendChild(toast);
 
-        setTimeout(() => toast.remove(), 3000);
+        const ms = Number.isFinite(Number(durationMs)) ? Math.max(1000, Number(durationMs)) : 3000;
+        setTimeout(() => toast.remove(), ms);
     }
 
     async function copyText(text) {

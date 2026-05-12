@@ -745,6 +745,13 @@ VIP.refunds = (function () {
             return;
         }
 
+        // Como este card ya guía el flow de instalación (3 pasos), ocultamos
+        // el `installHeroCard` para no duplicar el CTA de "Instalar la app".
+        try {
+            const heroCard = document.getElementById('installHeroCard');
+            if (heroCard) heroCard.hidden = true;
+        } catch (_) {}
+
         // NOTA: antes este bloque ocultaba el card si isAppInstalled() === true,
         // pero eso rompia el flujo: el user instalaba la app y nunca podia
         // reclamar porque el card desaparecia. Ahora el card sigue visible
@@ -808,12 +815,47 @@ VIP.refunds = (function () {
     }
 
     function handleWelcomeBonusClick() {
-        if (!claimRequirementsMet('welcome')) {
-            // Reusamos el modal generico de requisitos. _pendingClaimType
-            // dispara la customizacion de copy y el resume hacia welcome.
-            openRequirementsModal('welcome');
+        const inApp = isStandalone();
+        const installed = isAppInstalled();
+        const notifOk = isNotifGranted();
+
+        // Paso 1: no tiene la app instalada. Disparar el flow de instalación
+        // — iOS muestra modal con video, Android dispara prompt nativo de
+        // Chrome (o el modal de pasos si Chrome no lo dejó).
+        if (!installed) {
+            if (window.VIP && VIP.ui && typeof VIP.ui.installApp === 'function') {
+                VIP.ui.installApp();
+            }
             return;
         }
+
+        // Paso 2: tiene la app instalada pero está usando el browser, no
+        // el ícono. Le indicamos que abra desde el ícono de su celular.
+        if (!inApp) {
+            VIP.ui.showToast('📱 Abrí la app desde el ícono que quedó en tu pantalla', 'info', 6000);
+            return;
+        }
+
+        // Paso 3: ya está dentro de la app pero le faltan las notificaciones.
+        // Disparar la pedida de permiso del browser. Si granted, re-renderear
+        // para que aparezca el botón "RECLAMAR".
+        if (!notifOk) {
+            if (typeof Notification === 'undefined') {
+                VIP.ui.showToast('Tu navegador no soporta notificaciones.', 'error');
+                return;
+            }
+            Notification.requestPermission().then((perm) => {
+                if (perm === 'granted') {
+                    VIP.ui.showToast('✅ Notificaciones activadas. Ya podés reclamar tu bono.', 'success');
+                } else {
+                    VIP.ui.showToast('⚠️ Necesitamos las notificaciones activas para acreditarte el bono.', 'error');
+                }
+                renderWelcomeBonusCard();
+            }).catch(() => {});
+            return;
+        }
+
+        // Los 3 pasos OK: reclamar.
         claimWelcomeBonus();
     }
 
