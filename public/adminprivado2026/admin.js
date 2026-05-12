@@ -15382,7 +15382,12 @@ function _renderRafflesAdmin() {
         html += '      <button type="button" disabled style="background:rgba(255,255,255,0.04);color:#666;border:1px solid rgba(255,255,255,0.10);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:not-allowed;" title="Sorteos pagos deshabilitados por política — los activos se mantienen hasta sortearse">🚫 Force seed (off)</button>';
         html += '      <button type="button" onclick="announceRafflePicker()" style="background:rgba(102,255,102,0.10);color:#66ff66;border:1px solid rgba(102,255,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Mandar push avisando de un sorteo activo (elegís sorteo + equipos + texto)">📣 Anunciar sorteo</button>';
         html += '      <button type="button" onclick="viewLegacyRaffles()" style="background:rgba(255,170,102,0.10);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver y purgar sorteos del modelo viejo">🗑️ Sorteos viejos</button>';
-        html += '      <button type="button" onclick="viewArchivedRaffles()" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver sorteos archivados — útil para reabrir uno y cargarle ganador">🗄 Ver archivados</button>';
+    }
+    // "Ver archivados" sirve para paid Y free — cuando cleanup archivó un
+    // sorteo lleno y necesitás reabrirlo para cargarle ganador.
+    if (!isLightning) {
+        const kindForArchived = isFree ? 'free' : 'paid';
+        html += '      <button type="button" onclick="viewArchivedRaffles(\'' + kindForArchived + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;" title="Ver sorteos archivados — útil para reabrir uno y cargarle ganador">🗄 Ver archivados</button>';
     }
     // Crear sorteo relampago: SOLO en la seccion de relampago.
     if (isLightning) {
@@ -17120,7 +17125,9 @@ async function announceRaffleSend(raffleId) {
 // Lista los sorteos PAGOS archivados (incluye drawn/archived) y permite
 // REABRIR uno para cargarle ganador. Útil cuando cleanup archivó un
 // sorteo lleno que todavía no se sorteó.
-async function viewArchivedRaffles() {
+async function viewArchivedRaffles(kind) {
+    const k = (kind === 'free') ? 'free' : 'paid';
+    const kindLabel = k === 'free' ? 'gratis' : 'pagos';
     const modalId = 'archivedRafflesModal';
     document.getElementById(modalId)?.remove();
     const overlay = document.createElement('div');
@@ -17130,7 +17137,7 @@ async function viewArchivedRaffles() {
     overlay.innerHTML =
         '<div style="background:#1a0033;border:1.5px solid rgba(0,212,255,0.50);border-radius:14px;padding:18px;max-width:780px;width:100%;color:#fff;">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:12px;">' +
-                '<div><h3 style="margin:0;color:#00d4ff;font-size:15px;">🗄 Sorteos pagos archivados</h3>' +
+                '<div><h3 style="margin:0;color:#00d4ff;font-size:15px;">🗄 Sorteos ' + kindLabel + ' archivados</h3>' +
                 '<div style="color:#aaa;font-size:11.5px;margin-top:3px;">Estos sorteos están archivados. Si todavía no se sortearon (sin ganador) y tenían participantes, podés reabrirlos para cargarles ganador.</div></div>' +
                 '<button type="button" onclick="document.getElementById(\'' + modalId + '\').remove()" style="background:transparent;border:none;color:#888;font-size:22px;cursor:pointer;">×</button>' +
             '</div>' +
@@ -17139,7 +17146,7 @@ async function viewArchivedRaffles() {
     document.body.appendChild(overlay);
 
     try {
-        const r = await authFetch('/api/admin/raffles?include=archived');
+        const r = await authFetch('/api/admin/raffles?include=archived&kind=' + k);
         if (!r.ok) {
             document.getElementById('archivedRafflesList').innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error cargando</div>';
             return;

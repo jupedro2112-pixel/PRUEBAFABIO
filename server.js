@@ -21336,7 +21336,12 @@ app.post('/api/raffles/:id/claim-prize', authMiddleware, async (req, res) => {
 
 app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const newTypes = RAFFLE_TYPES.map(t => t.type);
+    // ?kind=paid|free|all — qué tipo de sorteo. Default 'paid' por compat.
+    const kind = String(req.query.kind || 'paid').toLowerCase();
+    let typeFilter;
+    if (kind === 'free')      typeFilter = FREE_RAFFLE_TYPES.map(t => t.type);
+    else if (kind === 'all')  typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
+    else                      typeFilter = RAFFLE_TYPES.map(t => t.type);
     // ?include=archived agrega los 'archived' al listado. Útil cuando hay
     // que reabrir un sorteo viejo para cargarle ganador (post-cleanup).
     const includeArchived = String(req.query.include || '').toLowerCase() === 'archived' ||
@@ -21345,7 +21350,7 @@ app.get('/api/admin/raffles', authMiddleware, adminMiddleware, async (req, res) 
       ? ['active', 'closed', 'drawn', 'archived']
       : ['active', 'closed', 'drawn'];
     const raffles = await Raffle.find(
-      { status: { $in: statusFilter }, raffleType: { $in: newTypes } }
+      { status: { $in: statusFilter }, raffleType: { $in: typeFilter } }
     ).sort({ status: 1, raffleType: 1, instanceNumber: 1 }).limit(500).lean();
     const ids = raffles.map(r => r.id);
     const partsAgg = await RaffleParticipation.aggregate([
