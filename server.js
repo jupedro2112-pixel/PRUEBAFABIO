@@ -22595,6 +22595,66 @@ app.post('/api/admin/raffles/:id/reopen', authMiddleware, superAdminMiddleware, 
   }
 });
 
+// POST /api/admin/raffles/reopen-all-pending?kind=paid|free|all
+// Reabre TODOS los sorteos archived/drawn que tengan participantes y NO
+// tengan ganador asignado. Después de esto el admin puede sortearlos uno
+// por uno con el flujo normal. Idempotente: si ya está active/closed o
+// tiene ganador, se saltea.
+app.post('/api/admin/raffles/reopen-all-pending', authMiddleware, superAdminMiddleware, async (req, res) => {
+  try {
+    const kind = String(req.query.kind || 'paid').toLowerCase();
+    let typeFilter;
+    if (kind === 'free')      typeFilter = FREE_RAFFLE_TYPES.map(t => t.type);
+    else if (kind === 'all')  typeFilter = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type), 'relampago'];
+    else                      typeFilter = RAFFLE_TYPES.map(t => t.type);
+
+    const candidates = await Raffle.find(
+      {
+        raffleType: { $in: typeFilter },
+        status: { $in: ['archived', 'drawn'] },
+        $or: [
+          { winnerUsername: null },
+          { winnerUsername: { $exists: false } },
+          { winnerUsername: '' }
+        ]
+      },
+      { id: 1, totalTickets: 1, name: 1 }
+    ).limit(500).lean();
+
+    if (candidates.length === 0) {
+      return res.json({ success: true, reopened: 0, skipped: 0, message: 'No hay sorteos archivados/sorteados sin ganador para reabrir.' });
+    }
+
+    const ids = candidates.map(c => c.id);
+    const partsAgg = await RaffleParticipation.aggregate([
+      { $match: { raffleId: { $in: ids } } },
+      { $group: { _id: '$raffleId', cuposSold: { $sum: '$cuposCount' } } }
+    ]);
+    const soldById = new Map();
+    for (const a of partsAgg) soldById.set(a._id, a.cuposSold || 0);
+
+    let reopened = 0;
+    let skipped = 0;
+    const reopenedList = [];
+    for (const r of candidates) {
+      const sold = soldById.get(r.id) || 0;
+      if (sold === 0) { skipped++; continue; }
+      const newStatus = sold >= (r.totalTickets || 100) ? 'closed' : 'active';
+      await Raffle.updateOne(
+        { id: r.id },
+        { $set: { status: newStatus, archivedAt: null } }
+      );
+      reopened++;
+      reopenedList.push({ id: r.id, name: r.name, newStatus, cuposSold: sold });
+    }
+    logger.info(`[raffles] reopen-all-pending kind=${kind} reopened=${reopened} skipped=${skipped}`);
+    res.json({ success: true, reopened, skipped, raffles: reopenedList });
+  } catch (err) {
+    logger.error(`/api/admin/raffles/reopen-all-pending: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/admin/raffles/cleanup — archiva 'drawn' y 'cancelled' y reseed.
 // Idempotente. Por defecto respeta la ventana de 24h del banner de
 // "Felicitaciones" del ganador. Si admin pasa ?force=1, archiva todo.

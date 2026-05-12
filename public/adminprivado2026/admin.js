@@ -17170,6 +17170,20 @@ async function viewArchivedRaffles(kind) {
         }
         summary += '</div>';
 
+        // Botón "Reabrir TODOS los pendientes": cuenta cuántos sorteos
+        // archived/drawn tienen participantes y NO tienen ganador todavía.
+        const pending = all.filter(x =>
+            (x.status === 'archived' || x.status === 'drawn') &&
+            !x.winnerUsername &&
+            (x.cuposSold || 0) > 0
+        );
+        if (pending.length > 0) {
+            summary += '<div style="background:rgba(212,175,55,0.10);border:1px solid rgba(212,175,55,0.50);border-radius:9px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
+            summary += '<div style="color:#ffd700;font-size:12px;line-height:1.4;"><strong>' + pending.length + ' sorteo(s) pendientes</strong> de cargarles ganador. Reabrilos todos juntos y después cargás el número uno por uno.</div>';
+            summary += '<button type="button" onclick="reopenAllPendingRaffles(\'' + k + '\')" style="background:linear-gradient(135deg,#ffd700,#d4af37);color:#1a0033;border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">♻️ Reabrir TODOS</button>';
+            summary += '</div>';
+        }
+
         const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
         const fmtDate = (d) => { try { return new Date(d).toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' }); } catch(_) { return ''; } };
         const statusBadge = (s) => {
@@ -17218,6 +17232,28 @@ async function viewArchivedRaffles(kind) {
     } catch (e) {
         const l = document.getElementById('archivedRafflesList');
         if (l) l.innerHTML = '<div style="color:#ff8080;text-align:center;padding:18px;">Error de conexión</div>';
+    }
+}
+
+async function reopenAllPendingRaffles(kind) {
+    const k = (kind === 'free') ? 'free' : 'paid';
+    if (!confirm('¿Reabrir TODOS los sorteos ' + (k === 'free' ? 'gratis' : 'pagos') + ' con participantes pero sin ganador?\n\nDespués vas a poder cargar el número ganador de cada uno con el flujo normal (🎰 Sortear).\n\nNo se puede deshacer fácilmente — los archivados van a volver a estar visibles.')) return;
+    try {
+        const r = await authFetch('/api/admin/raffles/reopen-all-pending?kind=' + k, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const d = await r.json();
+        if (!r.ok) { showToast('❌ ' + (d.error || 'Error'), 'error'); return; }
+        const msg = '♻️ Reabiertos: ' + d.reopened + (d.skipped ? ' (saltados sin participantes: ' + d.skipped + ')' : '');
+        showToast(msg, 'success');
+        document.getElementById('archivedRafflesModal')?.remove();
+        loadRafflesAdmin();
+        // Reabrir el modal histórico actualizado para que el admin vea los
+        // que pueden sortearse ahora.
+        setTimeout(() => viewArchivedRaffles(k), 600);
+    } catch (e) {
+        showToast('Error de conexión', 'error');
     }
 }
 
