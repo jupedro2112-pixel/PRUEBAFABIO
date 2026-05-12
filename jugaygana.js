@@ -898,6 +898,87 @@ async function withdrawFromUser(username, amount, description = '') {
 // OBTENER MOVIMIENTOS SEMANALES (semana pasada: lunes a domingo)
 // ============================================
 
+// Rango de la SEMANA ACTUAL (lunes 00:00 hasta HOY 23:59 hora Argentina).
+// Sirve para mostrar "cargaste esta semana" / "perdiste neto esta semana"
+// en tiempo real — distinto de getLastWeekRangeArgentinaEpoch que apunta a
+// la semana ya cerrada (para reembolsos del lunes).
+function getCurrentWeekRangeArgentinaEpoch() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+
+  const now = new Date();
+  const parts = formatter.formatToParts(now);
+  const yyyy = parts.find(p => p.type === 'year').value;
+  const mm = parts.find(p => p.type === 'month').value;
+  const dd = parts.find(p => p.type === 'day').value;
+  const todayLocal = new Date(`${yyyy}-${mm}-${dd}T00:00:00-03:00`);
+
+  const dayOfWeek = todayLocal.getDay();
+  const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const thisMonday = new Date(todayLocal.getTime() - daysSinceMonday * 24 * 60 * 60 * 1000);
+
+  const mondayParts = formatter.formatToParts(thisMonday);
+  const from = new Date(`${mondayParts.find(p => p.type === 'year').value}-${mondayParts.find(p => p.type === 'month').value}-${mondayParts.find(p => p.type === 'day').value}T00:00:00-03:00`);
+  const to = new Date(`${yyyy}-${mm}-${dd}T23:59:59-03:00`);
+
+  return {
+    fromEpoch: Math.floor(from.getTime() / 1000),
+    toEpoch: Math.floor(to.getTime() / 1000),
+    fromDateStr: `${mondayParts.find(p => p.type === 'year').value}-${mondayParts.find(p => p.type === 'month').value}-${mondayParts.find(p => p.type === 'day').value}`,
+    toDateStr: `${yyyy}-${mm}-${dd}`
+  };
+}
+
+async function getUserNetCurrentWeek(username) {
+  const ok = await ensureSession();
+  if (!ok) return { success: false, error: 'No hay sesión válida' };
+  if (!SESSION_PARENT_ID) return { success: false, error: 'No se pudo obtener Admin ID' };
+  try {
+    const { fromEpoch, toEpoch, fromDateStr, toDateStr } = getCurrentWeekRangeArgentinaEpoch();
+    console.log(`📊 Consultando movimientos SEMANA ACTUAL de ${username}: ${fromDateStr} a ${toDateStr}`);
+    const body = toFormUrlEncoded({
+      AdminID: SESSION_PARENT_ID,
+      UserName: username,
+      FromDate: fromEpoch,
+      ToDate: toEpoch
+    });
+    const headers = {
+      'Cookie': await getCookieString(),
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': BASE_URL,
+      'Referer': `${BASE_URL}/Default.aspx`
+    };
+    const resp = await axios.post(`${BASE_URL}/ShowUserTransfersByAgent.aspx/GetData`,
+      body,
+      { headers, validateStatus: () => true, timeout: 12000 }
+    );
+    if (resp.status < 200 || resp.status >= 300) {
+      return { success: false, error: `HTTP ${resp.status}` };
+    }
+    let parsed = resp.data;
+    if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed); } catch (_) {} }
+    const d = parsed && parsed.d;
+    if (!d) return { success: false, error: 'Respuesta sin payload .d' };
+    const list = Array.isArray(d) ? d : (d.Transfers || d.transfers || []);
+    let totalDeposits = 0, totalWithdraws = 0;
+    for (const t of list) {
+      const amt = parseFloat(t.Amount || t.amount || 0) || 0;
+      const op = String(t.OperationType || t.operationType || t.Operation || t.operation || '').toLowerCase();
+      if (op.includes('deposit') || op.includes('credit') || op.includes('carga')) totalDeposits += Math.abs(amt);
+      else if (op.includes('withdraw') || op.includes('debit') || op.includes('retiro')) totalWithdraws += Math.abs(amt);
+      else if (amt > 0) totalDeposits += amt;
+      else if (amt < 0) totalWithdraws += Math.abs(amt);
+    }
+    return { success: true, totalDeposits, totalWithdraws, range: { fromDateStr, toDateStr } };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 function getLastWeekRangeArgentinaEpoch() {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Argentina/Buenos_Aires',
@@ -1216,6 +1297,8 @@ module.exports = {
   changeUserPassword,
   getYesterdayRangeArgentinaEpoch,
   getLastWeekRangeArgentinaEpoch,
+  getCurrentWeekRangeArgentinaEpoch,
+  getUserNetCurrentWeek,
   getLastMonthRangeArgentinaEpoch,
   /** Returns the current session token, or null if no session is active. */
   getSessionToken: () => SESSION_TOKEN,

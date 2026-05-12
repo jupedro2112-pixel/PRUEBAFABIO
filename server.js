@@ -4605,6 +4605,13 @@ async function getRealMovementsTotals(username, period) {
       const r = jugaygana.getLastWeekRangeArgentinaEpoch();
       return { fromStr: r.fromDateStr, toStr: r.toDateStr };
     },
+    // current_week: lunes 00:00 hasta HOY 23:59 — sirve para mostrar en
+    // tiempo real "cargaste/perdiste esta semana" en la PWA (los gates de
+    // los sorteos gratis necesitan esto, no la semana cerrada).
+    current_week: () => {
+      const r = jugaygana.getCurrentWeekRangeArgentinaEpoch();
+      return { fromStr: r.fromDateStr, toStr: r.toDateStr };
+    },
     monthly: () => {
       const r = jugaygana.getLastMonthRangeArgentinaEpoch();
       return { fromStr: r.fromDateStr, toStr: r.toDateStr };
@@ -4621,6 +4628,7 @@ async function getRealMovementsTotals(username, period) {
     let primary;
     if (period === 'daily') primary = await jugaygana.getUserNetYesterday(username);
     else if (period === 'weekly') primary = await jugaygana.getUserNetLastWeek(username);
+    else if (period === 'current_week') primary = await jugaygana.getUserNetCurrentWeek(username);
     else if (period === 'monthly') primary = await jugaygana.getUserNetLastMonth(username);
 
     if (primary && primary.success) {
@@ -21067,7 +21075,10 @@ app.get('/api/raffles/active', authMiddleware, async (req, res) => {
     );
     if (hasFreeWeekly) {
       try {
-        const m = await getRealMovementsTotals(username, 'weekly');
+        // Usamos 'current_week' (lunes 00:00 → hoy 23:59) en vez de 'weekly'
+        // (lunes pasado → domingo pasado). Para los gates de sorteos gratis
+        // necesitamos saber qué cargó/perdió EN ESTA SEMANA, no la cerrada.
+        const m = await getRealMovementsTotals(username, 'current_week');
         weeklyDeposits = Number(m && m.deposits) || 0;
         weeklyWithdrawals = Number(m && m.withdrawals) || 0;
         weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
@@ -21418,7 +21429,7 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         let weeklyDeposits = 0;
         let weeklyWithdrawals = 0;
         try {
-          const m = await getRealMovementsTotals(username, 'weekly');
+          const m = await getRealMovementsTotals(username, 'current_week');
           weeklyDeposits = Number(m && m.deposits) || 0;
           weeklyWithdrawals = Number(m && m.withdrawals) || 0;
           weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
@@ -21439,11 +21450,11 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
           });
         }
       } else if (minCargas > 0) {
-        // Fallback legacy: filtro por cargas (sorteos free creados antes del
-        // cambio a netwin no tienen minNetLossARS, siguen con cargas).
+        // Filtro por cargas. Usamos 'current_week' (lunes actual hasta hoy)
+        // para que el gate se actualice en tiempo real con cada carga.
         let weeklyDeposits = 0;
         try {
-          const m = await getRealMovementsTotals(username, 'weekly');
+          const m = await getRealMovementsTotals(username, 'current_week');
           weeklyDeposits = Number(m && m.deposits) || 0;
         } catch (e) {
           logger.warn(`[raffles] FREE buy threshold check fail ${username}: ${e.message}`);
