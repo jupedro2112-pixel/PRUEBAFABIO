@@ -20600,6 +20600,22 @@ async function _ensureActiveRafflesSeeded() {
   // correr hasta sortearse; cuando se llenan, no se respawnean (ver el
   // bloque de cupo lleno en /buy). Los free se respawnean según
   // `parallelInstances` (cuántos activos del mismo tipo se mantienen).
+
+  // Cleanup idempotente: cancelar cualquier relámpago activo. El dueño
+  // decidió 2026-05-12 sacar los relámpagos. Esta línea corre cada seed
+  // (~60s) y mantiene la slate limpia hasta que el admin reactive
+  // _spawnLightningClone manualmente. updateMany es no-op si no hay
+  // activos.
+  try {
+    const cancelled = await Raffle.updateMany(
+      { raffleType: 'relampago', status: { $in: ['active', 'closed'] } },
+      { $set: { status: 'cancelled', cancelledAt: new Date() } }
+    );
+    if (cancelled && cancelled.modifiedCount > 0) {
+      logger.info(`[raffles] LIGHTNING cancel: ${cancelled.modifiedCount} relámpago(s) cancelados (auto-respawn desactivado)`);
+    }
+  } catch (e) { logger.warn(`[raffles] lightning cancel cleanup: ${e.message}`); }
+
   const allTypes = [...FREE_RAFFLE_TYPES];
   for (const cfg of allTypes) {
     try {
@@ -21817,25 +21833,13 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
           logger.info(`[raffles] paid ${raffle.raffleType} llenó — NO respawn (politica: solo gratis).`);
         }
         if (raffle.raffleType === 'relampago') {
-          // Auto-respawn del relampago hasta tope 3. El admin arma el N°1, el
-          // N°2 y N°3 los abre el sistema clonando la config (premio, cupos,
-          // gratis/pago, audiencia). Los que ya estan anotados en el cerrado
-          // NO pueden entrar al nuevo (regla de 1 cupo por persona en todos
-          // los relampagos abiertos — chequeada en el /buy).
-          try {
-            const openCount = await Raffle.countDocuments({
-              raffleType: 'relampago',
-              status: { $in: ['active', 'closed'] }
-            });
-            if (openCount < 3) {
-              await _spawnLightningClone(raffle);
-              logger.info(`[raffles] LIGHTNING auto-respawn (count=${openCount} -> ${openCount + 1})`);
-            } else {
-              logger.info(`[raffles] LIGHTNING no respawn — ya hay ${openCount} (tope 3)`);
-            }
-          } catch (e) {
-            logger.warn(`[raffles] LIGHTNING auto-respawn fail: ${e.message}`);
-          }
+          // Auto-respawn del relámpago DESACTIVADO por pedido del dueño
+          // 2026-05-12. Si querés volver a habilitarlo, restaurá el bloque
+          // de _spawnLightningClone abajo y volvé a poner el tope que
+          // corresponda. Mientras tanto, los relámpagos no se respawnean
+          // y los activos quedan ocultos en la PWA (solo aparecen los
+          // sorteados en el bloque unificado de resultados).
+          logger.info('[raffles] LIGHTNING auto-respawn DESACTIVADO');
           // Push a todos los participantes del que se acaba de llenar:
           // recordatorio de que para reclamar el premio necesitan 5 cargas +
           // juego con nosotros. Es la mecanica de "exclusivo para clientes".
