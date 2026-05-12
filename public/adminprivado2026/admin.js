@@ -17513,11 +17513,22 @@ async function openDrawAllUnifiedModal() {
         //   - drawn (sin winner): caso raro, status drawn pero sin winner
         // Excluye cancelled y los que ya tengan ganador. /draw-batch reabre
         // archived/drawn automáticamente antes de sortearlos.
-        const pendingStatuses = ['closed', 'active', 'archived', 'drawn'];
+        // Solo sorteos de la SEMANA PASADA pendientes. Estados:
+        //   closed: cerrados (cupo lleno o drawDate pasada) — los principales
+        //   archived: limpiados por cleanup pero sin ganador
+        //   drawn-sin-winner: race con un draw abortado (raros)
+        // NO 'active' — esos son los que abriste hoy/esta semana para la
+        // próxima nocturna. No se sortean en este modal.
+        const pendingStatuses = ['closed', 'archived', 'drawn'];
+        // Excluye tipos legacy MUY viejos que el dueño NO quiere sortear:
+        //   iphone / caribe / auto / other — esos eran premios físicos del
+        //   modelo loss-credit antiguo. No se sortean más.
+        const EXCLUDED_LEGACY_TYPES = ['iphone', 'caribe', 'auto', 'other'];
         const closed = (d.raffles || []).filter(x =>
             pendingStatuses.includes(x.status) &&
             !x.winnerUsername &&
-            (x.cuposSold || 0) > 0
+            (x.cuposSold || 0) > 0 &&
+            !EXCLUDED_LEGACY_TYPES.includes(x.raffleType)
         );
         if (closed.length === 0) {
             statsEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">No hay sorteos pendientes de sortear (todos los que tenían participantes ya tienen ganador).</div>';

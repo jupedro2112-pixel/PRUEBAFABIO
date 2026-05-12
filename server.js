@@ -23617,6 +23617,10 @@ app.post('/api/admin/raffles/test-push-all-to-user', authMiddleware, adminMiddle
         (Number(r.entryCost) || 0) === 0
       );
     }
+    // Excluir tipos LEGACY que el dueño no quiere sortear más (iphone,
+    // caribe, auto, other — premios físicos del modelo viejo).
+    const EXCLUDED_LEGACY = new Set(['iphone', 'caribe', 'auto', 'other']);
+    raffles = raffles.filter(r => !EXCLUDED_LEGACY.has(r.raffleType));
     if (raffles.length === 0) return res.json({ success: true, total: 0, results: [], message: 'No hay sorteos para testear con esos filtros.' });
 
     // Orden: bucket 0 = gratis por cargas (free + minNetLossARS===0);
