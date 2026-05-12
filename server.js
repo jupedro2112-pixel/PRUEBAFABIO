@@ -20281,17 +20281,24 @@ const LIGHTNING_RAFFLE_CONFIG = {
 // el admin las sortee, no spawnea otra del mismo tipo legacy — empieza a
 // spawnear las nuevas (free_*_cargas / free_*_netwin).
 const FREE_RAFFLE_TYPES = [
-  // === Por CARGAS ===
-  { type: 'free_1m_cargas',   prize: 1000000, totalTickets: 100, minCargasARS: 2000000, minNetLossARS: 0, parallelInstances: 1, emoji: '👑',
+  // === Por CARGAS === umbrales actualizados 2026-05-12
+  // Regla del dueño: para participar tenés que haber cargado al menos el
+  // % indicado del premio. Es la "ficha de entrada" en plata real.
+  { type: 'free_2m_cargas',   prize: 2000000, totalTickets: 100, minCargasARS: 1000000, minNetLossARS: 0, parallelInstances: 1, emoji: '🏆',
+    name: 'Sorteo $2.000.000', prizeName: '$2.000.000 en saldo' },
+  { type: 'free_1m_cargas',   prize: 1000000, totalTickets: 100, minCargasARS:  500000, minNetLossARS: 0, parallelInstances: 1, emoji: '👑',
     name: 'Sorteo $1.000.000', prizeName: '$1.000.000 en saldo' },
-  { type: 'free_500k_cargas', prize:  500000, totalTickets: 100, minCargasARS: 1000000, minNetLossARS: 0, parallelInstances: 1, emoji: '💎',
-    name: 'Sorteo $500.000',   prizeName: '$500.000 en saldo' },
-  { type: 'free_100k_cargas', prize:  100000, totalTickets: 100, minCargasARS:  200000, minNetLossARS: 0, parallelInstances: 5, emoji: '🎯',
+  { type: 'free_100k_cargas', prize:  100000, totalTickets: 100, minCargasARS:  250000, minNetLossARS: 0, parallelInstances: 5, emoji: '🎯',
     name: 'Sorteo $100.000',   prizeName: '$100.000 en saldo' },
-  // === Por NETWIN ===
-  { type: 'free_500k_netwin', prize:  500000, totalTickets: 100, minCargasARS: 0, minNetLossARS:  50000, parallelInstances: 1, emoji: '💰',
+  // === Por NETWIN === umbrales actualizados 2026-05-12.
+  // Regla: participás si perdiste neto >= X esta semana (cargas − retiros).
+  { type: 'free_2m_netwin',   prize: 2000000, totalTickets: 100, minCargasARS: 0, minNetLossARS: 500000, parallelInstances: 1, emoji: '🏆',
+    name: 'Sorteo NETWIN $2.000.000', prizeName: '$2.000.000 en saldo' },
+  { type: 'free_1m_netwin',   prize: 1000000, totalTickets: 100, minCargasARS: 0, minNetLossARS: 250000, parallelInstances: 1, emoji: '👑',
+    name: 'Sorteo NETWIN $1.000.000', prizeName: '$1.000.000 en saldo' },
+  { type: 'free_500k_netwin', prize:  500000, totalTickets: 100, minCargasARS: 0, minNetLossARS: 250000, parallelInstances: 1, emoji: '💰',
     name: 'Sorteo NETWIN $500.000', prizeName: '$500.000 en saldo' },
-  { type: 'free_100k_netwin', prize:  100000, totalTickets: 100, minCargasARS: 0, minNetLossARS:  20000, parallelInstances: 5, emoji: '🎁',
+  { type: 'free_100k_netwin', prize:  100000, totalTickets: 100, minCargasARS: 0, minNetLossARS:  50000, parallelInstances: 5, emoji: '🎁',
     name: 'Sorteo NETWIN $100.000', prizeName: '$100.000 en saldo' }
 ];
 

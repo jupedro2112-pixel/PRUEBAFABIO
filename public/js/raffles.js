@@ -660,43 +660,39 @@ VIP.raffles = (function () {
         html += '<button type="button" data-raffle-action="refresh" id="rafflesRefreshBtn" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 11px;border-radius:7px;font-weight:800;font-size:11px;cursor:pointer;letter-spacing:0.4px;flex-shrink:0;" title="Forzar actualización">🔄</button>';
         html += '</div>';
 
-        // === GRATIS === (sorteos vigentes, layout limpio)
-        if (free.length > 0) {
-            html += '<div style="margin:14px 0 8px;display:flex;align-items:center;gap:8px;">';
+        // Separamos GRATIS (por cargas) y NETWIN (por pérdida neta) en
+        // 2 SECCIONES con headers propios — pedido del dueño 2026-05-12.
+        // El user lo ve como "elegí cómo entrar" más claro.
+        const freeCargas = free.filter(r => Number(r.minNetLossARS || 0) === 0);
+        const freeNetwin = free.filter(r => Number(r.minNetLossARS || 0) > 0);
+        const sortByPrize = (a, b) => Number(b.prizeValueARS||0) - Number(a.prizeValueARS||0);
+        freeCargas.sort(sortByPrize);
+        freeNetwin.sort(sortByPrize);
+
+        // === SECCIÓN 1 · SORTEOS GRATIS (por cargas) ===
+        if (freeCargas.length > 0) {
+            const _myCargas = (_data && Number(_data.weeklyDeposits)) || 0;
+            html += '<div style="margin:14px 0 6px;display:flex;align-items:center;gap:8px;">';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#4dabff);"></div>';
             html += '<h3 style="margin:0;color:#4dabff;font-size:13px;font-weight:900;letter-spacing:2px;">🎁 SORTEOS GRATIS</h3>';
             html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#4dabff,transparent);"></div></div>';
-            // Mini-leyenda compacta: chip con tus cargas y tu netwin.
-            const _myCargas = (_data && Number(_data.weeklyDeposits)) || 0;
-            const _myNet = (_data && Number(_data.weeklyNetLoss)) || 0;
-            html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;font-size:10.5px;">';
-            html += '<span style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);border-radius:14px;padding:3px 10px;color:#aaffaa;font-weight:700;">🟢 Cargaste: $' + _fmt(_myCargas) + '</span>';
-            html += '<span style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.30);border-radius:14px;padding:3px 10px;color:#ffd0a0;font-weight:700;">🟠 Perdiste neto: $' + _fmt(_myNet) + '</span>';
+            html += '<div style="text-align:center;margin-bottom:8px;">';
+            html += '<span style="background:rgba(102,255,102,0.10);border:1px solid rgba(102,255,102,0.30);border-radius:14px;padding:3px 10px;color:#aaffaa;font-weight:700;font-size:10.5px;">🟢 Cargaste esta semana: $' + _fmt(_myCargas) + '</span>';
             html += '</div>';
-            // Orden: primero los GRATIS por cargas (minCargasARS>0), después
-            // los NETWIN (minNetLossARS>0). Dentro de cada grupo, prize
-            // mayor arriba. Pedido del dueño 2026-05-12.
-            const _freeSorted = free.slice().sort((a, b) => {
-                const aType = (Number(a.minNetLossARS||0) > 0) ? 1 : 0; // netwin=1, cargas=0
-                const bType = (Number(b.minNetLossARS||0) > 0) ? 1 : 0;
-                if (aType !== bType) return aType - bType; // cargas (0) primero
-                return Number(b.prizeValueARS||0) - Number(a.prizeValueARS||0);
-            });
-            // Sub-headers visuales: separamos cargas y netwin con un divisor
-            // tenue así el user ve el cambio de tipo.
-            let lastType = null;
-            for (const r of _freeSorted) {
-                const t = (Number(r.minNetLossARS||0) > 0) ? 'netwin' : 'cargas';
-                if (t !== lastType) {
-                    if (t === 'cargas') {
-                        html += '<div style="color:#66ff66;font-size:11px;font-weight:900;letter-spacing:1.5px;margin:8px 0 4px;text-transform:uppercase;">🟢 Por cargas</div>';
-                    } else {
-                        html += '<div style="color:#ffaa66;font-size:11px;font-weight:900;letter-spacing:1.5px;margin:14px 0 4px;text-transform:uppercase;">🟠 Por netwin (pérdida neta)</div>';
-                    }
-                    lastType = t;
-                }
-                html += _renderFreeCard(r);
-            }
+            for (const r of freeCargas) html += _renderFreeCard(r);
+        }
+
+        // === SECCIÓN 2 · SORTEOS NETWIN (por pérdida neta) ===
+        if (freeNetwin.length > 0) {
+            const _myNet = (_data && Number(_data.weeklyNetLoss)) || 0;
+            html += '<div style="margin:20px 0 6px;display:flex;align-items:center;gap:8px;">';
+            html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,transparent,#ffaa66);"></div>';
+            html += '<h3 style="margin:0;color:#ffaa66;font-size:13px;font-weight:900;letter-spacing:2px;">🟠 SORTEOS NETWIN</h3>';
+            html += '<div style="flex:1;height:2px;background:linear-gradient(90deg,#ffaa66,transparent);"></div></div>';
+            html += '<div style="text-align:center;margin-bottom:8px;">';
+            html += '<span style="background:rgba(255,170,102,0.10);border:1px solid rgba(255,170,102,0.30);border-radius:14px;padding:3px 10px;color:#ffd0a0;font-weight:700;font-size:10.5px;">🟠 Pérdida neta esta semana: $' + _fmt(_myNet) + '</span>';
+            html += '</div>';
+            for (const r of freeNetwin) html += _renderFreeCard(r);
         }
 
         // === PAGOS === sin explainer arriba (la info ya esta en las cards)
