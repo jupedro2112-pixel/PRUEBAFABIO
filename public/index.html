@@ -2748,6 +2748,18 @@
                 <div style="color:#22a0d9;font-weight:900;font-size:11.5px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;">🚀 Nuevo canal privado</div>
                 <div style="color:#fff;font-size:13px;font-weight:800;line-height:1.4;">Unite para recibir <strong style="color:#22a0d9;">ofertas exclusivas</strong>.</div>
             </div>
+            <!-- Banner CÓDIGO ACTIVO. JS lo pinta cuando GET /api/redeem-codes/active
+                 devuelve active=true y el user todavía no reclamó. Muestra cuenta
+                 regresiva y CTA grande para abrir el canal de Telegram. -->
+            <div id="redeemActiveBanner" style="display:none;margin-bottom:10px;background:linear-gradient(135deg,rgba(0,200,150,0.20),rgba(34,160,217,0.10));border:2px solid #00c896;border-radius:11px;padding:12px 13px;text-align:center;box-shadow:0 0 18px rgba(0,200,150,0.45);animation:redeemActivePulse 1.8s ease-in-out infinite;">
+                <div style="color:#00c896;font-weight:900;font-size:11.5px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;">🎁 Código activo ahora</div>
+                <div style="color:#fff;font-size:13.5px;font-weight:800;line-height:1.4;margin-bottom:6px;">Hay <strong id="redeemActiveAmount" style="color:#00ff99;">$0</strong> esperándote en Telegram.<br><span style="color:#aaa;font-size:11.5px;font-weight:700;">Quedan <strong id="redeemActiveCountdown" style="color:#ffd700;">--:--</strong> · Sumate al canal y reclamalo arriba ↗️</span></div>
+                <button type="button" id="redeemActiveOpenBtn" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:8px 14px;border-radius:8px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;cursor:pointer;">📲 Ver código en Telegram</button>
+            </div>
+            <style>
+              @keyframes redeemActivePulse { 0%,100% { box-shadow:0 0 18px rgba(0,200,150,0.45); } 50% { box-shadow:0 0 32px rgba(0,200,150,0.85); } }
+              @keyframes redeemBtnBlink { 0%,100% { box-shadow:0 0 0 rgba(0,200,150,0); transform:scale(1); } 50% { box-shadow:0 0 14px rgba(0,200,150,0.85); transform:scale(1.06); } }
+            </style>
             <span class="community-label">💬 Unite al canal de Telegram</span>
             <span class="community-link-wrap" id="userCommunityLink"><span class="community-empty">—</span></span>
             <!-- Alerta roja "no te olvides de unirte" — visible solo durante
@@ -6348,6 +6360,8 @@
                           '<div style="color:#aaa;font-size:11.5px;margin-bottom:14px;">Sumate al canal privado de Telegram para no perderte los próximos códigos.</div>' +
                           '<button type="button" id="redeemCodeOk" style="width:100%;background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);border:none;color:#000;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;cursor:pointer;">LISTO</button>' +
                         '</div>';
+                    // Ocultar banner verde de "código activo" — este user ya reclamó
+                    try { hideRedeemActiveBanner(); stopRedeemActivePolling(); } catch (_) {}
                     document.getElementById('redeemCodeOk').onclick = () => { overlay.remove(); window.location.reload(); };
                 } catch (e) {
                     errBox.textContent = '❌ Error de conexión';
@@ -6356,6 +6370,114 @@
                 }
             }
         };
+
+        // ============================================
+        // Detector "código activo ahora". Pinta el banner verde pulsante
+        // dentro de la sección Comunidad y hace destellar el botón
+        // "🎁 Reclama aquí" arriba a la izquierda. También arma cuenta
+        // regresiva en MM:SS. Refresca cada 30s y al recibir push.
+        // ============================================
+        let _redeemActiveTimer = null;
+        let _redeemActiveExpiresAt = 0;
+
+        function _fmtMS(ms) {
+            const s = Math.max(0, Math.floor(ms / 1000));
+            const m = Math.floor(s / 60), r = s % 60;
+            return String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
+        }
+        function _updateRedeemCountdown() {
+            const cdEl = document.getElementById('redeemActiveCountdown');
+            if (!cdEl) return;
+            const rem = _redeemActiveExpiresAt - Date.now();
+            if (rem <= 0) {
+                // venció, ocultar y refrescar
+                stopRedeemActivePolling();
+                hideRedeemActiveBanner();
+                window.checkRedeemActive && window.checkRedeemActive();
+                return;
+            }
+            cdEl.textContent = _fmtMS(rem);
+        }
+        function hideRedeemActiveBanner() {
+            const b = document.getElementById('redeemActiveBanner');
+            if (b) b.style.display = 'none';
+            const btn = document.getElementById('redeemCodeBtn');
+            if (btn) btn.style.animation = '';
+        }
+        function showRedeemActiveBanner(d) {
+            const b = document.getElementById('redeemActiveBanner');
+            if (!b) return;
+            const amt = document.getElementById('redeemActiveAmount');
+            if (amt) amt.textContent = '$' + Number(d.amountARS || 0).toLocaleString('es-AR');
+            _redeemActiveExpiresAt = new Date(d.expiresAt).getTime();
+            _updateRedeemCountdown();
+            b.style.display = 'block';
+            // Pulsar también el botón "🎁 Reclama aquí" para llamar la atención
+            const btn = document.getElementById('redeemCodeBtn');
+            if (btn) btn.style.animation = 'redeemBtnBlink 1.4s ease-in-out infinite';
+            // CTA → abrir el link de Telegram (mismo target que el botón principal de comunidad)
+            const openBtn = document.getElementById('redeemActiveOpenBtn');
+            if (openBtn) {
+                openBtn.onclick = () => {
+                    const lnk = document.querySelector('#userCommunityLink a');
+                    if (lnk && lnk.href) {
+                        window.open(lnk.href, '_blank', 'noopener');
+                    } else {
+                        // fallback: abrir el modal de reclamar igualmente
+                        window.openRedeemCodeModal && window.openRedeemCodeModal();
+                    }
+                };
+            }
+        }
+        function startRedeemActivePolling() {
+            if (_redeemActiveTimer) return;
+            _redeemActiveTimer = setInterval(_updateRedeemCountdown, 1000);
+        }
+        function stopRedeemActivePolling() {
+            if (_redeemActiveTimer) { clearInterval(_redeemActiveTimer); _redeemActiveTimer = null; }
+        }
+
+        window.checkRedeemActive = async function () {
+            try {
+                const r = await fetch('/api/redeem-codes/active', {
+                    headers: { 'Authorization': 'Bearer ' + _getToken() }
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || !d.success || !d.active || d.alreadyClaimed) {
+                    hideRedeemActiveBanner();
+                    stopRedeemActivePolling();
+                    return;
+                }
+                showRedeemActiveBanner(d);
+                startRedeemActivePolling();
+            } catch (_) { /* silent */ }
+        };
+
+        // Arranque + refresco cada 30s mientras la pestaña está visible.
+        document.addEventListener('DOMContentLoaded', () => {
+            if (_getToken()) {
+                window.checkRedeemActive();
+                setInterval(() => {
+                    if (document.visibilityState === 'visible' && _getToken()) {
+                        window.checkRedeemActive();
+                    }
+                }, 30000);
+            }
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && _getToken()) {
+                window.checkRedeemActive();
+            }
+        });
+        // Cuando el SW recibe la push de un código nuevo, dispara recheck.
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (e) => {
+                try {
+                    const t = e && e.data && (e.data.source || (e.data.data && e.data.data.source));
+                    if (t === 'redeem-code') window.checkRedeemActive();
+                } catch (_) {}
+            });
+        }
 
         window.openRedeemCodeInfo = function () {
             const old = document.getElementById('redeemCodeInfoModal');

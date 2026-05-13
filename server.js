@@ -35153,6 +35153,51 @@ app.delete('/api/admin/redeem-codes/:id', authMiddleware, adminMiddleware, async
   }
 });
 
+// GET /api/redeem-codes/active — devuelve si hay un código activo AHORA
+// para que la home del user muestre el banner "hay un código en Telegram".
+// NO devuelve el texto del código (los users deben sacarlo del canal).
+// Devuelve también alreadyClaimed para no molestar a quien ya reclamó.
+app.get('/api/redeem-codes/active', authMiddleware, async (req, res) => {
+  try {
+    const username = (req.user && req.user.username) || '';
+    const userId = (req.user && req.user.userId) || '';
+    const now = Date.now();
+    // Buscar el código activo más reciente (status=active y no vencido).
+    const rc = await RedeemCode.findOne({
+      status: 'active',
+      expiresAt: { $gt: new Date() }
+    }).sort({ createdAt: -1 }).lean();
+
+    if (!rc) return res.json({ success: true, active: false });
+
+    // Verificar cap máximo (si llegó al límite, ya no está realmente activo)
+    if (rc.maxClaims > 0 && (rc.claims || []).length >= rc.maxClaims) {
+      return res.json({ success: true, active: false });
+    }
+
+    const unameLow = String(username || '').toLowerCase();
+    const alreadyClaimed = (rc.claims || []).some(c =>
+      String(c.username || '').toLowerCase() === unameLow ||
+      (c.userId && c.userId === userId)
+    );
+
+    res.json({
+      success: true,
+      active: true,
+      id: rc.id,
+      amountARS: rc.amountARS,
+      expiresAt: rc.expiresAt,
+      remainingMs: Math.max(0, new Date(rc.expiresAt).getTime() - now),
+      claimsCount: (rc.claims || []).length,
+      maxClaims: rc.maxClaims || 0,
+      alreadyClaimed
+    });
+  } catch (err) {
+    logger.error(`GET /api/redeem-codes/active: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /api/redeem-codes/claim — canje del user (auth requerido)
 // Body: { code }
 app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
