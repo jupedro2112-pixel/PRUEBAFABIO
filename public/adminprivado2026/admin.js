@@ -383,9 +383,12 @@ function _changeSectionPin(sectionKey, sectionLabel) {
 // ============================================
 function showSection(sectionKey) {
     // Pin gate: si la sección está protegida y no está desbloqueada, pedir PIN.
+    // Excepción: en modo ?only=closings (usuario cierresgeneral) NO pedimos PIN
+    // porque ese rol no es admin full y no puede llamar a /section-pins/verify.
+    // Su autenticación ya pasa por el login dedicado de /cierresgeneral.
     const navEl = document.querySelector('.nav-item[data-section="' + sectionKey + '"]');
     const protectedKey = navEl && navEl.getAttribute('data-protected-pin');
-    if (protectedKey && !_isSectionUnlocked(protectedKey)) {
+    if (protectedKey && !_IS_CLOSINGS_MODE && !_isSectionUnlocked(protectedKey)) {
         const label = navEl.textContent.trim().split(/\s+/).slice(0, 3).join(' ');
         _promptSectionPin(protectedKey, label, () => showSection(sectionKey));
         return;

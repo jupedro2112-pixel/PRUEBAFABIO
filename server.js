@@ -9946,21 +9946,33 @@ app.get('/api/admin/recontact/daily-progress', authMiddleware, adminMiddleware, 
 // del admin; no es un secret externo.
 
 const _DEFAULT_SECTION_PIN = '1818';
+// Defaults específicos por sección — overridean _DEFAULT_SECTION_PIN.
+// Útil para que distintas secciones empiecen con PIN distinto sin que el
+// admin tenga que ir a cambiarlos a mano.
+const _SECTION_DEFAULT_PINS = { closings: '1515' };
+const _defaultPinForSection = (s) => _SECTION_DEFAULT_PINS[s] || _DEFAULT_SECTION_PIN;
 // 'teams' está protegido — el detalle por equipo (stats agregados, líneas,
 // usuarios) requiere PIN. Las features que solo necesitan el listado de
 // nombres de equipo (líneas caídas, refund-reminders) usan /teams/names
 // que NO está gateado.
 // 'backupPhones' protege el listado de números de respaldo.
-const _PROTECTED_SECTIONS = ['numero', 'backupPhones', 'teams'];
+// 'closings' protege la sección CIERRES GENERAL en el panel admin (es solo
+// frontend-gate: los endpoints /api/admin/closings* NO requieren el token
+// de section-pin porque también los usa el rol closings_viewer que no es
+// full admin y no puede llamar a /section-pins/verify).
+const _PROTECTED_SECTIONS = ['numero', 'backupPhones', 'teams', 'closings'];
 
 async function _getSectionPins() {
-  const v = await getConfig('admin_section_pins', null);
-  if (v && typeof v === 'object') return v;
-  // Init con defaults si no existe
-  const init = {};
-  for (const s of _PROTECTED_SECTIONS) init[s] = _DEFAULT_SECTION_PIN;
-  await setConfig('admin_section_pins', init);
-  return init;
+  let v = await getConfig('admin_section_pins', null);
+  let changed = false;
+  if (!v || typeof v !== 'object') { v = {}; changed = true; }
+  // Asegurar que toda sección protegida tenga PIN — completa con default si
+  // falta (cubre el caso de secciones nuevas agregadas en deploys posteriores).
+  for (const s of _PROTECTED_SECTIONS) {
+    if (!v[s]) { v[s] = _defaultPinForSection(s); changed = true; }
+  }
+  if (changed) await setConfig('admin_section_pins', v);
+  return v;
 }
 
 // POST verify — valida el PIN para una sección. Si coincide, emite un
@@ -9972,7 +9984,7 @@ app.post('/api/admin/section-pins/verify', authMiddleware, adminMiddleware, asyn
     const { section, pin } = req.body || {};
     if (!_PROTECTED_SECTIONS.includes(section)) return res.status(400).json({ error: 'section inválida' });
     const pins = await _getSectionPins();
-    const expected = pins[section] || _DEFAULT_SECTION_PIN;
+    const expected = pins[section] || _defaultPinForSection(section);
     const valid = String(pin || '') === String(expected);
     if (!valid) return res.json({ valid: false });
     const token = _signSectionPinToken(section, req.user && req.user.username);
@@ -9990,7 +10002,7 @@ app.post('/api/admin/section-pins/change', authMiddleware, adminMiddleware, asyn
     if (!_PROTECTED_SECTIONS.includes(section)) return res.status(400).json({ error: 'section inválida' });
     if (!/^\d{4,8}$/.test(String(newPin || ''))) return res.status(400).json({ error: 'El PIN nuevo debe tener 4-8 dígitos' });
     const pins = await _getSectionPins();
-    const expected = pins[section] || _DEFAULT_SECTION_PIN;
+    const expected = pins[section] || _defaultPinForSection(section);
     if (String(currentPin || '') !== String(expected)) return res.status(403).json({ error: 'PIN actual incorrecto' });
     pins[section] = String(newPin);
     await setConfig('admin_section_pins', pins);

@@ -76,8 +76,21 @@
                 <span>Admin Panel</span>
             </div>
             <nav class="sidebar-nav">
+                <!-- CIERRES (financiero) — al tope porque es lo que más se usa.
+                     Protegido con PIN: data-protected-pin="closings" muestra el
+                     modal de clave antes de dejar entrar. Default = 1515. -->
+                <div class="nav-section-title" style="color:#ffd700;border-top:1px solid rgba(255,215,0,0.30);padding-top:10px;margin-top:0;">💰 Cierres</div>
+                <a href="#" class="nav-item" data-section="closings" data-protected-pin="closings" style="background:rgba(255,215,0,0.10);border-left:3px solid #ffd700;">
+                    <span>🔐</span>
+                    <span><strong>CIERRES GENERAL</strong></span>
+                </a>
+                <a href="#" class="nav-item" data-section="cotizaciones" data-protected-pin="closings" style="background:rgba(0,200,150,0.08);border-left:3px solid #00c896;">
+                    <span>💱</span>
+                    <span><strong>COTIZACIONES</strong></span>
+                </a>
+
                 <!-- CENTRAL — titulo de sección (mismo estilo que NUEVO TOP). -->
-                <div class="nav-section-title" style="color:#d4af37;border-top:1px solid rgba(212,175,55,0.30);padding-top:10px;margin-top:0;">🏛️ CENTRAL</div>
+                <div class="nav-section-title" style="color:#d4af37;border-top:1px solid rgba(212,175,55,0.30);padding-top:10px;margin-top:12px;">🏛️ CENTRAL</div>
                 <a href="#" class="nav-item active" data-section="ingresos" style="background:rgba(212,175,55,0.06);border-left:3px solid #d4af37;">
                     <span>👥</span>
                     <span><strong>Ingresos diarios</strong></span>
@@ -226,19 +239,6 @@
                 <a href="#" class="nav-item" data-section="activePlayers">
                     <span>🎯</span>
                     <span>Clientes activos sin app</span>
-                </a>
-
-                <!-- Cierres diarios: control financiero (depósitos, ventas,
-                     bajadas, comisiones banco). PIN protected porque hay
-                     plata real involucrada. Al fondo del menú. -->
-                <div class="nav-section-title" style="color:#ffd700;border-top:1px solid rgba(255,215,0,0.30);padding-top:10px;margin-top:12px;">💰 Cierres</div>
-                <a href="#" class="nav-item" data-section="closings" style="background:rgba(255,215,0,0.06);border-left:3px solid #ffd700;">
-                    <span>📊</span>
-                    <span><strong>CIERRES GENERAL</strong></span>
-                </a>
-                <a href="#" class="nav-item" data-section="cotizaciones" style="background:rgba(0,200,150,0.06);border-left:3px solid #00c896;">
-                    <span>💱</span>
-                    <span><strong>COTIZACIONES</strong></span>
                 </a>
 
                 <!-- Ayuda y guía al fondo de todo (cada item tiene su propio ❓
