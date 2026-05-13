@@ -21,6 +21,14 @@ const cotizacionTeamSchema = new mongoose.Schema({
   // el precio USDT se calcula sobre 950.000 / usdtRate.
   // Ajustable por fila (cada equipo puede tener una comisión distinta).
   commissionPercent: { type: Number, default: 0, min: 0, max: 100 },
+  // === Tilde por equipo ===
+  // Cada equipo se cotiza por separado y a su tiempo. Cuando el dueño
+  // confirma que el equipo X ya pagó/cotizó, tilda su fila → pasa a
+  // cotizado=true. El tag de la cotización completa se deriva: queda
+  // "cotizada" cuando todos los equipos con monto están cotizados.
+  cotizado: { type: Boolean, default: false },
+  cotizedAt: { type: Date, default: null },
+  cotizedBy: { type: String, default: '' },
   // Foto opcional para respaldar el monto del equipo
   photoUrl: { type: String, default: '' }
 }, { _id: false });

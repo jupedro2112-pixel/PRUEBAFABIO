@@ -34502,14 +34502,30 @@ function _cotizacionCompute(c) {
   let totalARS = 0;
   let totalCommissionARS = 0;
   let totalNetARS = 0;
+  let totalCotizadoNetARS = 0;
+  let totalPendienteNetARS = 0;
+  let teamsCotizadasN = 0;
+  let teamsPendientesN = 0;
   const priced = teams.map((t) => {
     const totARS = Number(t.totalARS || 0);
     const pct = Math.max(0, Math.min(100, Number(t.commissionPercent || 0)));
     const commissionARS = Math.round(totARS * (pct / 100));
     const netARS = Math.max(0, totARS - commissionARS);
+    const isCotizado = !!t.cotizado;
     totalARS += totARS;
     totalCommissionARS += commissionARS;
     totalNetARS += netARS;
+    if (totARS > 0) {
+      // Sólo contamos equipos con monto > 0 — los slots vacíos no son
+      // ni cotizados ni pendientes, simplemente no existen.
+      if (isCotizado) {
+        teamsCotizadasN += 1;
+        totalCotizadoNetARS += netARS;
+      } else {
+        teamsPendientesN += 1;
+        totalPendienteNetARS += netARS;
+      }
+    }
     const precioUSDT = rate > 0 ? +(netARS / rate).toFixed(2) : 0;
     return {
       slot: t.slot,
@@ -34519,11 +34535,27 @@ function _cotizacionCompute(c) {
       commissionARS,
       netARS,
       photoUrl: t.photoUrl || '',
-      precioUSDT
+      precioUSDT,
+      cotizado: isCotizado,
+      cotizedAt: t.cotizedAt || null,
+      cotizedBy: t.cotizedBy || ''
     };
   });
   const totalUSDT = rate > 0 ? +(totalNetARS / rate).toFixed(2) : 0;
-  return { teams: priced, totalARS, totalCommissionARS, totalNetARS, totalUSDT, usdtRate: rate };
+  const totalCotizadoUSDT = rate > 0 ? +(totalCotizadoNetARS / rate).toFixed(2) : 0;
+  const totalPendienteUSDT = rate > 0 ? +(totalPendienteNetARS / rate).toFixed(2) : 0;
+  // Derivado: la cotización está "toda cotizada" cuando hay al menos un
+  // equipo con monto y todos los que tienen monto están cotizados.
+  const allCotizadas = (teamsCotizadasN > 0) && (teamsPendientesN === 0);
+  return {
+    teams: priced,
+    totalARS, totalCommissionARS, totalNetARS, totalUSDT,
+    totalCotizadoNetARS, totalCotizadoUSDT,
+    totalPendienteNetARS, totalPendienteUSDT,
+    teamsCotizadasN, teamsPendientesN,
+    allCotizadas,
+    usdtRate: rate
+  };
 }
 
 // GET /api/admin/cotizaciones?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -34555,6 +34587,13 @@ app.get(prefix, authMiddleware, closingsAccessMiddleware, async (req, res) => {
         totalCommissionARS: calc.totalCommissionARS,
         totalNetARS: calc.totalNetARS,
         totalUSDT: calc.totalUSDT,
+        totalCotizadoNetARS: calc.totalCotizadoNetARS,
+        totalCotizadoUSDT: calc.totalCotizadoUSDT,
+        totalPendienteNetARS: calc.totalPendienteNetARS,
+        totalPendienteUSDT: calc.totalPendienteUSDT,
+        teamsCotizadasN: calc.teamsCotizadasN,
+        teamsPendientesN: calc.teamsPendientesN,
+        allCotizadas: calc.allCotizadas,
         status: r.status || 'draft',
         closedAt: r.closedAt || null,
         closedBy: r.closedBy || '',
@@ -34699,20 +34738,76 @@ app.post(prefix + '/:id/reopen', authMiddleware, closingsAccessMiddleware, async
   }
 });
 
-// POST <prefix>/:id/toggle — alterna el tilde cotizado.
+// POST <prefix>/:id/toggle — alterna el tilde cotizado a NIVEL ENTRADA.
+// Marca/desmarca TODOS los equipos con monto > 0. Útil para "marcar todo
+// cotizado de una" cuando ya pagaron todos juntos.
 app.post(prefix + '/:id/toggle', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
     const newVal = !c.cotizado;
+    const now = new Date();
+    const who = (req.user && req.user.username) || '';
     c.cotizado = newVal;
-    c.cotizedAt = newVal ? new Date() : null;
-    c.cotizedBy = newVal ? ((req.user && req.user.username) || '') : '';
+    c.cotizedAt = newVal ? now : null;
+    c.cotizedBy = newVal ? who : '';
+    // Sincronizar con los equipos (sólo los que tienen monto).
+    if (Array.isArray(c.teams)) {
+      for (const t of c.teams) {
+        if (Number(t.totalARS || 0) <= 0) continue;
+        t.cotizado = newVal;
+        t.cotizedAt = newVal ? now : null;
+        t.cotizedBy = newVal ? who : '';
+      }
+    }
     await c.save();
     res.json({ success: true, cotizado: c.cotizado });
   } catch (err) {
     logger.error(`POST ${prefix}/:id/toggle (${label}): ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST <prefix>/:id/team/:slot/toggle — tilde por equipo individual.
+// El owner marca un equipo a la vez, a medida que cotiza. Cuando se tildan
+// todos los que tienen monto, la cotización completa pasa a "cotizada".
+app.post(prefix + '/:id/team/:slot/toggle', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const slot = Number(req.params.slot);
+    if (!Number.isInteger(slot) || slot < 0 || slot > 9) {
+      return res.status(400).json({ error: 'Slot inválido' });
+    }
+    const c = await Model.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    const teams = Array.isArray(c.teams) ? c.teams : [];
+    const idx = teams.findIndex(t => Number(t.slot) === slot);
+    if (idx < 0) return res.status(404).json({ error: 'Equipo no encontrado en esa cotización' });
+    const t = teams[idx];
+    if (Number(t.totalARS || 0) <= 0) {
+      return res.status(400).json({ error: 'No se puede cotizar un equipo sin monto cargado' });
+    }
+    const newVal = !t.cotizado;
+    t.cotizado = newVal;
+    t.cotizedAt = newVal ? new Date() : null;
+    t.cotizedBy = newVal ? ((req.user && req.user.username) || '') : '';
+    // Sincronizar el flag de entry: queda "cotizada" si todos los equipos
+    // con monto están cotizados.
+    const anyPending = teams.some(x => Number(x.totalARS || 0) > 0 && !x.cotizado);
+    const anyCotizado = teams.some(x => Number(x.totalARS || 0) > 0 && x.cotizado);
+    c.cotizado = anyCotizado && !anyPending;
+    c.cotizedAt = c.cotizado ? new Date() : null;
+    c.cotizedBy = c.cotizado ? ((req.user && req.user.username) || '') : '';
+    await c.save();
+    res.json({
+      success: true,
+      slot,
+      teamCotizado: t.cotizado,
+      allCotizadas: c.cotizado
+    });
+  } catch (err) {
+    logger.error(`POST ${prefix}/:id/team/:slot/toggle (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

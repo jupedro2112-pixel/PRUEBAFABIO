@@ -26829,11 +26829,13 @@ function _renderCotizaciones(scope) {
         return;
     }
 
-    // === Header del historial + filtros ===
+    // === Header del historial + filtros + total cotizado general ===
     const closedN = items.filter(x => x.status === 'closed').length;
     const draftN = items.length - closedN;
-    const cotizadasN = items.filter(x => x.cotizado).length;
-    const noCotizadasClosedN = items.filter(x => x.status === 'closed' && !x.cotizado).length;
+    const allCotizadasN = items.filter(x => x.allCotizadas || x.cotizado).length;
+    const sumCotizadoARS = items.reduce((a, x) => a + Number(x.totalCotizadoNetARS || 0), 0);
+    const sumCotizadoUSDT = items.reduce((a, x) => a + Number(x.totalCotizadoUSDT || 0), 0);
+    const sumPendienteARS = items.reduce((a, x) => a + Number(x.totalPendienteNetARS || 0), 0);
 
     h += '<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:12px 14px;margin-bottom:14px;">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">';
@@ -26842,8 +26844,21 @@ function _renderCotizaciones(scope) {
     h += '<span style="color:#aaa;">Total: <strong style="color:#fff;">' + items.length + '</strong></span>';
     h += '<span style="color:#ffd700;">📝 Draft: <strong>' + draftN + '</strong></span>';
     h += '<span style="color:#00d4ff;">🔒 Cerradas: <strong>' + closedN + '</strong></span>';
-    h += '<span style="color:#0f0;">✓ Cotizadas: <strong>' + cotizadasN + '</strong></span>';
-    h += '<span style="color:#f55;">✗ Cerradas no cotizadas: <strong>' + noCotizadasClosedN + '</strong></span>';
+    h += '<span style="color:#0f0;">✓ Todas cotizadas: <strong>' + allCotizadasN + '</strong></span>';
+    h += '</div>';
+    h += '</div>';
+
+    // Banner total cotizado general (suma de TODOS los equipos cotizados en
+    // TODOS los cierres del scope). Es la métrica clave para el dueño.
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:12px;">';
+    h += '<div style="background:linear-gradient(135deg,rgba(0,255,102,0.10) 0%,rgba(0,200,150,0.06) 100%);border:1px solid rgba(0,255,102,0.30);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">💎 Total cotizado general</div>';
+    h += '<div style="color:#0f0;font-weight:900;font-size:18px;margin-top:3px;">' + formatMoney(sumCotizadoARS) + '</div>';
+    h += '<div style="color:#aaffaa;font-weight:800;font-size:12px;">' + sumCotizadoUSDT.toFixed(2) + ' USDT</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(255,170,102,0.06);border:1px solid rgba(255,170,102,0.25);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">⏳ Pendiente de cotizar</div>';
+    h += '<div style="color:#ffaa66;font-weight:900;font-size:18px;margin-top:3px;">' + formatMoney(sumPendienteARS) + '</div>';
     h += '</div>';
     h += '</div>';
 
@@ -26891,6 +26906,19 @@ function _renderCotizaciones(scope) {
 
 let _cotFilter = 'all';
 let _cotExFilter = 'all';
+// Estado de expansión por id. Las cards cerradas vienen colapsadas — se
+// abren al tocar el botón Expandir y se cierran al tocar Colapsar.
+const _cotExpanded = {};
+function toggleCotExpand(id, scope) {
+    scope = scope || 'interna';
+    _cotExpanded[id] = !_cotExpanded[id];
+    _renderCotizaciones(scope);
+    // Scroll back to the card after re-render (DOM was rebuilt).
+    setTimeout(() => {
+        const el = document.getElementById(_cotCardIdPrefix(scope) + id);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
+}
 function setCotFilter(key, scope) {
     scope = scope || 'interna';
     if (scope === 'externa') _cotExFilter = key;
@@ -26921,21 +26949,31 @@ function _renderCotizacionCard(it, scope) {
     const scopeArg = ',\'' + scope + '\'';
     const rate = Number(it.usdtRate || 0);
     const teams = Array.isArray(it.teams) ? it.teams : [];
-    const cotizado = !!it.cotizado;
+    const allCotizadas = !!it.allCotizadas;
+    const someCotizadas = (Number(it.teamsCotizadasN || 0) > 0);
     const isClosed = (it.status === 'closed');
     const ro = isClosed ? ' readonly tabindex="-1"' : '';
     const roCss = isClosed ? 'background:rgba(0,0,0,0.55);cursor:default;color:#bbb;' : '';
 
-    // Borde y color: el ESTADO de cierre define el marco (azul claro =
-    // cerrada, gris = draft). El TAG cotizado se muestra como badge aparte.
+    // Cerradas vienen colapsadas por default (sólo header con totales),
+    // se expanden al click. Drafts vienen expandidas porque hay que editar.
+    const expanded = !!_cotExpanded[it.id];
+    const showBody = !isClosed || expanded;
+
+    // Borde y color: el ESTADO de cierre define el marco.
     const frameBorder = isClosed ? 'rgba(0,212,255,0.45)' : 'rgba(255,255,255,0.10)';
     const frameBg = isClosed ? 'rgba(0,40,80,0.20)' : 'rgba(0,0,0,0.30)';
     const statusBadge = isClosed
         ? '<span style="background:rgba(0,212,255,0.12);color:#00d4ff;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(0,212,255,0.40);">🔒 CERRADA</span>'
         : '<span style="background:rgba(255,215,0,0.10);color:#ffd700;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,215,0,0.35);">📝 DRAFT</span>';
-    const cotizadoBadge = cotizado
-        ? '<span style="background:rgba(0,255,0,0.10);color:#0f0;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(0,255,0,0.40);">✓ COTIZADO</span>'
-        : '<span style="background:rgba(255,80,80,0.10);color:#f55;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,80,80,0.30);">✗ NO COTIZADO</span>';
+    let cotizadoBadge;
+    if (allCotizadas) {
+        cotizadoBadge = '<span style="background:rgba(0,255,0,0.10);color:#0f0;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(0,255,0,0.40);">✓ TODAS COTIZADAS</span>';
+    } else if (someCotizadas) {
+        cotizadoBadge = '<span style="background:rgba(255,200,80,0.10);color:#ffc850;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,200,80,0.35);">⏳ PARCIAL ' + (it.teamsCotizadasN || 0) + '/' + ((it.teamsCotizadasN || 0) + (it.teamsPendientesN || 0)) + '</span>';
+    } else {
+        cotizadoBadge = '<span style="background:rgba(255,80,80,0.10);color:#f55;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,80,80,0.30);">✗ PENDIENTE</span>';
+    }
 
     let h = '<div id="' + idPfx + escapeHtml(it.id) + '" data-cot-id="' + escapeHtml(it.id) + '" data-cot-scope="' + scope + '" style="background:' + frameBg + ';border:1px solid ' + frameBorder + ';border-radius:12px;padding:16px;margin-bottom:18px;">';
 
@@ -26961,8 +26999,44 @@ function _renderCotizacionCard(it, scope) {
         h += '<button onclick="reopenCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;" title="Volver a editar (descerrar)">🔓 REABRIR</button>';
     }
     h += '<button onclick="deleteCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
+    // Botón expandir/colapsar — sólo visible cuando está cerrada (drafts
+    // ya están full editables, no tiene sentido colapsarlos).
+    if (isClosed) {
+        h += '<button onclick="toggleCotExpand(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(255,255,255,0.06);color:#aaa;border:1px solid rgba(255,255,255,0.15);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (expanded ? '▲ Colapsar' : '▼ Expandir') + '</button>';
+    }
     h += '</div>';
     h += '</div>';
+
+    // === Resumen rápido SIEMPRE VISIBLE (incluso colapsada) ===
+    // Muestra el total general / cotizado / pendiente del cierre, así el
+    // dueño ve el estado de un vistazo sin tener que expander.
+    const tCotizado = Number(it.totalCotizadoNetARS || 0);
+    const tPendiente = Number(it.totalPendienteNetARS || 0);
+    const tTotal = Number(it.totalNetARS || 0);
+    const pct = tTotal > 0 ? Math.round((tCotizado / tTotal) * 100) : 0;
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:' + (showBody ? '12' : '0') + 'px;">';
+    h += '<div style="background:rgba(255,255,255,0.04);border-radius:6px;padding:8px 12px;">';
+    h += '<div style="color:#888;font-size:9.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;">Total cierre</div>';
+    h += '<div style="color:#fff;font-weight:900;font-size:14px;">' + formatMoney(tTotal) + '</div>';
+    h += '<div style="color:#aaa;font-size:11px;">' + (rate > 0 ? (tTotal / rate).toFixed(2) : '0') + ' USDT</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(0,255,102,0.06);border:1px solid rgba(0,255,102,0.20);border-radius:6px;padding:8px 12px;">';
+    h += '<div style="color:#aaffaa;font-size:9.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;">✓ Cotizado · ' + pct + '%</div>';
+    h += '<div style="color:#0f0;font-weight:900;font-size:14px;">' + formatMoney(tCotizado) + '</div>';
+    h += '<div style="color:#aaffaa;font-size:11px;">' + Number(it.totalCotizadoUSDT || 0).toFixed(2) + ' USDT</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(255,170,102,0.05);border:1px solid rgba(255,170,102,0.20);border-radius:6px;padding:8px 12px;">';
+    h += '<div style="color:#ffaa66;font-size:9.5px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;">⏳ Pendiente</div>';
+    h += '<div style="color:#ffaa66;font-weight:900;font-size:14px;">' + formatMoney(tPendiente) + '</div>';
+    h += '<div style="color:#ffcfa0;font-size:11px;">' + Number(it.totalPendienteUSDT || 0).toFixed(2) + ' USDT</div>';
+    h += '</div>';
+    h += '</div>';
+
+    if (!showBody) {
+        // Card colapsada — cerrar aquí.
+        h += '</div>';
+        return h;
+    }
 
     // USDT rate
     h += '<div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:12px;background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.20);border-radius:8px;padding:10px 14px;">';
@@ -26977,7 +27051,7 @@ function _renderCotizacionCard(it, scope) {
 
     // Tabla de 10 equipos
     h += '<div style="overflow-x:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;">';
-    h += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:720px;">';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:820px;">';
     h += '<thead><tr style="background:rgba(255,255,255,0.04);">';
     h += '<th style="padding:8px;text-align:center;color:#aaa;font-size:10.5px;letter-spacing:0.5px;width:36px;">#</th>';
     h += '<th style="padding:8px;text-align:left;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">EQUIPO</th>';
@@ -26985,22 +27059,26 @@ function _renderCotizacionCard(it, scope) {
     h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;" title="% comisión que se descuenta del total antes de cotizar">% COM</th>';
     h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;" title="Total − comisión (lo que efectivamente se cotiza)">NETO $</th>';
     h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">PRECIO (USDT)</th>';
+    h += '<th style="padding:8px;text-align:center;color:#aaa;font-size:10.5px;letter-spacing:0.5px;" title="Tilde por equipo cuando ya se cotizó">ESTADO</th>';
     h += '</tr></thead><tbody>';
 
     let totalARS = 0;
     let totalCommARS = 0;
     let totalNetARS = 0;
     for (let i = 0; i < 10; i++) {
-        const t = teams.find(x => Number(x.slot) === i) || { slot: i, name: '', totalARS: 0, commissionPercent: 0 };
+        const t = teams.find(x => Number(x.slot) === i) || { slot: i, name: '', totalARS: 0, commissionPercent: 0, cotizado: false };
         const totA = Number(t.totalARS || 0);
         const pct = Math.max(0, Math.min(100, Number(t.commissionPercent || 0)));
         const commARS = Math.round(totA * (pct / 100));
         const netA = Math.max(0, totA - commARS);
+        const teamCotizado = !!t.cotizado;
         totalARS += totA;
         totalCommARS += commARS;
         totalNetARS += netA;
         const precioUSDT = rate > 0 ? (netA / rate) : 0;
-        h += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        // Tinte verde sutil en filas cotizadas para ver de un vistazo.
+        const rowBg = teamCotizado ? 'background:rgba(0,255,102,0.04);' : '';
+        h += '<tr style="' + rowBg + 'border-top:1px solid rgba(255,255,255,0.05);">';
         h += '<td style="padding:7px;text-align:center;color:#888;font-weight:700;">' + (i + 1) + '</td>';
         h += '<td style="padding:7px;">';
         h += '<input type="text" data-cot-team-slot="' + i + '" data-cot-team-field="name" value="' + escapeHtml(t.name || '') + '" placeholder="Nombre equipo" maxlength="80" ' + ro + ' style="' + roCss + 'width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:600;">';
@@ -27013,6 +27091,21 @@ function _renderCotizacionCard(it, scope) {
         h += '</td>';
         h += '<td data-cot-net-slot="' + i + '" style="padding:7px;text-align:right;color:#fff;font-weight:700;font-size:12px;">' + (netA > 0 ? formatMoney(netA) : '—') + '</td>';
         h += '<td data-cot-precio-slot="' + i + '" style="padding:7px;text-align:right;color:#00c896;font-weight:800;font-size:13px;">' + (rate > 0 && netA > 0 ? precioUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
+        // Columna ESTADO — tilde por equipo. Solo se puede tildar cuando la
+        // cotización está cerrada Y el equipo tiene monto (>0). En draft
+        // mostramos un placeholder porque todavía está cargando data.
+        h += '<td style="padding:7px;text-align:center;">';
+        if (totA <= 0) {
+            h += '<span style="color:#444;font-size:11px;">—</span>';
+        } else if (!isClosed) {
+            h += '<span style="color:#666;font-size:10px;font-style:italic;" title="Cerrá la cotización primero para poder tildar equipos">cerrá primero</span>';
+        } else if (teamCotizado) {
+            const tip = t.cotizedAt ? 'Cotizado el ' + formatDate(t.cotizedAt) + (t.cotizedBy ? ' por ' + t.cotizedBy : '') : 'Cotizado';
+            h += '<button onclick="toggleTeamCotizado(' + escapeJsArg(it.id) + ',' + i + scopeArg + ')" title="' + escapeHtml(tip) + '" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:5px 10px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;letter-spacing:0.3px;">✓ COTIZADO</button>';
+        } else {
+            h += '<button onclick="toggleTeamCotizado(' + escapeJsArg(it.id) + ',' + i + scopeArg + ')" title="Marcar este equipo como cotizado" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:5px 10px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;letter-spacing:0.3px;">✗ PENDIENTE</button>';
+        }
+        h += '</td>';
         h += '</tr>';
     }
 
@@ -27023,6 +27116,7 @@ function _renderCotizacionCard(it, scope) {
     h += '<td data-cot-total-comm style="padding:9px;text-align:right;color:#ffaa66;font-weight:900;font-size:12px;">−' + formatMoney(totalCommARS) + '</td>';
     h += '<td data-cot-total-net style="padding:9px;text-align:right;color:#fff;font-weight:900;font-size:13px;">' + formatMoney(totalNetARS) + '</td>';
     h += '<td data-cot-total-usdt style="padding:9px;text-align:right;color:#00c896;font-weight:900;font-size:13.5px;">' + (rate > 0 ? totalUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
+    h += '<td style="padding:9px;text-align:center;color:#aaa;font-weight:900;font-size:11px;">' + (it.teamsCotizadasN || 0) + ' / ' + ((it.teamsCotizadasN || 0) + (it.teamsPendientesN || 0)) + '</td>';
     h += '</tr>';
 
     h += '</tbody></table></div>';
@@ -27211,6 +27305,26 @@ async function reopenCotizacion(id, scope) {
             return;
         }
         showToast('🔓 Reabierta — ya podés editar', 'success');
+        loadCotizaciones(scope);
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+// Tildea/destildea un equipo individual de una cotización cerrada.
+// El server actualiza el flag de la entry si todos quedaron cotizados.
+async function toggleTeamCotizado(id, slot, scope) {
+    scope = scope || 'interna';
+    try {
+        const r = await authFetch(_cotApiBase(scope) + '/' + encodeURIComponent(id) + '/team/' + slot + '/toggle', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error', 'error');
+            return;
+        }
+        showToast(d.teamCotizado ? '✓ Equipo cotizado' : '✗ Equipo vuelto a pendiente', 'success');
+        // Mantener expandida la card que recién modificó.
+        _cotExpanded[id] = true;
         loadCotizaciones(scope);
     } catch (e) {
         showToast('Error de conexión', 'error');

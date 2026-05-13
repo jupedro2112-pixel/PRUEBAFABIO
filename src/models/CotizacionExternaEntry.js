@@ -15,6 +15,10 @@ const teamSchema = new mongoose.Schema({
   name: { type: String, default: '', trim: true, maxlength: 80 },
   totalARS: { type: Number, default: 0, min: 0 },
   commissionPercent: { type: Number, default: 0, min: 0, max: 100 },
+  // Tilde por equipo (idem CotizacionEntry).
+  cotizado: { type: Boolean, default: false },
+  cotizedAt: { type: Date, default: null },
+  cotizedBy: { type: String, default: '' },
   photoUrl: { type: String, default: '' }
 }, { _id: false });
 
