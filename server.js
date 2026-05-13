@@ -33637,6 +33637,347 @@ app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
 });
 
 // ============================================
+// CIERRES DIARIOS (control financiero)
+// ============================================
+// Cierre diario por sector: ganamos, publicidad, buffalo (con 7 slots
+// de equipo). Track depósitos, comisión banco, ventas a bajar, bajado,
+// pendiente arrastre, bonos. Comprobantes (fotos) + 24h lock + edit
+// history para auditoría.
+const ClosingEntry = require('./src/models/ClosingEntry');
+
+const CLOSING_SECTORS = ['ganamos', 'publicidad', 'buffalo'];
+const CLOSING_LOCK_HOURS = 24;
+
+function _closingComputeTotals(c) {
+  const deposits = Number(c.depositsARS || 0);
+  const margin = Number(c.bankMarginPercent || 0);
+  const commission = deposits * (margin / 100);
+  const depositsNet = deposits - commission;
+  const ventas = Number(c.ventasARS || 0);
+  const bajada = Number(c.bajadaARS || 0);
+  const pendienteAnterior = Number(c.pendienteAnteriorARS || 0);
+  // Lo que tendría que haberse bajado hoy = ventas del día + lo que vino de antes
+  const totalABajar = ventas + pendienteAnterior;
+  const pendienteHoy = Math.max(0, totalABajar - bajada);
+  const bonus = Number(c.bonusARS || 0);
+  // Cuenta neta del sector: lo que entró menos comisión menos bonos.
+  // (No restamos bajada porque la bajada NO es pérdida — es plata que se
+  // transfirió a los clientes que vendieron. Pendiente sí queda como
+  // deuda con clientes hasta que se baje).
+  const netoSector = depositsNet - bonus;
+  return {
+    commission, depositsNet, totalABajar, pendienteHoy, netoSector,
+    bajadaShortfall: Math.max(0, totalABajar - bajada)
+  };
+}
+
+function _closingIsLocked(c) {
+  if (c.status !== 'confirmed' || !c.confirmedAt) return false;
+  return (Date.now() - new Date(c.confirmedAt).getTime()) > (CLOSING_LOCK_HOURS * 3600 * 1000);
+}
+
+// Día YYYY-MM-DD hora Argentina
+function _closingDateKeyART(now) {
+  const d = now || new Date();
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(d);
+}
+
+// GET /api/admin/closings?from=YYYY-MM-DD&to=YYYY-MM-DD[&sector=]
+// Lista cierres con filtros. Default = últimos 30 días.
+app.get('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const today = _closingDateKeyART();
+    const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
+    const to   = String(req.query.to   || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.to   : today;
+    const sector = CLOSING_SECTORS.includes(String(req.query.sector)) ? req.query.sector : null;
+    const filter = {};
+    if (from || to) filter.dateKey = {};
+    if (from) filter.dateKey.$gte = from;
+    if (to)   filter.dateKey.$lte = to;
+    if (sector) filter.sector = sector;
+    const rows = await ClosingEntry.find(filter).sort({ dateKey: -1, sector: 1, teamSlot: 1 }).lean();
+    const enriched = rows.map(r => ({
+      ...r,
+      computed: _closingComputeTotals(r),
+      locked: _closingIsLocked(r)
+    }));
+    res.json({ success: true, rows: enriched, today });
+  } catch (err) {
+    logger.error(`/api/admin/closings: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/closings — crear entrada (draft).
+// Body: { dateKey, sector, teamSlot?, teamName?, depositsARS, bankMarginPercent,
+//         ventasARS, bajadaARS, pendienteAnteriorARS, bonusARS, bonusNote, notes }
+app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sector = String(b.sector || '');
+    if (!CLOSING_SECTORS.includes(sector)) {
+      return res.status(400).json({ error: 'Sector inválido' });
+    }
+    const dateKey = String(b.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.dateKey : _closingDateKeyART();
+    const teamSlot = (sector === 'buffalo' && Number.isInteger(b.teamSlot) && b.teamSlot >= 0 && b.teamSlot <= 6) ? b.teamSlot : null;
+
+    // Auto-pull del pendiente del día anterior si no se mandó explícito.
+    let pendienteAnterior = Math.max(0, Number(b.pendienteAnteriorARS) || 0);
+    if (!b.pendienteAnteriorARS && b.pendienteAnteriorARS !== 0) {
+      const prevDateKey = new Date(new Date(dateKey).getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+      const prevQuery = { dateKey: prevDateKey, sector };
+      if (teamSlot != null) prevQuery.teamSlot = teamSlot;
+      else prevQuery.teamSlot = null;
+      const prev = await ClosingEntry.findOne(prevQuery).lean();
+      if (prev) {
+        const c = _closingComputeTotals(prev);
+        pendienteAnterior = c.pendienteHoy || 0;
+      }
+    }
+
+    const doc = {
+      id: uuidv4(),
+      dateKey,
+      sector,
+      teamSlot,
+      teamName: String(b.teamName || '').trim().slice(0, 60),
+      depositsARS: Math.max(0, Number(b.depositsARS) || 0),
+      bankMarginPercent: Math.max(0, Math.min(100, Number(b.bankMarginPercent) || 0)),
+      ventasARS: Math.max(0, Number(b.ventasARS) || 0),
+      bajadaARS: Math.max(0, Number(b.bajadaARS) || 0),
+      pendienteAnteriorARS: pendienteAnterior,
+      bonusARS: Math.max(0, Number(b.bonusARS) || 0),
+      bonusNote: String(b.bonusNote || '').trim().slice(0, 200),
+      notes: String(b.notes || '').trim().slice(0, 500),
+      status: 'draft',
+      createdBy: req.user.username || ''
+    };
+
+    try {
+      const saved = await ClosingEntry.create(doc);
+      res.json({
+        success: true,
+        row: { ...saved.toObject(), computed: _closingComputeTotals(saved), locked: false }
+      });
+    } catch (e) {
+      if (String(e.message || '').includes('duplicate key')) {
+        return res.status(409).json({ error: 'Ya existe un cierre para ese día/sector/equipo. Editá el existente.' });
+      }
+      throw e;
+    }
+  } catch (err) {
+    logger.error(`POST /api/admin/closings: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PUT /api/admin/closings/:id — editar cierre (bloqueado si > 24h confirmado).
+// Cualquier cambio queda en editHistory para auditoría.
+app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await ClosingEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    if (_closingIsLocked(c)) {
+      return res.status(403).json({
+        error: `Cierre bloqueado — pasaron más de ${CLOSING_LOCK_HOURS}hs desde la confirmación. No se puede editar.`,
+        locked: true
+      });
+    }
+    const editable = [
+      'teamName','depositsARS','bankMarginPercent','ventasARS','bajadaARS',
+      'pendienteAnteriorARS','bonusARS','bonusNote','notes'
+    ];
+    const b = req.body || {};
+    const username = req.user.username || '';
+    const changes = [];
+    for (const f of editable) {
+      if (!(f in b)) continue;
+      let v = b[f];
+      if (typeof v === 'string') v = v.trim();
+      if (typeof v === 'number' || (typeof v === 'string' && f.endsWith('ARS')) || f === 'bankMarginPercent') {
+        v = Number(v) || 0;
+        if (f === 'bankMarginPercent') v = Math.max(0, Math.min(100, v));
+        else v = Math.max(0, v);
+      }
+      if (c[f] !== v) {
+        changes.push({ editedAt: new Date(), editedBy: username, field: f, before: c[f], after: v });
+        c[f] = v;
+      }
+    }
+    if (changes.length === 0) {
+      return res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: _closingIsLocked(c) }, message: 'Sin cambios' });
+    }
+    c.editHistory.push(...changes);
+    await c.save();
+    res.json({
+      success: true,
+      row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: _closingIsLocked(c) },
+      changesCount: changes.length
+    });
+  } catch (err) {
+    logger.error(`PUT /api/admin/closings/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/closings/:id/confirm — pasa de draft a confirmed.
+// Setea confirmedAt + lockedAt (24h después).
+// REQUIERE: si quedó pendiente > 0, debe haber al menos 1 comprobante
+// con kind='pendiente_bank' (foto del banco que muestre que la plata
+// sigue ahí). Sin esto, se considera plata faltante y rechazamos.
+app.post('/api/admin/closings/:id/confirm', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await ClosingEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    if (c.status === 'confirmed') {
+      return res.status(400).json({ error: 'Cierre ya estaba confirmado' });
+    }
+    const totals = _closingComputeTotals(c);
+    if (totals.pendienteHoy > 0) {
+      const hasProof = (c.comprobantes || []).some(p => p.kind === 'pendiente_bank');
+      if (!hasProof) {
+        return res.status(400).json({
+          error: `Quedaron $${totals.pendienteHoy.toLocaleString('es-AR')} pendientes para bajar. Tenés que adjuntar un comprobante del banco mostrando que la plata sigue en la cuenta antes de confirmar (sino se considera plata faltante).`,
+          missingBankProof: true,
+          pendienteARS: totals.pendienteHoy
+        });
+      }
+    }
+    const now = new Date();
+    c.status = 'confirmed';
+    c.confirmedAt = now;
+    c.confirmedBy = req.user.username || '';
+    c.lockedAt = new Date(now.getTime() + CLOSING_LOCK_HOURS * 3600 * 1000);
+    await c.save();
+    res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: false } });
+  } catch (err) {
+    logger.error(`POST /api/admin/closings/:id/confirm: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/closings/:id/comprobante — adjuntar foto (URL ya subida)
+// Body: { url, kind: 'bajada'|'pendiente_bank', note }
+app.post('/api/admin/closings/:id/comprobante', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await ClosingEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    if (_closingIsLocked(c)) {
+      return res.status(403).json({ error: 'Cierre bloqueado por 24h', locked: true });
+    }
+    const url = String((req.body && req.body.url) || '').trim();
+    if (!url || !/^https?:\/\//i.test(url)) {
+      return res.status(400).json({ error: 'URL inválida' });
+    }
+    const kind = ['bajada', 'pendiente_bank'].includes(req.body && req.body.kind) ? req.body.kind : 'bajada';
+    const note = String((req.body && req.body.note) || '').trim().slice(0, 200);
+    c.comprobantes.push({ url, kind, note, uploadedBy: req.user.username || '' });
+    c.editHistory.push({
+      editedAt: new Date(),
+      editedBy: req.user.username || '',
+      field: 'comprobante_add',
+      before: null,
+      after: { url, kind }
+    });
+    await c.save();
+    res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: false } });
+  } catch (err) {
+    logger.error(`POST comprobante: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE /api/admin/closings/:id/comprobante/:idx — sacar un comprobante.
+app.delete('/api/admin/closings/:id/comprobante/:idx', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const idx = parseInt(req.params.idx, 10);
+    const c = await ClosingEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    if (_closingIsLocked(c)) {
+      return res.status(403).json({ error: 'Cierre bloqueado por 24h', locked: true });
+    }
+    if (!Number.isInteger(idx) || idx < 0 || idx >= c.comprobantes.length) {
+      return res.status(400).json({ error: 'Índice inválido' });
+    }
+    const removed = c.comprobantes.splice(idx, 1)[0];
+    c.editHistory.push({
+      editedAt: new Date(),
+      editedBy: req.user.username || '',
+      field: 'comprobante_remove',
+      before: removed,
+      after: null
+    });
+    await c.save();
+    res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: false } });
+  } catch (err) {
+    logger.error(`DELETE comprobante: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/closings/summary?from=&to= — totales agregados.
+app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const today = _closingDateKeyART();
+    const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
+    const to   = String(req.query.to   || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.to   : today;
+    const filter = {};
+    if (from || to) filter.dateKey = {};
+    if (from) filter.dateKey.$gte = from;
+    if (to)   filter.dateKey.$lte = to;
+    const rows = await ClosingEntry.find(filter).lean();
+    const bySector = {};
+    for (const r of rows) {
+      const c = _closingComputeTotals(r);
+      const k = r.sector;
+      if (!bySector[k]) {
+        bySector[k] = {
+          sector: k,
+          depositsARS: 0, commission: 0, depositsNet: 0,
+          ventasARS: 0, bajadaARS: 0, pendienteHoy: 0,
+          bonusARS: 0, netoSector: 0, entries: 0
+        };
+      }
+      const s = bySector[k];
+      s.depositsARS += r.depositsARS || 0;
+      s.commission += c.commission;
+      s.depositsNet += c.depositsNet;
+      s.ventasARS += r.ventasARS || 0;
+      s.bajadaARS += r.bajadaARS || 0;
+      s.pendienteHoy += c.pendienteHoy;
+      s.bonusARS += r.bonusARS || 0;
+      s.netoSector += c.netoSector;
+      s.entries += 1;
+    }
+    const totals = {
+      depositsARS: 0, commission: 0, depositsNet: 0,
+      ventasARS: 0, bajadaARS: 0, pendienteHoy: 0, bonusARS: 0, netoSector: 0
+    };
+    for (const s of Object.values(bySector)) {
+      totals.depositsARS += s.depositsARS;
+      totals.commission += s.commission;
+      totals.depositsNet += s.depositsNet;
+      totals.ventasARS += s.ventasARS;
+      totals.bajadaARS += s.bajadaARS;
+      totals.pendienteHoy += s.pendienteHoy;
+      totals.bonusARS += s.bonusARS;
+      totals.netoSector += s.netoSector;
+    }
+    res.json({ success: true, bySector: Object.values(bySector), totals, from, to });
+  } catch (err) {
+    logger.error(`/api/admin/closings/summary: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // RUTAS DE REFERIDOS
 // ============================================
 
