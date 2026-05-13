@@ -33794,7 +33794,11 @@ const CLOSING_LOCK_HOURS = 24;
 
 function _closingComputeTotals(c) {
   const deposits = Number(c.depositsARS || 0);         // cargas totales (Σ de 7 equipos)
-  const ventas = Number(c.ventasARS || 0);             // lo que hay que bajar (sale para los ganadores)
+  // c.ventasARS guarda históricamente Σ DESCARGAS (cash-outs a clientes).
+  // La VENTA NETA = depósitos − descargas (lo que efectivamente quedó
+  // como ingreso de la casa antes de gastos/comisión).
+  const descargas = Number(c.ventasARS || 0);
+  const ventas = Math.max(0, deposits - descargas);
   const margin = Number(c.bankMarginPercent || 0);
   const bajada = Number(c.bajadaARS || 0);             // lo que efectivamente se bajó hoy
   const pendienteAnterior = Number(c.pendienteAnteriorARS || 0);
@@ -33816,7 +33820,7 @@ function _closingComputeTotals(c) {
   const commission = Math.round(deposits * (margin / 100));
 
   // Neto del día = lo que efectivamente queda después de:
-  //   ventas (lo que se vendió/retiró)
+  //   venta (= depósitos − descargas, lo que entró neto)
   //   − comisión (lo que el banco se llevó)
   //   − gastos (los gastos del día)
   //   − egresos (préstamos hechos)
@@ -33860,7 +33864,8 @@ function _closingComputeTotals(c) {
   return {
     commission,
     depositsNet: deposits - commission,
-    ventas,
+    descargas,                     // Σ cash-outs a clientes
+    ventas,                        // depósitos − descargas (venta NETA)
     bajada,
     bonus,
     ingresos,
