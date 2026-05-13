@@ -24968,8 +24968,39 @@ function _wireClosingsDragDrop() {
     });
 }
 
+// Achica una imagen al máximo (maxW x maxH px) preservando proporción y
+// la devuelve como data URL (image/jpeg, calidad 0.82). Reduce el peso
+// de un screenshot típico de ~1MB a ~80-150KB.
+async function _compressImageToDataUrl(file, maxW = 1400, maxH = 1400) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                let w = img.width, h = img.height;
+                if (w > maxW || h > maxH) {
+                    const r = Math.min(maxW / w, maxH / h);
+                    w = Math.round(w * r); h = Math.round(h * r);
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(canvas.toDataURL('image/jpeg', 0.82));
+            };
+            img.onerror = () => reject(new Error('img load failed'));
+            img.src = e.target.result;
+        };
+        reader.onerror = () => reject(new Error('file read failed'));
+        reader.readAsDataURL(file);
+    });
+}
+
 // Sube una lista de Files al cierre rid con (kind, teamSlot) — extraído
 // de onClosingFilePicked para que el drag&drop lo pueda reusar.
+// Estrategia: intenta S3 (presigned-url); si S3 no está configurado en el
+// server (501), guarda la imagen comprimida directamente como data URI en
+// la DB. Así funciona sin necesidad de configurar AWS.
 async function _uploadClosingFiles(rid, kind, teamSlot, files) {
     if (!files || files.length === 0) return;
     const row = (_closingsRowsCache || []).find(x => x.id === rid);
@@ -24984,22 +25015,41 @@ async function _uploadClosingFiles(rid, kind, teamSlot, files) {
         showToast('Sólo se suben ' + remaining + ' (cap de ' + COMP_MAX_PER_KIND + ' por tipo)', 'info');
     }
     let okCount = 0, failCount = 0;
+    let useFallback = false; // se activa después del primer 501 para evitar reintentos
     for (const file of toUpload) {
         try {
-            const pre = await authFetch('/api/upload/presigned-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: file.name || 'paste.png', contentType: file.type || 'image/png', prefix: 'closings' })
-            });
-            const preD = await pre.json();
-            if (!pre.ok || !preD.uploadUrl) { failCount++; continue; }
-            const putR = await fetch(preD.uploadUrl, {
-                method: 'PUT',
-                headers: { 'Content-Type': file.type || 'image/png' },
-                body: file
-            });
-            if (!putR.ok) { failCount++; continue; }
-            const publicUrl = preD.publicUrl || preD.url;
+            let publicUrl = null;
+
+            if (!useFallback) {
+                // Intento S3 primero
+                const pre = await authFetch('/api/upload/presigned-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: file.name || 'paste.png', contentType: file.type || 'image/png', prefix: 'closings' })
+                });
+                if (pre.status === 501) {
+                    // S3 no configurado → desde acá en adelante usar fallback base64
+                    useFallback = true;
+                } else {
+                    const preD = await pre.json().catch(() => ({}));
+                    if (!pre.ok || !preD.uploadUrl) { failCount++; continue; }
+                    const putR = await fetch(preD.uploadUrl, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': file.type || 'image/png' },
+                        body: file
+                    });
+                    if (!putR.ok) { failCount++; continue; }
+                    publicUrl = preD.publicUrl || preD.url;
+                }
+            }
+
+            if (useFallback) {
+                // Fallback: imagen comprimida como data URI directo en DB
+                try {
+                    publicUrl = await _compressImageToDataUrl(file);
+                } catch (e) { failCount++; continue; }
+            }
+
             const payload = { url: publicUrl, kind };
             if (teamSlot != null && !isNaN(teamSlot)) payload.teamSlot = teamSlot;
             const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
@@ -25007,7 +25057,7 @@ async function _uploadClosingFiles(rid, kind, teamSlot, files) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            const d = await r.json();
+            const d = await r.json().catch(() => ({}));
             if (!r.ok || !d.success) { failCount++; continue; }
             okCount++;
         } catch (e) { failCount++; }

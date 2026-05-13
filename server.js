@@ -34126,8 +34126,17 @@ app.post('/api/admin/closings/:id/comprobante', authMiddleware, closingsAccessMi
       return res.status(403).json({ error: 'Cierre bloqueado por 24h', locked: true });
     }
     const url = String((req.body && req.body.url) || '').trim();
-    if (!url || !/^https?:\/\//i.test(url)) {
-      return res.status(400).json({ error: 'URL inválida' });
+    // Aceptamos http(s):// (foto en S3 o externa) o data:image/...;base64,...
+    // El fallback del cliente usa data URI cuando S3 no está configurado.
+    const isHttp = /^https?:\/\//i.test(url);
+    const isDataImg = /^data:image\/(jpeg|png|gif|webp);base64,/i.test(url);
+    if (!url || !(isHttp || isDataImg)) {
+      return res.status(400).json({ error: 'URL inválida (esperado http(s):// o data:image/...;base64,)' });
+    }
+    // Sanity check: data URIs muy grandes podrían reventar el doc de Mongo
+    // (límite de 16MB total). 8MB de data URI ya es ~6MB de imagen real.
+    if (isDataImg && url.length > 8 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Imagen demasiado grande — máx 8MB en base64' });
     }
     const validKinds = ['deposito', 'venta', 'bonificacion', 'bajada', 'pendiente_bank', 'ingreso', 'egreso', 'gasto'];
     const kind = validKinds.includes(req.body && req.body.kind) ? req.body.kind : 'deposito';
