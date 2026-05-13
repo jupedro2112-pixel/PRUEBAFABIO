@@ -24663,16 +24663,19 @@ function _prevDateKey(dateKey) {
     return yy + '-' + mm + '-' + dd;
 }
 
-// Devuelve el pendiente a bajar del día anterior (al date dado) del sector
-// activo — leído del cache de cierres. Es el monto que automáticamente
-// debe arrancar como "pendiente anterior" en el nuevo cierre.
+// Devuelve el saldo de CVU a las 00 hs del día anterior — ese es el monto
+// REAL que arrastró al nuevo día. Antes usábamos el pendiente calculado,
+// pero eso siempre daba faltante por las diferencias entre lo esperado y
+// lo que el banco realmente mostró. Tomamos el CVU 00 hs real porque es
+// la verdad de cuánta plata hay disponible al arrancar el día.
 function _autoPendienteAnterior(date, sectorKey) {
     const prev = _prevDateKey(date);
     if (!prev) return 0;
     const row = (_closingsRowsCache || []).find(r => r.dateKey === prev && r.sector === sectorKey);
     if (!row) return 0;
+    // CVU 00 hs del día anterior — saldo bancario real al cierre.
     // Redondear a peso entero — evita decimales feos en el input.
-    return Math.round(Number((row.computed && row.computed.pendienteHoy) || 0));
+    return Math.round(Number(row.cvuMidnightARS || 0));
 }
 
 // Botón inline para adjuntar foto al cierre. Aparece pegado a un campo
@@ -25675,8 +25678,10 @@ function closingsRecompute(rid) {
     // Datos del bloque general
     const bankPct = getV('bankMarginPercent');
     const bajada = getV('bajadaARS');
-    const pendAnt = getV('pendienteAnteriorARS');
-    const saldoInicial = getV('saldoInicialARS');
+    const pendAnt = getV('pendienteAnteriorARS'); // CVU 00 hs día anterior
+    // saldoInicial: removido del modelo. Se deja en 0 — la cifra real del
+    // banco al cierre del día anterior ya viene reflejada en pendAnt (CVU 00 hs).
+    const saldoInicial = 0;
     // Movimientos extra
     const ingresos = getV('ingresosARS');
     const egresos = getV('egresosARS');
@@ -26244,30 +26249,33 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'bajada', null, '📷 Foto bajada', locked) + _inlineUploadList(rid, row, 'bajada', null, locked) + '</div>';
     html += '<div style="color:#666;font-size:9px;margin-top:2px;">hasta 10 fotos (varias transferencias)</div></div>';
-    // Pendiente anterior — comportamiento:
+    // CVU 00 hs del día anterior — comportamiento:
     //   - Si el cierre YA existe → usar el valor guardado, READ-ONLY.
-    //   - Si es NUEVO y hay cierre del día anterior → autocompletar y READ-ONLY.
+    //   - Si es NUEVO y hay cierre del día anterior → autocompletar con su
+    //     cvuMidnightARS y READ-ONLY (arrastre del CVU REAL del banco).
     //   - Si es NUEVO y NO hay día anterior (primer cierre del sector) →
     //     editable para que el owner cargue manualmente.
+    // Antes se usaba el "pendienteHoy" calculado pero eso siempre arrastraba
+    // diferencias contra la realidad bancaria. Ahora arrastra el CVU 00 hs
+    // del día previo — la cifra REAL que muestra el banco al cierre del día.
     const prevExists = !!(_closingsRowsCache || []).find(rr => rr.dateKey === _prevDateKey(date) && rr.sector === sec.key);
     const pendAntAuto = row
         ? Number(row.pendienteAnteriorARS || 0)
         : _autoPendienteAnterior(date, sec.key);
-    const pendAntEditable = !row && !prevExists; // primer cierre: editable
+    const pendAntEditable = !row && !prevExists;
     const pendAntStyle = pendAntEditable
-        ? inputStyle + 'border-color:rgba(255,170,102,0.40);'
-        : inputStyle + 'background:rgba(0,0,0,0.30);color:#ffaa66;cursor:not-allowed;';
+        ? inputStyle + 'border-color:rgba(0,212,255,0.40);'
+        : inputStyle + 'background:rgba(0,0,0,0.30);color:#00d4ff;cursor:not-allowed;';
     const pendAntAttr = pendAntEditable ? '' : 'readonly tabindex="-1"';
     const pendAntHint = pendAntEditable
-        ? 'PRIMER CIERRE · cargá manual cuánto quedó pendiente de antes'
-        : 'arrastre del día anterior · no editable';
-    const pendAntLabel = pendAntEditable ? '↩️ Pend. anterior $ (cargá una vez)' : '↩️ Pend. anterior $ (auto)';
+        ? 'PRIMER CIERRE · cargá manual el CVU al arrancar'
+        : 'arrastre del CVU 00 hs del día anterior · no editable';
+    const pendAntLabel = pendAntEditable ? '🏦 CVU 00 hs día anterior (1ª vez)' : '🏦 CVU 00 hs día anterior (auto)';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">' + pendAntLabel + '</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + pendAntAuto + '" min="0" step="1000" style="' + pendAntStyle + '" ' + pendAntAttr + ' ' + (locked ? 'disabled' : '') + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'pendiente_bank', null, '🏦 Foto banco', locked) + _inlineUploadList(rid, row, 'pendiente_bank', null, locked) + '</div>';
     html += '<div style="color:#666;font-size:9px;margin-top:2px;">' + pendAntHint + '</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;" title="Plata que ya estaba en el CVU al arrancar el día (carry-over). Se suma al CVU esperado al cierre.">💼 Saldo inicial $</label><input type="number" id="cls_' + rid + '_saldoInicialARS" value="' + (row ? (Number(row.saldoInicialARS) || 0) : 0) + '" min="0" step="1000" style="' + inputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '>';
-    html += '<input type="text" id="cls_' + rid + '_saldoInicialNote" value="' + escapeHtml((row && row.saldoInicialNote) || '') + '" placeholder="Detalle (de dónde viene)" maxlength="300" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:5px 8px;border-radius:5px;font-size:11px;width:100%;box-sizing:border-box;margin-top:4px;" ' + disabledAttr + '>';
-    html += '<div style="color:#666;font-size:9px;margin-top:2px;">plata que ya había de antes en el CVU</div></div>';
+    // Saldo inicial — REMOVIDO del flujo. Se mantienen los campos en el
+    // payload por backwards-compat (cierres viejos), pero ya no se muestran.
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ depósito# + descargas# + bonos#</div></div>';
     html += '</div>';
     html += '</div>';
@@ -26423,8 +26431,8 @@ async function saveTeamSectorClosing(rid, date, sector) {
         bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
         bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
-        saldoInicialARS: parseFloat(get('saldoInicialARS')) || 0,
-        saldoInicialNote: get('saldoInicialNote') || '',
+        saldoInicialARS: 0,
+        saldoInicialNote: '',
         ingresosARS: parseFloat(get('ingresosARS')) || 0,
         ingresosNote: get('ingresosNote') || '',
         egresosARS: parseFloat(get('egresosARS')) || 0,
@@ -26489,10 +26497,10 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
         const pAuto = row ? Number(row.pendienteAnteriorARS || 0) : _autoPendienteAnterior(date, sec.key);
         const pEditable = !row && !prevExistsP;
         const pStyle = pEditable
-            ? inputStyle + 'border-color:rgba(255,170,102,0.40);'
-            : inputStyle + 'background:rgba(0,0,0,0.30);color:#ffaa66;cursor:not-allowed;';
+            ? inputStyle + 'border-color:rgba(0,212,255,0.40);'
+            : inputStyle + 'background:rgba(0,0,0,0.30);color:#00d4ff;cursor:not-allowed;';
         const pAttr = pEditable ? '' : 'readonly tabindex="-1"';
-        const pLabel = pEditable ? '↩️ Pend. anterior (cargá una vez)' : '↩️ Pend. anterior (auto)';
+        const pLabel = pEditable ? '🏦 CVU 00 hs anterior (1ª vez)' : '🏦 CVU 00 hs anterior (auto)';
         html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">' + pLabel + '</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + pAuto + '" min="0" step="100" style="' + pStyle + '" ' + pAttr + ' ' + (locked ? 'disabled' : '') + '></div>';
     })();
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos ($)</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
@@ -26598,8 +26606,8 @@ async function saveClosing(rid, sector, teamSlot, date) {
         transactionsCount: parseInt(get('transactionsCount'), 10) || 0,
         withdrawalsCount: parseInt(get('withdrawalsCount'), 10) || 0,
         bonusCount: parseInt(get('bonusCount'), 10) || 0,
-        saldoInicialARS: parseFloat(get('saldoInicialARS')) || 0,
-        saldoInicialNote: get('saldoInicialNote') || '',
+        saldoInicialARS: 0,
+        saldoInicialNote: '',
         ingresosARS: parseFloat(get('ingresosARS')) || 0,
         ingresosNote: get('ingresosNote') || '',
         egresosARS: parseFloat(get('egresosARS')) || 0,

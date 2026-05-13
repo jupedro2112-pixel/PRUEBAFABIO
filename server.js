@@ -33802,7 +33802,12 @@ function _closingComputeTotals(c) {
   const ingresos = Number(c.ingresosARS || 0);         // plata que ENTRÓ extra (prestamos recibidos)
   const egresos = Number(c.egresosARS || 0);           // préstamos que HICIMOS (sale, vuelve después)
   const gastos = Number(c.gastosARS || 0);             // gastos del día (consumido, no vuelve)
-  const saldoInicial = Number(c.saldoInicialARS || 0); // plata que ya estaba en CVU al arrancar
+  // saldoInicial REMOVIDO del modelo nuevo. El CVU 00 hs del día anterior
+  // (que viene en pendienteAnteriorARS) ya refleja la realidad bancaria,
+  // así que cualquier saldo "inicial" ya está contemplado ahí. Lo dejamos
+  // leer del doc por backwards-compat con cierres viejos pero forzamos
+  // a 0 para los nuevos.
+  const saldoInicial = Number(c.saldoInicialARS || 0);
   const cvuActual = Number(c.cvuMidnightARS || 0);
 
   // Comisión: % sobre los DEPÓSITOS (cargas). El banco se queda con esta
@@ -33830,9 +33835,10 @@ function _closingComputeTotals(c) {
   // netoSector legacy = -diff (sale positivo si sobraste, negativo si faltaste)
   const netoSector = -diff;
 
-  // Saldo CVU esperado a las 00 hs = pendiente que falta bajar + saldo
-  // inicial (plata que ya estaba en el CVU al arrancar el día). Ese
-  // monto total tiene que estar en el banco al cierre.
+  // Saldo CVU esperado a las 00 hs = pendiente que falta bajar.
+  // (Antes se sumaba saldoInicial, pero ese campo fue removido del flujo
+  // nuevo. El CVU del día anterior — pendienteAnterior — ya viene de la
+  // realidad bancaria y se contempla en totalABajar.)
   const cvuExpected = pendienteHoy + saldoInicial;
   // Discrepancia: cvuActual - cvuExpected
   //   = 0  → perfecto (el banco coincide con los movimientos)
