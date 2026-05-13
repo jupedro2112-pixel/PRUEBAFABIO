@@ -25351,7 +25351,7 @@ function _renderClosings() {
         html += '<th style="' + thStd + '" title="Pendiente calculado = lo que falta bajar">⏳ Pend. a bajar</th>';
         html += '<th style="' + thStd + '" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
         html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = pendiente + ingresos − egresos − gastos">📐 NETO</th>';
-        html += '<th style="' + thStd + '" title="Δ = CVU real − Neto. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
+        html += '<th style="' + thStd + '" title="Δ = Pendiente − CVU 00h − Gastos − Egresos + Ingresos. Positivo = falta · Negativo = sobra">Δ falta/sobra</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Estado</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Acción</th>';
         html += '</tr></thead><tbody>';
@@ -25403,23 +25403,26 @@ function _renderClosings() {
             const egresosColor = egresosVal > 0 ? '#ff8080' : '#888';
             // Neto (= CVU esperado) = pendiente + ingresos − egresos − gastos
             // Es lo que TIENE que haber en el CVU al cerrar el día.
-            // Δ = CVU real − Neto → negativo = falta, positivo = sobra.
             const netoFinal = Number(c.pendienteHoy || 0)
                 + ingresosVal
                 - egresosVal
                 - gastosVal;
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
-            // Δ = CVU real − Neto
-            const deltaCvu2 = cvuMid - netoFinal;
+            // Δ falta/sobra — se calcula DIRECTO desde pendiente:
+            //   Δ = (Pendiente − CVU) − Gastos − Egresos + Ingresos
+            // Positivo = FALTA (lo que tendría que estar en el CVU no está).
+            // Negativo = SOBRA (hay más plata de la calculada).
+            const faltaSobra = (Number(c.pendienteHoy || 0) - cvuMid)
+                - gastosVal - egresosVal + ingresosVal;
             let dcolor, dtext;
-            if (cvuMid === 0 && netoFinal === 0) {
+            if (cvuMid === 0 && Number(c.pendienteHoy || 0) === 0 && ingresosVal === 0 && egresosVal === 0 && gastosVal === 0) {
                 dcolor = '#666'; dtext = '—';
-            } else if (Math.abs(deltaCvu2) < 1) {
+            } else if (Math.abs(faltaSobra) < 1) {
                 dcolor = '#aaffaa'; dtext = '✅ OK';
-            } else if (deltaCvu2 > 0) {
-                dcolor = '#66ff66'; dtext = '+' + _closingFmt(deltaCvu2);
+            } else if (faltaSobra > 0) {
+                dcolor = '#ff5050'; dtext = '🚨 FALTAN ' + _closingFmt(faltaSobra);
             } else {
-                dcolor = '#ff5050'; dtext = '🚨 ' + _closingFmt(deltaCvu2);
+                dcolor = '#66ff66'; dtext = '💚 SOBRAN ' + _closingFmt(-faltaSobra);
             }
             // Estilos: venta y neto se renderizan más grandes que el resto.
             const tdStd = 'padding:6px 10px;text-align:right;';
@@ -25441,7 +25444,7 @@ function _renderClosings() {
             html += '<td style="' + tdStd + 'color:#00d4ff;font-weight:700;" title="Saldo real CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
             // NETO — agrandado
             html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = pendiente + ingresos − egresos − gastos">' + _closingFmt(netoFinal) + '</td>';
-            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="CVU 00h − Neto">' + dtext + '</td>';
+            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="Δ = Pendiente − CVU 00h − Gastos − Egresos + Ingresos">' + dtext + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';
