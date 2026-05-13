@@ -35007,6 +35007,7 @@ app.post('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req,
     // testUsername, el push va SOLO a ese usuario (modo prueba). Si no,
     // va a todos los users con tokens FCM.
     let broadcastResult = null;
+    let diag = null;
     const testUsername = String(b.testUsername || '').trim().toLowerCase();
     if (b.broadcastTitle && b.broadcastBody) {
       try {
@@ -35022,9 +35023,28 @@ app.post('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req,
         const filter = testUsername
           ? { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
           : {};
+
+        // Diagnóstico previo: cuántos users matchean el filter y cuántos
+        // de ellos tienen tokens FCM (para que el dueño entienda por qué
+        // un test no llega — usuario no existe, no tiene push, etc.).
+        if (testUsername) {
+          const matchedUsers = await User.find(filter).select('username fcmToken fcmTokens').lean();
+          let totalTokens = 0;
+          for (const u of matchedUsers) {
+            if (u.fcmTokens && u.fcmTokens.length) totalTokens += u.fcmTokens.filter(t => t && t.token).length;
+            if (u.fcmToken) totalTokens += 1;
+          }
+          diag = {
+            testUsername,
+            matchedUsersCount: matchedUsers.length,
+            matchedUsername: matchedUsers[0] ? matchedUsers[0].username : null,
+            totalTokens
+          };
+        }
+
         broadcastResult = await sendNotificationToAllUsers(User, title, body, data, filter);
         if (testUsername) {
-          logger.info(`[redeem-codes] code ${doc.code} created · notif TEST a "${testUsername}" → success=${broadcastResult.successCount} fail=${broadcastResult.failureCount}`);
+          logger.info(`[redeem-codes] code ${doc.code} created · notif TEST a "${testUsername}" · matched=${diag && diag.matchedUsersCount} tokens=${diag && diag.totalTokens} → success=${broadcastResult.successCount} fail=${broadcastResult.failureCount} err=${broadcastResult.error || '-'}`);
         }
       } catch (notifErr) {
         logger.warn(`[redeem-codes] notif falló: ${notifErr.message}`);
@@ -35035,13 +35055,71 @@ app.post('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req,
       success: true,
       item: { id: doc.id, code: doc.code, expiresAt: doc.expiresAt },
       broadcastResult: broadcastResult ? {
-        successCount: broadcastResult.successCount,
-        failureCount: broadcastResult.failureCount,
-        totalUsers: broadcastResult.totalUsers
-      } : null
+        successCount: broadcastResult.successCount || 0,
+        failureCount: broadcastResult.failureCount || 0,
+        totalUsers: broadcastResult.totalUsers,
+        error: broadcastResult.error || null
+      } : null,
+      diag
     });
   } catch (err) {
     logger.error(`POST /api/admin/redeem-codes: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/redeem-codes/test-push — manda un push de prueba a un user
+// SIN crear ningún código. Sirve para verificar que el usuario realmente
+// tiene la app instalada con notifs activadas, antes de lanzar un código.
+app.post('/api/admin/redeem-codes/test-push', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const testUsername = String(b.username || '').trim().toLowerCase();
+    if (!testUsername) return res.status(400).json({ error: 'Falta username' });
+    const title = String(b.title || '🧪 Test push').slice(0, 80);
+    const body = String(b.body || 'Si recibís esto, tu app está OK para recibir códigos.').slice(0, 250);
+
+    const safe = testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filter = { username: { $regex: '^' + safe + '$', $options: 'i' } };
+
+    const matchedUsers = await User.find(filter).select('username fcmToken fcmTokens').lean();
+    let totalTokens = 0;
+    for (const u of matchedUsers) {
+      if (u.fcmTokens && u.fcmTokens.length) totalTokens += u.fcmTokens.filter(t => t && t.token).length;
+      if (u.fcmToken) totalTokens += 1;
+    }
+
+    if (matchedUsers.length === 0) {
+      return res.json({
+        success: false,
+        diag: { testUsername, matchedUsersCount: 0, totalTokens: 0 },
+        error: `No existe ningún usuario con username "${testUsername}"`
+      });
+    }
+    if (totalTokens === 0) {
+      return res.json({
+        success: false,
+        diag: { testUsername, matchedUsersCount: matchedUsers.length, matchedUsername: matchedUsers[0].username, totalTokens: 0 },
+        error: `El usuario "${matchedUsers[0].username}" existe pero no tiene tokens FCM registrados (no instaló la PWA o no aceptó notificaciones).`
+      });
+    }
+
+    const sendResult = await sendNotificationToAllUsers(User, title, body, { source: 'test-push' }, filter);
+    logger.info(`[redeem-codes] TEST-PUSH a "${testUsername}" · matched=${matchedUsers.length} tokens=${totalTokens} → success=${sendResult.successCount} fail=${sendResult.failureCount}`);
+    res.json({
+      success: true,
+      diag: {
+        testUsername,
+        matchedUsersCount: matchedUsers.length,
+        matchedUsername: matchedUsers[0].username,
+        totalTokens,
+        successCount: sendResult.successCount || 0,
+        failureCount: sendResult.failureCount || 0,
+        error: sendResult.error || null
+      }
+    });
+  } catch (err) {
+    logger.error(`POST /api/admin/redeem-codes/test-push: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

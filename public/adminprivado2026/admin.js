@@ -28255,7 +28255,8 @@ function _renderRedeemCodes() {
     h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:rgba(255,170,102,0.06);border:1px dashed rgba(255,170,102,0.30);border-radius:7px;padding:7px 10px;">';
     h += '<span style="color:#ffaa66;font-size:11px;font-weight:800;letter-spacing:0.3px;">🧪 TEST a un solo usuario:</span>';
     h += '<input id="rcTestUsername" type="text" placeholder="username exacto (vacío = todos)" maxlength="80" style="flex:1;min-width:160px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,170,102,0.30);color:#ffaa66;padding:5px 9px;border-radius:6px;font-size:12px;font-weight:700;">';
-    h += '<span style="color:#888;font-size:10.5px;">Si ponés un username, la notif va sólo a esa persona. El código se crea igual.</span>';
+    h += '<button onclick="testRedeemPush()" title="Manda un push de prueba a ese usuario SIN crear ningún código" style="background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.45);padding:5px 11px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;white-space:nowrap;">🔔 Probar push</button>';
+    h += '<span style="color:#888;font-size:10.5px;flex-basis:100%;">Si ponés un username, la notif va sólo a esa persona. El código se crea igual. El botón "🔔 Probar push" verifica si la app del user recibe notifs, sin crear código.</span>';
     h += '</div>';
     h += '<div style="color:#888;font-size:10.5px;margin-top:5px;">⚠️ El código NO va en la notificación — eso lo publicás vos en el canal de Telegram. La notif sólo avisa que hay uno nuevo y reenvía al canal.</div>';
     h += '</div>';
@@ -28368,12 +28369,29 @@ async function createRedeemCode(forceTest) {
         });
         const d = await r.json();
         if (!r.ok || !d.success) { showToast(d.error || 'Error al crear', 'error'); return; }
-        const bcMsg = d.broadcastResult
+        const bc = d.broadcastResult;
+        const di = d.diag;
+        const bcMsg = bc
             ? (testUsername
-                ? ' · 🧪 Notif TEST a "' + testUsername + '" (success: ' + (d.broadcastResult.successCount || 0) + ')'
-                : ' · Notif enviada a ' + (d.broadcastResult.successCount || 0) + ' usuarios')
+                ? ' · 🧪 TEST "' + testUsername + '" → success: ' + (bc.successCount || 0)
+                : ' · Notif enviada a ' + (bc.successCount || 0) + ' usuarios')
             : '';
         showToast('✅ Código creado' + bcMsg, 'success');
+        // Si fue test y no llegó (success=0), mostrar diagnóstico claro
+        if (testUsername && bc && (bc.successCount || 0) === 0) {
+            let diagMsg = '⚠️ Código creado pero el TEST PUSH NO se entregó.\n\n';
+            if (di) {
+                diagMsg += '• Usuarios que matchean "' + testUsername + '": ' + (di.matchedUsersCount || 0) + '\n';
+                if (di.matchedUsername) diagMsg += '• Match: ' + di.matchedUsername + '\n';
+                diagMsg += '• Tokens FCM del user: ' + (di.totalTokens || 0) + '\n';
+            }
+            if (bc.error) diagMsg += '• Error FCM: ' + bc.error + '\n';
+            diagMsg += '\nProbables causas:\n';
+            if (di && di.matchedUsersCount === 0) diagMsg += '→ Username mal escrito o usuario inexistente.\n';
+            else if (di && di.totalTokens === 0) diagMsg += '→ El user no tiene la PWA instalada o no aceptó notifs.\n';
+            else diagMsg += '→ Tokens FCM vencidos (el user no abre la app hace mucho).\n';
+            alert(diagMsg);
+        }
         // Limpiar inputs (mantiene testUsername para repetir tests rápido)
         document.getElementById('rcCode').value = '';
         document.getElementById('rcAmount').value = '';
@@ -28386,6 +28404,45 @@ async function createRedeemCode(forceTest) {
 
 // Wrapper: el botón "🧪 SOLO AL TEST USER" obliga a que testUsername esté seteado.
 async function createRedeemCodeTest() { return createRedeemCode(true); }
+
+// Manda un push de prueba al testUsername SIN crear código. Devuelve
+// diagnóstico detallado (user existe, tiene tokens, success/fail FCM).
+async function testRedeemPush() {
+    const username = (document.getElementById('rcTestUsername').value || '').trim();
+    if (!username) { showToast('Completá el username para probar', 'error'); return; }
+    const title = (document.getElementById('rcNotifTitle').value || '🧪 Test push').trim();
+    const body = (document.getElementById('rcNotifBody').value || 'Si recibís esto, tu app está OK.').trim();
+    try {
+        const r = await authFetch('/api/admin/redeem-codes/test-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, title, body })
+        });
+        const d = await r.json();
+        const di = d.diag || {};
+        let msg;
+        if (!d.success) {
+            msg = '❌ ' + (d.error || 'Falló el envío');
+            if (di.matchedUsersCount === 0) msg += '\n→ Usuario inexistente. Revisá la ortografía.';
+            else if (di.totalTokens === 0) msg += '\n→ El user existe pero NO tiene la PWA instalada / notifs aceptadas.';
+            alert(msg);
+            return;
+        }
+        msg = '✅ Push enviado a "' + (di.matchedUsername || username) + '"';
+        msg += '\n• Tokens FCM del user: ' + (di.totalTokens || 0);
+        msg += '\n• Entregados con éxito: ' + (di.successCount || 0);
+        msg += '\n• Fallidos: ' + (di.failureCount || 0);
+        if (di.error) msg += '\n⚠ ' + di.error;
+        if ((di.successCount || 0) === 0) {
+            msg += '\n\nSi success=0 pero hay tokens, los tokens están vencidos (el user borró la app o no la abre hace mucho).';
+        } else {
+            msg += '\n\nMirá el celular del user — debería sonarle ahora.';
+        }
+        alert(msg);
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
 
 async function closeRedeemCode(id) {
     if (!confirm('¿Cerrar este código? Después nadie va a poder canjearlo.')) return;
