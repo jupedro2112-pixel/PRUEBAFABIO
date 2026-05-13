@@ -9949,7 +9949,13 @@ const _DEFAULT_SECTION_PIN = '1818';
 // Defaults específicos por sección — overridean _DEFAULT_SECTION_PIN.
 // Útil para que distintas secciones empiecen con PIN distinto sin que el
 // admin tenga que ir a cambiarlos a mano.
-const _SECTION_DEFAULT_PINS = { closings: '1515' };
+const _SECTION_DEFAULT_PINS = { closings: '3333' };
+// PINs previos seedeados por defecto en deploys anteriores. Si el valor en
+// la DB todavía es uno de estos, se rotará al default nuevo en el próximo
+// _getSectionPins(). Si el owner ya cambió la clave a otro valor distinto,
+// no se toca. Esto evita que el dueño tenga que pasar por "Cambiar clave"
+// cada vez que se actualiza el default vía deploy.
+const _SECTION_LEGACY_PINS = { closings: ['1515', '1818'] };
 const _defaultPinForSection = (s) => _SECTION_DEFAULT_PINS[s] || _DEFAULT_SECTION_PIN;
 // 'teams' está protegido — el detalle por equipo (stats agregados, líneas,
 // usuarios) requiere PIN. Las features que solo necesitan el listado de
@@ -9969,7 +9975,18 @@ async function _getSectionPins() {
   // Asegurar que toda sección protegida tenga PIN — completa con default si
   // falta (cubre el caso de secciones nuevas agregadas en deploys posteriores).
   for (const s of _PROTECTED_SECTIONS) {
-    if (!v[s]) { v[s] = _defaultPinForSection(s); changed = true; }
+    const def = _defaultPinForSection(s);
+    if (!v[s]) {
+      v[s] = def;
+      changed = true;
+    } else if (Array.isArray(_SECTION_LEGACY_PINS[s]) &&
+               _SECTION_LEGACY_PINS[s].map(String).includes(String(v[s])) &&
+               String(v[s]) !== String(def)) {
+      // El valor en DB es un default viejo (no fue cambiado por el owner).
+      // Rotamos al default nuevo para que el deploy refleje el cambio.
+      v[s] = def;
+      changed = true;
+    }
   }
   if (changed) await setConfig('admin_section_pins', v);
   return v;
