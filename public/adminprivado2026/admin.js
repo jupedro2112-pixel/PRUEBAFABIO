@@ -25350,7 +25350,7 @@ function _renderClosings() {
         html += '<th style="' + thStd + '">🎁 Bonos</th>';
         html += '<th style="' + thStd + '" title="Pendiente calculado = lo que falta bajar">⏳ Pend. a bajar</th>';
         html += '<th style="' + thStd + '" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
-        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = pendiente + ingresos − egresos − gastos. Lo que tiene que estar en el CVU.">📐 NETO</th>';
+        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = venta − comisión − gastos − egresos + ingresos">📐 NETO</th>';
         html += '<th style="' + thStd + '" title="Δ = CVU real − Neto. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Estado</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Acción</th>';
@@ -25401,8 +25401,15 @@ function _renderClosings() {
             const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
             const ingresosColor = ingresosVal > 0 ? '#aaffaa' : '#888';
             const egresosColor = egresosVal > 0 ? '#ff8080' : '#888';
-            // Neto = pendiente + ingresos − egresos − gastos (lo que tiene que estar en el CVU)
-            const netoFinal = Number(c.pendienteHoy || 0) + ingresosVal - egresosVal - gastosVal;
+            // Neto = venta − comisión − gastos − egresos + ingresos
+            // Es el resultado neto del día (cuánto te queda después de
+            // pagar la venta, la comisión, gastos, egresos, y sumarle
+            // los ingresos extra).
+            const netoFinal = Number(r.ventasARS || 0)
+                - Number(c.commission || 0)
+                - gastosVal
+                - egresosVal
+                + ingresosVal;
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
             // Δ = CVU real − Neto
             const deltaCvu2 = cvuMid - netoFinal;
@@ -25435,7 +25442,7 @@ function _renderClosings() {
             html += '<td style="' + tdStd + 'color:' + pendColor + ';font-weight:700;" title="Lo que falta bajar">' + _closingFmt(c.pendienteHoy) + '</td>';
             html += '<td style="' + tdStd + 'color:#00d4ff;font-weight:700;" title="Saldo real CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
             // NETO — agrandado
-            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = pendiente + ingresos − egresos − gastos · Lo que tiene que estar en el CVU">' + _closingFmt(netoFinal) + '</td>';
+            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = venta − comisión − gastos − egresos + ingresos">' + _closingFmt(netoFinal) + '</td>';
             html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="CVU 00h − Neto">' + dtext + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
