@@ -27003,11 +27003,14 @@ function _renderCotizacionCard(it, scope) {
         h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
         h += '<button onclick="closeCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:linear-gradient(135deg,#00d4ff 0%,#0080ff 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">🔒 CERRAR COTIZACIÓN</button>';
     } else {
-        // === Modo CERRADA: sólo se cambia el tag cotizado ===
-        if (cotizado) {
-            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', false' + scopeArg + ')" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ MARCAR NO COTIZADO</button>';
+        // === Modo CERRADA ===
+        // Botón "marcar TODOS de una". Tildea/destildea todos los equipos
+        // con monto > 0 (el toggle entry-level del backend hace esto). El
+        // tildeo por equipo se hace en la columna ESTADO de cada fila.
+        if (allCotizadas) {
+            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', false' + scopeArg + ')" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ DESMARCAR TODOS</button>';
         } else {
-            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', true' + scopeArg + ')" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✓ MARCAR COTIZADO</button>';
+            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', true' + scopeArg + ')" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✓ MARCAR TODOS COTIZADOS</button>';
         }
         h += '<button onclick="reopenCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;" title="Volver a editar (descerrar)">🔓 REABRIR</button>';
     }
@@ -27350,7 +27353,10 @@ async function setCotizado(id, target, scope) {
     scope = scope || 'interna';
     const item = (_cotCache(scope) || []).find(x => x.id === id);
     if (!item) return;
-    if (!!item.cotizado === !!target) {
+    // En el modelo nuevo el flag "todas cotizadas" es derivado (allCotizadas).
+    // Comparamos contra eso para no toggle-ar dos veces si el target ya está.
+    const currentlyAll = !!(item.allCotizadas || item.cotizado);
+    if (currentlyAll === !!target) {
         showToast('Ya estaba en ese estado', 'info');
         return;
     }
