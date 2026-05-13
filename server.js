@@ -33735,9 +33735,9 @@ function _closingComputeTotals(c) {
   const gastos = Number(c.gastosARS || 0);             // gastos del día (consumido, no vuelve)
   const cvuActual = Number(c.cvuMidnightARS || 0);
 
-  // Comisión: % sobre la VENTA (no sobre depósitos). Es el gasto que se
-  // descuenta del total a bajar.
-  const commission = ventas * (margin / 100);
+  // Comisión: % sobre los DEPÓSITOS (cargas). El banco se queda con esta
+  // tajada de cada depósito que entra. Es nuestro gasto fijo del día.
+  const commission = deposits * (margin / 100);
 
   // Total que hay que bajar hoy = venta - comisión + pendiente del día anterior
   // (la comisión ya quedó pagada por el banco, no la bajamos nosotros).

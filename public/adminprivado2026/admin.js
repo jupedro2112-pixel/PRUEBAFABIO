@@ -25364,7 +25364,8 @@ function closingsRecompute(rid) {
     }
 
     // Mismo cálculo del backend (_closingComputeTotals)
-    const commission = sumVentas * (bankPct / 100);
+    // Comisión: % sobre los DEPÓSITOS (cargas), no sobre venta.
+    const commission = sumDeposits * (bankPct / 100);
     const totalABajar = Math.max(0, sumVentas - commission) + pendAnt;
     const diff = totalABajar - bajada;
     const totalTx = sumCargasN + sumDescN + sumBonosN;
@@ -25384,7 +25385,7 @@ function closingsRecompute(rid) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:5px;margin-bottom:6px;">';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DEPÓSITOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(sumDeposits) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ VENTA</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
-    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">COMISIÓN (' + bankPct + '% × venta)</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(commission) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">COMISIÓN (' + bankPct + '% × depósitos)</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(commission) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">TOTAL A BAJAR</div><div style="color:#fff;font-weight:800;">' + _closingFmt(totalABajar) + '</div><div style="color:#666;font-size:9px;">venta-com + pend ant</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">BAJADA REAL</div><div style="color:#aaffff;font-weight:800;">' + _closingFmt(bajada) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ BONIFICACIONES (dato)</div><div style="color:#ffd700;font-weight:800;">' + _closingFmt(sumBonus) + '</div><div style="color:#666;font-size:9px;">no afecta cuadre</div></div>';
@@ -25523,7 +25524,7 @@ function analyzeClosing(id) {
     html += '<div>1. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong></div>';
     html += '<div>2. Σ Venta a bajar: <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
     html += '<div>3. % Banco aplicado a venta: <strong style="color:#fff;">' + Number(r.bankMarginPercent || 0) + '%</strong></div>';
-    html += '<div>4. Comisión banco (venta × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
+    html += '<div>4. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
     html += '<div>5. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
     html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">6. <strong>TOTAL A BAJAR</strong> = (venta − comisión) + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
     html += '<div>7. Bajada REAL del día: <strong style="color:#aaffff;">' + fmt(r.bajadaARS) + '</strong></div>';
@@ -25565,7 +25566,7 @@ function analyzeClosing(id) {
         html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
         html += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);">';
         html += '<th style="padding:5px 8px;">#</th><th style="padding:5px 8px;">Equipo</th>';
-        html += '<th style="padding:5px 8px;text-align:right;">Cargas $</th><th style="padding:5px 8px;text-align:right;">Carg #</th>';
+        html += '<th style="padding:5px 8px;text-align:right;">Depósito $</th><th style="padding:5px 8px;text-align:right;">Depós #</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Venta $</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Bon $</th><th style="padding:5px 8px;text-align:right;">Bon #</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Desc #</th>';
@@ -25745,8 +25746,8 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div style="background:rgba(0,212,255,0.06);border:1.5px solid rgba(0,212,255,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
     html += '<div style="color:#00d4ff;font-weight:900;font-size:11px;letter-spacing:1px;margin-bottom:8px;">🤝 GENERAL (uno para los 7 equipos)</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;">';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco (sobre venta)</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas$ de los 7</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco (sobre depósitos)</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ depósito$ de los 7 · base de la comisión</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Venta total</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ venta$ de los 7 · lo que hay que bajar</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'bajada', null, '📷 Foto bajada', locked) + _inlineUploadList(rid, row, 'bajada', null, locked) + '</div>';
@@ -25754,7 +25755,7 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior $</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'pendiente_bank', null, '🏦 Foto banco', locked) + _inlineUploadList(rid, row, 'pendiente_bank', null, locked) + '</div>';
     html += '<div style="color:#666;font-size:9px;margin-top:2px;">screenshot del banco si quedó pendiente</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas# + descargas# + bonos#</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ depósito# + descargas# + bonos#</div></div>';
     html += '</div>';
     html += '</div>';
 
@@ -25772,7 +25773,7 @@ function _renderTeamSectorEntry(sec, date, row) {
         html += '<div style="background:#ffd700;color:#000;font-weight:900;font-size:11px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + (i + 1) + '</div>';
         html += '<input type="text" data-buffalo-team="' + i + '" data-field="name" value="' + escapeHtml(t.name) + '" placeholder="Nombre equipo ' + (i + 1) + '" style="flex:1;min-width:120px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:700;" ' + disabledAttr + '>';
         // Botón foto + lista de adjuntas para ESTE equipo (kind='deposito')
-        html += _inlineUploadBtn(rid, row, 'deposito', i, '📷 Foto (cargas+venta+tx)', locked);
+        html += _inlineUploadBtn(rid, row, 'deposito', i, '📷 Foto (depósito+venta+tx)', locked);
         html += _inlineUploadList(rid, row, 'deposito', i, locked);
         html += '</div>';
 
@@ -25799,9 +25800,9 @@ function _renderTeamSectorEntry(sec, date, row) {
         const netoLabel = diff === 0 ? '✅ CIERRE EN 0' : (diff > 0 ? '⏳ FALTAN ' + _closingFmt(diff) : '💚 SOBRA ' + _closingFmt(-diff));
         html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:11.5px;">';
         html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:5px;">';
-        html += '<span style="color:#aaa;">Σ Cargas: <strong style="color:#aaffaa;">' + _closingFmt(row.depositsARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Σ Depósito: <strong style="color:#aaffaa;">' + _closingFmt(row.depositsARS) + '</strong></span>';
         html += '<span style="color:#aaa;">Σ Venta: <strong style="color:#ffd0a0;">' + _closingFmt(row.ventasARS) + '</strong></span>';
-        html += '<span style="color:#aaa;">Comisión banco (sobre venta): <strong style="color:#ff8080;">-' + _closingFmt(c.commission) + '</strong></span>';
+        html += '<span style="color:#aaa;">Comisión banco (sobre depósitos): <strong style="color:#ff8080;">-' + _closingFmt(c.commission) + '</strong></span>';
         html += '<span style="color:#aaa;">A bajar total: <strong>' + _closingFmt(c.totalABajar) + '</strong></span>';
         html += '<span style="color:#aaa;">Bajada real: <strong style="color:#aaffff;">' + _closingFmt(row.bajadaARS) + '</strong></span>';
         html += '<span style="color:#aaa;">Σ Bonificaciones (dato): <strong style="color:#ffd700;">' + _closingFmt(row.bonusARS) + '</strong></span>';
