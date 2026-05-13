@@ -35,11 +35,12 @@ const editEntrySchema = new mongoose.Schema({
 const buffaloTeamSchema = new mongoose.Schema({
   slot: { type: Number, required: true, min: 0, max: 6 },
   name: { type: String, default: '', trim: true },
-  depositsARS: { type: Number, default: 0, min: 0 },
+  depositsARS: { type: Number, default: 0, min: 0 },       // cargas $
+  depositsCount: { type: Number, default: 0, min: 0 },     // cargas # (count of deposits)
   ventasARS: { type: Number, default: 0, min: 0 },
-  bonusARS: { type: Number, default: 0, min: 0 },
-  bonusCount: { type: Number, default: 0, min: 0 },
-  transactionsCount: { type: Number, default: 0, min: 0 }
+  bonusARS: { type: Number, default: 0, min: 0 },          // bonos $
+  bonusCount: { type: Number, default: 0, min: 0 },        // bonificaciones #
+  withdrawalsCount: { type: Number, default: 0, min: 0 }   // descargas # (count per team)
 }, { _id: false });
 
 const comprobanteSchema = new mongoose.Schema({
@@ -129,6 +130,12 @@ const closingSchema = new mongoose.Schema({
   confirmedAt: { type: Date, default: null },
   confirmedBy: { type: String, default: '' },
   lockedAt: { type: Date, default: null }, // confirmedAt + 24h
+  // Tilde de "VERIFICADO" — el owner revisó el análisis post-confirm
+  // y validó manualmente que el cierre dió OK. Es separado del confirm:
+  // confirmed = pasó el gate de comprobantes; verified = el owner lo
+  // revisó visualmente y dió el ok final.
+  verifiedAt: { type: Date, default: null },
+  verifiedBy: { type: String, default: '' },
 
   editHistory: { type: [editEntrySchema], default: [] },
 

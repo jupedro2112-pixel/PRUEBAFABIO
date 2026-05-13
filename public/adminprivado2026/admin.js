@@ -24945,7 +24945,7 @@ function _renderBuffaloEntry(sec, date, row) {
     const rid = row ? row.id : ('new_buffalo_main');
     const teams = (row && Array.isArray(row.teams) && row.teams.length === 7)
         ? row.teams
-        : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: '', depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, transactionsCount: 0 }));
+        : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 }));
 
     const inputStyle = 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;width:100%;box-sizing:border-box;';
     const disabledAttr = locked ? 'disabled' : '';
@@ -24965,7 +24965,7 @@ function _renderBuffaloEntry(sec, date, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real ($)</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior ($)</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📤 Descargas (cant.)</label><input type="number" id="cls_' + rid + '_withdrawalsCount" value="' + (row ? (row.withdrawalsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><input type="number" id="cls_' + rid + '_transactionsCount" value="' + (row ? (row.transactionsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '</div>';
     html += '</div>';
 
@@ -24973,18 +24973,19 @@ function _renderBuffaloEntry(sec, date, row) {
     html += '<div style="background:rgba(255,215,0,0.04);border:1.5px solid rgba(255,215,0,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
     html += '<div style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1px;margin-bottom:8px;">🎯 POR EQUIPO (individual cada uno)</div>';
     for (let i = 0; i < 7; i++) {
-        const t = teams[i] || { slot: i, name: '', depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, transactionsCount: 0 };
+        const t = teams[i] || { slot: i, name: '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 };
         html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;margin-bottom:6px;">';
         html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">';
         html += '<div style="background:#ffd700;color:#000;font-weight:900;font-size:11px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + (i + 1) + '</div>';
         html += '<input type="text" data-buffalo-team="' + i + '" data-field="name" value="' + escapeHtml(t.name) + '" placeholder="Nombre equipo ' + (i + 1) + '" style="flex:1;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:700;" ' + disabledAttr + '>';
         html += '</div>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;">';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">💰 Depósitos</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:5px;">';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">💰 Cargas $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">📥 Cargas #</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🛒 Venta</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">📤 Descargas #</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonos $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonos #</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusCount" value="' + (t.bonusCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🔢 Transacc.</label><input type="number" data-buffalo-team="' + i + '" data-field="transactionsCount" value="' + (t.transactionsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonificac. #</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusCount" value="' + (t.bonusCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
         html += '</div>';
         html += '</div>';
     }
@@ -25040,7 +25041,7 @@ function _renderBuffaloEntry(sec, date, row) {
     }
 
     // Action buttons
-    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
     if (!locked) {
         html += '<button type="button" onclick="saveBuffaloClosing(\'' + rid + '\', \'' + date + '\')" style="background:rgba(102,255,102,0.15);border:1px solid rgba(102,255,102,0.45);color:#aaffaa;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (exists ? '💾 GUARDAR CAMBIOS' : '💾 CREAR CIERRE') + '</button>';
         if (exists && !confirmed) {
@@ -25049,9 +25050,35 @@ function _renderBuffaloEntry(sec, date, row) {
     } else {
         html += '<span style="color:#888;font-size:11px;">Bloqueado · solo lectura</span>';
     }
+    if (exists && confirmed) {
+        const isVerified = !!row.verifiedAt;
+        const vBg = isVerified ? 'linear-gradient(135deg,#66ff66,#25d366)' : 'rgba(102,255,102,0.08)';
+        const vColor = isVerified ? '#000' : '#aaffaa';
+        const vBorder = isVerified ? '#66ff66' : 'rgba(102,255,102,0.40)';
+        const vText = isVerified ? '✓ VERIFICADO · destildear' : '☐ Marcar como verificado';
+        html += '<button type="button" onclick="verifyClosing(\'' + rid + '\')" style="background:' + vBg + ';border:1px solid ' + vBorder + ';color:' + vColor + ';padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;margin-left:auto;">' + vText + '</button>';
+        if (isVerified) {
+            html += '<span style="color:#aaffaa;font-size:10.5px;">por <strong>' + escapeHtml(row.verifiedBy || '?') + '</strong></span>';
+        }
+    }
     html += '</div>';
     html += '</div>';
     return html;
+}
+
+async function verifyClosing(rid) {
+    try {
+        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/verify', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error', 'error');
+            return;
+        }
+        showToast(d.row && d.row.verifiedAt ? '✓ Verificado' : 'Tilde sacado', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error', 'error');
+    }
 }
 
 // Save específico para Buffalo: arma el array teams[] desde los inputs.
@@ -25071,10 +25098,11 @@ async function saveBuffaloClosing(rid, date) {
             slot: i,
             name: (find('name') || '').trim(),
             depositsARS: parseFloat(find('depositsARS')) || 0,
+            depositsCount: parseInt(find('depositsCount'), 10) || 0,
             ventasARS: parseFloat(find('ventasARS')) || 0,
             bonusARS: parseFloat(find('bonusARS')) || 0,
             bonusCount: parseInt(find('bonusCount'), 10) || 0,
-            transactionsCount: parseInt(find('transactionsCount'), 10) || 0
+            withdrawalsCount: parseInt(find('withdrawalsCount'), 10) || 0
         });
     }
     const payload = {
@@ -25083,7 +25111,7 @@ async function saveBuffaloClosing(rid, date) {
         bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
         bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
-        withdrawalsCount: parseInt(get('withdrawalsCount'), 10) || 0,
+        transactionsCount: parseInt(get('transactionsCount'), 10) || 0,
         teams
     };
 

@@ -33731,10 +33731,11 @@ function _normalizeBuffaloTeams(input) {
       slot: i,
       name: String(src.name || '').trim().slice(0, 60),
       depositsARS: Math.max(0, Number(src.depositsARS) || 0),
+      depositsCount: Math.max(0, Math.round(Number(src.depositsCount) || 0)),
       ventasARS: Math.max(0, Number(src.ventasARS) || 0),
       bonusARS: Math.max(0, Number(src.bonusARS) || 0),
       bonusCount: Math.max(0, Math.round(Number(src.bonusCount) || 0)),
-      transactionsCount: Math.max(0, Math.round(Number(src.transactionsCount) || 0))
+      withdrawalsCount: Math.max(0, Math.round(Number(src.withdrawalsCount) || 0))
     });
   }
   return out;
@@ -33746,9 +33747,9 @@ function _aggregateBuffaloTeams(teams) {
     acc.ventasARS += t.ventasARS || 0;
     acc.bonusARS += t.bonusARS || 0;
     acc.bonusCount += t.bonusCount || 0;
-    acc.transactionsCount += t.transactionsCount || 0;
+    acc.withdrawalsCount += t.withdrawalsCount || 0;
     return acc;
-  }, { depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, transactionsCount: 0 });
+  }, { depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 });
 }
 
 // POST /api/admin/closings — crear entrada (draft).
@@ -33792,7 +33793,9 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       bankMarginPercent: Math.max(0, Math.min(100, Number(b.bankMarginPercent) || 0)),
       bajadaARS: Math.max(0, Number(b.bajadaARS) || 0),
       pendienteAnteriorARS: pendienteAnterior,
-      withdrawalsCount: Math.max(0, Math.round(Number(b.withdrawalsCount) || 0)),
+      // transacciones totales: GENERAL en Buffalo (no se suma de teams).
+      // En ganamos/publicidad sigue siendo el único campo.
+      transactionsCount: Math.max(0, Math.round(Number(b.transactionsCount) || 0)),
       bonusNote: String(b.bonusNote || '').trim().slice(0, 200),
       notes: String(b.notes || '').trim().slice(0, 500),
       status: 'draft',
@@ -33807,13 +33810,13 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       doc.ventasARS = agg.ventasARS;
       doc.bonusARS = agg.bonusARS;
       doc.bonusCount = agg.bonusCount;
-      doc.transactionsCount = agg.transactionsCount;
+      doc.withdrawalsCount = agg.withdrawalsCount;
     } else {
       doc.depositsARS = Math.max(0, Number(b.depositsARS) || 0);
       doc.ventasARS = Math.max(0, Number(b.ventasARS) || 0);
       doc.bonusARS = Math.max(0, Number(b.bonusARS) || 0);
       doc.bonusCount = Math.max(0, Math.round(Number(b.bonusCount) || 0));
-      doc.transactionsCount = Math.max(0, Math.round(Number(b.transactionsCount) || 0));
+      doc.withdrawalsCount = Math.max(0, Math.round(Number(b.withdrawalsCount) || 0));
     }
 
     try {
@@ -33847,18 +33850,21 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
         locked: true
       });
     }
-    // Para buffalo, los campos depositsARS/ventasARS/bonusARS/bonusCount/
-    // transactionsCount se calculan del teams[]; NO se editan directo.
-    const editableCommon = [
-      'bankMarginPercent','bajadaARS','pendienteAnteriorARS','withdrawalsCount',
+    // Para buffalo: depositsARS/ventasARS/bonusARS/bonusCount/withdrawalsCount
+    // se calculan del teams[]; transactionsCount es GENERAL (input directo);
+    // bankMargin/bajada/pendienteAnt también generales (input directo).
+    // Para ganamos/publicidad: todos los campos son input directo (no teams).
+    const editableCommonBuffalo = [
+      'bankMarginPercent','bajadaARS','pendienteAnteriorARS','transactionsCount',
       'bonusNote','notes'
     ];
-    const editableIndividual = [
-      'teamName','depositsARS','ventasARS','bonusARS','bonusCount','transactionsCount'
+    const editableNonBuffalo = [
+      'teamName','depositsARS','ventasARS','bonusARS','bonusCount',
+      'transactionsCount','withdrawalsCount',
+      'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
+      'bonusNote','notes'
     ];
-    const editable = c.sector === 'buffalo'
-      ? editableCommon
-      : editableCommon.concat(editableIndividual);
+    const editable = c.sector === 'buffalo' ? editableCommonBuffalo : editableNonBuffalo;
     const b = req.body || {};
     const username = req.user.username || '';
     const changes = [];
@@ -33880,8 +33886,9 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
     // Buffalo: si llega teams[], normalizamos + recomputamos totales.
     if (c.sector === 'buffalo' && Array.isArray(b.teams)) {
       const newTeams = _normalizeBuffaloTeams(b.teams);
-      // Registrar cambios por equipo en editHistory (resumido)
-      const before = c.teams ? c.teams.map(t => ({ slot:t.slot, name:t.name, depositsARS:t.depositsARS, ventasARS:t.ventasARS, bonusARS:t.bonusARS, bonusCount:t.bonusCount, transactionsCount:t.transactionsCount })) : [];
+      const before = c.teams
+        ? c.teams.map(t => ({ slot:t.slot, name:t.name, depositsARS:t.depositsARS, depositsCount:t.depositsCount, ventasARS:t.ventasARS, bonusARS:t.bonusARS, bonusCount:t.bonusCount, withdrawalsCount:t.withdrawalsCount }))
+        : [];
       const sameJson = JSON.stringify(before) === JSON.stringify(newTeams);
       if (!sameJson) {
         changes.push({ editedAt: new Date(), editedBy: username, field: 'teams', before, after: newTeams });
@@ -33891,7 +33898,7 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
         c.ventasARS = agg.ventasARS;
         c.bonusARS = agg.bonusARS;
         c.bonusCount = agg.bonusCount;
-        c.transactionsCount = agg.transactionsCount;
+        c.withdrawalsCount = agg.withdrawalsCount;
       }
     }
     if (changes.length === 0) {
@@ -33943,6 +33950,35 @@ app.post('/api/admin/closings/:id/confirm', authMiddleware, adminMiddleware, asy
     res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: false } });
   } catch (err) {
     logger.error(`POST /api/admin/closings/:id/confirm: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/closings/:id/verify — toggle del tilde "verificado"
+// (el owner revisó el análisis y dió OK manual). Sólo si está confirmado.
+app.post('/api/admin/closings/:id/verify', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await ClosingEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    if (c.status !== 'confirmed') {
+      return res.status(400).json({ error: 'Confirmá el cierre antes de verificarlo' });
+    }
+    const username = req.user.username || '';
+    if (c.verifiedAt) {
+      // toggle off
+      c.editHistory.push({ editedAt: new Date(), editedBy: username, field: 'verified', before: true, after: false });
+      c.verifiedAt = null;
+      c.verifiedBy = '';
+    } else {
+      c.verifiedAt = new Date();
+      c.verifiedBy = username;
+      c.editHistory.push({ editedAt: new Date(), editedBy: username, field: 'verified', before: false, after: true });
+    }
+    await c.save();
+    res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: _closingIsLocked(c) } });
+  } catch (err) {
+    logger.error(`POST verify: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
