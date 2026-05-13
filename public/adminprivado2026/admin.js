@@ -24570,8 +24570,14 @@ const CLOSING_SECTORS_UI = [
 let _closingsRowsCache = [];      // historial completo (últimos N días) para la selección activa
 let _closingsTodayKey = null;
 // Selección actual: qué sector + (opcional) equipo Buffalo + día activo del editor
-let _closingsView = { sector: 'ganamos', teamSlot: null, date: null };
+// + filtro de estado (all/draft/confirmed) para el historial.
+let _closingsView = { sector: 'ganamos', teamSlot: null, date: null, filter: 'all' };
 const CLOSINGS_HISTORY_DAYS = 60;
+
+function closingsSetFilter(f) {
+    _closingsView.filter = f;
+    _renderClosings();
+}
 
 function _closingFmt(n) {
     return '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
@@ -24811,6 +24817,108 @@ function _wireClosingsLiveRecompute() {
     });
 }
 
+// Gráfico SVG simple del cuadre histórico:
+//   - eje X: días (cronológico, izquierda → derecha = pasado → presente)
+//   - eje Y: diff (0 = línea media)
+//   - barras rojas: falta plata (diff > 0)
+//   - barras verdes: sobra (diff < 0)
+//   - barras grises: cerró en 0
+//   - barra punteada: borrador (no confirmado)
+function _renderClosingsChart(rows, sec) {
+    if (!rows || rows.length === 0) return '';
+    // Orden cronológico
+    const data = [...rows].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+    const W = 760, H = 180, padL = 50, padR = 12, padT = 14, padB = 28;
+    const innerW = W - padL - padR;
+    const innerH = H - padT - padB;
+
+    // Escala Y: max abs(diff)
+    let maxAbs = 1;
+    data.forEach(r => {
+        const v = Math.abs(Number((r.computed || {}).diff) || 0);
+        if (v > maxAbs) maxAbs = v;
+    });
+    // Redondear maxAbs a un múltiplo "lindo"
+    const niceMax = (function(n) {
+        const exp = Math.floor(Math.log10(n));
+        const base = Math.pow(10, exp);
+        const m = n / base;
+        if (m <= 1) return base;
+        if (m <= 2) return 2 * base;
+        if (m <= 5) return 5 * base;
+        return 10 * base;
+    })(maxAbs);
+
+    const midY = padT + innerH / 2;
+    const barW = Math.max(2, Math.min(20, (innerW - 4) / data.length - 2));
+    const step = (innerW - 4) / data.length;
+    const yFromDiff = (d) => {
+        const ratio = d / niceMax; // -1..1
+        return midY - ratio * (innerH / 2);
+    };
+
+    const fmtShort = (n) => {
+        const a = Math.abs(n);
+        if (a >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (a >= 1e3) return (n / 1e3).toFixed(0) + 'k';
+        return String(Math.round(n));
+    };
+
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;">';
+    // Background
+    svg += '<rect width="' + W + '" height="' + H + '" fill="rgba(0,0,0,0.30)" rx="8"/>';
+    // Eje 0 (línea media)
+    svg += '<line x1="' + padL + '" y1="' + midY + '" x2="' + (W - padR) + '" y2="' + midY + '" stroke="rgba(255,255,255,0.30)" stroke-width="1.5"/>';
+    // Labels Y
+    svg += '<text x="' + (padL - 6) + '" y="' + (midY + 4) + '" text-anchor="end" fill="#888" font-size="10" font-family="monospace">0</text>';
+    svg += '<text x="' + (padL - 6) + '" y="' + (padT + 12) + '" text-anchor="end" fill="#ff8080" font-size="10" font-family="monospace">+' + fmtShort(niceMax) + '</text>';
+    svg += '<text x="' + (padL - 6) + '" y="' + (H - padB + 2) + '" text-anchor="end" fill="#66ff66" font-size="10" font-family="monospace">-' + fmtShort(niceMax) + '</text>';
+    // Labels semantica
+    svg += '<text x="' + (padL + 2) + '" y="' + (padT + 11) + '" fill="#ff8080" font-size="9.5" font-family="monospace" font-weight="700">FALTA $</text>';
+    svg += '<text x="' + (padL + 2) + '" y="' + (H - padB - 3) + '" fill="#66ff66" font-size="9.5" font-family="monospace" font-weight="700">SOBRA $</text>';
+
+    // Barras
+    data.forEach((r, i) => {
+        const c = r.computed || {};
+        const diff = Number(c.diff) || 0;
+        const x = padL + 2 + i * step + (step - barW) / 2;
+        const yTop = Math.min(midY, yFromDiff(diff));
+        const yBottom = Math.max(midY, yFromDiff(diff));
+        const h = Math.max(2, yBottom - yTop);
+        const isConfirmed = r.status === 'confirmed';
+        const hasBankProof = (r.comprobantes || []).some(p => p.kind === 'pendiente_bank');
+        let color;
+        if (Math.abs(diff) < 1) {
+            color = isConfirmed ? '#88cc88' : '#666';
+        } else if (diff > 0) {
+            color = isConfirmed ? (hasBankProof ? '#ffaa66' : '#ff5050') : 'rgba(255,80,80,0.45)';
+        } else {
+            color = isConfirmed ? '#66ff66' : 'rgba(102,255,102,0.45)';
+        }
+        const op = isConfirmed ? 1 : 0.65;
+        const dashAttr = isConfirmed ? '' : ' stroke="' + color + '" stroke-width="1" stroke-dasharray="2 1.5"';
+        svg += '<rect x="' + x.toFixed(1) + '" y="' + yTop.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + color + '" opacity="' + op + '"' + dashAttr + '><title>' + r.dateKey + ' · ' + (diff >= 0 ? '+' : '') + Math.round(diff).toLocaleString('es-AR') + (isConfirmed ? ' · confirmado' : ' · borrador') + '</title></rect>';
+        // Label de fecha cada N barras
+        const showLabel = (data.length <= 12) || (i === 0) || (i === data.length - 1) || (i % Math.ceil(data.length / 10) === 0);
+        if (showLabel) {
+            const dd = r.dateKey.slice(8, 10);
+            const mm = r.dateKey.slice(5, 7);
+            svg += '<text x="' + (x + barW / 2).toFixed(1) + '" y="' + (H - padB + 13) + '" text-anchor="middle" fill="#888" font-size="9" font-family="monospace">' + dd + '/' + mm + '</text>';
+        }
+    });
+
+    svg += '</svg>';
+
+    let html = '<div style="background:rgba(0,0,0,0.18);padding:11px 12px;border-bottom:1px solid rgba(255,255,255,0.06);">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">';
+    html += '<div style="color:' + sec.color + ';font-size:11px;font-weight:900;letter-spacing:1px;">📈 GRÁFICO DE CUADRE — ' + data.length + ' día(s)</div>';
+    html += '<div style="color:#888;font-size:10.5px;">Rojo = faltó bajar · Verde = sobró · Punteado = borrador</div>';
+    html += '</div>';
+    html += svg;
+    html += '</div>';
+    return html;
+}
+
 function _renderClosings() {
     const body = document.getElementById('closingsBody');
     if (!body) return;
@@ -24859,14 +24967,47 @@ function _renderClosings() {
     html += '</div>';
 
     // ===== Tabla histórica (últimos N días para la selección) =====
+    const filter = _closingsView.filter || 'all';
+    const counts = {
+        all: _closingsRowsCache.length,
+        draft: _closingsRowsCache.filter(x => x.status !== 'confirmed').length,
+        confirmed: _closingsRowsCache.filter(x => x.status === 'confirmed').length
+    };
+    const filteredRows = _closingsRowsCache.filter(r => {
+        if (filter === 'draft')     return r.status !== 'confirmed';
+        if (filter === 'confirmed') return r.status === 'confirmed';
+        return true;
+    });
+
     html += '<div style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:11px;overflow:hidden;">';
     html += '<div style="background:rgba(255,255,255,0.04);padding:9px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
     html += '<div style="color:#fff;font-weight:900;font-size:13px;letter-spacing:0.4px;">📜 HISTORIAL (últimos ' + CLOSINGS_HISTORY_DAYS + ' días)</div>';
-    html += '<div style="color:#888;font-size:11px;">' + _closingsRowsCache.length + ' cierres registrados</div>';
+    html += '<div style="color:#888;font-size:11px;">' + filteredRows.length + ' de ' + _closingsRowsCache.length + ' cierres</div>';
     html += '</div>';
 
-    if (_closingsRowsCache.length === 0) {
-        html += '<div style="color:#888;text-align:center;padding:22px;font-size:12.5px;">Sin cierres en el rango. Cargá el primero arriba.</div>';
+    // Filtros: Todos · Borradores · Cerrados
+    html += '<div style="background:rgba(0,0,0,0.18);padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,0.06);">';
+    const filterDefs = [
+        { key: 'all',       label: '📜 Todos',      activeColor: '#fff',    activeBg: 'rgba(255,255,255,0.15)' },
+        { key: 'draft',     label: '📝 Borradores', activeColor: '#ffd700', activeBg: 'rgba(255,215,0,0.18)' },
+        { key: 'confirmed', label: '✅ Cerrados',   activeColor: '#aaffaa', activeBg: 'rgba(102,255,102,0.18)' }
+    ];
+    for (const f of filterDefs) {
+        const active = filter === f.key;
+        const bg = active ? f.activeBg : 'rgba(0,0,0,0.30)';
+        const color = active ? f.activeColor : '#aaa';
+        const border = active ? f.activeColor : 'rgba(255,255,255,0.12)';
+        html += '<button type="button" onclick="closingsSetFilter(\'' + f.key + '\')" style="background:' + bg + ';color:' + color + ';border:1px solid ' + border + ';padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">' + f.label + ' (' + counts[f.key] + ')</button>';
+    }
+    html += '</div>';
+
+    // Gráfico de cuadre histórico (solo si hay datos)
+    if (_closingsRowsCache.length > 0) {
+        html += _renderClosingsChart(filteredRows, sec);
+    }
+
+    if (filteredRows.length === 0) {
+        html += '<div style="color:#888;text-align:center;padding:22px;font-size:12.5px;">' + (filter === 'all' ? 'Sin cierres en el rango. Cargá el primero arriba.' : 'Sin cierres con este filtro.') + '</div>';
     } else {
         html += '<div style="overflow-x:auto;">';
         html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:760px;">';
@@ -24883,7 +25024,7 @@ function _renderClosings() {
         html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Estado</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Acción</th>';
         html += '</tr></thead><tbody>';
-        const sorted = [..._closingsRowsCache].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+        const sorted = [...filteredRows].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
         for (const r of sorted) {
             const c = r.computed || {};
             const isActive = r.dateKey === date;
