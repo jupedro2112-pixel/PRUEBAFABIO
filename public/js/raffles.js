@@ -337,16 +337,17 @@ VIP.raffles = (function () {
     // Cada linea muestra: emoji · nombre · #ganador · ganador con username
     // tapado al 80%. Si el caller GANO, ve su nombre completo + boton claim.
     function _renderDrawnSummary(drawnList) {
-        const totalCount = drawnList.length;
-        const myWins = drawnList.filter(r => r.iAmWinner).length;
+        // Pedido del dueño 2026-05-13: NO mostrar el listado público de
+        // ganadores de la semana. Sólo dejamos las filas donde el usuario
+        // que está mirando es el ganador (para que pueda reclamar).
+        const myList = (drawnList || []).filter(r => r.iAmWinner);
+        if (myList.length === 0) return '';
 
-        let html = '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;margin-bottom:14px;">';
+        let html = '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.30);border-radius:10px;padding:10px 12px;margin-bottom:14px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">';
-        html += '<div style="color:#aaa;font-size:10.5px;font-weight:800;letter-spacing:2px;text-transform:uppercase;">🏆 Resultados sorteos' + (myWins > 0 ? ' · <span style="color:#66ff66;">' + myWins + ' ganaste</span>' : '') + '</div>';
-        html += '<div style="color:#666;font-size:10px;">' + totalCount + ' total</div>';
+        html += '<div style="color:#66ff66;font-size:10.5px;font-weight:800;letter-spacing:2px;text-transform:uppercase;">🏆 ' + (myList.length === 1 ? 'Ganaste un sorteo' : 'Ganaste ' + myList.length + ' sorteos') + '</div>';
         html += '</div>';
-        // Mostramos TODOS por default — el dueno quiere una vista general.
-        for (const r of drawnList) html += _renderDrawnLine(r);
+        for (const r of myList) html += _renderDrawnLine(r);
         html += '</div>';
         return html;
     }
