@@ -24837,9 +24837,25 @@ async function loadClosingsAnalysis() {
     } catch (_) {}
 }
 
+// Estado del rango de fechas del resumen (default: día activo).
+function _closingsSummaryRange() {
+    const today = _closingsTodayART();
+    return {
+        from: _closingsView.summaryFrom || _closingsView.date || today,
+        to: _closingsView.summaryTo || _closingsView.date || today
+    };
+}
+
+function closingsSetSummaryRange(from, to) {
+    _closingsView.summaryFrom = from;
+    _closingsView.summaryTo = to;
+    loadClosingsSummary(_closingsView.date);
+}
+
 async function loadClosingsSummary(date) {
     try {
-        const params = new URLSearchParams({ from: date, to: date });
+        const range = _closingsSummaryRange();
+        const params = new URLSearchParams({ from: range.from, to: range.to });
         // Filtrar por el sector activo — el resumen del día NO debe mezclar
         // sectores. Cada sector tiene su propio análisis.
         if (_closingsView.sector) params.set('sector', _closingsView.sector);
@@ -24850,34 +24866,81 @@ async function loadClosingsSummary(date) {
         if (!box) return;
         const t = d.totals;
         const sectorEmoji = { ganamos: '💼', publicidad: '📢', buffalo: '🐃' };
-        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px;">';
-        html += '<div style="background:rgba(102,255,102,0.10);border:1.5px solid #66ff66;border-radius:9px;padding:8px;text-align:center;">';
-        html += '<div style="color:#aaffaa;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">💰 ENTRÓ NETO</div>';
-        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.depositsNet) + '</div>';
-        html += '<div style="color:#888;font-size:10px;">' + _closingFmt(t.depositsARS) + ' bruto · -' + _closingFmt(t.commission) + ' comisión</div>';
+
+        // Promedio del % comisión sobre los depósitos del rango
+        const avgCommissionPct = (t.depositsARS > 0)
+            ? (t.commission * 100 / t.depositsARS)
+            : 0;
+        const sameDay = range.from === range.to;
+        const rangeLabel = sameDay
+            ? range.from
+            : (range.from + ' → ' + range.to);
+
+        let html = '';
+
+        // ===== Selector de rango de fechas para este panel =====
+        html += '<div style="background:rgba(155,48,255,0.06);border:1px solid rgba(155,48,255,0.30);border-radius:8px;padding:8px 11px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11.5px;">';
+        html += '<span style="color:#c89bff;font-weight:800;letter-spacing:0.5px;">📅 Resumen del:</span>';
+        html += '<label style="color:#aaa;font-size:10.5px;">Desde</label>';
+        html += '<input type="date" id="closingsSummaryFrom" value="' + escapeHtml(range.from) + '" onchange="closingsSetSummaryRange(this.value, document.getElementById(\'closingsSummaryTo\').value)" style="background:rgba(0,0,0,0.45);border:1px solid rgba(155,48,255,0.40);color:#fff;padding:4px 7px;border-radius:5px;font-size:11.5px;">';
+        html += '<label style="color:#aaa;font-size:10.5px;">Hasta</label>';
+        html += '<input type="date" id="closingsSummaryTo" value="' + escapeHtml(range.to) + '" onchange="closingsSetSummaryRange(document.getElementById(\'closingsSummaryFrom\').value, this.value)" style="background:rgba(0,0,0,0.45);border:1px solid rgba(155,48,255,0.40);color:#fff;padding:4px 7px;border-radius:5px;font-size:11.5px;">';
+        html += '<button type="button" onclick="closingsSetSummaryRange(\'' + _closingsTodayART() + '\',\'' + _closingsTodayART() + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;">Hoy</button>';
+        const lastWeek = new Date(); lastWeek.setDate(lastWeek.getDate() - 6);
+        const last7 = lastWeek.toISOString().slice(0, 10);
+        html += '<button type="button" onclick="closingsSetSummaryRange(\'' + last7 + '\',\'' + _closingsTodayART() + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;">7 días</button>';
+        const lastMonth = new Date(); lastMonth.setDate(lastMonth.getDate() - 29);
+        const last30 = lastMonth.toISOString().slice(0, 10);
+        html += '<button type="button" onclick="closingsSetSummaryRange(\'' + last30 + '\',\'' + _closingsTodayART() + '\')" style="background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;">30 días</button>';
+        html += '<span style="color:#888;font-size:10.5px;margin-left:auto;">' + (d.bySector[0]?.entries || 0) + ' cierre(s) · ' + rangeLabel + '</span>';
         html += '</div>';
-        html += '<div style="background:rgba(0,212,255,0.10);border:1.5px solid #00d4ff;border-radius:9px;padding:8px;text-align:center;">';
+
+        // ===== Cards =====
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-bottom:10px;">';
+
+        // ENTRÓ — total depósitos bruto + comisión perdida + promedio %
+        html += '<div style="background:rgba(102,255,102,0.10);border:1.5px solid #66ff66;border-radius:9px;padding:9px;text-align:center;">';
+        html += '<div style="color:#aaffaa;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">💰 ENTRÓ</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.depositsARS) + '</div>';
+        html += '<div style="color:#888;font-size:9.5px;">todos los depósitos</div>';
+        html += '<div style="margin-top:5px;padding-top:5px;border-top:1px dashed rgba(255,255,255,0.10);">';
+        html += '<div style="color:#ff8080;font-size:10.5px;font-weight:700;">-' + _closingFmt(t.commission) + ' comisión</div>';
+        html += '<div style="color:#888;font-size:9.5px;">prom. ' + avgCommissionPct.toFixed(2) + '%</div>';
+        html += '</div>';
+        html += '</div>';
+
+        // VENTA — total descargas / a bajar
+        html += '<div style="background:rgba(255,208,160,0.10);border:1.5px solid #ffd0a0;border-radius:9px;padding:9px;text-align:center;">';
+        html += '<div style="color:#ffd0a0;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🛒 VENTA</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.ventasARS) + '</div>';
+        html += '<div style="color:#888;font-size:9.5px;">Σ descargas a bajar</div>';
+        html += '</div>';
+
+        // BAJÓ
+        html += '<div style="background:rgba(0,212,255,0.10);border:1.5px solid #00d4ff;border-radius:9px;padding:9px;text-align:center;">';
         html += '<div style="color:#aaffff;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🏃 BAJÓ</div>';
         html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.bajadaARS) + '</div>';
-        html += '<div style="color:#888;font-size:10px;">de ' + _closingFmt(t.ventasARS) + ' a bajar</div>';
+        html += '<div style="color:#888;font-size:9.5px;">de ' + _closingFmt(t.ventasARS) + ' a bajar</div>';
         html += '</div>';
+
+        // PENDIENTE — lo que falta bajar (queda en CVU)
         const pendColor = t.pendienteHoy > 0 ? '#ff8080' : '#aaffaa';
         const pendBg = t.pendienteHoy > 0 ? 'rgba(255,128,128,0.10)' : 'rgba(102,255,102,0.06)';
-        html += '<div style="background:' + pendBg + ';border:1.5px solid ' + pendColor + ';border-radius:9px;padding:8px;text-align:center;">';
+        html += '<div style="background:' + pendBg + ';border:1.5px solid ' + pendColor + ';border-radius:9px;padding:9px;text-align:center;">';
         html += '<div style="color:' + pendColor + ';font-size:10.5px;font-weight:800;letter-spacing:0.4px;">⏳ PENDIENTE</div>';
         html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.pendienteHoy) + '</div>';
-        html += '<div style="color:#888;font-size:10px;">' + (t.pendienteHoy > 0 ? 'arrastre al día siguiente' : 'todo al día') + '</div>';
+        html += '<div style="color:#888;font-size:9.5px;">' + (t.pendienteHoy > 0 ? 'falta bajar · queda en CVU' : 'todo bajado') + '</div>';
         html += '</div>';
-        html += '<div style="background:rgba(255,215,0,0.10);border:1.5px solid #ffd700;border-radius:9px;padding:8px;text-align:center;">';
+
+        // BONOS REGALADOS — total + cantidad
+        const bonusCount = Number(t.bonusCount || 0);
+        const bonusAvg = bonusCount > 0 ? (t.bonusARS / bonusCount) : 0;
+        html += '<div style="background:rgba(255,215,0,0.10);border:1.5px solid #ffd700;border-radius:9px;padding:9px;text-align:center;">';
         html += '<div style="color:#ffd700;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🎁 BONOS REGALADOS</div>';
         html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.bonusARS) + '</div>';
-        html += '<div style="color:#888;font-size:10px;">total del día</div>';
+        html += '<div style="color:#888;font-size:9.5px;">' + bonusCount + ' bono(s) · prom ' + _closingFmt(bonusAvg) + '</div>';
         html += '</div>';
-        html += '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.15),rgba(255,215,0,0.10));border:2px solid #c89bff;border-radius:9px;padding:8px;text-align:center;">';
-        html += '<div style="color:#c89bff;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">📐 NETO DEL DÍA</div>';
-        html += '<div style="color:#fff;font-size:18px;font-weight:900;">' + _closingFmt(t.netoSector) + '</div>';
-        html += '<div style="color:#888;font-size:10px;">entró neto - bonos</div>';
-        html += '</div>';
+
         html += '</div>';
 
         // Breakdown por sector: sólo mostrar si NO estamos filtrando ya por
