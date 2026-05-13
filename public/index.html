@@ -2410,13 +2410,17 @@
                      admin > Número principal. Mismo tamaño que el username
                      del header-right. JS lo muestra/oculta segun la API. -->
                 <span class="team-name" id="teamName" style="display:none;"></span>
-                <div class="user-action-btns">
-                    <!-- Canjear código: arriba a la izquierda, chiquito,
-                         no predominante. Al toque abre modal con input.
-                         Botón ℹ al lado explica que los códigos llegan
-                         por el canal de Telegram (pedido del dueño). -->
-                    <button id="redeemCodeBtn" title="Reclamá tu código de bono" onclick="openRedeemCodeModal()" style="background:linear-gradient(135deg,rgba(0,200,150,0.18),rgba(0,143,108,0.10));border:1px solid rgba(0,200,150,0.50);color:#00c896;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer;font-weight:800;letter-spacing:0.3px;">🎁 Reclama aquí</button>
+                <!-- Canjear código: arriba a la izquierda, chiquito, no predominante.
+                     IMPORTANTE: va FUERA de .user-action-btns porque en mobile
+                     ese contenedor está hidden (display:none) por el media query
+                     de header.css. Como necesitamos que SIEMPRE se vea (es la
+                     entrada principal a los bonos por código de Telegram), lo
+                     dejamos como bloque suelto en header-left. -->
+                <div class="redeem-code-quick" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
+                    <button id="redeemCodeBtn" title="Reclamá tu código de bono" onclick="openRedeemCodeModal()" style="background:linear-gradient(135deg,rgba(0,200,150,0.18),rgba(0,143,108,0.10));border:1px solid rgba(0,200,150,0.50);color:#00c896;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer;font-weight:800;letter-spacing:0.3px;white-space:nowrap;">🎁 Reclama aquí</button>
                     <button id="redeemCodeInfoBtn" title="¿De dónde salen los códigos?" onclick="openRedeemCodeInfo()" style="background:rgba(0,200,150,0.06);border:1px solid rgba(0,200,150,0.30);color:#00c896;font-size:12px;padding:4px 7px;border-radius:6px;cursor:pointer;font-weight:800;line-height:1;">ℹ</button>
+                </div>
+                <div class="user-action-btns">
                     <!-- Refresh manual: full reload de la pagina. El owner pidio
                          poder forzar un actualizar chiquito desde el home cuando
                          no se ven los sorteos / saldo / etc. Es lo equivalente a
