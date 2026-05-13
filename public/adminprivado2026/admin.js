@@ -25814,7 +25814,7 @@ function analyzeClosing(id) {
     html += '<div style="font-family:monospace;font-size:12.5px;line-height:1.8;color:#ddd;">';
     html += '<div>1. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong></div>';
     html += '<div>2. Σ Descargas (= venta auto a bajar): <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
-    html += '<div>3. % Banco aplicado a venta: <strong style="color:#fff;">' + Number(r.bankMarginPercent || 0) + '%</strong></div>';
+    html += '<div>3. % Banco aplicado a depósitos: <strong style="color:#fff;">' + Number(r.bankMarginPercent || 0) + '%</strong></div>';
     html += '<div>4. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
     html += '<div>5. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
     html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">6. <strong>TOTAL A BAJAR</strong> = (venta − comisión) + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
