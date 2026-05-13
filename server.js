@@ -34927,6 +34927,129 @@ _mountCotizacionRoutes('/api/admin/cotizaciones', CotizacionEntry, 'cotizacion')
 _mountCotizacionRoutes('/api/admin/cotizaciones-externo', CotizacionExternaEntry, 'cotizacion-externa');
 
 // ============================================
+// EMPLEADOS POR ESTRUCTURA
+// ============================================
+// Personal de los 3 sectores financieros (ganamos / publicidad / buffalo)
+// agrupado por puesto. Sueldo base mensual + pagos extra por feriados.
+// Usa el mismo gate (closingsAccessMiddleware) que los cierres y las
+// cotizaciones, porque comparte rol financiero.
+
+const EmployeeEntry = require('./src/models/EmployeeEntry');
+const EMP_DELETE_PIN = '1818';
+const EMP_SECTORS = ['ganamos', 'publicidad', 'buffalo'];
+
+function _empCompute(e) {
+  const sueldo = Number(e.sueldoARS || 0);
+  const feriados = Array.isArray(e.feriados) ? e.feriados : [];
+  const feriadosTotal = feriados.reduce((s, f) => s + Number(f.amountARS || 0), 0);
+  return {
+    sueldoARS: sueldo,
+    feriadosTotal,
+    feriadosCount: feriados.length,
+    totalMensual: sueldo + feriadosTotal
+  };
+}
+
+// GET /api/admin/empleados[?sector=…]
+app.get('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const filter = {};
+    if (EMP_SECTORS.includes(req.query.sector)) filter.sector = req.query.sector;
+    const rows = await EmployeeEntry.find(filter).sort({ sector: 1, role: 1, name: 1 }).lean();
+    const items = rows.map(r => ({ ...r, computed: _empCompute(r) }));
+    res.json({ success: true, items });
+  } catch (err) {
+    logger.error(`GET /api/admin/empleados: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/empleados — crear empleado
+app.post('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sector = String(b.sector || '');
+    if (!EMP_SECTORS.includes(sector)) return res.status(400).json({ error: 'Sector inválido' });
+    const role = String(b.role || '').trim().toLowerCase().slice(0, 60);
+    if (!role) return res.status(400).json({ error: 'Puesto requerido' });
+    const doc = {
+      id: `emp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      sector,
+      role,
+      name: String(b.name || '').trim().slice(0, 100),
+      schedule: String(b.schedule || '').trim().slice(0, 200),
+      sueldoARS: Math.max(0, Number(b.sueldoARS) || 0),
+      feriados: [],
+      notes: String(b.notes || '').slice(0, 500),
+      active: b.active !== false,
+      createdBy: (req.user && req.user.username) || ''
+    };
+    const saved = await EmployeeEntry.create(doc);
+    res.json({ success: true, item: { id: saved.id } });
+  } catch (err) {
+    logger.error(`POST /api/admin/empleados: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PUT /api/admin/empleados/:id — actualizar
+app.put('/api/admin/empleados/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const e = await EmployeeEntry.findOne({ id });
+    if (!e) return res.status(404).json({ error: 'Empleado no encontrado' });
+    const b = req.body || {};
+    if (b.sector !== undefined) {
+      if (!EMP_SECTORS.includes(b.sector)) return res.status(400).json({ error: 'Sector inválido' });
+      e.sector = b.sector;
+    }
+    if (b.role !== undefined) {
+      const r = String(b.role || '').trim().toLowerCase().slice(0, 60);
+      if (!r) return res.status(400).json({ error: 'Puesto requerido' });
+      e.role = r;
+    }
+    if (b.name !== undefined) e.name = String(b.name || '').trim().slice(0, 100);
+    if (b.schedule !== undefined) e.schedule = String(b.schedule || '').trim().slice(0, 200);
+    if (b.sueldoARS !== undefined) e.sueldoARS = Math.max(0, Number(b.sueldoARS) || 0);
+    if (b.notes !== undefined) e.notes = String(b.notes || '').slice(0, 500);
+    if (b.active !== undefined) e.active = !!b.active;
+    if (Array.isArray(b.feriados)) {
+      e.feriados = b.feriados.map(f => ({
+        dateKey: String((f && f.dateKey) || '').slice(0, 10),
+        amountARS: Math.max(0, Number((f && f.amountARS) || 0)),
+        note: String((f && f.note) || '').slice(0, 200)
+      }));
+    }
+    await e.save();
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`PUT /api/admin/empleados/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE /api/admin/empleados/:id — borrar (requiere PIN 1818)
+app.delete('/api/admin/empleados/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const pin = String(
+      (req.query && req.query.pin) ||
+      (req.body && req.body.pin) ||
+      (req.headers && req.headers['x-delete-pin']) ||
+      ''
+    );
+    if (pin !== EMP_DELETE_PIN) return res.status(403).json({ error: 'PIN incorrecto' });
+    const e = await EmployeeEntry.findOne({ id });
+    if (!e) return res.status(404).json({ error: 'Empleado no encontrado' });
+    await EmployeeEntry.deleteOne({ id });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/empleados/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // RUTAS DE REFERIDOS
 // ============================================
 

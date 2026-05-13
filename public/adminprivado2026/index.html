@@ -100,6 +100,10 @@
                     <span>📋</span>
                     <span>Historial Cotización</span>
                 </a>
+                <a href="#" class="nav-item" data-section="empleados" data-protected-pin="closings" style="background:rgba(155,48,255,0.10);border-left:3px solid #9b30ff;">
+                    <span>👥</span>
+                    <span><strong>EMPLEADOS</strong></span>
+                </a>
 
                 <!-- CENTRAL — titulo de sección (mismo estilo que NUEVO TOP). -->
                 <div class="nav-section-title" style="color:#d4af37;border-top:1px solid rgba(212,175,55,0.30);padding-top:10px;margin-top:12px;">🏛️ CENTRAL</div>
@@ -1808,6 +1812,28 @@
                     </p>
                 </div>
                 <div id="historialCotizacionBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: EMPLEADOS
+                 Personal de las 3 estructuras (ganamos, publicidad, buffalo)
+                 agrupados por puesto. Sueldo base + pagos por feriados.
+                 ============================================ -->
+            <section id="empleadosSection" class="section">
+                <div class="panel-header">
+                    <h2>👥 Empleados</h2>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="refresh-btn" onclick="loadEmpleados()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div style="background:rgba(155,48,255,0.06);border-left:3px solid #9b30ff;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.55;">
+                        Personal de las 3 estructuras. Elegí el sector arriba; dentro vas a ver los puestos (encargados, pagos, comunidad, cargas, recontactación, revisión de chat, etc) y podés agregar personas con su nombre, horario, sueldo y pagos extra por feriados. Podés crear puestos nuevos también.
+                    </p>
+                </div>
+                <div id="empleadosBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>

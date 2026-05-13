@@ -435,6 +435,7 @@ function showSection(sectionKey) {
         historialBuffalo: 'historialBuffaloSection',
         cotizacionesExterno: 'cotizacionesExternoSection',
         historialCotizacion: 'historialCotizacionSection',
+        empleados: 'empleadosSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -523,6 +524,8 @@ function showSection(sectionKey) {
         loadHistorialBuffalo();
     } else if (sectionKey === 'historialCotizacion') {
         loadHistorialCotizacion();
+    } else if (sectionKey === 'empleados') {
+        loadEmpleados();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -27867,4 +27870,313 @@ function _centralStatCard(label, big, small, color, bg, border) {
     h += '<div style="color:#bbb;font-weight:700;font-size:11.5px;">' + small + '</div>';
     h += '</div>';
     return h;
+}
+
+// ============================================================
+// EMPLEADOS POR ESTRUCTURA
+// ============================================================
+// 3 sectores (ganamos, publicidad, buffalo) cada uno con puestos.
+// Cada empleado tiene nombre, horario, sueldo y opcionalmente feriados
+// con pago extra. Total mensual = sueldo + Σ feriados.
+// Los puestos son strings libres — los defaults sugeridos se ofrecen al
+// crear un nuevo grupo, pero el dueño puede crear cualquier puesto.
+
+const EMP_SECTORS_UI = [
+    { key: 'ganamos',    label: '💼 GANAMOS',    color: '#25d366' },
+    { key: 'publicidad', label: '📢 PUBLICIDAD', color: '#00d4ff' },
+    { key: 'buffalo',    label: '🐃 BUFFALO',    color: '#ffd700' }
+];
+const EMP_DEFAULT_ROLES = [
+    { key: 'encargados',     label: 'Encargados' },
+    { key: 'pagos',          label: 'Pagos' },
+    { key: 'comunidad',      label: 'Comunidad' },
+    { key: 'cargas',         label: 'Cargas' },
+    { key: 'recontactacion', label: 'Recontactación' },
+    { key: 'revision_chat',  label: 'Revisión de chat' }
+];
+
+let _empCache = [];
+let _empSector = 'ganamos';
+
+function _empRoleLabel(role) {
+    const def = EMP_DEFAULT_ROLES.find(r => r.key === role);
+    if (def) return def.label;
+    // role libre — capitalizar y reemplazar _ por espacio
+    return String(role || '').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+}
+
+function setEmpSector(s) {
+    _empSector = s;
+    _renderEmpleados();
+}
+
+async function loadEmpleados() {
+    const body = document.getElementById('empleadosBody');
+    if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/empleados');
+        const d = await r.json();
+        if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
+        _empCache = d.items || [];
+        _renderEmpleados();
+    } catch (e) {
+        console.error('[empleados] load fail:', e);
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+function _renderEmpleados() {
+    const body = document.getElementById('empleadosBody');
+    if (!body) return;
+    const items = (_empCache || []).filter(e => e.sector === _empSector);
+
+    let h = '';
+
+    // === Selector de sector ===
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">';
+    for (const s of EMP_SECTORS_UI) {
+        const active = s.key === _empSector;
+        const bg = active ? s.color : 'rgba(255,255,255,0.04)';
+        const color = active ? '#000' : s.color;
+        const border = active ? s.color : (s.color + '55');
+        h += '<button onclick="setEmpSector(\'' + s.key + '\')" style="flex:1;min-width:140px;background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:10px 12px;border-radius:9px;font-weight:900;font-size:13px;letter-spacing:0.5px;cursor:pointer;">' + s.label + '</button>';
+    }
+    h += '</div>';
+
+    // === Resumen de totales del sector ===
+    const sectorTotal = items.reduce((a, e) => a + ((e.computed && e.computed.totalMensual) || 0), 0);
+    const sectorSueldo = items.reduce((a, e) => a + Number(e.sueldoARS || 0), 0);
+    const sectorFeriados = items.reduce((a, e) => a + ((e.computed && e.computed.feriadosTotal) || 0), 0);
+    const sectorActivos = items.filter(e => e.active !== false).length;
+
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:14px;">';
+    h += '<div style="background:rgba(155,48,255,0.10);border:1px solid rgba(155,48,255,0.35);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">💰 Total mensual</div>';
+    h += '<div style="color:#c89bff;font-weight:900;font-size:18px;margin-top:3px;">' + formatMoney(Math.round(sectorTotal)) + '</div>';
+    h += '<div style="color:#aaa;font-size:11px;">' + sectorActivos + ' empleados activos</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.25);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">💵 Sueldos base</div>';
+    h += '<div style="color:#00d4ff;font-weight:900;font-size:17px;margin-top:3px;">' + formatMoney(Math.round(sectorSueldo)) + '</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(255,170,102,0.06);border:1px solid rgba(255,170,102,0.25);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">🎉 Feriados</div>';
+    h += '<div style="color:#ffaa66;font-weight:900;font-size:17px;margin-top:3px;">' + formatMoney(Math.round(sectorFeriados)) + '</div>';
+    h += '</div>';
+    h += '</div>';
+
+    // === Crear empleado / agregar puesto nuevo ===
+    h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.20);border-radius:9px;padding:11px 14px;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">';
+    h += '<button onclick="addEmpleado()" style="background:linear-gradient(135deg,#9b30ff 0%,#6e1bb3 100%);color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">➕ Agregar empleado</button>';
+    h += '<span style="color:#888;font-size:11px;">Podés tipear cualquier puesto o usar los sugeridos.</span>';
+    h += '</div>';
+
+    if (items.length === 0) {
+        h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:10px;padding:30px;text-align:center;color:#888;font-size:13px;">Todavía no hay empleados cargados en este sector. Tocá "➕ Agregar empleado" para empezar.</div>';
+        body.innerHTML = h;
+        return;
+    }
+
+    // === Agrupar por puesto ===
+    const byRole = {};
+    for (const e of items) {
+        const r = e.role || 'sin_puesto';
+        if (!byRole[r]) byRole[r] = [];
+        byRole[r].push(e);
+    }
+    // Ordenar puestos: primero los defaults en orden, después los custom alfabético
+    const roleOrder = EMP_DEFAULT_ROLES.map(r => r.key);
+    const sortedRoles = Object.keys(byRole).sort((a, b) => {
+        const ia = roleOrder.indexOf(a), ib = roleOrder.indexOf(b);
+        if (ia >= 0 && ib >= 0) return ia - ib;
+        if (ia >= 0) return -1;
+        if (ib >= 0) return 1;
+        return a.localeCompare(b);
+    });
+
+    for (const role of sortedRoles) {
+        const arr = byRole[role];
+        const roleTotal = arr.reduce((a, e) => a + ((e.computed && e.computed.totalMensual) || 0), 0);
+        const roleSueldo = arr.reduce((a, e) => a + Number(e.sueldoARS || 0), 0);
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:12px;overflow:hidden;">';
+        h += '<div style="padding:10px 14px;background:rgba(155,48,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
+        h += '<div style="color:#c89bff;font-weight:900;font-size:13px;letter-spacing:0.5px;">👤 ' + escapeHtml(_empRoleLabel(role)) + ' <span style="color:#888;font-size:11px;font-weight:700;">· ' + arr.length + (arr.length === 1 ? ' persona' : ' personas') + '</span></div>';
+        h += '<div style="color:#fff;font-weight:900;font-size:13.5px;">' + formatMoney(Math.round(roleTotal)) + ' <span style="color:#888;font-size:10.5px;font-weight:700;">(sueldo: ' + formatMoney(Math.round(roleSueldo)) + ')</span></div>';
+        h += '</div>';
+        h += '<div>';
+        for (const e of arr) {
+            h += _renderEmpleadoRow(e);
+        }
+        h += '</div>';
+        h += '</div>';
+    }
+
+    body.innerHTML = h;
+}
+
+function _renderEmpleadoRow(e) {
+    const c = e.computed || {};
+    const totMes = Number(c.totalMensual || 0);
+    const ferTot = Number(c.feriadosTotal || 0);
+    const ferCount = Number(c.feriadosCount || 0);
+    const isActive = e.active !== false;
+    const bg = isActive ? 'rgba(0,0,0,0.20)' : 'rgba(255,80,80,0.05)';
+    let h = '<div id="emp_' + escapeHtml(e.id) + '" style="padding:11px 14px;background:' + bg + ';border-bottom:1px solid rgba(255,255,255,0.04);">';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:9px;align-items:end;">';
+    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Nombre</label><input data-emp-field="name" type="text" value="' + escapeHtml(e.name || '') + '" placeholder="Nombre y apellido" maxlength="100" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;"></div>';
+    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Horario</label><input data-emp-field="schedule" type="text" value="' + escapeHtml(e.schedule || '') + '" placeholder="Ej: lun-vie 10-18hs" maxlength="200" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;"></div>';
+    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Puesto</label><input data-emp-field="role" type="text" value="' + escapeHtml(e.role || '') + '" maxlength="60" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(155,48,255,0.30);color:#c89bff;padding:6px 9px;border-radius:6px;font-size:12px;font-weight:700;"></div>';
+    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Sueldo $</label><input data-emp-field="sueldoARS" type="number" min="0" step="1000" value="' + Number(e.sueldoARS || 0) + '" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.30);color:#00d4ff;padding:6px 9px;border-radius:6px;font-size:13px;font-weight:800;text-align:right;"></div>';
+    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Total mes</label><div style="background:rgba(155,48,255,0.10);border:1px solid rgba(155,48,255,0.35);color:#c89bff;padding:6px 9px;border-radius:6px;font-size:13.5px;font-weight:900;text-align:right;">' + formatMoney(Math.round(totMes)) + '</div></div>';
+    h += '</div>';
+
+    // === Feriados ===
+    const feriados = Array.isArray(e.feriados) ? e.feriados : [];
+    h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    h += '<div style="color:#ffaa66;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🎉 FERIADOS DEL MES (' + ferCount + ') · pago extra: ' + formatMoney(Math.round(ferTot)) + '</div>';
+    h += '<button onclick="addEmpFeriado(\'' + escapeHtml(e.id) + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:4px 10px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;">➕ Feriado</button>';
+    h += '</div>';
+    if (feriados.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin feriados cargados este mes.</div>';
+    } else {
+        for (let i = 0; i < feriados.length; i++) {
+            const f = feriados[i] || {};
+            h += '<div data-emp-feriado="' + i + '" style="display:grid;grid-template-columns:140px 130px 1fr auto;gap:6px;margin-bottom:4px;align-items:center;">';
+            h += '<input data-emp-feriado-field="dateKey" type="date" value="' + escapeHtml(f.dateKey || '') + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#ffaa66;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;">';
+            h += '<input data-emp-feriado-field="amountARS" type="number" min="0" step="1000" value="' + Number(f.amountARS || 0) + '" placeholder="Monto $" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#fff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;text-align:right;">';
+            h += '<input data-emp-feriado-field="note" type="text" value="' + escapeHtml(f.note || '') + '" placeholder="Detalle (opcional)" maxlength="200" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:4px 8px;border-radius:5px;font-size:11px;">';
+            h += '<button onclick="removeEmpFeriado(\'' + escapeHtml(e.id) + '\',' + i + ')" title="Sacar feriado" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
+            h += '</div>';
+        }
+    }
+    h += '</div>';
+
+    // === Botones ===
+    h += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">';
+    h += '<button onclick="saveEmpleado(\'' + escapeHtml(e.id) + '\')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 12px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">💾 Guardar</button>';
+    h += '<button onclick="toggleEmpActive(\'' + escapeHtml(e.id) + '\')" style="background:' + (isActive ? 'rgba(255,170,102,0.10)' : 'rgba(0,255,102,0.10)') + ';color:' + (isActive ? '#ffaa66' : '#0f0') + ';border:1px solid ' + (isActive ? 'rgba(255,170,102,0.35)' : 'rgba(0,255,102,0.35)') + ';padding:6px 12px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (isActive ? '⏸ Inactivar' : '▶ Activar') + '</button>';
+    h += '<button onclick="deleteEmpleado(\'' + escapeHtml(e.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:6px 10px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
+    if (!isActive) {
+        h += '<span style="color:#ffaa66;font-size:11px;font-weight:700;align-self:center;">INACTIVO</span>';
+    }
+    h += '</div>';
+
+    h += '</div>';
+    return h;
+}
+
+function _collectEmpPayload(id) {
+    const card = document.getElementById('emp_' + id);
+    if (!card) return null;
+    const get = (field) => {
+        const el = card.querySelector('[data-emp-field="' + field + '"]');
+        return el ? el.value : '';
+    };
+    const feriados = [];
+    const ferRows = card.querySelectorAll('[data-emp-feriado]');
+    ferRows.forEach(row => {
+        const dk = (row.querySelector('[data-emp-feriado-field="dateKey"]') || {}).value || '';
+        const am = Number((row.querySelector('[data-emp-feriado-field="amountARS"]') || {}).value || 0);
+        const nt = (row.querySelector('[data-emp-feriado-field="note"]') || {}).value || '';
+        feriados.push({ dateKey: dk, amountARS: am, note: nt });
+    });
+    return {
+        name: get('name'),
+        schedule: get('schedule'),
+        role: (get('role') || '').toLowerCase().trim(),
+        sueldoARS: Number(get('sueldoARS')) || 0,
+        feriados
+    };
+}
+
+async function addEmpleado() {
+    const role = prompt('Puesto del nuevo empleado:\n\n(sugeridos: encargados, pagos, comunidad, cargas, recontactacion, revision_chat — o tipeá uno nuevo)', 'encargados');
+    if (role == null) return;
+    const role2 = (role || '').trim().toLowerCase();
+    if (!role2) { showToast('Puesto requerido', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/empleados', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sector: _empSector, role: role2 })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al crear', 'error'); return; }
+        showToast('✅ Empleado creado · completá los datos', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function saveEmpleado(id) {
+    const payload = _collectEmpPayload(id);
+    if (!payload) return;
+    try {
+        const r = await authFetch('/api/admin/empleados/' + encodeURIComponent(id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al guardar', 'error'); return; }
+        showToast('💾 Guardado', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+function addEmpFeriado(id) {
+    const emp = (_empCache || []).find(e => e.id === id);
+    if (!emp) return;
+    // Mutamos el cache local + re-renderizamos. El owner después guarda.
+    if (!Array.isArray(emp.feriados)) emp.feriados = [];
+    emp.feriados.push({ dateKey: '', amountARS: 0, note: '' });
+    _renderEmpleados();
+    showToast('Cargá la fecha y el monto, después tocá 💾 Guardar', 'info');
+}
+
+function removeEmpFeriado(id, idx) {
+    const emp = (_empCache || []).find(e => e.id === id);
+    if (!emp || !Array.isArray(emp.feriados)) return;
+    emp.feriados.splice(idx, 1);
+    _renderEmpleados();
+}
+
+async function toggleEmpActive(id) {
+    const emp = (_empCache || []).find(e => e.id === id);
+    if (!emp) return;
+    const newVal = !(emp.active !== false);
+    try {
+        const r = await authFetch('/api/admin/empleados/' + encodeURIComponent(id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active: newVal })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        showToast(newVal ? '▶ Activado' : '⏸ Inactivado', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function deleteEmpleado(id) {
+    if (!confirm('¿Borrar este empleado? La acción no se puede deshacer.')) return;
+    const pin = prompt('PIN para borrar el empleado:');
+    if (pin == null) return;
+    if (!pin) { showToast('PIN requerido', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/empleados/' + encodeURIComponent(id) + '?pin=' + encodeURIComponent(pin), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('🗑 Eliminado', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
 }
