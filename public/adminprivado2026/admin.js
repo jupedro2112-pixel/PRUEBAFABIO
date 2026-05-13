@@ -24908,6 +24908,9 @@ function _renderClosings() {
             if (r.locked) {
                 stateBadge += ' <span style="color:#ff8080;font-size:9.5px;">🔒</span>';
             }
+            if (r.verifiedAt) {
+                stateBadge += ' <span style="color:#66ff66;font-size:11px;font-weight:900;" title="Verificado por ' + escapeHtml(r.verifiedBy || '?') + '">✓</span>';
+            }
 
             const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#888';
             const netColor = c.netoSector < 0 ? '#ff8080' : '#fff';
@@ -25252,7 +25255,7 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     }
 
     // Action buttons
-    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
     if (!locked) {
         html += '<button type="button" onclick="saveClosing(\'' + rid + '\', \'' + sec.key + '\', ' + (teamSlot == null ? 'null' : teamSlot) + ', \'' + date + '\')" style="background:rgba(102,255,102,0.15);border:1px solid rgba(102,255,102,0.45);color:#aaffaa;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (exists ? '💾 GUARDAR CAMBIOS' : '💾 CREAR CIERRE') + '</button>';
         if (exists && !confirmed) {
@@ -25260,6 +25263,17 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
         }
     } else {
         html += '<span style="color:#888;font-size:11px;">Bloqueado · solo lectura</span>';
+    }
+    if (exists && confirmed) {
+        const isVerified = !!row.verifiedAt;
+        const vBg = isVerified ? 'linear-gradient(135deg,#66ff66,#25d366)' : 'rgba(102,255,102,0.08)';
+        const vColor = isVerified ? '#000' : '#aaffaa';
+        const vBorder = isVerified ? '#66ff66' : 'rgba(102,255,102,0.40)';
+        const vText = isVerified ? '✓ VERIFICADO · destildear' : '☐ Marcar como verificado';
+        html += '<button type="button" onclick="verifyClosing(\'' + rid + '\')" style="background:' + vBg + ';border:1px solid ' + vBorder + ';color:' + vColor + ';padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;margin-left:auto;">' + vText + '</button>';
+        if (isVerified) {
+            html += '<span style="color:#aaffaa;font-size:10.5px;">por <strong>' + escapeHtml(row.verifiedBy || '?') + '</strong></span>';
+        }
     }
     html += '</div>';
     html += '</div>';
