@@ -6599,16 +6599,19 @@ async function initializeData() {
   // restringido al panel /cierresgeneral. La contraseña SE SOBRESCRIBE
   // siempre con el valor configurado abajo, para que cambiar la
   // constante y redeployar actualice el password en producción.
+  //
+  // IMPORTANTE: NO hashear con bcrypt.hash() antes de pasarlo al modelo —
+  // el pre('save') hook de User.js ya hashea automáticamente. Si pasamos
+  // un hash, se rehashea (doble bcrypt) y bcrypt.compare en login falla.
   try {
     const CIERRES_USERNAME = 'cierresgeneral';
     const CIERRES_PASSWORD = 'asd123';
-    const hashed = await bcrypt.hash(CIERRES_PASSWORD, 12);
     let cierresUser = await User.findOne({ username: CIERRES_USERNAME });
     if (!cierresUser) {
       await User.create({
         id: uuidv4(),
         username: CIERRES_USERNAME,
-        password: hashed,
+        password: CIERRES_PASSWORD,    // raw — el hook hashea
         email: 'cierres@saladejuegos.com',
         phone: null,
         role: 'closings_viewer',
@@ -6623,7 +6626,7 @@ async function initializeData() {
       });
       console.log(`✅ Usuario '${CIERRES_USERNAME}' creado (rol: closings_viewer)`);
     } else {
-      cierresUser.password = hashed;          // siempre sincronizar con la constante
+      cierresUser.password = CIERRES_PASSWORD;  // raw — el hook hashea al save()
       cierresUser.role = 'closings_viewer';
       cierresUser.isActive = true;
       cierresUser.mustChangePassword = false;
