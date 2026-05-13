@@ -4,7 +4,18 @@
 // ============================================
 
 const API_URL = '';
-let currentToken = localStorage.getItem('adminToken') || null;
+
+// Sesiones separadas: el admin general usa `adminToken`, el panel de
+// /cierresgeneral (URL con ?only=closings) usa `closingsToken`. Así las
+// dos sesiones coexisten sin pisarse.
+const _IS_CLOSINGS_MODE = (function() {
+    try { return new URLSearchParams(location.search).get('only') === 'closings'; }
+    catch { return false; }
+})();
+const _TOKEN_KEY = _IS_CLOSINGS_MODE ? 'closingsToken' : 'adminToken';
+const _USER_KEY = _IS_CLOSINGS_MODE ? 'closingsUser' : 'adminUser';
+
+let currentToken = localStorage.getItem(_TOKEN_KEY) || null;
 let currentAdmin = null;
 
 // Máximo de slots permitidos por el backend (USER_LINES_MAX_SLOTS).
@@ -173,15 +184,8 @@ async function handleLogin(e) {
 
         currentToken = data.token;
         currentAdmin = data.user;
-        localStorage.setItem('adminToken', currentToken);
-        // closings_viewer: forzar el modo "only=closings" (sidebar oculto,
-        // sólo se ve la sección de cierres) aunque la URL no lo traiga.
-        if (data.user && data.user.role === 'closings_viewer') {
-            try {
-                document.documentElement.classList.add('admin-only-mode');
-                document.documentElement.dataset.onlySection = 'closings';
-            } catch (_) {}
-        }
+        localStorage.setItem(_TOKEN_KEY, currentToken);
+        if (data.user) localStorage.setItem(_USER_KEY, JSON.stringify(data.user));
         showApp();
     } catch (err) {
         console.error('Login error:', err);
@@ -192,7 +196,8 @@ async function handleLogin(e) {
 function handleLogout() {
     currentToken = null;
     currentAdmin = null;
-    localStorage.removeItem('adminToken');
+    localStorage.removeItem(_TOKEN_KEY);
+    localStorage.removeItem(_USER_KEY);
     document.getElementById('app').classList.add('hidden');
     document.getElementById('loginScreen').classList.remove('hidden');
 }
@@ -4141,17 +4146,11 @@ document.addEventListener('DOMContentLoaded', function () {
             const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
             if (!adminRoles.includes(data.role)) throw new Error('not admin');
             currentAdmin = data;
-            // closings_viewer: forzar modo only=closings al recargar.
-            if (data.role === 'closings_viewer') {
-                try {
-                    document.documentElement.classList.add('admin-only-mode');
-                    document.documentElement.dataset.onlySection = 'closings';
-                } catch (_) {}
-            }
             showApp();
         }).catch(() => {
             currentToken = null;
-            localStorage.removeItem('adminToken');
+            localStorage.removeItem(_TOKEN_KEY);
+            localStorage.removeItem(_USER_KEY);
         });
     }
 });
@@ -25276,8 +25275,17 @@ async function closingsLogout() {
         await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     } catch (_) {}
     try {
-        localStorage.removeItem('adminToken');
-        localStorage.removeItem('adminUser');
+        localStorage.removeItem('closingsToken');
+        localStorage.removeItem('closingsUser');
+        // Por si quedó un viejo token bajo adminToken/adminUser:
+        // sólo se borran si pertenecen a un closings_viewer
+        try {
+            const u = JSON.parse(localStorage.getItem('adminUser') || '{}');
+            if (u && u.role === 'closings_viewer') {
+                localStorage.removeItem('adminToken');
+                localStorage.removeItem('adminUser');
+            }
+        } catch (_) {}
         sessionStorage.clear();
     } catch (_) {}
     location.href = '/cierresgeneral';

@@ -176,10 +176,12 @@
             btn.textContent = 'Ingresar';
             return;
           }
-          // Persistir el token en localStorage (mismo formato que usa /adminprivado2026/admin.js).
+          // Persistir el token en una key separada (closingsToken) para
+          // que no pise la sesión del admin general (adminToken). El admin
+          // panel detecta ?only=closings y carga el closingsToken.
           try {
-            localStorage.setItem('adminToken', d.token);
-            if (d.user) localStorage.setItem('adminUser', JSON.stringify(d.user));
+            localStorage.setItem('closingsToken', d.token);
+            if (d.user) localStorage.setItem('closingsUser', JSON.stringify(d.user));
           } catch (_) {}
           // Redirigir al panel admin en modo "only=closings" — sidebar oculto,
           // sólo se ve la sección de cierres.
@@ -191,9 +193,9 @@
         }
       });
 
-      // Si ya tiene un token válido, saltar directo al panel.
+      // Si ya tiene un token específico de cierres válido, saltar directo.
       try {
-        const t = localStorage.getItem('adminToken');
+        const t = localStorage.getItem('closingsToken');
         if (t) {
           fetch('/api/auth/verify', { headers: { Authorization: 'Bearer ' + t } })
             .then(r => r.ok ? r.json() : null)
