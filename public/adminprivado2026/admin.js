@@ -3998,12 +3998,22 @@ async function sendBulkNotification() {
         };
 
         // 1) Enviar la notificacion. El server crea el row de historial
-        //    y nos devuelve historyId.
-        const r = await authFetch('/api/notifications/send-all', {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-        const data = await r.json();
+        //    y nos devuelve historyId. Timeout de 120s — si el ALB de AWS
+        //    corta la conexión a los 60s, igual capturamos el error y le
+        //    decimos al dueño que revise el historial.
+        const _sendCtrl = new AbortController();
+        const _sendTimeoutId = setTimeout(() => _sendCtrl.abort(), 120000);
+        let r, data;
+        try {
+            r = await authFetch('/api/notifications/send-all', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                signal: _sendCtrl.signal
+            });
+            data = await r.json();
+        } finally {
+            clearTimeout(_sendTimeoutId);
+        }
 
         // 2a) Si hay promo, crear la promo vinculada al historyId.
         if (promoEnabled && r.ok && data.success) {
@@ -4096,6 +4106,14 @@ async function sendBulkNotification() {
             updateNotifPreview();
             loadPromoAlertStatus();
             loadGiveawayStatusAdmin();
+            // Refrescar la lista de notifs programadas y, si la sección de
+            // historial ya estaba cargada, también el historial. Antes el
+            // envío "se hacía" pero no aparecía en historial hasta que el
+            // dueño cambiaba de sección y volvía.
+            try { loadScheduledNotifications(); } catch (_) {}
+            try {
+                if (document.getElementById('notifsHistoryContent')) loadNotifsHistory();
+            } catch (_) {}
         } else {
             const msg = data.error || data.message || 'Error desconocido';
             if (result) result.innerHTML = `❌ Error: ${escapeHtml(msg)}`;
@@ -4103,8 +4121,23 @@ async function sendBulkNotification() {
         }
     } catch (err) {
         console.error('sendBulkNotification error:', err);
-        if (result) result.innerHTML = `❌ Error de conexión: ${escapeHtml(err.message)}`;
-        showToast('Error de conexión', 'error');
+        // Distinguir timeout/abort: si la fetch fue abortada (el ALB suele
+        // cortar a los 60s en envíos masivos), el server probablemente sigue
+        // procesando en background. Avisamos al dueño que mire el historial.
+        const wasAborted = err && (err.name === 'AbortError' || /aborted|abort/i.test(err.message || ''));
+        if (wasAborted) {
+            if (result) result.innerHTML = '⏳ El envío está tardando — la conexión se cortó pero el server sigue procesando. <strong>Revisá el historial en 30-60 segundos</strong> para ver cuántos llegaron.';
+            showToast('Conexión cortada — el envío sigue en background', 'info');
+            // Forzamos un reload del historial en 30s para que el dueño vea
+            // el row cuando el server termine.
+            setTimeout(() => {
+                try { if (document.getElementById('notifsHistoryContent')) loadNotifsHistory(); } catch (_) {}
+                try { loadScheduledNotifications(); } catch (_) {}
+            }, 30000);
+        } else {
+            if (result) result.innerHTML = `❌ Error de conexión: ${escapeHtml(err.message)}`;
+            showToast('Error de conexión', 'error');
+        }
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = defaultBtnText; }
     }
