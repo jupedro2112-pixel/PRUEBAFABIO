@@ -433,6 +433,7 @@ function showSection(sectionKey) {
         closings: 'closingsSection',
         cotizaciones: 'cotizacionesSection',
         cotizacionesExterno: 'cotizacionesExternoSection',
+        centralHistorial: 'centralHistorialSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -517,6 +518,8 @@ function showSection(sectionKey) {
         loadCotizaciones();
     } else if (sectionKey === 'cotizacionesExterno') {
         loadCotizacionesExterno();
+    } else if (sectionKey === 'centralHistorial') {
+        loadCentralHistorial();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -27559,4 +27562,244 @@ async function deleteCotizacion(id, scope) {
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
+}
+
+// ============================================================
+// CENTRAL DE HISTORIAL
+// ============================================================
+// Consolida cotizaciones INTERNAS + EXTERNAS en una sola vista.
+// Cada cotización cerrada tiene equipos con tilde individual (cotizado).
+// Aquí agrupamos los eventos por período (día/semana/mes) y mostramos:
+//   - Resumen del período (cantidad de eventos, total $, total USDT, comisión)
+//   - Detalle expandible: cada evento con equipo, scope, monto, USDT, quién
+//
+// Datos se cargan llamando las dos APIs de cotizaciones existentes y
+// procesando todo client-side (los volúmenes son chicos, no hace falta
+// endpoint dedicado).
+
+let _centralPeriod = 'week'; // 'day' | 'week' | 'month'
+let _centralExpanded = {};   // periodKey → bool
+
+function setCentralPeriod(p) {
+    _centralPeriod = p;
+    _centralExpanded = {}; // reset expansion al cambiar de granularidad
+    _renderCentralHistorial();
+}
+function toggleCentralPeriod(key) {
+    _centralExpanded[key] = !_centralExpanded[key];
+    _renderCentralHistorial();
+}
+
+let _centralData = null; // { internas, externas } cargados
+
+async function loadCentralHistorial() {
+    const body = document.getElementById('centralHistorialBody');
+    if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const [rInt, rExt] = await Promise.all([
+            authFetch('/api/admin/cotizaciones'),
+            authFetch('/api/admin/cotizaciones-externo')
+        ]);
+        const [dInt, dExt] = await Promise.all([rInt.json(), rExt.json()]);
+        if (!rInt.ok || !dInt.success) throw new Error(dInt.error || 'No se pudieron cargar las internas');
+        if (!rExt.ok || !dExt.success) throw new Error(dExt.error || 'No se pudieron cargar las externas');
+        _centralData = {
+            internas: dInt.items || [],
+            externas: dExt.items || []
+        };
+        _renderCentralHistorial();
+    } catch (e) {
+        console.error('[centralHistorial] load fail:', e);
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+// Aplana las cotizaciones a una lista de eventos individuales (1 evento
+// por equipo cotizado). Devuelve cada evento con su scope, fecha de
+// cotización (cotizedAt), monto neto, USDT, comisión, etc.
+function _centralBuildEvents() {
+    if (!_centralData) return [];
+    const out = [];
+    const push = (cot, scopeKey) => {
+        const rate = Number(cot.usdtRate || 0);
+        const teams = Array.isArray(cot.teams) ? cot.teams : [];
+        for (const t of teams) {
+            if (!t.cotizado || !t.cotizedAt) continue;
+            const commARS = Number(t.commissionARS || 0);
+            out.push({
+                scope: scopeKey,
+                cotId: cot.id,
+                cotDateKey: cot.dateKey,
+                slot: t.slot,
+                name: t.name || ('Equipo ' + (Number(t.slot || 0) + 1)),
+                netARS: Number(t.netARS || 0),
+                precioUSDT: Number(t.precioUSDT || 0),
+                commissionARS: commARS,
+                commissionUSDT: rate > 0 ? +(commARS / rate).toFixed(2) : 0,
+                cotizedAt: t.cotizedAt,
+                cotizedBy: t.cotizedBy || ''
+            });
+        }
+    };
+    for (const c of (_centralData.internas || [])) push(c, 'interna');
+    for (const c of (_centralData.externas || [])) push(c, 'externa');
+    out.sort((a, b) => new Date(b.cotizedAt) - new Date(a.cotizedAt));
+    return out;
+}
+
+// Clave de período en formato canónico ordenable por string.
+function _centralPeriodKey(date, period) {
+    const d = new Date(date);
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth() + 1;
+    const day = d.getUTCDate();
+    if (period === 'day') {
+        return y + '-' + String(m).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    }
+    if (period === 'month') {
+        return y + '-' + String(m).padStart(2, '0');
+    }
+    // ISO week (year + week#)
+    const dt = new Date(Date.UTC(y, m - 1, day));
+    dt.setUTCDate(dt.getUTCDate() + 4 - (dt.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+    const weekNum = Math.ceil(((dt - yearStart) / 86400000 + 1) / 7);
+    return dt.getUTCFullYear() + '-W' + String(weekNum).padStart(2, '0');
+}
+
+function _centralPeriodLabel(key, period) {
+    if (period === 'day') return '📆 ' + key;
+    if (period === 'month') return '📅 ' + key;
+    return '🗓️ Semana ' + key;
+}
+
+function _renderCentralHistorial() {
+    const body = document.getElementById('centralHistorialBody');
+    if (!body) return;
+    if (!_centralData) {
+        body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">Cargá los datos primero.</div>';
+        return;
+    }
+    const events = _centralBuildEvents();
+    const period = _centralPeriod;
+
+    // === Header: filtros de período + totales globales ===
+    let h = '';
+    h += '<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:12px 14px;margin-bottom:14px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">';
+    h += '<div style="color:#fff;font-weight:900;font-size:13px;letter-spacing:0.5px;">🗂️ AGRUPADO POR</div>';
+    h += '<div style="display:flex;gap:6px;">';
+    const tabBtn = (k, lbl) => {
+        const active = (period === k);
+        const css = active
+            ? 'background:rgba(212,175,55,0.20);color:#d4af37;border-color:rgba(212,175,55,0.55);'
+            : 'background:rgba(255,255,255,0.04);color:#aaa;border-color:rgba(255,255,255,0.10);';
+        return '<button onclick="setCentralPeriod(\'' + k + '\')" style="' + css + 'border:1px solid;padding:6px 14px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.4px;">' + lbl + '</button>';
+    };
+    h += tabBtn('day', '📆 Diario');
+    h += tabBtn('week', '🗓️ Semanal');
+    h += tabBtn('month', '📅 Mensual');
+    h += '</div>';
+    h += '</div>';
+    h += '</div>';
+
+    // Resumen global (todos los eventos juntos)
+    const sumNet = events.reduce((a, e) => a + e.netARS, 0);
+    const sumUSDT = events.reduce((a, e) => a + e.precioUSDT, 0);
+    const sumComm = events.reduce((a, e) => a + e.commissionARS, 0);
+    const sumCommUSDT = events.reduce((a, e) => a + e.commissionUSDT, 0);
+    const internasN = events.filter(e => e.scope === 'interna').length;
+    const externasN = events.filter(e => e.scope === 'externa').length;
+
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:14px;">';
+    h += _centralStatCard('💎 Total cotizado', formatMoney(Math.round(sumNet)), sumUSDT.toFixed(2) + ' USDT', '#0f0', 'rgba(0,255,102,0.10)', 'rgba(0,255,102,0.30)');
+    h += _centralStatCard('🏦 Comisión total', formatMoney(Math.round(sumComm)), sumCommUSDT.toFixed(2) + ' USDT', '#ffd700', 'rgba(255,215,0,0.10)', 'rgba(255,215,0,0.35)');
+    h += _centralStatCard('📊 Eventos totales', String(events.length), internasN + ' interna · ' + externasN + ' externa', '#00d4ff', 'rgba(0,212,255,0.08)', 'rgba(0,212,255,0.30)');
+    h += '</div>';
+
+    if (events.length === 0) {
+        h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:10px;padding:30px;text-align:center;color:#888;font-size:13px;">Todavía no hay eventos cotizados. Tildeá equipos en COTIZACIONES o COTIZACIONES EXTERNO para que aparezcan acá.</div>';
+        body.innerHTML = h;
+        return;
+    }
+
+    // === Agrupar por período ===
+    const groups = {}; // key → { events: [], totals }
+    for (const ev of events) {
+        const k = _centralPeriodKey(ev.cotizedAt, period);
+        if (!groups[k]) groups[k] = { key: k, events: [], net: 0, usdt: 0, comm: 0, commUSDT: 0, internas: 0, externas: 0 };
+        const g = groups[k];
+        g.events.push(ev);
+        g.net += ev.netARS;
+        g.usdt += ev.precioUSDT;
+        g.comm += ev.commissionARS;
+        g.commUSDT += ev.commissionUSDT;
+        if (ev.scope === 'interna') g.internas += 1; else g.externas += 1;
+    }
+    const sortedKeys = Object.keys(groups).sort().reverse();
+
+    h += '<div style="display:flex;flex-direction:column;gap:8px;">';
+    for (const k of sortedKeys) {
+        const g = groups[k];
+        const isOpen = !!_centralExpanded[k];
+        const accent = '#d4af37';
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(212,175,55,0.25);border-radius:10px;overflow:hidden;">';
+        h += '<div onclick="toggleCentralPeriod(\'' + escapeHtml(k) + '\')" style="cursor:pointer;padding:11px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;user-select:none;background:' + (isOpen ? 'rgba(212,175,55,0.05)' : 'transparent') + ';">';
+        h += '<div style="color:' + accent + ';font-size:12px;width:18px;text-align:center;">' + (isOpen ? '▼' : '▶') + '</div>';
+        h += '<div>';
+        h += '<div style="color:#fff;font-weight:900;font-size:13.5px;">' + _centralPeriodLabel(k, period) + '</div>';
+        h += '<div style="color:#aaa;font-size:11px;margin-top:2px;">' + g.events.length + ' eventos · ' + g.internas + ' int · ' + g.externas + ' ext</div>';
+        h += '</div>';
+        h += '<div style="text-align:right;">';
+        h += '<div style="color:#aaffaa;font-weight:900;font-size:13.5px;">' + formatMoney(Math.round(g.net)) + '</div>';
+        h += '<div style="color:#aaa;font-size:11px;">' + g.usdt.toFixed(2) + ' USDT · com: ' + formatMoney(Math.round(g.comm)) + '</div>';
+        h += '</div>';
+        h += '</div>';
+
+        if (isOpen) {
+            h += '<div style="border-top:1px solid rgba(255,255,255,0.06);padding:8px 14px;">';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+            h += '<thead><tr style="color:#888;border-bottom:1px solid rgba(255,255,255,0.08);">';
+            h += '<th style="padding:6px;text-align:left;font-size:10px;letter-spacing:0.5px;">SCOPE</th>';
+            h += '<th style="padding:6px;text-align:left;font-size:10px;letter-spacing:0.5px;">FECHA TILDE</th>';
+            h += '<th style="padding:6px;text-align:left;font-size:10px;letter-spacing:0.5px;">EQUIPO</th>';
+            h += '<th style="padding:6px;text-align:left;font-size:10px;letter-spacing:0.5px;">CIERRE</th>';
+            h += '<th style="padding:6px;text-align:right;font-size:10px;letter-spacing:0.5px;">NETO $</th>';
+            h += '<th style="padding:6px;text-align:right;font-size:10px;letter-spacing:0.5px;">USDT</th>';
+            h += '<th style="padding:6px;text-align:right;font-size:10px;letter-spacing:0.5px;">COMISIÓN</th>';
+            h += '<th style="padding:6px;text-align:left;font-size:10px;letter-spacing:0.5px;">POR</th>';
+            h += '</tr></thead><tbody>';
+            for (const ev of g.events) {
+                const scopeBadge = ev.scope === 'externa'
+                    ? '<span style="background:rgba(0,150,255,0.15);color:#0080ff;padding:2px 8px;border-radius:4px;font-weight:800;font-size:10px;">🌐 EXT</span>'
+                    : '<span style="background:rgba(0,200,150,0.15);color:#00c896;padding:2px 8px;border-radius:4px;font-weight:800;font-size:10px;">💱 INT</span>';
+                h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">';
+                h += '<td style="padding:6px;">' + scopeBadge + '</td>';
+                h += '<td style="padding:6px;color:#ddd;">' + escapeHtml(formatDate(ev.cotizedAt)) + '</td>';
+                h += '<td style="padding:6px;color:#fff;font-weight:700;">' + escapeHtml(ev.name) + '</td>';
+                h += '<td style="padding:6px;color:#aaa;">' + escapeHtml(ev.cotDateKey) + '</td>';
+                h += '<td style="padding:6px;text-align:right;color:#fff;font-weight:700;">' + formatMoney(ev.netARS) + '</td>';
+                h += '<td style="padding:6px;text-align:right;color:#aaffaa;font-weight:700;">' + ev.precioUSDT.toFixed(2) + '</td>';
+                h += '<td style="padding:6px;text-align:right;color:#ffd700;font-weight:700;">' + formatMoney(ev.commissionARS) + '</td>';
+                h += '<td style="padding:6px;color:#888;">' + escapeHtml(ev.cotizedBy || '—') + '</td>';
+                h += '</tr>';
+            }
+            h += '</tbody></table>';
+            h += '</div>';
+        }
+        h += '</div>';
+    }
+    h += '</div>';
+
+    body.innerHTML = h;
+}
+
+function _centralStatCard(label, big, small, color, bg, border) {
+    let h = '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">' + label + '</div>';
+    h += '<div style="color:' + color + ';font-weight:900;font-size:18px;margin-top:3px;">' + big + '</div>';
+    h += '<div style="color:#bbb;font-weight:700;font-size:11.5px;">' + small + '</div>';
+    h += '</div>';
+    return h;
 }
