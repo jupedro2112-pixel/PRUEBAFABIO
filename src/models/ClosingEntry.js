@@ -100,6 +100,26 @@ const closingSchema = new mongoose.Schema({
   // o se calcula automático leyendo el cierre del día previo.
   pendienteAnteriorARS: { type: Number, default: 0 },
 
+  // === Movimientos extra del día ===
+  // ingresosARS: plata que ENTRÓ extra (nos prestaron / movimos de otra cuenta)
+  // egresosARS:  préstamos que HICIMOS (prestamos a alguien — vuelve después)
+  // gastosARS:   gastos del día (consumido — NO vuelve: insumos, sueldos, etc.)
+  // Los 3 afectan el saldo esperado del CVU al cierre. Cada uno tiene
+  // un detalle (note) que el owner llena para auditoría.
+  ingresosARS: { type: Number, default: 0, min: 0 },
+  ingresosNote: { type: String, default: '', trim: true },
+  egresosARS: { type: Number, default: 0, min: 0 },
+  egresosNote: { type: String, default: '', trim: true },
+  gastosARS: { type: Number, default: 0, min: 0 },
+  gastosNote: { type: String, default: '', trim: true },
+
+  // Saldo REAL del CVU/banco a las 00 hs (al cerrar el día).
+  // Sirve para verificar: ¿coincide con el saldo esperado calculado?
+  //   - Si coincide → todo cuadra.
+  //   - Si hay menos → 🚨 PLATA FALTANTE (problema).
+  //   - Si hay más  → sobra (revisar movimientos no registrados).
+  cvuMidnightARS: { type: Number, default: 0, min: 0 },
+
   // === Bonificaciones / regalos ===
   bonusARS: { type: Number, default: 0 },
   bonusNote: { type: String, default: '', trim: true },

@@ -24798,6 +24798,19 @@ async function loadClosingsSummary(date) {
     } catch (_) {}
 }
 
+// Wire up live recompute: cualquier input dentro de [data-cls-id] dispara
+// closingsRecompute() para refrescar el preview en vivo.
+function _wireClosingsLiveRecompute() {
+    document.querySelectorAll('[data-cls-id]').forEach(card => {
+        const rid = card.getAttribute('data-cls-id');
+        if (!rid || card.dataset.wiredRecompute === '1') return;
+        card.dataset.wiredRecompute = '1';
+        card.addEventListener('input', () => closingsRecompute(rid));
+        // Recompute inicial
+        closingsRecompute(rid);
+    });
+}
+
 function _renderClosings() {
     const body = document.getElementById('closingsBody');
     if (!body) return;
@@ -24921,7 +24934,10 @@ function _renderClosings() {
             html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:' + netColor + ';font-weight:800;">' + _closingFmt(c.netoSector) + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
-            html += '<td style="padding:6px 10px;text-align:center;"><button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;">Abrir</button></td>';
+            html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
+            html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';
+            html += '<button type="button" onclick="analyzeClosing(\'' + r.id + '\')" style="background:rgba(155,48,255,0.12);color:#c89bff;border:1px solid rgba(155,48,255,0.45);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;">🔍 Analizar</button>';
+            html += '</td>';
             html += '</tr>';
         }
         html += '</tbody></table></div>';
@@ -24929,6 +24945,8 @@ function _renderClosings() {
     html += '</div>';
 
     body.innerHTML = html;
+    // Wire up live recompute on inputs y disparar primer cálculo
+    setTimeout(_wireClosingsLiveRecompute, 10);
 }
 
 // Panel de comprobantes (fotos). Categorías:
@@ -25036,6 +25054,394 @@ async function onClosingFilePicked(rid) {
     }
 }
 
+// Live preview: lee inputs del editor y muestra el cuadre del cierre
+// en tiempo real (sin necesidad de guardar). Se vuelve a llamar en
+// cada `oninput` de los campos que afectan el cálculo.
+function closingsRecompute(rid) {
+    const box = document.getElementById('cls_' + rid + '_preview');
+    if (!box) return;
+    const getV = (suffix) => {
+        const el = document.getElementById('cls_' + rid + '_' + suffix);
+        return el ? parseFloat(el.value) || 0 : 0;
+    };
+    // Datos del bloque general
+    const bankPct = getV('bankMarginPercent');
+    const bajada = getV('bajadaARS');
+    const pendAnt = getV('pendienteAnteriorARS');
+    // Movimientos extra
+    const ingresos = getV('ingresosARS');
+    const egresos = getV('egresosARS');
+    const gastos = getV('gastosARS');
+    const cvuActual = getV('cvuMidnightARS');
+
+    // Datos por equipo (si los hay)
+    let sumDeposits = 0, sumVentas = 0, sumBonus = 0;
+    let sumCargasN = 0, sumDescN = 0, sumBonosN = 0;
+    const teamInputs = document.querySelectorAll('[data-cls-id="' + rid + '"] [data-buffalo-team]');
+    if (teamInputs.length > 0) {
+        const teams = {};
+        teamInputs.forEach(el => {
+            const slot = el.getAttribute('data-buffalo-team');
+            const field = el.getAttribute('data-field');
+            if (!teams[slot]) teams[slot] = {};
+            teams[slot][field] = parseFloat(el.value) || 0;
+        });
+        Object.values(teams).forEach(t => {
+            sumDeposits += t.depositsARS || 0;
+            sumVentas += t.ventasARS || 0;
+            sumBonus += t.bonusARS || 0;
+            sumCargasN += t.depositsCount || 0;
+            sumDescN += t.withdrawalsCount || 0;
+            sumBonosN += t.bonusCount || 0;
+        });
+    } else {
+        // Sector simple (publicidad): inputs directos
+        sumDeposits = getV('depositsARS');
+        sumVentas = getV('ventasARS');
+        sumBonus = getV('bonusARS');
+        sumCargasN = getV('depositsCount');
+        sumDescN = getV('withdrawalsCount');
+        sumBonosN = getV('bonusCount');
+    }
+
+    // Mismo cálculo del backend (_closingComputeTotals)
+    const commission = sumVentas * (bankPct / 100);
+    const totalABajar = Math.max(0, sumVentas - commission) + pendAnt;
+    const diff = totalABajar - bajada;
+    const totalTx = sumCargasN + sumDescN + sumBonosN;
+
+    // CVU: lo que TIENE QUE haber en la cuenta al cerrar el día
+    const cvuExpected = sumDeposits + ingresos - commission - bajada - sumBonus - egresos - gastos;
+    const cvuDiscrepancy = cvuActual - cvuExpected;
+
+    // Pintar preview
+    const cuadreColor = diff === 0 ? '#aaffaa' : (diff > 0 ? '#ff8080' : '#66ff66');
+    const cuadreLabel = diff === 0
+        ? '✅ CUADRE EN 0 (cerró bien)'
+        : (diff > 0 ? '⏳ FALTAN ' + _closingFmt(diff) + ' por bajar' : '💚 SOBRA ' + _closingFmt(-diff) + ' (a favor)');
+
+    let html = '<div style="background:rgba(0,0,0,0.40);border:1.5px solid ' + cuadreColor + '55;border-radius:9px;padding:10px;font-size:11.5px;">';
+    html += '<div style="color:#c89bff;font-size:10px;font-weight:900;letter-spacing:1px;margin-bottom:6px;">🧮 CÁLCULO EN VIVO (se actualiza al tipear)</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:5px;margin-bottom:6px;">';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DEPÓSITOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(sumDeposits) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ VENTA</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">COMISIÓN (' + bankPct + '% × venta)</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(commission) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">TOTAL A BAJAR</div><div style="color:#fff;font-weight:800;">' + _closingFmt(totalABajar) + '</div><div style="color:#666;font-size:9px;">venta-com + pend ant</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">BAJADA REAL</div><div style="color:#aaffff;font-weight:800;">' + _closingFmt(bajada) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ BONIFICACIONES (dato)</div><div style="color:#ffd700;font-weight:800;">' + _closingFmt(sumBonus) + '</div><div style="color:#666;font-size:9px;">no afecta cuadre</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ TRANSACCIONES</div><div style="color:#c89bff;font-weight:800;">' + totalTx.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9px;">' + sumCargasN + '+' + sumDescN + '+' + sumBonosN + '</div></div>';
+    html += '</div>';
+    html += '<div style="background:' + cuadreColor + '22;border:2px solid ' + cuadreColor + ';border-radius:8px;padding:9px;text-align:center;color:' + cuadreColor + ';font-weight:900;font-size:14px;letter-spacing:0.5px;margin-bottom:7px;">' + cuadreLabel + '</div>';
+
+    // === CONTROL CVU 00 HS ===
+    if (ingresos || egresos || gastos || cvuActual) {
+        const cvuColor = Math.abs(cvuDiscrepancy) < 1 ? '#aaffaa' : (cvuDiscrepancy < 0 ? '#ff5050' : '#ffaa66');
+        let cvuLabel;
+        if (Math.abs(cvuDiscrepancy) < 1) {
+            cvuLabel = '✅ CVU CUADRA — el saldo real coincide con el esperado';
+        } else if (cvuDiscrepancy < 0) {
+            cvuLabel = '🚨 FALTAN ' + _closingFmt(-cvuDiscrepancy) + ' EN EL CVU — saldo real es MENOR al esperado';
+        } else {
+            cvuLabel = '⚠️ SOBRAN ' + _closingFmt(cvuDiscrepancy) + ' EN EL CVU — entró plata sin registrar';
+        }
+        html += '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px;">';
+        html += '<div style="color:#00d4ff;font-size:10px;font-weight:900;letter-spacing:1px;margin-bottom:6px;">🏦 CONTROL CVU 00 HS</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:5px;margin-bottom:6px;">';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📥 INGRESOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(ingresos) + '</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📤 EGRESOS</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(egresos) + '</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">🧾 GASTOS</div><div style="color:#ffaa66;font-weight:800;">-' + _closingFmt(gastos) + '</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">dep+ing−com−baj−bon−eg−gas</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU REAL (00 hs)</div><div style="color:#00d4ff;font-weight:800;">' + _closingFmt(cvuActual) + '</div></div>';
+        html += '</div>';
+        html += '<div style="background:' + cvuColor + '22;border:2px solid ' + cvuColor + ';border-radius:7px;padding:7px;text-align:center;color:' + cvuColor + ';font-weight:900;font-size:12.5px;">' + cvuLabel + '</div>';
+        html += '</div>';
+    }
+
+    html += '</div>';
+    box.innerHTML = html;
+}
+
+// Modal de análisis profundo de un cierre puntual.
+// Muestra cálculo paso a paso, contribución por equipo (Buffalo/Ganamos),
+// chequeo CVU, comprobantes adjuntos y diagnóstico de qué falta.
+function analyzeClosing(id) {
+    const r = (_closingsRowsCache || []).find(x => x.id === id);
+    if (!r) {
+        showToast('Cierre no encontrado', 'error');
+        return;
+    }
+    const c = r.computed || {};
+    const fmt = _closingFmt;
+    const escH = (typeof escapeHtml === 'function') ? escapeHtml : (s => String(s || ''));
+
+    // Diagnóstico de cuadre (lo que falta bajar)
+    const diff = Number(c.diff || 0);
+    const cuadreColor = Math.abs(diff) < 1 ? '#aaffaa' : (diff > 0 ? '#ff5050' : '#66ff66');
+    const cuadreText = Math.abs(diff) < 1
+        ? '✅ EL CIERRE CUADRA EN 0 — todo lo que había que bajar se bajó.'
+        : (diff > 0
+            ? '⏳ FALTAN $' + fmt(diff).replace('$', '') + ' por bajar — quedaron como pendiente.'
+            : '💚 SOBRA $' + fmt(-diff).replace('$', '') + ' — bajaste más de lo necesario (a favor).');
+
+    // Diagnóstico CVU
+    const cvuDiscrepancy = Number(c.cvuDiscrepancy || 0);
+    const cvuActual = Number(c.cvuActual || 0);
+    const cvuExpected = Number(c.cvuExpected || 0);
+    const hasCvuData = cvuActual > 0 || Number(c.ingresos || 0) > 0 || Number(c.egresos || 0) > 0 || Number(c.gastos || 0) > 0;
+    let cvuColor = '#aaffaa', cvuText = '';
+    if (hasCvuData) {
+        if (Math.abs(cvuDiscrepancy) < 1) {
+            cvuText = '✅ EL SALDO CVU COINCIDE — la plata está donde tiene que estar.';
+        } else if (cvuDiscrepancy < 0) {
+            cvuColor = '#ff5050';
+            cvuText = '🚨 FALTAN $' + fmt(-cvuDiscrepancy).replace('$', '') + ' EN EL CVU — saldo real es MENOR al esperado. Posible plata salida sin registrar.';
+        } else {
+            cvuColor = '#ffaa66';
+            cvuText = '⚠️ SOBRAN $' + fmt(cvuDiscrepancy).replace('$', '') + ' EN EL CVU — entró plata sin registrar. Revisar movimientos.';
+        }
+    }
+
+    // Comprobantes por categoría
+    const comps = r.comprobantes || [];
+    const compsByKind = {};
+    for (const k of ['deposito','venta','bonificacion','bajada','pendiente_bank']) {
+        compsByKind[k] = comps.filter(p => p.kind === k);
+    }
+    const hasBankProof = compsByKind.pendiente_bank.length > 0;
+
+    // Faltantes detectados
+    const faltantes = [];
+    if (c.pendienteHoy > 0 && !hasBankProof) {
+        faltantes.push('🏦 Falta foto del BANCO mostrando los $' + fmt(c.pendienteHoy).replace('$', '') + ' pendientes — sin esto, no se puede confirmar.');
+    }
+    if (c.diff > 0 && r.status === 'confirmed' && !hasBankProof) {
+        faltantes.push('🚨 Confirmado con pendiente y sin respaldo bancario — plata faltante.');
+    }
+    if (compsByKind.bajada.length === 0 && Number(r.bajadaARS) > 0) {
+        faltantes.push('🏃 Bajaste $' + fmt(r.bajadaARS).replace('$', '') + ' pero no adjuntaste comprobante de bajada (transferencia).');
+    }
+    if (compsByKind.deposito.length === 0 && Number(r.depositsARS) > 0) {
+        faltantes.push('📥 Hay depósitos por $' + fmt(r.depositsARS).replace('$', '') + ' sin foto adjunta.');
+    }
+    if (hasCvuData && cvuDiscrepancy < -1) {
+        faltantes.push('💸 La cuenta tiene MENOS plata que la calculada — revisar todos los movimientos del día.');
+    }
+    if (Number(r.bajadaARS) > Number(c.totalABajar)) {
+        faltantes.push('⚠️ Bajaste $' + fmt(r.bajadaARS - c.totalABajar).replace('$', '') + ' DE MÁS que el total a bajar — revisar el dato.');
+    }
+
+    // Sector label
+    const secLabel = (r.sector === 'buffalo') ? '🐃 BUFFALO' : (r.sector === 'ganamos' ? '🎯 GANAMOS' : '📢 PUBLICIDAD');
+
+    // Modal
+    let m = document.getElementById('clsAnalyzeModal');
+    if (m) m.remove();
+    m = document.createElement('div');
+    m.id = 'clsAnalyzeModal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;overflow-y:auto;';
+    m.onclick = (e) => { if (e.target === m) m.remove(); };
+
+    let html = '<div style="background:linear-gradient(180deg,#16162a,#0c0c1a);border:1.5px solid rgba(155,48,255,0.45);border-radius:14px;max-width:920px;width:100%;max-height:90vh;overflow-y:auto;padding:18px;color:#fff;">';
+
+    // Header
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.10);">';
+    html += '<div>';
+    html += '<div style="color:#c89bff;font-size:11px;font-weight:900;letter-spacing:1.5px;">🔍 ANÁLISIS DE CIERRE</div>';
+    html += '<div style="color:#fff;font-size:17px;font-weight:900;margin-top:3px;">' + secLabel + ' · ' + escH(r.dateKey) + '</div>';
+    html += '<div style="color:#888;font-size:11px;margin-top:2px;">';
+    html += (r.status === 'confirmed' ? '✅ Confirmado' : '📝 Borrador');
+    if (r.locked) html += ' · 🔒 Bloqueado';
+    if (r.verifiedAt) html += ' · ✓ Verificado por ' + escH(r.verifiedBy || '?');
+    html += '</div>';
+    html += '</div>';
+    html += '<button onclick="document.getElementById(\'clsAnalyzeModal\').remove()" style="background:rgba(255,80,80,0.18);border:1px solid rgba(255,80,80,0.50);color:#ff8080;width:34px;height:34px;border-radius:50%;font-size:18px;font-weight:900;cursor:pointer;">✕</button>';
+    html += '</div>';
+
+    // === 1. CÁLCULO PASO A PASO ===
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:13px;margin-bottom:12px;">';
+    html += '<div style="color:#c89bff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🧮 CÁLCULO PASO A PASO</div>';
+    html += '<div style="font-family:monospace;font-size:12.5px;line-height:1.8;color:#ddd;">';
+    html += '<div>1. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong></div>';
+    html += '<div>2. Σ Venta a bajar: <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
+    html += '<div>3. % Banco aplicado a venta: <strong style="color:#fff;">' + Number(r.bankMarginPercent || 0) + '%</strong></div>';
+    html += '<div>4. Comisión banco (venta × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
+    html += '<div>5. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">6. <strong>TOTAL A BAJAR</strong> = (venta − comisión) + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
+    html += '<div>7. Bajada REAL del día: <strong style="color:#aaffff;">' + fmt(r.bajadaARS) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">8. <strong>DIFERENCIA</strong> = total a bajar − bajada = <strong style="color:' + cuadreColor + ';font-size:14px;">' + (diff >= 0 ? '+' : '') + fmt(diff) + '</strong></div>';
+    html += '</div>';
+    html += '<div style="background:' + cuadreColor + '22;border:2px solid ' + cuadreColor + ';border-radius:8px;padding:10px;margin-top:10px;text-align:center;color:' + cuadreColor + ';font-weight:900;font-size:14px;">' + cuadreText + '</div>';
+    html += '</div>';
+
+    // === 2. CONTROL CVU + MOVIMIENTOS EXTRA ===
+    if (hasCvuData) {
+        html += '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.25);border-radius:10px;padding:13px;margin-bottom:12px;">';
+        html += '<div style="color:#00d4ff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🏦 CONTROL CVU + MOVIMIENTOS EXTRA</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px;margin-bottom:10px;">';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;"><div style="color:#888;font-size:10px;">📥 Ingresos (préstamos recibidos)</div><div style="color:#aaffaa;font-weight:800;">+' + fmt(c.ingresos || 0) + '</div>';
+        if (r.ingresosNote) html += '<div style="color:#aaa;font-size:10px;margin-top:3px;font-style:italic;">"' + escH(r.ingresosNote) + '"</div>';
+        html += '</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;"><div style="color:#888;font-size:10px;">📤 Egresos (préstamos hechos)</div><div style="color:#ff8080;font-weight:800;">-' + fmt(c.egresos || 0) + '</div>';
+        if (r.egresosNote) html += '<div style="color:#aaa;font-size:10px;margin-top:3px;font-style:italic;">"' + escH(r.egresosNote) + '"</div>';
+        html += '</div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;"><div style="color:#888;font-size:10px;">🧾 Gastos del día</div><div style="color:#ffaa66;font-weight:800;">-' + fmt(c.gastos || 0) + '</div>';
+        if (r.gastosNote) html += '<div style="color:#aaa;font-size:10px;margin-top:3px;font-style:italic;">"' + escH(r.gastosNote) + '"</div>';
+        html += '</div>';
+        html += '</div>';
+        html += '<div style="font-family:monospace;font-size:12px;line-height:1.7;color:#ddd;background:rgba(0,0,0,0.25);padding:9px;border-radius:7px;margin-bottom:8px;">';
+        html += '<div>CVU esperado = depósitos + ingresos − comisión − bajada − bonus − egresos − gastos</div>';
+        html += '<div>             = ' + fmt(r.depositsARS) + ' + ' + fmt(c.ingresos || 0) + ' − ' + fmt(c.commission) + ' − ' + fmt(r.bajadaARS) + ' − ' + fmt(r.bonusARS) + ' − ' + fmt(c.egresos || 0) + ' − ' + fmt(c.gastos || 0) + '</div>';
+        html += '<div style="margin-top:4px;">             = <strong style="color:#fff;font-size:13px;">' + fmt(cvuExpected) + '</strong></div>';
+        html += '<div style="margin-top:5px;border-top:1px dashed rgba(255,255,255,0.10);padding-top:5px;">CVU real cargado: <strong style="color:#00d4ff;">' + fmt(cvuActual) + '</strong></div>';
+        html += '<div>Discrepancia: <strong style="color:' + cvuColor + ';">' + (cvuDiscrepancy >= 0 ? '+' : '') + fmt(cvuDiscrepancy) + '</strong></div>';
+        html += '</div>';
+        html += '<div style="background:' + cvuColor + '22;border:2px solid ' + cvuColor + ';border-radius:7px;padding:9px;text-align:center;color:' + cvuColor + ';font-weight:900;font-size:13px;">' + cvuText + '</div>';
+        html += '</div>';
+    }
+
+    // === 3. CONTRIBUCIÓN POR EQUIPO (Buffalo / Ganamos) ===
+    if ((r.sector === 'buffalo' || r.sector === 'ganamos') && Array.isArray(r.teams) && r.teams.length > 0) {
+        html += '<div style="background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.25);border-radius:10px;padding:13px;margin-bottom:12px;">';
+        html += '<div style="color:#ffd700;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🎯 CONTRIBUCIÓN POR EQUIPO</div>';
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        html += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);">';
+        html += '<th style="padding:5px 8px;">#</th><th style="padding:5px 8px;">Equipo</th>';
+        html += '<th style="padding:5px 8px;text-align:right;">Cargas $</th><th style="padding:5px 8px;text-align:right;">Carg #</th>';
+        html += '<th style="padding:5px 8px;text-align:right;">Venta $</th>';
+        html += '<th style="padding:5px 8px;text-align:right;">Bon $</th><th style="padding:5px 8px;text-align:right;">Bon #</th>';
+        html += '<th style="padding:5px 8px;text-align:right;">Desc #</th>';
+        html += '</tr></thead><tbody>';
+        const teamsSorted = [...r.teams].sort((a, b) => (a.slot || 0) - (b.slot || 0));
+        for (const t of teamsSorted) {
+            html += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);">';
+            html += '<td style="padding:5px 8px;color:#ffd700;font-weight:900;">' + ((t.slot || 0) + 1) + '</td>';
+            html += '<td style="padding:5px 8px;color:#fff;">' + escH(t.name || '(sin nombre)') + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#aaffaa;">' + fmt(t.depositsARS) + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#c89bff;">' + Number(t.depositsCount || 0) + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#ffd0a0;">' + fmt(t.ventasARS) + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#ffd700;">' + fmt(t.bonusARS) + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#c89bff;">' + Number(t.bonusCount || 0) + '</td>';
+            html += '<td style="padding:5px 8px;text-align:right;color:#c89bff;">' + Number(t.withdrawalsCount || 0) + '</td>';
+            html += '</tr>';
+        }
+        // Totales
+        const ttDep = teamsSorted.reduce((a, t) => a + Number(t.depositsARS || 0), 0);
+        const ttCarg = teamsSorted.reduce((a, t) => a + Number(t.depositsCount || 0), 0);
+        const ttVen = teamsSorted.reduce((a, t) => a + Number(t.ventasARS || 0), 0);
+        const ttBon = teamsSorted.reduce((a, t) => a + Number(t.bonusARS || 0), 0);
+        const ttBonN = teamsSorted.reduce((a, t) => a + Number(t.bonusCount || 0), 0);
+        const ttDesc = teamsSorted.reduce((a, t) => a + Number(t.withdrawalsCount || 0), 0);
+        html += '<tr style="border-top:2px solid rgba(255,255,255,0.20);font-weight:900;">';
+        html += '<td colspan="2" style="padding:6px 8px;color:#fff;">TOTAL</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#aaffaa;">' + fmt(ttDep) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#c89bff;">' + ttCarg + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#ffd0a0;">' + fmt(ttVen) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#ffd700;">' + fmt(ttBon) + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#c89bff;">' + ttBonN + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;color:#c89bff;">' + ttDesc + '</td>';
+        html += '</tr>';
+        html += '</tbody></table></div>';
+        html += '</div>';
+    }
+
+    // === 4. COMPROBANTES ===
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:13px;margin-bottom:12px;">';
+    html += '<div style="color:#aaffff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">📎 COMPROBANTES ADJUNTOS (' + comps.length + ')</div>';
+    const kindLabels = { deposito: '📥 Depósito', venta: '🛒 Venta', bonificacion: '🎁 Bonificación', bajada: '🏃 Bajada', pendiente_bank: '🏦 Banco-Pend.' };
+    const kindColors = { deposito: '#aaffaa', venta: '#ffd0a0', bonificacion: '#ffd700', bajada: '#aaffff', pendiente_bank: '#ffaa66' };
+    for (const k of ['deposito','venta','bonificacion','bajada','pendiente_bank']) {
+        const list = compsByKind[k];
+        const color = kindColors[k];
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);">';
+        html += '<span style="color:' + color + ';font-weight:800;font-size:11px;min-width:130px;">' + kindLabels[k] + '</span>';
+        html += '<span style="color:#fff;font-weight:700;">' + list.length + (list.length === 0 ? ' ❌' : ' ✓') + '</span>';
+        if (list.length > 0) {
+            html += '<span style="color:#aaa;font-size:10.5px;">';
+            list.forEach((cp, i) => {
+                html += ' <a href="' + escH(cp.url) + '" target="_blank" rel="noopener" style="color:' + color + ';text-decoration:underline;">#' + (i + 1) + '</a>';
+            });
+            html += '</span>';
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // === 5. DIAGNÓSTICO FINAL ===
+    html += '<div style="background:' + (faltantes.length > 0 ? 'rgba(255,80,80,0.07)' : 'rgba(102,255,102,0.07)') + ';border:1.5px solid ' + (faltantes.length > 0 ? '#ff5050' : '#66ff66') + ';border-radius:10px;padding:13px;">';
+    html += '<div style="color:' + (faltantes.length > 0 ? '#ff8080' : '#aaffaa') + ';font-size:12px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">';
+    html += faltantes.length > 0 ? '⚠️ DIAGNÓSTICO — ' + faltantes.length + ' COSA(S) PARA REVISAR' : '✅ DIAGNÓSTICO — TODO OK';
+    html += '</div>';
+    if (faltantes.length > 0) {
+        html += '<ul style="margin:0;padding-left:18px;color:#ddd;font-size:11.5px;line-height:1.7;">';
+        for (const f of faltantes) html += '<li style="margin-bottom:4px;">' + f + '</li>';
+        html += '</ul>';
+    } else {
+        html += '<div style="color:#aaffaa;font-size:11.5px;">El cierre está completo y todos los datos cuadran. Listo para confirmar (si aún no lo está).</div>';
+    }
+    html += '</div>';
+
+    html += '</div>'; // /modal content
+    m.innerHTML = html;
+    document.body.appendChild(m);
+}
+
+// Sección "Movimientos extra del día": préstamos (ingresos/egresos),
+// gastos, y CVU control a las 00 hs. Cada uno con detalle (note).
+// Aparece en TODOS los sectores (Buffalo/Ganamos/Publicidad).
+function _renderClosingExtras(rid, row, locked) {
+    const disabledAttr = locked ? 'disabled' : '';
+    const inputStyle = 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;width:100%;box-sizing:border-box;';
+    const noteStyle = 'background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:5px 8px;border-radius:5px;font-size:11px;width:100%;box-sizing:border-box;margin-top:4px;';
+    const r = row || {};
+    let html = '<div style="background:rgba(255,170,102,0.05);border:1.5px solid rgba(255,170,102,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">';
+    html += '<div style="color:#ffaa66;font-weight:900;font-size:11px;letter-spacing:1px;">💸 MOVIMIENTOS EXTRA DEL DÍA</div>';
+    html += '<div style="color:#888;font-size:10px;">préstamos · gastos · saldo CVU</div>';
+    html += '</div>';
+
+    // 3 columnas: INGRESOS · EGRESOS · GASTOS (con detalle abajo c/u)
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:9px;">';
+
+    // INGRESOS = préstamos que NOS HICIERON (entró plata extra)
+    html += '<div style="background:rgba(102,255,102,0.06);border:1px solid rgba(102,255,102,0.25);border-radius:7px;padding:8px;">';
+    html += '<label style="color:#aaffaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">📥 Ingresos / préstamos recibidos $</label>';
+    html += '<input type="number" id="cls_' + rid + '_ingresosARS" value="' + (Number(r.ingresosARS) || 0) + '" min="0" step="1000" style="' + inputStyle + 'border-color:rgba(102,255,102,0.35);" ' + disabledAttr + '>';
+    html += '<input type="text" id="cls_' + rid + '_ingresosNote" value="' + escapeHtml(r.ingresosNote || '') + '" placeholder="Detalle (de quién, motivo…)" maxlength="300" style="' + noteStyle + '" ' + disabledAttr + '>';
+    html += '</div>';
+
+    // EGRESOS = préstamos que NOSOTROS HICIMOS (sale plata, vuelve después)
+    html += '<div style="background:rgba(255,128,128,0.06);border:1px solid rgba(255,128,128,0.25);border-radius:7px;padding:8px;">';
+    html += '<label style="color:#ff8080;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">📤 Egresos / préstamos hechos $</label>';
+    html += '<input type="number" id="cls_' + rid + '_egresosARS" value="' + (Number(r.egresosARS) || 0) + '" min="0" step="1000" style="' + inputStyle + 'border-color:rgba(255,128,128,0.35);" ' + disabledAttr + '>';
+    html += '<input type="text" id="cls_' + rid + '_egresosNote" value="' + escapeHtml(r.egresosNote || '') + '" placeholder="Detalle (a quién, motivo…)" maxlength="300" style="' + noteStyle + '" ' + disabledAttr + '>';
+    html += '</div>';
+
+    // GASTOS = gastos consumidos del día (no vuelven: insumos, sueldos, etc.)
+    html += '<div style="background:rgba(255,170,102,0.06);border:1px solid rgba(255,170,102,0.25);border-radius:7px;padding:8px;">';
+    html += '<label style="color:#ffaa66;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">🧾 Gastos del día $</label>';
+    html += '<input type="number" id="cls_' + rid + '_gastosARS" value="' + (Number(r.gastosARS) || 0) + '" min="0" step="100" style="' + inputStyle + 'border-color:rgba(255,170,102,0.35);" ' + disabledAttr + '>';
+    html += '<input type="text" id="cls_' + rid + '_gastosNote" value="' + escapeHtml(r.gastosNote || '') + '" placeholder="Detalle (en qué se gastó…)" maxlength="300" style="' + noteStyle + '" ' + disabledAttr + '>';
+    html += '</div>';
+
+    html += '</div>';
+
+    // CVU a las 00 hs (control)
+    html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.30);border-radius:7px;padding:8px;display:grid;grid-template-columns:1fr 2fr;gap:8px;align-items:start;">';
+    html += '<div>';
+    html += '<label style="color:#00d4ff;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">🏦 Saldo CVU a las 00 hs $</label>';
+    html += '<input type="number" id="cls_' + rid + '_cvuMidnightARS" value="' + (Number(r.cvuMidnightARS) || 0) + '" min="0" step="1000" style="' + inputStyle + 'border-color:rgba(0,212,255,0.40);" ' + disabledAttr + '>';
+    html += '</div>';
+    html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px 9px;font-size:10.5px;color:#aaa;">';
+    html += '<strong style="color:#00d4ff;">¿Para qué?</strong> Anotá la plata REAL que hay en el CVU/banco al cerrar el día. ';
+    html += 'El sistema compara con el saldo esperado (depósitos + ingresos − comisión − bajada − bonus − egresos − gastos). ';
+    html += 'Si <strong style="color:#ff8080;">hay menos</strong> = problema, falta plata. Si hay más = revisar movimientos sin registrar.';
+    html += '</div>';
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+}
+
 // Sector con 7 equipos (Buffalo o Ganamos). Una entry por día.
 // Generales arriba (% banco + pendiente a completar + depósitos totales
 // y transacciones totales COMPUTADOS de los 7 equipos). Abajo los 7
@@ -25062,6 +25468,9 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += (locked ? '<span style="color:#ff8080;font-size:10px;font-weight:800;">🔒 BLOQUEADO 24h</span>' : (confirmed ? '<span style="color:#aaffaa;font-size:10px;font-weight:800;">✅ CONFIRMADO</span>' : '<span style="color:#888;font-size:10px;">📝 BORRADOR</span>'));
     html += '</div>';
 
+    // === Preview en vivo (se rellena por closingsRecompute) ===
+    html += '<div id="cls_' + rid + '_preview" style="margin-bottom:11px;"></div>';
+
     // Computed (suma de los 7 equipos)
     const sumDeposits = teams.reduce((a, t) => a + Number(t.depositsARS || 0), 0);
     const sumVentas = teams.reduce((a, t) => a + Number(t.ventasARS || 0), 0);
@@ -25079,6 +25488,9 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas# + descargas# + bonos#</div></div>';
     html += '</div>';
     html += '</div>';
+
+    // === MOVIMIENTOS EXTRA (préstamos + gastos + CVU control) ===
+    html += _renderClosingExtras(rid, row, locked);
 
     // === EQUIPOS (individual) ===
     html += '<div style="background:rgba(255,215,0,0.04);border:1.5px solid rgba(255,215,0,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
@@ -25203,6 +25615,13 @@ async function saveTeamSectorClosing(rid, date, sector) {
         bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
         bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
+        ingresosARS: parseFloat(get('ingresosARS')) || 0,
+        ingresosNote: get('ingresosNote') || '',
+        egresosARS: parseFloat(get('egresosARS')) || 0,
+        egresosNote: get('egresosNote') || '',
+        gastosARS: parseFloat(get('gastosARS')) || 0,
+        gastosNote: get('gastosNote') || '',
+        cvuMidnightARS: parseFloat(get('cvuMidnightARS')) || 0,
         teams
     };
 
@@ -25261,6 +25680,9 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📤 Descargas (cant.)</label><input type="number" id="cls_' + rid + '_withdrawalsCount" value="' + (row ? (row.withdrawalsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonificaciones (cant.)</label><input type="number" id="cls_' + rid + '_bonusCount" value="' + (row ? (row.bonusCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '</div>';
+
+    // === MOVIMIENTOS EXTRA (préstamos + gastos + CVU control) ===
+    html += _renderClosingExtras(rid, row, locked);
 
     if (exists) {
         const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#aaffaa';
@@ -25355,7 +25777,14 @@ async function saveClosing(rid, sector, teamSlot, date) {
         bonusARS: parseFloat(get('bonusARS')) || 0,
         transactionsCount: parseInt(get('transactionsCount'), 10) || 0,
         withdrawalsCount: parseInt(get('withdrawalsCount'), 10) || 0,
-        bonusCount: parseInt(get('bonusCount'), 10) || 0
+        bonusCount: parseInt(get('bonusCount'), 10) || 0,
+        ingresosARS: parseFloat(get('ingresosARS')) || 0,
+        ingresosNote: get('ingresosNote') || '',
+        egresosARS: parseFloat(get('egresosARS')) || 0,
+        egresosNote: get('egresosNote') || '',
+        gastosARS: parseFloat(get('gastosARS')) || 0,
+        gastosNote: get('gastosNote') || '',
+        cvuMidnightARS: parseFloat(get('cvuMidnightARS')) || 0
     };
     if (sector === 'buffalo') {
         payload.teamSlot = teamSlot;

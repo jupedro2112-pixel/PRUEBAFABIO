@@ -33655,6 +33655,10 @@ function _closingComputeTotals(c) {
   const bajada = Number(c.bajadaARS || 0);             // lo que efectivamente se bajó hoy
   const pendienteAnterior = Number(c.pendienteAnteriorARS || 0);
   const bonus = Number(c.bonusARS || 0);
+  const ingresos = Number(c.ingresosARS || 0);         // plata que ENTRÓ extra (prestamos recibidos)
+  const egresos = Number(c.egresosARS || 0);           // préstamos que HICIMOS (sale, vuelve después)
+  const gastos = Number(c.gastosARS || 0);             // gastos del día (consumido, no vuelve)
+  const cvuActual = Number(c.cvuMidnightARS || 0);
 
   // Comisión: % sobre la VENTA (no sobre depósitos). Es el gasto que se
   // descuenta del total a bajar.
@@ -33675,12 +33679,27 @@ function _closingComputeTotals(c) {
   //  netoSector < 0  → falta plata (pendiente, en rojo)
   const netoSector = -diff;
 
+  // Saldo CVU esperado a las 00 hs:
+  //   in: depósitos + ingresos
+  //   out: comisión + bajada + bonus + egresos (préstamos hechos) + gastos
+  // El saldo esperado refleja la plata que TIENE que estar en la cuenta
+  // al cerrar el día.
+  const cvuExpected = deposits + ingresos - commission - bajada - bonus - egresos - gastos;
+  // Discrepancia: cvuActual - cvuExpected
+  //   = 0  → perfecto (el banco coincide con los movimientos)
+  //   > 0  → sobra plata (entró algo no registrado — revisar)
+  //   < 0  → FALTA plata (problema serio: salió plata sin registrarse)
+  const cvuDiscrepancy = cvuActual - cvuExpected;
+
   return {
     commission,
     depositsNet: deposits - commission,
     ventas,
     bajada,
     bonus,
+    ingresos,
+    egresos,
+    gastos,
     totalABajar,
     pendienteHoy,
     sobrepago,
@@ -33689,7 +33708,10 @@ function _closingComputeTotals(c) {
     // Cash en banco después de pagar la venta neta = lo que sobra en
     // caja (no incluye bonus que sale por otro lado).
     cashEnBanco: deposits - bajada,
-    bajadaShortfall: pendienteHoy
+    bajadaShortfall: pendienteHoy,
+    cvuExpected,
+    cvuActual,
+    cvuDiscrepancy
   };
 }
 
@@ -33809,6 +33831,14 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       bankMarginPercent: Math.max(0, Math.min(100, Number(b.bankMarginPercent) || 0)),
       bajadaARS: Math.max(0, Number(b.bajadaARS) || 0),
       pendienteAnteriorARS: pendienteAnterior,
+      // Movimientos extra del día
+      ingresosARS: Math.max(0, Number(b.ingresosARS) || 0),
+      ingresosNote: String(b.ingresosNote || '').trim().slice(0, 300),
+      egresosARS: Math.max(0, Number(b.egresosARS) || 0),
+      egresosNote: String(b.egresosNote || '').trim().slice(0, 300),
+      gastosARS: Math.max(0, Number(b.gastosARS) || 0),
+      gastosNote: String(b.gastosNote || '').trim().slice(0, 300),
+      cvuMidnightARS: Math.max(0, Number(b.cvuMidnightARS) || 0),
       // transacciones totales: GENERAL en Buffalo (no se suma de teams).
       // En ganamos/publicidad sigue siendo el único campo.
       transactionsCount: Math.max(0, Math.round(Number(b.transactionsCount) || 0)),
@@ -33872,12 +33902,16 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
     // Para ganamos/publicidad: todos los campos son input directo (no teams).
     const editableCommonBuffalo = [
       'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
+      'ingresosARS','ingresosNote','egresosARS','egresosNote',
+      'gastosARS','gastosNote','cvuMidnightARS',
       'bonusNote','notes'
     ];
     const editableNonBuffalo = [
       'teamName','depositsARS','ventasARS','bonusARS','bonusCount',
       'transactionsCount','withdrawalsCount',
       'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
+      'ingresosARS','ingresosNote','egresosARS','egresosNote',
+      'gastosARS','gastosNote','cvuMidnightARS',
       'bonusNote','notes'
     ];
     const hasTeams = (c.sector === 'buffalo' || c.sector === 'ganamos');
@@ -33894,6 +33928,9 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
         if (f === 'bankMarginPercent') v = Math.max(0, Math.min(100, v));
         else if (f === 'transactionsCount' || f === 'withdrawalsCount' || f === 'bonusCount') v = Math.max(0, Math.round(v));
         else v = Math.max(0, v);
+      } else if (typeof v === 'string') {
+        // Cap a 300 chars para notes (ingresosNote, egresosNote, gastosNote, bonusNote, notes, teamName)
+        v = v.slice(0, f === 'notes' ? 500 : (f === 'teamName' ? 60 : 300));
       }
       if (c[f] !== v) {
         changes.push({ editedAt: new Date(), editedBy: username, field: f, before: c[f], after: v });
