@@ -83,6 +83,89 @@
         c.style.display = '';
     }
 
+    // Modal que se abre cuando el server rebota el giro porque al user
+    // le faltan los pasos (app instalada o notifs). Detecta plataforma y
+    // muestra el siguiente paso concreto + CTA.
+    function _showNeedsAppModal() {
+        const inApp = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+                       window.navigator.standalone === true;
+        const notifPerm = (typeof Notification !== 'undefined') ? Notification.permission : 'default';
+
+        document.getElementById('rouletteNeedsAppModal')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'rouletteNeedsAppModal';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99998;display:flex;align-items:flex-start;justify-content:center;padding:14px;overflow-y:auto;-webkit-overflow-scrolling:touch;';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        let b1, b2, b3, ctaTxt, ctaAction;
+        if (!inApp) {
+            b1 = '⏳'; b2 = '⏳'; b3 = '⏳';
+            ctaTxt = '📲 INSTALAR LA APP AHORA';
+            ctaAction = 'window.VIP&&VIP.ui&&VIP.ui.installApp&&VIP.ui.installApp();document.getElementById(\'rouletteNeedsAppModal\').remove();';
+        } else if (notifPerm !== 'granted') {
+            b1 = '✅'; b2 = '✅'; b3 = '⏳';
+            ctaTxt = '🔔 ACTIVAR NOTIFICACIONES';
+            ctaAction = '(async()=>{try{const p=await Notification.requestPermission();if(p===\'granted\')VIP.ui.showToast(\'✅ Listo, tocá GIRAR de nuevo\',\'success\');}catch(_){}document.getElementById(\'rouletteNeedsAppModal\').remove();})();';
+        } else {
+            b1 = '✅'; b2 = '✅'; b3 = '⚠️';
+            ctaTxt = '🔄 REFRESCAR';
+            ctaAction = 'location.reload();';
+        }
+
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2.5px solid #ffd700;border-radius:18px;padding:22px 18px;max-width:440px;width:100%;color:#fff;margin:16px auto;box-shadow:0 0 40px rgba(255,215,0,0.40);">' +
+                '<div style="text-align:center;font-size:54px;line-height:1;margin-bottom:6px;">🎰</div>' +
+                '<div style="text-align:center;color:#ffd700;font-weight:900;font-size:17px;letter-spacing:1px;margin-bottom:4px;">Para girar la ruleta</div>' +
+                '<div style="text-align:center;color:#fff;font-size:13.5px;line-height:1.55;margin-bottom:14px;">Necesitamos asegurarnos que sos vos. Para participar tenés que tener <strong>la app instalada con notificaciones activas</strong>.</div>' +
+                '<div style="background:rgba(255,215,0,0.06);border:1px dashed rgba(255,215,0,0.45);border-radius:12px;padding:14px;margin-bottom:14px;">' +
+                    '<div style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1.5px;text-align:center;margin-bottom:10px;">🧭 SEGUÍ ESTOS 3 PASOS</div>' +
+                    '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:9px;"><div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;">' + b1 + '</div><div style="flex:1;font-size:12.5px;line-height:1.5;"><strong>Instalá la app</strong> en tu celular (Android: 1 toque · iPhone: video paso a paso).</div></div>' +
+                    '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:9px;"><div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;">' + b2 + '</div><div style="flex:1;font-size:12.5px;line-height:1.5;"><strong>Abrí la app desde el ícono</strong> nuevo de tu pantalla — no desde Chrome.</div></div>' +
+                    '<div style="display:flex;gap:10px;align-items:flex-start;"><div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;">' + b3 + '</div><div style="flex:1;font-size:12.5px;line-height:1.5;"><strong>Aceptá las notificaciones</strong> cuando te lo pida la app. Después tocá GIRAR.</div></div>' +
+                '</div>' +
+                (!inApp ? '<div style="background:rgba(37,211,102,0.10);border:1px solid #25d366;border-radius:10px;padding:9px 11px;margin-bottom:12px;text-align:center;font-size:12px;color:#aaffaa;">🎁 <strong style="color:#ffd700;">Bonus:</strong> al instalar la app por primera vez te llevás <strong style="color:#ffd700;">$5.000 GRATIS</strong> de bienvenida.</div>' : '') +
+                '<button onclick="' + ctaAction + '" style="width:100%;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:13px;border-radius:11px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;margin-bottom:8px;box-shadow:0 4px 14px rgba(255,215,0,0.40);">' + ctaTxt + '</button>' +
+                '<button onclick="document.getElementById(\'rouletteNeedsAppModal\').remove();" style="width:100%;background:transparent;color:#aaa;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
+    }
+
+    // Card que aparece cuando el user ganó: lo invita a la comunidad para
+    // recibir novedades (problemas de página, juegos de la semana,
+    // problemas con el banco) y le aclara qué hacer si su WhatsApp
+    // principal no funciona — revisar el número vigente en el home.
+    function _communityRecommendCard() {
+        const link = (window.VIP && VIP.state && VIP.state.communityLink) || '';
+        const link2 = (window.VIP && VIP.state && VIP.state.communityLink2) || '';
+        const label1 = (window.VIP && VIP.state && VIP.state.communityLabel) || 'COMUNIDAD 1';
+        const label2 = (window.VIP && VIP.state && VIP.state.communityLabel2) || 'COMUNIDAD 2';
+
+        let buttons = '';
+        if (link) {
+            buttons += '<a href="' + _esc(link) + '" target="_blank" rel="noopener" onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + _esc(link) + '\')" style="display:flex;align-items:center;gap:9px;background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;text-decoration:none;padding:11px 13px;border-radius:10px;font-weight:900;font-size:13.5px;margin-bottom:8px;box-shadow:0 3px 10px rgba(37,211,102,0.40);">' +
+                '<span style="font-size:18px;">💬</span>' +
+                '<span style="flex:1;text-align:left;">ENTRAR A ' + _esc(label1.toUpperCase()) + '</span>' +
+                '<span style="font-size:14px;">›</span>' +
+            '</a>';
+        }
+        if (link2) {
+            buttons += '<a href="' + _esc(link2) + '" target="_blank" rel="noopener" onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button_2\',\'' + _esc(link2) + '\')" style="display:flex;align-items:center;gap:9px;background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;text-decoration:none;padding:11px 13px;border-radius:10px;font-weight:900;font-size:13.5px;margin-bottom:8px;box-shadow:0 3px 10px rgba(0,212,255,0.35);">' +
+                '<span style="font-size:18px;">💬</span>' +
+                '<span style="flex:1;text-align:left;">ENTRAR A ' + _esc(label2.toUpperCase()) + '</span>' +
+                '<span style="font-size:14px;">›</span>' +
+            '</a>';
+        }
+        if (!buttons) return '';
+
+        let html = '<div style="background:linear-gradient(135deg,rgba(37,211,102,0.12),rgba(0,212,255,0.08));border:1.5px dashed rgba(37,211,102,0.55);border-radius:13px;padding:13px;margin-bottom:12px;">';
+        html += '<div style="color:#25d366;font-weight:900;font-size:12px;letter-spacing:0.8px;text-align:center;margin-bottom:6px;">📢 SUMATE A LA COMUNIDAD</div>';
+        html += '<div style="color:#fff;font-size:12.5px;line-height:1.5;margin-bottom:10px;text-align:center;">Recibí <strong>novedades</strong>, problemas con la página, <strong>juegos de la semana</strong>, problemas con el banco y todo lo que necesites saber.</div>';
+        html += buttons;
+        html += '<div style="background:rgba(255,170,102,0.10);border-left:3px solid #ffaa66;border-radius:0 7px 7px 0;padding:7px 10px;margin-top:6px;color:#ffd0a0;font-size:11.5px;line-height:1.4;">⚠️ Si nuestro <strong>WhatsApp principal</strong> no te funciona, revisá el número vigente abajo en el home.</div>';
+        html += '</div>';
+        return html;
+    }
+
     function _prizesTable() {
         if (!_state || !_state.prizes) return '';
         // Transparencia: mostramos cada premio con su probabilidad.
@@ -141,6 +224,11 @@
                 html += '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:13px;font-weight:800;">✅ Acreditado a tu saldo automáticamente</div>';
                 if (spin.creditTxId) html += '<div style="color:#888;font-size:10px;margin-top:6px;font-family:monospace;">tx: ' + _esc(spin.creditTxId) + '</div>';
                 html += '</div>';
+
+                // CTA comunidad — el owner pidió que recomendemos entrar al
+                // grupo cuando ganen, para que reciban novedades, problemas
+                // con la página, juegos de la semana, problemas con el banco.
+                html += _communityRecommendCard();
             } else if (won && spin.status === 'credit_failed') {
                 html += '<div style="background:rgba(255,170,102,0.10);border:2px solid #ffaa66;border-radius:14px;padding:20px 16px;text-align:center;margin-bottom:12px;">';
                 html += '<div style="font-size:48px;margin-bottom:6px;">⚠️</div>';
@@ -197,6 +285,10 @@
                     _state.alreadySpun = true;
                     _state.spin = d.spin;
                     _renderModal();
+                } else if (d && d.needsAppNotifs) {
+                    // No tiene app instalada y/o notifs aceptadas — mostrar
+                    // el modal con los pasos clarito para que pueda participar.
+                    _showNeedsAppModal();
                 } else {
                     if (box) box.innerHTML = '<div style="color:#ff8080;padding:20px;">❌ ' + _esc((d && d.error) || 'Error') + '</div>';
                 }
