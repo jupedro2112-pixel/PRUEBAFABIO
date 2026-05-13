@@ -33757,6 +33757,7 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       pendienteAnteriorARS: pendienteAnterior,
       bonusARS: Math.max(0, Number(b.bonusARS) || 0),
       bonusNote: String(b.bonusNote || '').trim().slice(0, 200),
+      transactionsCount: Math.max(0, Math.round(Number(b.transactionsCount) || 0)),
       notes: String(b.notes || '').trim().slice(0, 500),
       status: 'draft',
       createdBy: req.user.username || ''
@@ -33795,7 +33796,7 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
     }
     const editable = [
       'teamName','depositsARS','bankMarginPercent','ventasARS','bajadaARS',
-      'pendienteAnteriorARS','bonusARS','bonusNote','notes'
+      'pendienteAnteriorARS','bonusARS','bonusNote','transactionsCount','notes'
     ];
     const b = req.body || {};
     const username = req.user.username || '';
@@ -33804,9 +33805,10 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
       if (!(f in b)) continue;
       let v = b[f];
       if (typeof v === 'string') v = v.trim();
-      if (typeof v === 'number' || (typeof v === 'string' && f.endsWith('ARS')) || f === 'bankMarginPercent') {
+      if (typeof v === 'number' || (typeof v === 'string' && f.endsWith('ARS')) || f === 'bankMarginPercent' || f === 'transactionsCount') {
         v = Number(v) || 0;
         if (f === 'bankMarginPercent') v = Math.max(0, Math.min(100, v));
+        else if (f === 'transactionsCount') v = Math.max(0, Math.round(v));
         else v = Math.max(0, v);
       }
       if (c[f] !== v) {
@@ -33948,7 +33950,7 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
           sector: k,
           depositsARS: 0, commission: 0, depositsNet: 0,
           ventasARS: 0, bajadaARS: 0, pendienteHoy: 0,
-          bonusARS: 0, netoSector: 0, entries: 0
+          bonusARS: 0, netoSector: 0, transactionsCount: 0, entries: 0
         };
       }
       const s = bySector[k];
@@ -33960,11 +33962,13 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
       s.pendienteHoy += c.pendienteHoy;
       s.bonusARS += r.bonusARS || 0;
       s.netoSector += c.netoSector;
+      s.transactionsCount += r.transactionsCount || 0;
       s.entries += 1;
     }
     const totals = {
       depositsARS: 0, commission: 0, depositsNet: 0,
-      ventasARS: 0, bajadaARS: 0, pendienteHoy: 0, bonusARS: 0, netoSector: 0
+      ventasARS: 0, bajadaARS: 0, pendienteHoy: 0, bonusARS: 0, netoSector: 0,
+      transactionsCount: 0
     };
     for (const s of Object.values(bySector)) {
       totals.depositsARS += s.depositsARS;
@@ -33975,10 +33979,132 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
       totals.pendienteHoy += s.pendienteHoy;
       totals.bonusARS += s.bonusARS;
       totals.netoSector += s.netoSector;
+      totals.transactionsCount += s.transactionsCount;
     }
     res.json({ success: true, bySector: Object.values(bySector), totals, from, to });
   } catch (err) {
     logger.error(`/api/admin/closings/summary: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/closings/analysis?period=day|week|month[&sector=&teamSlot=]
+// Devuelve totales del período actual vs el anterior + deltas para
+// comparativa empresarial. Acepta filtro opcional por sector/equipo.
+app.get('/api/admin/closings/analysis', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const period = ['day','week','month'].includes(String(req.query.period)) ? req.query.period : 'month';
+    const sector = CLOSING_SECTORS.includes(String(req.query.sector)) ? req.query.sector : null;
+    const teamSlotRaw = req.query.teamSlot;
+    const teamSlot = (teamSlotRaw !== undefined && teamSlotRaw !== '' && Number.isFinite(parseInt(teamSlotRaw, 10)))
+      ? parseInt(teamSlotRaw, 10)
+      : null;
+
+    const today = _closingDateKeyART();
+    // Calcular rangos current vs previous
+    function dateMinusDays(dateKey, days) {
+      const d = new Date(dateKey + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() - days);
+      return d.toISOString().slice(0, 10);
+    }
+    let curFrom, curTo, prevFrom, prevTo;
+    if (period === 'day') {
+      curFrom = curTo = today;
+      prevFrom = prevTo = dateMinusDays(today, 1);
+    } else if (period === 'week') {
+      curTo = today;
+      curFrom = dateMinusDays(today, 6);     // últimos 7 días
+      prevTo = dateMinusDays(today, 7);
+      prevFrom = dateMinusDays(today, 13);
+    } else {
+      curTo = today;
+      curFrom = dateMinusDays(today, 29);    // últimos 30 días
+      prevTo = dateMinusDays(today, 30);
+      prevFrom = dateMinusDays(today, 59);
+    }
+
+    function buildFilter(from, to) {
+      const f = { dateKey: { $gte: from, $lte: to } };
+      if (sector) f.sector = sector;
+      if (sector === 'buffalo' && teamSlot != null) f.teamSlot = teamSlot;
+      return f;
+    }
+
+    function aggregate(rows) {
+      const out = {
+        depositsARS: 0, commission: 0, depositsNet: 0,
+        ventasARS: 0, bajadaARS: 0, pendienteHoy: 0,
+        bonusARS: 0, netoSector: 0, transactionsCount: 0,
+        days: 0, entries: 0
+      };
+      const dayKeys = new Set();
+      for (const r of rows) {
+        const c = _closingComputeTotals(r);
+        out.depositsARS += r.depositsARS || 0;
+        out.commission += c.commission;
+        out.depositsNet += c.depositsNet;
+        out.ventasARS += r.ventasARS || 0;
+        out.bajadaARS += r.bajadaARS || 0;
+        out.pendienteHoy += c.pendienteHoy;
+        out.bonusARS += r.bonusARS || 0;
+        out.netoSector += c.netoSector;
+        out.transactionsCount += r.transactionsCount || 0;
+        out.entries += 1;
+        dayKeys.add(r.dateKey);
+      }
+      out.days = dayKeys.size;
+      // KPIs derivados
+      out.avgTicket = out.transactionsCount > 0 ? out.depositsARS / out.transactionsCount : 0;
+      out.avgNetoDiario = out.days > 0 ? out.netoSector / out.days : 0;
+      out.avgVentasDiario = out.days > 0 ? out.ventasARS / out.days : 0;
+      return out;
+    }
+
+    const [currentRows, previousRows] = await Promise.all([
+      ClosingEntry.find(buildFilter(curFrom, curTo)).lean(),
+      ClosingEntry.find(buildFilter(prevFrom, prevTo)).lean()
+    ]);
+
+    const current = aggregate(currentRows);
+    const previous = aggregate(previousRows);
+
+    function deltaPct(a, b) {
+      if (!b) return a > 0 ? 100 : 0;
+      return ((a - b) / Math.abs(b)) * 100;
+    }
+    const deltas = {
+      depositsARS: { abs: current.depositsARS - previous.depositsARS, pct: deltaPct(current.depositsARS, previous.depositsARS) },
+      ventasARS:   { abs: current.ventasARS - previous.ventasARS,     pct: deltaPct(current.ventasARS, previous.ventasARS) },
+      bajadaARS:   { abs: current.bajadaARS - previous.bajadaARS,     pct: deltaPct(current.bajadaARS, previous.bajadaARS) },
+      bonusARS:    { abs: current.bonusARS - previous.bonusARS,       pct: deltaPct(current.bonusARS, previous.bonusARS) },
+      netoSector:  { abs: current.netoSector - previous.netoSector,   pct: deltaPct(current.netoSector, previous.netoSector) },
+      pendienteHoy:{ abs: current.pendienteHoy - previous.pendienteHoy, pct: deltaPct(current.pendienteHoy, previous.pendienteHoy) },
+      transactionsCount: { abs: current.transactionsCount - previous.transactionsCount, pct: deltaPct(current.transactionsCount, previous.transactionsCount) },
+      avgTicket:   { abs: current.avgTicket - previous.avgTicket,     pct: deltaPct(current.avgTicket, previous.avgTicket) }
+    };
+
+    // Conteo de alertas en el período actual
+    let rojos = 0, faltantes = 0, sobrepagos = 0, pendOK = 0;
+    for (const r of currentRows) {
+      const c = _closingComputeTotals(r);
+      const hasBank = (r.comprobantes || []).some(p => p.kind === 'pendiente_bank');
+      if (r.bajadaARS > c.totalABajar) sobrepagos++;
+      else if (c.pendienteHoy > 0) {
+        if (r.status === 'confirmed' && !hasBank) faltantes++;
+        else pendOK++;
+      } else if (r.status === 'confirmed' && c.netoSector < 0) rojos++;
+    }
+
+    res.json({
+      success: true,
+      period,
+      current: { ...current, from: curFrom, to: curTo },
+      previous: { ...previous, from: prevFrom, to: prevTo },
+      deltas,
+      alerts: { rojos, faltantes, sobrepagos, pendOK }
+    });
+  } catch (err) {
+    logger.error(`/api/admin/closings/analysis: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

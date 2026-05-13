@@ -24639,9 +24639,107 @@ async function loadClosings() {
         _closingsTodayKey = d.today;
         _renderClosings();
         loadClosingsSummary(_closingsView.date);
+        loadClosingsAnalysis();
     } catch (e) {
         body.innerHTML = '<div style="color:#ff8080;padding:14px;">Error: ' + escapeHtml(e.message || '') + '</div>';
     }
+}
+
+let _closingsAnalysisPeriod = 'month';
+
+function closingsSetAnalysisPeriod(p) {
+    _closingsAnalysisPeriod = p;
+    loadClosingsAnalysis();
+}
+
+async function loadClosingsAnalysis() {
+    const box = document.getElementById('closingsAnalysisBox');
+    if (!box) return;
+    try {
+        const params = new URLSearchParams({
+            period: _closingsAnalysisPeriod,
+            sector: _closingsView.sector
+        });
+        if (_closingsView.sector === 'buffalo' && _closingsView.teamSlot != null) {
+            params.set('teamSlot', String(_closingsView.teamSlot));
+        }
+        const r = await authFetch('/api/admin/closings/analysis?' + params.toString());
+        const d = await r.json();
+        if (!r.ok || !d.success) return;
+
+        const fmtPct = (n) => (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+        const arrow = (n) => n > 0.5 ? '▲' : (n < -0.5 ? '▼' : '·');
+        const arrowColor = (n, goodIfUp) => {
+            if (Math.abs(n) < 0.5) return '#888';
+            const isUp = n > 0;
+            return (isUp === goodIfUp) ? '#aaffaa' : '#ff8080';
+        };
+        const periodLabel = { day: 'HOY vs AYER', week: 'ÚLT 7 DÍAS vs PREV 7', month: 'ÚLT 30 DÍAS vs PREV 30' }[d.period];
+
+        let html = '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.08),rgba(0,212,255,0.06));border:1.5px solid rgba(155,48,255,0.40);border-radius:11px;padding:13px;">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
+        html += '<div style="color:#c89bff;font-weight:900;font-size:13px;letter-spacing:0.6px;">📊 ANÁLISIS COMPARATIVO · ' + periodLabel + '</div>';
+        html += '<div style="display:flex;gap:4px;">';
+        for (const p of [['day','Día'],['week','Semana'],['month','Mes']]) {
+            const active = p[0] === _closingsAnalysisPeriod;
+            html += '<button type="button" onclick="closingsSetAnalysisPeriod(\'' + p[0] + '\')" style="background:' + (active ? '#c89bff' : 'rgba(0,0,0,0.40)') + ';color:' + (active ? '#000' : '#c89bff') + ';border:1px solid rgba(155,48,255,0.50);padding:4px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">' + p[1] + '</button>';
+        }
+        html += '</div></div>';
+
+        // Cards de KPIs con delta
+        const kpis = [
+            ['📥 Depósitos', d.current.depositsARS, d.deltas.depositsARS, true],
+            ['🛒 Ventas', d.current.ventasARS, d.deltas.ventasARS, false],
+            ['🏃 Bajadas', d.current.bajadaARS, d.deltas.bajadaARS, false],
+            ['🎁 Bonos', d.current.bonusARS, d.deltas.bonusARS, false],
+            ['📐 Neto sector', d.current.netoSector, d.deltas.netoSector, true],
+            ['🔢 Transacciones', d.current.transactionsCount, d.deltas.transactionsCount, true],
+            ['🎯 Ticket prom.', d.current.avgTicket, d.deltas.avgTicket, true]
+        ];
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;margin-bottom:10px;">';
+        for (const [label, value, delta, goodIfUp] of kpis) {
+            const isCount = label.includes('Transacciones');
+            const valStr = isCount
+                ? Number(value || 0).toLocaleString('es-AR')
+                : _closingFmt(value);
+            const deltaColor = arrowColor(delta.pct, goodIfUp);
+            const ar = arrow(delta.pct);
+            const deltaAbs = isCount
+                ? (delta.abs >= 0 ? '+' : '') + Math.round(delta.abs).toLocaleString('es-AR')
+                : (delta.abs >= 0 ? '+' : '−') + _closingFmt(Math.abs(delta.abs)).replace('$','$');
+            html += '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;">';
+            html += '<div style="color:#aaa;font-size:10.5px;font-weight:700;letter-spacing:0.3px;margin-bottom:2px;">' + label + '</div>';
+            html += '<div style="color:#fff;font-size:15px;font-weight:900;line-height:1.1;">' + valStr + '</div>';
+            html += '<div style="color:' + deltaColor + ';font-size:10.5px;font-weight:800;margin-top:2px;">' + ar + ' ' + fmtPct(delta.pct) + ' · ' + deltaAbs + '</div>';
+            html += '</div>';
+        }
+        html += '</div>';
+
+        // Comparativa lado a lado
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;">';
+        html += '<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.35);border-radius:7px;padding:7px 9px;">';
+        html += '<div style="color:#00d4ff;font-weight:800;font-size:10.5px;margin-bottom:3px;">PERÍODO ACTUAL · ' + escapeHtml(d.current.from) + ' → ' + escapeHtml(d.current.to) + '</div>';
+        html += '<div style="color:#fff;">' + d.current.days + ' días · ' + d.current.entries + ' cierres · neto/día <strong>' + _closingFmt(d.current.avgNetoDiario) + '</strong></div>';
+        html += '</div>';
+        html += '<div style="background:rgba(155,48,255,0.06);border:1px solid rgba(155,48,255,0.35);border-radius:7px;padding:7px 9px;">';
+        html += '<div style="color:#c89bff;font-weight:800;font-size:10.5px;margin-bottom:3px;">PERÍODO ANTERIOR · ' + escapeHtml(d.previous.from) + ' → ' + escapeHtml(d.previous.to) + '</div>';
+        html += '<div style="color:#fff;">' + d.previous.days + ' días · ' + d.previous.entries + ' cierres · neto/día <strong>' + _closingFmt(d.previous.avgNetoDiario) + '</strong></div>';
+        html += '</div>';
+        html += '</div>';
+
+        // Alertas
+        const a = d.alerts;
+        if (a.rojos > 0 || a.faltantes > 0 || a.sobrepagos > 0 || a.pendOK > 0) {
+            html += '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap;font-size:11px;">';
+            if (a.faltantes > 0) html += '<span style="background:rgba(255,80,80,0.15);border:1px solid #ff5050;color:#ff5050;padding:3px 9px;border-radius:5px;font-weight:800;">🚨 ' + a.faltantes + ' plata faltante</span>';
+            if (a.rojos > 0)     html += '<span style="background:rgba(255,128,128,0.10);border:1px solid #ff8080;color:#ff8080;padding:3px 9px;border-radius:5px;font-weight:800;">📉 ' + a.rojos + ' en rojo</span>';
+            if (a.sobrepagos > 0) html += '<span style="background:rgba(255,170,102,0.10);border:1px solid #ffaa66;color:#ffaa66;padding:3px 9px;border-radius:5px;font-weight:800;">⚠️ ' + a.sobrepagos + ' sobre-pago</span>';
+            if (a.pendOK > 0)    html += '<span style="background:rgba(255,170,102,0.06);border:1px solid rgba(255,170,102,0.40);color:#ffd0a0;padding:3px 9px;border-radius:5px;font-weight:700;">⏳ ' + a.pendOK + ' pendientes respaldados</span>';
+            html += '</div>';
+        }
+        html += '</div>';
+        box.innerHTML = html;
+    } catch (_) {}
 }
 
 async function loadClosingsSummary(date) {
@@ -24764,6 +24862,9 @@ function _renderClosings() {
     // ===== Summary del día activo =====
     html += '<div id="closingsSummaryBox" style="margin-bottom:14px;"></div>';
 
+    // ===== Panel de Análisis Comparativo =====
+    html += '<div id="closingsAnalysisBox" style="margin-bottom:16px;"></div>';
+
     // ===== Editor del día activo =====
     const activeRow = _closingsRowsCache.find(r => r.dateKey === date);
     html += '<div style="background:rgba(0,0,0,0.30);border:1.5px solid ' + sec.color + '55;border-radius:11px;padding:14px;margin-bottom:18px;">';
@@ -24785,6 +24886,7 @@ function _renderClosings() {
         html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:760px;">';
         html += '<thead><tr style="background:rgba(255,255,255,0.04);color:' + sec.color + ';text-align:left;">';
         html += '<th style="padding:7px 10px;font-weight:800;">Fecha</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🔢 Tx</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">💰 Depósitos</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏦 Comisión</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🛒 Venta</th>';
@@ -24838,6 +24940,7 @@ function _renderClosings() {
             const netColor = c.netoSector < 0 ? '#ff8080' : '#fff';
             html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (isActive ? 'background:rgba(255,215,0,0.06);' : '') + '">';
             html += '<td style="padding:6px 10px;color:#fff;font-weight:700;font-family:monospace;">' + escapeHtml(r.dateKey) + (isActive ? ' <span style="color:#ffd700;">←</span>' : '') + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:#c89bff;font-weight:700;">' + Number(r.transactionsCount || 0).toLocaleString('es-AR') + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#aaffaa;">' + _closingFmt(r.depositsARS) + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#ff8080;">-' + _closingFmt(c.commission) + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#ffd0a0;">' + _closingFmt(r.ventasARS) + '</td>';
@@ -24890,6 +24993,7 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacciones</label><input type="number" id="cls_' + rid + '_transactionsCount" value="' + (row ? (row.transactionsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '</div>';
 
     if (exists) {
@@ -25000,7 +25104,8 @@ async function saveClosing(rid, sector, teamSlot, date) {
         ventasARS: parseFloat(get('ventasARS')) || 0,
         bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
-        bonusARS: parseFloat(get('bonusARS')) || 0
+        bonusARS: parseFloat(get('bonusARS')) || 0,
+        transactionsCount: parseInt(get('transactionsCount'), 10) || 0
     };
     if (sector === 'buffalo') {
         payload.teamSlot = teamSlot;

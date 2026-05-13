@@ -81,6 +81,12 @@ const closingSchema = new mongoose.Schema({
   bonusARS: { type: Number, default: 0 },
   bonusNote: { type: String, default: '', trim: true },
 
+  // === Volumen operacional ===
+  // Cantidad de transacciones procesadas ese día por el sector.
+  // Sirve para tracking de actividad — ticket promedio, comparativas,
+  // detectar caídas de volumen.
+  transactionsCount: { type: Number, default: 0, min: 0 },
+
   // === Adjuntos: comprobantes de bajada + screenshots de banco ===
   comprobantes: { type: [comprobanteSchema], default: [] },
 
