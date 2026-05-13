@@ -33826,20 +33826,31 @@ function _closingComputeTotals(c) {
   // Total a bajar = Neto + pendiente anterior (lo que arrastraste).
   const totalABajar = neto + pendienteAnterior;
 
-  // Pendiente a bajar (real) = total a bajar − lo bajado
-  // Positivo: falta bajar · Negativo: bajaste de más
-  const diff = totalABajar - bajada;
-  const pendienteHoy = Math.max(0, diff);
+  // === Pendiente a bajar: realidad bancaria vs cálculo ===
+  // Antes era `pendienteHoy = max(0, totalABajar - bajada)` (sólo cálculo).
+  // El owner reportó que el cálculo siempre daba un valor distinto al CVU
+  // real (porque hay diferencias menores en cada movimiento), generando
+  // falsos faltantes que se arrastran.
+  //
+  // Modelo nuevo:
+  //   - pendienteCalculado = lo que la matemática dice que debería quedar
+  //   - pendienteHoy = el CVU 00 hs REAL (si el owner lo cargó); si no,
+  //     cae al calculado. Es lo que se arrastra al día siguiente.
+  //   - cvuDiscrepancy = diferencia entre realidad y cálculo (falta/sobra)
+  const diff = totalABajar - bajada;            // según fórmula
+  const pendienteCalculado = Math.max(0, diff); // legacy "esperado"
   const sobrepago = Math.max(0, -diff);
+  // Si el dueño cargó el CVU 00 hs (>0), eso es la verdad — lo usamos
+  // como pendienteHoy. Si no lo cargó todavía, usamos el calculado.
+  const pendienteHoy = cvuActual > 0 ? cvuActual : pendienteCalculado;
 
   // netoSector legacy = -diff (sale positivo si sobraste, negativo si faltaste)
   const netoSector = -diff;
 
-  // Saldo CVU esperado a las 00 hs = pendiente que falta bajar.
-  // (Antes se sumaba saldoInicial, pero ese campo fue removido del flujo
-  // nuevo. El CVU del día anterior — pendienteAnterior — ya viene de la
-  // realidad bancaria y se contempla en totalABajar.)
-  const cvuExpected = pendienteHoy + saldoInicial;
+  // CVU esperado según el cálculo (qué debería quedar de pendiente si todo
+  // cuadrara): pendienteCalculado + saldoInicial (saldoInicial casi siempre 0
+  // en el modelo nuevo, queda para backwards-compat con cierres viejos).
+  const cvuExpected = pendienteCalculado + saldoInicial;
   // Discrepancia: cvuActual - cvuExpected
   //   = 0  → perfecto (el banco coincide con los movimientos)
   //   > 0  → sobra plata (entró algo no registrado — revisar)
@@ -33858,7 +33869,8 @@ function _closingComputeTotals(c) {
     saldoInicial,                  // plata que ya estaba en CVU al arrancar
     neto,                          // venta - comisión - gastos - egresos + ingresos
     totalABajar,                   // neto + pendiente anterior
-    pendienteHoy,                  // max(0, totalABajar - bajada)
+    pendienteHoy,                  // CVU 00hs real (si cargado) | calculado (fallback)
+    pendienteCalculado,            // lo que la fórmula dice
     sobrepago,
     diff,
     netoSector,

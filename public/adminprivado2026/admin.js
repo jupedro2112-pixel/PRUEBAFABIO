@@ -25722,16 +25722,19 @@ function closingsRecompute(rid) {
     const commission = sumDeposits * (bankPct / 100);
     // Neto = venta − comisión − gastos − egresos + ingresos
     const neto = sumVentas - commission - gastos - egresos + ingresos;
-    // Total a bajar = Neto + pendiente anterior
+    // Total a bajar = Neto + pendiente anterior (=CVU del día anterior)
     const totalABajar = neto + pendAnt;
-    // Pendiente a bajar (real) = total a bajar − bajada
+    // Diferencia según la fórmula: total a bajar − bajada
     const diff = totalABajar - bajada;
-    const pendienteHoyLive = Math.max(0, diff);
+    const pendienteCalculado = Math.max(0, diff);
+    // Pendiente a bajar OFICIAL = CVU 00 hs real (si está cargado).
+    // Si todavía no se cargó, cae al cálculo.
+    const pendienteHoyLive = cvuActual > 0 ? cvuActual : pendienteCalculado;
     const totalTx = sumCargasN + sumDescN + sumBonosN;
 
-    // CVU esperado = pendiente a bajar + saldo inicial (plata de antes).
-    const cvuExpected = pendienteHoyLive + saldoInicial;
-    // Δ falta/sobra = CVU real − esperado (negativo = falta).
+    // CVU esperado SEGÚN cálculo = lo que la fórmula dice que debería quedar.
+    const cvuExpected = pendienteCalculado + saldoInicial;
+    // Δ falta/sobra = CVU real cargado − esperado (negativo = falta).
     const cvuDiscrepancy = cvuActual - cvuExpected;
 
     // Pintar preview
@@ -25950,7 +25953,15 @@ function analyzeClosing(id) {
     html += '<div>8. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
     html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">9. <strong>TOTAL A BAJAR</strong> = neto + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
     html += '<div>10. Bajada REAL del día: <strong style="color:#aaffff;">-' + fmt(r.bajadaARS) + '</strong></div>';
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">11. <strong>PENDIENTE A BAJAR</strong> = total a bajar − bajada = <strong style="color:' + cuadreColor + ';font-size:14px;">' + fmt(diff) + '</strong></div>';
+    // Línea 11 — el pendiente a bajar oficial es el CVU 00 hs real cargado
+    // por el dueño. Si no se cargó (=0), cae al valor calculado.
+    const pendCalc = Number(c.pendienteCalculado != null ? c.pendienteCalculado : Math.max(0, diff));
+    const pendReal = Number(c.pendienteHoy || 0);
+    const usingCvu = Number(c.cvuActual || 0) > 0;
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">11a. <strong>según cálculo</strong> (total a bajar − bajada) = <strong style="color:#aaa;font-size:13px;">' + fmt(pendCalc) + '</strong></div>';
+    html += '<div>11b. <strong>CVU 00 hs real</strong> (lo que muestra el banco) = <strong style="color:#00d4ff;font-size:13px;">' + fmt(Number(c.cvuActual || 0)) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">12. <strong>PENDIENTE A BAJAR</strong> = <strong style="color:' + cuadreColor + ';font-size:14px;">' + fmt(pendReal) + '</strong> <span style="color:#888;font-size:10.5px;">' + (usingCvu ? '(tomado del CVU real)' : '(no se cargó CVU — se usa el calculado)') + '</span></div>';
+    html += '<div style="color:#888;font-size:10.5px;margin-top:3px;">↪ Este monto arrastra al "CVU 00 hs día anterior" del próximo cierre.</div>';
     html += '</div>';
     html += '<div style="background:' + cuadreColor + '22;border:2px solid ' + cuadreColor + ';border-radius:8px;padding:10px;margin-top:10px;text-align:center;color:' + cuadreColor + ';font-weight:900;font-size:14px;">' + cuadreText + '</div>';
 
