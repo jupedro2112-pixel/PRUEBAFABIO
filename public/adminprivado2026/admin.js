@@ -24567,17 +24567,40 @@ const CLOSING_SECTORS_UI = [
     { key: 'buffalo',    label: '🐃 BUFFALO',    color: '#ffd700', individual: true, slots: 7 }
 ];
 
-let _closingsRowsCache = [];
+let _closingsRowsCache = [];      // historial completo (últimos N días) para la selección activa
 let _closingsTodayKey = null;
+// Selección actual: qué sector + (opcional) equipo Buffalo + día activo del editor
+let _closingsView = { sector: 'ganamos', teamSlot: null, date: null };
+const CLOSINGS_HISTORY_DAYS = 60;
 
 function _closingFmt(n) {
     return '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
 }
 
-function _closingsCurrentDate() {
-    const el = document.getElementById('closingsDate');
-    if (el && el.value) return el.value;
-    return _closingsTodayKey || new Date().toISOString().slice(0, 10);
+function _closingsTodayART() {
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date());
+}
+
+function closingsSelectSector(sectorKey) {
+    _closingsView.sector = sectorKey;
+    // Si no es buffalo, limpiar teamSlot
+    if (sectorKey !== 'buffalo') _closingsView.teamSlot = null;
+    else if (_closingsView.teamSlot == null) _closingsView.teamSlot = 0;
+    loadClosings();
+}
+
+function closingsSelectTeam(slot) {
+    _closingsView.teamSlot = Number(slot);
+    loadClosings();
+}
+
+function closingsSelectDate(dateStr) {
+    _closingsView.date = dateStr;
+    _renderClosings();
+    loadClosingsSummary(dateStr);
 }
 
 async function loadClosings() {
@@ -24585,28 +24608,37 @@ async function loadClosings() {
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
 
-    const dateInput = document.getElementById('closingsDate');
-    let date = dateInput && dateInput.value;
-    if (!date) {
-        // Defaultear a hoy ART
-        const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
-        date = today.toISOString().slice(0, 10);
-        if (dateInput) dateInput.value = date;
+    if (!_closingsView.date) {
+        _closingsView.date = _closingsTodayART();
     }
+    const today = _closingsTodayART();
+    const fromDate = new Date(today);
+    fromDate.setDate(fromDate.getDate() - CLOSINGS_HISTORY_DAYS);
+    const fromKey = fromDate.toISOString().slice(0, 10);
 
     try {
-        const params = new URLSearchParams({ from: date, to: date });
+        const params = new URLSearchParams({
+            from: fromKey,
+            to: today,
+            sector: _closingsView.sector
+        });
         const r = await authFetch('/api/admin/closings?' + params.toString());
         const d = await r.json();
         if (!r.ok || !d.success) {
             body.innerHTML = '<div style="color:#ff8080;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
             return;
         }
-        _closingsRowsCache = d.rows || [];
+        // Filtrar al teamSlot si corresponde
+        let rows = d.rows || [];
+        if (_closingsView.sector === 'buffalo') {
+            rows = rows.filter(r => r.teamSlot === _closingsView.teamSlot);
+        } else {
+            rows = rows.filter(r => r.teamSlot == null);
+        }
+        _closingsRowsCache = rows;
         _closingsTodayKey = d.today;
-        _renderClosings(date);
-        // Cargar summary del día también
-        loadClosingsSummary(date);
+        _renderClosings();
+        loadClosingsSummary(_closingsView.date);
     } catch (e) {
         body.innerHTML = '<div style="color:#ff8080;padding:14px;">Error: ' + escapeHtml(e.message || '') + '</div>';
     }
@@ -24673,32 +24705,120 @@ async function loadClosingsSummary(date) {
     } catch (_) {}
 }
 
-function _renderClosings(date) {
+function _renderClosings() {
     const body = document.getElementById('closingsBody');
     if (!body) return;
 
+    const sec = CLOSING_SECTORS_UI.find(s => s.key === _closingsView.sector) || CLOSING_SECTORS_UI[0];
+    const date = _closingsView.date || _closingsTodayART();
+    const today = _closingsTodayART();
+
     let html = '';
 
-    // Summary container (relleno por loadClosingsSummary)
-    html += '<div id="closingsSummaryBox" style="margin-bottom:16px;"></div>';
+    // ===== Selector de sector =====
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
+    for (const s of CLOSING_SECTORS_UI) {
+        const active = s.key === _closingsView.sector;
+        const bg = active ? s.color : 'rgba(255,255,255,0.04)';
+        const color = active ? '#000' : s.color;
+        const border = active ? s.color : (s.color + '55');
+        html += '<button type="button" onclick="closingsSelectSector(\'' + s.key + '\')" style="flex:1;min-width:130px;background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:9px 12px;border-radius:9px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;cursor:pointer;">' + s.label + '</button>';
+    }
+    html += '</div>';
 
-    // Cards por sector
-    for (const sec of CLOSING_SECTORS_UI) {
-        html += '<div style="background:rgba(0,0,0,0.30);border:1.5px solid ' + sec.color + '55;border-radius:11px;padding:14px;margin-bottom:14px;">';
-        html += '<div style="color:' + sec.color + ';font-weight:900;font-size:14px;letter-spacing:0.8px;margin-bottom:10px;">' + sec.label + '</div>';
-        if (sec.individual) {
-            // Buffalo: 7 slots
-            for (let i = 0; i < sec.slots; i++) {
-                const row = _closingsRowsCache.find(r => r.sector === sec.key && r.teamSlot === i);
-                html += _renderClosingEntry(sec, date, i, row);
+    // ===== Selector de equipo Buffalo =====
+    if (sec.individual) {
+        html += '<div style="background:rgba(255,215,0,0.04);border:1px dashed rgba(255,215,0,0.30);border-radius:9px;padding:9px;margin-bottom:12px;">';
+        html += '<div style="color:#ffd700;font-size:11px;font-weight:800;letter-spacing:0.5px;margin-bottom:6px;">🐃 Elegí equipo Buffalo</div>';
+        html += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
+        // Para nombres reales miramos el último cierre conocido por slot.
+        const teamNamesBySlot = {};
+        for (const r of _closingsRowsCache) {
+            if (r.sector === 'buffalo' && r.teamSlot != null && r.teamName) {
+                teamNamesBySlot[r.teamSlot] = r.teamName;
             }
-        } else {
-            // Ganamos / Publicidad: una entrada
-            const row = _closingsRowsCache.find(r => r.sector === sec.key && (r.teamSlot == null));
-            html += _renderClosingEntry(sec, date, null, row);
+        }
+        // También miramos otros equipos (no solo el activo) — necesitamos extra fetch?
+        // Para simplificar mostramos slots 0-6 con su número o nombre si quedó guardado en cache local.
+        for (let i = 0; i < sec.slots; i++) {
+            const active = _closingsView.teamSlot === i;
+            const name = teamNamesBySlot[i] || ('Equipo ' + (i + 1));
+            const bg = active ? '#ffd700' : 'rgba(0,0,0,0.40)';
+            const color = active ? '#000' : '#ffd700';
+            const border = active ? '#ffd700' : 'rgba(255,215,0,0.40)';
+            html += '<button type="button" onclick="closingsSelectTeam(' + i + ')" style="background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:6px 10px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (i + 1) + '. ' + escapeHtml(name) + '</button>';
         }
         html += '</div>';
+        html += '</div>';
     }
+
+    // ===== Selector de día (visible solo para el editor) =====
+    html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:9px 11px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+    html += '<label style="color:#aaa;font-size:11px;font-weight:700;letter-spacing:0.5px;">📅 Día activo:</label>';
+    html += '<input type="date" id="closingsActiveDate" value="' + escapeHtml(date) + '" max="' + escapeHtml(today) + '" onchange="closingsSelectDate(this.value)" style="background:rgba(0,0,0,0.45);border:1px solid rgba(255,215,0,0.40);color:#fff;padding:5px 9px;border-radius:6px;font-weight:700;font-size:12.5px;">';
+    if (date !== today) {
+        html += '<button type="button" onclick="closingsSelectDate(\'' + today + '\')" style="background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:5px 10px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;">↩ Volver a hoy</button>';
+    }
+    html += '</div>';
+
+    // ===== Summary del día activo =====
+    html += '<div id="closingsSummaryBox" style="margin-bottom:14px;"></div>';
+
+    // ===== Editor del día activo =====
+    const activeRow = _closingsRowsCache.find(r => r.dateKey === date);
+    html += '<div style="background:rgba(0,0,0,0.30);border:1.5px solid ' + sec.color + '55;border-radius:11px;padding:14px;margin-bottom:18px;">';
+    html += '<div style="color:' + sec.color + ';font-weight:900;font-size:13px;letter-spacing:0.6px;margin-bottom:8px;">' + sec.label + (sec.individual ? ' · Equipo ' + (_closingsView.teamSlot + 1) : '') + ' · ' + date + '</div>';
+    html += _renderClosingEntry(sec, date, sec.individual ? _closingsView.teamSlot : null, activeRow);
+    html += '</div>';
+
+    // ===== Tabla histórica (últimos N días para la selección) =====
+    html += '<div style="background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:11px;overflow:hidden;">';
+    html += '<div style="background:rgba(255,255,255,0.04);padding:9px 12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">';
+    html += '<div style="color:#fff;font-weight:900;font-size:13px;letter-spacing:0.4px;">📜 HISTORIAL (últimos ' + CLOSINGS_HISTORY_DAYS + ' días)</div>';
+    html += '<div style="color:#888;font-size:11px;">' + _closingsRowsCache.length + ' cierres registrados</div>';
+    html += '</div>';
+
+    if (_closingsRowsCache.length === 0) {
+        html += '<div style="color:#888;text-align:center;padding:22px;font-size:12.5px;">Sin cierres en el rango. Cargá el primero arriba.</div>';
+    } else {
+        html += '<div style="overflow-x:auto;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:680px;">';
+        html += '<thead><tr style="background:rgba(255,255,255,0.04);color:' + sec.color + ';text-align:left;">';
+        html += '<th style="padding:7px 10px;font-weight:800;">Fecha</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">💰 Depósitos</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏦 Comisión</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏃 Bajó</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">⏳ Pend.</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🎁 Bonos</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">📐 Neto</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Estado</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Acción</th>';
+        html += '</tr></thead><tbody>';
+        const sorted = [..._closingsRowsCache].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+        for (const r of sorted) {
+            const c = r.computed || {};
+            const isActive = r.dateKey === date;
+            const stateBadge = r.locked
+                ? '<span style="color:#ff8080;font-weight:800;font-size:10px;">🔒 24h</span>'
+                : r.status === 'confirmed'
+                    ? '<span style="color:#aaffaa;font-weight:800;font-size:10px;">✅</span>'
+                    : '<span style="color:#888;font-size:10px;">📝</span>';
+            const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#888';
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (isActive ? 'background:rgba(255,215,0,0.06);' : '') + '">';
+            html += '<td style="padding:6px 10px;color:#fff;font-weight:700;font-family:monospace;">' + escapeHtml(r.dateKey) + (isActive ? ' <span style="color:#ffd700;">←</span>' : '') + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:#aaffaa;">' + _closingFmt(r.depositsARS) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:#ff8080;">-' + _closingFmt(c.commission) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:#aaffff;">' + _closingFmt(r.bajadaARS) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:' + pendColor + ';font-weight:700;">' + _closingFmt(c.pendienteHoy) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:#fff;font-weight:800;">' + _closingFmt(c.netoSector) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
+            html += '<td style="padding:6px 10px;text-align:center;"><button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;">Abrir</button></td>';
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    }
+    html += '</div>';
 
     body.innerHTML = html;
 }
