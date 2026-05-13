@@ -26863,7 +26863,40 @@ function _renderCotizaciones(scope) {
 
     // Banner total cotizado general (suma de TODOS los equipos cotizados en
     // TODOS los cierres del scope). Es la métrica clave para el dueño.
-    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:12px;">';
+    // === Comisión acumulada ===
+    // De cada cierre cotizado, ese %comisión × monto = lo que se queda la
+    // casa. Lo queremos ver por SEMANA (la cotización es semanal) y total.
+    // Iteramos los items, sumamos teams cotizados por semana ISO (lunes-domingo).
+    function _isoWeekKey(d) {
+        // Año-Semana ISO 8601 (lunes inicia semana). Devuelve "YYYY-W##".
+        const date = new Date(d);
+        date.setUTCHours(0, 0, 0, 0);
+        // Jueves de esta semana ISO
+        date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+        const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+        const weekNum = Math.ceil(((date - yearStart) / 86400000 + 1) / 7);
+        return date.getUTCFullYear() + '-W' + String(weekNum).padStart(2, '0');
+    }
+    const _nowWeek = _isoWeekKey(new Date());
+    let commWeekARS = 0, commWeekUSDT = 0;
+    let commTotalARS = 0, commTotalUSDT = 0;
+    for (const cot of items) {
+        const rate = Number(cot.usdtRate || 0);
+        const cotTeams = Array.isArray(cot.teams) ? cot.teams : [];
+        for (const t of cotTeams) {
+            if (!t.cotizado || !t.cotizedAt) continue;
+            const commARS = Number(t.commissionARS || 0);
+            const commUSDT = rate > 0 ? (commARS / rate) : 0;
+            commTotalARS += commARS;
+            commTotalUSDT += commUSDT;
+            if (_isoWeekKey(t.cotizedAt) === _nowWeek) {
+                commWeekARS += commARS;
+                commWeekUSDT += commUSDT;
+            }
+        }
+    }
+
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:12px;">';
     h += '<div style="background:linear-gradient(135deg,rgba(0,255,102,0.10) 0%,rgba(0,200,150,0.06) 100%);border:1px solid rgba(0,255,102,0.30);border-radius:8px;padding:10px 14px;">';
     h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">💎 Total cotizado general</div>';
     h += '<div style="color:#0f0;font-weight:900;font-size:18px;margin-top:3px;">' + formatMoney(sumCotizadoARS) + '</div>';
@@ -26872,6 +26905,18 @@ function _renderCotizaciones(scope) {
     h += '<div style="background:rgba(255,170,102,0.06);border:1px solid rgba(255,170,102,0.25);border-radius:8px;padding:10px 14px;">';
     h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">⏳ Pendiente de cotizar</div>';
     h += '<div style="color:#ffaa66;font-weight:900;font-size:18px;margin-top:3px;">' + formatMoney(sumPendienteARS) + '</div>';
+    h += '</div>';
+    // Comisión: dos cards — semana actual + total acumulado
+    h += '<div style="background:linear-gradient(135deg,rgba(255,215,0,0.10) 0%,rgba(255,170,0,0.06) 100%);border:1px solid rgba(255,215,0,0.35);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">💰 Comisión semana actual</div>';
+    h += '<div style="color:#ffd700;font-weight:900;font-size:17px;margin-top:3px;">' + formatMoney(Math.round(commWeekARS)) + '</div>';
+    h += '<div style="color:#ffe88a;font-weight:800;font-size:12px;">' + commWeekUSDT.toFixed(2) + ' USDT</div>';
+    h += '<div style="color:#888;font-size:9.5px;margin-top:2px;">semana ' + escapeHtml(_nowWeek) + '</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">🏦 Comisión total acumulada</div>';
+    h += '<div style="color:#d4af37;font-weight:900;font-size:17px;margin-top:3px;">' + formatMoney(Math.round(commTotalARS)) + '</div>';
+    h += '<div style="color:#e8d180;font-weight:800;font-size:12px;">' + commTotalUSDT.toFixed(2) + ' USDT</div>';
     h += '</div>';
     h += '</div>';
 
@@ -27090,8 +27135,9 @@ function _renderCotizacionCard(it, scope) {
     h += '</div>';
     h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
     if (!isClosed) {
-        // === Modo DRAFT: editar y cerrar ===
+        // === Modo DRAFT: editar, guardar plantilla y cerrar ===
         h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
+        h += '<button onclick="saveCotizacionDefaults(' + escapeJsArg(it.id) + scopeArg + ')" title="Guarda los nombres y % de comisión como plantilla. Los próximos cierres arrancan con esto pre-cargado." style="background:rgba(155,48,255,0.15);color:#c89bff;border:1px solid rgba(155,48,255,0.45);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.3px;">⭐ Guardar plantilla</button>';
         h += '<button onclick="closeCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:linear-gradient(135deg,#00d4ff 0%,#0080ff 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">🔒 CERRAR COTIZACIÓN</button>';
     } else {
         // === Modo CERRADA ===
@@ -27372,6 +27418,37 @@ async function saveCotizacion(id, scope) {
     if (ok) {
         showToast('💾 Guardado', 'success');
         loadCotizaciones(scope);
+    }
+}
+
+// Guarda los nombres + % comisión de los equipos como PLANTILLA para los
+// próximos cierres del mismo scope. Los montos NO se incluyen — siempre
+// arrancan en 0 en cada cierre nuevo.
+async function saveCotizacionDefaults(id, scope) {
+    scope = scope || 'interna';
+    const payload = _collectCotizacionPayload(id, scope);
+    if (!payload) return;
+    if (!confirm('¿Guardar los nombres y % de comisión actuales como plantilla?\n\nLos próximos cierres del scope ' + scope.toUpperCase() + ' van a arrancar con estos nombres y porcentajes pre-cargados.')) return;
+    // Sólo mandamos name + commissionPercent (no montos).
+    const teams = payload.teams.map(t => ({
+        slot: t.slot,
+        name: t.name || '',
+        commissionPercent: Number(t.commissionPercent) || 0
+    }));
+    try {
+        const r = await authFetch(_cotApiBase(scope) + '/defaults', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ teams })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al guardar plantilla', 'error');
+            return;
+        }
+        showToast('⭐ Plantilla guardada · los próximos cierres arrancan con esto', 'success');
+    } catch (e) {
+        showToast('Error de conexión', 'error');
     }
 }
 

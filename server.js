@@ -34613,6 +34613,44 @@ app.get(prefix, authMiddleware, closingsAccessMiddleware, async (req, res) => {
   }
 });
 
+// Config key para guardar la plantilla de equipos (nombres + % comisión)
+// por scope. Cuando se crea una cotización nueva, si hay plantilla, se
+// pre-rellena con ella así el dueño no tiene que tipear todo de nuevo.
+const _defaultsConfigKey = (lbl) => 'cotizacion_defaults_' + lbl;
+
+// GET <prefix>/defaults — leer la plantilla guardada
+app.get(prefix + '/defaults', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const v = await getConfig(_defaultsConfigKey(label), null);
+    res.json({ success: true, defaults: v || { teams: [] } });
+  } catch (err) {
+    logger.error(`GET ${prefix}/defaults (${label}): ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST <prefix>/defaults — guardar plantilla desde el body.
+// Body: { teams: [{slot, name, commissionPercent}, ...] }
+app.post(prefix + '/defaults', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const teamsIn = Array.isArray(req.body && req.body.teams) ? req.body.teams : [];
+    const teams = [];
+    for (let i = 0; i < 10; i++) {
+      const src = teamsIn.find(t => Number(t && t.slot) === i) || {};
+      teams.push({
+        slot: i,
+        name: String(src.name || '').trim().slice(0, 80),
+        commissionPercent: Math.max(0, Math.min(100, Number(src.commissionPercent) || 0))
+      });
+    }
+    await setConfig(_defaultsConfigKey(label), { teams, savedAt: new Date(), savedBy: (req.user && req.user.username) || '' });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`POST ${prefix}/defaults (${label}): ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST <prefix> — crear una cotización para una fecha.
 app.post(prefix, authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
@@ -34623,9 +34661,20 @@ app.post(prefix, authMiddleware, closingsAccessMiddleware, async (req, res) => {
     const existing = await Model.findOne({ dateKey });
     if (existing) return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
 
-    const teams = Array.from({ length: 10 }, (_, i) => ({
-      slot: i, name: '', totalARS: 0, commissionPercent: 0, photoUrl: ''
-    }));
+    // Pre-rellenar con la plantilla guardada (si existe) — nombres y %
+    // comisión. Los montos siempre arrancan en 0 (los carga el dueño).
+    const defaults = await getConfig(_defaultsConfigKey(label), null);
+    const defTeams = (defaults && Array.isArray(defaults.teams)) ? defaults.teams : [];
+    const teams = Array.from({ length: 10 }, (_, i) => {
+      const def = defTeams.find(t => Number(t.slot) === i) || {};
+      return {
+        slot: i,
+        name: def.name || '',
+        totalARS: 0,
+        commissionPercent: Math.max(0, Math.min(100, Number(def.commissionPercent) || 0)),
+        photoUrl: ''
+      };
+    });
 
     const doc = {
       id: `cot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
