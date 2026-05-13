@@ -436,6 +436,7 @@ function showSection(sectionKey) {
         cotizacionesExterno: 'cotizacionesExternoSection',
         historialCotizacion: 'historialCotizacionSection',
         empleados: 'empleadosSection',
+        redeemCodes: 'redeemCodesSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -526,6 +527,8 @@ function showSection(sectionKey) {
         loadHistorialCotizacion();
     } else if (sectionKey === 'empleados') {
         loadEmpleados();
+    } else if (sectionKey === 'redeemCodes') {
+        loadRedeemCodes();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -28176,6 +28179,190 @@ async function deleteEmpleado(id) {
         if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
         showToast('🗑 Eliminado', 'success');
         loadEmpleados();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+// ============================================================
+// CÓDIGOS CANJEABLES (Admin)
+// ============================================================
+let _redeemCodesCache = [];
+
+async function loadRedeemCodes() {
+    const body = document.getElementById('redeemCodesBody');
+    if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/redeem-codes');
+        const d = await r.json();
+        if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
+        _redeemCodesCache = d.items || [];
+        _renderRedeemCodes();
+    } catch (e) {
+        console.error('[redeem-codes] load fail:', e);
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+}
+
+function _renderRedeemCodes() {
+    const body = document.getElementById('redeemCodesBody');
+    if (!body) return;
+    const items = _redeemCodesCache || [];
+
+    let h = '';
+
+    // === Creator (siempre arriba) ===
+    h += '<div style="background:rgba(0,200,150,0.06);border:1.5px solid rgba(0,200,150,0.35);border-radius:11px;padding:14px;margin-bottom:18px;">';
+    h += '<div style="color:#00c896;font-weight:900;font-size:13px;letter-spacing:0.5px;margin-bottom:10px;">➕ CREAR CÓDIGO NUEVO</div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px;">';
+    h += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;display:block;margin-bottom:4px;">Código</label>';
+    h += '<input id="rcCode" type="text" maxlength="32" placeholder="EJ: TELEGRAM3000" style="width:100%;background:rgba(0,0,0,0.45);border:1px solid rgba(0,200,150,0.40);color:#00c896;padding:8px 11px;border-radius:7px;font-size:14px;font-weight:900;text-transform:uppercase;letter-spacing:1px;"></div>';
+    h += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;display:block;margin-bottom:4px;">Monto $</label>';
+    h += '<input id="rcAmount" type="number" min="1" step="100" placeholder="3000" style="width:100%;background:rgba(0,0,0,0.45);border:1px solid rgba(0,212,255,0.35);color:#00d4ff;padding:8px 11px;border-radius:7px;font-size:14px;font-weight:800;text-align:right;"></div>';
+    h += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;display:block;margin-bottom:4px;">Duración (min)</label>';
+    h += '<input id="rcDuration" type="number" min="1" step="5" placeholder="30" style="width:100%;background:rgba(0,0,0,0.45);border:1px solid rgba(255,170,102,0.35);color:#ffaa66;padding:8px 11px;border-radius:7px;font-size:14px;font-weight:800;text-align:right;"></div>';
+    h += '<div><label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;display:block;margin-bottom:4px;">Cap (0=ilim)</label>';
+    h += '<input id="rcMaxClaims" type="number" min="0" step="1" placeholder="0" style="width:100%;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:8px 11px;border-radius:7px;font-size:13px;font-weight:700;text-align:right;"></div>';
+    h += '</div>';
+
+    // === Notificación push opcional ===
+    h += '<div style="background:rgba(0,0,0,0.30);border:1px dashed rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:10px;">';
+    h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:7px;"><input id="rcSendNotif" type="checkbox" checked> <span style="color:#00d4ff;font-weight:800;font-size:12px;">📲 Mandar notif a TODOS avisando del código nuevo</span></label>';
+    h += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:7px;">';
+    h += '<input id="rcNotifTitle" type="text" placeholder="Título notif" maxlength="80" value="🎁 ¡Código nuevo en Telegram!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;font-weight:700;">';
+    h += '<input id="rcNotifBody" type="text" placeholder="Texto del aviso" maxlength="250" value="Sumate al canal privado de Telegram para ver el código y canjearlo en la app. ¡Lo dejamos por tiempo limitado!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;">';
+    h += '</div>';
+    h += '<div style="color:#888;font-size:10.5px;margin-top:5px;">⚠️ El código NO va en la notificación — eso lo publicás vos en el canal de Telegram. La notif sólo avisa que hay uno nuevo y reenvía al canal.</div>';
+    h += '</div>';
+
+    h += '<button onclick="createRedeemCode()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 CREAR Y AVISAR</button>';
+    h += '</div>';
+
+    // === Lista de códigos ===
+    if (items.length === 0) {
+        h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:10px;padding:24px;text-align:center;color:#888;font-size:13px;">Todavía no hay códigos. Creá el primero arriba ⬆️</div>';
+        body.innerHTML = h;
+        return;
+    }
+
+    h += '<div style="color:#aaa;font-size:11.5px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;margin-bottom:8px;">📜 Historial de códigos (' + items.length + ')</div>';
+    for (const it of items) {
+        h += _renderRedeemCodeRow(it);
+    }
+    body.innerHTML = h;
+}
+
+function _renderRedeemCodeRow(it) {
+    const isActive = !!it.isActive;
+    const claims = it.claimsCount || 0;
+    const remMin = Math.round((it.remainingMs || 0) / 60000);
+    let statusBadge;
+    if (isActive) {
+        statusBadge = '<span style="background:rgba(0,255,102,0.12);color:#0f0;padding:4px 10px;border-radius:6px;font-weight:900;font-size:10.5px;letter-spacing:0.8px;border:1px solid rgba(0,255,102,0.40);">✓ ACTIVO · ' + remMin + ' min</span>';
+    } else {
+        const lbl = it.status === 'closed_expired' ? 'VENCIDO' : (it.status === 'closed_max' ? 'AGOTADO' : 'CERRADO');
+        statusBadge = '<span style="background:rgba(255,80,80,0.10);color:#f55;padding:4px 10px;border-radius:6px;font-weight:900;font-size:10.5px;letter-spacing:0.8px;border:1px solid rgba(255,80,80,0.30);">' + lbl + '</span>';
+    }
+    const totalPaid = (it.claims || []).filter(c => c.status === 'completed').reduce((a, c) => a + Number(c.amount || 0), 0);
+    let h = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:11px 14px;margin-bottom:10px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:7px;">';
+    h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
+    h += '<code style="background:rgba(0,200,150,0.12);color:#00c896;padding:5px 12px;border-radius:6px;font-weight:900;font-size:14px;letter-spacing:1.5px;border:1px solid rgba(0,200,150,0.40);">' + escapeHtml(it.code) + '</code>';
+    h += '<span style="color:#00d4ff;font-weight:900;font-size:13.5px;">$' + Number(it.amountARS || 0).toLocaleString('es-AR') + '</span>';
+    h += statusBadge;
+    h += '<span style="color:#aaa;font-size:11px;">Canjes: <strong style="color:#fff;">' + claims + '</strong>' + (it.maxClaims > 0 ? '/' + it.maxClaims : '') + ' · Pagado: <strong style="color:#aaffaa;">' + formatMoney(totalPaid) + '</strong></span>';
+    h += '</div>';
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    if (isActive) {
+        h += '<button onclick="closeRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">⏸ Cerrar</button>';
+    }
+    h += '<button onclick="deleteRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">🗑</button>';
+    h += '</div>';
+    h += '</div>';
+    if (it.notes) h += '<div style="color:#aaa;font-size:11px;font-style:italic;margin-bottom:5px;">"' + escapeHtml(it.notes) + '"</div>';
+    // Lista mini de canjes
+    if (claims > 0) {
+        h += '<details style="margin-top:6px;"><summary style="color:#888;font-size:10.5px;cursor:pointer;font-weight:700;">Ver canjes (' + claims + ')</summary>';
+        h += '<div style="margin-top:6px;font-size:11px;max-height:200px;overflow-y:auto;">';
+        for (const c of (it.claims || [])) {
+            const failed = c.status === 'pending_credit_failed';
+            h += '<div style="display:flex;justify-content:space-between;padding:3px 7px;border-radius:4px;background:' + (failed ? 'rgba(255,80,80,0.06)' : 'rgba(0,255,102,0.04)') + ';margin-bottom:2px;">';
+            h += '<span style="color:' + (failed ? '#f55' : '#aaffaa') + ';">' + (failed ? '⚠️ ' : '✓ ') + escapeHtml(c.username) + '</span>';
+            h += '<span style="color:#888;font-size:10.5px;">' + escapeHtml(formatDate(c.claimedAt)) + '</span>';
+            h += '</div>';
+            if (failed && c.creditError) h += '<div style="color:#f55;font-size:10px;padding:0 7px 5px;font-style:italic;">' + escapeHtml(c.creditError) + '</div>';
+        }
+        h += '</div></details>';
+    }
+    h += '</div>';
+    return h;
+}
+
+async function createRedeemCode() {
+    const code = (document.getElementById('rcCode').value || '').trim().toUpperCase();
+    const amountARS = Number(document.getElementById('rcAmount').value) || 0;
+    const durationMinutes = Number(document.getElementById('rcDuration').value) || 0;
+    const maxClaims = Number(document.getElementById('rcMaxClaims').value) || 0;
+    const sendNotif = !!document.getElementById('rcSendNotif').checked;
+    const notifTitle = (document.getElementById('rcNotifTitle').value || '').trim();
+    const notifBody = (document.getElementById('rcNotifBody').value || '').trim();
+
+    if (!code) { showToast('Falta el código', 'error'); return; }
+    if (amountARS < 1) { showToast('Monto inválido', 'error'); return; }
+    if (durationMinutes < 1) { showToast('Duración inválida', 'error'); return; }
+
+    const payload = { code, amountARS, durationMinutes, maxClaims };
+    if (sendNotif && notifTitle && notifBody) {
+        payload.broadcastTitle = notifTitle;
+        payload.broadcastBody = notifBody;
+    }
+
+    try {
+        const r = await authFetch('/api/admin/redeem-codes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al crear', 'error'); return; }
+        const bcMsg = d.broadcastResult
+            ? ' · Notif enviada a ' + (d.broadcastResult.successCount || 0) + ' usuarios'
+            : '';
+        showToast('✅ Código creado' + bcMsg, 'success');
+        // Limpiar inputs
+        document.getElementById('rcCode').value = '';
+        document.getElementById('rcAmount').value = '';
+        document.getElementById('rcDuration').value = '';
+        loadRedeemCodes();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function closeRedeemCode(id) {
+    if (!confirm('¿Cerrar este código? Después nadie va a poder canjearlo.')) return;
+    try {
+        const r = await authFetch('/api/admin/redeem-codes/' + encodeURIComponent(id) + '/close', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('⏸ Cerrado', 'success');
+        loadRedeemCodes();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function deleteRedeemCode(id) {
+    const pin = prompt('PIN para borrar:');
+    if (pin == null) return;
+    if (!pin) { showToast('PIN requerido', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/redeem-codes/' + encodeURIComponent(id) + '?pin=' + encodeURIComponent(pin), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('🗑 Eliminado', 'success');
+        loadRedeemCodes();
     } catch (e) {
         showToast('Error de conexión', 'error');
     }

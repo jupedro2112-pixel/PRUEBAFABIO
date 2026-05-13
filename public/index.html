@@ -2411,6 +2411,12 @@
                      del header-right. JS lo muestra/oculta segun la API. -->
                 <span class="team-name" id="teamName" style="display:none;"></span>
                 <div class="user-action-btns">
+                    <!-- Canjear código: arriba a la izquierda, chiquito,
+                         no predominante. Al toque abre modal con input.
+                         Botón ℹ al lado explica que los códigos llegan
+                         por el canal de Telegram (pedido del dueño). -->
+                    <button id="redeemCodeBtn" title="Canjear código de bono" onclick="openRedeemCodeModal()" style="background:linear-gradient(135deg,rgba(0,200,150,0.18),rgba(0,143,108,0.10));border:1px solid rgba(0,200,150,0.50);color:#00c896;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer;font-weight:800;letter-spacing:0.3px;">🎁 Canjear código</button>
+                    <button id="redeemCodeInfoBtn" title="¿De dónde salen los códigos?" onclick="openRedeemCodeInfo()" style="background:rgba(0,200,150,0.06);border:1px solid rgba(0,200,150,0.30);color:#00c896;font-size:12px;padding:4px 7px;border-radius:6px;cursor:pointer;font-weight:800;line-height:1;">ℹ</button>
                     <!-- Refresh manual: full reload de la pagina. El owner pidio
                          poder forzar un actualizar chiquito desde el home cuando
                          no se ven los sorteos / saldo / etc. Es lo equivalente a
@@ -6263,6 +6269,111 @@
                 body: JSON.stringify({ referer: document.referrer || null })
             }).catch(function () {});
         } catch (_) {}
+    })();
+    </script>
+
+    <!-- ============================================
+         CANJEAR CÓDIGO — modal mínimo, no predominante.
+         El botón está chiquito arriba a la izquierda. Al apretar abre
+         este modal con input + submit. POST a /api/redeem-codes/claim.
+         ============================================ -->
+    <script>
+    (function () {
+        function _getToken() {
+            try { return localStorage.getItem('authToken') || ''; } catch (_) { return ''; }
+        }
+        function _esc(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        window.openRedeemCodeModal = function () {
+            const old = document.getElementById('redeemCodeModal');
+            if (old) old.remove();
+            const overlay = document.createElement('div');
+            overlay.id = 'redeemCodeModal';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99998;display:flex;align-items:center;justify-content:center;padding:18px;';
+            overlay.innerHTML =
+                '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:1.5px solid rgba(0,200,150,0.45);border-radius:13px;padding:22px 20px;max-width:380px;width:100%;box-shadow:0 0 40px rgba(0,200,150,0.25);color:#fff;">' +
+                  '<div style="text-align:center;margin-bottom:16px;">' +
+                    '<div style="font-size:38px;margin-bottom:4px;">🎁</div>' +
+                    '<div style="color:#00c896;font-weight:900;font-size:16px;letter-spacing:0.5px;">Canjear código</div>' +
+                    '<div style="color:#aaa;font-size:11.5px;margin-top:4px;">Tipeá el código que encontraste en el canal de Telegram.</div>' +
+                  '</div>' +
+                  '<input type="text" id="redeemCodeInput" maxlength="32" placeholder="EJ: TELEGRAM3000" autocomplete="off" autofocus style="width:100%;background:rgba(0,0,0,0.55);color:#00c896;border:1.5px solid rgba(0,200,150,0.40);padding:11px 14px;border-radius:9px;font-size:16px;text-align:center;font-weight:900;letter-spacing:2px;text-transform:uppercase;box-sizing:border-box;">' +
+                  '<div id="redeemCodeErr" style="color:#ff8080;font-size:12px;text-align:center;min-height:16px;margin-top:7px;font-weight:700;"></div>' +
+                  '<div style="display:flex;gap:8px;margin-top:13px;">' +
+                    '<button type="button" id="redeemCodeCancel" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.18);color:#fff;padding:10px;border-radius:8px;font-weight:800;cursor:pointer;">Cancelar</button>' +
+                    '<button type="button" id="redeemCodeSubmit" style="flex:2;background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);border:none;color:#000;padding:10px;border-radius:8px;font-weight:900;letter-spacing:0.5px;cursor:pointer;">CANJEAR</button>' +
+                  '</div>' +
+                '</div>';
+            document.body.appendChild(overlay);
+            const input = document.getElementById('redeemCodeInput');
+            const errBox = document.getElementById('redeemCodeErr');
+            const btn = document.getElementById('redeemCodeSubmit');
+            input.addEventListener('input', () => { input.value = (input.value || '').toUpperCase(); });
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSubmit(); });
+            document.getElementById('redeemCodeCancel').onclick = () => overlay.remove();
+            btn.onclick = doSubmit;
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+            async function doSubmit() {
+                const code = (input.value || '').trim();
+                if (!code) { errBox.textContent = 'Ingresá el código'; return; }
+                errBox.textContent = '⏳ Verificando…';
+                errBox.style.color = '#aaa';
+                btn.disabled = true;
+                try {
+                    const r = await fetch('/api/redeem-codes/claim', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + _getToken()
+                        },
+                        body: JSON.stringify({ code })
+                    });
+                    const d = await r.json().catch(() => ({}));
+                    if (!r.ok || !d.success) {
+                        errBox.textContent = '❌ ' + (d.error || 'Error al canjear');
+                        errBox.style.color = '#ff8080';
+                        btn.disabled = false;
+                        return;
+                    }
+                    // Éxito: reemplazar el modal por uno de "✅ acreditado"
+                    overlay.innerHTML =
+                        '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #00c896;border-radius:13px;padding:30px 22px;max-width:380px;width:100%;box-shadow:0 0 40px rgba(0,200,150,0.45);color:#fff;text-align:center;">' +
+                          '<div style="font-size:48px;margin-bottom:6px;">✅</div>' +
+                          '<div style="color:#00c896;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:5px;">¡Canjeado!</div>' +
+                          '<div style="color:#aaffaa;font-size:14px;font-weight:700;margin-bottom:14px;">Se acreditaron <strong style="font-size:18px;">$' + Number(d.amountARS || 0).toLocaleString('es-AR') + '</strong> a tu cuenta.</div>' +
+                          '<div style="color:#aaa;font-size:11.5px;margin-bottom:14px;">Sumate al canal privado de Telegram para no perderte los próximos códigos.</div>' +
+                          '<button type="button" id="redeemCodeOk" style="width:100%;background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);border:none;color:#000;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;cursor:pointer;">LISTO</button>' +
+                        '</div>';
+                    document.getElementById('redeemCodeOk').onclick = () => { overlay.remove(); window.location.reload(); };
+                } catch (e) {
+                    errBox.textContent = '❌ Error de conexión';
+                    errBox.style.color = '#ff8080';
+                    btn.disabled = false;
+                }
+            }
+        };
+
+        window.openRedeemCodeInfo = function () {
+            const old = document.getElementById('redeemCodeInfoModal');
+            if (old) old.remove();
+            const overlay = document.createElement('div');
+            overlay.id = 'redeemCodeInfoModal';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99998;display:flex;align-items:center;justify-content:center;padding:18px;';
+            overlay.innerHTML =
+                '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:1.5px solid rgba(34,160,217,0.50);border-radius:13px;padding:22px 20px;max-width:380px;width:100%;box-shadow:0 0 30px rgba(34,160,217,0.30);color:#fff;text-align:center;">' +
+                  '<div style="font-size:38px;margin-bottom:4px;">📢</div>' +
+                  '<div style="color:#22a0d9;font-weight:900;font-size:15px;letter-spacing:0.5px;margin-bottom:8px;">¿De dónde salen los códigos?</div>' +
+                  '<div style="color:#ddd;font-size:12.5px;line-height:1.55;margin-bottom:14px;">Los códigos los publicamos en nuestro <strong style="color:#22a0d9;">canal privado de Telegram</strong>. Sumate ahí para enterarte apenas sale uno nuevo — algunos tienen tiempo limitado.</div>' +
+                  '<button type="button" id="redeemInfoOk" style="width:100%;background:linear-gradient(135deg,#22a0d9 0%,#0088cc 100%);border:none;color:#fff;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;cursor:pointer;">Entendido</button>' +
+                '</div>';
+            document.body.appendChild(overlay);
+            document.getElementById('redeemInfoOk').onclick = () => overlay.remove();
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        };
     })();
     </script>
 </body>

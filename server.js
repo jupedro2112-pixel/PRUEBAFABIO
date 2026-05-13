@@ -34927,6 +34927,257 @@ _mountCotizacionRoutes('/api/admin/cotizaciones', CotizacionEntry, 'cotizacion')
 _mountCotizacionRoutes('/api/admin/cotizaciones-externo', CotizacionExternaEntry, 'cotizacion-externa');
 
 // ============================================
+// CÓDIGOS CANJEABLES
+// ============================================
+// El owner publica un código (string corto) con un monto y duración en
+// minutos. Los users que conocen el código (típicamente lo reciben en
+// el canal de Telegram) lo canjean dentro de la ventana de tiempo y se
+// les acredita el monto via JUGAYGANA. 1 canje por user.
+
+const RedeemCode = require('./src/models/RedeemCode');
+const REDEEM_DELETE_PIN = '1818';
+
+function _redeemNormalize(code) {
+  return String(code || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+function _redeemIsActive(rc, now) {
+  if (!rc) return false;
+  if (rc.status !== 'active') return false;
+  const t = (now || new Date()).getTime();
+  if (new Date(rc.expiresAt).getTime() <= t) return false;
+  if (rc.maxClaims > 0 && rc.claims.length >= rc.maxClaims) return false;
+  return true;
+}
+
+// GET /api/admin/redeem-codes — listar (admin)
+app.get('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const rows = await RedeemCode.find({}).sort({ createdAt: -1 }).limit(100).lean();
+    const enriched = rows.map(r => ({
+      ...r,
+      claimsCount: (r.claims || []).length,
+      isActive: _redeemIsActive(r),
+      remainingMs: Math.max(0, new Date(r.expiresAt).getTime() - Date.now())
+    }));
+    res.json({ success: true, items: enriched });
+  } catch (err) {
+    logger.error(`GET /api/admin/redeem-codes: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/redeem-codes — crear código (admin)
+// Body: { code, amountARS, durationMinutes, maxClaims?, notes?, broadcastTitle?, broadcastBody? }
+// Si broadcastTitle + broadcastBody están seteados, además manda push a todos.
+app.post('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const code = _redeemNormalize(b.code);
+    const amountARS = Math.max(0, Number(b.amountARS) || 0);
+    const durationMinutes = Math.max(1, Math.round(Number(b.durationMinutes) || 0));
+    const maxClaims = Math.max(0, Math.round(Number(b.maxClaims) || 0));
+    if (!code) return res.status(400).json({ error: 'Código requerido' });
+    if (!/^[A-Z0-9_-]{2,32}$/.test(code)) {
+      return res.status(400).json({ error: 'Código inválido — sólo letras/números/-/_  (2-32 chars)' });
+    }
+    if (amountARS < 1) return res.status(400).json({ error: 'Monto inválido' });
+    const existing = await RedeemCode.findOne({ code });
+    if (existing) return res.status(409).json({ error: 'Ya existe un código con ese texto' });
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + durationMinutes * 60 * 1000);
+    const doc = await RedeemCode.create({
+      id: 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      code,
+      amountARS,
+      durationMinutes,
+      expiresAt,
+      maxClaims,
+      notes: String(b.notes || '').slice(0, 300),
+      createdBy: (req.user && req.user.username) || ''
+    });
+
+    // Push opcional: si vienen broadcastTitle + broadcastBody, dispara
+    // notif masiva con info del código. NO incluimos el código en el body
+    // por seguridad (los códigos van por el canal de Telegram).
+    let broadcastResult = null;
+    if (b.broadcastTitle && b.broadcastBody) {
+      try {
+        const title = String(b.broadcastTitle).slice(0, 80);
+        const body = String(b.broadcastBody).slice(0, 250);
+        broadcastResult = await sendNotificationToAllUsers(User, title, body, {
+          source: 'redeem-code',
+          codeId: doc.id,
+          durationMinutes: String(durationMinutes),
+          amount: String(amountARS)
+        }, {});
+      } catch (notifErr) {
+        logger.warn(`[redeem-codes] notif broadcast falló: ${notifErr.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      item: { id: doc.id, code: doc.code, expiresAt: doc.expiresAt },
+      broadcastResult: broadcastResult ? {
+        successCount: broadcastResult.successCount,
+        failureCount: broadcastResult.failureCount,
+        totalUsers: broadcastResult.totalUsers
+      } : null
+    });
+  } catch (err) {
+    logger.error(`POST /api/admin/redeem-codes: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/redeem-codes/:id/close — cerrar manual (admin)
+app.post('/api/admin/redeem-codes/:id/close', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const rc = await RedeemCode.findOne({ id: String(req.params.id || '') });
+    if (!rc) return res.status(404).json({ error: 'Código no encontrado' });
+    rc.status = 'closed_manual';
+    await rc.save();
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`POST /api/admin/redeem-codes/:id/close: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE /api/admin/redeem-codes/:id — borrar (admin + PIN 1818)
+app.delete('/api/admin/redeem-codes/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const pin = String((req.query && req.query.pin) || (req.body && req.body.pin) || '');
+    if (pin !== REDEEM_DELETE_PIN) return res.status(403).json({ error: 'PIN incorrecto' });
+    const rc = await RedeemCode.findOne({ id: String(req.params.id || '') });
+    if (!rc) return res.status(404).json({ error: 'Código no encontrado' });
+    await RedeemCode.deleteOne({ id: rc.id });
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/redeem-codes/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/redeem-codes/claim — canje del user (auth requerido)
+// Body: { code }
+app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
+  try {
+    const username = req.user.username;
+    const userId = req.user.userId;
+    const code = _redeemNormalize((req.body || {}).code);
+    if (!code) return res.status(400).json({ error: 'Ingresá el código' });
+
+    const rc = await RedeemCode.findOne({ code });
+    if (!rc) return res.status(404).json({ error: 'Código inválido o vencido' });
+
+    // Auto-cierre lazy
+    const now = new Date();
+    if (rc.status === 'active' && new Date(rc.expiresAt).getTime() <= now.getTime()) {
+      rc.status = 'closed_expired';
+      await rc.save().catch(() => {});
+    }
+    if (rc.status !== 'active') {
+      const msg = rc.status === 'closed_expired'
+        ? 'El código ya venció'
+        : (rc.status === 'closed_max' ? 'Se agotaron los canjes' : 'Código cerrado');
+      return res.status(403).json({ error: msg });
+    }
+    if (rc.maxClaims > 0 && rc.claims.length >= rc.maxClaims) {
+      rc.status = 'closed_max';
+      await rc.save().catch(() => {});
+      return res.status(403).json({ error: 'Se agotaron los canjes' });
+    }
+
+    // Anti-doble-canje (mismo user)
+    const usernameLower = String(username || '').toLowerCase();
+    const alreadyClaimed = rc.claims.some(c =>
+      String(c.username || '').toLowerCase() === usernameLower ||
+      (c.userId && c.userId === userId)
+    );
+    if (alreadyClaimed) return res.status(409).json({ error: 'Ya canjeaste este código' });
+
+    // Reservar slot atómicamente: push del claim si todavía no existe.
+    // Usamos $addToSet sobre claims.username para garantizar unicidad por user.
+    const reserved = await RedeemCode.findOneAndUpdate(
+      {
+        id: rc.id,
+        status: 'active',
+        'claims.username': { $ne: usernameLower }
+      },
+      {
+        $push: {
+          claims: {
+            userId,
+            username: usernameLower,
+            amount: rc.amountARS,
+            claimedAt: now,
+            status: 'completed'
+          }
+        }
+      },
+      { new: true }
+    );
+    if (!reserved) {
+      return res.status(409).json({ error: 'Ya canjeaste este código o se cerró' });
+    }
+
+    // Acreditar via JUGAYGANA
+    let creditOk = true;
+    let creditError = null;
+    let transactionId = null;
+    try {
+      const r = await jugaygana.creditUserBalance(username, rc.amountARS);
+      if (!r || !r.success) {
+        creditOk = false;
+        creditError = String((r && r.error) || 'Error desconocido').slice(0, 500);
+      } else {
+        transactionId = (r.data && (r.data.transfer_id || r.data.transferId)) || null;
+      }
+    } catch (e) {
+      creditOk = false;
+      creditError = String(e.message || e).slice(0, 500);
+    }
+
+    if (!creditOk) {
+      // Marcar el claim como pending para que el admin lo revise.
+      await RedeemCode.updateOne(
+        { id: rc.id, 'claims.username': usernameLower },
+        {
+          $set: {
+            'claims.$.status': 'pending_credit_failed',
+            'claims.$.creditError': creditError
+          }
+        }
+      ).catch(() => {});
+      logger.error(`[redeem-codes] credit fail ${username} code=${code}: ${creditError}`);
+      return res.status(500).json({
+        error: 'Hubo un problema al acreditar. El admin lo está revisando — no reintentes.',
+        pendingReview: true
+      });
+    }
+
+    // Persistir transactionId
+    if (transactionId) {
+      await RedeemCode.updateOne(
+        { id: rc.id, 'claims.username': usernameLower },
+        { $set: { 'claims.$.transactionId': transactionId } }
+      ).catch(() => {});
+    }
+
+    res.json({
+      success: true,
+      message: '✅ ¡Canjeado! Se acreditaron $' + rc.amountARS.toLocaleString('es-AR') + ' a tu cuenta.',
+      amountARS: rc.amountARS
+    });
+  } catch (err) {
+    logger.error(`POST /api/redeem-codes/claim: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // EMPLEADOS POR ESTRUCTURA
 // ============================================
 // Personal de los 3 sectores financieros (ganamos / publicidad / buffalo)
