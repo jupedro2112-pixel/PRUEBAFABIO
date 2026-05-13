@@ -432,6 +432,7 @@ function showSection(sectionKey) {
         activePlayers: 'activePlayersSection',
         closings: 'closingsSection',
         cotizaciones: 'cotizacionesSection',
+        cotizacionesExterno: 'cotizacionesExternoSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -514,6 +515,8 @@ function showSection(sectionKey) {
         loadClosings();
     } else if (sectionKey === 'cotizaciones') {
         loadCotizaciones();
+    } else if (sectionKey === 'cotizacionesExterno') {
+        loadCotizacionesExterno();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -26724,6 +26727,31 @@ async function removeClosingComprobante(rid, idx) {
 // con ✓ (cotizado) o ✗ (sin cotizar).
 
 let _cotizacionesCache = [];
+let _cotizacionesExternoCache = [];
+
+// Scope helpers: el módulo de cotizaciones soporta dos backends paralelos
+// (interna = /api/admin/cotizaciones, externa = /api/admin/cotizaciones-externo).
+// Cada uno tiene su propio cache, sección y URL base.
+function _cotApiBase(scope) {
+    return scope === 'externa' ? '/api/admin/cotizaciones-externo' : '/api/admin/cotizaciones';
+}
+function _cotCache(scope) {
+    return scope === 'externa' ? _cotizacionesExternoCache : _cotizacionesCache;
+}
+function _cotBodyId(scope) {
+    return scope === 'externa' ? 'cotizacionesExternoBody' : 'cotizacionesBody';
+}
+function _cotCardIdPrefix(scope) {
+    return scope === 'externa' ? 'cotEx_' : 'cot_';
+}
+// Scope activo de la última card que el usuario interactuó. Se setea en
+// _renderCotizacionCard y lo usan las acciones (save/close/etc) para saber
+// a qué backend pegarle. Cada función expuesta acepta un scope explícito
+// pero los onclick generados usan este lookup vía data-cot-scope.
+function _cotScopeOfId(id) {
+    if ((_cotizacionesExternoCache || []).find(x => x.id === id)) return 'externa';
+    return 'interna';
+}
 
 // Devuelve el lunes de la semana actual (o el de hoy si es lunes), en
 // formato YYYY-MM-DD hora Argentina. Útil como default del date picker.
@@ -26744,41 +26772,53 @@ function _cotMondayOfThisWeek() {
     return base.toISOString().slice(0, 10);
 }
 
-async function loadCotizaciones() {
-    const body = document.getElementById('cotizacionesBody');
+async function loadCotizaciones(scope) {
+    scope = scope || 'interna';
+    const body = document.getElementById(_cotBodyId(scope));
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
     try {
-        const r = await authFetch('/api/admin/cotizaciones');
+        const r = await authFetch(_cotApiBase(scope));
         const d = await r.json();
         if (!r.ok || !d.success) {
             body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(d.error || 'No se pudo cargar') + '</div>';
             return;
         }
-        _cotizacionesCache = d.items || [];
-        _renderCotizaciones();
+        if (scope === 'externa') _cotizacionesExternoCache = d.items || [];
+        else _cotizacionesCache = d.items || [];
+        _renderCotizaciones(scope);
     } catch (e) {
         body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error de conexión</div>';
     }
 }
 
-function _renderCotizaciones() {
-    const body = document.getElementById('cotizacionesBody');
+// Wrapper para el sidebar "Cotizaciones Externo" — mismo flujo apuntando
+// a /api/admin/cotizaciones-externo (collection separada en Mongo).
+async function loadCotizacionesExterno() {
+    return loadCotizaciones('externa');
+}
+
+function _renderCotizaciones(scope) {
+    scope = scope || 'interna';
+    const body = document.getElementById(_cotBodyId(scope));
     if (!body) return;
-    const items = _cotizacionesCache || [];
+    const items = _cotCache(scope) || [];
     const defaultDate = _cotMondayOfThisWeek();
+    const titlePrefix = scope === 'externa' ? '🌐 ' : '';
+    const createFn = scope === 'externa' ? 'createCotizacionExterno()' : 'createCotizacion()';
+    const newDateInputId = scope === 'externa' ? 'newCotExDate' : 'newCotDate';
 
     let h = '';
 
     // === Crear nueva cotización ===
     h += '<div style="background:rgba(0,200,150,0.06);border:1px solid rgba(0,200,150,0.30);border-radius:10px;padding:14px;margin-bottom:18px;">';
-    h += '<div style="color:#00c896;font-weight:800;font-size:13px;margin-bottom:10px;">➕ Nueva cotización</div>';
+    h += '<div style="color:#00c896;font-weight:800;font-size:13px;margin-bottom:10px;">➕ ' + titlePrefix + 'Nueva cotización</div>';
     h += '<div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">';
     h += '<div>';
     h += '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Fecha</label>';
-    h += '<input type="date" id="newCotDate" value="' + escapeHtml(defaultDate) + '" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:8px 10px;border-radius:7px;font-size:13px;font-weight:600;">';
+    h += '<input type="date" id="' + newDateInputId + '" value="' + escapeHtml(defaultDate) + '" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:8px 10px;border-radius:7px;font-size:13px;font-weight:600;">';
     h += '</div>';
-    h += '<button onclick="createCotizacion()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">CREAR CIERRE</button>';
+    h += '<button onclick="' + createFn + '" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">CREAR CIERRE</button>';
     h += '<span style="color:#888;font-size:11px;">Default = lunes de esta semana. Podés elegir cualquier fecha.</span>';
     h += '</div>';
     h += '</div>';
@@ -26814,16 +26854,18 @@ function _renderCotizaciones() {
         const css = active
             ? 'background:rgba(0,212,255,0.20);color:#00d4ff;border-color:rgba(0,212,255,0.50);'
             : 'background:rgba(255,255,255,0.04);color:#aaa;border-color:rgba(255,255,255,0.10);';
-        return '<button onclick="setCotFilter(\'' + key + '\')" style="' + css + 'border:1px solid;padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">' + label + '</button>';
+        return '<button onclick="setCotFilter(\'' + key + '\',\'' + scope + '\')" style="' + css + 'border:1px solid;padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">' + label + '</button>';
     };
-    const f = _cotFilter || 'all';
+    const filterKey = scope === 'externa' ? '_cotExFilter' : '_cotFilter';
+    const f = (scope === 'externa' ? _cotExFilter : _cotFilter) || 'all';
     h += filterBtn('all',          'Todos',         f === 'all');
     h += filterBtn('draft',        '📝 Draft',      f === 'draft');
     h += filterBtn('closed',       '🔒 Cerradas',   f === 'closed');
     h += filterBtn('cotizado',     '✓ Cotizadas',   f === 'cotizado');
     h += filterBtn('no_cotizado',  '✗ No cotizadas',f === 'no_cotizado');
     h += '<span style="color:#888;margin-left:10px;">Ir a fecha:</span>';
-    h += '<input type="date" id="cotJumpDate" onchange="jumpToCotDate(this.value)" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:5px 9px;border-radius:6px;font-weight:700;font-size:11.5px;">';
+    const jumpId = scope === 'externa' ? 'cotExJumpDate' : 'cotJumpDate';
+    h += '<input type="date" id="' + jumpId + '" onchange="jumpToCotDate(this.value,\'' + scope + '\')" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:5px 9px;border-radius:6px;font-weight:700;font-size:11.5px;">';
     h += '</div>';
     h += '</div>';
 
@@ -26840,7 +26882,7 @@ function _renderCotizaciones() {
         h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:10px;padding:20px;text-align:center;color:#888;font-size:12.5px;">Ninguna cotización coincide con el filtro.</div>';
     } else {
         for (const it of filtered) {
-            h += _renderCotizacionCard(it);
+            h += _renderCotizacionCard(it, scope);
         }
     }
 
@@ -26848,20 +26890,24 @@ function _renderCotizaciones() {
 }
 
 let _cotFilter = 'all';
-function setCotFilter(key) {
-    _cotFilter = key;
-    _renderCotizaciones();
+let _cotExFilter = 'all';
+function setCotFilter(key, scope) {
+    scope = scope || 'interna';
+    if (scope === 'externa') _cotExFilter = key;
+    else _cotFilter = key;
+    _renderCotizaciones(scope);
 }
 
-// Scroll a la tarjeta de la fecha elegida (si existe).
-function jumpToCotDate(dateKey) {
+// Scroll a la tarjeta de la fecha elegida (si existe en el scope dado).
+function jumpToCotDate(dateKey, scope) {
+    scope = scope || 'interna';
     if (!dateKey) return;
-    const found = (_cotizacionesCache || []).find(it => it.dateKey === dateKey);
+    const found = (_cotCache(scope) || []).find(it => it.dateKey === dateKey);
     if (!found) {
         showToast('No hay cotización para esa fecha', 'info');
         return;
     }
-    const el = document.getElementById('cot_' + found.id);
+    const el = document.getElementById(_cotCardIdPrefix(scope) + found.id);
     if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.style.outline = '2px solid #00d4ff';
@@ -26869,7 +26915,10 @@ function jumpToCotDate(dateKey) {
     }
 }
 
-function _renderCotizacionCard(it) {
+function _renderCotizacionCard(it, scope) {
+    scope = scope || 'interna';
+    const idPfx = _cotCardIdPrefix(scope);
+    const scopeArg = ',\'' + scope + '\'';
     const rate = Number(it.usdtRate || 0);
     const teams = Array.isArray(it.teams) ? it.teams : [];
     const cotizado = !!it.cotizado;
@@ -26888,7 +26937,7 @@ function _renderCotizacionCard(it) {
         ? '<span style="background:rgba(0,255,0,0.10);color:#0f0;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(0,255,0,0.40);">✓ COTIZADO</span>'
         : '<span style="background:rgba(255,80,80,0.10);color:#f55;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,80,80,0.30);">✗ NO COTIZADO</span>';
 
-    let h = '<div id="cot_' + escapeHtml(it.id) + '" data-cot-id="' + escapeHtml(it.id) + '" style="background:' + frameBg + ';border:1px solid ' + frameBorder + ';border-radius:12px;padding:16px;margin-bottom:18px;">';
+    let h = '<div id="' + idPfx + escapeHtml(it.id) + '" data-cot-id="' + escapeHtml(it.id) + '" data-cot-scope="' + scope + '" style="background:' + frameBg + ';border:1px solid ' + frameBorder + ';border-radius:12px;padding:16px;margin-bottom:18px;">';
 
     // Header
     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">';
@@ -26900,18 +26949,18 @@ function _renderCotizacionCard(it) {
     h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
     if (!isClosed) {
         // === Modo DRAFT: editar y cerrar ===
-        h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
-        h += '<button onclick="closeCotizacion(' + escapeJsArg(it.id) + ')" style="background:linear-gradient(135deg,#00d4ff 0%,#0080ff 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">🔒 CERRAR COTIZACIÓN</button>';
+        h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
+        h += '<button onclick="closeCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:linear-gradient(135deg,#00d4ff 0%,#0080ff 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">🔒 CERRAR COTIZACIÓN</button>';
     } else {
         // === Modo CERRADA: sólo se cambia el tag cotizado ===
         if (cotizado) {
-            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', false)" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ MARCAR NO COTIZADO</button>';
+            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', false' + scopeArg + ')" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ MARCAR NO COTIZADO</button>';
         } else {
-            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', true)" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✓ MARCAR COTIZADO</button>';
+            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', true' + scopeArg + ')" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✓ MARCAR COTIZADO</button>';
         }
-        h += '<button onclick="reopenCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;" title="Volver a editar (descerrar)">🔓 REABRIR</button>';
+        h += '<button onclick="reopenCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;" title="Volver a editar (descerrar)">🔓 REABRIR</button>';
     }
-    h += '<button onclick="deleteCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
+    h += '<button onclick="deleteCotizacion(' + escapeJsArg(it.id) + scopeArg + ')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
     h += '</div>';
     h += '</div>';
 
@@ -26919,7 +26968,7 @@ function _renderCotizacionCard(it) {
     h += '<div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:12px;background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.20);border-radius:8px;padding:10px 14px;">';
     h += '<div>';
     h += '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Valor USDT (ARS)</label>';
-    h += '<input type="number" min="0" step="0.01" data-cot-field="usdtRate" value="' + (rate || '') + '" placeholder="ej: 1500" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="' + roCss + 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.40);color:#ffd700;padding:9px 12px;border-radius:7px;font-size:14px;font-weight:800;width:140px;">';
+    h += '<input type="number" min="0" step="0.01" data-cot-field="usdtRate" value="' + (rate || '') + '" placeholder="ej: 1500" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + scopeArg + ')" style="' + roCss + 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.40);color:#ffd700;padding:9px 12px;border-radius:7px;font-size:14px;font-weight:800;width:140px;">';
     h += '</div>';
     h += '<div style="color:#888;font-size:11px;line-height:1.4;">';
     h += 'precio_equipo = <strong style="color:#fff;">total_ARS / valor_USDT</strong>';
@@ -26928,36 +26977,51 @@ function _renderCotizacionCard(it) {
 
     // Tabla de 10 equipos
     h += '<div style="overflow-x:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;">';
-    h += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:560px;">';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:720px;">';
     h += '<thead><tr style="background:rgba(255,255,255,0.04);">';
     h += '<th style="padding:8px;text-align:center;color:#aaa;font-size:10.5px;letter-spacing:0.5px;width:36px;">#</th>';
     h += '<th style="padding:8px;text-align:left;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">EQUIPO</th>';
     h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">TOTAL $ (ARS)</th>';
+    h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;" title="% comisión que se descuenta del total antes de cotizar">% COM</th>';
+    h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;" title="Total − comisión (lo que efectivamente se cotiza)">NETO $</th>';
     h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">PRECIO (USDT)</th>';
     h += '</tr></thead><tbody>';
 
     let totalARS = 0;
+    let totalCommARS = 0;
+    let totalNetARS = 0;
     for (let i = 0; i < 10; i++) {
-        const t = teams.find(x => Number(x.slot) === i) || { slot: i, name: '', totalARS: 0 };
+        const t = teams.find(x => Number(x.slot) === i) || { slot: i, name: '', totalARS: 0, commissionPercent: 0 };
         const totA = Number(t.totalARS || 0);
+        const pct = Math.max(0, Math.min(100, Number(t.commissionPercent || 0)));
+        const commARS = Math.round(totA * (pct / 100));
+        const netA = Math.max(0, totA - commARS);
         totalARS += totA;
-        const precioUSDT = rate > 0 ? (totA / rate) : 0;
+        totalCommARS += commARS;
+        totalNetARS += netA;
+        const precioUSDT = rate > 0 ? (netA / rate) : 0;
         h += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
         h += '<td style="padding:7px;text-align:center;color:#888;font-weight:700;">' + (i + 1) + '</td>';
         h += '<td style="padding:7px;">';
         h += '<input type="text" data-cot-team-slot="' + i + '" data-cot-team-field="name" value="' + escapeHtml(t.name || '') + '" placeholder="Nombre equipo" maxlength="80" ' + ro + ' style="' + roCss + 'width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:600;">';
         h += '</td>';
         h += '<td style="padding:7px;text-align:right;">';
-        h += '<input type="number" min="0" step="1" data-cot-team-slot="' + i + '" data-cot-team-field="totalARS" value="' + (totA || '') + '" placeholder="0" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="' + roCss + 'width:140px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:700;text-align:right;">';
+        h += '<input type="number" min="0" step="1" data-cot-team-slot="' + i + '" data-cot-team-field="totalARS" value="' + (totA || '') + '" placeholder="0" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + scopeArg + ')" style="' + roCss + 'width:120px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:700;text-align:right;">';
         h += '</td>';
-        h += '<td data-cot-precio-slot="' + i + '" style="padding:7px;text-align:right;color:#00c896;font-weight:800;font-size:13px;">' + (rate > 0 ? precioUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
+        h += '<td style="padding:7px;text-align:right;">';
+        h += '<input type="number" min="0" max="100" step="0.1" data-cot-team-slot="' + i + '" data-cot-team-field="commissionPercent" value="' + (pct || '') + '" placeholder="0" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + scopeArg + ')" style="' + roCss + 'width:70px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.30);color:#ffaa66;padding:6px 8px;border-radius:6px;font-size:12.5px;font-weight:700;text-align:right;" title="% comisión que se descuenta">';
+        h += '</td>';
+        h += '<td data-cot-net-slot="' + i + '" style="padding:7px;text-align:right;color:#fff;font-weight:700;font-size:12px;">' + (netA > 0 ? formatMoney(netA) : '—') + '</td>';
+        h += '<td data-cot-precio-slot="' + i + '" style="padding:7px;text-align:right;color:#00c896;font-weight:800;font-size:13px;">' + (rate > 0 && netA > 0 ? precioUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
         h += '</tr>';
     }
 
-    const totalUSDT = rate > 0 ? (totalARS / rate) : 0;
+    const totalUSDT = rate > 0 ? (totalNetARS / rate) : 0;
     h += '<tr style="border-top:2px solid rgba(0,200,150,0.30);background:rgba(0,200,150,0.06);">';
     h += '<td colspan="2" style="padding:9px;text-align:right;color:#00c896;font-weight:900;font-size:12px;letter-spacing:1px;">TOTAL</td>';
-    h += '<td data-cot-total-ars style="padding:9px;text-align:right;color:#fff;font-weight:900;font-size:13.5px;">' + formatMoney(totalARS) + '</td>';
+    h += '<td data-cot-total-ars style="padding:9px;text-align:right;color:#fff;font-weight:900;font-size:13px;">' + formatMoney(totalARS) + '</td>';
+    h += '<td data-cot-total-comm style="padding:9px;text-align:right;color:#ffaa66;font-weight:900;font-size:12px;">−' + formatMoney(totalCommARS) + '</td>';
+    h += '<td data-cot-total-net style="padding:9px;text-align:right;color:#fff;font-weight:900;font-size:13px;">' + formatMoney(totalNetARS) + '</td>';
     h += '<td data-cot-total-usdt style="padding:9px;text-align:right;color:#00c896;font-weight:900;font-size:13.5px;">' + (rate > 0 ? totalUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
     h += '</tr>';
 
@@ -26988,37 +27052,55 @@ function _renderCotizacionCard(it) {
     return h;
 }
 
-// Recalcula los precios en USDT y el total cuando cambia el rate o un total $.
-function _cotRecompute(id) {
-    const card = document.getElementById('cot_' + id);
+// Recalcula los precios en USDT, neto y totales cuando cambia el rate,
+// un total $ o un % de comisión.
+function _cotRecompute(id, scope) {
+    scope = scope || 'interna';
+    const card = document.getElementById(_cotCardIdPrefix(scope) + id);
     if (!card) return;
     const rateInput = card.querySelector('[data-cot-field="usdtRate"]');
     const rate = Number((rateInput && rateInput.value) || 0);
     let totalARS = 0;
+    let totalCommARS = 0;
+    let totalNetARS = 0;
     for (let i = 0; i < 10; i++) {
         const totInput = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="totalARS"]');
+        const pctInput = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="commissionPercent"]');
         const totA = Number((totInput && totInput.value) || 0);
+        const pct = Math.max(0, Math.min(100, Number((pctInput && pctInput.value) || 0)));
+        const commARS = Math.round(totA * (pct / 100));
+        const netA = Math.max(0, totA - commARS);
         totalARS += totA;
+        totalCommARS += commARS;
+        totalNetARS += netA;
+        const netCell = card.querySelector('[data-cot-net-slot="' + i + '"]');
+        if (netCell) netCell.textContent = netA > 0 ? formatMoney(netA) : '—';
         const precioCell = card.querySelector('[data-cot-precio-slot="' + i + '"]');
         if (precioCell) {
-            precioCell.textContent = rate > 0 ? (totA / rate).toFixed(2) + ' USDT' : '—';
+            precioCell.textContent = (rate > 0 && netA > 0) ? (netA / rate).toFixed(2) + ' USDT' : '—';
         }
     }
     const totA = card.querySelector('[data-cot-total-ars]');
     if (totA) totA.textContent = formatMoney(totalARS);
+    const totC = card.querySelector('[data-cot-total-comm]');
+    if (totC) totC.textContent = '−' + formatMoney(totalCommARS);
+    const totN = card.querySelector('[data-cot-total-net]');
+    if (totN) totN.textContent = formatMoney(totalNetARS);
     const totU = card.querySelector('[data-cot-total-usdt]');
-    if (totU) totU.textContent = rate > 0 ? (totalARS / rate).toFixed(2) + ' USDT' : '—';
+    if (totU) totU.textContent = rate > 0 ? (totalNetARS / rate).toFixed(2) + ' USDT' : '—';
 }
 
-async function createCotizacion() {
-    const inp = document.getElementById('newCotDate');
+async function createCotizacion(scope) {
+    scope = scope || 'interna';
+    const inputId = scope === 'externa' ? 'newCotExDate' : 'newCotDate';
+    const inp = document.getElementById(inputId);
     const dateKey = inp ? inp.value : '';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
         showToast('Elegí una fecha válida', 'error');
         return;
     }
     try {
-        const r = await authFetch('/api/admin/cotizaciones', {
+        const r = await authFetch(_cotApiBase(scope), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ dateKey })
@@ -27029,15 +27111,18 @@ async function createCotizacion() {
             return;
         }
         showToast('✅ Cotización creada', 'success');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
 }
 
+async function createCotizacionExterno() { return createCotizacion('externa'); }
+
 // Extrae el payload (dateKey, rate, notes, teams) desde el DOM de la tarjeta.
-function _collectCotizacionPayload(id) {
-    const card = document.getElementById('cot_' + id);
+function _collectCotizacionPayload(id, scope) {
+    scope = scope || 'interna';
+    const card = document.getElementById(_cotCardIdPrefix(scope) + id);
     if (!card) return null;
     const dateKey = (card.querySelector('[data-cot-field="dateKey"]') || {}).value || '';
     const usdtRate = Number((card.querySelector('[data-cot-field="usdtRate"]') || {}).value || 0);
@@ -27046,20 +27131,22 @@ function _collectCotizacionPayload(id) {
     for (let i = 0; i < 10; i++) {
         const nameEl = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="name"]');
         const totEl  = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="totalARS"]');
+        const pctEl  = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="commissionPercent"]');
         teams.push({
             slot: i,
             name: nameEl ? nameEl.value : '',
-            totalARS: Number((totEl && totEl.value) || 0)
+            totalARS: Number((totEl && totEl.value) || 0),
+            commissionPercent: Number((pctEl && pctEl.value) || 0)
         });
     }
     return { dateKey, usdtRate, notes, teams };
 }
 
-// PUT sin reload — devuelve true/false. Lo usan saveCotizacion y el combo
-// saveAndConfirmCotizacion para no recargar dos veces.
-async function _persistCotizacion(id, payload) {
+// PUT sin reload — devuelve true/false.
+async function _persistCotizacion(id, payload, scope) {
+    scope = scope || 'interna';
     try {
-        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id), {
+        const r = await authFetch(_cotApiBase(scope) + '/' + encodeURIComponent(id), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -27076,94 +27163,98 @@ async function _persistCotizacion(id, payload) {
     }
 }
 
-async function saveCotizacion(id) {
-    const payload = _collectCotizacionPayload(id);
+async function saveCotizacion(id, scope) {
+    scope = scope || 'interna';
+    const payload = _collectCotizacionPayload(id, scope);
     if (!payload) return;
-    const ok = await _persistCotizacion(id, payload);
+    const ok = await _persistCotizacion(id, payload, scope);
     if (ok) {
         showToast('💾 Guardado', 'success');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     }
 }
 
 // Cierra la cotización: primero guarda lo que esté cargado (para no perder
 // cambios pendientes), después llama al endpoint /close que lockea los
 // datos (rate, equipos, fecha). El tag cotizado sigue editable después.
-async function closeCotizacion(id) {
+async function closeCotizacion(id, scope) {
+    scope = scope || 'interna';
     if (!confirm('¿Cerrar esta cotización? Después no vas a poder editar equipos, USDT ni la fecha (sí podés cambiar el tag cotizado/no cotizado).\n\nSe puede reabrir con "🔓 REABRIR" si te equivocás.')) return;
-    const payload = _collectCotizacionPayload(id);
+    const payload = _collectCotizacionPayload(id, scope);
     if (!payload) return;
-    const saved = await _persistCotizacion(id, payload);
+    const saved = await _persistCotizacion(id, payload, scope);
     if (!saved) return;
     try {
-        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/close', { method: 'POST' });
+        const r = await authFetch(_cotApiBase(scope) + '/' + encodeURIComponent(id) + '/close', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || !d.success) {
             showToast('Guardado, pero error al cerrar: ' + (d.error || ''), 'error');
-            loadCotizaciones();
+            loadCotizaciones(scope);
             return;
         }
         showToast('🔒 Cotización cerrada', 'success');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     } catch (e) {
         showToast('Guardado, pero falló el cierre', 'error');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     }
 }
 
-async function reopenCotizacion(id) {
+async function reopenCotizacion(id, scope) {
+    scope = scope || 'interna';
     if (!confirm('¿Reabrir esta cotización para volver a editar?')) return;
     try {
-        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/reopen', { method: 'POST' });
+        const r = await authFetch(_cotApiBase(scope) + '/' + encodeURIComponent(id) + '/reopen', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || !d.success) {
             showToast(d.error || 'Error al reabrir', 'error');
             return;
         }
         showToast('🔓 Reabierta — ya podés editar', 'success');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
 }
 
-// Setea el tag cotizado al valor que se pase (true o false). Usa el endpoint
-// /toggle ya existente, pero sólo dispara si el valor actual difiere — así
-// es idempotente desde el lado del cliente.
-async function setCotizado(id, target) {
-    const item = (_cotizacionesCache || []).find(x => x.id === id);
+// Setea el tag cotizado al valor que se pase (true o false). Sólo dispara
+// si el valor actual difiere — idempotente desde el lado del cliente.
+async function setCotizado(id, target, scope) {
+    scope = scope || 'interna';
+    const item = (_cotCache(scope) || []).find(x => x.id === id);
     if (!item) return;
     if (!!item.cotizado === !!target) {
         showToast('Ya estaba en ese estado', 'info');
         return;
     }
     try {
-        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/toggle', { method: 'POST' });
+        const r = await authFetch(_cotApiBase(scope) + '/' + encodeURIComponent(id) + '/toggle', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || !d.success) {
             showToast(d.error || 'Error', 'error');
             return;
         }
         showToast(d.cotizado ? '✓ Marcado como COTIZADO' : '✗ Marcado SIN COTIZAR', 'success');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     } catch (e) {
         showToast('Error de conexión', 'error');
     }
 }
 
-async function deleteCotizacion(id) {
+async function deleteCotizacion(id, scope) {
+    scope = scope || 'interna';
     const pin = prompt('PIN para borrar la cotización:');
     if (pin == null) return;
     if (!pin) { showToast('PIN requerido', 'error'); return; }
     try {
-        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '?pin=' + encodeURIComponent(pin), { method: 'DELETE' });
+        const r = await authFetch(_cotApiBase(scope) + '/' + encodeURIComponent(id) + '?pin=' + encodeURIComponent(pin), { method: 'DELETE' });
         const d = await r.json();
         if (!r.ok || !d.success) {
             showToast(d.error || 'Error', 'error');
             return;
         }
         showToast('🗑 Eliminada', 'success');
-        loadCotizaciones();
+        loadCotizaciones(scope);
     } catch (e) {
         showToast('Error de conexión', 'error');
     }

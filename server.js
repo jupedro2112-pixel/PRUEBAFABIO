@@ -34493,30 +34493,48 @@ app.get('/api/admin/closings/analysis', authMiddleware, closingsAccessMiddleware
 // El owner marca con tilde (✓) cuando ya cotizó, o cruz (✗) si no.
 
 const CotizacionEntry = require('./src/models/CotizacionEntry');
+const CotizacionExternaEntry = require('./src/models/CotizacionExternaEntry');
 const COT_DELETE_PIN = '1818';
 
 function _cotizacionCompute(c) {
   const rate = Number(c.usdtRate || 0);
   const teams = Array.isArray(c.teams) ? c.teams : [];
   let totalARS = 0;
+  let totalCommissionARS = 0;
+  let totalNetARS = 0;
   const priced = teams.map((t) => {
     const totARS = Number(t.totalARS || 0);
+    const pct = Math.max(0, Math.min(100, Number(t.commissionPercent || 0)));
+    const commissionARS = Math.round(totARS * (pct / 100));
+    const netARS = Math.max(0, totARS - commissionARS);
     totalARS += totARS;
-    const precioUSDT = rate > 0 ? +(totARS / rate).toFixed(2) : 0;
+    totalCommissionARS += commissionARS;
+    totalNetARS += netARS;
+    const precioUSDT = rate > 0 ? +(netARS / rate).toFixed(2) : 0;
     return {
       slot: t.slot,
       name: t.name || '',
       totalARS: totARS,
+      commissionPercent: pct,
+      commissionARS,
+      netARS,
       photoUrl: t.photoUrl || '',
       precioUSDT
     };
   });
-  const totalUSDT = rate > 0 ? +(totalARS / rate).toFixed(2) : 0;
-  return { teams: priced, totalARS, totalUSDT, usdtRate: rate };
+  const totalUSDT = rate > 0 ? +(totalNetARS / rate).toFixed(2) : 0;
+  return { teams: priced, totalARS, totalCommissionARS, totalNetARS, totalUSDT, usdtRate: rate };
 }
 
 // GET /api/admin/cotizaciones?from=YYYY-MM-DD&to=YYYY-MM-DD
-app.get('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// Factory: monta los endpoints CRUD de cotizaciones en `prefix` (sin slash
+// trailing), usando `Model` como modelo de mongoose y `label` como nombre
+// humano para logs. Lo usamos dos veces: una para /api/admin/cotizaciones
+// (CotizacionEntry) y otra para /api/admin/cotizaciones-externo
+// (CotizacionExternaEntry). Misma lógica, distinta collection.
+function _mountCotizacionRoutes(prefix, Model, label) {
+
+app.get(prefix, authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const today = _closingDateKeyART();
     const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
@@ -34525,7 +34543,7 @@ app.get('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, asy
     if (from || to) filter.dateKey = {};
     if (from) filter.dateKey.$gte = from;
     if (to)   filter.dateKey.$lte = to;
-    const rows = await CotizacionEntry.find(filter).sort({ dateKey: -1 }).lean();
+    const rows = await Model.find(filter).sort({ dateKey: -1 }).lean();
     const enriched = rows.map((r) => {
       const calc = _cotizacionCompute(r);
       return {
@@ -34534,6 +34552,8 @@ app.get('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, asy
         usdtRate: calc.usdtRate,
         teams: calc.teams,
         totalARS: calc.totalARS,
+        totalCommissionARS: calc.totalCommissionARS,
+        totalNetARS: calc.totalNetARS,
         totalUSDT: calc.totalUSDT,
         status: r.status || 'draft',
         closedAt: r.closedAt || null,
@@ -34549,23 +34569,23 @@ app.get('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, asy
     });
     res.json({ success: true, items: enriched });
   } catch (err) {
-    logger.error(`GET /api/admin/cotizaciones: ${err.message}`);
+    logger.error(`GET ${prefix} (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// POST /api/admin/cotizaciones — crear una cotización para una fecha.
-app.post('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// POST <prefix> — crear una cotización para una fecha.
+app.post(prefix, authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const body = req.body || {};
     const dateKey = String(body.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? body.dateKey : null;
     if (!dateKey) return res.status(400).json({ error: 'Fecha inválida' });
 
-    const existing = await CotizacionEntry.findOne({ dateKey });
+    const existing = await Model.findOne({ dateKey });
     if (existing) return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
 
     const teams = Array.from({ length: 10 }, (_, i) => ({
-      slot: i, name: '', totalARS: 0, photoUrl: ''
+      slot: i, name: '', totalARS: 0, commissionPercent: 0, photoUrl: ''
     }));
 
     const doc = {
@@ -34577,25 +34597,24 @@ app.post('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, as
       notes: String(body.notes || '').slice(0, 500),
       createdBy: (req.user && req.user.username) || ''
     };
-    const saved = await CotizacionEntry.create(doc);
+    const saved = await Model.create(doc);
     res.json({ success: true, item: { id: saved.id, dateKey: saved.dateKey } });
   } catch (err) {
     if (err && err.code === 11000) {
       return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
     }
-    logger.error(`POST /api/admin/cotizaciones: ${err.message}`);
+    logger.error(`POST ${prefix} (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// PUT /api/admin/cotizaciones/:id — actualiza campos editables.
-// Si la cotización está cerrada (status='closed') sólo se permite editar
-// las notas. Para modificar equipos/rate/fecha hay que reabrirla primero
-// con /:id/reopen.
-app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// PUT <prefix>/:id — actualiza campos editables. Si la cotización está
+// cerrada (status='closed') sólo se permite editar las notas. Para
+// modificar equipos/rate/fecha hay que reabrirla primero con /:id/reopen.
+app.put(prefix + '/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
-    const c = await CotizacionEntry.findOne({ id });
+    const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
     const isClosed = c.status === 'closed';
 
@@ -34605,7 +34624,7 @@ app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware,
       const dk = String(b.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.dateKey : null;
       if (!dk) return res.status(400).json({ error: 'Fecha inválida' });
       if (dk !== c.dateKey) {
-        const collide = await CotizacionEntry.findOne({ dateKey: dk, id: { $ne: id } });
+        const collide = await Model.findOne({ dateKey: dk, id: { $ne: id } });
         if (collide) return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
         c.dateKey = dk;
       }
@@ -34622,15 +34641,16 @@ app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware,
       for (const t of b.teams) {
         const slot = Number(t.slot);
         if (!Number.isInteger(slot) || slot < 0 || slot > 9) continue;
-        const cur = map.get(slot) || { slot, name: '', totalARS: 0, photoUrl: '' };
+        const cur = map.get(slot) || { slot, name: '', totalARS: 0, commissionPercent: 0, photoUrl: '' };
         if (t.name !== undefined) cur.name = String(t.name || '').slice(0, 80);
         if (t.totalARS !== undefined) cur.totalARS = Math.max(0, Number(t.totalARS) || 0);
+        if (t.commissionPercent !== undefined) cur.commissionPercent = Math.max(0, Math.min(100, Number(t.commissionPercent) || 0));
         if (t.photoUrl !== undefined) cur.photoUrl = String(t.photoUrl || '');
         map.set(slot, cur);
       }
       const merged = [];
       for (let i = 0; i < 10; i++) {
-        merged.push(map.get(i) || { slot: i, name: '', totalARS: 0, photoUrl: '' });
+        merged.push(map.get(i) || { slot: i, name: '', totalARS: 0, commissionPercent: 0, photoUrl: '' });
       }
       c.teams = merged;
     }
@@ -34638,18 +34658,16 @@ app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware,
     await c.save();
     res.json({ success: true });
   } catch (err) {
-    logger.error(`PUT /api/admin/cotizaciones/:id: ${err.message}`);
+    logger.error(`PUT ${prefix}/:id (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// POST /api/admin/cotizaciones/:id/close — cierra la cotización (lockea
-// equipos + rate + fecha). El tag cotizado/no-cotizado sigue editable
-// porque la cotización real puede pasar días después del cierre.
-app.post('/api/admin/cotizaciones/:id/close', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// POST <prefix>/:id/close
+app.post(prefix + '/:id/close', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
-    const c = await CotizacionEntry.findOne({ id });
+    const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
     if (c.status === 'closed') return res.json({ success: true, status: 'closed', alreadyClosed: true });
     c.status = 'closed';
@@ -34658,17 +34676,16 @@ app.post('/api/admin/cotizaciones/:id/close', authMiddleware, closingsAccessMidd
     await c.save();
     res.json({ success: true, status: 'closed' });
   } catch (err) {
-    logger.error(`POST /api/admin/cotizaciones/:id/close: ${err.message}`);
+    logger.error(`POST ${prefix}/:id/close (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// POST /api/admin/cotizaciones/:id/reopen — vuelve a draft para corregir
-// datos. No toca el tag cotizado (sigue como estaba).
-app.post('/api/admin/cotizaciones/:id/reopen', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// POST <prefix>/:id/reopen
+app.post(prefix + '/:id/reopen', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
-    const c = await CotizacionEntry.findOne({ id });
+    const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
     if (c.status !== 'closed') return res.json({ success: true, status: c.status || 'draft' });
     c.status = 'draft';
@@ -34677,16 +34694,16 @@ app.post('/api/admin/cotizaciones/:id/reopen', authMiddleware, closingsAccessMid
     await c.save();
     res.json({ success: true, status: 'draft' });
   } catch (err) {
-    logger.error(`POST /api/admin/cotizaciones/:id/reopen: ${err.message}`);
+    logger.error(`POST ${prefix}/:id/reopen (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// POST /api/admin/cotizaciones/:id/toggle — alterna el tilde cotizado.
-app.post('/api/admin/cotizaciones/:id/toggle', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// POST <prefix>/:id/toggle — alterna el tilde cotizado.
+app.post(prefix + '/:id/toggle', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
-    const c = await CotizacionEntry.findOne({ id });
+    const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
     const newVal = !c.cotizado;
     c.cotizado = newVal;
@@ -34695,18 +34712,16 @@ app.post('/api/admin/cotizaciones/:id/toggle', authMiddleware, closingsAccessMid
     await c.save();
     res.json({ success: true, cotizado: c.cotizado });
   } catch (err) {
-    logger.error(`POST /api/admin/cotizaciones/:id/toggle: ${err.message}`);
+    logger.error(`POST ${prefix}/:id/toggle (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// POST /api/admin/cotizaciones/:id/confirm — fija cotizado=true (idempotente).
-// A diferencia de /toggle, no alterna: si ya está confirmada, se queda en
-// confirmada y no cambia los campos cotizedAt/cotizedBy.
-app.post('/api/admin/cotizaciones/:id/confirm', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// POST <prefix>/:id/confirm — fija cotizado=true (idempotente).
+app.post(prefix + '/:id/confirm', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
-    const c = await CotizacionEntry.findOne({ id });
+    const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
     if (!c.cotizado) {
       c.cotizado = true;
@@ -34716,13 +34731,13 @@ app.post('/api/admin/cotizaciones/:id/confirm', authMiddleware, closingsAccessMi
     }
     res.json({ success: true, cotizado: true });
   } catch (err) {
-    logger.error(`POST /api/admin/cotizaciones/:id/confirm: ${err.message}`);
+    logger.error(`POST ${prefix}/:id/confirm (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
 
-// DELETE /api/admin/cotizaciones/:id — borra (requiere PIN 1818).
-app.delete('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+// DELETE <prefix>/:id — borra (requiere PIN 1818).
+app.delete(prefix + '/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const pin = String(
@@ -34732,16 +34747,22 @@ app.delete('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddlewa
       ''
     );
     if (pin !== COT_DELETE_PIN) return res.status(403).json({ error: 'PIN incorrecto' });
-    const c = await CotizacionEntry.findOne({ id });
+    const c = await Model.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
-    await CotizacionEntry.deleteOne({ id });
-    logger.warn(`DELETE cotizacion ${id} by ${req.user && req.user.username}`);
+    await Model.deleteOne({ id });
+    logger.warn(`DELETE ${label} ${id} by ${req.user && req.user.username}`);
     res.json({ success: true });
   } catch (err) {
-    logger.error(`DELETE /api/admin/cotizaciones/:id: ${err.message}`);
+    logger.error(`DELETE ${prefix}/:id (${label}): ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
+
+} // _mountCotizacionRoutes
+
+// Montar las dos versiones: interna (Cotizaciones) y externa (Cotizaciones Externo)
+_mountCotizacionRoutes('/api/admin/cotizaciones', CotizacionEntry, 'cotizacion');
+_mountCotizacionRoutes('/api/admin/cotizaciones-externo', CotizacionExternaEntry, 'cotizacion-externa');
 
 // ============================================
 // RUTAS DE REFERIDOS

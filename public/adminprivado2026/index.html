@@ -88,6 +88,10 @@
                     <span>💱</span>
                     <span><strong>COTIZACIONES</strong></span>
                 </a>
+                <a href="#" class="nav-item" data-section="cotizacionesExterno" data-protected-pin="closings" style="background:rgba(0,150,255,0.08);border-left:3px solid #0080ff;">
+                    <span>🌐</span>
+                    <span><strong>COTIZACIONES EXTERNO</strong></span>
+                </a>
 
                 <!-- CENTRAL — titulo de sección (mismo estilo que NUEVO TOP). -->
                 <div class="nav-section-title" style="color:#d4af37;border-top:1px solid rgba(212,175,55,0.30);padding-top:10px;margin-top:12px;">🏛️ CENTRAL</div>
@@ -1733,6 +1737,28 @@
                     </p>
                 </div>
                 <div id="cotizacionesBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: COTIZACIONES EXTERNO
+                 Misma estructura que cotizaciones internas, pero pega contra
+                 /api/admin/cotizaciones-externo (collection separada).
+                 ============================================ -->
+            <section id="cotizacionesExternoSection" class="section">
+                <div class="panel-header">
+                    <h2>🌐 Cotizaciones Externo</h2>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="refresh-btn" onclick="loadCotizacionesExterno()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div style="background:rgba(0,150,255,0.08);border-left:3px solid #0080ff;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.55;">
+                        Cotizaciones para uso <strong>externo</strong> (clientes / partners). Mismo flujo que las internas pero con su propia collection en la DB — los datos no se mezclan. Cada equipo puede tener su propio % de comisión que se descuenta antes de cotizar.
+                    </p>
+                </div>
+                <div id="cotizacionesExternoBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>

@@ -16,6 +16,11 @@ const cotizacionTeamSchema = new mongoose.Schema({
   slot: { type: Number, required: true, min: 0, max: 9 },
   name: { type: String, default: '', trim: true, maxlength: 80 },
   totalARS: { type: Number, default: 0, min: 0 },
+  // % de comisión que se descuenta del total del equipo antes de cotizar.
+  // Si totalARS = 1.000.000 y commissionPercent = 5, el neto es 950.000 y
+  // el precio USDT se calcula sobre 950.000 / usdtRate.
+  // Ajustable por fila (cada equipo puede tener una comisión distinta).
+  commissionPercent: { type: Number, default: 0, min: 0, max: 100 },
   // Foto opcional para respaldar el monto del equipo
   photoUrl: { type: String, default: '' }
 }, { _id: false });
