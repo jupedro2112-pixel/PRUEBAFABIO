@@ -24621,7 +24621,8 @@ function _autoPendienteAnterior(date, sectorKey) {
     if (!prev) return 0;
     const row = (_closingsRowsCache || []).find(r => r.dateKey === prev && r.sector === sectorKey);
     if (!row) return 0;
-    return Number((row.computed && row.computed.pendienteHoy) || 0);
+    // Redondear a peso entero — evita decimales feos en el input.
+    return Math.round(Number((row.computed && row.computed.pendienteHoy) || 0));
 }
 
 // Botón inline para adjuntar foto al cierre. Aparece pegado a un campo
@@ -24932,11 +24933,13 @@ async function loadClosingsSummary(date) {
         html += '</div>';
         html += '</div>';
 
-        // VENTA — total descargas / a bajar
+        // VENTA — descargas + pendiente del día anterior (lo que TIENE que bajarse en total)
+        const pendAntTotal = Number(t.pendienteAnteriorARS || 0);
+        const ventaConPend = Number(t.ventasARS || 0) + pendAntTotal;
         html += '<div style="background:rgba(255,208,160,0.10);border:1.5px solid #ffd0a0;border-radius:9px;padding:9px;text-align:center;">';
-        html += '<div style="color:#ffd0a0;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🛒 VENTA</div>';
-        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.ventasARS) + '</div>';
-        html += '<div style="color:#888;font-size:9.5px;">Σ descargas a bajar</div>';
+        html += '<div style="color:#ffd0a0;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🛒 VENTA + PEND. ANT.</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(ventaConPend) + '</div>';
+        html += '<div style="color:#888;font-size:9.5px;">' + _closingFmt(t.ventasARS) + ' descargas + ' + _closingFmt(pendAntTotal) + ' pend.ant</div>';
         html += '</div>';
 
         // BAJÓ
@@ -25366,15 +25369,16 @@ function _renderClosings() {
         html += '<th style="' + thStd + '">🏦 Comisión</th>';
         html += '<th style="' + thStd + '">📤 Descargas</th>';
         html += '<th style="' + thBig + 'color:#ffd0a0;" title="Venta = descargas (auto)">🛒 VENTA</th>';
-        html += '<th style="' + thStd + '">🏃 Bajó</th>';
         html += '<th style="' + thStd + '" title="Gastos del día (resta del neto)">🧾 Gastos</th>';
         html += '<th style="' + thStd + '" title="Egresos del día (préstamos hechos)">📤 Egresos</th>';
         html += '<th style="' + thStd + '" title="Ingresos del día (préstamos recibidos)">📥 Ingresos</th>';
         html += '<th style="' + thStd + '">🎁 Bonos</th>';
-        html += '<th style="' + thStd + '" title="Pendiente calculado = lo que falta bajar">⏳ Pend. a bajar</th>';
+        html += '<th style="' + thStd + '" title="Pendiente que venía arrastrado del día anterior">↩️ Pend. día anterior</th>';
+        html += '<th style="' + thStd + '" title="Pendiente calculado del día = lo que falta bajar">⏳ Pend. a bajar</th>';
+        html += '<th style="' + thStd + '">🏃 Bajó</th>';
         html += '<th style="' + thStd + '" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
         html += '<th style="' + thBig + 'color:#c89bff;" title="Neto del día = venta − comisión − gastos − egresos + ingresos">📐 NETO</th>';
-        html += '<th style="' + thStd + '" title="Δ = Pendiente a bajar − CVU 00h (gastos/egresos/ingresos ya están en el pendiente vía Neto). Positivo = falta · Negativo = sobra">Δ falta/sobra</th>';
+        html += '<th style="' + thStd + '" title="Δ = Pendiente a bajar − CVU 00h. Positivo = falta · Negativo = sobra">Δ falta/sobra</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Estado</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Acción</th>';
         html += '</tr></thead><tbody>';
@@ -25456,16 +25460,17 @@ function _renderClosings() {
             html += '<td style="' + tdStd + 'color:#ffd0a0;">' + _closingFmt(r.ventasARS) + '</td>';
             // VENTA (= descargas) — agrandado
             html += '<td style="' + tdBig + 'color:#ffd0a0;font-weight:900;">' + _closingFmt(r.ventasARS) + '</td>';
-            html += '<td style="' + tdStd + 'color:#aaffff;">' + _closingFmt(r.bajadaARS) + '</td>';
             html += '<td style="' + tdStd + 'color:' + gastosColor + ';" title="Resta del neto">' + _closingFmt(gastosVal) + '</td>';
             html += '<td style="' + tdStd + 'color:' + egresosColor + ';" title="Préstamos hechos · resta del neto">' + _closingFmt(egresosVal) + '</td>';
             html += '<td style="' + tdStd + 'color:' + ingresosColor + ';" title="Préstamos recibidos · suma al neto">' + _closingFmt(ingresosVal) + '</td>';
             html += '<td style="' + tdStd + 'color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
+            html += '<td style="' + tdStd + 'color:#ffaa66;" title="Arrastre del día anterior">' + _closingFmt(r.pendienteAnteriorARS) + '</td>';
             html += '<td style="' + tdStd + 'color:' + pendColor + ';font-weight:700;" title="Lo que falta bajar">' + _closingFmt(c.pendienteHoy) + '</td>';
+            html += '<td style="' + tdStd + 'color:#aaffff;">' + _closingFmt(r.bajadaARS) + '</td>';
             html += '<td style="' + tdStd + 'color:#00d4ff;font-weight:700;" title="Saldo real CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
             // NETO — agrandado
             html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto del día = venta − comisión − gastos − egresos + ingresos">' + _closingFmt(netoFinal) + '</td>';
-            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="Δ = Pendiente a bajar − CVU 00h (gastos/egresos/ingresos ya están en el pendiente vía Neto)">' + dtext + '</td>';
+            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="Δ = Pendiente a bajar − CVU 00h">' + dtext + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';

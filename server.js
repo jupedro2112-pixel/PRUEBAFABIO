@@ -33738,7 +33738,8 @@ function _closingComputeTotals(c) {
 
   // Comisión: % sobre los DEPÓSITOS (cargas). El banco se queda con esta
   // tajada de cada depósito que entra. Es nuestro gasto fijo del día.
-  const commission = deposits * (margin / 100);
+  // Se redondea a peso entero para evitar decimales que arrastren feo.
+  const commission = Math.round(deposits * (margin / 100));
 
   // Neto del día = lo que efectivamente queda después de:
   //   ventas (lo que se vendió/retiró)
@@ -34257,10 +34258,12 @@ app.get('/api/admin/closings/summary', authMiddleware, closingsAccessMiddleware,
       s.commission += c.commission;
       s.depositsNet += c.depositsNet;
       s.ventasARS += r.ventasARS || 0;
+      s.pendienteAnteriorARS += r.pendienteAnteriorARS || 0;
       s.bajadaARS += r.bajadaARS || 0;
       s.pendienteHoy += c.pendienteHoy;
       s.bonusARS += r.bonusARS || 0;
       s.netoSector += c.netoSector;
+      s.neto += (c.neto || 0);
       s.transactionsCount += r.transactionsCount || 0;
       s.withdrawalsCount += r.withdrawalsCount || 0;
       s.bonusCount += r.bonusCount || 0;
@@ -34268,7 +34271,8 @@ app.get('/api/admin/closings/summary', authMiddleware, closingsAccessMiddleware,
     }
     const totals = {
       depositsARS: 0, commission: 0, depositsNet: 0,
-      ventasARS: 0, bajadaARS: 0, pendienteHoy: 0, bonusARS: 0, netoSector: 0,
+      ventasARS: 0, pendienteAnteriorARS: 0, bajadaARS: 0, pendienteHoy: 0,
+      bonusARS: 0, netoSector: 0, neto: 0,
       transactionsCount: 0, withdrawalsCount: 0, bonusCount: 0
     };
     for (const s of Object.values(bySector)) {
@@ -34276,10 +34280,12 @@ app.get('/api/admin/closings/summary', authMiddleware, closingsAccessMiddleware,
       totals.commission += s.commission;
       totals.depositsNet += s.depositsNet;
       totals.ventasARS += s.ventasARS;
+      totals.pendienteAnteriorARS += s.pendienteAnteriorARS || 0;
       totals.bajadaARS += s.bajadaARS;
       totals.pendienteHoy += s.pendienteHoy;
       totals.bonusARS += s.bonusARS;
       totals.netoSector += s.netoSector;
+      totals.neto += (s.neto || 0);
       totals.transactionsCount += s.transactionsCount;
       totals.withdrawalsCount += s.withdrawalsCount;
       totals.bonusCount += s.bonusCount;
