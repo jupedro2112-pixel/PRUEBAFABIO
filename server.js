@@ -33755,10 +33755,11 @@ function _closingComputeTotals(c) {
   const netoSector = -diff;
 
   // Saldo CVU esperado a las 00 hs (= Neto del día):
-  //   venta − comisión − gastos − egresos + ingresos
-  // Es lo que TIENE que estar en la cuenta al cerrar el día. Si el saldo
-  // real (cvuMidnightARS) es menor, falta plata; si es mayor, sobra.
-  const cvuExpected = ventas - commission - gastos - egresos + ingresos;
+  //   pendiente + ingresos − egresos − gastos
+  // El pendiente que falta bajar tiene que estar en el banco. Los
+  // ingresos suman (entró plata), egresos y gastos restan (salió).
+  // Si el saldo real (cvuMidnightARS) es menor, falta plata; si es mayor, sobra.
+  const cvuExpected = pendienteHoy + ingresos - egresos - gastos;
   // Discrepancia: cvuActual - cvuExpected
   //   = 0  → perfecto (el banco coincide con los movimientos)
   //   > 0  → sobra plata (entró algo no registrado — revisar)

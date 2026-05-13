@@ -25350,7 +25350,7 @@ function _renderClosings() {
         html += '<th style="' + thStd + '">🎁 Bonos</th>';
         html += '<th style="' + thStd + '" title="Pendiente calculado = lo que falta bajar">⏳ Pend. a bajar</th>';
         html += '<th style="' + thStd + '" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
-        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = venta − comisión − gastos − egresos + ingresos">📐 NETO</th>';
+        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = pendiente + ingresos − egresos − gastos">📐 NETO</th>';
         html += '<th style="' + thStd + '" title="Δ = CVU real − Neto. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Estado</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Acción</th>';
@@ -25401,15 +25401,13 @@ function _renderClosings() {
             const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
             const ingresosColor = ingresosVal > 0 ? '#aaffaa' : '#888';
             const egresosColor = egresosVal > 0 ? '#ff8080' : '#888';
-            // Neto = venta − comisión − gastos − egresos + ingresos
-            // Es el resultado neto del día (cuánto te queda después de
-            // pagar la venta, la comisión, gastos, egresos, y sumarle
-            // los ingresos extra).
-            const netoFinal = Number(r.ventasARS || 0)
-                - Number(c.commission || 0)
-                - gastosVal
+            // Neto (= CVU esperado) = pendiente + ingresos − egresos − gastos
+            // Es lo que TIENE que haber en el CVU al cerrar el día.
+            // Δ = CVU real − Neto → negativo = falta, positivo = sobra.
+            const netoFinal = Number(c.pendienteHoy || 0)
+                + ingresosVal
                 - egresosVal
-                + ingresosVal;
+                - gastosVal;
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
             // Δ = CVU real − Neto
             const deltaCvu2 = cvuMid - netoFinal;
@@ -25442,7 +25440,7 @@ function _renderClosings() {
             html += '<td style="' + tdStd + 'color:' + pendColor + ';font-weight:700;" title="Lo que falta bajar">' + _closingFmt(c.pendienteHoy) + '</td>';
             html += '<td style="' + tdStd + 'color:#00d4ff;font-weight:700;" title="Saldo real CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
             // NETO — agrandado
-            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = venta − comisión − gastos − egresos + ingresos">' + _closingFmt(netoFinal) + '</td>';
+            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = pendiente + ingresos − egresos − gastos">' + _closingFmt(netoFinal) + '</td>';
             html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="CVU 00h − Neto">' + dtext + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
@@ -25604,8 +25602,9 @@ function closingsRecompute(rid) {
     const totalTx = sumCargasN + sumDescN + sumBonosN;
 
     // CVU esperado (= Neto del día):
-    //   venta − comisión − gastos − egresos + ingresos
-    const cvuExpected = sumVentas - commission - gastos - egresos + ingresos;
+    //   pendiente + ingresos − egresos − gastos
+    const pendienteHoyLive = Math.max(0, diff);
+    const cvuExpected = pendienteHoyLive + ingresos - egresos - gastos;
     const cvuDiscrepancy = cvuActual - cvuExpected;
 
     // Pintar preview
@@ -25644,7 +25643,7 @@ function closingsRecompute(rid) {
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📥 INGRESOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(ingresos) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📤 EGRESOS</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(egresos) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">🧾 GASTOS</div><div style="color:#ffaa66;font-weight:800;">-' + _closingFmt(gastos) + '</div></div>';
-        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO (= NETO)</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">venta − com − gas − eg + ing</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO (= NETO)</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">pend + ing − eg − gas</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU REAL (00 hs)</div><div style="color:#00d4ff;font-weight:800;">' + _closingFmt(cvuActual) + '</div></div>';
         html += '</div>';
         html += '<div style="background:' + cvuColor + '22;border:2px solid ' + cvuColor + ';border-radius:7px;padding:7px;text-align:center;color:' + cvuColor + ';font-weight:900;font-size:12.5px;">' + cvuLabel + '</div>';
@@ -25868,8 +25867,8 @@ function analyzeClosing(id) {
         html += '</div>';
         html += '</div>';
         html += '<div style="font-family:monospace;font-size:12px;line-height:1.7;color:#ddd;background:rgba(0,0,0,0.25);padding:9px;border-radius:7px;margin-bottom:8px;">';
-        html += '<div>Neto del día (= CVU esperado) = venta − comisión − gastos − egresos + ingresos</div>';
-        html += '<div style="margin-top:4px;">             = ' + fmt(r.ventasARS || 0) + ' − ' + fmt(c.commission) + ' − ' + fmt(c.gastos || 0) + ' − ' + fmt(c.egresos || 0) + ' + ' + fmt(c.ingresos || 0) + '</div>';
+        html += '<div>Neto del día (= CVU esperado) = pendiente + ingresos − egresos − gastos</div>';
+        html += '<div style="margin-top:4px;">             = ' + fmt(c.pendienteHoy || 0) + ' + ' + fmt(c.ingresos || 0) + ' − ' + fmt(c.egresos || 0) + ' − ' + fmt(c.gastos || 0) + '</div>';
         html += '<div style="margin-top:4px;">             = <strong style="color:#fff;font-size:13px;">' + fmt(cvuExpected) + '</strong></div>';
         html += '<div style="margin-top:5px;border-top:1px dashed rgba(255,255,255,0.10);padding-top:5px;">CVU real cargado: <strong style="color:#00d4ff;">' + fmt(cvuActual) + '</strong></div>';
         html += '<div>Discrepancia: <strong style="color:' + cvuColor + ';">' + (cvuDiscrepancy >= 0 ? '+' : '') + fmt(cvuDiscrepancy) + '</strong></div>';
