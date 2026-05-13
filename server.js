@@ -34535,6 +34535,9 @@ app.get('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, asy
         teams: calc.teams,
         totalARS: calc.totalARS,
         totalUSDT: calc.totalUSDT,
+        status: r.status || 'draft',
+        closedAt: r.closedAt || null,
+        closedBy: r.closedBy || '',
         cotizado: !!r.cotizado,
         cotizedAt: r.cotizedAt,
         cotizedBy: r.cotizedBy || '',
@@ -34586,14 +34589,19 @@ app.post('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, as
 });
 
 // PUT /api/admin/cotizaciones/:id — actualiza campos editables.
+// Si la cotización está cerrada (status='closed') sólo se permite editar
+// las notas. Para modificar equipos/rate/fecha hay que reabrirla primero
+// con /:id/reopen.
 app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const c = await CotizacionEntry.findOne({ id });
     if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    const isClosed = c.status === 'closed';
 
     const b = req.body || {};
     if (b.dateKey !== undefined) {
+      if (isClosed) return res.status(403).json({ error: 'Cotización cerrada — reabrila para cambiar la fecha' });
       const dk = String(b.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.dateKey : null;
       if (!dk) return res.status(400).json({ error: 'Fecha inválida' });
       if (dk !== c.dateKey) {
@@ -34602,10 +34610,14 @@ app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware,
         c.dateKey = dk;
       }
     }
-    if (b.usdtRate !== undefined) c.usdtRate = Math.max(0, Number(b.usdtRate) || 0);
+    if (b.usdtRate !== undefined) {
+      if (isClosed) return res.status(403).json({ error: 'Cotización cerrada — reabrila para cambiar el USDT' });
+      c.usdtRate = Math.max(0, Number(b.usdtRate) || 0);
+    }
     if (b.notes !== undefined) c.notes = String(b.notes || '').slice(0, 500);
 
     if (Array.isArray(b.teams)) {
+      if (isClosed) return res.status(403).json({ error: 'Cotización cerrada — reabrila para cambiar los equipos' });
       const map = new Map(c.teams.map((t) => [t.slot, t]));
       for (const t of b.teams) {
         const slot = Number(t.slot);
@@ -34627,6 +34639,45 @@ app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware,
     res.json({ success: true });
   } catch (err) {
     logger.error(`PUT /api/admin/cotizaciones/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/cotizaciones/:id/close — cierra la cotización (lockea
+// equipos + rate + fecha). El tag cotizado/no-cotizado sigue editable
+// porque la cotización real puede pasar días después del cierre.
+app.post('/api/admin/cotizaciones/:id/close', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await CotizacionEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    if (c.status === 'closed') return res.json({ success: true, status: 'closed', alreadyClosed: true });
+    c.status = 'closed';
+    c.closedAt = new Date();
+    c.closedBy = (req.user && req.user.username) || '';
+    await c.save();
+    res.json({ success: true, status: 'closed' });
+  } catch (err) {
+    logger.error(`POST /api/admin/cotizaciones/:id/close: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/cotizaciones/:id/reopen — vuelve a draft para corregir
+// datos. No toca el tag cotizado (sigue como estaba).
+app.post('/api/admin/cotizaciones/:id/reopen', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await CotizacionEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    if (c.status !== 'closed') return res.json({ success: true, status: c.status || 'draft' });
+    c.status = 'draft';
+    c.closedAt = null;
+    c.closedBy = '';
+    await c.save();
+    res.json({ success: true, status: 'draft' });
+  } catch (err) {
+    logger.error(`POST /api/admin/cotizaciones/:id/reopen: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

@@ -26789,54 +26789,127 @@ function _renderCotizaciones() {
         return;
     }
 
-    // === Header del historial ===
+    // === Header del historial + filtros ===
+    const closedN = items.filter(x => x.status === 'closed').length;
+    const draftN = items.length - closedN;
     const cotizadasN = items.filter(x => x.cotizado).length;
-    const draftN = items.length - cotizadasN;
-    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:8px;">';
+    const noCotizadasClosedN = items.filter(x => x.status === 'closed' && !x.cotizado).length;
+
+    h += '<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:12px 14px;margin-bottom:14px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">';
     h += '<div style="color:#fff;font-weight:900;font-size:13px;letter-spacing:0.5px;">📋 HISTORIAL DE COTIZACIONES</div>';
-    h += '<div style="display:flex;gap:10px;font-size:11.5px;font-weight:700;">';
+    h += '<div style="display:flex;gap:10px;font-size:11.5px;font-weight:700;flex-wrap:wrap;">';
     h += '<span style="color:#aaa;">Total: <strong style="color:#fff;">' + items.length + '</strong></span>';
+    h += '<span style="color:#ffd700;">📝 Draft: <strong>' + draftN + '</strong></span>';
+    h += '<span style="color:#00d4ff;">🔒 Cerradas: <strong>' + closedN + '</strong></span>';
     h += '<span style="color:#0f0;">✓ Cotizadas: <strong>' + cotizadasN + '</strong></span>';
-    h += '<span style="color:#f55;">✗ Pendientes: <strong>' + draftN + '</strong></span>';
+    h += '<span style="color:#f55;">✗ Cerradas no cotizadas: <strong>' + noCotizadasClosedN + '</strong></span>';
     h += '</div>';
     h += '</div>';
 
-    for (const it of items) {
-        h += _renderCotizacionCard(it);
+    // Filtros: por estado + ir a una fecha específica
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;">';
+    h += '<span style="color:#888;">Filtrar:</span>';
+    const filterBtn = (key, label, active) => {
+        const css = active
+            ? 'background:rgba(0,212,255,0.20);color:#00d4ff;border-color:rgba(0,212,255,0.50);'
+            : 'background:rgba(255,255,255,0.04);color:#aaa;border-color:rgba(255,255,255,0.10);';
+        return '<button onclick="setCotFilter(\'' + key + '\')" style="' + css + 'border:1px solid;padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">' + label + '</button>';
+    };
+    const f = _cotFilter || 'all';
+    h += filterBtn('all',          'Todos',         f === 'all');
+    h += filterBtn('draft',        '📝 Draft',      f === 'draft');
+    h += filterBtn('closed',       '🔒 Cerradas',   f === 'closed');
+    h += filterBtn('cotizado',     '✓ Cotizadas',   f === 'cotizado');
+    h += filterBtn('no_cotizado',  '✗ No cotizadas',f === 'no_cotizado');
+    h += '<span style="color:#888;margin-left:10px;">Ir a fecha:</span>';
+    h += '<input type="date" id="cotJumpDate" onchange="jumpToCotDate(this.value)" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:5px 9px;border-radius:6px;font-weight:700;font-size:11.5px;">';
+    h += '</div>';
+    h += '</div>';
+
+    // Filtrado
+    const filtered = items.filter(it => {
+        if (f === 'draft') return it.status !== 'closed';
+        if (f === 'closed') return it.status === 'closed';
+        if (f === 'cotizado') return !!it.cotizado;
+        if (f === 'no_cotizado') return !it.cotizado;
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:10px;padding:20px;text-align:center;color:#888;font-size:12.5px;">Ninguna cotización coincide con el filtro.</div>';
+    } else {
+        for (const it of filtered) {
+            h += _renderCotizacionCard(it);
+        }
     }
 
     body.innerHTML = h;
+}
+
+let _cotFilter = 'all';
+function setCotFilter(key) {
+    _cotFilter = key;
+    _renderCotizaciones();
+}
+
+// Scroll a la tarjeta de la fecha elegida (si existe).
+function jumpToCotDate(dateKey) {
+    if (!dateKey) return;
+    const found = (_cotizacionesCache || []).find(it => it.dateKey === dateKey);
+    if (!found) {
+        showToast('No hay cotización para esa fecha', 'info');
+        return;
+    }
+    const el = document.getElementById('cot_' + found.id);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '2px solid #00d4ff';
+        setTimeout(() => { el.style.outline = ''; }, 1800);
+    }
 }
 
 function _renderCotizacionCard(it) {
     const rate = Number(it.usdtRate || 0);
     const teams = Array.isArray(it.teams) ? it.teams : [];
     const cotizado = !!it.cotizado;
+    const isClosed = (it.status === 'closed');
+    const ro = isClosed ? ' readonly tabindex="-1"' : '';
+    const roCss = isClosed ? 'background:rgba(0,0,0,0.55);cursor:default;color:#bbb;' : '';
 
-    const accent = cotizado ? '#0f0' : '#f55';
-    const accentBg = cotizado ? 'rgba(0,255,0,0.06)' : 'rgba(255,80,80,0.06)';
-    const accentBorder = cotizado ? 'rgba(0,255,0,0.30)' : 'rgba(255,80,80,0.30)';
-    const statusLabel = cotizado ? '✓ COTIZADO' : '✗ SIN COTIZAR';
+    // Borde y color: el ESTADO de cierre define el marco (azul claro =
+    // cerrada, gris = draft). El TAG cotizado se muestra como badge aparte.
+    const frameBorder = isClosed ? 'rgba(0,212,255,0.45)' : 'rgba(255,255,255,0.10)';
+    const frameBg = isClosed ? 'rgba(0,40,80,0.20)' : 'rgba(0,0,0,0.30)';
+    const statusBadge = isClosed
+        ? '<span style="background:rgba(0,212,255,0.12);color:#00d4ff;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(0,212,255,0.40);">🔒 CERRADA</span>'
+        : '<span style="background:rgba(255,215,0,0.10);color:#ffd700;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,215,0,0.35);">📝 DRAFT</span>';
+    const cotizadoBadge = cotizado
+        ? '<span style="background:rgba(0,255,0,0.10);color:#0f0;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(0,255,0,0.40);">✓ COTIZADO</span>'
+        : '<span style="background:rgba(255,80,80,0.10);color:#f55;padding:5px 12px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:1px;border:1px solid rgba(255,80,80,0.30);">✗ NO COTIZADO</span>';
 
-    let h = '<div id="cot_' + escapeHtml(it.id) + '" data-cot-id="' + escapeHtml(it.id) + '" style="background:rgba(0,0,0,0.30);border:1px solid ' + accentBorder + ';border-radius:12px;padding:16px;margin-bottom:18px;">';
+    let h = '<div id="cot_' + escapeHtml(it.id) + '" data-cot-id="' + escapeHtml(it.id) + '" style="background:' + frameBg + ';border:1px solid ' + frameBorder + ';border-radius:12px;padding:16px;margin-bottom:18px;">';
 
     // Header
     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">';
-    h += '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">';
-    h += '<input type="date" data-cot-field="dateKey" value="' + escapeHtml(it.dateKey) + '" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:7px 10px;border-radius:7px;font-size:13px;font-weight:700;">';
-    h += '<div style="background:' + accentBg + ';color:' + accent + ';padding:6px 14px;border-radius:8px;font-weight:900;font-size:12px;letter-spacing:1px;border:1px solid ' + accentBorder + ';">' + statusLabel + '</div>';
+    h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+    h += '<input type="date" data-cot-field="dateKey" value="' + escapeHtml(it.dateKey) + '" ' + ro + ' style="' + roCss + 'background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:7px 10px;border-radius:7px;font-size:13px;font-weight:700;">';
+    h += statusBadge;
+    h += cotizadoBadge;
     h += '</div>';
     h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
-    // 💾 GUARDAR — sólo persiste los datos (rate, equipos, notas) sin tocar
-    // el estado de cotizado. Útil mientras se está cargando la info.
-    h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
-    // ✅ GUARDAR Y CONFIRMAR — combo: persiste + marca cotizado=true. Sólo
-    // se muestra si todavía no está confirmada (cotizado=false).
-    if (!cotizado) {
-        h += '<button onclick="saveAndConfirmCotizacion(' + escapeJsArg(it.id) + ')" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✅ GUARDAR Y CONFIRMAR</button>';
+    if (!isClosed) {
+        // === Modo DRAFT: editar y cerrar ===
+        h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
+        h += '<button onclick="closeCotizacion(' + escapeJsArg(it.id) + ')" style="background:linear-gradient(135deg,#00d4ff 0%,#0080ff 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">🔒 CERRAR COTIZACIÓN</button>';
     } else {
-        // Ya confirmada: ofrecer "desmarcar" para volver a editar como draft.
-        h += '<button onclick="toggleCotizado(' + escapeJsArg(it.id) + ')" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ DESMARCAR</button>';
+        // === Modo CERRADA: sólo se cambia el tag cotizado ===
+        if (cotizado) {
+            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', false)" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ MARCAR NO COTIZADO</button>';
+        } else {
+            h += '<button onclick="setCotizado(' + escapeJsArg(it.id) + ', true)" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✓ MARCAR COTIZADO</button>';
+        }
+        h += '<button onclick="reopenCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;" title="Volver a editar (descerrar)">🔓 REABRIR</button>';
     }
     h += '<button onclick="deleteCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
     h += '</div>';
@@ -26846,7 +26919,7 @@ function _renderCotizacionCard(it) {
     h += '<div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:12px;background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.20);border-radius:8px;padding:10px 14px;">';
     h += '<div>';
     h += '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Valor USDT (ARS)</label>';
-    h += '<input type="number" min="0" step="0.01" data-cot-field="usdtRate" value="' + (rate || '') + '" placeholder="ej: 1500" oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.40);color:#ffd700;padding:9px 12px;border-radius:7px;font-size:14px;font-weight:800;width:140px;">';
+    h += '<input type="number" min="0" step="0.01" data-cot-field="usdtRate" value="' + (rate || '') + '" placeholder="ej: 1500" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="' + roCss + 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.40);color:#ffd700;padding:9px 12px;border-radius:7px;font-size:14px;font-weight:800;width:140px;">';
     h += '</div>';
     h += '<div style="color:#888;font-size:11px;line-height:1.4;">';
     h += 'precio_equipo = <strong style="color:#fff;">total_ARS / valor_USDT</strong>';
@@ -26872,10 +26945,10 @@ function _renderCotizacionCard(it) {
         h += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
         h += '<td style="padding:7px;text-align:center;color:#888;font-weight:700;">' + (i + 1) + '</td>';
         h += '<td style="padding:7px;">';
-        h += '<input type="text" data-cot-team-slot="' + i + '" data-cot-team-field="name" value="' + escapeHtml(t.name || '') + '" placeholder="Nombre equipo" maxlength="80" style="width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:600;">';
+        h += '<input type="text" data-cot-team-slot="' + i + '" data-cot-team-field="name" value="' + escapeHtml(t.name || '') + '" placeholder="Nombre equipo" maxlength="80" ' + ro + ' style="' + roCss + 'width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:600;">';
         h += '</td>';
         h += '<td style="padding:7px;text-align:right;">';
-        h += '<input type="number" min="0" step="1" data-cot-team-slot="' + i + '" data-cot-team-field="totalARS" value="' + (totA || '') + '" placeholder="0" oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="width:140px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:700;text-align:right;">';
+        h += '<input type="number" min="0" step="1" data-cot-team-slot="' + i + '" data-cot-team-field="totalARS" value="' + (totA || '') + '" placeholder="0" ' + ro + ' oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="' + roCss + 'width:140px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:700;text-align:right;">';
         h += '</td>';
         h += '<td data-cot-precio-slot="' + i + '" style="padding:7px;text-align:right;color:#00c896;font-weight:800;font-size:13px;">' + (rate > 0 ? precioUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
         h += '</tr>';
@@ -26897,8 +26970,13 @@ function _renderCotizacionCard(it) {
     h += '<input type="text" data-cot-field="notes" value="' + escapeHtml(it.notes || '') + '" maxlength="500" placeholder="Detalle, recordatorio…" style="width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:7px 10px;border-radius:6px;font-size:12px;">';
     h += '</div>';
     h += '<div style="color:#666;font-size:10.5px;text-align:right;">';
+    if (isClosed && it.closedAt) {
+        h += '🔒 Cerrada: <strong style="color:#00d4ff;">' + escapeHtml(formatDate(it.closedAt)) + '</strong>';
+        if (it.closedBy) h += ' por ' + escapeHtml(it.closedBy);
+        h += '<br>';
+    }
     if (it.cotizado && it.cotizedAt) {
-        h += 'Cotizado: <strong style="color:#0f0;">' + escapeHtml(formatDate(it.cotizedAt)) + '</strong>';
+        h += '✓ Cotizado: <strong style="color:#0f0;">' + escapeHtml(formatDate(it.cotizedAt)) + '</strong>';
         if (it.cotizedBy) h += ' por ' + escapeHtml(it.cotizedBy);
         h += '<br>';
     }
@@ -27008,31 +27086,57 @@ async function saveCotizacion(id) {
     }
 }
 
-// Combo: guarda los datos + marca cotizado=true (idempotente, via /confirm).
-// Si la persistencia falla, no se llama al confirm (la cotización queda en
-// el estado que tenía).
-async function saveAndConfirmCotizacion(id) {
+// Cierra la cotización: primero guarda lo que esté cargado (para no perder
+// cambios pendientes), después llama al endpoint /close que lockea los
+// datos (rate, equipos, fecha). El tag cotizado sigue editable después.
+async function closeCotizacion(id) {
+    if (!confirm('¿Cerrar esta cotización? Después no vas a poder editar equipos, USDT ni la fecha (sí podés cambiar el tag cotizado/no cotizado).\n\nSe puede reabrir con "🔓 REABRIR" si te equivocás.')) return;
     const payload = _collectCotizacionPayload(id);
     if (!payload) return;
     const saved = await _persistCotizacion(id, payload);
     if (!saved) return;
     try {
-        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/confirm', { method: 'POST' });
+        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/close', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || !d.success) {
-            showToast('Guardado, pero error al confirmar: ' + (d.error || ''), 'error');
+            showToast('Guardado, pero error al cerrar: ' + (d.error || ''), 'error');
             loadCotizaciones();
             return;
         }
-        showToast('✅ Guardado y CONFIRMADO', 'success');
+        showToast('🔒 Cotización cerrada', 'success');
         loadCotizaciones();
     } catch (e) {
-        showToast('Guardado, pero falló la confirmación', 'error');
+        showToast('Guardado, pero falló el cierre', 'error');
         loadCotizaciones();
     }
 }
 
-async function toggleCotizado(id) {
+async function reopenCotizacion(id) {
+    if (!confirm('¿Reabrir esta cotización para volver a editar?')) return;
+    try {
+        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/reopen', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al reabrir', 'error');
+            return;
+        }
+        showToast('🔓 Reabierta — ya podés editar', 'success');
+        loadCotizaciones();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+// Setea el tag cotizado al valor que se pase (true o false). Usa el endpoint
+// /toggle ya existente, pero sólo dispara si el valor actual difiere — así
+// es idempotente desde el lado del cliente.
+async function setCotizado(id, target) {
+    const item = (_cotizacionesCache || []).find(x => x.id === id);
+    if (!item) return;
+    if (!!item.cotizado === !!target) {
+        showToast('Ya estaba en ese estado', 'info');
+        return;
+    }
     try {
         const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/toggle', { method: 'POST' });
         const d = await r.json();

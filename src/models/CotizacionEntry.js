@@ -38,7 +38,19 @@ const cotizacionSchema = new mongoose.Schema({
   // Valor del USDT (en ARS) para esta cotización
   usdtRate: { type: Number, default: 0, min: 0 },
 
-  // Tilde / cruz — el owner confirma manualmente cuando ya cotizó
+  // === Ciclo de vida ===
+  // draft  → editable libre. Cuando el owner termina de cargar, "cierra".
+  // closed → los datos quedan lockeados (teams, rate, fecha). Sólo el tag
+  //          de cotizado/no-cotizado se puede seguir cambiando, porque eso
+  //          es una etiqueta posterior (puede pasar días después que cierre
+  //          el cuadre de números).
+  status: { type: String, enum: ['draft', 'closed'], default: 'draft', index: true },
+  closedAt: { type: Date, default: null },
+  closedBy: { type: String, default: '' },
+
+  // Tilde / cruz — el owner confirma manualmente cuando ya cotizó.
+  // Independiente del status: se puede tildar/destildar incluso después de
+  // cerrar la cotización (la cotización efectiva pasa días después).
   cotizado: { type: Boolean, default: false },
   cotizedAt: { type: Date, default: null },
   cotizedBy: { type: String, default: '' },
