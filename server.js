@@ -33652,28 +33652,26 @@ function _closingComputeTotals(c) {
   const deposits = Number(c.depositsARS || 0);
   const margin = Number(c.bankMarginPercent || 0);
   const commission = deposits * (margin / 100);
-  const depositsNet = deposits - commission;
   const ventas = Number(c.ventasARS || 0);
-  const bajada = Number(c.bajadaARS || 0);
-  const pendienteAnterior = Number(c.pendienteAnteriorARS || 0);
-  // Lo que tendría que haberse bajado hoy = ventas del día + lo que vino de antes
-  const totalABajar = ventas + pendienteAnterior;
-  const pendienteHoy = Math.max(0, totalABajar - bajada);
   const bonus = Number(c.bonusARS || 0);
-  // Cuenta neta del sector (ganancia real del operador):
-  //   depósitos netos (después de comisión banco)
-  //   − ventas (plata que les debemos a los ganadores — pagada o no)
-  //   − bonos (regalos)
-  // Pendiente NO se resta acá (ya está dentro de ventas). Bajada no resta
-  // tampoco porque ventas representa la obligación total.
-  // Cash en caja distinto a profit: depositsNet − bajada = lo que SOBRA
-  // hoy en el banco. Lo separamos como `cashEnBanco`.
-  const netoSector = depositsNet - ventas - bonus;
-  const cashEnBanco = depositsNet - bajada;
+  const pendiente = Number(c.pendienteAnteriorARS || 0); // "pendiente a completar"
+  // Neto del cierre = ventas (lo que QUEDÓ de venta — positivo)
+  //                   - costo banco (% de depósitos)
+  // Bonificaciones NO se restan (son data, no impactan el neto del día
+  // según pidió el owner).
+  const netoSector = ventas - commission;
   return {
-    commission, depositsNet, ventas, bajada, totalABajar,
-    pendienteHoy, bonus, netoSector, cashEnBanco,
-    bajadaShortfall: Math.max(0, totalABajar - bajada)
+    commission,
+    depositsNet: deposits - commission,
+    ventas,
+    bonus,
+    pendienteHoy: pendiente,
+    totalABajar: pendiente,
+    netoSector,
+    // Cash en caja = depósitos brutos - comisión - ventas (la "ganancia
+    // real" si todas las ventas se cobraron). Útil para reconciliar banco.
+    cashEnBanco: deposits - commission - ventas,
+    bajadaShortfall: pendiente
   };
 }
 
@@ -33802,7 +33800,7 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       createdBy: req.user.username || ''
     };
 
-    if (sector === 'buffalo') {
+    if (sector === 'buffalo' || sector === 'ganamos') {
       const teams = _normalizeBuffaloTeams(b.teams);
       const agg = _aggregateBuffaloTeams(teams);
       doc.teams = teams;
@@ -33864,7 +33862,8 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
       'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
       'bonusNote','notes'
     ];
-    const editable = c.sector === 'buffalo' ? editableCommonBuffalo : editableNonBuffalo;
+    const hasTeams = (c.sector === 'buffalo' || c.sector === 'ganamos');
+    const editable = hasTeams ? editableCommonBuffalo : editableNonBuffalo;
     const b = req.body || {};
     const username = req.user.username || '';
     const changes = [];
@@ -33883,8 +33882,8 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
         c[f] = v;
       }
     }
-    // Buffalo: si llega teams[], normalizamos + recomputamos totales.
-    if (c.sector === 'buffalo' && Array.isArray(b.teams)) {
+    // Buffalo o Ganamos: si llega teams[], normalizamos + recomputamos totales.
+    if (hasTeams && Array.isArray(b.teams)) {
       const newTeams = _normalizeBuffaloTeams(b.teams);
       const before = c.teams
         ? c.teams.map(t => ({ slot:t.slot, name:t.name, depositsARS:t.depositsARS, depositsCount:t.depositsCount, ventasARS:t.ventasARS, bonusARS:t.bonusARS, bonusCount:t.bonusCount, withdrawalsCount:t.withdrawalsCount }))
@@ -33997,15 +33996,18 @@ app.post('/api/admin/closings/:id/comprobante', authMiddleware, adminMiddleware,
     if (!url || !/^https?:\/\//i.test(url)) {
       return res.status(400).json({ error: 'URL inválida' });
     }
-    const kind = ['bajada', 'pendiente_bank'].includes(req.body && req.body.kind) ? req.body.kind : 'bajada';
+    const validKinds = ['deposito', 'venta', 'bonificacion', 'bajada', 'pendiente_bank'];
+    const kind = validKinds.includes(req.body && req.body.kind) ? req.body.kind : 'deposito';
     const note = String((req.body && req.body.note) || '').trim().slice(0, 200);
-    c.comprobantes.push({ url, kind, note, uploadedBy: req.user.username || '' });
+    const slotRaw = req.body && req.body.teamSlot;
+    const teamSlot = (Number.isInteger(slotRaw) && slotRaw >= 0 && slotRaw <= 6) ? slotRaw : null;
+    c.comprobantes.push({ url, kind, teamSlot, note, uploadedBy: req.user.username || '' });
     c.editHistory.push({
       editedAt: new Date(),
       editedBy: req.user.username || '',
       field: 'comprobante_add',
       before: null,
-      after: { url, kind }
+      after: { url, kind, teamSlot }
     });
     await c.save();
     res.json({ success: true, row: { ...c.toObject(), computed: _closingComputeTotals(c), locked: false } });

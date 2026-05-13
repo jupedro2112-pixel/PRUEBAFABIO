@@ -24562,9 +24562,9 @@ if (typeof window !== 'undefined') {
 // ============================================
 
 const CLOSING_SECTORS_UI = [
-    { key: 'ganamos',    label: '💼 GANAMOS',    color: '#25d366', individual: false },
+    { key: 'ganamos',    label: '💼 GANAMOS',    color: '#25d366', individual: true,  slots: 7 },
     { key: 'publicidad', label: '📢 PUBLICIDAD', color: '#00d4ff', individual: false },
-    { key: 'buffalo',    label: '🐃 BUFFALO',    color: '#ffd700', individual: true, slots: 7 }
+    { key: 'buffalo',    label: '🐃 BUFFALO',    color: '#ffd700', individual: true,  slots: 7 }
 ];
 
 let _closingsRowsCache = [];      // historial completo (últimos N días) para la selección activa
@@ -24839,7 +24839,7 @@ function _renderClosings() {
     html += '<div style="background:rgba(0,0,0,0.30);border:1.5px solid ' + sec.color + '55;border-radius:11px;padding:14px;margin-bottom:18px;">';
     html += '<div style="color:' + sec.color + ';font-weight:900;font-size:13px;letter-spacing:0.6px;margin-bottom:8px;">' + sec.label + ' · ' + date + '</div>';
     if (sec.individual) {
-        html += _renderBuffaloEntry(sec, date, activeRow);
+        html += _renderTeamSectorEntry(sec, date, activeRow);
     } else {
         html += _renderClosingEntry(sec, date, null, activeRow);
     }
@@ -24935,17 +24935,122 @@ function _renderClosings() {
     body.innerHTML = html;
 }
 
-// Buffalo: una sola entry por día. Generales arriba (% banco, bajada,
-// pendiente, descargas count) + 7 equipos abajo cada uno con sus campos
-// individuales (depositos, ventas, bonos $, bonos cant, transacciones).
-// Los totales se calculan client-side para preview y server-side al
-// guardar (suma de los 7 equipos).
-function _renderBuffaloEntry(sec, date, row) {
+// Panel de comprobantes (fotos). Categorías:
+//   📥 Depósitos · 🛒 Venta · 🎁 Bonificación · 🏃 Bajada · 🏦 Banco-Pendiente
+// El owner puede adjuntar fotos por categoría para respaldar cada
+// monto. Sin foto de "banco-pendiente" no se puede confirmar si hay
+// pendiente > 0.
+const COMP_KINDS = [
+    { key: 'deposito',       label: '📥 Depósito',      color: '#aaffaa' },
+    { key: 'venta',          label: '🛒 Venta',         color: '#ffd0a0' },
+    { key: 'bonificacion',   label: '🎁 Bonificación',  color: '#ffd700' },
+    { key: 'bajada',         label: '🏃 Bajada',        color: '#aaffff' },
+    { key: 'pendiente_bank', label: '🏦 Banco-Pend.',   color: '#ffaa66' }
+];
+
+function _renderComprobantesPanel(row, rid, locked, computed) {
+    const comps = (row && row.comprobantes) || [];
+    const hasPendBank = comps.some(p => p.kind === 'pendiente_bank');
+    const needsPendBank = (computed && computed.pendienteHoy > 0) && !hasPendBank;
+
+    let html = '<div style="background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:9px;margin-bottom:8px;">';
+    html += '<div style="color:#fff;font-weight:800;font-size:11.5px;margin-bottom:6px;">📎 COMPROBANTES (' + comps.length + ')</div>';
+
+    // Grid por categoría
+    for (const kk of COMP_KINDS) {
+        const kComps = comps.filter(p => p.kind === kk.key);
+        html += '<div style="margin-bottom:5px;padding:5px 7px;background:rgba(255,255,255,0.03);border-radius:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+        html += '<div style="color:' + kk.color + ';font-weight:800;font-size:10.5px;min-width:115px;">' + kk.label + ' (' + kComps.length + ')</div>';
+        // Thumbnails
+        for (const cp of kComps) {
+            const idx = comps.indexOf(cp);
+            html += '<a href="' + escapeHtml(cp.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:3px;background:rgba(255,255,255,0.06);border:1px solid ' + kk.color + '55;color:' + kk.color + ';text-decoration:none;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;">📷 #' + (idx + 1);
+            if (!locked) html += ' <span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + idx + ')" style="color:#ff8080;cursor:pointer;margin-left:3px;">✕</span>';
+            html += '</a>';
+        }
+        // Upload button
+        if (!locked) {
+            html += '<button type="button" onclick="openClosingUpload(\'' + rid + '\',\'' + kk.key + '\')" style="background:rgba(0,212,255,0.10);border:1px dashed rgba(0,212,255,0.45);color:#00d4ff;padding:2px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">+ subir</button>';
+        }
+        html += '</div>';
+    }
+
+    if (needsPendBank) {
+        html += '<div style="color:#ff8080;font-size:10.5px;margin-top:5px;background:rgba(255,80,80,0.08);border-left:3px solid #ff5050;padding:6px 9px;border-radius:0 6px 6px 0;">⚠️ Quedó pendiente — adjuntá una foto <strong>🏦 Banco-Pend.</strong> que muestre la plata en la cuenta antes de confirmar.</div>';
+    }
+
+    // Input file oculto + handler
+    if (!locked) {
+        html += '<input type="file" accept="image/*" id="cls_' + rid + '_file" style="display:none;" onchange="onClosingFilePicked(\'' + rid + '\')">';
+    }
+    html += '</div>';
+    return html;
+}
+
+// State: qué categoría se está subiendo. Set por openClosingUpload(rid, kind).
+const _closingUploadKind = {};
+function openClosingUpload(rid, kind) {
+    _closingUploadKind[rid] = kind;
+    const fileEl = document.getElementById('cls_' + rid + '_file');
+    if (fileEl) fileEl.click();
+}
+
+async function onClosingFilePicked(rid) {
+    const fileEl = document.getElementById('cls_' + rid + '_file');
+    if (!fileEl || !fileEl.files || !fileEl.files[0]) return;
+    const file = fileEl.files[0];
+    const kind = _closingUploadKind[rid] || 'deposito';
+    try {
+        const pre = await authFetch('/api/upload/presigned-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, contentType: file.type, prefix: 'closings' })
+        });
+        const preD = await pre.json();
+        if (!pre.ok || !preD.uploadUrl) {
+            showToast('Error pidiendo URL de upload', 'error');
+            return;
+        }
+        const putR = await fetch(preD.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type },
+            body: file
+        });
+        if (!putR.ok) {
+            showToast('Falló la subida del archivo', 'error');
+            return;
+        }
+        const publicUrl = preD.publicUrl || preD.url;
+        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: publicUrl, kind })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al asociar', 'error');
+            return;
+        }
+        showToast('✅ Foto subida', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error: ' + (e.message || ''), 'error');
+    } finally {
+        if (fileEl) fileEl.value = '';
+    }
+}
+
+// Sector con 7 equipos (Buffalo o Ganamos). Una entry por día.
+// Generales arriba (% banco + pendiente a completar + depósitos totales
+// y transacciones totales COMPUTADOS de los 7 equipos). Abajo los 7
+// equipos con sus campos individuales.
+// Neto = Σ(ventas) − Σ(cargas × banco%). Bonificaciones no afectan neto.
+function _renderTeamSectorEntry(sec, date, row) {
     const exists = !!row;
     const locked = row && row.locked;
     const confirmed = row && row.status === 'confirmed';
     const c = (row && row.computed) || {};
-    const rid = row ? row.id : ('new_buffalo_main');
+    const rid = row ? row.id : ('new_' + sec.key + '_main');
     const teams = (row && Array.isArray(row.teams) && row.teams.length === 7)
         ? row.teams
         : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 }));
@@ -24961,14 +25066,18 @@ function _renderBuffaloEntry(sec, date, row) {
     html += (locked ? '<span style="color:#ff8080;font-size:10px;font-weight:800;">🔒 BLOQUEADO 24h</span>' : (confirmed ? '<span style="color:#aaffaa;font-size:10px;font-weight:800;">✅ CONFIRMADO</span>' : '<span style="color:#888;font-size:10px;">📝 BORRADOR</span>'));
     html += '</div>';
 
-    // === GENERALES (compartido todo Buffalo: una sola bajada, mismo banco) ===
+    // Computed (suma de los 7 equipos)
+    const sumDeposits = teams.reduce((a, t) => a + Number(t.depositsARS || 0), 0);
+    const sumTransactions = teams.reduce((a, t) => a + Number(t.depositsCount || 0) + Number(t.withdrawalsCount || 0) + Number(t.bonusCount || 0), 0);
+
+    // === GENERALES ===
     html += '<div style="background:rgba(0,212,255,0.06);border:1.5px solid rgba(0,212,255,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
     html += '<div style="color:#00d4ff;font-weight:900;font-size:11px;letter-spacing:1px;margin-bottom:8px;">🤝 GENERAL (uno para los 7 equipos)</div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;">';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real ($)</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior ($)</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><input type="number" id="cls_' + rid + '_transactionsCount" value="' + (row ? (row.transactionsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas$ de los 7</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">⏳ Pendiente a completar</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacciones totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas# + descargas# + bonos#</div></div>';
     html += '</div>';
     html += '</div>';
 
@@ -24978,17 +25087,24 @@ function _renderBuffaloEntry(sec, date, row) {
     for (let i = 0; i < 7; i++) {
         const t = teams[i] || { slot: i, name: '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 };
         html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;margin-bottom:6px;">';
-        html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">';
+        // Header: número + nombre del equipo
+        html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;">';
         html += '<div style="background:#ffd700;color:#000;font-weight:900;font-size:11px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + (i + 1) + '</div>';
         html += '<input type="text" data-buffalo-team="' + i + '" data-field="name" value="' + escapeHtml(t.name) + '" placeholder="Nombre equipo ' + (i + 1) + '" style="flex:1;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:700;" ' + disabledAttr + '>';
         html += '</div>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:5px;">';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">💰 Cargas $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">📥 Cargas #</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🛒 Venta</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">📤 Descargas #</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonos $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonificac. #</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusCount" value="' + (t.bonusCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+
+        // FILA 1: plata (cargas $ + venta + bonificaciones $)
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;margin-bottom:5px;">';
+        html += '<div><label style="color:#aaffaa;font-size:9.5px;text-transform:uppercase;font-weight:700;">💰 Cargas $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;border-color:rgba(102,255,102,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;">🛒 Venta $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#ffd700;font-size:9.5px;text-transform:uppercase;font-weight:700;">🎁 Bonificaciones $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;border-color:rgba(255,215,0,0.30);" ' + disabledAttr + '><div style="color:#666;font-size:9px;margin-top:1px;">no afecta neto · solo dato</div></div>';
+        html += '</div>';
+
+        // FILA 2: cantidades agrupadas (cargas# + descargas# + bonos#)
+        html += '<div style="background:rgba(155,48,255,0.06);border:1px dashed rgba(155,48,255,0.30);border-radius:6px;padding:5px;display:grid;grid-template-columns:repeat(3,1fr);gap:5px;">';
+        html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;">📥 Cargas #</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;">📤 Descargas #</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;">🎁 Bonos #</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusCount" value="' + (t.bonusCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
         html += '</div>';
         html += '</div>';
     }
@@ -25009,35 +25125,7 @@ function _renderBuffaloEntry(sec, date, row) {
         html += '<span style="color:#aaa;">Neto sector: <strong style="color:' + netColor + ';">' + _closingFmt(c.netoSector) + '</strong></span>';
         html += '</div>';
 
-        // Comprobantes (mismo widget que el otro entry)
-        const comps = row.comprobantes || [];
-        const hasPendBank = comps.some(p => p.kind === 'pendiente_bank');
-        const needsPendBank = c.pendienteHoy > 0 && !hasPendBank;
-        html += '<div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:7px 9px;margin-bottom:8px;font-size:11px;">';
-        html += '<div style="color:#aaa;font-weight:700;margin-bottom:4px;">📎 Comprobantes (' + comps.length + ')</div>';
-        if (comps.length > 0) {
-            html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px;">';
-            for (let i = 0; i < comps.length; i++) {
-                const cp = comps[i];
-                const kindColor = cp.kind === 'pendiente_bank' ? '#ffaa66' : '#aaffaa';
-                const kindLabel = cp.kind === 'pendiente_bank' ? '🏦 banco-pendiente' : '✅ bajada';
-                html += '<a href="' + escapeHtml(cp.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);border:1px solid ' + kindColor + '55;color:' + kindColor + ';text-decoration:none;padding:3px 7px;border-radius:5px;font-size:10.5px;">' + kindLabel;
-                if (!locked) html += ' <span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + i + ')" style="color:#ff8080;cursor:pointer;margin-left:3px;">✕</span>';
-                html += '</a>';
-            }
-            html += '</div>';
-        }
-        if (!locked) {
-            html += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
-            html += '<input type="file" accept="image/*" id="cls_' + rid + '_file" style="font-size:10.5px;color:#bbb;">';
-            html += '<select id="cls_' + rid + '_kind" style="background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:3px 6px;border-radius:5px;font-size:10.5px;"><option value="bajada">✅ Bajada</option><option value="pendiente_bank">🏦 Banco-pendiente</option></select>';
-            html += '<button type="button" onclick="uploadClosingComprobante(\'' + rid + '\')" style="background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">📎 Subir</button>';
-            html += '</div>';
-            if (needsPendBank) {
-                html += '<div style="color:#ff8080;font-size:10.5px;margin-top:5px;">⚠️ Quedó pendiente — adjuntá foto del banco mostrando que la plata sigue ahí antes de confirmar.</div>';
-            }
-        }
-        html += '</div>';
+        html += _renderComprobantesPanel(row, rid, locked, c);
         if (row.editHistory && row.editHistory.length > 0) {
             html += '<div style="font-size:10.5px;color:#888;margin-bottom:6px;">📝 Editado ' + row.editHistory.length + ' veces · último por <strong>' + escapeHtml(row.editHistory[row.editHistory.length - 1].editedBy || '?') + '</strong></div>';
         }
@@ -25046,7 +25134,7 @@ function _renderBuffaloEntry(sec, date, row) {
     // Action buttons
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">';
     if (!locked) {
-        html += '<button type="button" onclick="saveBuffaloClosing(\'' + rid + '\', \'' + date + '\')" style="background:rgba(102,255,102,0.15);border:1px solid rgba(102,255,102,0.45);color:#aaffaa;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (exists ? '💾 GUARDAR CAMBIOS' : '💾 CREAR CIERRE') + '</button>';
+        html += '<button type="button" onclick="saveTeamSectorClosing(\'' + rid + '\', \'' + date + '\', \'' + sec.key + '\')" style="background:rgba(102,255,102,0.15);border:1px solid rgba(102,255,102,0.45);color:#aaffaa;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (exists ? '💾 GUARDAR CAMBIOS' : '💾 CREAR CIERRE') + '</button>';
         if (exists && !confirmed) {
             html += '<button type="button" onclick="confirmClosing(\'' + rid + '\')" style="background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:6px 14px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;">✅ CONFIRMAR (lock 24h)</button>';
         }
@@ -25084,8 +25172,9 @@ async function verifyClosing(rid) {
     }
 }
 
-// Save específico para Buffalo: arma el array teams[] desde los inputs.
-async function saveBuffaloClosing(rid, date) {
+// Save para sectores con teams[] (Buffalo y Ganamos). Arma el array
+// teams[] desde los inputs + envía generales.
+async function saveTeamSectorClosing(rid, date, sector) {
     const get = (suffix) => {
         const el = document.getElementById('cls_' + rid + '_' + suffix);
         return el ? el.value : '';
@@ -25109,12 +25198,10 @@ async function saveBuffaloClosing(rid, date) {
         });
     }
     const payload = {
-        sector: 'buffalo',
+        sector,
         dateKey: date,
         bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
-        bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
-        transactionsCount: parseInt(get('transactionsCount'), 10) || 0,
         teams
     };
 
@@ -25128,7 +25215,7 @@ async function saveBuffaloClosing(rid, date) {
             showToast(d.error || 'Error al guardar', 'error');
             return;
         }
-        showToast('✅ Buffalo guardado', 'success');
+        showToast('✅ ' + sector.toUpperCase() + ' guardado', 'success');
         loadClosings();
     } catch (e) {
         showToast('Error al guardar', 'error');
@@ -25219,36 +25306,7 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
             }
         }
         html += '<div style="background:' + analysisBg + ';border-left:3px solid ' + analysisColor + ';border-radius:0 6px 6px 0;padding:7px 10px;margin-bottom:8px;color:' + analysisColor + ';font-size:11.5px;font-weight:700;">' + analysisText + '</div>';
-        // Comprobantes
-        const comps = row.comprobantes || [];
-        const hasBajada = comps.some(p => p.kind === 'bajada');
-        const hasPendBank = comps.some(p => p.kind === 'pendiente_bank');
-        const needsPendBank = c.pendienteHoy > 0 && !hasPendBank;
-        html += '<div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:7px 9px;margin-bottom:8px;font-size:11px;">';
-        html += '<div style="color:#aaa;font-weight:700;margin-bottom:4px;">📎 Comprobantes (' + comps.length + ')</div>';
-        if (comps.length > 0) {
-            html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px;">';
-            for (let i = 0; i < comps.length; i++) {
-                const cp = comps[i];
-                const kindColor = cp.kind === 'pendiente_bank' ? '#ffaa66' : '#aaffaa';
-                const kindLabel = cp.kind === 'pendiente_bank' ? '🏦 banco-pendiente' : '✅ bajada';
-                html += '<a href="' + escapeHtml(cp.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);border:1px solid ' + kindColor + '55;color:' + kindColor + ';text-decoration:none;padding:3px 7px;border-radius:5px;font-size:10.5px;">' + kindLabel;
-                if (!locked) html += ' <span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + i + ')" style="color:#ff8080;cursor:pointer;margin-left:3px;">✕</span>';
-                html += '</a>';
-            }
-            html += '</div>';
-        }
-        if (!locked) {
-            html += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
-            html += '<input type="file" accept="image/*" id="cls_' + rid + '_file" style="font-size:10.5px;color:#bbb;">';
-            html += '<select id="cls_' + rid + '_kind" style="background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:3px 6px;border-radius:5px;font-size:10.5px;"><option value="bajada">✅ Bajada</option><option value="pendiente_bank">🏦 Banco-pendiente</option></select>';
-            html += '<button type="button" onclick="uploadClosingComprobante(\'' + rid + '\')" style="background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">📎 Subir</button>';
-            html += '</div>';
-            if (needsPendBank) {
-                html += '<div style="color:#ff8080;font-size:10.5px;margin-top:5px;">⚠️ Quedó pendiente — adjuntá foto del banco mostrando que la plata sigue ahí antes de confirmar.</div>';
-            }
-        }
-        html += '</div>';
+        html += _renderComprobantesPanel(row, rid, locked, c);
         if (row.editHistory && row.editHistory.length > 0) {
             html += '<div style="font-size:10.5px;color:#888;margin-bottom:6px;">📝 Editado ' + row.editHistory.length + ' veces · último por <strong>' + escapeHtml(row.editHistory[row.editHistory.length - 1].editedBy || '?') + '</strong></div>';
         }

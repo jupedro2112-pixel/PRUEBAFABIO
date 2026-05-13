@@ -45,14 +45,22 @@ const buffaloTeamSchema = new mongoose.Schema({
 
 const comprobanteSchema = new mongoose.Schema({
   url: { type: String, required: true },
-  // 'bajada' = comprobante de transferencia hecha
-  // 'pendiente_bank' = screenshot del banco mostrando que la plata pendiente
-  //                    SIGUE EN LA CUENTA (defensa contra plata faltante)
+  // Tipos de comprobantes que el owner puede adjuntar:
+  //  'deposito'        — foto de un depósito que entró
+  //  'venta'           — foto que respalda el monto de venta
+  //  'bonificacion'    — foto del bono dado
+  //  'bajada'          — comprobante de transferencia hecha (plata pagada)
+  //  'pendiente_bank'  — screenshot del banco mostrando que la plata
+  //                      pendiente SIGUE en la cuenta (defensa contra
+  //                      plata faltante al confirmar)
   kind: {
     type: String,
-    enum: ['bajada', 'pendiente_bank'],
-    default: 'bajada'
+    enum: ['deposito', 'venta', 'bonificacion', 'bajada', 'pendiente_bank'],
+    default: 'deposito'
   },
+  // Slot del equipo asociado (0..6) — opcional. Cuando es null/undefined,
+  // el comprobante aplica al sector completo, no a un equipo puntual.
+  teamSlot: { type: Number, default: null, min: 0, max: 6 },
   note: { type: String, default: '' },
   uploadedAt: { type: Date, default: Date.now },
   uploadedBy: { type: String, default: '' }
