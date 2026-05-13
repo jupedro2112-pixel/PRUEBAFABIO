@@ -33755,11 +33755,14 @@ function _closingComputeTotals(c) {
   const netoSector = -diff;
 
   // Saldo CVU esperado a las 00 hs:
-  //   in: depósitos + ingresos
-  //   out: comisión + bajada + bonus + egresos (préstamos hechos) + gastos
-  // El saldo esperado refleja la plata que TIENE que estar en la cuenta
-  // al cerrar el día.
-  const cvuExpected = deposits + ingresos - commission - bajada - bonus - egresos - gastos;
+  // Los depósitos NO entran al CVU (no se contabilizan acá) — sólo sirven
+  // como base para la comisión. Lo único que tiene que quedar en el CVU
+  // al cerrar el día es:
+  //   pendiente_que_falta_bajar
+  //   + ingresos (préstamos recibidos — plata que entró extra)
+  //   − egresos (préstamos hechos — plata que salió extra)
+  //   − gastos del día
+  const cvuExpected = pendienteHoy + ingresos - egresos - gastos;
   // Discrepancia: cvuActual - cvuExpected
   //   = 0  → perfecto (el banco coincide con los movimientos)
   //   > 0  → sobra plata (entró algo no registrado — revisar)

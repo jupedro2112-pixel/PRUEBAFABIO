@@ -25269,14 +25269,16 @@ function _renderClosings() {
 
             const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#888';
             const netColor = (c.diff || 0) > 0 ? '#ff8080' : ((c.diff || 0) < 0 ? '#66ff66' : '#aaffaa');
-            // CVU 00h vs Pendiente: lo que TIENE que haber vs lo que hay.
-            // Δ = cvuMidnight − pendienteHoy
-            //   = 0 → cuadra (la plata pendiente está toda en el CVU)
-            //   > 0 → sobra (hay más plata de la calculada para bajar)
-            //   < 0 → FALTA (PROBLEMA: hay menos plata que la que tendría que estar)
+            // CVU 00h vs lo que tendría que haber.
+            // Esperado = pendiente + ingresos − egresos − gastos (los
+            // depósitos NO entran al CVU). Δ = real − esperado.
+            //   = 0 → cuadra exacto
+            //   > 0 → sobra (entró plata sin registrar)
+            //   < 0 → FALTA (salió plata sin registrar — problema)
             const cvuMid = Number(r.cvuMidnightARS || 0);
             const pendVal = Number(c.pendienteHoy || 0);
-            const deltaCvu = cvuMid - pendVal;
+            const expCvu = pendVal + Number(c.ingresos || 0) - Number(c.egresos || 0) - Number(c.gastos || 0);
+            const deltaCvu = cvuMid - expCvu;
             let deltaColor, deltaText;
             if (cvuMid === 0 && pendVal === 0) {
                 deltaColor = '#666'; deltaText = '—';
@@ -25458,8 +25460,10 @@ function closingsRecompute(rid) {
     const diff = totalABajar - bajada;
     const totalTx = sumCargasN + sumDescN + sumBonosN;
 
-    // CVU: lo que TIENE QUE haber en la cuenta al cerrar el día
-    const cvuExpected = sumDeposits + ingresos - commission - bajada - sumBonus - egresos - gastos;
+    // CVU esperado = pendienteHoy + ingresos − egresos − gastos.
+    // Los depósitos NO entran (no se contabilizan, sólo son base de comisión).
+    const pendienteHoyLive = Math.max(0, diff);
+    const cvuExpected = pendienteHoyLive + ingresos - egresos - gastos;
     const cvuDiscrepancy = cvuActual - cvuExpected;
 
     // Pintar preview
@@ -25498,7 +25502,7 @@ function closingsRecompute(rid) {
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📥 INGRESOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(ingresos) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📤 EGRESOS</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(egresos) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">🧾 GASTOS</div><div style="color:#ffaa66;font-weight:800;">-' + _closingFmt(gastos) + '</div></div>';
-        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">dep+ing−com−baj−bon−eg−gas</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">pendiente + ing − eg − gas</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU REAL (00 hs)</div><div style="color:#00d4ff;font-weight:800;">' + _closingFmt(cvuActual) + '</div></div>';
         html += '</div>';
         html += '<div style="background:' + cvuColor + '22;border:2px solid ' + cvuColor + ';border-radius:7px;padding:7px;text-align:center;color:' + cvuColor + ';font-weight:900;font-size:12.5px;">' + cvuLabel + '</div>';
@@ -25722,8 +25726,9 @@ function analyzeClosing(id) {
         html += '</div>';
         html += '</div>';
         html += '<div style="font-family:monospace;font-size:12px;line-height:1.7;color:#ddd;background:rgba(0,0,0,0.25);padding:9px;border-radius:7px;margin-bottom:8px;">';
-        html += '<div>CVU esperado = depósitos + ingresos − comisión − bajada − bonus − egresos − gastos</div>';
-        html += '<div>             = ' + fmt(r.depositsARS) + ' + ' + fmt(c.ingresos || 0) + ' − ' + fmt(c.commission) + ' − ' + fmt(r.bajadaARS) + ' − ' + fmt(r.bonusARS) + ' − ' + fmt(c.egresos || 0) + ' − ' + fmt(c.gastos || 0) + '</div>';
+        html += '<div>CVU esperado = pendiente + ingresos − egresos − gastos</div>';
+        html += '<div style="color:#888;font-size:10.5px;">(los depósitos NO entran al CVU — sólo se usan para calcular la comisión)</div>';
+        html += '<div style="margin-top:4px;">             = ' + fmt(c.pendienteHoy || 0) + ' + ' + fmt(c.ingresos || 0) + ' − ' + fmt(c.egresos || 0) + ' − ' + fmt(c.gastos || 0) + '</div>';
         html += '<div style="margin-top:4px;">             = <strong style="color:#fff;font-size:13px;">' + fmt(cvuExpected) + '</strong></div>';
         html += '<div style="margin-top:5px;border-top:1px dashed rgba(255,255,255,0.10);padding-top:5px;">CVU real cargado: <strong style="color:#00d4ff;">' + fmt(cvuActual) + '</strong></div>';
         html += '<div>Discrepancia: <strong style="color:' + cvuColor + ';">' + (cvuDiscrepancy >= 0 ? '+' : '') + fmt(cvuDiscrepancy) + '</strong></div>';
