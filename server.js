@@ -34101,6 +34101,39 @@ app.delete('/api/admin/closings/:id/comprobante/:idx', authMiddleware, adminMidd
   }
 });
 
+// DELETE /api/admin/closings/:id — borrar cierre completo.
+// REQUIERE PIN ('1818') — pasa como ?pin=1818 o en el body.
+// Funciona incluso si el cierre está confirmado/locked (es un override
+// manual del owner para casos donde hay que limpiar/empezar de cero).
+const CLOSING_DELETE_PIN = '1818';
+app.delete('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const pin = String(
+      (req.query && req.query.pin) ||
+      (req.body && req.body.pin) ||
+      (req.headers && req.headers['x-delete-pin']) ||
+      ''
+    );
+    if (pin !== CLOSING_DELETE_PIN) {
+      return res.status(403).json({ error: 'PIN incorrecto' });
+    }
+    const c = await ClosingEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+    const snapshot = {
+      dateKey: c.dateKey, sector: c.sector, status: c.status,
+      depositsARS: c.depositsARS, ventasARS: c.ventasARS,
+      bajadaARS: c.bajadaARS, deletedBy: req.user.username || ''
+    };
+    await ClosingEntry.deleteOne({ id });
+    logger.warn(`DELETE closing ${id} (PIN OK) by ${req.user.username}: ${JSON.stringify(snapshot)}`);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/closings/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // GET /api/admin/closings/summary?from=&to= — totales agregados.
 app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (req, res) => {
   try {

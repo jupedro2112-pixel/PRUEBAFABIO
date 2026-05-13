@@ -24583,6 +24583,28 @@ function _closingFmt(n) {
     return '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
 }
 
+// Busca los nombres de equipo más recientes para un sector. Recorre el
+// cache de cierres (orden cronológico inverso) y para CADA slot toma el
+// primer nombre no vacío que encuentra. Así si en un día puntual no se
+// llenó el nombre, hereda el del cierre anterior. Devuelve array[7].
+function _latestTeamNames(sectorKey, excludeId) {
+    const out = ['', '', '', '', '', '', ''];
+    const rows = (_closingsRowsCache || [])
+        .filter(r => r && r.sector === sectorKey && Array.isArray(r.teams) && r.id !== excludeId)
+        .sort((a, b) => b.dateKey.localeCompare(a.dateKey)); // más reciente primero
+    for (const r of rows) {
+        for (let i = 0; i < 7; i++) {
+            if (out[i]) continue;
+            const t = r.teams.find(tt => Number(tt.slot) === i);
+            if (t && String(t.name || '').trim()) {
+                out[i] = String(t.name).trim();
+            }
+        }
+        if (out.every(n => n)) break;
+    }
+    return out;
+}
+
 function _closingsTodayART() {
     return new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/Argentina/Buenos_Aires',
@@ -25077,7 +25099,8 @@ function _renderClosings() {
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';
-            html += '<button type="button" onclick="analyzeClosing(\'' + r.id + '\')" style="background:rgba(155,48,255,0.12);color:#c89bff;border:1px solid rgba(155,48,255,0.45);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;">🔍 Analizar</button>';
+            html += '<button type="button" onclick="analyzeClosing(\'' + r.id + '\')" style="background:rgba(155,48,255,0.12);color:#c89bff;border:1px solid rgba(155,48,255,0.45);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">🔍 Analizar</button>';
+            html += '<button type="button" onclick="deleteClosing(\'' + r.id + '\')" title="Borrar cierre (PIN)" style="background:rgba(255,80,80,0.12);color:#ff8080;border:1px solid rgba(255,80,80,0.45);padding:3px 7px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;">🗑️</button>';
             html += '</td>';
             html += '</tr>';
         }
@@ -25594,9 +25617,12 @@ function _renderTeamSectorEntry(sec, date, row) {
     const confirmed = row && row.status === 'confirmed';
     const c = (row && row.computed) || {};
     const rid = row ? row.id : ('new_' + sec.key + '_main');
+    // Para cierres NUEVOS: buscamos el cierre más reciente del MISMO sector
+    // que tenga nombres de equipo y los usamos como default. Editable después.
+    const recentNames = _latestTeamNames(sec.key, row ? row.id : null);
     const teams = (row && Array.isArray(row.teams) && row.teams.length === 7)
         ? row.teams
-        : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 }));
+        : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: recentNames[i] || '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 }));
 
     const inputStyle = 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;width:100%;box-sizing:border-box;';
     const disabledAttr = locked ? 'disabled' : '';
@@ -25708,6 +25734,28 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '</div>';
     html += '</div>';
     return html;
+}
+
+// Borrar cierre con PIN (1818). El owner usa esta opción para empezar
+// de cero un día puntual — funciona incluso si el cierre está confirmado.
+async function deleteClosing(rid) {
+    const pin = prompt('🗑️ Borrar cierre — ingresá el PIN:');
+    if (!pin) return;
+    if (!confirm('¿Confirmás que querés BORRAR este cierre?\n\nLa entrada se elimina por completo (no se puede deshacer).')) return;
+    try {
+        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '?pin=' + encodeURIComponent(pin), {
+            method: 'DELETE'
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al borrar', 'error');
+            return;
+        }
+        showToast('🗑️ Cierre borrado', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error al borrar', 'error');
+    }
 }
 
 async function verifyClosing(rid) {
