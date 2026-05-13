@@ -6596,15 +6596,15 @@ async function initializeData() {
   } // end if (adminUsername)
 
   // Seed del usuario 'cierresgeneral' (rol closings_viewer) — acceso
-  // restringido al panel /cierresgeneral. Idempotente: si ya existe,
-  // sólo se asegura el rol y el estado activo (NO sobrescribe la
-  // contraseña para preservar cambios manuales en producción).
+  // restringido al panel /cierresgeneral. La contraseña SE SOBRESCRIBE
+  // siempre con el valor configurado abajo, para que cambiar la
+  // constante y redeployar actualice el password en producción.
   try {
     const CIERRES_USERNAME = 'cierresgeneral';
-    const CIERRES_PASSWORD = 'P4pel123';
+    const CIERRES_PASSWORD = 'asd123';
+    const hashed = await bcrypt.hash(CIERRES_PASSWORD, 12);
     let cierresUser = await User.findOne({ username: CIERRES_USERNAME });
     if (!cierresUser) {
-      const hashed = await bcrypt.hash(CIERRES_PASSWORD, 12);
       await User.create({
         id: uuidv4(),
         username: CIERRES_USERNAME,
@@ -6623,11 +6623,12 @@ async function initializeData() {
       });
       console.log(`✅ Usuario '${CIERRES_USERNAME}' creado (rol: closings_viewer)`);
     } else {
-      let changed = false;
-      if (cierresUser.role !== 'closings_viewer') { cierresUser.role = 'closings_viewer'; changed = true; }
-      if (!cierresUser.isActive) { cierresUser.isActive = true; changed = true; }
-      if (changed) await cierresUser.save();
-      console.log(`✅ Usuario '${CIERRES_USERNAME}' verificado (rol: ${cierresUser.role})`);
+      cierresUser.password = hashed;          // siempre sincronizar con la constante
+      cierresUser.role = 'closings_viewer';
+      cierresUser.isActive = true;
+      cierresUser.mustChangePassword = false;
+      await cierresUser.save();
+      console.log(`✅ Usuario '${CIERRES_USERNAME}' actualizado (password resync)`);
     }
   } catch (e) {
     logger.warn(`No se pudo seedear 'cierresgeneral': ${e.message}`);
