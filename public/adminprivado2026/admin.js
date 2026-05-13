@@ -24591,11 +24591,15 @@ let _closingsTodayKey = null;
 // loadClosings() según el rol del user en runtime.
 let _closingsView = { sector: 'ganamos', teamSlot: null, date: null, filter: 'all' };
 
-// True sólo cuando estamos en /cierresgeneral (rol closings_viewer).
-// En ese modo se muestran las 3 cards con PIN. En admin normal queda
-// la UI vieja (selector de tabs, sin PIN).
+// True sólo cuando entramos vía /cierresgeneral (URL trae ?only=closings).
+// En ese modo se muestran las 3 cards con PIN. Para CUALQUIER otro acceso
+// (admin abriendo el panel normal, incluso si lo abre con sesión de
+// closings_viewer y sin ?only=closings) → queda el selector de tabs viejo.
 function _isClosingsViewerMode() {
-    return !!(currentAdmin && currentAdmin.role === 'closings_viewer');
+    try {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('only') === 'closings';
+    } catch { return false; }
 }
 const CLOSINGS_HISTORY_DAYS = 60;
 
