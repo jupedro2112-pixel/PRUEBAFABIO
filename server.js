@@ -33660,13 +33660,19 @@ function _closingComputeTotals(c) {
   const totalABajar = ventas + pendienteAnterior;
   const pendienteHoy = Math.max(0, totalABajar - bajada);
   const bonus = Number(c.bonusARS || 0);
-  // Cuenta neta del sector: lo que entró menos comisión menos bonos.
-  // (No restamos bajada porque la bajada NO es pérdida — es plata que se
-  // transfirió a los clientes que vendieron. Pendiente sí queda como
-  // deuda con clientes hasta que se baje).
-  const netoSector = depositsNet - bonus;
+  // Cuenta neta del sector (ganancia real del operador):
+  //   depósitos netos (después de comisión banco)
+  //   − ventas (plata que les debemos a los ganadores — pagada o no)
+  //   − bonos (regalos)
+  // Pendiente NO se resta acá (ya está dentro de ventas). Bajada no resta
+  // tampoco porque ventas representa la obligación total.
+  // Cash en caja distinto a profit: depositsNet − bajada = lo que SOBRA
+  // hoy en el banco. Lo separamos como `cashEnBanco`.
+  const netoSector = depositsNet - ventas - bonus;
+  const cashEnBanco = depositsNet - bajada;
   return {
-    commission, depositsNet, totalABajar, pendienteHoy, netoSector,
+    commission, depositsNet, ventas, bajada, totalABajar,
+    pendienteHoy, bonus, netoSector, cashEnBanco,
     bajadaShortfall: Math.max(0, totalABajar - bajada)
   };
 }
