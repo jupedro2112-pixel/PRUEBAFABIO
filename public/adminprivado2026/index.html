@@ -100,10 +100,6 @@
                     <span>📋</span>
                     <span>Historial Cotización</span>
                 </a>
-                <a href="#" class="nav-item" data-section="centralHistorial" data-protected-pin="closings" style="background:rgba(212,175,55,0.10);border-left:3px solid #d4af37;">
-                    <span>📊</span>
-                    <span><strong>CENTRAL HISTORIAL</strong></span>
-                </a>
 
                 <!-- CENTRAL — titulo de sección (mismo estilo que NUEVO TOP). -->
                 <div class="nav-section-title" style="color:#d4af37;border-top:1px solid rgba(212,175,55,0.30);padding-top:10px;margin-top:12px;">🏛️ CENTRAL</div>
@@ -1812,28 +1808,6 @@
                     </p>
                 </div>
                 <div id="historialCotizacionBody">
-                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
-                </div>
-            </section>
-
-            <!-- ============================================
-                 SECCIÓN: CENTRAL DE HISTORIAL
-                 Junta interna + externa, agrupa por período (día/semana/mes)
-                 y deja expandir cada bloque para ver el detalle de eventos.
-                 ============================================ -->
-            <section id="centralHistorialSection" class="section">
-                <div class="panel-header">
-                    <h2>📊 Central de Historial</h2>
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <button class="refresh-btn" onclick="loadCentralHistorial()" title="Actualizar">🔄</button>
-                    </div>
-                </div>
-                <div style="background:rgba(212,175,55,0.08);border-left:3px solid #d4af37;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
-                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.55;">
-                        Resumen consolidado de <strong>cotizaciones internas + externas</strong>. Filtrá por día, semana o mes; cada bloque arranca colapsado con el total del período y se expande al click para ver cada cotización individual con qué equipo, cuándo, monto y USDT.
-                    </p>
-                </div>
-                <div id="centralHistorialBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>

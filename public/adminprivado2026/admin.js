@@ -435,7 +435,6 @@ function showSection(sectionKey) {
         historialBuffalo: 'historialBuffaloSection',
         cotizacionesExterno: 'cotizacionesExternoSection',
         historialCotizacion: 'historialCotizacionSection',
-        centralHistorial: 'centralHistorialSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -524,8 +523,6 @@ function showSection(sectionKey) {
         loadHistorialBuffalo();
     } else if (sectionKey === 'historialCotizacion') {
         loadHistorialCotizacion();
-    } else if (sectionKey === 'centralHistorial') {
-        loadCentralHistorial();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
