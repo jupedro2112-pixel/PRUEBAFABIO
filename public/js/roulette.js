@@ -83,6 +83,67 @@
         c.style.display = '';
     }
 
+    // Rueda visual con segmentos coloreados, uno por premio. Si no
+    // tenemos la tabla de premios todavía, render un fallback simple.
+    function _buildWheelSVG(spinning) {
+        const prizes = (_state && _state.prizes) || [];
+        if (!prizes.length) {
+            return '<div style="font-size:72px;line-height:1;animation:rouletteIcon 2s ease-in-out infinite;">🎰</div>' +
+                   '<style>@keyframes rouletteIcon { 0%,100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }</style>';
+        }
+        const total = prizes.reduce((s, p) => s + (p.weight || 0), 0) || 100;
+        let cum = 0;
+        let segs = '';
+        for (const p of prizes) {
+            const segAngle = (Number(p.weight || 0) / total) * 360;
+            const start = cum;
+            const end = cum + segAngle;
+            const startRad = (start - 90) * Math.PI / 180;
+            const endRad = (end - 90) * Math.PI / 180;
+            const r = 92;
+            const x1 = 100 + r * Math.cos(startRad);
+            const y1 = 100 + r * Math.sin(startRad);
+            const x2 = 100 + r * Math.cos(endRad);
+            const y2 = 100 + r * Math.sin(endRad);
+            const largeArc = segAngle > 180 ? 1 : 0;
+            const val = Number(p.value || 0);
+            const color = val >= 10000 ? '#ffd700'
+                         : val >= 2000 ? '#ff8c5a'
+                         : val >= 1000 ? '#aaffaa'
+                         : val > 0     ? '#9bd3ff'
+                         :              '#5a4080';
+            const textColor = val > 0 ? '#1a0033' : '#ddd';
+            segs += '<path d="M 100 100 L ' + x1.toFixed(2) + ' ' + y1.toFixed(2) +
+                    ' A ' + r + ' ' + r + ' 0 ' + largeArc + ' 1 ' + x2.toFixed(2) + ' ' + y2.toFixed(2) +
+                    ' Z" fill="' + color + '" stroke="#1a0033" stroke-width="2"/>';
+            // Label en el centro del segmento (solo si el segmento es lo
+            // bastante ancho para que el texto se lea).
+            if (segAngle >= 12) {
+                const midRad = ((start + end) / 2 - 90) * Math.PI / 180;
+                const lx = 100 + 62 * Math.cos(midRad);
+                const ly = 100 + 62 * Math.sin(midRad);
+                const labelTxt = val > 0 ? ('$' + (val >= 1000 ? (val/1000) + 'K' : val)) : '×';
+                segs += '<text x="' + lx.toFixed(2) + '" y="' + ly.toFixed(2) + '" text-anchor="middle" dominant-baseline="central" font-size="11" font-weight="900" fill="' + textColor + '">' + labelTxt + '</text>';
+            }
+            cum = end;
+        }
+        const spinClass = spinning ? 'wheelSpin' : '';
+        return '<div style="position:relative;width:200px;height:210px;margin:0 auto;">' +
+            '<svg viewBox="0 0 200 200" style="width:200px;height:200px;display:block;margin:0 auto;filter:drop-shadow(0 4px 18px rgba(255,215,0,0.45));">' +
+                '<g id="rouletteWheel" class="' + spinClass + '" style="transform-origin:100px 100px;">' +
+                    segs +
+                    '<circle cx="100" cy="100" r="14" fill="#1a0033" stroke="#ffd700" stroke-width="2"/>' +
+                    '<circle cx="100" cy="100" r="5" fill="#ffd700"/>' +
+                '</g>' +
+            '</svg>' +
+            // Puntero arriba (▼ apuntando al segmento ganador)
+            '<svg viewBox="0 0 30 30" style="position:absolute;top:-4px;left:50%;transform:translateX(-50%);width:30px;height:30px;">' +
+                '<path d="M 15 26 L 26 6 L 4 6 Z" fill="#ff3366" stroke="#1a0033" stroke-width="2"/>' +
+            '</svg>' +
+        '</div>' +
+        '<style>@keyframes rouletteWheelSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } } .wheelSpin { animation: rouletteWheelSpin 0.35s linear infinite; }</style>';
+    }
+
     // Modal que se abre cuando el server rebota el giro porque al user
     // le faltan los pasos (app instalada o notifs). Detecta plataforma y
     // muestra el siguiente paso concreto + CTA.
@@ -246,14 +307,13 @@
             html += _prizesTable();
             html += '<button onclick="VIP.roulette.close()" style="width:100%;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:12px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">CERRAR</button>';
         } else {
-            // Estado: aún no giró. CTA grande + tabla de probabilidades.
-            html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,#4a0080,#7c00cc);border:2px solid #ffd700;border-radius:14px;padding:28px 16px;text-align:center;margin-bottom:12px;box-shadow:inset 0 0 30px rgba(255,215,0,0.20);">';
-            html += '<div style="font-size:72px;line-height:1;margin-bottom:6px;animation:rouletteIcon 2s ease-in-out infinite;">🎰</div>';
-            html += '<div style="color:#ffd700;font-size:16px;font-weight:900;letter-spacing:1px;margin-bottom:4px;">Tu giro de hoy te espera</div>';
-            html += '<div style="color:#fff;font-size:13px;margin-bottom:14px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, se acredita solo a tu saldo.</div>';
-            html += '<button id="rouletteSpinBtn" onclick="VIP.roulette.spin()" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:16px 40px;border-radius:12px;font-weight:900;font-size:18px;cursor:pointer;letter-spacing:2px;box-shadow:0 4px 16px rgba(255,215,0,0.50);">🎰 GIRAR</button>';
+            // Estado: aún no giró. Rueda visual + CTA + tabla.
+            html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,#4a0080,#7c00cc);border:2px solid #ffd700;border-radius:14px;padding:20px 14px;text-align:center;margin-bottom:12px;box-shadow:inset 0 0 30px rgba(255,215,0,0.20);">';
+            html += _buildWheelSVG();
+            html += '<div style="color:#ffd700;font-size:14px;font-weight:900;letter-spacing:0.8px;margin:10px 0 4px;">Tu giro de hoy te espera</div>';
+            html += '<div style="color:#fff;font-size:12.5px;margin-bottom:12px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, se acredita solo a tu saldo.</div>';
+            html += '<button id="rouletteSpinBtn" onclick="VIP.roulette.spin()" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:14px 40px;border-radius:12px;font-weight:900;font-size:17px;cursor:pointer;letter-spacing:2px;box-shadow:0 4px 16px rgba(255,215,0,0.50);">🎰 GIRAR</button>';
             html += '</div>';
-            html += '<style>@keyframes rouletteIcon { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }</style>';
             html += _prizesTable();
         }
         html += '</div>';
@@ -263,12 +323,11 @@
     async function spin() {
         if (_spinning) return;
         _spinning = true;
-        // Animación: el botón se transforma en spinner + cuenta regresiva visual.
+        // Animación: rueda girando rápido + label "GIRANDO".
         const box = document.getElementById('rouletteResultBox');
         if (box) {
-            box.innerHTML = '<div style="font-size:80px;line-height:1;margin-bottom:10px;display:inline-block;animation:rouletteSpin 0.5s linear infinite;">🎰</div>' +
-                '<div style="color:#ffd700;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;">GIRANDO...</div>' +
-                '<style>@keyframes rouletteSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }</style>';
+            box.innerHTML = _buildWheelSVG(true) +
+                '<div style="color:#ffd700;font-size:14px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin-top:6px;">GIRANDO…</div>';
         }
         try {
             // Mínimo 1.5s de animación para que se "sienta" la ruleta.
