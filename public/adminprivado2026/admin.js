@@ -25332,22 +25332,28 @@ function _renderClosings() {
         html += '<div style="color:#888;text-align:center;padding:22px;font-size:12.5px;">' + (filter === 'all' ? 'Sin cierres en el rango. Cargá el primero arriba.' : 'Sin cierres con este filtro.') + '</div>';
     } else {
         html += '<div style="overflow-x:auto;">';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1080px;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1480px;">';
         html += '<thead><tr style="background:rgba(255,255,255,0.04);color:' + sec.color + ';text-align:left;">';
         html += '<th style="padding:7px 10px;font-weight:800;">Fecha</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🔢 Tx</th>';
+        // Estilos: venta y neto se agrandan ~10% más que el resto.
+        const thStd  = 'padding:7px 10px;font-weight:800;text-align:right;font-size:11.5px;';
+        const thBig  = 'padding:9px 14px;font-weight:900;text-align:right;font-size:13px;';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">💰 Depósitos</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏦 Comisión</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Venta = ∑ descargas$ — calculado automáticamente">📤 Descargas (=venta)</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏃 Bajó</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Pendiente calculado = lo que tiene que haber en el CVU para bajar mañana">⏳ Pend.</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🎁 Bonos</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Gastos del día (resta del neto)">🧾 Gastos</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Neto = -diff − gastos. Pendiente ya está descontado.">📐 Neto</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Δ = CVU real − Pendiente. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Estado</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Acción</th>';
+        html += '<th style="' + thStd + '">🏦 Comisión</th>';
+        html += '<th style="' + thStd + '">📤 Descargas</th>';
+        html += '<th style="' + thBig + 'color:#ffd0a0;" title="Venta = descargas (auto)">🛒 VENTA</th>';
+        html += '<th style="' + thStd + '">🏃 Bajó</th>';
+        html += '<th style="' + thStd + '" title="Gastos del día (resta del neto)">🧾 Gastos</th>';
+        html += '<th style="' + thStd + '" title="Egresos del día (préstamos hechos)">📤 Egresos</th>';
+        html += '<th style="' + thStd + '" title="Ingresos del día (préstamos recibidos)">📥 Ingresos</th>';
+        html += '<th style="' + thStd + '">🎁 Bonos</th>';
+        html += '<th style="' + thStd + '" title="Pendiente calculado = lo que falta bajar">⏳ Pend. a bajar</th>';
+        html += '<th style="' + thStd + '" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
+        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = pendiente + ingresos − egresos − gastos. Lo que tiene que estar en el CVU.">📐 NETO</th>';
+        html += '<th style="' + thStd + '" title="Δ = CVU real − Neto. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
+        html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Estado</th>';
+        html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Acción</th>';
         html += '</tr></thead><tbody>';
         const sorted = [...filteredRows].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
         for (const r of sorted) {
@@ -25388,38 +25394,20 @@ function _renderClosings() {
             }
 
             const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#888';
-            const netColor = (c.diff || 0) > 0 ? '#ff8080' : ((c.diff || 0) < 0 ? '#66ff66' : '#aaffaa');
-            // CVU 00h: el saldo real cargado por el owner. La Δ se calcula
-            // abajo (después del Neto) porque depende del Neto nuevo.
             const cvuMid = Number(r.cvuMidnightARS || 0);
-            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (isActive ? 'background:rgba(255,215,0,0.06);' : '') + '">';
-            html += '<td style="padding:6px 10px;color:#fff;font-weight:700;font-family:monospace;">' + escapeHtml(r.dateKey) + (isActive ? ' <span style="color:#ffd700;">←</span>' : '') + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#c89bff;font-weight:700;">' + Number(r.transactionsCount || 0).toLocaleString('es-AR') + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#aaffaa;">' + _closingFmt(r.depositsARS) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#ff8080;">-' + _closingFmt(c.commission) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#ffd0a0;">' + _closingFmt(r.ventasARS) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#aaffff;">' + _closingFmt(r.bajadaARS) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:' + pendColor + ';font-weight:700;" title="Lo que tiene que haber en el CVU para bajar mañana">' + _closingFmt(c.pendienteHoy) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#00d4ff;font-weight:700;" title="Saldo real cargado del CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
-            // Gastos del día: se muestran positivos (sin signo) — restan
-            // del neto, pero la columna es informativa.
             const gastosVal = Number(r.gastosARS || 0);
-            const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
-            html += '<td style="padding:6px 10px;text-align:right;color:' + gastosColor + ';" title="Resta del neto en la cuenta final">' + _closingFmt(gastosVal) + '</td>';
-            // Neto = pendiente + ingresos − egresos − gastos
-            // Representa lo que TIENE que haber en el CVU al cierre.
-            // Si neto > CVU real → falta plata. Si neto < CVU real → sobra.
             const ingresosVal = Number(c.ingresos || 0);
             const egresosVal = Number(c.egresos || 0);
+            const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
+            const ingresosColor = ingresosVal > 0 ? '#aaffaa' : '#888';
+            const egresosColor = egresosVal > 0 ? '#ff8080' : '#888';
+            // Neto = pendiente + ingresos − egresos − gastos (lo que tiene que estar en el CVU)
             const netoFinal = Number(c.pendienteHoy || 0) + ingresosVal - egresosVal - gastosVal;
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
-            html += '<td style="padding:6px 10px;text-align:right;color:' + netoFinalColor + ';font-weight:800;" title="Neto = pendiente + ingresos − egresos − gastos · Lo que tiene que estar en el CVU">' + _closingFmt(netoFinal) + '</td>';
-            // Δ falta/sobra: comparar CVU real vs Neto (lo esperado)
-            //   CVU - Neto = 0 → cuadra · > 0 sobra · < 0 falta
-            const deltaCvu2 = Number(r.cvuMidnightARS || 0) - netoFinal;
+            // Δ = CVU real − Neto
+            const deltaCvu2 = cvuMid - netoFinal;
             let dcolor, dtext;
-            if (Number(r.cvuMidnightARS || 0) === 0 && netoFinal === 0) {
+            if (cvuMid === 0 && netoFinal === 0) {
                 dcolor = '#666'; dtext = '—';
             } else if (Math.abs(deltaCvu2) < 1) {
                 dcolor = '#aaffaa'; dtext = '✅ OK';
@@ -25428,7 +25416,27 @@ function _renderClosings() {
             } else {
                 dcolor = '#ff5050'; dtext = '🚨 ' + _closingFmt(deltaCvu2);
             }
-            html += '<td style="padding:6px 10px;text-align:right;color:' + dcolor + ';font-weight:800;" title="CVU 00h − Neto · positivo = sobra · negativo = falta">' + dtext + '</td>';
+            // Estilos: venta y neto se renderizan más grandes que el resto.
+            const tdStd = 'padding:6px 10px;text-align:right;';
+            const tdBig = 'padding:8px 14px;text-align:right;font-size:13px;';
+            html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (isActive ? 'background:rgba(255,215,0,0.06);' : '') + '">';
+            html += '<td style="padding:6px 10px;color:#fff;font-weight:700;font-family:monospace;">' + escapeHtml(r.dateKey) + (isActive ? ' <span style="color:#ffd700;">←</span>' : '') + '</td>';
+            html += '<td style="' + tdStd + 'color:#c89bff;font-weight:700;">' + Number(r.transactionsCount || 0).toLocaleString('es-AR') + '</td>';
+            html += '<td style="' + tdStd + 'color:#aaffaa;">' + _closingFmt(r.depositsARS) + '</td>';
+            html += '<td style="' + tdStd + 'color:#ff8080;">-' + _closingFmt(c.commission) + '</td>';
+            html += '<td style="' + tdStd + 'color:#ffd0a0;">' + _closingFmt(r.ventasARS) + '</td>';
+            // VENTA (= descargas) — agrandado
+            html += '<td style="' + tdBig + 'color:#ffd0a0;font-weight:900;">' + _closingFmt(r.ventasARS) + '</td>';
+            html += '<td style="' + tdStd + 'color:#aaffff;">' + _closingFmt(r.bajadaARS) + '</td>';
+            html += '<td style="' + tdStd + 'color:' + gastosColor + ';" title="Resta del neto">' + _closingFmt(gastosVal) + '</td>';
+            html += '<td style="' + tdStd + 'color:' + egresosColor + ';" title="Préstamos hechos · resta del neto">' + _closingFmt(egresosVal) + '</td>';
+            html += '<td style="' + tdStd + 'color:' + ingresosColor + ';" title="Préstamos recibidos · suma al neto">' + _closingFmt(ingresosVal) + '</td>';
+            html += '<td style="' + tdStd + 'color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
+            html += '<td style="' + tdStd + 'color:' + pendColor + ';font-weight:700;" title="Lo que falta bajar">' + _closingFmt(c.pendienteHoy) + '</td>';
+            html += '<td style="' + tdStd + 'color:#00d4ff;font-weight:700;" title="Saldo real CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
+            // NETO — agrandado
+            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = pendiente + ingresos − egresos − gastos · Lo que tiene que estar en el CVU">' + _closingFmt(netoFinal) + '</td>';
+            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="CVU 00h − Neto">' + dtext + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';
