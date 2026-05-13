@@ -33649,29 +33649,47 @@ const CLOSING_SECTORS = ['ganamos', 'publicidad', 'buffalo'];
 const CLOSING_LOCK_HOURS = 24;
 
 function _closingComputeTotals(c) {
-  const deposits = Number(c.depositsARS || 0);
+  const deposits = Number(c.depositsARS || 0);         // cargas totales (Σ de 7 equipos)
+  const ventas = Number(c.ventasARS || 0);             // lo que hay que bajar (sale para los ganadores)
   const margin = Number(c.bankMarginPercent || 0);
-  const commission = deposits * (margin / 100);
-  const ventas = Number(c.ventasARS || 0);
+  const bajada = Number(c.bajadaARS || 0);             // lo que efectivamente se bajó hoy
+  const pendienteAnterior = Number(c.pendienteAnteriorARS || 0);
   const bonus = Number(c.bonusARS || 0);
-  const pendiente = Number(c.pendienteAnteriorARS || 0); // "pendiente a completar"
-  // Neto del cierre = ventas (lo que QUEDÓ de venta — positivo)
-  //                   - costo banco (% de depósitos)
-  // Bonificaciones NO se restan (son data, no impactan el neto del día
-  // según pidió el owner).
-  const netoSector = ventas - commission;
+
+  // Comisión: % sobre la VENTA (no sobre depósitos). Es el gasto que se
+  // descuenta del total a bajar.
+  const commission = ventas * (margin / 100);
+
+  // Total que hay que bajar hoy = venta - comisión + pendiente del día anterior
+  // (la comisión ya quedó pagada por el banco, no la bajamos nosotros).
+  const totalABajar = Math.max(0, ventas - commission) + pendienteAnterior;
+
+  // diff = cuánto falta bajar (positivo) o cuánto se bajó de más (negativo)
+  const diff = totalABajar - bajada;
+  const pendienteHoy = Math.max(0, diff);
+  const sobrepago = Math.max(0, -diff);
+
+  // Neto del cierre = -diff (lo opuesto):
+  //  netoSector = 0  → cerró exacto, todo bien
+  //  netoSector > 0  → sobra plata (bajaste de más, a favor)
+  //  netoSector < 0  → falta plata (pendiente, en rojo)
+  const netoSector = -diff;
+
   return {
     commission,
     depositsNet: deposits - commission,
     ventas,
+    bajada,
     bonus,
-    pendienteHoy: pendiente,
-    totalABajar: pendiente,
+    totalABajar,
+    pendienteHoy,
+    sobrepago,
+    diff,
     netoSector,
-    // Cash en caja = depósitos brutos - comisión - ventas (la "ganancia
-    // real" si todas las ventas se cobraron). Útil para reconciliar banco.
-    cashEnBanco: deposits - commission - ventas,
-    bajadaShortfall: pendiente
+    // Cash en banco después de pagar la venta neta = lo que sobra en
+    // caja (no incluye bonus que sale por otro lado).
+    cashEnBanco: deposits - bajada,
+    bajadaShortfall: pendienteHoy
   };
 }
 
@@ -33853,7 +33871,7 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
     // bankMargin/bajada/pendienteAnt también generales (input directo).
     // Para ganamos/publicidad: todos los campos son input directo (no teams).
     const editableCommonBuffalo = [
-      'bankMarginPercent','bajadaARS','pendienteAnteriorARS','transactionsCount',
+      'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
       'bonusNote','notes'
     ];
     const editableNonBuffalo = [

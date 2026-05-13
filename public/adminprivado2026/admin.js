@@ -24875,35 +24875,31 @@ function _renderClosings() {
             const c = r.computed || {};
             const isActive = r.dateKey === date;
 
-            // Análisis del cierre: ¿faltó plata, cerró bien, está pendiente
-            // con respaldo del banco, está sobrebajado?
+            // Análisis del cierre basado en el cuadre (diff):
+            //  diff == 0 → cerró exacto
+            //  diff > 0  → falta bajar (pendiente; rojo si no hay foto banco)
+            //  diff < 0  → bajaste de más (sobra plata, verde a favor)
             const hasBankProof = (r.comprobantes || []).some(p => p.kind === 'pendiente_bank');
-            const overpaid = r.bajadaARS > c.totalABajar;
             const isConfirmed = r.status === 'confirmed';
             const isDraft = r.status === 'draft';
+            const dval = c.diff || 0;
             let stateBadge;
-            if (overpaid) {
-                stateBadge = '<span style="color:#ffaa66;font-weight:800;font-size:10px;" title="Bajaste más de lo que había que bajar — revisá">⚠️ SOBRE-PAGO</span>';
-            } else if (c.pendienteHoy > 0) {
+            if (dval === 0) {
+                stateBadge = isConfirmed
+                    ? '<span style="color:#aaffaa;font-weight:900;font-size:10px;">✅ CERRÓ BIEN</span>'
+                    : '<span style="color:#888;font-size:10px;">📝 BORRADOR · en 0</span>';
+            } else if (dval > 0) {
                 if (isConfirmed && hasBankProof) {
-                    stateBadge = '<span style="color:#ffaa66;font-weight:800;font-size:10px;" title="Quedó pendiente con respaldo del banco — la plata sigue en cuenta">⏳ PEND. RESPALDADO</span>';
+                    stateBadge = '<span style="color:#ffaa66;font-weight:800;font-size:10px;" title="Falta bajar — respaldado con foto banco">⏳ PEND. RESPALDADO</span>';
                 } else if (isConfirmed) {
-                    stateBadge = '<span style="color:#ff5050;font-weight:900;font-size:10px;" title="Pendiente confirmado SIN comprobante banco">🚨 PLATA FALTANTE</span>';
+                    stateBadge = '<span style="color:#ff5050;font-weight:900;font-size:10px;" title="Falta bajar SIN respaldo banco">🚨 PLATA FALTANTE</span>';
                 } else {
-                    stateBadge = '<span style="color:#888;font-size:10px;">📝 BORRADOR · pend</span>';
+                    stateBadge = '<span style="color:#888;font-size:10px;">📝 BORRADOR · falta bajar</span>';
                 }
             } else {
-                if (isConfirmed) {
-                    if (c.netoSector < 0) {
-                        stateBadge = '<span style="color:#ff8080;font-weight:800;font-size:10px;" title="Cerró pero el sector perdió plata el día">📉 CERRÓ EN ROJO</span>';
-                    } else {
-                        stateBadge = '<span style="color:#aaffaa;font-weight:900;font-size:10px;">✅ CERRÓ BIEN</span>';
-                    }
-                } else if (isDraft) {
-                    stateBadge = '<span style="color:#888;font-size:10px;">📝 BORRADOR</span>';
-                } else {
-                    stateBadge = '<span style="color:#888;font-size:10px;">—</span>';
-                }
+                stateBadge = isConfirmed
+                    ? '<span style="color:#66ff66;font-weight:900;font-size:10px;" title="Bajaste de más — sobra plata a favor">💚 SOBREPAGO (a favor)</span>'
+                    : '<span style="color:#888;font-size:10px;">📝 BORRADOR · sobrepago</span>';
             }
             if (r.locked) {
                 stateBadge += ' <span style="color:#ff8080;font-size:9.5px;">🔒</span>';
@@ -24913,7 +24909,7 @@ function _renderClosings() {
             }
 
             const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#888';
-            const netColor = c.netoSector < 0 ? '#ff8080' : '#fff';
+            const netColor = (c.diff || 0) > 0 ? '#ff8080' : ((c.diff || 0) < 0 ? '#66ff66' : '#aaffaa');
             html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);' + (isActive ? 'background:rgba(255,215,0,0.06);' : '') + '">';
             html += '<td style="padding:6px 10px;color:#fff;font-weight:700;font-family:monospace;">' + escapeHtml(r.dateKey) + (isActive ? ' <span style="color:#ffd700;">←</span>' : '') + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#c89bff;font-weight:700;">' + Number(r.transactionsCount || 0).toLocaleString('es-AR') + '</td>';
@@ -25068,16 +25064,19 @@ function _renderTeamSectorEntry(sec, date, row) {
 
     // Computed (suma de los 7 equipos)
     const sumDeposits = teams.reduce((a, t) => a + Number(t.depositsARS || 0), 0);
+    const sumVentas = teams.reduce((a, t) => a + Number(t.ventasARS || 0), 0);
     const sumTransactions = teams.reduce((a, t) => a + Number(t.depositsCount || 0) + Number(t.withdrawalsCount || 0) + Number(t.bonusCount || 0), 0);
 
     // === GENERALES ===
     html += '<div style="background:rgba(0,212,255,0.06);border:1.5px solid rgba(0,212,255,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
     html += '<div style="color:#00d4ff;font-weight:900;font-size:11px;letter-spacing:1px;margin-bottom:8px;">🤝 GENERAL (uno para los 7 equipos)</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;">';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco (sobre venta)</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas$ de los 7</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">⏳ Pendiente a completar</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacciones totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas# + descargas# + bonos#</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Venta total</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ venta$ de los 7 · lo que hay que bajar</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior $</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas# + descargas# + bonos#</div></div>';
     html += '</div>';
     html += '</div>';
 
@@ -25110,19 +25109,21 @@ function _renderTeamSectorEntry(sec, date, row) {
     }
     html += '</div>';
 
-    // Computed inline + análisis (igual que en _renderClosingEntry para no-buffalo)
+    // Computed inline + análisis
     if (exists) {
-        const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#aaffaa';
-        const netColor = c.netoSector < 0 ? '#ff8080' : '#ffd700';
-        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px 9px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:10px;font-size:11px;">';
-        html += '<span style="color:#aaa;">Total depós (7eq): <strong style="color:#aaffaa;">' + _closingFmt(row.depositsARS) + '</strong></span>';
-        html += '<span style="color:#aaa;">Total venta (7eq): <strong style="color:#ffd0a0;">' + _closingFmt(row.ventasARS) + '</strong></span>';
-        html += '<span style="color:#aaa;">Total bonos (7eq): <strong style="color:#ffd700;">' + _closingFmt(row.bonusARS) + '</strong></span>';
-        html += '<span style="color:#aaa;">Comisión: <strong style="color:#ff8080;">-' + _closingFmt(c.commission) + '</strong></span>';
+        const diff = c.diff || 0;
+        const netoColor = diff === 0 ? '#aaffaa' : (diff > 0 ? '#ff8080' : '#66ff66');
+        const netoLabel = diff === 0 ? '✅ CIERRE EN 0' : (diff > 0 ? '⏳ FALTAN ' + _closingFmt(diff) : '💚 SOBRA ' + _closingFmt(-diff));
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:9px 11px;margin-bottom:8px;font-size:11.5px;">';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:5px;">';
+        html += '<span style="color:#aaa;">Σ Cargas: <strong style="color:#aaffaa;">' + _closingFmt(row.depositsARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Σ Venta: <strong style="color:#ffd0a0;">' + _closingFmt(row.ventasARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Comisión banco (sobre venta): <strong style="color:#ff8080;">-' + _closingFmt(c.commission) + '</strong></span>';
         html += '<span style="color:#aaa;">A bajar total: <strong>' + _closingFmt(c.totalABajar) + '</strong></span>';
-        html += '<span style="color:#aaa;">Pendiente hoy: <strong style="color:' + pendColor + ';">' + _closingFmt(c.pendienteHoy) + '</strong></span>';
-        html += '<span style="color:#aaa;">Cash en banco: <strong style="color:#aaffff;">' + _closingFmt(c.cashEnBanco) + '</strong></span>';
-        html += '<span style="color:#aaa;">Neto sector: <strong style="color:' + netColor + ';">' + _closingFmt(c.netoSector) + '</strong></span>';
+        html += '<span style="color:#aaa;">Bajada real: <strong style="color:#aaffff;">' + _closingFmt(row.bajadaARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Σ Bonificaciones (dato): <strong style="color:#ffd700;">' + _closingFmt(row.bonusARS) + '</strong></span>';
+        html += '</div>';
+        html += '<div style="font-size:14px;font-weight:900;color:' + netoColor + ';text-align:center;padding:6px;border-top:1px dashed rgba(255,255,255,0.10);margin-top:4px;">' + netoLabel + '</div>';
         html += '</div>';
 
         html += _renderComprobantesPanel(row, rid, locked, c);
@@ -25201,6 +25202,7 @@ async function saveTeamSectorClosing(rid, date, sector) {
         sector,
         dateKey: date,
         bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
+        bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
         teams
     };
