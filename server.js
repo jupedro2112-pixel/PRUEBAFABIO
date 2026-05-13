@@ -33739,27 +33739,29 @@ function _closingComputeTotals(c) {
   // tajada de cada depósito que entra. Es nuestro gasto fijo del día.
   const commission = deposits * (margin / 100);
 
-  // Total que hay que bajar hoy = venta - comisión + pendiente del día anterior
-  // (la comisión ya quedó pagada por el banco, no la bajamos nosotros).
-  const totalABajar = Math.max(0, ventas - commission) + pendienteAnterior;
+  // Neto del día = lo que efectivamente queda después de:
+  //   ventas (lo que se vendió/retiró)
+  //   − comisión (lo que el banco se llevó)
+  //   − gastos (los gastos del día)
+  //   − egresos (préstamos hechos)
+  //   + ingresos (préstamos recibidos)
+  const neto = ventas - commission - gastos - egresos + ingresos;
 
-  // diff = cuánto falta bajar (positivo) o cuánto se bajó de más (negativo)
+  // Total a bajar = Neto + pendiente anterior (lo que arrastraste).
+  const totalABajar = neto + pendienteAnterior;
+
+  // Pendiente a bajar (real) = total a bajar − lo bajado
+  // Positivo: falta bajar · Negativo: bajaste de más
   const diff = totalABajar - bajada;
   const pendienteHoy = Math.max(0, diff);
   const sobrepago = Math.max(0, -diff);
 
-  // Neto del cierre = -diff (lo opuesto):
-  //  netoSector = 0  → cerró exacto, todo bien
-  //  netoSector > 0  → sobra plata (bajaste de más, a favor)
-  //  netoSector < 0  → falta plata (pendiente, en rojo)
+  // netoSector legacy = -diff (sale positivo si sobraste, negativo si faltaste)
   const netoSector = -diff;
 
-  // Saldo CVU esperado a las 00 hs (= Neto del día):
-  //   pendiente + ingresos − egresos − gastos
-  // El pendiente que falta bajar tiene que estar en el banco. Los
-  // ingresos suman (entró plata), egresos y gastos restan (salió).
-  // Si el saldo real (cvuMidnightARS) es menor, falta plata; si es mayor, sobra.
-  const cvuExpected = pendienteHoy + ingresos - egresos - gastos;
+  // Saldo CVU esperado a las 00 hs = pendiente que falta bajar.
+  // Ese monto tiene que estar en el banco.
+  const cvuExpected = pendienteHoy;
   // Discrepancia: cvuActual - cvuExpected
   //   = 0  → perfecto (el banco coincide con los movimientos)
   //   > 0  → sobra plata (entró algo no registrado — revisar)
@@ -33775,8 +33777,9 @@ function _closingComputeTotals(c) {
     ingresos,
     egresos,
     gastos,
-    totalABajar,
-    pendienteHoy,
+    neto,                          // venta - comisión - gastos - egresos + ingresos
+    totalABajar,                   // neto + pendiente anterior
+    pendienteHoy,                  // max(0, totalABajar - bajada)
     sobrepago,
     diff,
     netoSector,

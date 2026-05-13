@@ -25350,8 +25350,8 @@ function _renderClosings() {
         html += '<th style="' + thStd + '">🎁 Bonos</th>';
         html += '<th style="' + thStd + '" title="Pendiente calculado = lo que falta bajar">⏳ Pend. a bajar</th>';
         html += '<th style="' + thStd + '" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
-        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto = pendiente + ingresos − egresos − gastos">📐 NETO</th>';
-        html += '<th style="' + thStd + '" title="Δ = Pendiente − CVU 00h − Gastos − Egresos + Ingresos. Positivo = falta · Negativo = sobra">Δ falta/sobra</th>';
+        html += '<th style="' + thBig + 'color:#c89bff;" title="Neto del día = venta − comisión − gastos − egresos + ingresos">📐 NETO</th>';
+        html += '<th style="' + thStd + '" title="Δ = Pendiente a bajar − CVU 00h (gastos/egresos/ingresos ya están en el pendiente vía Neto). Positivo = falta · Negativo = sobra">Δ falta/sobra</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Estado</th>';
         html += '<th style="' + thStd.replace('text-align:right', 'text-align:center') + '">Acción</th>';
         html += '</tr></thead><tbody>';
@@ -25401,21 +25401,19 @@ function _renderClosings() {
             const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
             const ingresosColor = ingresosVal > 0 ? '#aaffaa' : '#888';
             const egresosColor = egresosVal > 0 ? '#ff8080' : '#888';
-            // Neto (= CVU esperado) = pendiente + ingresos − egresos − gastos
-            // Es lo que TIENE que haber en el CVU al cerrar el día.
-            const netoFinal = Number(c.pendienteHoy || 0)
-                + ingresosVal
-                - egresosVal
-                - gastosVal;
+            // Neto del día = venta − comisión − gastos − egresos + ingresos
+            // (lo trae el server en c.neto; si no, lo calculamos acá como fallback)
+            const netoFinal = (c.neto != null)
+                ? Number(c.neto)
+                : (Number(r.ventasARS || 0) - Number(c.commission || 0) - gastosVal - egresosVal + ingresosVal);
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
-            // Δ falta/sobra — se calcula DIRECTO desde pendiente:
-            //   Δ = (Pendiente − CVU) − Gastos − Egresos + Ingresos
-            // Positivo = FALTA (lo que tendría que estar en el CVU no está).
-            // Negativo = SOBRA (hay más plata de la calculada).
-            const faltaSobra = (Number(c.pendienteHoy || 0) - cvuMid)
-                - gastosVal - egresosVal + ingresosVal;
+            // Δ falta/sobra = pendiente a bajar − CVU 00h
+            // El pendiente YA incluye gastos/egresos/ingresos (vía neto).
+            // Positivo = FALTA · Negativo = SOBRA
+            const pendienteVal = Number(c.pendienteHoy || 0);
+            const faltaSobra = pendienteVal - cvuMid;
             let dcolor, dtext;
-            if (cvuMid === 0 && Number(c.pendienteHoy || 0) === 0 && ingresosVal === 0 && egresosVal === 0 && gastosVal === 0) {
+            if (cvuMid === 0 && pendienteVal === 0) {
                 dcolor = '#666'; dtext = '—';
             } else if (Math.abs(faltaSobra) < 1) {
                 dcolor = '#aaffaa'; dtext = '✅ OK';
@@ -25443,8 +25441,8 @@ function _renderClosings() {
             html += '<td style="' + tdStd + 'color:' + pendColor + ';font-weight:700;" title="Lo que falta bajar">' + _closingFmt(c.pendienteHoy) + '</td>';
             html += '<td style="' + tdStd + 'color:#00d4ff;font-weight:700;" title="Saldo real CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
             // NETO — agrandado
-            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto = pendiente + ingresos − egresos − gastos">' + _closingFmt(netoFinal) + '</td>';
-            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="Δ = Pendiente − CVU 00h − Gastos − Egresos + Ingresos">' + dtext + '</td>';
+            html += '<td style="' + tdBig + 'color:' + netoFinalColor + ';font-weight:900;" title="Neto del día = venta − comisión − gastos − egresos + ingresos">' + _closingFmt(netoFinal) + '</td>';
+            html += '<td style="' + tdStd + 'color:' + dcolor + ';font-weight:800;" title="Δ = Pendiente a bajar − CVU 00h (gastos/egresos/ingresos ya están en el pendiente vía Neto)">' + dtext + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';
@@ -25598,16 +25596,19 @@ function closingsRecompute(rid) {
     }
 
     // Mismo cálculo del backend (_closingComputeTotals)
-    // Comisión: % sobre los DEPÓSITOS (cargas), no sobre venta.
     const commission = sumDeposits * (bankPct / 100);
-    const totalABajar = Math.max(0, sumVentas - commission) + pendAnt;
+    // Neto = venta − comisión − gastos − egresos + ingresos
+    const neto = sumVentas - commission - gastos - egresos + ingresos;
+    // Total a bajar = Neto + pendiente anterior
+    const totalABajar = neto + pendAnt;
+    // Pendiente a bajar (real) = total a bajar − bajada
     const diff = totalABajar - bajada;
+    const pendienteHoyLive = Math.max(0, diff);
     const totalTx = sumCargasN + sumDescN + sumBonosN;
 
-    // CVU esperado (= Neto del día):
-    //   pendiente + ingresos − egresos − gastos
-    const pendienteHoyLive = Math.max(0, diff);
-    const cvuExpected = pendienteHoyLive + ingresos - egresos - gastos;
+    // CVU esperado = pendiente a bajar.
+    const cvuExpected = pendienteHoyLive;
+    // Δ falta/sobra = CVU real − pendiente (negativo = falta).
     const cvuDiscrepancy = cvuActual - cvuExpected;
 
     // Pintar preview
@@ -25622,7 +25623,8 @@ function closingsRecompute(rid) {
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DEPÓSITOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(sumDeposits) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DESCARGAS (= VENTA auto)</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">COMISIÓN (' + bankPct + '% × depósitos)</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(commission) + '</div></div>';
-    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">TOTAL A BAJAR</div><div style="color:#fff;font-weight:800;">' + _closingFmt(totalABajar) + '</div><div style="color:#666;font-size:9px;">venta-com + pend ant</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">NETO (venta − com − gas − eg + ing)</div><div style="color:#c89bff;font-weight:800;">' + _closingFmt(neto) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">TOTAL A BAJAR</div><div style="color:#fff;font-weight:800;">' + _closingFmt(totalABajar) + '</div><div style="color:#666;font-size:9px;">neto + pend ant</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">BAJADA REAL</div><div style="color:#aaffff;font-weight:800;">' + _closingFmt(bajada) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ BONIFICACIONES (dato)</div><div style="color:#ffd700;font-weight:800;">' + _closingFmt(sumBonus) + '</div><div style="color:#666;font-size:9px;">no afecta cuadre</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ TRANSACCIONES</div><div style="color:#c89bff;font-weight:800;">' + totalTx.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9px;">' + sumCargasN + '+' + sumDescN + '+' + sumBonosN + '</div></div>';
@@ -25646,7 +25648,7 @@ function closingsRecompute(rid) {
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📥 INGRESOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(ingresos) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">📤 EGRESOS</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(egresos) + '</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">🧾 GASTOS</div><div style="color:#ffaa66;font-weight:800;">-' + _closingFmt(gastos) + '</div></div>';
-        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO (= NETO)</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">pend + ing − eg − gas</div></div>';
+        html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU ESPERADO</div><div style="color:#fff;font-weight:800;">' + _closingFmt(cvuExpected) + '</div><div style="color:#666;font-size:9px;">= pendiente a bajar</div></div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">CVU REAL (00 hs)</div><div style="color:#00d4ff;font-weight:800;">' + _closingFmt(cvuActual) + '</div></div>';
         html += '</div>';
         html += '<div style="background:' + cvuColor + '22;border:2px solid ' + cvuColor + ';border-radius:7px;padding:7px;text-align:center;color:' + cvuColor + ';font-weight:900;font-size:12.5px;">' + cvuLabel + '</div>';
@@ -25814,14 +25816,18 @@ function analyzeClosing(id) {
     html += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:13px;margin-bottom:12px;">';
     html += '<div style="color:#c89bff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🧮 CÁLCULO PASO A PASO</div>';
     html += '<div style="font-family:monospace;font-size:12.5px;line-height:1.8;color:#ddd;">';
-    html += '<div>1. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong></div>';
-    html += '<div>2. Σ Descargas (= venta auto a bajar): <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
-    html += '<div>3. % Banco aplicado a depósitos: <strong style="color:#fff;">' + Number(r.bankMarginPercent || 0) + '%</strong></div>';
-    html += '<div>4. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
-    html += '<div>5. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">6. <strong>TOTAL A BAJAR</strong> = (venta − comisión) + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
-    html += '<div>7. Bajada REAL del día: <strong style="color:#aaffff;">' + fmt(r.bajadaARS) + '</strong></div>';
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">8. <strong>DIFERENCIA</strong> = total a bajar − bajada = <strong style="color:' + cuadreColor + ';font-size:14px;">' + (diff >= 0 ? '+' : '') + fmt(diff) + '</strong></div>';
+    html += '<div>1. Σ Venta (= descargas): <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
+    html += '<div>2. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong> · base de la comisión</div>';
+    html += '<div>3. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
+    html += '<div>4. Gastos del día: <strong style="color:#ffaa66;">-' + fmt(c.gastos || 0) + '</strong></div>';
+    html += '<div>5. Egresos (préstamos hechos): <strong style="color:#ff8080;">-' + fmt(c.egresos || 0) + '</strong></div>';
+    html += '<div>6. Ingresos (préstamos recibidos): <strong style="color:#aaffaa;">+' + fmt(c.ingresos || 0) + '</strong></div>';
+    const netoCalc = Number(c.neto != null ? c.neto : (Number(r.ventasARS||0) - Number(c.commission||0) - Number(c.gastos||0) - Number(c.egresos||0) + Number(c.ingresos||0)));
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">7. <strong>NETO del día</strong> = venta − comisión − gastos − egresos + ingresos = <strong style="color:#c89bff;font-size:14px;">' + fmt(netoCalc) + '</strong></div>';
+    html += '<div>8. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">9. <strong>TOTAL A BAJAR</strong> = neto + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
+    html += '<div>10. Bajada REAL del día: <strong style="color:#aaffff;">-' + fmt(r.bajadaARS) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">11. <strong>PENDIENTE A BAJAR</strong> = total a bajar − bajada = <strong style="color:' + cuadreColor + ';font-size:14px;">' + fmt(diff) + '</strong></div>';
     html += '</div>';
     html += '<div style="background:' + cuadreColor + '22;border:2px solid ' + cuadreColor + ';border-radius:8px;padding:10px;margin-top:10px;text-align:center;color:' + cuadreColor + ';font-weight:900;font-size:14px;">' + cuadreText + '</div>';
 
@@ -25870,11 +25876,10 @@ function analyzeClosing(id) {
         html += '</div>';
         html += '</div>';
         html += '<div style="font-family:monospace;font-size:12px;line-height:1.7;color:#ddd;background:rgba(0,0,0,0.25);padding:9px;border-radius:7px;margin-bottom:8px;">';
-        html += '<div>Neto del día (= CVU esperado) = pendiente + ingresos − egresos − gastos</div>';
-        html += '<div style="margin-top:4px;">             = ' + fmt(c.pendienteHoy || 0) + ' + ' + fmt(c.ingresos || 0) + ' − ' + fmt(c.egresos || 0) + ' − ' + fmt(c.gastos || 0) + '</div>';
-        html += '<div style="margin-top:4px;">             = <strong style="color:#fff;font-size:13px;">' + fmt(cvuExpected) + '</strong></div>';
+        html += '<div>CVU esperado = Pendiente a bajar = <strong style="color:#fff;font-size:13px;">' + fmt(c.pendienteHoy || 0) + '</strong></div>';
+        html += '<div style="color:#888;font-size:10.5px;">(Gastos, egresos e ingresos ya están descontados en el cálculo del Neto que arma el pendiente)</div>';
         html += '<div style="margin-top:5px;border-top:1px dashed rgba(255,255,255,0.10);padding-top:5px;">CVU real cargado: <strong style="color:#00d4ff;">' + fmt(cvuActual) + '</strong></div>';
-        html += '<div>Discrepancia: <strong style="color:' + cvuColor + ';">' + (cvuDiscrepancy >= 0 ? '+' : '') + fmt(cvuDiscrepancy) + '</strong></div>';
+        html += '<div>Diferencia (CVU real − pendiente): <strong style="color:' + cvuColor + ';">' + (cvuDiscrepancy >= 0 ? '+' : '') + fmt(cvuDiscrepancy) + '</strong></div>';
         html += '</div>';
         html += '<div style="background:' + cvuColor + '22;border:2px solid ' + cvuColor + ';border-radius:7px;padding:9px;text-align:center;color:' + cvuColor + ';font-weight:900;font-size:13px;">' + cvuText + '</div>';
         html += '</div>';
