@@ -24586,10 +24586,17 @@ let _closingsRowsCache = [];      // historial completo (últimos N días) para 
 let _closingsTodayKey = null;
 // Selección actual: qué sector + (opcional) equipo Buffalo + día activo del editor
 // + filtro de estado (all/draft/confirmed) para el historial.
-// sector = null al iniciar — el usuario tiene que clickear una card y
-// pasar el PIN antes de ver los datos. Después de un unlock por sesión,
-// la selección queda hasta cerrar pestaña.
-let _closingsView = { sector: null, teamSlot: null, date: null, filter: 'all' };
+// Para el rol closings_viewer arrancamos sin sector (gate de PIN). Para
+// admins entramos directo a "ganamos" como antes. El default lo setea
+// loadClosings() según el rol del user en runtime.
+let _closingsView = { sector: 'ganamos', teamSlot: null, date: null, filter: 'all' };
+
+// True sólo cuando estamos en /cierresgeneral (rol closings_viewer).
+// En ese modo se muestran las 3 cards con PIN. En admin normal queda
+// la UI vieja (selector de tabs, sin PIN).
+function _isClosingsViewerMode() {
+    return !!(currentAdmin && currentAdmin.role === 'closings_viewer');
+}
 const CLOSINGS_HISTORY_DAYS = 60;
 
 function closingsSetFilter(f) {
@@ -24718,7 +24725,7 @@ function _verifyClosingsPin(sector, attempt) {
     return String(attempt || '').trim() === _getClosingsPin(sector);
 }
 function _changeClosingsPin(sector) {
-    const auth = prompt('🔑 Cambiar PIN de ' + sector.toUpperCase() + '\n\nIngresá el PIN ACTUAL o el PIN MAESTRO (1818):');
+    const auth = prompt('🔑 Cambiar PIN de ' + sector.toUpperCase() + '\n\nIngresá el PIN actual:');
     if (auth == null) return;
     if (!_verifyClosingsPin(sector, auth)) {
         showToast('PIN incorrecto', 'error');
@@ -24732,9 +24739,9 @@ function _changeClosingsPin(sector) {
 }
 
 function closingsSelectSector(sectorKey) {
-    // PIN gate: si el sector está bloqueado, pedir clave antes de entrar.
-    if (!_isClosingsUnlocked(sectorKey)) {
-        const pin = prompt('🔒 Sector ' + sectorKey.toUpperCase() + '\n\nIngresá el PIN para acceder:\n(o el PIN MAESTRO 1818)');
+    // PIN gate sólo en /cierresgeneral (closings_viewer). Admin entra directo.
+    if (_isClosingsViewerMode() && !_isClosingsUnlocked(sectorKey)) {
+        const pin = prompt('🔒 Sector ' + sectorKey.toUpperCase() + '\n\nIngresá el PIN para acceder:');
         if (pin == null) return; // canceló
         if (!_verifyClosingsPin(sectorKey, pin)) {
             showToast('PIN incorrecto', 'error');
@@ -24759,6 +24766,13 @@ async function loadClosings() {
 
     if (!_closingsView.date) {
         _closingsView.date = _closingsTodayART();
+    }
+
+    // En modo closings_viewer arrancamos SIN sector activo para que se
+    // dispare el gate de PIN. En admin normal sigue arrancando en 'ganamos'.
+    if (_isClosingsViewerMode() && !_closingsView._initialized) {
+        _closingsView.sector = null;
+        _closingsView._initialized = true;
     }
 
     // Si no hay sector seleccionado, sólo renderizamos las 3 cards de
@@ -25254,34 +25268,47 @@ function _renderClosings() {
 
     let html = '';
 
-    // ===== Selector de sector — 3 columnas con PIN por sector =====
-    // Cada sector es una card grande con candado si no está desbloqueado.
-    // Click → pide PIN → desbloquea por sesión. Botón 🔑 cambia el PIN.
-    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">';
-    for (const s of CLOSING_SECTORS_UI) {
-        const active = s.key === _closingsView.sector;
-        const unlocked = _isClosingsUnlocked(s.key);
-        const bg = active
-            ? 'linear-gradient(135deg,' + s.color + ',' + s.color + 'cc)'
-            : (unlocked ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.40)');
-        const color = active ? '#000' : s.color;
-        const border = active ? s.color : (s.color + (unlocked ? '55' : '33'));
-        const lockBadge = unlocked
-            ? '<span style="font-size:11px;color:' + (active ? '#000' : '#aaffaa') + ';font-weight:800;">🔓 abierto</span>'
-            : '<span style="font-size:11px;color:#ff8080;font-weight:800;">🔒 con clave</span>';
-        html += '<div style="background:' + bg + ';color:' + color + ';border:2px solid ' + border + ';border-radius:11px;padding:14px 12px;position:relative;cursor:pointer;transition:transform 0.08s;" onclick="closingsSelectSector(\'' + s.key + '\')" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">';
-        html += '<div style="font-weight:900;font-size:14px;letter-spacing:0.5px;margin-bottom:5px;">' + s.label + '</div>';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
-        html += lockBadge;
-        html += '<button type="button" onclick="event.stopPropagation();_changeClosingsPin(\'' + s.key + '\')" title="Cambiar PIN (usá 1818 si lo olvidaste)" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);color:' + (active ? '#000' : '#fff') + ';padding:3px 9px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">🔑 PIN</button>';
+    // ===== Selector de sector =====
+    // Dos modos:
+    //  A) /cierresgeneral (closings_viewer): 3 cards grandes con PIN.
+    //  B) admin normal: el selector de tabs viejo, sin PIN.
+    if (_isClosingsViewerMode()) {
+        html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">';
+        for (const s of CLOSING_SECTORS_UI) {
+            const active = s.key === _closingsView.sector;
+            const unlocked = _isClosingsUnlocked(s.key);
+            const bg = active
+                ? 'linear-gradient(135deg,' + s.color + ',' + s.color + 'cc)'
+                : (unlocked ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.40)');
+            const color = active ? '#000' : s.color;
+            const border = active ? s.color : (s.color + (unlocked ? '55' : '33'));
+            const lockBadge = unlocked
+                ? '<span style="font-size:11px;color:' + (active ? '#000' : '#aaffaa') + ';font-weight:800;">🔓 abierto</span>'
+                : '<span style="font-size:11px;color:#ff8080;font-weight:800;">🔒 con clave</span>';
+            html += '<div style="background:' + bg + ';color:' + color + ';border:2px solid ' + border + ';border-radius:11px;padding:14px 12px;position:relative;cursor:pointer;transition:transform 0.08s;" onclick="closingsSelectSector(\'' + s.key + '\')" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">';
+            html += '<div style="font-weight:900;font-size:14px;letter-spacing:0.5px;margin-bottom:5px;">' + s.label + '</div>';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
+            html += lockBadge;
+            html += '<button type="button" onclick="event.stopPropagation();_changeClosingsPin(\'' + s.key + '\')" title="Cambiar PIN" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);color:' + (active ? '#000' : '#fff') + ';padding:3px 9px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">🔑 PIN</button>';
+            html += '</div>';
+            if (active) html += '<div style="position:absolute;top:6px;right:8px;font-size:12px;font-weight:900;">★</div>';
+            html += '</div>';
+        }
         html += '</div>';
-        if (active) html += '<div style="position:absolute;top:6px;right:8px;font-size:12px;font-weight:900;">★</div>';
+    } else {
+        // UI vieja para admin normal (tabs en línea, sin PIN)
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
+        for (const s of CLOSING_SECTORS_UI) {
+            const active = s.key === _closingsView.sector;
+            const bg = active ? s.color : 'rgba(255,255,255,0.04)';
+            const color = active ? '#000' : s.color;
+            const border = active ? s.color : (s.color + '55');
+            html += '<button type="button" onclick="closingsSelectSector(\'' + s.key + '\')" style="flex:1;min-width:130px;background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:9px 12px;border-radius:9px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;cursor:pointer;">' + s.label + '</button>';
+        }
         html += '</div>';
     }
-    html += '</div>';
-    html += '<div style="color:#888;font-size:10.5px;margin-bottom:10px;text-align:right;">PIN olvidado? Usá el maestro <strong style="color:#ffaa66;">1818</strong> para entrar y/o cambiar la clave.</div>';
 
-    // Sin sector activo: mostrar mensaje y cortar.
+    // Sin sector activo (solo aplica en closings_viewer): mostrar prompt.
     if (noSector) {
         html += '<div style="background:rgba(0,212,255,0.06);border:1px dashed rgba(0,212,255,0.40);border-radius:10px;padding:32px;text-align:center;color:#aaa;font-size:13px;">';
         html += '👆 Tocá uno de los 3 sectores de arriba para entrar. Cada uno tiene su PIN propio.';
@@ -25366,7 +25393,7 @@ function _renderClosings() {
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🔢 Tx</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">💰 Depósitos</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏦 Comisión</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🛒 Venta</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Venta = ∑ descargas$ — calculado automáticamente">📤 Descargas (=venta)</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏃 Bajó</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Pendiente calculado = lo que tiene que haber en el CVU para bajar mañana">⏳ Pend.</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
@@ -25623,7 +25650,7 @@ function closingsRecompute(rid) {
     html += '<div style="color:#c89bff;font-size:10px;font-weight:900;letter-spacing:1px;margin-bottom:6px;">🧮 CÁLCULO EN VIVO (se actualiza al tipear)</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:5px;margin-bottom:6px;">';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DEPÓSITOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(sumDeposits) + '</div></div>';
-    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ VENTA</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DESCARGAS (= VENTA auto)</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">COMISIÓN (' + bankPct + '% × depósitos)</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(commission) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">TOTAL A BAJAR</div><div style="color:#fff;font-weight:800;">' + _closingFmt(totalABajar) + '</div><div style="color:#666;font-size:9px;">venta-com + pend ant</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">BAJADA REAL</div><div style="color:#aaffff;font-weight:800;">' + _closingFmt(bajada) + '</div></div>';
@@ -25818,7 +25845,7 @@ function analyzeClosing(id) {
     html += '<div style="color:#c89bff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🧮 CÁLCULO PASO A PASO</div>';
     html += '<div style="font-family:monospace;font-size:12.5px;line-height:1.8;color:#ddd;">';
     html += '<div>1. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong></div>';
-    html += '<div>2. Σ Venta a bajar: <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
+    html += '<div>2. Σ Descargas (= venta auto a bajar): <strong style="color:#ffd0a0;">' + fmt(r.ventasARS) + '</strong></div>';
     html += '<div>3. % Banco aplicado a venta: <strong style="color:#fff;">' + Number(r.bankMarginPercent || 0) + '%</strong></div>';
     html += '<div>4. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
     html += '<div>5. Pendiente del día anterior: <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
@@ -25892,7 +25919,7 @@ function analyzeClosing(id) {
         html += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);">';
         html += '<th style="padding:5px 8px;">#</th><th style="padding:5px 8px;">Equipo</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Depósito $</th><th style="padding:5px 8px;text-align:right;">Depós #</th>';
-        html += '<th style="padding:5px 8px;text-align:right;">Venta $</th>';
+        html += '<th style="padding:5px 8px;text-align:right;" title="Descargas$ del equipo (= venta)">Descargas $</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Bon $</th><th style="padding:5px 8px;text-align:right;">Bon #</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Desc #</th>';
         html += '</tr></thead><tbody>';
@@ -26100,7 +26127,7 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;">';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco (sobre depósitos)</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ depósito$ de los 7 · base de la comisión</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Venta total</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ venta$ de los 7 · lo que hay que bajar</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Venta total (auto)</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;" title="Calculado: ∑ descargas$ de los 7 · NO se edita">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ descargas$ de los 7 · lo que hay que bajar (auto)</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'bajada', null, '📷 Foto bajada', locked) + _inlineUploadList(rid, row, 'bajada', null, locked) + '</div>';
     html += '<div style="color:#666;font-size:9px;margin-top:2px;">hasta 10 fotos (varias transferencias)</div></div>';
@@ -26135,7 +26162,7 @@ function _renderTeamSectorEntry(sec, date, row) {
         const moneyInputStyle = inputStyle + 'font-size:11.5px;padding:4px 8px;';
         html += '<div style="display:grid;grid-template-columns:1.6fr 1.6fr 1.6fr 1fr 1fr 1fr;gap:5px;align-items:end;">';
         html += '<div><label style="color:#aaffaa;font-size:9.5px;text-transform:uppercase;font-weight:700;">💰 Depósito $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(102,255,102,0.30);" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;">🛒 Venta $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Lo que el equipo retiró (cash-outs). La venta se calcula sola = descargas$.">📤 Descargas $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#ffd700;font-size:9.5px;text-transform:uppercase;font-weight:700;">🎁 Bonif. $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + moneyInputStyle + 'border-color:rgba(255,215,0,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de depósitos (operaciones de carga)">📥 Depós#</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de descargas (operaciones de retiro)">📤 Desc#</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
@@ -26319,7 +26346,7 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px;margin-bottom:8px;">';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos</label><input type="number" id="cls_' + rid + '_depositsARS" value="' + (row ? row.depositsARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Ventas a bajar</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;" title="Lo que se retiró (cash-outs). La venta = descargas$, se calcula sola.">📤 Descargas $</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '><div style="color:#666;font-size:9.5px;margin-top:2px;">🛒 venta auto = mismo monto</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos ($)</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
