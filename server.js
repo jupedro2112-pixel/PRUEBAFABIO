@@ -1578,9 +1578,24 @@ app.post('/api/admin/send-cbu', authMiddleware, adminMiddleware, async (req, res
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
-  const mongoOk = mongoose.connection.readyState === 1;
+  const mongoStates = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+  const mongoState = mongoose.connection.readyState;
+  const mongoOk = mongoState === 1;
   res.json({
-    status: mongoOk ? 'ok' : 'degraded'
+    status: mongoOk ? 'ok' : 'degraded',
+    mongo: mongoStates[mongoState] || 'unknown',
+    env: {
+      // Sólo flags booleanos — NO se exponen valores reales para no filtrar secrets.
+      hasMongoUri: !!process.env.MONGODB_URI,
+      hasJwtSecret: !!process.env.JWT_SECRET,
+      hasJgApiUrl: !!process.env.JG_API_URL,
+      hasRedisUrl: !!process.env.REDIS_URL,
+      hasS3Bucket: !!process.env.S3_BUCKET,
+      nodeEnv: process.env.NODE_ENV || 'development',
+      debugLogin: process.env.DEBUG_LOGIN === '1'
+    },
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -1897,9 +1912,20 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     // Si no existe localmente, verificar en JUGAYGANA (solo para login por username)
     if (!user && username) {
       logger.debug(`User ${username} not found locally, checking JUGAYGANA...`);
-      
-      const jgUser = await jugaygana.getUserInfoByName(username);
-      
+
+      // En AWS suele haber problemas de conectividad o timeout hacia JUGAYGANA.
+      // Si la llamada falla, NO queremos romper el login — degradamos a "user
+      // not found" y devolvemos 401 normal.
+      let jgUser = null;
+      try {
+        jgUser = await jugaygana.getUserInfoByName(username);
+      } catch (jgErr) {
+        logger.error(`[Login] JUGAYGANA lookup failed for ${username}: ${jgErr.message}`);
+        // Si era un admin (no debería estar en JUGAYGANA), simplemente cae
+        // como credenciales inválidas. Si era un user real importado, perdió
+        // la chance de auto-creación esta vez — reintenta el próximo login.
+      }
+
       if (jgUser) {
         logger.debug(`User found in JUGAYGANA, creating locally...`);
         
@@ -2104,8 +2130,22 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       }
     });
   } catch (error) {
-    logger.error(`Login error: ${error.message}`);
-    res.status(500).json({ error: 'Error del servidor' });
+    // Loggear stack completo para que en CloudWatch se vea la causa raíz.
+    // El errorCode + name ayuda a identificar issues típicos en producción:
+    //   MongooseError / MongoNetworkError → Mongo no llega
+    //   JsonWebTokenError → JWT_SECRET malformado/faltante
+    //   TypeError → bug del código
+    logger.error(`[Login] ${error.name || 'Error'}: ${error.message}`, {
+      stack: error.stack,
+      code: error.code,
+      name: error.name
+    });
+    res.status(500).json({
+      error: 'Error del servidor',
+      // El detalle del error sólo se incluye si DEBUG_LOGIN=1 en el env (no
+      // exponer info sensible por default). Útil para diagnosticar en AWS.
+      detail: process.env.DEBUG_LOGIN === '1' ? `${error.name}: ${error.message}` : undefined
+    });
   }
 });
 
