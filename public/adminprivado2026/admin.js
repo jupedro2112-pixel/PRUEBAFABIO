@@ -24583,6 +24583,53 @@ function _closingFmt(n) {
     return '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
 }
 
+// Botón inline para adjuntar foto al cierre. Aparece pegado a un campo
+// concreto (depósito de un equipo, bajada, gastos, etc.). Cuenta cuántas
+// fotos ya tiene de ese kind+teamSlot y lo muestra arriba.
+//   rid       — id del cierre (si empieza con "new_" el botón pide guardar)
+//   row       — row del cierre actual (para contar fotos ya subidas)
+//   kind      — categoría ('deposito', 'bajada', 'ingreso', etc.)
+//   teamSlot  — slot del equipo (0..6) o null si general
+//   label     — texto del botón ('📷 Foto', etc.)
+//   locked    — si el cierre está bloqueado, deshabilita
+function _inlineUploadBtn(rid, row, kind, teamSlot, label, locked) {
+    const isNew = String(rid).startsWith('new_');
+    const comps = (row && row.comprobantes) || [];
+    const count = comps.filter(c => c.kind === kind && (teamSlot == null ? (c.teamSlot == null) : Number(c.teamSlot) === Number(teamSlot))).length;
+    const disabled = locked || isNew;
+    const bg = disabled ? 'rgba(255,255,255,0.04)' : 'rgba(0,212,255,0.10)';
+    const color = disabled ? '#666' : '#00d4ff';
+    const border = disabled ? 'rgba(255,255,255,0.10)' : 'rgba(0,212,255,0.45)';
+    const cursor = disabled ? 'not-allowed' : 'pointer';
+    const tsArg = teamSlot != null ? Number(teamSlot) : 'null';
+    const onClick = disabled
+        ? (isNew ? 'showToast(\'Guardá el cierre primero\',\'info\')' : '')
+        : ('openClosingUpload(\'' + rid + '\',\'' + kind + '\',' + tsArg + ')');
+    let html = '<button type="button" onclick="' + onClick + '" title="' + (isNew ? 'Guardá primero el cierre' : 'Adjuntar foto · ' + count + '/' + COMP_MAX_PER_KIND_DISPLAY) + '" style="background:' + bg + ';border:1px dashed ' + border + ';color:' + color + ';padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;cursor:' + cursor + ';display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">' + label + (count > 0 ? ' <span style="background:rgba(0,212,255,0.30);color:#fff;border-radius:8px;padding:0 5px;font-size:9.5px;">' + count + '</span>' : '') + '</button>';
+    return html;
+}
+const COMP_MAX_PER_KIND_DISPLAY = 10;
+
+// Lista mini de fotos ya adjuntadas para un kind+teamSlot — muestra
+// thumbnails clicables (abren en otra tab) con botón ✕ para eliminar.
+// Usado al lado de los inputs para que el owner vea/saque las fotos
+// SIN abrir el panel grande de comprobantes.
+function _inlineUploadList(rid, row, kind, teamSlot, locked) {
+    const comps = (row && row.comprobantes) || [];
+    const matches = comps
+        .map((c, idx) => ({ ...c, idx }))
+        .filter(c => c.kind === kind && (teamSlot == null ? (c.teamSlot == null) : Number(c.teamSlot) === Number(teamSlot)));
+    if (matches.length === 0) return '';
+    let html = '<div style="display:inline-flex;flex-wrap:wrap;gap:3px;align-items:center;margin-left:4px;">';
+    for (const m of matches) {
+        html += '<a href="' + escapeHtml(m.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:2px;background:rgba(0,212,255,0.10);border:1px solid rgba(0,212,255,0.35);color:#00d4ff;text-decoration:none;padding:1px 5px;border-radius:4px;font-size:9.5px;font-weight:700;">📷' + (m.idx + 1);
+        if (!locked) html += '<span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + m.idx + ')" style="color:#ff8080;cursor:pointer;margin-left:2px;">✕</span>';
+        html += '</a>';
+    }
+    html += '</div>';
+    return html;
+}
+
 // Busca los nombres de equipo más recientes para un sector. Recorre el
 // cache de cierres (orden cronológico inverso) y para CADA slot toma el
 // primer nombre no vacío que encuentra. Así si en un día puntual no se
@@ -25126,95 +25173,128 @@ const COMP_KINDS = [
     { key: 'pendiente_bank', label: '🏦 Banco-Pend.',   color: '#ffaa66' }
 ];
 
+// Panel compacto: una sola línea con conteo de fotos por categoría,
+// + alerta si falta foto banco-pendiente, + input file oculto necesario
+// para el upload. Los botones para SUBIR están inline al lado de cada
+// campo (no más sección grande abajo).
 function _renderComprobantesPanel(row, rid, locked, computed) {
     const comps = (row && row.comprobantes) || [];
     const hasPendBank = comps.some(p => p.kind === 'pendiente_bank');
     const needsPendBank = (computed && computed.pendienteHoy > 0) && !hasPendBank;
 
-    let html = '<div style="background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:9px;margin-bottom:8px;">';
-    html += '<div style="color:#fff;font-weight:800;font-size:11.5px;margin-bottom:6px;">📎 COMPROBANTES (' + comps.length + ')</div>';
+    let html = '';
 
-    // Grid por categoría
-    for (const kk of COMP_KINDS) {
-        const kComps = comps.filter(p => p.kind === kk.key);
-        html += '<div style="margin-bottom:5px;padding:5px 7px;background:rgba(255,255,255,0.03);border-radius:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
-        html += '<div style="color:' + kk.color + ';font-weight:800;font-size:10.5px;min-width:115px;">' + kk.label + ' (' + kComps.length + ')</div>';
-        // Thumbnails
-        for (const cp of kComps) {
-            const idx = comps.indexOf(cp);
-            html += '<a href="' + escapeHtml(cp.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:3px;background:rgba(255,255,255,0.06);border:1px solid ' + kk.color + '55;color:' + kk.color + ';text-decoration:none;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;">📷 #' + (idx + 1);
-            if (!locked) html += ' <span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + idx + ')" style="color:#ff8080;cursor:pointer;margin-left:3px;">✕</span>';
-            html += '</a>';
+    // Resumen línea con conteos por categoría (todo en una sola fila)
+    if (comps.length > 0) {
+        const summary = [
+            { k: 'deposito',       label: '📥 Depósitos',  color: '#aaffaa' },
+            { k: 'bajada',         label: '🏃 Bajadas',    color: '#aaffff' },
+            { k: 'pendiente_bank', label: '🏦 Banco-Pend.', color: '#ffaa66' },
+            { k: 'ingreso',        label: '📥 Ingresos',   color: '#aaffaa' },
+            { k: 'egreso',         label: '📤 Egresos',    color: '#ff8080' },
+            { k: 'gasto',          label: '🧾 Gastos',     color: '#ffaa66' },
+            { k: 'bonificacion',   label: '🎁 Bonif.',     color: '#ffd700' }
+        ];
+        html += '<div style="background:rgba(0,0,0,0.18);border:1px solid rgba(255,255,255,0.06);border-radius:7px;padding:7px 10px;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:10.5px;">';
+        html += '<div style="color:#888;font-weight:700;">📎 Fotos:</div>';
+        for (const s of summary) {
+            const n = comps.filter(c => c.kind === s.k).length;
+            if (n === 0) continue;
+            html += '<span style="color:' + s.color + ';font-weight:700;">' + s.label + ' <strong>' + n + '</strong></span>';
         }
-        // Upload button
-        if (!locked) {
-            html += '<button type="button" onclick="openClosingUpload(\'' + rid + '\',\'' + kk.key + '\')" style="background:rgba(0,212,255,0.10);border:1px dashed rgba(0,212,255,0.45);color:#00d4ff;padding:2px 8px;border-radius:5px;font-weight:700;font-size:10px;cursor:pointer;">+ subir</button>';
-        }
+        html += '<span style="color:#888;margin-left:auto;">total ' + comps.length + '</span>';
         html += '</div>';
     }
 
+    // Alerta: pendiente sin foto banco
     if (needsPendBank) {
-        html += '<div style="color:#ff8080;font-size:10.5px;margin-top:5px;background:rgba(255,80,80,0.08);border-left:3px solid #ff5050;padding:6px 9px;border-radius:0 6px 6px 0;">⚠️ Quedó pendiente — adjuntá una foto <strong>🏦 Banco-Pend.</strong> que muestre la plata en la cuenta antes de confirmar.</div>';
+        html += '<div style="color:#ff8080;font-size:10.5px;margin-bottom:8px;background:rgba(255,80,80,0.08);border-left:3px solid #ff5050;padding:6px 9px;border-radius:0 6px 6px 0;">⚠️ Quedó pendiente — adjuntá la foto <strong>🏦 Banco</strong> arriba (al lado de "Pend. anterior") antes de confirmar.</div>';
     }
 
-    // Input file oculto + handler
+    // Input file oculto: necesario para que openClosingUpload pueda funcionar.
     if (!locked) {
-        html += '<input type="file" accept="image/*" id="cls_' + rid + '_file" style="display:none;" onchange="onClosingFilePicked(\'' + rid + '\')">';
+        html += '<input type="file" accept="image/*" multiple id="cls_' + rid + '_file" style="display:none;" onchange="onClosingFilePicked(\'' + rid + '\')">';
     }
-    html += '</div>';
     return html;
 }
 
-// State: qué categoría se está subiendo. Set por openClosingUpload(rid, kind).
-const _closingUploadKind = {};
-function openClosingUpload(rid, kind) {
-    _closingUploadKind[rid] = kind;
+// State: qué categoría se está subiendo + opcional teamSlot.
+// Set por openClosingUpload(rid, kind, teamSlot).
+const _closingUploadState = {};
+
+// Cap por tipo de comprobante para evitar spam (10 fotos por kind)
+const COMP_MAX_PER_KIND = 10;
+
+function openClosingUpload(rid, kind, teamSlot) {
+    // No se puede subir foto a un cierre que todavía no existe.
+    if (String(rid).startsWith('new_')) {
+        showToast('💾 Guardá el cierre primero — después podés adjuntar fotos.', 'info');
+        return;
+    }
+    _closingUploadState[rid] = { kind, teamSlot: (teamSlot != null ? Number(teamSlot) : null) };
     const fileEl = document.getElementById('cls_' + rid + '_file');
     if (fileEl) fileEl.click();
 }
 
 async function onClosingFilePicked(rid) {
     const fileEl = document.getElementById('cls_' + rid + '_file');
-    if (!fileEl || !fileEl.files || !fileEl.files[0]) return;
-    const file = fileEl.files[0];
-    const kind = _closingUploadKind[rid] || 'deposito';
-    try {
-        const pre = await authFetch('/api/upload/presigned-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: file.name, contentType: file.type, prefix: 'closings' })
-        });
-        const preD = await pre.json();
-        if (!pre.ok || !preD.uploadUrl) {
-            showToast('Error pidiendo URL de upload', 'error');
-            return;
-        }
-        const putR = await fetch(preD.uploadUrl, {
-            method: 'PUT',
-            headers: { 'Content-Type': file.type },
-            body: file
-        });
-        if (!putR.ok) {
-            showToast('Falló la subida del archivo', 'error');
-            return;
-        }
-        const publicUrl = preD.publicUrl || preD.url;
-        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: publicUrl, kind })
-        });
-        const d = await r.json();
-        if (!r.ok || !d.success) {
-            showToast(d.error || 'Error al asociar', 'error');
-            return;
-        }
-        showToast('✅ Foto subida', 'success');
-        loadClosings();
-    } catch (e) {
-        showToast('Error: ' + (e.message || ''), 'error');
-    } finally {
+    if (!fileEl || !fileEl.files || fileEl.files.length === 0) return;
+    const files = Array.from(fileEl.files);
+    const state = _closingUploadState[rid] || { kind: 'deposito', teamSlot: null };
+    const kind = state.kind;
+    const teamSlot = state.teamSlot;
+
+    // Chequear cap: cuántas fotos de este kind ya tiene el cierre actual
+    const row = (_closingsRowsCache || []).find(x => x.id === rid);
+    const existingCount = row && Array.isArray(row.comprobantes) ? row.comprobantes.filter(c => c.kind === kind).length : 0;
+    const remaining = Math.max(0, COMP_MAX_PER_KIND - existingCount);
+    if (remaining === 0) {
+        showToast('Ya hay ' + COMP_MAX_PER_KIND + ' fotos de este tipo (máximo).', 'error');
         if (fileEl) fileEl.value = '';
+        return;
+    }
+    const toUpload = files.slice(0, remaining);
+    if (files.length > remaining) {
+        showToast('Sólo se suben ' + remaining + ' (cap de ' + COMP_MAX_PER_KIND + ' por tipo)', 'info');
+    }
+
+    let okCount = 0, failCount = 0;
+    for (const file of toUpload) {
+        try {
+            const pre = await authFetch('/api/upload/presigned-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: file.name, contentType: file.type, prefix: 'closings' })
+            });
+            const preD = await pre.json();
+            if (!pre.ok || !preD.uploadUrl) { failCount++; continue; }
+            const putR = await fetch(preD.uploadUrl, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type },
+                body: file
+            });
+            if (!putR.ok) { failCount++; continue; }
+            const publicUrl = preD.publicUrl || preD.url;
+            const payload = { url: publicUrl, kind };
+            if (teamSlot != null && !isNaN(teamSlot)) payload.teamSlot = teamSlot;
+            const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const d = await r.json();
+            if (!r.ok || !d.success) { failCount++; continue; }
+            okCount++;
+        } catch (e) {
+            failCount++;
+        }
+    }
+    if (fileEl) fileEl.value = '';
+    if (okCount > 0) {
+        showToast('✅ ' + okCount + ' foto(s) subida(s)' + (failCount > 0 ? ' · ' + failCount + ' falló' : ''), 'success');
+        loadClosings();
+    } else {
+        showToast('❌ No se pudo subir ninguna foto', 'error');
     }
 }
 
@@ -25571,6 +25651,7 @@ function _renderClosingExtras(rid, row, locked) {
     html += '<label style="color:#aaffaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">📥 Ingresos / préstamos recibidos $</label>';
     html += '<input type="number" id="cls_' + rid + '_ingresosARS" value="' + (Number(r.ingresosARS) || 0) + '" min="0" step="1000" style="' + inputStyle + 'border-color:rgba(102,255,102,0.35);" ' + disabledAttr + '>';
     html += '<input type="text" id="cls_' + rid + '_ingresosNote" value="' + escapeHtml(r.ingresosNote || '') + '" placeholder="Detalle (de quién, motivo…)" maxlength="300" style="' + noteStyle + '" ' + disabledAttr + '>';
+    html += '<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'ingreso', null, '📷 Foto ingreso', locked) + _inlineUploadList(rid, row, 'ingreso', null, locked) + '</div>';
     html += '</div>';
 
     // EGRESOS = préstamos que NOSOTROS HICIMOS (sale plata, vuelve después)
@@ -25578,6 +25659,7 @@ function _renderClosingExtras(rid, row, locked) {
     html += '<label style="color:#ff8080;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">📤 Egresos / préstamos hechos $</label>';
     html += '<input type="number" id="cls_' + rid + '_egresosARS" value="' + (Number(r.egresosARS) || 0) + '" min="0" step="1000" style="' + inputStyle + 'border-color:rgba(255,128,128,0.35);" ' + disabledAttr + '>';
     html += '<input type="text" id="cls_' + rid + '_egresosNote" value="' + escapeHtml(r.egresosNote || '') + '" placeholder="Detalle (a quién, motivo…)" maxlength="300" style="' + noteStyle + '" ' + disabledAttr + '>';
+    html += '<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'egreso', null, '📷 Foto egreso', locked) + _inlineUploadList(rid, row, 'egreso', null, locked) + '</div>';
     html += '</div>';
 
     // GASTOS = gastos consumidos del día (no vuelven: insumos, sueldos, etc.)
@@ -25585,6 +25667,7 @@ function _renderClosingExtras(rid, row, locked) {
     html += '<label style="color:#ffaa66;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;font-weight:800;">🧾 Gastos del día $</label>';
     html += '<input type="number" id="cls_' + rid + '_gastosARS" value="' + (Number(r.gastosARS) || 0) + '" min="0" step="100" style="' + inputStyle + 'border-color:rgba(255,170,102,0.35);" ' + disabledAttr + '>';
     html += '<input type="text" id="cls_' + rid + '_gastosNote" value="' + escapeHtml(r.gastosNote || '') + '" placeholder="Detalle (en qué se gastó…)" maxlength="300" style="' + noteStyle + '" ' + disabledAttr + '>';
+    html += '<div style="margin-top:5px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'gasto', null, '📷 Foto gasto', locked) + _inlineUploadList(rid, row, 'gasto', null, locked) + '</div>';
     html += '</div>';
 
     html += '</div>';
@@ -25650,8 +25733,12 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco (sobre venta)</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas$ de los 7</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Venta total</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ venta$ de los 7 · lo que hay que bajar</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior $</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
+    html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'bajada', null, '📷 Foto bajada', locked) + _inlineUploadList(rid, row, 'bajada', null, locked) + '</div>';
+    html += '<div style="color:#666;font-size:9px;margin-top:2px;">hasta 10 fotos (varias transferencias)</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior $</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
+    html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'pendiente_bank', null, '🏦 Foto banco', locked) + _inlineUploadList(rid, row, 'pendiente_bank', null, locked) + '</div>';
+    html += '<div style="color:#666;font-size:9px;margin-top:2px;">screenshot del banco si quedó pendiente</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#c89bff;cursor:not-allowed;">' + sumTransactions.toLocaleString('es-AR') + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ cargas# + descargas# + bonos#</div></div>';
     html += '</div>';
     html += '</div>';
@@ -25665,10 +25752,13 @@ function _renderTeamSectorEntry(sec, date, row) {
     for (let i = 0; i < 7; i++) {
         const t = teams[i] || { slot: i, name: '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 };
         html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;margin-bottom:6px;">';
-        // Header: número + nombre del equipo
-        html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;">';
+        // Header: número + nombre del equipo + botón de foto
+        html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;flex-wrap:wrap;">';
         html += '<div style="background:#ffd700;color:#000;font-weight:900;font-size:11px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + (i + 1) + '</div>';
-        html += '<input type="text" data-buffalo-team="' + i + '" data-field="name" value="' + escapeHtml(t.name) + '" placeholder="Nombre equipo ' + (i + 1) + '" style="flex:1;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:700;" ' + disabledAttr + '>';
+        html += '<input type="text" data-buffalo-team="' + i + '" data-field="name" value="' + escapeHtml(t.name) + '" placeholder="Nombre equipo ' + (i + 1) + '" style="flex:1;min-width:120px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:700;" ' + disabledAttr + '>';
+        // Botón foto + lista de adjuntas para ESTE equipo (kind='deposito')
+        html += _inlineUploadBtn(rid, row, 'deposito', i, '📷 Foto (cargas+venta+tx)', locked);
+        html += _inlineUploadList(rid, row, 'deposito', i, locked);
         html += '</div>';
 
         // UNA SOLA FILA: 3 montos ($) + 3 contadores (#) — counts compactos.
@@ -25676,10 +25766,10 @@ function _renderTeamSectorEntry(sec, date, row) {
         const countInputStyle = inputStyle + 'font-size:11.5px;padding:4px 6px;text-align:center;';
         const moneyInputStyle = inputStyle + 'font-size:11.5px;padding:4px 8px;';
         html += '<div style="display:grid;grid-template-columns:1.6fr 1.6fr 1.6fr 1fr 1fr 1fr;gap:5px;align-items:end;">';
-        html += '<div><label style="color:#aaffaa;font-size:9.5px;text-transform:uppercase;font-weight:700;">💰 Cargas $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(102,255,102,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#aaffaa;font-size:9.5px;text-transform:uppercase;font-weight:700;">💰 Depósito $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(102,255,102,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;">🛒 Venta $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#ffd700;font-size:9.5px;text-transform:uppercase;font-weight:700;">🎁 Bonif. $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + moneyInputStyle + 'border-color:rgba(255,215,0,0.30);" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de cargas (operaciones de depósito)">📥 Carg#</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de depósitos (operaciones de carga)">📥 Depós#</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de descargas (operaciones de retiro)">📤 Desc#</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de bonificaciones entregadas">🎁 Bon#</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusCount" value="' + (t.bonusCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
         html += '</div>';

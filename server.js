@@ -34051,7 +34051,7 @@ app.post('/api/admin/closings/:id/comprobante', authMiddleware, adminMiddleware,
     if (!url || !/^https?:\/\//i.test(url)) {
       return res.status(400).json({ error: 'URL inválida' });
     }
-    const validKinds = ['deposito', 'venta', 'bonificacion', 'bajada', 'pendiente_bank'];
+    const validKinds = ['deposito', 'venta', 'bonificacion', 'bajada', 'pendiente_bank', 'ingreso', 'egreso', 'gasto'];
     const kind = validKinds.includes(req.body && req.body.kind) ? req.body.kind : 'deposito';
     const note = String((req.body && req.body.note) || '').trim().slice(0, 200);
     const slotRaw = req.body && req.body.teamSlot;
