@@ -432,7 +432,9 @@ function showSection(sectionKey) {
         activePlayers: 'activePlayersSection',
         closings: 'closingsSection',
         cotizaciones: 'cotizacionesSection',
+        historialBuffalo: 'historialBuffaloSection',
         cotizacionesExterno: 'cotizacionesExternoSection',
+        historialCotizacion: 'historialCotizacionSection',
         centralHistorial: 'centralHistorialSection',
         help: 'helpSection'
     };
@@ -518,6 +520,10 @@ function showSection(sectionKey) {
         loadCotizaciones();
     } else if (sectionKey === 'cotizacionesExterno') {
         loadCotizacionesExterno();
+    } else if (sectionKey === 'historialBuffalo') {
+        loadHistorialBuffalo();
+    } else if (sectionKey === 'historialCotizacion') {
+        loadHistorialCotizacion();
     } else if (sectionKey === 'centralHistorial') {
         loadCentralHistorial();
     } else if (sectionKey === 'help') {
@@ -27577,23 +27583,39 @@ async function deleteCotizacion(id, scope) {
 // procesando todo client-side (los volúmenes son chicos, no hace falta
 // endpoint dedicado).
 
-let _centralPeriod = 'week'; // 'day' | 'week' | 'month'
-let _centralExpanded = {};   // periodKey → bool
-
-function setCentralPeriod(p) {
-    _centralPeriod = p;
-    _centralExpanded = {}; // reset expansion al cambiar de granularidad
-    _renderCentralHistorial();
+// Una vista por scope. Soporta 'all' (central, junta los dos), 'interna' o
+// 'externa'. Cada vista mantiene su propio período y expansión por id de
+// período para que las tres se naveguen independientemente sin pisarse.
+const _histViewState = {
+    all:     { period: 'week', expanded: {} },
+    interna: { period: 'week', expanded: {} },
+    externa: { period: 'week', expanded: {} }
+};
+function _histBodyId(view) {
+    if (view === 'interna') return 'historialBuffaloBody';
+    if (view === 'externa') return 'historialCotizacionBody';
+    return 'centralHistorialBody';
 }
-function toggleCentralPeriod(key) {
-    _centralExpanded[key] = !_centralExpanded[key];
-    _renderCentralHistorial();
+function setCentralPeriod(p, view) {
+    view = view || 'all';
+    if (!_histViewState[view]) return;
+    _histViewState[view].period = p;
+    _histViewState[view].expanded = {}; // reset al cambiar granularidad
+    _renderHistorialView(view);
+}
+function toggleCentralPeriod(key, view) {
+    view = view || 'all';
+    if (!_histViewState[view]) return;
+    _histViewState[view].expanded[key] = !_histViewState[view].expanded[key];
+    _renderHistorialView(view);
 }
 
-let _centralData = null; // { internas, externas } cargados
+let _centralData = null; // { internas, externas } cargados — compartido entre las 3 vistas
 
-async function loadCentralHistorial() {
-    const body = document.getElementById('centralHistorialBody');
+// Carga ambas listas y refresca la vista pedida (o todas si view='all'
+// porque la central las necesita combinadas).
+async function _loadHistorialData(view) {
+    const body = document.getElementById(_histBodyId(view));
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
     try {
@@ -27608,17 +27630,23 @@ async function loadCentralHistorial() {
             internas: dInt.items || [],
             externas: dExt.items || []
         };
-        _renderCentralHistorial();
+        _renderHistorialView(view);
     } catch (e) {
-        console.error('[centralHistorial] load fail:', e);
+        console.error('[historial:' + view + '] load fail:', e);
         body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
 }
 
-// Aplana las cotizaciones a una lista de eventos individuales (1 evento
-// por equipo cotizado). Devuelve cada evento con su scope, fecha de
-// cotización (cotizedAt), monto neto, USDT, comisión, etc.
-function _centralBuildEvents() {
+async function loadCentralHistorial()    { return _loadHistorialData('all'); }
+async function loadHistorialBuffalo()    { return _loadHistorialData('interna'); }
+async function loadHistorialCotizacion() { return _loadHistorialData('externa'); }
+
+// Aplana las cotizaciones a una lista de eventos (1 evento por equipo
+// cotizado). `view` controla qué scopes incluir:
+//   'all'     → internas + externas
+//   'interna' → sólo internas
+//   'externa' → sólo externas
+function _centralBuildEvents(view) {
     if (!_centralData) return [];
     const out = [];
     const push = (cot, scopeKey) => {
@@ -27642,8 +27670,12 @@ function _centralBuildEvents() {
             });
         }
     };
-    for (const c of (_centralData.internas || [])) push(c, 'interna');
-    for (const c of (_centralData.externas || [])) push(c, 'externa');
+    if (view !== 'externa') {
+        for (const c of (_centralData.internas || [])) push(c, 'interna');
+    }
+    if (view !== 'interna') {
+        for (const c of (_centralData.externas || [])) push(c, 'externa');
+    }
     out.sort((a, b) => new Date(b.cotizedAt) - new Date(a.cotizedAt));
     return out;
 }
@@ -27674,15 +27706,20 @@ function _centralPeriodLabel(key, period) {
     return '🗓️ Semana ' + key;
 }
 
-function _renderCentralHistorial() {
-    const body = document.getElementById('centralHistorialBody');
+// Wrapper para la vista central (mantiene el nombre histórico).
+function _renderCentralHistorial() { return _renderHistorialView('all'); }
+
+function _renderHistorialView(view) {
+    view = view || 'all';
+    const state = _histViewState[view] || _histViewState.all;
+    const body = document.getElementById(_histBodyId(view));
     if (!body) return;
     if (!_centralData) {
         body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">Cargá los datos primero.</div>';
         return;
     }
-    const events = _centralBuildEvents();
-    const period = _centralPeriod;
+    const events = _centralBuildEvents(view);
+    const period = state.period;
 
     // === Header: filtros de período + totales globales ===
     let h = '';
@@ -27695,7 +27732,7 @@ function _renderCentralHistorial() {
         const css = active
             ? 'background:rgba(212,175,55,0.20);color:#d4af37;border-color:rgba(212,175,55,0.55);'
             : 'background:rgba(255,255,255,0.04);color:#aaa;border-color:rgba(255,255,255,0.10);';
-        return '<button onclick="setCentralPeriod(\'' + k + '\')" style="' + css + 'border:1px solid;padding:6px 14px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.4px;">' + lbl + '</button>';
+        return '<button onclick="setCentralPeriod(\'' + k + '\',\'' + view + '\')" style="' + css + 'border:1px solid;padding:6px 14px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.4px;">' + lbl + '</button>';
     };
     h += tabBtn('day', '📆 Diario');
     h += tabBtn('week', '🗓️ Semanal');
@@ -27712,10 +27749,13 @@ function _renderCentralHistorial() {
     const internasN = events.filter(e => e.scope === 'interna').length;
     const externasN = events.filter(e => e.scope === 'externa').length;
 
+    const eventsSubtitle = (view === 'all')
+        ? (internasN + ' interna · ' + externasN + ' externa')
+        : (view === 'interna' ? 'sólo Buffalo (interna)' : 'sólo Externo');
     h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:14px;">';
     h += _centralStatCard('💎 Total cotizado', formatMoney(Math.round(sumNet)), sumUSDT.toFixed(2) + ' USDT', '#0f0', 'rgba(0,255,102,0.10)', 'rgba(0,255,102,0.30)');
     h += _centralStatCard('🏦 Comisión total', formatMoney(Math.round(sumComm)), sumCommUSDT.toFixed(2) + ' USDT', '#ffd700', 'rgba(255,215,0,0.10)', 'rgba(255,215,0,0.35)');
-    h += _centralStatCard('📊 Eventos totales', String(events.length), internasN + ' interna · ' + externasN + ' externa', '#00d4ff', 'rgba(0,212,255,0.08)', 'rgba(0,212,255,0.30)');
+    h += _centralStatCard('📊 Eventos totales', String(events.length), eventsSubtitle, '#00d4ff', 'rgba(0,212,255,0.08)', 'rgba(0,212,255,0.30)');
     h += '</div>';
 
     if (events.length === 0) {
@@ -27742,14 +27782,17 @@ function _renderCentralHistorial() {
     h += '<div style="display:flex;flex-direction:column;gap:8px;">';
     for (const k of sortedKeys) {
         const g = groups[k];
-        const isOpen = !!_centralExpanded[k];
+        const isOpen = !!state.expanded[k];
         const accent = '#d4af37';
         h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(212,175,55,0.25);border-radius:10px;overflow:hidden;">';
-        h += '<div onclick="toggleCentralPeriod(\'' + escapeHtml(k) + '\')" style="cursor:pointer;padding:11px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;user-select:none;background:' + (isOpen ? 'rgba(212,175,55,0.05)' : 'transparent') + ';">';
+        h += '<div onclick="toggleCentralPeriod(\'' + escapeHtml(k) + '\',\'' + view + '\')" style="cursor:pointer;padding:11px 14px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;user-select:none;background:' + (isOpen ? 'rgba(212,175,55,0.05)' : 'transparent') + ';">';
         h += '<div style="color:' + accent + ';font-size:12px;width:18px;text-align:center;">' + (isOpen ? '▼' : '▶') + '</div>';
         h += '<div>';
         h += '<div style="color:#fff;font-weight:900;font-size:13.5px;">' + _centralPeriodLabel(k, period) + '</div>';
-        h += '<div style="color:#aaa;font-size:11px;margin-top:2px;">' + g.events.length + ' eventos · ' + g.internas + ' int · ' + g.externas + ' ext</div>';
+        const breakdown = (view === 'all')
+            ? (g.events.length + ' eventos · ' + g.internas + ' int · ' + g.externas + ' ext')
+            : (g.events.length + ' eventos');
+        h += '<div style="color:#aaa;font-size:11px;margin-top:2px;">' + breakdown + '</div>';
         h += '</div>';
         h += '<div style="text-align:right;">';
         h += '<div style="color:#aaffaa;font-weight:900;font-size:13.5px;">' + formatMoney(Math.round(g.net)) + '</div>';
