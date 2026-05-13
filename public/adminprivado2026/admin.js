@@ -26756,6 +26756,18 @@ function _renderCotizaciones() {
         return;
     }
 
+    // === Header del historial ===
+    const cotizadasN = items.filter(x => x.cotizado).length;
+    const draftN = items.length - cotizadasN;
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px;padding:10px 14px;background:rgba(255,255,255,0.04);border-radius:8px;">';
+    h += '<div style="color:#fff;font-weight:900;font-size:13px;letter-spacing:0.5px;">📋 HISTORIAL DE COTIZACIONES</div>';
+    h += '<div style="display:flex;gap:10px;font-size:11.5px;font-weight:700;">';
+    h += '<span style="color:#aaa;">Total: <strong style="color:#fff;">' + items.length + '</strong></span>';
+    h += '<span style="color:#0f0;">✓ Cotizadas: <strong>' + cotizadasN + '</strong></span>';
+    h += '<span style="color:#f55;">✗ Pendientes: <strong>' + draftN + '</strong></span>';
+    h += '</div>';
+    h += '</div>';
+
     for (const it of items) {
         h += _renderCotizacionCard(it);
     }
@@ -26782,8 +26794,17 @@ function _renderCotizacionCard(it) {
     h += '<div style="background:' + accentBg + ';color:' + accent + ';padding:6px 14px;border-radius:8px;font-weight:900;font-size:12px;letter-spacing:1px;border:1px solid ' + accentBorder + ';">' + statusLabel + '</div>';
     h += '</div>';
     h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
-    h += '<button onclick="toggleCotizado(' + escapeJsArg(it.id) + ')" style="background:' + (cotizado ? 'rgba(255,80,80,0.18)' : 'rgba(0,255,0,0.18)') + ';color:' + (cotizado ? '#f55' : '#0f0') + ';border:1px solid ' + (cotizado ? 'rgba(255,80,80,0.40)' : 'rgba(0,255,0,0.40)') + ';padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">' + (cotizado ? '✗ MARCAR SIN COTIZAR' : '✓ MARCAR COTIZADO') + '</button>';
+    // 💾 GUARDAR — sólo persiste los datos (rate, equipos, notas) sin tocar
+    // el estado de cotizado. Útil mientras se está cargando la info.
     h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
+    // ✅ GUARDAR Y CONFIRMAR — combo: persiste + marca cotizado=true. Sólo
+    // se muestra si todavía no está confirmada (cotizado=false).
+    if (!cotizado) {
+        h += '<button onclick="saveAndConfirmCotizacion(' + escapeJsArg(it.id) + ')" style="background:linear-gradient(135deg,#00ff66 0%,#00c896 100%);color:#000;border:none;padding:7px 16px;border-radius:8px;font-weight:900;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✅ GUARDAR Y CONFIRMAR</button>';
+    } else {
+        // Ya confirmada: ofrecer "desmarcar" para volver a editar como draft.
+        h += '<button onclick="toggleCotizado(' + escapeJsArg(it.id) + ')" style="background:rgba(255,80,80,0.15);color:#f55;border:1px solid rgba(255,80,80,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">✗ DESMARCAR</button>';
+    }
     h += '<button onclick="deleteCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
     h += '</div>';
     h += '</div>';
@@ -26903,9 +26924,10 @@ async function createCotizacion() {
     }
 }
 
-async function saveCotizacion(id) {
+// Extrae el payload (dateKey, rate, notes, teams) desde el DOM de la tarjeta.
+function _collectCotizacionPayload(id) {
     const card = document.getElementById('cot_' + id);
-    if (!card) return;
+    if (!card) return null;
     const dateKey = (card.querySelector('[data-cot-field="dateKey"]') || {}).value || '';
     const usdtRate = Number((card.querySelector('[data-cot-field="usdtRate"]') || {}).value || 0);
     const notes = (card.querySelector('[data-cot-field="notes"]') || {}).value || '';
@@ -26919,21 +26941,61 @@ async function saveCotizacion(id) {
             totalARS: Number((totEl && totEl.value) || 0)
         });
     }
+    return { dateKey, usdtRate, notes, teams };
+}
+
+// PUT sin reload — devuelve true/false. Lo usan saveCotizacion y el combo
+// saveAndConfirmCotizacion para no recargar dos veces.
+async function _persistCotizacion(id, payload) {
     try {
         const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dateKey, usdtRate, notes, teams })
+            body: JSON.stringify(payload)
         });
         const d = await r.json();
         if (!r.ok || !d.success) {
             showToast(d.error || 'Error al guardar', 'error');
-            return;
+            return false;
         }
-        showToast('💾 Guardado', 'success');
-        loadCotizaciones();
+        return true;
     } catch (e) {
         showToast('Error de conexión', 'error');
+        return false;
+    }
+}
+
+async function saveCotizacion(id) {
+    const payload = _collectCotizacionPayload(id);
+    if (!payload) return;
+    const ok = await _persistCotizacion(id, payload);
+    if (ok) {
+        showToast('💾 Guardado', 'success');
+        loadCotizaciones();
+    }
+}
+
+// Combo: guarda los datos + marca cotizado=true (idempotente, via /confirm).
+// Si la persistencia falla, no se llama al confirm (la cotización queda en
+// el estado que tenía).
+async function saveAndConfirmCotizacion(id) {
+    const payload = _collectCotizacionPayload(id);
+    if (!payload) return;
+    const saved = await _persistCotizacion(id, payload);
+    if (!saved) return;
+    try {
+        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/confirm', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast('Guardado, pero error al confirmar: ' + (d.error || ''), 'error');
+            loadCotizaciones();
+            return;
+        }
+        showToast('✅ Guardado y CONFIRMADO', 'success');
+        loadCotizaciones();
+    } catch (e) {
+        showToast('Guardado, pero falló la confirmación', 'error');
+        loadCotizaciones();
     }
 }
 

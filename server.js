@@ -34609,6 +34609,27 @@ app.post('/api/admin/cotizaciones/:id/toggle', authMiddleware, closingsAccessMid
   }
 });
 
+// POST /api/admin/cotizaciones/:id/confirm — fija cotizado=true (idempotente).
+// A diferencia de /toggle, no alterna: si ya está confirmada, se queda en
+// confirmada y no cambia los campos cotizedAt/cotizedBy.
+app.post('/api/admin/cotizaciones/:id/confirm', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await CotizacionEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    if (!c.cotizado) {
+      c.cotizado = true;
+      c.cotizedAt = new Date();
+      c.cotizedBy = (req.user && req.user.username) || '';
+      await c.save();
+    }
+    res.json({ success: true, cotizado: true });
+  } catch (err) {
+    logger.error(`POST /api/admin/cotizaciones/:id/confirm: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // DELETE /api/admin/cotizaciones/:id — borra (requiere PIN 1818).
 app.delete('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
