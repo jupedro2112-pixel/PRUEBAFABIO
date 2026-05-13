@@ -623,6 +623,7 @@ VIP.auth = (function () {
                 VIP.state.communityReplacementLink = d.communityReplacementLink || null;
                 VIP.state.communityReplacementLabel = d.communityReplacementLabel || null;
                 VIP.state.communityAlertForceUntilMs = d.communityAlertForceUntilMs || 0;
+                VIP.state.communityForceBannerMsg = d.communityForceBannerMsg || null;
                 VIP.state.teamName = d.teamName || null;
                 try { renderCommunityForceBanner(); } catch (_) {}
                 renderRefundsHomeUI();
@@ -689,8 +690,20 @@ VIP.auth = (function () {
         if (!el) return;
         const until = Number(VIP.state.communityAlertForceUntilMs || 0);
         const active = until > Date.now();
-        if (active) el.style.display = '';
-        else el.style.display = 'none';
+        if (active) {
+            el.style.display = '';
+            // Pintar mensaje custom si el admin lo dejó (al cambiar el link).
+            // Estructura: <div título><div cuerpo>. Sólo reemplazamos el cuerpo.
+            try {
+                const custom = String(VIP.state.communityForceBannerMsg || '').trim();
+                if (custom) {
+                    const bodyDiv = el.querySelectorAll('div')[1];
+                    if (bodyDiv) bodyDiv.textContent = custom;
+                }
+            } catch (_) {}
+        } else {
+            el.style.display = 'none';
+        }
         try { console.log('[community-banner] active=' + active + ' until=' + (until ? new Date(until).toISOString() : 'null')); } catch (_) {}
     }
 

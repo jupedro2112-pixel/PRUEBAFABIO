@@ -2649,10 +2649,16 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     // (vía /api/admin/community-alert/force o automáticamente al apretar
     // 📢 Avisar push), la PWA ignora el cooldown de 5 días.
     let alertForceUntilMs = 0;
+    let forceBannerMsg = null;
     try {
       const raw = await getConfig('communityAlertForceUntil').catch(() => null);
       const n = Number(raw) || 0;
-      if (n > Date.now()) alertForceUntilMs = n;
+      if (n > Date.now()) {
+        alertForceUntilMs = n;
+        // Mensaje custom del banner (lo setea PUT user-communities con
+        // broadcastBody). Vive solo durante la ventana forzada.
+        forceBannerMsg = await getConfig('communityForceBannerMsg').catch(() => null) || null;
+      }
     } catch (_) {}
 
     res.json({
@@ -2665,7 +2671,8 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       communityStatus,
       communityReplacementLink: communityReplacementLink || null,
       communityReplacementLabel: communityReplacementLabel || null,
-      communityAlertForceUntilMs: alertForceUntilMs || null
+      communityAlertForceUntilMs: alertForceUntilMs || null,
+      communityForceBannerMsg: forceBannerMsg
     });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
@@ -11850,7 +11857,7 @@ app.get('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
 
 app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { slots, defaultLink, defaultLink2 } = req.body || {};
+    const { slots, defaultLink, defaultLink2, broadcastOnChange, broadcastTitle, broadcastBody } = req.body || {};
     if (!Array.isArray(slots)) {
       return res.status(400).json({ error: 'slots debe ser un array' });
     }
@@ -11891,8 +11898,71 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
       defaultLink: newDefaultLink,
       defaultLink2: newDefaultLink2
     };
+
+    // Detectar si CAMBIÓ algún link respecto al guardado previo. Si cambió
+    // y broadcastOnChange=true (default), disparamos:
+    //   1. Activar communityAlertForceUntil por 24h (banner rojo "Unite")
+    //   2. Guardar communityForceBannerMsg custom (para que el banner
+    //      muestre "a las 23 hs reclamá plata con el código")
+    //   3. Mandar push a TODOS los users con tokens FCM
+    let linkChanged = false;
+    let pushResult = null;
+    try {
+      const prev = (await getConfig('userCommunitiesByPrefix')) || {};
+      const norm = v => (v || '').toString().trim().toLowerCase();
+      const prevDef = [norm(prev.defaultLink), norm(prev.defaultLink2)].sort().join('||');
+      const newDef = [norm(newDefaultLink), norm(newDefaultLink2)].sort().join('||');
+      if (prevDef !== newDef) linkChanged = true;
+      if (!linkChanged) {
+        const prevSlotsKey = (Array.isArray(prev.slots) ? prev.slots : [])
+          .map(s => norm(s.prefix) + ':' + norm(s.link) + ':' + norm(s.link2))
+          .sort().join('|');
+        const newSlotsKey = cleaned
+          .map(s => norm(s.prefix) + ':' + norm(s.link) + ':' + norm(s.link2))
+          .sort().join('|');
+        if (prevSlotsKey !== newSlotsKey) linkChanged = true;
+      }
+    } catch (_) {}
+
     await setConfig('userCommunitiesByPrefix', value);
-    res.json({ success: true, message: 'Links de comunidad actualizados', value });
+
+    const wantBroadcast = broadcastOnChange !== false; // default true
+    if (linkChanged && wantBroadcast) {
+      try {
+        const until = Date.now() + 24 * 3600 * 1000;
+        await setConfig('communityAlertForceUntil', until);
+        const customMsg = (broadcastBody && String(broadcastBody).trim()) || null;
+        if (customMsg) {
+          await setConfig('communityForceBannerMsg', customMsg.slice(0, 250));
+        } else {
+          // Mensaje default si admin no completó nada
+          await setConfig('communityForceBannerMsg', 'Nuevo canal de Telegram — unite y a las 23:00 hs publicamos un código para reclamar plata gratis 💸');
+        }
+        const title = (broadcastTitle && String(broadcastTitle).trim()) || '🚀 Nuevo canal de Telegram';
+        const body  = customMsg || 'Unite al nuevo canal — a las 23:00 hs publicamos un código para reclamar plata gratis 💸';
+        try {
+          pushResult = await sendNotificationToAllUsers(User, title.slice(0, 80), body.slice(0, 250), {
+            source: 'community-link-changed'
+          });
+          logger.info(`[user-communities] link CAMBIO → push enviado success=${pushResult && pushResult.successCount} fail=${pushResult && pushResult.failureCount}`);
+        } catch (e) {
+          logger.warn(`[user-communities] push falló: ${e.message}`);
+        }
+      } catch (e) { logger.warn(`[user-communities] force-banner falló: ${e.message}`); }
+    }
+
+    res.json({
+      success: true,
+      message: 'Links de comunidad actualizados',
+      value,
+      linkChanged,
+      broadcastFired: !!(linkChanged && wantBroadcast),
+      pushResult: pushResult ? {
+        successCount: pushResult.successCount || 0,
+        failureCount: pushResult.failureCount || 0,
+        error: pushResult.error || null
+      } : null
+    });
   } catch (error) {
     console.error('Error actualizando user-communities:', error);
     res.status(500).json({ error: 'Error del servidor' });

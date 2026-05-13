@@ -1402,14 +1402,40 @@ async function saveUserCommunities() {
     const defaultLink = (document.getElementById('userCommunitiesDefaultLink').value || '').trim();
     const defaultLink2El = document.getElementById('userCommunitiesDefaultLink2');
     const defaultLink2 = (defaultLink2El && defaultLink2El.value || '').trim();
+
+    // Toggle "avisar por push si cambia link" + textos del cartel/notif.
+    // Si el admin no agregó el bloque al HTML, defaults sensatos.
+    const notifyEl = document.getElementById('uc_notifyOnChange');
+    const broadcastOnChange = notifyEl ? !!notifyEl.checked : true;
+    const broadcastTitle = (document.getElementById('uc_notifTitle')?.value || '').trim()
+        || '🚀 Nuevo canal de Telegram';
+    const broadcastBody = (document.getElementById('uc_notifBody')?.value || '').trim()
+        || 'Unite al nuevo canal — a las 23:00 hs publicamos un código para reclamar plata gratis 💸';
+
+    if (broadcastOnChange) {
+        if (!confirm('¿Guardar y, si el link cambió, mandar push + cartel a TODOS los usuarios con el mensaje "' + broadcastBody.slice(0, 100) + (broadcastBody.length > 100 ? '…' : '') + '" ?')) {
+            return;
+        }
+    }
+
     try {
         const r = await authFetch('/api/admin/user-communities', {
             method: 'PUT',
-            body: JSON.stringify({ slots, defaultLink, defaultLink2 })
+            body: JSON.stringify({ slots, defaultLink, defaultLink2, broadcastOnChange, broadcastTitle, broadcastBody })
         });
         const data = await r.json();
         if (r.ok) {
-            showToast('Links de comunidad guardados', 'success');
+            let msg = '✅ Links guardados';
+            if (data.linkChanged) {
+                if (data.broadcastFired) {
+                    msg += ' · 📲 Push enviado a ' + (data.pushResult?.successCount || 0) + ' destinatarios · 🚨 Cartel rojo activado 24hs';
+                } else {
+                    msg += ' · Link cambió pero NO se mandó notif (toggle off)';
+                }
+            } else {
+                msg += ' · (no hubo cambio de link)';
+            }
+            showToast(msg, 'success');
         } else {
             showToast(data.error || 'Error al guardar links', 'error');
         }

@@ -389,6 +389,22 @@
                         <input type="text" id="userCommunitiesDefaultLink2" placeholder="https://chat.whatsapp.com/... (opcional)" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.4);color:#00d4ff;font-size:13px;font-weight:600;font-family:monospace;box-sizing:border-box;">
                         <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Si lo cargás, los usuarios sin equipo van a ver dos botones de comunidad.</small>
                     </div>
+                    <!-- Aviso automático: si el admin cambia algún link y guarda,
+                         se manda push + cartel 24hs a TODOS los users. Permite
+                         personalizar título/cuerpo (default focus en Telegram +
+                         código a las 23 hs, pedido del dueño 2026-05-13). -->
+                    <div style="margin-top:18px;padding:12px 14px;border:1.5px solid rgba(0,136,204,0.45);border-radius:10px;background:rgba(0,136,204,0.07);">
+                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:8px;">
+                            <input type="checkbox" id="uc_notifyOnChange" checked>
+                            <span style="color:#22a0d9;font-weight:800;font-size:12.5px;letter-spacing:0.3px;">📲 Si el link cambia → push + cartel rojo 24hs a TODOS</span>
+                        </label>
+                        <label style="display:block;color:#aaa;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Título del push</label>
+                        <input type="text" id="uc_notifTitle" maxlength="80" value="🚀 Nuevo canal de Telegram" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.4);color:#fff;font-size:12.5px;font-weight:700;box-sizing:border-box;margin-bottom:7px;">
+                        <label style="display:block;color:#aaa;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Cuerpo del push + cartel</label>
+                        <textarea id="uc_notifBody" maxlength="250" rows="2" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.4);color:#fff;font-size:12px;font-weight:600;box-sizing:border-box;resize:vertical;">Unite al nuevo canal — a las 23:00 hs publicamos un código para reclamar plata gratis 💸</textarea>
+                        <small style="color:#888;font-size:10.5px;display:block;margin-top:4px;">El mismo texto se muestra como cartel rojo dentro de la app durante 24hs (también podés activarlo manual abajo).</small>
+                    </div>
+
                     <button class="btn-primary" onclick="saveUserCommunities()" style="margin-top:16px;width:100%;padding:12px;font-size:14px;font-weight:700;">
                         💾 Guardar links de comunidad
                     </button>
