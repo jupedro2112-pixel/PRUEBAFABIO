@@ -19441,6 +19441,42 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
   }
 });
 
+// POST /api/admin/roulette/test-spin — simula un giro para un username
+// específico sin afectar su spin real del día. Pick weighted con la misma
+// tabla ROULETTE_PRIZES. Devuelve qué le habría salido. NO escribe nada
+// en DailyRouletteSpin ni acredita plata. Para que el owner pueda probar
+// el flow y el visual sin gastar dinero real.
+app.post('/api/admin/roulette/test-spin', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) {
+      return res.status(400).json({ error: 'Falta username' });
+    }
+    // Verificar que el user exista (para que el owner sepa si tipeó mal).
+    const u = await User.findOne({ username: { $regex: '^' + username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }, { _id: 1, username: 1 }).lean();
+    if (!u) {
+      return res.status(404).json({ error: `Usuario "${username}" no encontrado` });
+    }
+    const pick = _rouletteWeightedPick();
+    res.json({
+      success: true,
+      simulation: true,
+      username: u.username,
+      prize: {
+        prizeARS: Number(pick.value) || 0,
+        prizeLabel: pick.label,
+        emoji: pick.emoji,
+        weight: pick.weight
+      },
+      prizes: ROULETTE_PRIZES,
+      note: 'Esto es solo simulación — no se escribió nada ni se acreditó plata.'
+    });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/test-spin: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /api/roulette/spin — el user gira la ruleta del día.
 app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
   try {

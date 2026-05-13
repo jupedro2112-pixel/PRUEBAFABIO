@@ -2497,6 +2497,47 @@ async function viewNotifCheckConfirmers(checkId) {
 // =========================================================================
 // RULETA DIARIA — panel admin: stats + historial
 // =========================================================================
+// Probar el giro de la ruleta a nombre de un user (simulación) — no
+// afecta el spin real ni acredita plata. Solo muestra qué premio le
+// habría salido con la tabla de probabilidades vigente.
+async function rouletteTestSpin() {
+    const username = (document.getElementById('rouletteTestUsername')?.value || '').trim();
+    const box = document.getElementById('rouletteTestResult');
+    if (!username) {
+        if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Falta el username</div>';
+        return;
+    }
+    if (box) box.innerHTML = '<div style="color:#aaa;text-align:center;padding:6px;font-size:12px;">⏳ Girando…</div>';
+    try {
+        const r = await authFetch('/api/admin/roulette/test-spin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        const won = (d.prize.prizeARS || 0) > 0;
+        const color = won ? '#ffd700' : '#888';
+        const bg = won ? 'rgba(255,215,0,0.10)' : 'rgba(255,255,255,0.04)';
+        const border = won ? '#ffd700' : 'rgba(255,255,255,0.18)';
+        if (box) {
+            box.innerHTML =
+                '<div style="background:' + bg + ';border:1.5px solid ' + border + ';border-radius:9px;padding:10px 12px;display:flex;align-items:center;gap:10px;">' +
+                    '<div style="font-size:30px;line-height:1;">' + (d.prize.emoji || '🎲') + '</div>' +
+                    '<div style="flex:1;">' +
+                        '<div style="color:' + color + ';font-weight:900;font-size:14px;">' + escapeHtml(d.prize.prizeLabel) + (won ? ' · $' + Number(d.prize.prizeARS).toLocaleString('es-AR') : '') + '</div>' +
+                        '<div style="color:#aaa;font-size:11px;">A nombre de <strong>@' + escapeHtml(d.username) + '</strong> · peso ' + d.prize.weight + ' · simulación, no afecta nada real.</div>' +
+                    '</div>' +
+                '</div>';
+        }
+    } catch (e) {
+        if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
 async function loadRouletteAdmin() {
     const days = parseInt((document.getElementById('rouletteDays') || {}).value || '14', 10) || 14;
     const body = document.getElementById('rouletteAdminBody');

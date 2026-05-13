@@ -106,6 +106,7 @@
                     <span>🔔</span>
                     <span><strong>Test notificaciones</strong></span>
                 </a>
+                <div style="height:18px;border-top:1px dashed rgba(255,255,255,0.10);margin:14px 0 6px;"></div>
                 <a href="#" class="nav-item" data-section="teams" data-protected-pin="teams" style="background:rgba(212,175,55,0.06);border-left:3px solid #d4af37;">
                     <span>📊</span>
                     <span><strong>Equipos</strong> <span style="margin-left:auto;font-size:10px;opacity:0.7;" title="Esta sección requiere clave">🔑</span></span>
@@ -922,6 +923,18 @@
                         </select>
                         <button class="refresh-btn" onclick="loadRouletteAdmin()" title="Actualizar">🔄</button>
                     </div>
+                </div>
+                <!-- Test del giro: simulación que no afecta el spin real
+                     del user ni acredita plata. Sirve para que el owner
+                     vea qué premio le habría salido + cómo se ve el flow. -->
+                <div style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(155,48,255,0.08));border:1.5px dashed rgba(0,212,255,0.50);border-radius:11px;padding:13px 14px;margin-bottom:14px;">
+                    <div style="color:#00d4ff;font-weight:900;font-size:12px;letter-spacing:0.6px;margin-bottom:6px;">🧪 PROBAR GIRO (simulación)</div>
+                    <div style="color:#bbb;font-size:11px;margin-bottom:9px;line-height:1.5;">Tirá un giro de prueba a nombre de un usuario. No le afecta su giro real ni acredita plata — solo te muestra qué premio le habría salido con las probabilidades vigentes.</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <input id="rouletteTestUsername" type="text" placeholder="Username (ej: atojuan)" style="flex:1;min-width:160px;background:rgba(0,0,0,0.45);border:1px solid rgba(0,212,255,0.40);color:#fff;padding:8px 11px;border-radius:7px;font-size:13px;box-sizing:border-box;">
+                        <button onclick="rouletteTestSpin()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:8px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🎰 PROBAR GIRO</button>
+                    </div>
+                    <div id="rouletteTestResult" style="margin-top:9px;"></div>
                 </div>
                 <div id="rouletteAdminBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
