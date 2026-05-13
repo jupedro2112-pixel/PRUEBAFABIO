@@ -25523,13 +25523,19 @@ function _renderClosings() {
                 ? Number(c.neto)
                 : (Number(r.ventasARS || 0) - Number(c.commission || 0) - gastosVal - egresosVal + ingresosVal);
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
-            // Δ falta/sobra = pendiente a bajar − CVU 00h
-            // El pendiente YA incluye gastos/egresos/ingresos (vía neto).
-            // Positivo = FALTA · Negativo = SOBRA
-            const pendienteVal = Number(c.pendienteHoy || 0);
-            const faltaSobra = pendienteVal - cvuMid;
+            // Δ falta/sobra = pendiente CALCULADO − CVU 00h real
+            // Compara lo que la fórmula dice que tendría que haber (calc)
+            // contra lo que el banco realmente muestra (CVU). Antes usaba
+            // pendienteHoy pero ahora pendienteHoy === CVU real → siempre 0.
+            // El interesante es la divergencia entre cálculo y realidad.
+            const pendCalcVal = Number(
+                c.pendienteCalculado != null
+                    ? c.pendienteCalculado
+                    : Math.max(0, Number(c.totalABajar || 0) - Number(r.bajadaARS || 0))
+            );
+            const faltaSobra = pendCalcVal - cvuMid;
             let dcolor, dtext;
-            if (cvuMid === 0 && pendienteVal === 0) {
+            if (cvuMid === 0 && pendCalcVal === 0) {
                 dcolor = '#666'; dtext = '—';
             } else if (Math.abs(faltaSobra) < 1) {
                 dcolor = '#aaffaa'; dtext = '✅ OK';
