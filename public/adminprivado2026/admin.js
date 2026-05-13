@@ -24586,27 +24586,16 @@ let _closingsRowsCache = [];      // historial completo (últimos N días) para 
 let _closingsTodayKey = null;
 // Selección actual: qué sector + (opcional) equipo Buffalo + día activo del editor
 // + filtro de estado (all/draft/confirmed) para el historial.
-// Para el rol closings_viewer arrancamos sin sector (gate de PIN). Para
-// admins entramos directo a "ganamos" como antes. El default lo setea
-// loadClosings() según el rol del user en runtime.
 let _closingsView = { sector: 'ganamos', teamSlot: null, date: null, filter: 'all' };
-
-// True sólo cuando entramos vía /cierresgeneral (URL trae ?only=closings).
-// En ese modo se muestran las 3 cards con PIN. Para CUALQUIER otro acceso
-// (admin abriendo el panel normal, incluso si lo abre con sesión de
-// closings_viewer y sin ?only=closings) → queda el selector de tabs viejo.
-function _isClosingsViewerMode() {
-    try {
-        const params = new URLSearchParams(window.location.search);
-        return params.get('only') === 'closings';
-    } catch { return false; }
-}
 const CLOSINGS_HISTORY_DAYS = 60;
 
 function closingsSetFilter(f) {
     _closingsView.filter = f;
     _renderClosings();
 }
+
+// Stubs vacíos para compat con render histórico (botón 🔑 PIN no se usa más)
+function _changeClosingsPin() { /* no-op: PIN removido */ }
 
 function _closingFmt(n) {
     return '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
@@ -24696,63 +24685,7 @@ function _closingsTodayART() {
     }).format(new Date());
 }
 
-// =========================================================================
-// PIN POR SECTOR — cada uno tiene su clave (default abajo). Si el owner
-// olvida la suya, el master PIN 1818 destraba TODO y permite cambiarla.
-// Las claves custom se guardan en localStorage (por navegador), los unlocks
-// son por sessionStorage (caducan al cerrar pestaña).
-// =========================================================================
-const _CLOSINGS_PIN_DEFAULTS = { buffalo: 'buffa123', ganamos: 'ganamos123', publicidad: 'publi123' };
-const _CLOSINGS_MASTER_PIN = '1818';
-
-function _getClosingsPin(sector) {
-    try {
-        const raw = localStorage.getItem('closingsPins');
-        const obj = raw ? JSON.parse(raw) : {};
-        return obj[sector] || _CLOSINGS_PIN_DEFAULTS[sector] || '';
-    } catch { return _CLOSINGS_PIN_DEFAULTS[sector] || ''; }
-}
-function _setClosingsPin(sector, newPin) {
-    let obj = {};
-    try { obj = JSON.parse(localStorage.getItem('closingsPins') || '{}'); } catch {}
-    obj[sector] = String(newPin || '').trim();
-    localStorage.setItem('closingsPins', JSON.stringify(obj));
-}
-function _isClosingsUnlocked(sector) {
-    return sessionStorage.getItem('closingsUnlock_' + sector) === '1';
-}
-function _markClosingsUnlocked(sector) {
-    sessionStorage.setItem('closingsUnlock_' + sector, '1');
-}
-function _verifyClosingsPin(sector, attempt) {
-    if (String(attempt || '').trim() === _CLOSINGS_MASTER_PIN) return true;
-    return String(attempt || '').trim() === _getClosingsPin(sector);
-}
-function _changeClosingsPin(sector) {
-    const auth = prompt('🔑 Cambiar PIN de ' + sector.toUpperCase() + '\n\nIngresá el PIN actual:');
-    if (auth == null) return;
-    if (!_verifyClosingsPin(sector, auth)) {
-        showToast('PIN incorrecto', 'error');
-        return;
-    }
-    const np = prompt('Nuevo PIN para ' + sector.toUpperCase() + ' (mín. 4 caracteres):');
-    if (np == null) return;
-    if (String(np).trim().length < 4) { showToast('Mínimo 4 caracteres', 'error'); return; }
-    _setClosingsPin(sector, np);
-    showToast('✅ PIN de ' + sector + ' cambiado', 'success');
-}
-
 function closingsSelectSector(sectorKey) {
-    // PIN gate sólo en /cierresgeneral (closings_viewer). Admin entra directo.
-    if (_isClosingsViewerMode() && !_isClosingsUnlocked(sectorKey)) {
-        const pin = prompt('🔒 Sector ' + sectorKey.toUpperCase() + '\n\nIngresá el PIN para acceder:');
-        if (pin == null) return; // canceló
-        if (!_verifyClosingsPin(sectorKey, pin)) {
-            showToast('PIN incorrecto', 'error');
-            return;
-        }
-        _markClosingsUnlocked(sectorKey);
-    }
     _closingsView.sector = sectorKey;
     _closingsView.teamSlot = null;
     loadClosings();
@@ -24767,27 +24700,11 @@ function closingsSelectDate(dateStr) {
 async function loadClosings() {
     const body = document.getElementById('closingsBody');
     if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
 
     if (!_closingsView.date) {
         _closingsView.date = _closingsTodayART();
     }
-
-    // En modo closings_viewer arrancamos SIN sector activo para que se
-    // dispare el gate de PIN. En admin normal sigue arrancando en 'ganamos'.
-    if (_isClosingsViewerMode() && !_closingsView._initialized) {
-        _closingsView.sector = null;
-        _closingsView._initialized = true;
-    }
-
-    // Si no hay sector seleccionado, sólo renderizamos las 3 cards de
-    // selección con PIN — sin llamar al backend.
-    if (!_closingsView.sector) {
-        _closingsRowsCache = [];
-        _renderClosings();
-        return;
-    }
-
-    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
     const today = _closingsTodayART();
     const fromDate = new Date(today);
     fromDate.setDate(fromDate.getDate() - CLOSINGS_HISTORY_DAYS);
@@ -24827,7 +24744,6 @@ function closingsSetAnalysisPeriod(p) {
 async function loadClosingsAnalysis() {
     const box = document.getElementById('closingsAnalysisBox');
     if (!box) return;
-    if (!_closingsView.sector) { box.innerHTML = ''; return; }
     try {
         const params = new URLSearchParams({
             period: _closingsAnalysisPeriod,
@@ -24922,7 +24838,6 @@ async function loadClosingsAnalysis() {
 }
 
 async function loadClosingsSummary(date) {
-    if (!_closingsView.sector) return; // sin sector no carga summary
     try {
         const params = new URLSearchParams({ from: date, to: date });
         const r = await authFetch('/api/admin/closings/summary?' + params.toString());
@@ -25263,63 +25178,22 @@ function _renderClosings() {
     const body = document.getElementById('closingsBody');
     if (!body) return;
 
+    const sec = CLOSING_SECTORS_UI.find(s => s.key === _closingsView.sector) || CLOSING_SECTORS_UI[0];
     const date = _closingsView.date || _closingsTodayART();
     const today = _closingsTodayART();
-    const noSector = !_closingsView.sector;
-    const sec = !noSector
-        ? CLOSING_SECTORS_UI.find(s => s.key === _closingsView.sector)
-        : CLOSING_SECTORS_UI[0];
 
     let html = '';
 
     // ===== Selector de sector =====
-    // Dos modos:
-    //  A) /cierresgeneral (closings_viewer): 3 cards grandes con PIN.
-    //  B) admin normal: el selector de tabs viejo, sin PIN.
-    if (_isClosingsViewerMode()) {
-        html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">';
-        for (const s of CLOSING_SECTORS_UI) {
-            const active = s.key === _closingsView.sector;
-            const unlocked = _isClosingsUnlocked(s.key);
-            const bg = active
-                ? 'linear-gradient(135deg,' + s.color + ',' + s.color + 'cc)'
-                : (unlocked ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.40)');
-            const color = active ? '#000' : s.color;
-            const border = active ? s.color : (s.color + (unlocked ? '55' : '33'));
-            const lockBadge = unlocked
-                ? '<span style="font-size:11px;color:' + (active ? '#000' : '#aaffaa') + ';font-weight:800;">🔓 abierto</span>'
-                : '<span style="font-size:11px;color:#ff8080;font-weight:800;">🔒 con clave</span>';
-            html += '<div style="background:' + bg + ';color:' + color + ';border:2px solid ' + border + ';border-radius:11px;padding:14px 12px;position:relative;cursor:pointer;transition:transform 0.08s;" onclick="closingsSelectSector(\'' + s.key + '\')" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">';
-            html += '<div style="font-weight:900;font-size:14px;letter-spacing:0.5px;margin-bottom:5px;">' + s.label + '</div>';
-            html += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">';
-            html += lockBadge;
-            html += '<button type="button" onclick="event.stopPropagation();_changeClosingsPin(\'' + s.key + '\')" title="Cambiar PIN" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);color:' + (active ? '#000' : '#fff') + ';padding:3px 9px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">🔑 PIN</button>';
-            html += '</div>';
-            if (active) html += '<div style="position:absolute;top:6px;right:8px;font-size:12px;font-weight:900;">★</div>';
-            html += '</div>';
-        }
-        html += '</div>';
-    } else {
-        // UI vieja para admin normal (tabs en línea, sin PIN)
-        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
-        for (const s of CLOSING_SECTORS_UI) {
-            const active = s.key === _closingsView.sector;
-            const bg = active ? s.color : 'rgba(255,255,255,0.04)';
-            const color = active ? '#000' : s.color;
-            const border = active ? s.color : (s.color + '55');
-            html += '<button type="button" onclick="closingsSelectSector(\'' + s.key + '\')" style="flex:1;min-width:130px;background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:9px 12px;border-radius:9px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;cursor:pointer;">' + s.label + '</button>';
-        }
-        html += '</div>';
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
+    for (const s of CLOSING_SECTORS_UI) {
+        const active = s.key === _closingsView.sector;
+        const bg = active ? s.color : 'rgba(255,255,255,0.04)';
+        const color = active ? '#000' : s.color;
+        const border = active ? s.color : (s.color + '55');
+        html += '<button type="button" onclick="closingsSelectSector(\'' + s.key + '\')" style="flex:1;min-width:130px;background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:9px 12px;border-radius:9px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;cursor:pointer;">' + s.label + '</button>';
     }
-
-    // Sin sector activo (solo aplica en closings_viewer): mostrar prompt.
-    if (noSector) {
-        html += '<div style="background:rgba(0,212,255,0.06);border:1px dashed rgba(0,212,255,0.40);border-radius:10px;padding:32px;text-align:center;color:#aaa;font-size:13px;">';
-        html += '👆 Tocá uno de los 3 sectores de arriba para entrar. Cada uno tiene su PIN propio.';
-        html += '</div>';
-        body.innerHTML = html;
-        return;
-    }
+    html += '</div>';
 
     // ===== Selector de día (visible solo para el editor) =====
     html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:9px 11px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
