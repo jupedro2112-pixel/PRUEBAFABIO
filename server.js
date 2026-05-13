@@ -34431,6 +34431,193 @@ app.get('/api/admin/closings/analysis', authMiddleware, closingsAccessMiddleware
 });
 
 // ============================================
+// COTIZACIONES SEMANALES
+// ============================================
+// Cada lunes (o cuando el owner lo decida) se cierra una cotización por
+// equipo (hasta 10) y se cotiza al valor del USDT del día.
+//   precio_equipo = total_ARS_equipo / usdt_rate
+// El owner marca con tilde (✓) cuando ya cotizó, o cruz (✗) si no.
+
+const CotizacionEntry = require('./src/models/CotizacionEntry');
+const COT_DELETE_PIN = '1818';
+
+function _cotizacionCompute(c) {
+  const rate = Number(c.usdtRate || 0);
+  const teams = Array.isArray(c.teams) ? c.teams : [];
+  let totalARS = 0;
+  const priced = teams.map((t) => {
+    const totARS = Number(t.totalARS || 0);
+    totalARS += totARS;
+    const precioUSDT = rate > 0 ? +(totARS / rate).toFixed(2) : 0;
+    return {
+      slot: t.slot,
+      name: t.name || '',
+      totalARS: totARS,
+      photoUrl: t.photoUrl || '',
+      precioUSDT
+    };
+  });
+  const totalUSDT = rate > 0 ? +(totalARS / rate).toFixed(2) : 0;
+  return { teams: priced, totalARS, totalUSDT, usdtRate: rate };
+}
+
+// GET /api/admin/cotizaciones?from=YYYY-MM-DD&to=YYYY-MM-DD
+app.get('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const today = _closingDateKeyART();
+    const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
+    const to   = String(req.query.to   || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.to   : today;
+    const filter = {};
+    if (from || to) filter.dateKey = {};
+    if (from) filter.dateKey.$gte = from;
+    if (to)   filter.dateKey.$lte = to;
+    const rows = await CotizacionEntry.find(filter).sort({ dateKey: -1 }).lean();
+    const enriched = rows.map((r) => {
+      const calc = _cotizacionCompute(r);
+      return {
+        id: r.id,
+        dateKey: r.dateKey,
+        usdtRate: calc.usdtRate,
+        teams: calc.teams,
+        totalARS: calc.totalARS,
+        totalUSDT: calc.totalUSDT,
+        cotizado: !!r.cotizado,
+        cotizedAt: r.cotizedAt,
+        cotizedBy: r.cotizedBy || '',
+        notes: r.notes || '',
+        createdBy: r.createdBy || '',
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt
+      };
+    });
+    res.json({ success: true, items: enriched });
+  } catch (err) {
+    logger.error(`GET /api/admin/cotizaciones: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/cotizaciones — crear una cotización para una fecha.
+app.post('/api/admin/cotizaciones', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const dateKey = String(body.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? body.dateKey : null;
+    if (!dateKey) return res.status(400).json({ error: 'Fecha inválida' });
+
+    const existing = await CotizacionEntry.findOne({ dateKey });
+    if (existing) return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
+
+    const teams = Array.from({ length: 10 }, (_, i) => ({
+      slot: i, name: '', totalARS: 0, photoUrl: ''
+    }));
+
+    const doc = {
+      id: `cot_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      dateKey,
+      teams,
+      usdtRate: Number(body.usdtRate || 0),
+      cotizado: false,
+      notes: String(body.notes || '').slice(0, 500),
+      createdBy: (req.user && req.user.username) || ''
+    };
+    const saved = await CotizacionEntry.create(doc);
+    res.json({ success: true, item: { id: saved.id, dateKey: saved.dateKey } });
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
+    }
+    logger.error(`POST /api/admin/cotizaciones: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PUT /api/admin/cotizaciones/:id — actualiza campos editables.
+app.put('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await CotizacionEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+
+    const b = req.body || {};
+    if (b.dateKey !== undefined) {
+      const dk = String(b.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.dateKey : null;
+      if (!dk) return res.status(400).json({ error: 'Fecha inválida' });
+      if (dk !== c.dateKey) {
+        const collide = await CotizacionEntry.findOne({ dateKey: dk, id: { $ne: id } });
+        if (collide) return res.status(409).json({ error: 'Ya existe una cotización para esa fecha' });
+        c.dateKey = dk;
+      }
+    }
+    if (b.usdtRate !== undefined) c.usdtRate = Math.max(0, Number(b.usdtRate) || 0);
+    if (b.notes !== undefined) c.notes = String(b.notes || '').slice(0, 500);
+
+    if (Array.isArray(b.teams)) {
+      const map = new Map(c.teams.map((t) => [t.slot, t]));
+      for (const t of b.teams) {
+        const slot = Number(t.slot);
+        if (!Number.isInteger(slot) || slot < 0 || slot > 9) continue;
+        const cur = map.get(slot) || { slot, name: '', totalARS: 0, photoUrl: '' };
+        if (t.name !== undefined) cur.name = String(t.name || '').slice(0, 80);
+        if (t.totalARS !== undefined) cur.totalARS = Math.max(0, Number(t.totalARS) || 0);
+        if (t.photoUrl !== undefined) cur.photoUrl = String(t.photoUrl || '');
+        map.set(slot, cur);
+      }
+      const merged = [];
+      for (let i = 0; i < 10; i++) {
+        merged.push(map.get(i) || { slot: i, name: '', totalARS: 0, photoUrl: '' });
+      }
+      c.teams = merged;
+    }
+
+    await c.save();
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`PUT /api/admin/cotizaciones/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/cotizaciones/:id/toggle — alterna el tilde cotizado.
+app.post('/api/admin/cotizaciones/:id/toggle', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const c = await CotizacionEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    const newVal = !c.cotizado;
+    c.cotizado = newVal;
+    c.cotizedAt = newVal ? new Date() : null;
+    c.cotizedBy = newVal ? ((req.user && req.user.username) || '') : '';
+    await c.save();
+    res.json({ success: true, cotizado: c.cotizado });
+  } catch (err) {
+    logger.error(`POST /api/admin/cotizaciones/:id/toggle: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// DELETE /api/admin/cotizaciones/:id — borra (requiere PIN 1818).
+app.delete('/api/admin/cotizaciones/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const pin = String(
+      (req.query && req.query.pin) ||
+      (req.body && req.body.pin) ||
+      (req.headers && req.headers['x-delete-pin']) ||
+      ''
+    );
+    if (pin !== COT_DELETE_PIN) return res.status(403).json({ error: 'PIN incorrecto' });
+    const c = await CotizacionEntry.findOne({ id });
+    if (!c) return res.status(404).json({ error: 'Cotización no encontrada' });
+    await CotizacionEntry.deleteOne({ id });
+    logger.warn(`DELETE cotizacion ${id} by ${req.user && req.user.username}`);
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`DELETE /api/admin/cotizaciones/:id: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // RUTAS DE REFERIDOS
 // ============================================
 

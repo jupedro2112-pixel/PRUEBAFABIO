@@ -236,6 +236,10 @@
                     <span>📊</span>
                     <span><strong>CIERRES GENERAL</strong></span>
                 </a>
+                <a href="#" class="nav-item" data-section="cotizaciones" style="background:rgba(0,200,150,0.06);border-left:3px solid #00c896;">
+                    <span>💱</span>
+                    <span><strong>COTIZACIONES</strong></span>
+                </a>
 
                 <!-- Ayuda y guía al fondo de todo (cada item tiene su propio ❓
                      en el sidebar, esta entrada lleva al overview completo). -->
@@ -1708,6 +1712,27 @@
                     </p>
                 </div>
                 <div id="closingsBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: COTIZACIONES SEMANALES
+                 Render dinámico desde admin.js loadCotizaciones().
+                 ============================================ -->
+            <section id="cotizacionesSection" class="section">
+                <div class="panel-header">
+                    <h2>💱 Cotizaciones</h2>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="refresh-btn" onclick="loadCotizaciones()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div style="background:rgba(0,200,150,0.08);border-left:3px solid #00c896;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.55;">
+                        Cierre semanal por equipo (hasta 10). El lunes — o cualquier fecha que elijas — sumás el total $ de cada equipo y completás el <strong>valor del USDT</strong>. El precio a cotizar se calcula automáticamente: <code style="color:#00c896;">total_ARS / usdt_rate</code>. Marcá con <strong style="color:#0f0;">✓</strong> cuando ya cotizaste o <strong style="color:#f55;">✗</strong> si no.
+                    </p>
+                </div>
+                <div id="cotizacionesBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>

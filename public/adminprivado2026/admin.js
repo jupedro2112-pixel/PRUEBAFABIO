@@ -428,6 +428,7 @@ function showSection(sectionKey) {
         lineDown: 'lineDownSection',
         activePlayers: 'activePlayersSection',
         closings: 'closingsSection',
+        cotizaciones: 'cotizacionesSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -508,6 +509,8 @@ function showSection(sectionKey) {
         loadActivePlayers();
     } else if (sectionKey === 'closings') {
         loadClosings();
+    } else if (sectionKey === 'cotizaciones') {
+        loadCotizaciones();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -26654,5 +26657,294 @@ async function removeClosingComprobante(rid, idx) {
         loadClosings();
     } catch (e) {
         showToast('Error', 'error');
+    }
+}
+
+// ============================================================
+// COTIZACIONES SEMANALES
+// ============================================================
+// Sección financiera dedicada: cada lunes (o la fecha que el owner
+// elija) se cierra una cotización por equipo (hasta 10). Sumás el
+// total $ acumulado del equipo, completás el valor del USDT del día,
+// y el precio a cotizar sale solo: total / usdt_rate. El owner marca
+// con ✓ (cotizado) o ✗ (sin cotizar).
+
+let _cotizacionesCache = [];
+
+// Devuelve el lunes de la semana actual (o el de hoy si es lunes), en
+// formato YYYY-MM-DD hora Argentina. Útil como default del date picker.
+function _cotMondayOfThisWeek() {
+    const tz = 'America/Argentina/Buenos_Aires';
+    const now = new Date();
+    // Obtener "hoy en ART"
+    const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' });
+    const parts = fmt.formatToParts(now);
+    const get = (t) => (parts.find(p => p.type === t) || {}).value;
+    const y = Number(get('year')), m = Number(get('month')), d = Number(get('day'));
+    const wd = String(get('weekday') || '').toLowerCase(); // mon,tue,...
+    const dowMap = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const dow = dowMap[wd] != null ? dowMap[wd] : 1;
+    const delta = (dow === 0) ? -6 : (1 - dow); // lunes = delta 0; martes = -1, ...
+    const base = new Date(Date.UTC(y, m - 1, d));
+    base.setUTCDate(base.getUTCDate() + delta);
+    return base.toISOString().slice(0, 10);
+}
+
+async function loadCotizaciones() {
+    const body = document.getElementById('cotizacionesBody');
+    if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const r = await authFetch('/api/admin/cotizaciones');
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(d.error || 'No se pudo cargar') + '</div>';
+            return;
+        }
+        _cotizacionesCache = d.items || [];
+        _renderCotizaciones();
+    } catch (e) {
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error de conexión</div>';
+    }
+}
+
+function _renderCotizaciones() {
+    const body = document.getElementById('cotizacionesBody');
+    if (!body) return;
+    const items = _cotizacionesCache || [];
+    const defaultDate = _cotMondayOfThisWeek();
+
+    let h = '';
+
+    // === Crear nueva cotización ===
+    h += '<div style="background:rgba(0,200,150,0.06);border:1px solid rgba(0,200,150,0.30);border-radius:10px;padding:14px;margin-bottom:18px;">';
+    h += '<div style="color:#00c896;font-weight:800;font-size:13px;margin-bottom:10px;">➕ Nueva cotización</div>';
+    h += '<div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">';
+    h += '<div>';
+    h += '<label style="color:#aaa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Fecha</label>';
+    h += '<input type="date" id="newCotDate" value="' + escapeHtml(defaultDate) + '" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:8px 10px;border-radius:7px;font-size:13px;font-weight:600;">';
+    h += '</div>';
+    h += '<button onclick="createCotizacion()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:9px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">CREAR CIERRE</button>';
+    h += '<span style="color:#888;font-size:11px;">Default = lunes de esta semana. Podés elegir cualquier fecha.</span>';
+    h += '</div>';
+    h += '</div>';
+
+    if (items.length === 0) {
+        h += '<div style="background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.15);border-radius:10px;padding:30px;text-align:center;color:#888;font-size:13px;">Todavía no hay cotizaciones cargadas. Creá la primera arriba ⬆️</div>';
+        body.innerHTML = h;
+        return;
+    }
+
+    for (const it of items) {
+        h += _renderCotizacionCard(it);
+    }
+
+    body.innerHTML = h;
+}
+
+function _renderCotizacionCard(it) {
+    const rate = Number(it.usdtRate || 0);
+    const teams = Array.isArray(it.teams) ? it.teams : [];
+    const cotizado = !!it.cotizado;
+
+    const accent = cotizado ? '#0f0' : '#f55';
+    const accentBg = cotizado ? 'rgba(0,255,0,0.06)' : 'rgba(255,80,80,0.06)';
+    const accentBorder = cotizado ? 'rgba(0,255,0,0.30)' : 'rgba(255,80,80,0.30)';
+    const statusLabel = cotizado ? '✓ COTIZADO' : '✗ SIN COTIZAR';
+
+    let h = '<div id="cot_' + escapeHtml(it.id) + '" data-cot-id="' + escapeHtml(it.id) + '" style="background:rgba(0,0,0,0.30);border:1px solid ' + accentBorder + ';border-radius:12px;padding:16px;margin-bottom:18px;">';
+
+    // Header
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">';
+    h += '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">';
+    h += '<input type="date" data-cot-field="dateKey" value="' + escapeHtml(it.dateKey) + '" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.14);color:#fff;padding:7px 10px;border-radius:7px;font-size:13px;font-weight:700;">';
+    h += '<div style="background:' + accentBg + ';color:' + accent + ';padding:6px 14px;border-radius:8px;font-weight:900;font-size:12px;letter-spacing:1px;border:1px solid ' + accentBorder + ';">' + statusLabel + '</div>';
+    h += '</div>';
+    h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+    h += '<button onclick="toggleCotizado(' + escapeJsArg(it.id) + ')" style="background:' + (cotizado ? 'rgba(255,80,80,0.18)' : 'rgba(0,255,0,0.18)') + ';color:' + (cotizado ? '#f55' : '#0f0') + ';border:1px solid ' + (cotizado ? 'rgba(255,80,80,0.40)' : 'rgba(0,255,0,0.40)') + ';padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">' + (cotizado ? '✗ MARCAR SIN COTIZAR' : '✓ MARCAR COTIZADO') + '</button>';
+    h += '<button onclick="saveCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:7px 14px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR</button>';
+    h += '<button onclick="deleteCotizacion(' + escapeJsArg(it.id) + ')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:7px 12px;border-radius:8px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
+    h += '</div>';
+    h += '</div>';
+
+    // USDT rate
+    h += '<div style="display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:12px;background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.20);border-radius:8px;padding:10px 14px;">';
+    h += '<div>';
+    h += '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;display:block;margin-bottom:4px;">Valor USDT (ARS)</label>';
+    h += '<input type="number" min="0" step="0.01" data-cot-field="usdtRate" value="' + (rate || '') + '" placeholder="ej: 1500" oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.40);color:#ffd700;padding:9px 12px;border-radius:7px;font-size:14px;font-weight:800;width:140px;">';
+    h += '</div>';
+    h += '<div style="color:#888;font-size:11px;line-height:1.4;">';
+    h += 'precio_equipo = <strong style="color:#fff;">total_ARS / valor_USDT</strong>';
+    h += '</div>';
+    h += '</div>';
+
+    // Tabla de 10 equipos
+    h += '<div style="overflow-x:auto;border:1px solid rgba(255,255,255,0.08);border-radius:8px;">';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:560px;">';
+    h += '<thead><tr style="background:rgba(255,255,255,0.04);">';
+    h += '<th style="padding:8px;text-align:center;color:#aaa;font-size:10.5px;letter-spacing:0.5px;width:36px;">#</th>';
+    h += '<th style="padding:8px;text-align:left;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">EQUIPO</th>';
+    h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">TOTAL $ (ARS)</th>';
+    h += '<th style="padding:8px;text-align:right;color:#aaa;font-size:10.5px;letter-spacing:0.5px;">PRECIO (USDT)</th>';
+    h += '</tr></thead><tbody>';
+
+    let totalARS = 0;
+    for (let i = 0; i < 10; i++) {
+        const t = teams.find(x => Number(x.slot) === i) || { slot: i, name: '', totalARS: 0 };
+        const totA = Number(t.totalARS || 0);
+        totalARS += totA;
+        const precioUSDT = rate > 0 ? (totA / rate) : 0;
+        h += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
+        h += '<td style="padding:7px;text-align:center;color:#888;font-weight:700;">' + (i + 1) + '</td>';
+        h += '<td style="padding:7px;">';
+        h += '<input type="text" data-cot-team-slot="' + i + '" data-cot-team-field="name" value="' + escapeHtml(t.name || '') + '" placeholder="Nombre equipo" maxlength="80" style="width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:600;">';
+        h += '</td>';
+        h += '<td style="padding:7px;text-align:right;">';
+        h += '<input type="number" min="0" step="1" data-cot-team-slot="' + i + '" data-cot-team-field="totalARS" value="' + (totA || '') + '" placeholder="0" oninput="_cotRecompute(' + escapeJsArg(it.id) + ')" style="width:140px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:6px 10px;border-radius:6px;font-size:12.5px;font-weight:700;text-align:right;">';
+        h += '</td>';
+        h += '<td data-cot-precio-slot="' + i + '" style="padding:7px;text-align:right;color:#00c896;font-weight:800;font-size:13px;">' + (rate > 0 ? precioUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
+        h += '</tr>';
+    }
+
+    const totalUSDT = rate > 0 ? (totalARS / rate) : 0;
+    h += '<tr style="border-top:2px solid rgba(0,200,150,0.30);background:rgba(0,200,150,0.06);">';
+    h += '<td colspan="2" style="padding:9px;text-align:right;color:#00c896;font-weight:900;font-size:12px;letter-spacing:1px;">TOTAL</td>';
+    h += '<td data-cot-total-ars style="padding:9px;text-align:right;color:#fff;font-weight:900;font-size:13.5px;">' + formatMoney(totalARS) + '</td>';
+    h += '<td data-cot-total-usdt style="padding:9px;text-align:right;color:#00c896;font-weight:900;font-size:13.5px;">' + (rate > 0 ? totalUSDT.toFixed(2) + ' USDT' : '—') + '</td>';
+    h += '</tr>';
+
+    h += '</tbody></table></div>';
+
+    // Notas + meta
+    h += '<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:end;">';
+    h += '<div style="flex:1;min-width:260px;">';
+    h += '<label style="color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px;">Notas (opcional)</label>';
+    h += '<input type="text" data-cot-field="notes" value="' + escapeHtml(it.notes || '') + '" maxlength="500" placeholder="Detalle, recordatorio…" style="width:100%;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#fff;padding:7px 10px;border-radius:6px;font-size:12px;">';
+    h += '</div>';
+    h += '<div style="color:#666;font-size:10.5px;text-align:right;">';
+    if (it.cotizado && it.cotizedAt) {
+        h += 'Cotizado: <strong style="color:#0f0;">' + escapeHtml(formatDate(it.cotizedAt)) + '</strong>';
+        if (it.cotizedBy) h += ' por ' + escapeHtml(it.cotizedBy);
+        h += '<br>';
+    }
+    if (it.createdBy) h += 'Creado por ' + escapeHtml(it.createdBy);
+    h += '</div>';
+    h += '</div>';
+
+    h += '</div>';
+    return h;
+}
+
+// Recalcula los precios en USDT y el total cuando cambia el rate o un total $.
+function _cotRecompute(id) {
+    const card = document.getElementById('cot_' + id);
+    if (!card) return;
+    const rateInput = card.querySelector('[data-cot-field="usdtRate"]');
+    const rate = Number((rateInput && rateInput.value) || 0);
+    let totalARS = 0;
+    for (let i = 0; i < 10; i++) {
+        const totInput = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="totalARS"]');
+        const totA = Number((totInput && totInput.value) || 0);
+        totalARS += totA;
+        const precioCell = card.querySelector('[data-cot-precio-slot="' + i + '"]');
+        if (precioCell) {
+            precioCell.textContent = rate > 0 ? (totA / rate).toFixed(2) + ' USDT' : '—';
+        }
+    }
+    const totA = card.querySelector('[data-cot-total-ars]');
+    if (totA) totA.textContent = formatMoney(totalARS);
+    const totU = card.querySelector('[data-cot-total-usdt]');
+    if (totU) totU.textContent = rate > 0 ? (totalARS / rate).toFixed(2) + ' USDT' : '—';
+}
+
+async function createCotizacion() {
+    const inp = document.getElementById('newCotDate');
+    const dateKey = inp ? inp.value : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+        showToast('Elegí una fecha válida', 'error');
+        return;
+    }
+    try {
+        const r = await authFetch('/api/admin/cotizaciones', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dateKey })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al crear', 'error');
+            return;
+        }
+        showToast('✅ Cotización creada', 'success');
+        loadCotizaciones();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function saveCotizacion(id) {
+    const card = document.getElementById('cot_' + id);
+    if (!card) return;
+    const dateKey = (card.querySelector('[data-cot-field="dateKey"]') || {}).value || '';
+    const usdtRate = Number((card.querySelector('[data-cot-field="usdtRate"]') || {}).value || 0);
+    const notes = (card.querySelector('[data-cot-field="notes"]') || {}).value || '';
+    const teams = [];
+    for (let i = 0; i < 10; i++) {
+        const nameEl = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="name"]');
+        const totEl  = card.querySelector('[data-cot-team-slot="' + i + '"][data-cot-team-field="totalARS"]');
+        teams.push({
+            slot: i,
+            name: nameEl ? nameEl.value : '',
+            totalARS: Number((totEl && totEl.value) || 0)
+        });
+    }
+    try {
+        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dateKey, usdtRate, notes, teams })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al guardar', 'error');
+            return;
+        }
+        showToast('💾 Guardado', 'success');
+        loadCotizaciones();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function toggleCotizado(id) {
+    try {
+        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '/toggle', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error', 'error');
+            return;
+        }
+        showToast(d.cotizado ? '✓ Marcado como COTIZADO' : '✗ Marcado SIN COTIZAR', 'success');
+        loadCotizaciones();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+async function deleteCotizacion(id) {
+    const pin = prompt('PIN para borrar la cotización:');
+    if (pin == null) return;
+    if (!pin) { showToast('PIN requerido', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/cotizaciones/' + encodeURIComponent(id) + '?pin=' + encodeURIComponent(pin), { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error', 'error');
+            return;
+        }
+        showToast('🗑 Eliminada', 'success');
+        loadCotizaciones();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
     }
 }
