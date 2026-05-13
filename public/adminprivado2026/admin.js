@@ -24840,6 +24840,9 @@ async function loadClosingsAnalysis() {
 async function loadClosingsSummary(date) {
     try {
         const params = new URLSearchParams({ from: date, to: date });
+        // Filtrar por el sector activo — el resumen del día NO debe mezclar
+        // sectores. Cada sector tiene su propio análisis.
+        if (_closingsView.sector) params.set('sector', _closingsView.sector);
         const r = await authFetch('/api/admin/closings/summary?' + params.toString());
         const d = await r.json();
         if (!r.ok || !d.success) return;
@@ -24877,8 +24880,9 @@ async function loadClosingsSummary(date) {
         html += '</div>';
         html += '</div>';
 
-        // Breakdown por sector
-        if (d.bySector.length > 0) {
+        // Breakdown por sector: sólo mostrar si NO estamos filtrando ya por
+        // un sector (en ese caso es redundante).
+        if (!_closingsView.sector && d.bySector.length > 0) {
             html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;">';
             for (const s of d.bySector) {
                 html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:7px;padding:7px 9px;font-size:11px;">';
@@ -25275,10 +25279,10 @@ function _renderClosings() {
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🏃 Bajó</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Pendiente calculado = lo que tiene que haber en el CVU para bajar mañana">⏳ Pend.</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Δ = CVU real − Pendiente. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🎁 Bonos</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Gastos del día (ya consumidos)">🧾 Gastos</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Gastos del día (resta del neto)">🧾 Gastos</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Neto = -diff − gastos. Pendiente ya está descontado.">📐 Neto</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Δ = CVU real − Pendiente. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Estado</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Acción</th>';
         html += '</tr></thead><tbody>';
@@ -25351,12 +25355,12 @@ function _renderClosings() {
             html += '<td style="padding:6px 10px;text-align:right;color:#aaffff;">' + _closingFmt(r.bajadaARS) + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:' + pendColor + ';font-weight:700;" title="Lo que tiene que haber en el CVU para bajar mañana">' + _closingFmt(c.pendienteHoy) + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#00d4ff;font-weight:700;" title="Saldo real cargado del CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:' + deltaColor + ';font-weight:800;" title="CVU real − Pendiente · positivo = sobra · negativo = falta">' + deltaText + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
-            // Gastos del día (separados — restan al neto pero se ven aparte)
+            // Gastos del día: se MUESTRAN positivos (sin signo), pero
+            // RESTAN del neto en la cuenta. Es solo el formato visual.
             const gastosVal = Number(r.gastosARS || 0);
             const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
-            html += '<td style="padding:6px 10px;text-align:right;color:' + gastosColor + ';">' + (gastosVal > 0 ? '-' : '') + _closingFmt(gastosVal) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:' + gastosColor + ';" title="Resta del neto en la cuenta final">' + _closingFmt(gastosVal) + '</td>';
             // Neto = -diff − gastos (pendiente ya descontado via -diff).
             // Si hay pendiente, el neto es negativo (debemos eso). Gastos
             // también restan. El pendiente sigue mostrándose en su columna
@@ -25364,6 +25368,7 @@ function _renderClosings() {
             const netoFinal = (Number(c.netoSector) || 0) - gastosVal;
             const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
             html += '<td style="padding:6px 10px;text-align:right;color:' + netoFinalColor + ';font-weight:800;" title="Neto = -diff (pendiente descontado) − gastos. Si hay pendiente, neto es negativo.">' + _closingFmt(netoFinal) + '</td>';
+            html += '<td style="padding:6px 10px;text-align:right;color:' + deltaColor + ';font-weight:800;" title="CVU real − Pendiente · positivo = sobra · negativo = falta">' + deltaText + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';

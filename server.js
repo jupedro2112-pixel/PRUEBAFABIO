@@ -34227,10 +34227,12 @@ app.get('/api/admin/closings/summary', authMiddleware, closingsAccessMiddleware,
     const today = _closingDateKeyART();
     const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
     const to   = String(req.query.to   || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.to   : today;
+    const sector = CLOSING_SECTORS.includes(String(req.query.sector)) ? req.query.sector : null;
     const filter = {};
     if (from || to) filter.dateKey = {};
     if (from) filter.dateKey.$gte = from;
     if (to)   filter.dateKey.$lte = to;
+    if (sector) filter.sector = sector;
     const rows = await ClosingEntry.find(filter).lean();
     const bySector = {};
     for (const r of rows) {
