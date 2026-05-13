@@ -669,8 +669,21 @@ const USER_PUBLIC_FIELDS = 'id username email phone phoneVerified whatsapp accou
 // Admin roles are internal VIPCARGAS accounts that have NO counterpart in
 // JUGAYGANA. They must never be routed through any JUGAYGANA sync, default-
 // password detection, or mustChangePassword flow.
-const ADMIN_ROLES = ['admin', 'depositor', 'withdrawer'];
+// 'closings_viewer' is an admin-class role restricted to the /cierresgeneral
+// page — can read/write closings only. Counts as admin for password/cookie
+// handling but is rejected by adminMiddleware (which is for full admins).
+const ADMIN_ROLES = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
 const isAdminRole = (role) => ADMIN_ROLES.includes(role);
+const CLOSINGS_ACCESS_ROLES = ['admin', 'closings_viewer'];
+
+// Middleware: allow only roles that can access /api/admin/closings*.
+// Full admins always allowed; closings_viewer is restricted to these endpoints.
+const closingsAccessMiddleware = (req, res, next) => {
+  if (!CLOSINGS_ACCESS_ROLES.includes(req.user && req.user.role)) {
+    return res.status(403).json({ error: 'Acceso denegado.' });
+  }
+  next();
+};
 
 // Maximum character length for a block reason stored on a user account.
 // Must match the maxlength attribute in the admin panel block modal HTML.
@@ -789,7 +802,7 @@ function requireAdminCookie(req, res, next) {
   }
   try {
     const decoded = jwt.verify(cookieVal, JWT_SECRET);
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     if (!adminRoles.includes(decoded.role)) {
       return res.status(403).send('Forbidden');
     }
@@ -870,6 +883,26 @@ app.use('/adminprivado2026/', adminHostCheck, (req, res) => {
 // Pasa por el mismo adminHostCheck (sólo se sirve desde el dominio admin).
 app.get(['/recontactacion', '/recontactacion/'], adminHostCheck, (req, res) => {
   res.redirect(302, '/adminprivado2026/?only=recontact');
+});
+
+// /cierresgeneral — login branded para el rol closings_viewer.
+// Después del login redirige a /adminprivado2026/?only=closings, donde el
+// admin.js renderiza SOLO la sección de cierres (sidebar oculta por CSS).
+app.get(['/cierresgeneral', '/cierresgeneral/'], adminHostCheck, (req, res) => {
+  const filePath = path.join(__dirname, 'public', 'cierresgeneral', 'index.html');
+  const content = readFileSafe(filePath);
+  if (!content) return res.status(500).send('Error loading page');
+  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.send(content);
+});
+
+// Block direct file access under /cierresgeneral/.
+app.use('/cierresgeneral/', adminHostCheck, (req, res) => {
+  res.status(404).send('Not found');
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -2034,7 +2067,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     // An httpOnly, SameSite=Strict, path-scoped cookie is the recommended
     // alternative to localStorage for session tokens: it is inaccessible to
     // JavaScript (XSS-safe) and is scoped to the admin path only.
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     if (adminRoles.includes(userObj.role)) {
       // Set two httpOnly cookies: one for page access, one for API calls.
       // Neither can be read by client-side scripts (XSS-safe).
@@ -2706,7 +2739,7 @@ app.get('/api/admin/me', async (req, res) => {
   }
   try {
     const decoded = jwt.verify(cookieToken, JWT_SECRET);
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     if (!adminRoles.includes(decoded.role)) {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
@@ -3183,7 +3216,7 @@ app.post('/api/auth/login-otp-verify', authLimiter, async (req, res) => {
 
     // Set admin cookies if applicable. Incluir tokenVersion para que el
     // bump de versión invalide este cookie igual que el localStorage token.
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     if (adminRoles.includes(userObj.role)) {
       const adminCookieToken = jwt.sign(
         { userId: userId, username: userObj.username, role: userObj.role, tokenVersion: userObj.tokenVersion ?? 0 },
@@ -3985,7 +4018,7 @@ app.delete('/api/users/:id', authMiddleware, adminMiddleware, async (req, res) =
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     if (adminRoles.includes(userToDelete.role) && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo los administradores pueden eliminar otros administradores' });
     }
@@ -4411,7 +4444,7 @@ app.post('/api/messages/send', authMiddleware, async (req, res) => {
       }
     }
     
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     const isAdminRole = adminRoles.includes(req.user.role);
     
     // Issue #3: Bloquear comandos enviados por usuarios comunes (solo admins pueden procesar comandos)
@@ -6561,7 +6594,45 @@ async function initializeData() {
     console.log(`✅ Admin verificado: ${adminUsername}`);
   }
   } // end if (adminUsername)
-  
+
+  // Seed del usuario 'cierresgeneral' (rol closings_viewer) — acceso
+  // restringido al panel /cierresgeneral. Idempotente: si ya existe,
+  // sólo se asegura el rol y el estado activo (NO sobrescribe la
+  // contraseña para preservar cambios manuales en producción).
+  try {
+    const CIERRES_USERNAME = 'cierresgeneral';
+    const CIERRES_PASSWORD = 'P4pel123';
+    let cierresUser = await User.findOne({ username: CIERRES_USERNAME });
+    if (!cierresUser) {
+      const hashed = await bcrypt.hash(CIERRES_PASSWORD, 12);
+      await User.create({
+        id: uuidv4(),
+        username: CIERRES_USERNAME,
+        password: hashed,
+        email: 'cierres@saladejuegos.com',
+        phone: null,
+        role: 'closings_viewer',
+        accountNumber: 'CIERRES01',
+        balance: 0,
+        createdAt: new Date(),
+        lastLogin: null,
+        isActive: true,
+        jugayganaUserId: null,
+        jugayganaUsername: null,
+        jugayganaSyncStatus: 'not_applicable'
+      });
+      console.log(`✅ Usuario '${CIERRES_USERNAME}' creado (rol: closings_viewer)`);
+    } else {
+      let changed = false;
+      if (cierresUser.role !== 'closings_viewer') { cierresUser.role = 'closings_viewer'; changed = true; }
+      if (!cierresUser.isActive) { cierresUser.isActive = true; changed = true; }
+      if (changed) await cierresUser.save();
+      console.log(`✅ Usuario '${CIERRES_USERNAME}' verificado (rol: ${cierresUser.role})`);
+    }
+  } catch (e) {
+    logger.warn(`No se pudo seedear 'cierresgeneral': ${e.message}`);
+  }
+
   // Backfill de periodKey en RefundClaim viejos: necesario para que el indice
   // unique partial cubra retroactivamente los reembolsos anteriores al fix.
   // Idempotente y barato si no hay rows con periodKey null.
@@ -32531,7 +32602,7 @@ app.get('/api/admin/database', authMiddleware, adminMiddleware, async (req, res)
     const users = await User.find().select('-password').lean();
     const totalMessages = await Message.countDocuments();
     
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     const totalAdmins = users.filter(u => adminRoles.includes(u.role)).length;
     
     res.json({
@@ -33304,7 +33375,7 @@ app.get('/api/users/:userId', authMiddleware, async (req, res) => {
     const { userId } = req.params;
     
     // Only admins or the user themselves can fetch a user profile
-    const adminRoles = ['admin', 'depositor', 'withdrawer'];
+    const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
     if (!adminRoles.includes(req.user.role) && req.user.userId !== userId) {
       return res.status(403).json({ error: 'Acceso denegado' });
     }
@@ -33731,7 +33802,7 @@ function _closingDateKeyART(now) {
 
 // GET /api/admin/closings?from=YYYY-MM-DD&to=YYYY-MM-DD[&sector=]
 // Lista cierres con filtros. Default = últimos 30 días.
-app.get('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const today = _closingDateKeyART();
     const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
@@ -33797,7 +33868,7 @@ function _aggregateBuffaloTeams(teams) {
 //   bonusARS, bonusCount, transactionsCount }.
 // Para buffalo: incluir { teams: [{slot,name,depositsARS,ventasARS,bonusARS,
 //   bonusCount,transactionsCount}, ...] }.
-app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const b = req.body || {};
     const sector = String(b.sector || '');
@@ -33885,7 +33956,7 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
 
 // PUT /api/admin/closings/:id — editar cierre (bloqueado si > 24h confirmado).
 // Cualquier cambio queda en editHistory para auditoría.
-app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.put('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const c = await ClosingEntry.findOne({ id });
@@ -33976,7 +34047,7 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
 // REQUIERE: si quedó pendiente > 0, debe haber al menos 1 comprobante
 // con kind='pendiente_bank' (foto del banco que muestre que la plata
 // sigue ahí). Sin esto, se considera plata faltante y rechazamos.
-app.post('/api/admin/closings/:id/confirm', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/closings/:id/confirm', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const c = await ClosingEntry.findOne({ id });
@@ -34010,7 +34081,7 @@ app.post('/api/admin/closings/:id/confirm', authMiddleware, adminMiddleware, asy
 
 // POST /api/admin/closings/:id/verify — toggle del tilde "verificado"
 // (el owner revisó el análisis y dió OK manual). Sólo si está confirmado.
-app.post('/api/admin/closings/:id/verify', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/closings/:id/verify', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const c = await ClosingEntry.findOne({ id });
@@ -34039,7 +34110,7 @@ app.post('/api/admin/closings/:id/verify', authMiddleware, adminMiddleware, asyn
 
 // POST /api/admin/closings/:id/comprobante — adjuntar foto (URL ya subida)
 // Body: { url, kind: 'bajada'|'pendiente_bank', note }
-app.post('/api/admin/closings/:id/comprobante', authMiddleware, adminMiddleware, async (req, res) => {
+app.post('/api/admin/closings/:id/comprobante', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const c = await ClosingEntry.findOne({ id });
@@ -34073,7 +34144,7 @@ app.post('/api/admin/closings/:id/comprobante', authMiddleware, adminMiddleware,
 });
 
 // DELETE /api/admin/closings/:id/comprobante/:idx — sacar un comprobante.
-app.delete('/api/admin/closings/:id/comprobante/:idx', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/closings/:id/comprobante/:idx', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const idx = parseInt(req.params.idx, 10);
@@ -34106,7 +34177,7 @@ app.delete('/api/admin/closings/:id/comprobante/:idx', authMiddleware, adminMidd
 // Funciona incluso si el cierre está confirmado/locked (es un override
 // manual del owner para casos donde hay que limpiar/empezar de cero).
 const CLOSING_DELETE_PIN = '1818';
-app.delete('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, res) => {
+app.delete('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const id = String(req.params.id || '');
     const pin = String(
@@ -34135,7 +34206,7 @@ app.delete('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (re
 });
 
 // GET /api/admin/closings/summary?from=&to= — totales agregados.
-app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/api/admin/closings/summary', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const today = _closingDateKeyART();
     const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
@@ -34200,7 +34271,7 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
 // GET /api/admin/closings/analysis?period=day|week|month[&sector=&teamSlot=]
 // Devuelve totales del período actual vs el anterior + deltas para
 // comparativa empresarial. Acepta filtro opcional por sector/equipo.
-app.get('/api/admin/closings/analysis', authMiddleware, adminMiddleware, async (req, res) => {
+app.get('/api/admin/closings/analysis', authMiddleware, closingsAccessMiddleware, async (req, res) => {
   try {
     const period = ['day','week','month'].includes(String(req.query.period)) ? req.query.period : 'month';
     const sector = CLOSING_SECTORS.includes(String(req.query.sector)) ? req.query.sector : null;

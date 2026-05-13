@@ -165,7 +165,7 @@ async function handleLogin(e) {
             return;
         }
 
-        const adminRoles = ['admin', 'depositor', 'withdrawer'];
+        const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
         if (!adminRoles.includes(data.user && data.user.role)) {
             errEl.textContent = 'Tu cuenta no tiene permisos de administrador';
             return;
@@ -174,6 +174,14 @@ async function handleLogin(e) {
         currentToken = data.token;
         currentAdmin = data.user;
         localStorage.setItem('adminToken', currentToken);
+        // closings_viewer: forzar el modo "only=closings" (sidebar oculto,
+        // sólo se ve la sección de cierres) aunque la URL no lo traiga.
+        if (data.user && data.user.role === 'closings_viewer') {
+            try {
+                document.documentElement.classList.add('admin-only-mode');
+                document.documentElement.dataset.onlySection = 'closings';
+            } catch (_) {}
+        }
         showApp();
     } catch (err) {
         console.error('Login error:', err);
@@ -4130,9 +4138,16 @@ document.addEventListener('DOMContentLoaded', function () {
         }).then(async (r) => {
             if (!r.ok) throw new Error('invalid');
             const data = await r.json();
-            const adminRoles = ['admin', 'depositor', 'withdrawer'];
+            const adminRoles = ['admin', 'depositor', 'withdrawer', 'closings_viewer'];
             if (!adminRoles.includes(data.role)) throw new Error('not admin');
             currentAdmin = data;
+            // closings_viewer: forzar modo only=closings al recargar.
+            if (data.role === 'closings_viewer') {
+                try {
+                    document.documentElement.classList.add('admin-only-mode');
+                    document.documentElement.dataset.onlySection = 'closings';
+                } catch (_) {}
+            }
             showApp();
         }).catch(() => {
             currentToken = null;
