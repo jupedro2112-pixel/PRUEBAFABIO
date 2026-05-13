@@ -25267,6 +25267,22 @@ function _renderClosingsChart(rows, sec) {
     return html;
 }
 
+// Cerrar sesión desde el panel /cierresgeneral. Limpia el token, los
+// cookies admin (vía endpoint), y redirige al login branded.
+async function closingsLogout() {
+    if (!confirm('¿Cerrar sesión?')) return;
+    try {
+        // Best-effort: pedir al server que limpie las cookies admin.
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    } catch (_) {}
+    try {
+        localStorage.removeItem('adminToken');
+        localStorage.removeItem('adminUser');
+        sessionStorage.clear();
+    } catch (_) {}
+    location.href = '/cierresgeneral';
+}
+
 function _renderClosings() {
     const body = document.getElementById('closingsBody');
     if (!body) return;
@@ -25274,8 +25290,22 @@ function _renderClosings() {
     const sec = CLOSING_SECTORS_UI.find(s => s.key === _closingsView.sector) || CLOSING_SECTORS_UI[0];
     const date = _closingsView.date || _closingsTodayART();
     const today = _closingsTodayART();
+    // En modo "only=closings" (entrada vía /cierresgeneral) mostramos un
+    // botón de "Cerrar sesión" arriba ya que el sidebar/logout normal no
+    // está visible.
+    const onlyMode = (function() {
+        try {
+            return new URLSearchParams(location.search).get('only') === 'closings';
+        } catch { return false; }
+    })();
 
     let html = '';
+
+    if (onlyMode) {
+        html += '<div style="display:flex;justify-content:flex-end;margin-bottom:8px;">';
+        html += '<button type="button" onclick="closingsLogout()" style="background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.45);color:#ff8080;padding:6px 13px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">🚪 Cerrar sesión</button>';
+        html += '</div>';
+    }
 
     // ===== Selector de sector =====
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
