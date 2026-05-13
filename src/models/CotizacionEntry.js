@@ -1,0 +1,52 @@
+/**
+ * Cotización semanal — sección financiera dedicada.
+ *
+ * Cada lunes se hace un cierre que totaliza por equipo (hasta 10) y se
+ * cotiza al valor del USDT. El valor a cotizar de cada equipo es:
+ *   precio = total_ARS_equipo / usdt_rate
+ *
+ * El owner marca con ✓ "cotizado" o ✗ "sin cotizar".
+ *
+ * Una entrada por fecha (típicamente lunes, pero se puede usar cualquier
+ * fecha — el owner elige).
+ */
+const mongoose = require('mongoose');
+
+const cotizacionTeamSchema = new mongoose.Schema({
+  slot: { type: Number, required: true, min: 0, max: 9 },
+  name: { type: String, default: '', trim: true, maxlength: 80 },
+  totalARS: { type: Number, default: 0, min: 0 },
+  // Foto opcional para respaldar el monto del equipo
+  photoUrl: { type: String, default: '' }
+}, { _id: false });
+
+const cotizacionSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true, index: true },
+
+  // YYYY-MM-DD — típicamente un lunes, pero el owner elige libremente.
+  dateKey: { type: String, required: true, index: true },
+
+  // Hasta 10 equipos
+  teams: {
+    type: [cotizacionTeamSchema],
+    default: () => Array.from({ length: 10 }, (_, i) => ({
+      slot: i, name: '', totalARS: 0, photoUrl: ''
+    }))
+  },
+
+  // Valor del USDT (en ARS) para esta cotización
+  usdtRate: { type: Number, default: 0, min: 0 },
+
+  // Tilde / cruz — el owner confirma manualmente cuando ya cotizó
+  cotizado: { type: Boolean, default: false },
+  cotizedAt: { type: Date, default: null },
+  cotizedBy: { type: String, default: '' },
+
+  notes: { type: String, default: '', maxlength: 500 },
+  createdBy: { type: String, default: '' }
+}, { timestamps: true });
+
+cotizacionSchema.index({ dateKey: 1 }, { unique: true });
+
+module.exports = mongoose.models['CotizacionEntry'] ||
+  mongoose.model('CotizacionEntry', cotizacionSchema);
