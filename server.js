@@ -34997,22 +34997,32 @@ app.post('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req,
       createdBy: (req.user && req.user.username) || ''
     });
 
-    // Push opcional: si vienen broadcastTitle + broadcastBody, dispara
-    // notif masiva con info del código. NO incluimos el código en el body
-    // por seguridad (los códigos van por el canal de Telegram).
+    // Push opcional. NO incluimos el código en el body por seguridad —
+    // los códigos se publican en el canal de Telegram. Si viene
+    // testUsername, el push va SOLO a ese usuario (modo prueba). Si no,
+    // va a todos los users con tokens FCM.
     let broadcastResult = null;
+    const testUsername = String(b.testUsername || '').trim().toLowerCase();
     if (b.broadcastTitle && b.broadcastBody) {
       try {
         const title = String(b.broadcastTitle).slice(0, 80);
         const body = String(b.broadcastBody).slice(0, 250);
-        broadcastResult = await sendNotificationToAllUsers(User, title, body, {
+        const data = {
           source: 'redeem-code',
           codeId: doc.id,
           durationMinutes: String(durationMinutes),
           amount: String(amountARS)
-        }, {});
+        };
+        // Filtro mongo: si hay testUsername, restringir a ese user (case-insensitive).
+        const filter = testUsername
+          ? { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
+          : {};
+        broadcastResult = await sendNotificationToAllUsers(User, title, body, data, filter);
+        if (testUsername) {
+          logger.info(`[redeem-codes] code ${doc.code} created · notif TEST a "${testUsername}" → success=${broadcastResult.successCount} fail=${broadcastResult.failureCount}`);
+        }
       } catch (notifErr) {
-        logger.warn(`[redeem-codes] notif broadcast falló: ${notifErr.message}`);
+        logger.warn(`[redeem-codes] notif falló: ${notifErr.message}`);
       }
     }
 

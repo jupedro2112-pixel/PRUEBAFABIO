@@ -28228,15 +28228,24 @@ function _renderRedeemCodes() {
 
     // === Notificación push opcional ===
     h += '<div style="background:rgba(0,0,0,0.30);border:1px dashed rgba(0,212,255,0.30);border-radius:8px;padding:10px;margin-bottom:10px;">';
-    h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:7px;"><input id="rcSendNotif" type="checkbox" checked> <span style="color:#00d4ff;font-weight:800;font-size:12px;">📲 Mandar notif a TODOS avisando del código nuevo</span></label>';
-    h += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:7px;">';
+    h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:7px;"><input id="rcSendNotif" type="checkbox" checked> <span style="color:#00d4ff;font-weight:800;font-size:12px;">📲 Mandar notif con info del código</span></label>';
+    h += '<div style="display:grid;grid-template-columns:1fr 2fr;gap:7px;margin-bottom:7px;">';
     h += '<input id="rcNotifTitle" type="text" placeholder="Título notif" maxlength="80" value="🎁 ¡Código nuevo en Telegram!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;font-weight:700;">';
     h += '<input id="rcNotifBody" type="text" placeholder="Texto del aviso" maxlength="250" value="Sumate al canal privado de Telegram para ver el código y canjearlo en la app. ¡Lo dejamos por tiempo limitado!" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;">';
+    h += '</div>';
+    // Modo TEST: si tipeás un username, la notif va SOLO a ese user.
+    h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:rgba(255,170,102,0.06);border:1px dashed rgba(255,170,102,0.30);border-radius:7px;padding:7px 10px;">';
+    h += '<span style="color:#ffaa66;font-size:11px;font-weight:800;letter-spacing:0.3px;">🧪 TEST a un solo usuario:</span>';
+    h += '<input id="rcTestUsername" type="text" placeholder="username exacto (vacío = todos)" maxlength="80" style="flex:1;min-width:160px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,170,102,0.30);color:#ffaa66;padding:5px 9px;border-radius:6px;font-size:12px;font-weight:700;">';
+    h += '<span style="color:#888;font-size:10.5px;">Si ponés un username, la notif va sólo a esa persona. El código se crea igual.</span>';
     h += '</div>';
     h += '<div style="color:#888;font-size:10.5px;margin-top:5px;">⚠️ El código NO va en la notificación — eso lo publicás vos en el canal de Telegram. La notif sólo avisa que hay uno nuevo y reenvía al canal.</div>';
     h += '</div>';
 
+    h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
     h += '<button onclick="createRedeemCode()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 CREAR Y AVISAR</button>';
+    h += '<button onclick="createRedeemCodeTest()" style="background:rgba(255,170,102,0.18);color:#ffaa66;border:1.5px solid rgba(255,170,102,0.50);padding:10px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🧪 SOLO AL TEST USER</button>';
+    h += '</div>';
     h += '</div>';
 
     // === Lista de códigos ===
@@ -28299,7 +28308,10 @@ function _renderRedeemCodeRow(it) {
     return h;
 }
 
-async function createRedeemCode() {
+// Crea el código y opcionalmente dispara la notif. forceTest=true obliga
+// a usar el testUsername del input (modo prueba a un solo user); sin él
+// usa lo que esté tipeado en rcTestUsername (vacío = broadcast a todos).
+async function createRedeemCode(forceTest) {
     const code = (document.getElementById('rcCode').value || '').trim().toUpperCase();
     const amountARS = Number(document.getElementById('rcAmount').value) || 0;
     const durationMinutes = Number(document.getElementById('rcDuration').value) || 0;
@@ -28307,16 +28319,28 @@ async function createRedeemCode() {
     const sendNotif = !!document.getElementById('rcSendNotif').checked;
     const notifTitle = (document.getElementById('rcNotifTitle').value || '').trim();
     const notifBody = (document.getElementById('rcNotifBody').value || '').trim();
+    const testUsername = (document.getElementById('rcTestUsername').value || '').trim();
 
     if (!code) { showToast('Falta el código', 'error'); return; }
     if (amountARS < 1) { showToast('Monto inválido', 'error'); return; }
     if (durationMinutes < 1) { showToast('Duración inválida', 'error'); return; }
 
+    if (forceTest && !testUsername) {
+        showToast('Completá el usuario para el test', 'error');
+        return;
+    }
+
     const payload = { code, amountARS, durationMinutes, maxClaims };
     if (sendNotif && notifTitle && notifBody) {
         payload.broadcastTitle = notifTitle;
         payload.broadcastBody = notifBody;
+        if (testUsername) payload.testUsername = testUsername;
     }
+
+    const confirmMsg = testUsername
+        ? '¿Crear el código "' + code + '" y mandar la notif SÓLO a "' + testUsername + '"? (No se notifica a nadie más)'
+        : '¿Crear el código "' + code + '" y mandar la notif a TODOS los usuarios?';
+    if (!confirm(confirmMsg)) return;
 
     try {
         const r = await authFetch('/api/admin/redeem-codes', {
@@ -28327,10 +28351,12 @@ async function createRedeemCode() {
         const d = await r.json();
         if (!r.ok || !d.success) { showToast(d.error || 'Error al crear', 'error'); return; }
         const bcMsg = d.broadcastResult
-            ? ' · Notif enviada a ' + (d.broadcastResult.successCount || 0) + ' usuarios'
+            ? (testUsername
+                ? ' · 🧪 Notif TEST a "' + testUsername + '" (success: ' + (d.broadcastResult.successCount || 0) + ')'
+                : ' · Notif enviada a ' + (d.broadcastResult.successCount || 0) + ' usuarios')
             : '';
         showToast('✅ Código creado' + bcMsg, 'success');
-        // Limpiar inputs
+        // Limpiar inputs (mantiene testUsername para repetir tests rápido)
         document.getElementById('rcCode').value = '';
         document.getElementById('rcAmount').value = '';
         document.getElementById('rcDuration').value = '';
@@ -28339,6 +28365,9 @@ async function createRedeemCode() {
         showToast('Error de conexión', 'error');
     }
 }
+
+// Wrapper: el botón "🧪 SOLO AL TEST USER" obliga a que testUsername esté seteado.
+async function createRedeemCodeTest() { return createRedeemCode(true); }
 
 async function closeRedeemCode(id) {
     if (!confirm('¿Cerrar este código? Después nadie va a poder canjearlo.')) return;
