@@ -25391,7 +25391,7 @@ function _renderClosings() {
         html += '<div style="color:#888;text-align:center;padding:22px;font-size:12.5px;">' + (filter === 'all' ? 'Sin cierres en el rango. Cargá el primero arriba.' : 'Sin cierres con este filtro.') + '</div>';
     } else {
         html += '<div style="overflow-x:auto;">';
-        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:980px;">';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;min-width:1080px;">';
         html += '<thead><tr style="background:rgba(255,255,255,0.04);color:' + sec.color + ';text-align:left;">';
         html += '<th style="padding:7px 10px;font-weight:800;">Fecha</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🔢 Tx</th>';
@@ -25403,7 +25403,8 @@ function _renderClosings() {
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Saldo real del CVU/banco a las 00 hs">🏦 CVU 00h</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Δ = CVU real − Pendiente. Positivo = sobra · Negativo = falta · 0 = OK">Δ falta/sobra</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">🎁 Bonos</th>';
-        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">📐 Neto</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Gastos del día (ya consumidos)">🧾 Gastos</th>';
+        html += '<th style="padding:7px 10px;font-weight:800;text-align:right;" title="Neto = -diff − gastos. Pendiente ya está descontado.">📐 Neto</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Estado</th>';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:center;">Acción</th>';
         html += '</tr></thead><tbody>';
@@ -25478,7 +25479,17 @@ function _renderClosings() {
             html += '<td style="padding:6px 10px;text-align:right;color:#00d4ff;font-weight:700;" title="Saldo real cargado del CVU a las 00 hs">' + _closingFmt(cvuMid) + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:' + deltaColor + ';font-weight:800;" title="CVU real − Pendiente · positivo = sobra · negativo = falta">' + deltaText + '</td>';
             html += '<td style="padding:6px 10px;text-align:right;color:#ffd700;">' + _closingFmt(r.bonusARS) + '</td>';
-            html += '<td style="padding:6px 10px;text-align:right;color:' + netColor + ';font-weight:800;">' + _closingFmt(c.netoSector) + '</td>';
+            // Gastos del día (separados — restan al neto pero se ven aparte)
+            const gastosVal = Number(r.gastosARS || 0);
+            const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
+            html += '<td style="padding:6px 10px;text-align:right;color:' + gastosColor + ';">' + (gastosVal > 0 ? '-' : '') + _closingFmt(gastosVal) + '</td>';
+            // Neto = -diff − gastos (pendiente ya descontado via -diff).
+            // Si hay pendiente, el neto es negativo (debemos eso). Gastos
+            // también restan. El pendiente sigue mostrándose en su columna
+            // propia para claridad.
+            const netoFinal = (Number(c.netoSector) || 0) - gastosVal;
+            const netoFinalColor = netoFinal > 0 ? '#66ff66' : (netoFinal < 0 ? '#ff5050' : '#aaffaa');
+            html += '<td style="padding:6px 10px;text-align:right;color:' + netoFinalColor + ';font-weight:800;" title="Neto = -diff (pendiente descontado) − gastos. Si hay pendiente, neto es negativo.">' + _closingFmt(netoFinal) + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;">' + stateBadge + '</td>';
             html += '<td style="padding:6px 10px;text-align:center;white-space:nowrap;">';
             html += '<button type="button" onclick="closingsSelectDate(\'' + r.dateKey + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10.5px;font-weight:700;cursor:pointer;margin-right:3px;">Abrir</button>';
