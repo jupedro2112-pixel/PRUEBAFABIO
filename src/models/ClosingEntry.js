@@ -87,6 +87,14 @@ const closingSchema = new mongoose.Schema({
   // detectar caídas de volumen.
   transactionsCount: { type: Number, default: 0, min: 0 },
 
+  // Cantidad de descargas (retiros / cash-outs) ese día. Permite calcular
+  // descarga promedio (bajadaARS / withdrawalsCount).
+  withdrawalsCount: { type: Number, default: 0, min: 0 },
+
+  // Cantidad de bonificaciones entregadas ese día. Permite calcular
+  // bonus promedio (bonusARS / bonusCount) y cuántos clientes recibieron.
+  bonusCount: { type: Number, default: 0, min: 0 },
+
   // === Adjuntos: comprobantes de bajada + screenshots de banco ===
   comprobantes: { type: [comprobanteSchema], default: [] },
 

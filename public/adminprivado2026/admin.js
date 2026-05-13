@@ -24688,25 +24688,31 @@ async function loadClosingsAnalysis() {
 
         // Cards de KPIs con delta
         const kpis = [
-            ['📥 Depósitos', d.current.depositsARS, d.deltas.depositsARS, true],
-            ['🛒 Ventas', d.current.ventasARS, d.deltas.ventasARS, false],
-            ['🏃 Bajadas', d.current.bajadaARS, d.deltas.bajadaARS, false],
-            ['🎁 Bonos', d.current.bonusARS, d.deltas.bonusARS, false],
-            ['📐 Neto sector', d.current.netoSector, d.deltas.netoSector, true],
-            ['🔢 Transacciones', d.current.transactionsCount, d.deltas.transactionsCount, true],
-            ['🎯 Ticket prom.', d.current.avgTicket, d.deltas.avgTicket, true]
+            ['📥 Depósitos', d.current.depositsARS, d.deltas.depositsARS, true, 'ars'],
+            ['🛒 Ventas', d.current.ventasARS, d.deltas.ventasARS, false, 'ars'],
+            ['🏃 Bajadas', d.current.bajadaARS, d.deltas.bajadaARS, false, 'ars'],
+            ['🎁 Bonos $', d.current.bonusARS, d.deltas.bonusARS, false, 'ars'],
+            ['📐 Neto sector', d.current.netoSector, d.deltas.netoSector, true, 'ars'],
+            ['🔢 Transacciones', d.current.transactionsCount, d.deltas.transactionsCount, true, 'count'],
+            ['📤 Descargas (cant.)', d.current.withdrawalsCount, d.deltas.withdrawalsCount, false, 'count'],
+            ['🎁 Bonos (cant.)', d.current.bonusCount, d.deltas.bonusCount, false, 'count'],
+            ['🎯 Ticket prom.', d.current.avgTicket, d.deltas.avgTicket, true, 'ars'],
+            ['📤 Descarga prom.', d.current.avgWithdrawal, d.deltas.avgWithdrawal, false, 'ars'],
+            ['🎁 Bono prom.', d.current.avgBonus, d.deltas.avgBonus, false, 'ars'],
+            ['💸 % Costo bonos', d.current.bonusCostPct, d.deltas.bonusCostPct, false, 'pct']
         ];
         html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;margin-bottom:10px;">';
-        for (const [label, value, delta, goodIfUp] of kpis) {
-            const isCount = label.includes('Transacciones');
-            const valStr = isCount
-                ? Number(value || 0).toLocaleString('es-AR')
-                : _closingFmt(value);
+        for (const [label, value, delta, goodIfUp, kind] of kpis) {
+            let valStr;
+            if (kind === 'count') valStr = Number(value || 0).toLocaleString('es-AR');
+            else if (kind === 'pct') valStr = Number(value || 0).toFixed(1) + '%';
+            else valStr = _closingFmt(value);
             const deltaColor = arrowColor(delta.pct, goodIfUp);
             const ar = arrow(delta.pct);
-            const deltaAbs = isCount
-                ? (delta.abs >= 0 ? '+' : '') + Math.round(delta.abs).toLocaleString('es-AR')
-                : (delta.abs >= 0 ? '+' : '−') + _closingFmt(Math.abs(delta.abs)).replace('$','$');
+            let deltaAbs;
+            if (kind === 'count') deltaAbs = (delta.abs >= 0 ? '+' : '') + Math.round(delta.abs).toLocaleString('es-AR');
+            else if (kind === 'pct') deltaAbs = (delta.abs >= 0 ? '+' : '') + delta.abs.toFixed(1) + 'pp';
+            else deltaAbs = (delta.abs >= 0 ? '+' : '−') + _closingFmt(Math.abs(delta.abs));
             html += '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;">';
             html += '<div style="color:#aaa;font-size:10.5px;font-weight:700;letter-spacing:0.3px;margin-bottom:2px;">' + label + '</div>';
             html += '<div style="color:#fff;font-size:15px;font-weight:900;line-height:1.1;">' + valStr + '</div>';
@@ -24992,8 +24998,10 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Ventas a bajar</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacciones</label><input type="number" id="cls_' + rid + '_transactionsCount" value="' + (row ? (row.transactionsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos ($)</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><input type="number" id="cls_' + rid + '_transactionsCount" value="' + (row ? (row.transactionsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📤 Descargas (cant.)</label><input type="number" id="cls_' + rid + '_withdrawalsCount" value="' + (row ? (row.withdrawalsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonificaciones (cant.)</label><input type="number" id="cls_' + rid + '_bonusCount" value="' + (row ? (row.bonusCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '</div>';
 
     if (exists) {
@@ -25105,7 +25113,9 @@ async function saveClosing(rid, sector, teamSlot, date) {
         bajadaARS: parseFloat(get('bajadaARS')) || 0,
         pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
         bonusARS: parseFloat(get('bonusARS')) || 0,
-        transactionsCount: parseInt(get('transactionsCount'), 10) || 0
+        transactionsCount: parseInt(get('transactionsCount'), 10) || 0,
+        withdrawalsCount: parseInt(get('withdrawalsCount'), 10) || 0,
+        bonusCount: parseInt(get('bonusCount'), 10) || 0
     };
     if (sector === 'buffalo') {
         payload.teamSlot = teamSlot;

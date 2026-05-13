@@ -33758,6 +33758,8 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       bonusARS: Math.max(0, Number(b.bonusARS) || 0),
       bonusNote: String(b.bonusNote || '').trim().slice(0, 200),
       transactionsCount: Math.max(0, Math.round(Number(b.transactionsCount) || 0)),
+      withdrawalsCount: Math.max(0, Math.round(Number(b.withdrawalsCount) || 0)),
+      bonusCount: Math.max(0, Math.round(Number(b.bonusCount) || 0)),
       notes: String(b.notes || '').trim().slice(0, 500),
       status: 'draft',
       createdBy: req.user.username || ''
@@ -33796,7 +33798,8 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
     }
     const editable = [
       'teamName','depositsARS','bankMarginPercent','ventasARS','bajadaARS',
-      'pendienteAnteriorARS','bonusARS','bonusNote','transactionsCount','notes'
+      'pendienteAnteriorARS','bonusARS','bonusNote','transactionsCount',
+      'withdrawalsCount','bonusCount','notes'
     ];
     const b = req.body || {};
     const username = req.user.username || '';
@@ -33805,10 +33808,10 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
       if (!(f in b)) continue;
       let v = b[f];
       if (typeof v === 'string') v = v.trim();
-      if (typeof v === 'number' || (typeof v === 'string' && f.endsWith('ARS')) || f === 'bankMarginPercent' || f === 'transactionsCount') {
+      if (typeof v === 'number' || (typeof v === 'string' && f.endsWith('ARS')) || f === 'bankMarginPercent' || f === 'transactionsCount' || f === 'withdrawalsCount' || f === 'bonusCount') {
         v = Number(v) || 0;
         if (f === 'bankMarginPercent') v = Math.max(0, Math.min(100, v));
-        else if (f === 'transactionsCount') v = Math.max(0, Math.round(v));
+        else if (f === 'transactionsCount' || f === 'withdrawalsCount' || f === 'bonusCount') v = Math.max(0, Math.round(v));
         else v = Math.max(0, v);
       }
       if (c[f] !== v) {
@@ -33950,7 +33953,8 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
           sector: k,
           depositsARS: 0, commission: 0, depositsNet: 0,
           ventasARS: 0, bajadaARS: 0, pendienteHoy: 0,
-          bonusARS: 0, netoSector: 0, transactionsCount: 0, entries: 0
+          bonusARS: 0, netoSector: 0, transactionsCount: 0,
+          withdrawalsCount: 0, bonusCount: 0, entries: 0
         };
       }
       const s = bySector[k];
@@ -33963,12 +33967,14 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
       s.bonusARS += r.bonusARS || 0;
       s.netoSector += c.netoSector;
       s.transactionsCount += r.transactionsCount || 0;
+      s.withdrawalsCount += r.withdrawalsCount || 0;
+      s.bonusCount += r.bonusCount || 0;
       s.entries += 1;
     }
     const totals = {
       depositsARS: 0, commission: 0, depositsNet: 0,
       ventasARS: 0, bajadaARS: 0, pendienteHoy: 0, bonusARS: 0, netoSector: 0,
-      transactionsCount: 0
+      transactionsCount: 0, withdrawalsCount: 0, bonusCount: 0
     };
     for (const s of Object.values(bySector)) {
       totals.depositsARS += s.depositsARS;
@@ -33980,6 +33986,8 @@ app.get('/api/admin/closings/summary', authMiddleware, adminMiddleware, async (r
       totals.bonusARS += s.bonusARS;
       totals.netoSector += s.netoSector;
       totals.transactionsCount += s.transactionsCount;
+      totals.withdrawalsCount += s.withdrawalsCount;
+      totals.bonusCount += s.bonusCount;
     }
     res.json({ success: true, bySector: Object.values(bySector), totals, from, to });
   } catch (err) {
@@ -34035,6 +34043,7 @@ app.get('/api/admin/closings/analysis', authMiddleware, adminMiddleware, async (
         depositsARS: 0, commission: 0, depositsNet: 0,
         ventasARS: 0, bajadaARS: 0, pendienteHoy: 0,
         bonusARS: 0, netoSector: 0, transactionsCount: 0,
+        withdrawalsCount: 0, bonusCount: 0,
         days: 0, entries: 0
       };
       const dayKeys = new Set();
@@ -34049,14 +34058,20 @@ app.get('/api/admin/closings/analysis', authMiddleware, adminMiddleware, async (
         out.bonusARS += r.bonusARS || 0;
         out.netoSector += c.netoSector;
         out.transactionsCount += r.transactionsCount || 0;
+        out.withdrawalsCount += r.withdrawalsCount || 0;
+        out.bonusCount += r.bonusCount || 0;
         out.entries += 1;
         dayKeys.add(r.dateKey);
       }
       out.days = dayKeys.size;
-      // KPIs derivados
+      // KPIs derivados / promedios
       out.avgTicket = out.transactionsCount > 0 ? out.depositsARS / out.transactionsCount : 0;
       out.avgNetoDiario = out.days > 0 ? out.netoSector / out.days : 0;
       out.avgVentasDiario = out.days > 0 ? out.ventasARS / out.days : 0;
+      out.avgWithdrawal = out.withdrawalsCount > 0 ? out.bajadaARS / out.withdrawalsCount : 0;
+      out.avgBonus = out.bonusCount > 0 ? out.bonusARS / out.bonusCount : 0;
+      // % de cost-to-revenue (bonos sobre depósitos netos)
+      out.bonusCostPct = out.depositsNet > 0 ? (out.bonusARS / out.depositsNet) * 100 : 0;
       return out;
     }
 
@@ -34080,7 +34095,12 @@ app.get('/api/admin/closings/analysis', authMiddleware, adminMiddleware, async (
       netoSector:  { abs: current.netoSector - previous.netoSector,   pct: deltaPct(current.netoSector, previous.netoSector) },
       pendienteHoy:{ abs: current.pendienteHoy - previous.pendienteHoy, pct: deltaPct(current.pendienteHoy, previous.pendienteHoy) },
       transactionsCount: { abs: current.transactionsCount - previous.transactionsCount, pct: deltaPct(current.transactionsCount, previous.transactionsCount) },
-      avgTicket:   { abs: current.avgTicket - previous.avgTicket,     pct: deltaPct(current.avgTicket, previous.avgTicket) }
+      withdrawalsCount:  { abs: current.withdrawalsCount - previous.withdrawalsCount,   pct: deltaPct(current.withdrawalsCount, previous.withdrawalsCount) },
+      bonusCount:        { abs: current.bonusCount - previous.bonusCount,               pct: deltaPct(current.bonusCount, previous.bonusCount) },
+      avgTicket:    { abs: current.avgTicket - previous.avgTicket,         pct: deltaPct(current.avgTicket, previous.avgTicket) },
+      avgWithdrawal:{ abs: current.avgWithdrawal - previous.avgWithdrawal, pct: deltaPct(current.avgWithdrawal, previous.avgWithdrawal) },
+      avgBonus:     { abs: current.avgBonus - previous.avgBonus,           pct: deltaPct(current.avgBonus, previous.avgBonus) },
+      bonusCostPct: { abs: current.bonusCostPct - previous.bonusCostPct,   pct: deltaPct(current.bonusCostPct, previous.bonusCostPct) }
     };
 
     // Conteo de alertas en el período actual
