@@ -105,6 +105,13 @@ const closingSchema = new mongoose.Schema({
   // o se calcula automático leyendo el cierre del día previo.
   pendienteAnteriorARS: { type: Number, default: 0 },
 
+  // Saldo INICIAL del día — plata que ya estaba en el CVU al arrancar
+  // (carry-over de días anteriores). Se suma al CVU esperado al cierre:
+  //   CVU al final = pendiente_a_bajar + saldo_inicial
+  // Si no hay plata previa, queda en 0.
+  saldoInicialARS: { type: Number, default: 0, min: 0 },
+  saldoInicialNote: { type: String, default: '', trim: true },
+
   // === Movimientos extra del día ===
   // ingresosARS: plata que ENTRÓ extra (nos prestaron / movimos de otra cuenta)
   // egresosARS:  préstamos que HICIMOS (prestamos a alguien — vuelve después)

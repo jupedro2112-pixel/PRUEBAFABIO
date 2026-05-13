@@ -33733,6 +33733,7 @@ function _closingComputeTotals(c) {
   const ingresos = Number(c.ingresosARS || 0);         // plata que ENTRÓ extra (prestamos recibidos)
   const egresos = Number(c.egresosARS || 0);           // préstamos que HICIMOS (sale, vuelve después)
   const gastos = Number(c.gastosARS || 0);             // gastos del día (consumido, no vuelve)
+  const saldoInicial = Number(c.saldoInicialARS || 0); // plata que ya estaba en CVU al arrancar
   const cvuActual = Number(c.cvuMidnightARS || 0);
 
   // Comisión: % sobre los DEPÓSITOS (cargas). El banco se queda con esta
@@ -33759,9 +33760,10 @@ function _closingComputeTotals(c) {
   // netoSector legacy = -diff (sale positivo si sobraste, negativo si faltaste)
   const netoSector = -diff;
 
-  // Saldo CVU esperado a las 00 hs = pendiente que falta bajar.
-  // Ese monto tiene que estar en el banco.
-  const cvuExpected = pendienteHoy;
+  // Saldo CVU esperado a las 00 hs = pendiente que falta bajar + saldo
+  // inicial (plata que ya estaba en el CVU al arrancar el día). Ese
+  // monto total tiene que estar en el banco al cierre.
+  const cvuExpected = pendienteHoy + saldoInicial;
   // Discrepancia: cvuActual - cvuExpected
   //   = 0  → perfecto (el banco coincide con los movimientos)
   //   > 0  → sobra plata (entró algo no registrado — revisar)
@@ -33777,6 +33779,7 @@ function _closingComputeTotals(c) {
     ingresos,
     egresos,
     gastos,
+    saldoInicial,                  // plata que ya estaba en CVU al arrancar
     neto,                          // venta - comisión - gastos - egresos + ingresos
     totalABajar,                   // neto + pendiente anterior
     pendienteHoy,                  // max(0, totalABajar - bajada)
@@ -33916,6 +33919,8 @@ app.post('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async 
       egresosNote: String(b.egresosNote || '').trim().slice(0, 300),
       gastosARS: Math.max(0, Number(b.gastosARS) || 0),
       gastosNote: String(b.gastosNote || '').trim().slice(0, 300),
+      saldoInicialARS: Math.max(0, Number(b.saldoInicialARS) || 0),
+      saldoInicialNote: String(b.saldoInicialNote || '').trim().slice(0, 300),
       cvuMidnightARS: Math.max(0, Number(b.cvuMidnightARS) || 0),
       // transacciones totales: GENERAL en Buffalo (no se suma de teams).
       // En ganamos/publicidad sigue siendo el único campo.
@@ -33981,7 +33986,7 @@ app.put('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, asy
     const editableCommonBuffalo = [
       'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
       'ingresosARS','ingresosNote','egresosARS','egresosNote',
-      'gastosARS','gastosNote','cvuMidnightARS',
+      'gastosARS','gastosNote','saldoInicialARS','saldoInicialNote','cvuMidnightARS',
       'bonusNote','notes'
     ];
     const editableNonBuffalo = [
@@ -33989,7 +33994,7 @@ app.put('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, asy
       'transactionsCount','withdrawalsCount',
       'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
       'ingresosARS','ingresosNote','egresosARS','egresosNote',
-      'gastosARS','gastosNote','cvuMidnightARS',
+      'gastosARS','gastosNote','saldoInicialARS','saldoInicialNote','cvuMidnightARS',
       'bonusNote','notes'
     ];
     const hasTeams = (c.sector === 'buffalo' || c.sector === 'ganamos');
