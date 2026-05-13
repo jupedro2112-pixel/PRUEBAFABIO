@@ -33717,9 +33717,47 @@ app.get('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res)
   }
 });
 
+// Para Buffalo: normaliza el array `teams` que llega del front y calcula
+// los totales (depositsARS, ventasARS, bonusARS, bonusCount, transactionsCount)
+// como suma de los 7 equipos. bankMarginPercent/bajadaARS/pendienteAnteriorARS/
+// withdrawalsCount son GENERALES (uno solo para todo Buffalo, porque la
+// bajada se hace una sola vez desde el mismo banco).
+function _normalizeBuffaloTeams(input) {
+  const arr = Array.isArray(input) ? input : [];
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const src = arr.find(t => t && Number(t.slot) === i) || {};
+    out.push({
+      slot: i,
+      name: String(src.name || '').trim().slice(0, 60),
+      depositsARS: Math.max(0, Number(src.depositsARS) || 0),
+      ventasARS: Math.max(0, Number(src.ventasARS) || 0),
+      bonusARS: Math.max(0, Number(src.bonusARS) || 0),
+      bonusCount: Math.max(0, Math.round(Number(src.bonusCount) || 0)),
+      transactionsCount: Math.max(0, Math.round(Number(src.transactionsCount) || 0))
+    });
+  }
+  return out;
+}
+
+function _aggregateBuffaloTeams(teams) {
+  return teams.reduce((acc, t) => {
+    acc.depositsARS += t.depositsARS || 0;
+    acc.ventasARS += t.ventasARS || 0;
+    acc.bonusARS += t.bonusARS || 0;
+    acc.bonusCount += t.bonusCount || 0;
+    acc.transactionsCount += t.transactionsCount || 0;
+    return acc;
+  }, { depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, transactionsCount: 0 });
+}
+
 // POST /api/admin/closings — crear entrada (draft).
-// Body: { dateKey, sector, teamSlot?, teamName?, depositsARS, bankMarginPercent,
-//         ventasARS, bajadaARS, pendienteAnteriorARS, bonusARS, bonusNote, notes }
+// Body común: { dateKey, sector, bankMarginPercent, bajadaARS,
+//   pendienteAnteriorARS, withdrawalsCount, bonusNote, notes }
+// Para ganamos/publicidad: incluir además { depositsARS, ventasARS,
+//   bonusARS, bonusCount, transactionsCount }.
+// Para buffalo: incluir { teams: [{slot,name,depositsARS,ventasARS,bonusARS,
+//   bonusCount,transactionsCount}, ...] }.
 app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const b = req.body || {};
@@ -33728,16 +33766,16 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       return res.status(400).json({ error: 'Sector inválido' });
     }
     const dateKey = String(b.dateKey || '').match(/^\d{4}-\d{2}-\d{2}$/) ? b.dateKey : _closingDateKeyART();
-    const teamSlot = (sector === 'buffalo' && Number.isInteger(b.teamSlot) && b.teamSlot >= 0 && b.teamSlot <= 6) ? b.teamSlot : null;
+
+    // Buffalo tiene UNA sola entry por día (teamSlot=null) con teams[] embebido.
+    // Ganamos/Publicidad también teamSlot=null.
+    const teamSlot = null;
 
     // Auto-pull del pendiente del día anterior si no se mandó explícito.
     let pendienteAnterior = Math.max(0, Number(b.pendienteAnteriorARS) || 0);
     if (!b.pendienteAnteriorARS && b.pendienteAnteriorARS !== 0) {
       const prevDateKey = new Date(new Date(dateKey).getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-      const prevQuery = { dateKey: prevDateKey, sector };
-      if (teamSlot != null) prevQuery.teamSlot = teamSlot;
-      else prevQuery.teamSlot = null;
-      const prev = await ClosingEntry.findOne(prevQuery).lean();
+      const prev = await ClosingEntry.findOne({ dateKey: prevDateKey, sector, teamSlot: null }).lean();
       if (prev) {
         const c = _closingComputeTotals(prev);
         pendienteAnterior = c.pendienteHoy || 0;
@@ -33749,21 +33787,34 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       dateKey,
       sector,
       teamSlot,
-      teamName: String(b.teamName || '').trim().slice(0, 60),
-      depositsARS: Math.max(0, Number(b.depositsARS) || 0),
+      teamName: '',
+      // Generales (válidos para los 3 sectores)
       bankMarginPercent: Math.max(0, Math.min(100, Number(b.bankMarginPercent) || 0)),
-      ventasARS: Math.max(0, Number(b.ventasARS) || 0),
       bajadaARS: Math.max(0, Number(b.bajadaARS) || 0),
       pendienteAnteriorARS: pendienteAnterior,
-      bonusARS: Math.max(0, Number(b.bonusARS) || 0),
-      bonusNote: String(b.bonusNote || '').trim().slice(0, 200),
-      transactionsCount: Math.max(0, Math.round(Number(b.transactionsCount) || 0)),
       withdrawalsCount: Math.max(0, Math.round(Number(b.withdrawalsCount) || 0)),
-      bonusCount: Math.max(0, Math.round(Number(b.bonusCount) || 0)),
+      bonusNote: String(b.bonusNote || '').trim().slice(0, 200),
       notes: String(b.notes || '').trim().slice(0, 500),
       status: 'draft',
       createdBy: req.user.username || ''
     };
+
+    if (sector === 'buffalo') {
+      const teams = _normalizeBuffaloTeams(b.teams);
+      const agg = _aggregateBuffaloTeams(teams);
+      doc.teams = teams;
+      doc.depositsARS = agg.depositsARS;
+      doc.ventasARS = agg.ventasARS;
+      doc.bonusARS = agg.bonusARS;
+      doc.bonusCount = agg.bonusCount;
+      doc.transactionsCount = agg.transactionsCount;
+    } else {
+      doc.depositsARS = Math.max(0, Number(b.depositsARS) || 0);
+      doc.ventasARS = Math.max(0, Number(b.ventasARS) || 0);
+      doc.bonusARS = Math.max(0, Number(b.bonusARS) || 0);
+      doc.bonusCount = Math.max(0, Math.round(Number(b.bonusCount) || 0));
+      doc.transactionsCount = Math.max(0, Math.round(Number(b.transactionsCount) || 0));
+    }
 
     try {
       const saved = await ClosingEntry.create(doc);
@@ -33773,7 +33824,7 @@ app.post('/api/admin/closings', authMiddleware, adminMiddleware, async (req, res
       });
     } catch (e) {
       if (String(e.message || '').includes('duplicate key')) {
-        return res.status(409).json({ error: 'Ya existe un cierre para ese día/sector/equipo. Editá el existente.' });
+        return res.status(409).json({ error: 'Ya existe un cierre para ese día/sector. Editá el existente.' });
       }
       throw e;
     }
@@ -33796,11 +33847,18 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
         locked: true
       });
     }
-    const editable = [
-      'teamName','depositsARS','bankMarginPercent','ventasARS','bajadaARS',
-      'pendienteAnteriorARS','bonusARS','bonusNote','transactionsCount',
-      'withdrawalsCount','bonusCount','notes'
+    // Para buffalo, los campos depositsARS/ventasARS/bonusARS/bonusCount/
+    // transactionsCount se calculan del teams[]; NO se editan directo.
+    const editableCommon = [
+      'bankMarginPercent','bajadaARS','pendienteAnteriorARS','withdrawalsCount',
+      'bonusNote','notes'
     ];
+    const editableIndividual = [
+      'teamName','depositsARS','ventasARS','bonusARS','bonusCount','transactionsCount'
+    ];
+    const editable = c.sector === 'buffalo'
+      ? editableCommon
+      : editableCommon.concat(editableIndividual);
     const b = req.body || {};
     const username = req.user.username || '';
     const changes = [];
@@ -33817,6 +33875,23 @@ app.put('/api/admin/closings/:id', authMiddleware, adminMiddleware, async (req, 
       if (c[f] !== v) {
         changes.push({ editedAt: new Date(), editedBy: username, field: f, before: c[f], after: v });
         c[f] = v;
+      }
+    }
+    // Buffalo: si llega teams[], normalizamos + recomputamos totales.
+    if (c.sector === 'buffalo' && Array.isArray(b.teams)) {
+      const newTeams = _normalizeBuffaloTeams(b.teams);
+      // Registrar cambios por equipo en editHistory (resumido)
+      const before = c.teams ? c.teams.map(t => ({ slot:t.slot, name:t.name, depositsARS:t.depositsARS, ventasARS:t.ventasARS, bonusARS:t.bonusARS, bonusCount:t.bonusCount, transactionsCount:t.transactionsCount })) : [];
+      const sameJson = JSON.stringify(before) === JSON.stringify(newTeams);
+      if (!sameJson) {
+        changes.push({ editedAt: new Date(), editedBy: username, field: 'teams', before, after: newTeams });
+        c.teams = newTeams;
+        const agg = _aggregateBuffaloTeams(newTeams);
+        c.depositsARS = agg.depositsARS;
+        c.ventasARS = agg.ventasARS;
+        c.bonusARS = agg.bonusARS;
+        c.bonusCount = agg.bonusCount;
+        c.transactionsCount = agg.transactionsCount;
       }
     }
     if (changes.length === 0) {

@@ -28,6 +28,20 @@ const editEntrySchema = new mongoose.Schema({
   after: { type: mongoose.Schema.Types.Mixed }
 }, { _id: false });
 
+// Sub-equipo para sector Buffalo. Buffalo tiene 7 equipos pero comparte
+// algunos datos (% banco, bajada, pendiente, descargas) porque la bajada
+// se hace UNA sola vez desde un mismo banco. Lo demás (depositos, ventas,
+// bonos, transacciones) sí es individual por equipo.
+const buffaloTeamSchema = new mongoose.Schema({
+  slot: { type: Number, required: true, min: 0, max: 6 },
+  name: { type: String, default: '', trim: true },
+  depositsARS: { type: Number, default: 0, min: 0 },
+  ventasARS: { type: Number, default: 0, min: 0 },
+  bonusARS: { type: Number, default: 0, min: 0 },
+  bonusCount: { type: Number, default: 0, min: 0 },
+  transactionsCount: { type: Number, default: 0, min: 0 }
+}, { _id: false });
+
 const comprobanteSchema = new mongoose.Schema({
   url: { type: String, required: true },
   // 'bajada' = comprobante de transferencia hecha
@@ -94,6 +108,13 @@ const closingSchema = new mongoose.Schema({
   // Cantidad de bonificaciones entregadas ese día. Permite calcular
   // bonus promedio (bonusARS / bonusCount) y cuántos clientes recibieron.
   bonusCount: { type: Number, default: 0, min: 0 },
+
+  // Sólo para sector Buffalo: array de 7 equipos. Los campos
+  // depositsARS/ventasARS/bonusARS/bonusCount/transactionsCount del padre
+  // se calculan como suma de los teams (no se editan directo). Los campos
+  // bankMarginPercent/bajadaARS/pendienteAnteriorARS/withdrawalsCount del
+  // padre son generales (compartidos por todo Buffalo, una sola bajada).
+  teams: { type: [buffaloTeamSchema], default: undefined },
 
   // === Adjuntos: comprobantes de bajada + screenshots de banco ===
   comprobantes: { type: [comprobanteSchema], default: [] },

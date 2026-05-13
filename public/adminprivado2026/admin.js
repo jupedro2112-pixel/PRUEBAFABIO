@@ -24586,14 +24586,8 @@ function _closingsTodayART() {
 
 function closingsSelectSector(sectorKey) {
     _closingsView.sector = sectorKey;
-    // Si no es buffalo, limpiar teamSlot
-    if (sectorKey !== 'buffalo') _closingsView.teamSlot = null;
-    else if (_closingsView.teamSlot == null) _closingsView.teamSlot = 0;
-    loadClosings();
-}
-
-function closingsSelectTeam(slot) {
-    _closingsView.teamSlot = Number(slot);
+    // Buffalo es una entrada por día con teams[] embebido — no hay teamSlot.
+    _closingsView.teamSlot = null;
     loadClosings();
 }
 
@@ -24628,13 +24622,8 @@ async function loadClosings() {
             body.innerHTML = '<div style="color:#ff8080;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
             return;
         }
-        // Filtrar al teamSlot si corresponde
-        let rows = d.rows || [];
-        if (_closingsView.sector === 'buffalo') {
-            rows = rows.filter(r => r.teamSlot === _closingsView.teamSlot);
-        } else {
-            rows = rows.filter(r => r.teamSlot == null);
-        }
+        // Todas las entradas son teamSlot=null ahora (incluso buffalo, que usa teams[]).
+        const rows = (d.rows || []).filter(r => r.teamSlot == null);
         _closingsRowsCache = rows;
         _closingsTodayKey = d.today;
         _renderClosings();
@@ -24830,32 +24819,6 @@ function _renderClosings() {
     }
     html += '</div>';
 
-    // ===== Selector de equipo Buffalo =====
-    if (sec.individual) {
-        html += '<div style="background:rgba(255,215,0,0.04);border:1px dashed rgba(255,215,0,0.30);border-radius:9px;padding:9px;margin-bottom:12px;">';
-        html += '<div style="color:#ffd700;font-size:11px;font-weight:800;letter-spacing:0.5px;margin-bottom:6px;">🐃 Elegí equipo Buffalo</div>';
-        html += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
-        // Para nombres reales miramos el último cierre conocido por slot.
-        const teamNamesBySlot = {};
-        for (const r of _closingsRowsCache) {
-            if (r.sector === 'buffalo' && r.teamSlot != null && r.teamName) {
-                teamNamesBySlot[r.teamSlot] = r.teamName;
-            }
-        }
-        // También miramos otros equipos (no solo el activo) — necesitamos extra fetch?
-        // Para simplificar mostramos slots 0-6 con su número o nombre si quedó guardado en cache local.
-        for (let i = 0; i < sec.slots; i++) {
-            const active = _closingsView.teamSlot === i;
-            const name = teamNamesBySlot[i] || ('Equipo ' + (i + 1));
-            const bg = active ? '#ffd700' : 'rgba(0,0,0,0.40)';
-            const color = active ? '#000' : '#ffd700';
-            const border = active ? '#ffd700' : 'rgba(255,215,0,0.40)';
-            html += '<button type="button" onclick="closingsSelectTeam(' + i + ')" style="background:' + bg + ';color:' + color + ';border:1.5px solid ' + border + ';padding:6px 10px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (i + 1) + '. ' + escapeHtml(name) + '</button>';
-        }
-        html += '</div>';
-        html += '</div>';
-    }
-
     // ===== Selector de día (visible solo para el editor) =====
     html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:9px 11px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
     html += '<label style="color:#aaa;font-size:11px;font-weight:700;letter-spacing:0.5px;">📅 Día activo:</label>';
@@ -24874,8 +24837,12 @@ function _renderClosings() {
     // ===== Editor del día activo =====
     const activeRow = _closingsRowsCache.find(r => r.dateKey === date);
     html += '<div style="background:rgba(0,0,0,0.30);border:1.5px solid ' + sec.color + '55;border-radius:11px;padding:14px;margin-bottom:18px;">';
-    html += '<div style="color:' + sec.color + ';font-weight:900;font-size:13px;letter-spacing:0.6px;margin-bottom:8px;">' + sec.label + (sec.individual ? ' · Equipo ' + (_closingsView.teamSlot + 1) : '') + ' · ' + date + '</div>';
-    html += _renderClosingEntry(sec, date, sec.individual ? _closingsView.teamSlot : null, activeRow);
+    html += '<div style="color:' + sec.color + ';font-weight:900;font-size:13px;letter-spacing:0.6px;margin-bottom:8px;">' + sec.label + ' · ' + date + '</div>';
+    if (sec.individual) {
+        html += _renderBuffaloEntry(sec, date, activeRow);
+    } else {
+        html += _renderClosingEntry(sec, date, null, activeRow);
+    }
     html += '</div>';
 
     // ===== Tabla histórica (últimos N días para la selección) =====
@@ -24963,6 +24930,178 @@ function _renderClosings() {
     html += '</div>';
 
     body.innerHTML = html;
+}
+
+// Buffalo: una sola entry por día. Generales arriba (% banco, bajada,
+// pendiente, descargas count) + 7 equipos abajo cada uno con sus campos
+// individuales (depositos, ventas, bonos $, bonos cant, transacciones).
+// Los totales se calculan client-side para preview y server-side al
+// guardar (suma de los 7 equipos).
+function _renderBuffaloEntry(sec, date, row) {
+    const exists = !!row;
+    const locked = row && row.locked;
+    const confirmed = row && row.status === 'confirmed';
+    const c = (row && row.computed) || {};
+    const rid = row ? row.id : ('new_buffalo_main');
+    const teams = (row && Array.isArray(row.teams) && row.teams.length === 7)
+        ? row.teams
+        : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: '', depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, transactionsCount: 0 }));
+
+    const inputStyle = 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;width:100%;box-sizing:border-box;';
+    const disabledAttr = locked ? 'disabled' : '';
+
+    let html = '<div data-cls-id="' + rid + '">';
+
+    // Status badge
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+    html += '<div style="color:#aaa;font-size:11px;letter-spacing:0.5px;">Cierre del ' + escapeHtml(date) + '</div>';
+    html += (locked ? '<span style="color:#ff8080;font-size:10px;font-weight:800;">🔒 BLOQUEADO 24h</span>' : (confirmed ? '<span style="color:#aaffaa;font-size:10px;font-weight:800;">✅ CONFIRMADO</span>' : '<span style="color:#888;font-size:10px;">📝 BORRADOR</span>'));
+    html += '</div>';
+
+    // === GENERALES (compartido todo Buffalo: una sola bajada, mismo banco) ===
+    html += '<div style="background:rgba(0,212,255,0.06);border:1.5px solid rgba(0,212,255,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
+    html += '<div style="color:#00d4ff;font-weight:900;font-size:11px;letter-spacing:1px;margin-bottom:8px;">🤝 GENERAL (uno para los 7 equipos)</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px;">';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real ($)</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior ($)</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📤 Descargas (cant.)</label><input type="number" id="cls_' + rid + '_withdrawalsCount" value="' + (row ? (row.withdrawalsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '</div>';
+    html += '</div>';
+
+    // === EQUIPOS (individual) ===
+    html += '<div style="background:rgba(255,215,0,0.04);border:1.5px solid rgba(255,215,0,0.35);border-radius:9px;padding:11px;margin-bottom:11px;">';
+    html += '<div style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1px;margin-bottom:8px;">🎯 POR EQUIPO (individual cada uno)</div>';
+    for (let i = 0; i < 7; i++) {
+        const t = teams[i] || { slot: i, name: '', depositsARS: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, transactionsCount: 0 };
+        html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px;margin-bottom:6px;">';
+        html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">';
+        html += '<div style="background:#ffd700;color:#000;font-weight:900;font-size:11px;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + (i + 1) + '</div>';
+        html += '<input type="text" data-buffalo-team="' + i + '" data-field="name" value="' + escapeHtml(t.name) + '" placeholder="Nombre equipo ' + (i + 1) + '" style="flex:1;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:4px 8px;border-radius:5px;font-size:12px;font-weight:700;" ' + disabledAttr + '>';
+        html += '</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;">';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">💰 Depósitos</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🛒 Venta</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonos $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🎁 Bonos #</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusCount" value="' + (t.bonusCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#888;font-size:9.5px;text-transform:uppercase;">🔢 Transacc.</label><input type="number" data-buffalo-team="' + i + '" data-field="transactionsCount" value="' + (t.transactionsCount || 0) + '" min="0" step="1" style="' + inputStyle + 'font-size:11.5px;padding:4px 8px;" ' + disabledAttr + '></div>';
+        html += '</div>';
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // Computed inline + análisis (igual que en _renderClosingEntry para no-buffalo)
+    if (exists) {
+        const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#aaffaa';
+        const netColor = c.netoSector < 0 ? '#ff8080' : '#ffd700';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px 9px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:10px;font-size:11px;">';
+        html += '<span style="color:#aaa;">Total depós (7eq): <strong style="color:#aaffaa;">' + _closingFmt(row.depositsARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Total venta (7eq): <strong style="color:#ffd0a0;">' + _closingFmt(row.ventasARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Total bonos (7eq): <strong style="color:#ffd700;">' + _closingFmt(row.bonusARS) + '</strong></span>';
+        html += '<span style="color:#aaa;">Comisión: <strong style="color:#ff8080;">-' + _closingFmt(c.commission) + '</strong></span>';
+        html += '<span style="color:#aaa;">A bajar total: <strong>' + _closingFmt(c.totalABajar) + '</strong></span>';
+        html += '<span style="color:#aaa;">Pendiente hoy: <strong style="color:' + pendColor + ';">' + _closingFmt(c.pendienteHoy) + '</strong></span>';
+        html += '<span style="color:#aaa;">Cash en banco: <strong style="color:#aaffff;">' + _closingFmt(c.cashEnBanco) + '</strong></span>';
+        html += '<span style="color:#aaa;">Neto sector: <strong style="color:' + netColor + ';">' + _closingFmt(c.netoSector) + '</strong></span>';
+        html += '</div>';
+
+        // Comprobantes (mismo widget que el otro entry)
+        const comps = row.comprobantes || [];
+        const hasPendBank = comps.some(p => p.kind === 'pendiente_bank');
+        const needsPendBank = c.pendienteHoy > 0 && !hasPendBank;
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:7px 9px;margin-bottom:8px;font-size:11px;">';
+        html += '<div style="color:#aaa;font-weight:700;margin-bottom:4px;">📎 Comprobantes (' + comps.length + ')</div>';
+        if (comps.length > 0) {
+            html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px;">';
+            for (let i = 0; i < comps.length; i++) {
+                const cp = comps[i];
+                const kindColor = cp.kind === 'pendiente_bank' ? '#ffaa66' : '#aaffaa';
+                const kindLabel = cp.kind === 'pendiente_bank' ? '🏦 banco-pendiente' : '✅ bajada';
+                html += '<a href="' + escapeHtml(cp.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);border:1px solid ' + kindColor + '55;color:' + kindColor + ';text-decoration:none;padding:3px 7px;border-radius:5px;font-size:10.5px;">' + kindLabel;
+                if (!locked) html += ' <span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + i + ')" style="color:#ff8080;cursor:pointer;margin-left:3px;">✕</span>';
+                html += '</a>';
+            }
+            html += '</div>';
+        }
+        if (!locked) {
+            html += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
+            html += '<input type="file" accept="image/*" id="cls_' + rid + '_file" style="font-size:10.5px;color:#bbb;">';
+            html += '<select id="cls_' + rid + '_kind" style="background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:3px 6px;border-radius:5px;font-size:10.5px;"><option value="bajada">✅ Bajada</option><option value="pendiente_bank">🏦 Banco-pendiente</option></select>';
+            html += '<button type="button" onclick="uploadClosingComprobante(\'' + rid + '\')" style="background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">📎 Subir</button>';
+            html += '</div>';
+            if (needsPendBank) {
+                html += '<div style="color:#ff8080;font-size:10.5px;margin-top:5px;">⚠️ Quedó pendiente — adjuntá foto del banco mostrando que la plata sigue ahí antes de confirmar.</div>';
+            }
+        }
+        html += '</div>';
+        if (row.editHistory && row.editHistory.length > 0) {
+            html += '<div style="font-size:10.5px;color:#888;margin-bottom:6px;">📝 Editado ' + row.editHistory.length + ' veces · último por <strong>' + escapeHtml(row.editHistory[row.editHistory.length - 1].editedBy || '?') + '</strong></div>';
+        }
+    }
+
+    // Action buttons
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    if (!locked) {
+        html += '<button type="button" onclick="saveBuffaloClosing(\'' + rid + '\', \'' + date + '\')" style="background:rgba(102,255,102,0.15);border:1px solid rgba(102,255,102,0.45);color:#aaffaa;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (exists ? '💾 GUARDAR CAMBIOS' : '💾 CREAR CIERRE') + '</button>';
+        if (exists && !confirmed) {
+            html += '<button type="button" onclick="confirmClosing(\'' + rid + '\')" style="background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:6px 14px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;">✅ CONFIRMAR (lock 24h)</button>';
+        }
+    } else {
+        html += '<span style="color:#888;font-size:11px;">Bloqueado · solo lectura</span>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+}
+
+// Save específico para Buffalo: arma el array teams[] desde los inputs.
+async function saveBuffaloClosing(rid, date) {
+    const get = (suffix) => {
+        const el = document.getElementById('cls_' + rid + '_' + suffix);
+        return el ? el.value : '';
+    };
+    const teams = [];
+    for (let i = 0; i < 7; i++) {
+        const find = (field) => {
+            const sel = '[data-cls-id="' + rid + '"] [data-buffalo-team="' + i + '"][data-field="' + field + '"]';
+            const el = document.querySelector(sel);
+            return el ? el.value : '';
+        };
+        teams.push({
+            slot: i,
+            name: (find('name') || '').trim(),
+            depositsARS: parseFloat(find('depositsARS')) || 0,
+            ventasARS: parseFloat(find('ventasARS')) || 0,
+            bonusARS: parseFloat(find('bonusARS')) || 0,
+            bonusCount: parseInt(find('bonusCount'), 10) || 0,
+            transactionsCount: parseInt(find('transactionsCount'), 10) || 0
+        });
+    }
+    const payload = {
+        sector: 'buffalo',
+        dateKey: date,
+        bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
+        bajadaARS: parseFloat(get('bajadaARS')) || 0,
+        pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
+        withdrawalsCount: parseInt(get('withdrawalsCount'), 10) || 0,
+        teams
+    };
+
+    const isNew = rid.startsWith('new_');
+    try {
+        const r = isNew
+            ? await authFetch('/api/admin/closings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+            : await authFetch('/api/admin/closings/' + encodeURIComponent(rid), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al guardar', 'error');
+            return;
+        }
+        showToast('✅ Buffalo guardado', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error al guardar', 'error');
+    }
 }
 
 function _renderClosingEntry(sec, date, teamSlot, row) {
