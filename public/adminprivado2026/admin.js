@@ -26777,18 +26777,31 @@ async function loadCotizaciones(scope) {
     const body = document.getElementById(_cotBodyId(scope));
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    let r, d;
     try {
-        const r = await authFetch(_cotApiBase(scope));
-        const d = await r.json();
-        if (!r.ok || !d.success) {
-            body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(d.error || 'No se pudo cargar') + '</div>';
-            return;
-        }
-        if (scope === 'externa') _cotizacionesExternoCache = d.items || [];
-        else _cotizacionesCache = d.items || [];
-        _renderCotizaciones(scope);
+        r = await authFetch(_cotApiBase(scope));
+        d = await r.json();
     } catch (e) {
-        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error de conexión</div>';
+        // Fallo en el fetch o el parse JSON. Loggeamos el error real para
+        // que sea visible en DevTools cuando algo realmente revienta de red.
+        console.error('[cotizaciones] fetch/parse fail:', e);
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error de conexión: ' + escapeHtml(e.message || String(e)) + '</div>';
+        return;
+    }
+    if (!r.ok || !d.success) {
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Error: ' + escapeHtml(d.error || ('HTTP ' + r.status)) + '</div>';
+        return;
+    }
+    if (scope === 'externa') _cotizacionesExternoCache = d.items || [];
+    else _cotizacionesCache = d.items || [];
+    // Render aislado del fetch: si el render tira, ya tenemos la data en
+    // cache pero mostramos el error específico (no decimos "Error de
+    // conexión" cuando el problema es un bug del render).
+    try {
+        _renderCotizaciones(scope);
+    } catch (renderErr) {
+        console.error('[cotizaciones] render fail:', renderErr);
+        body.innerHTML = '<div style="color:#f55;text-align:center;padding:24px;">Bug del render: ' + escapeHtml(renderErr.message || String(renderErr)) + '<br><small style="color:#888;">Abrí la consola (F12) para ver el stack completo.</small></div>';
     }
 }
 
