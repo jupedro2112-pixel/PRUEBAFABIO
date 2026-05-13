@@ -157,9 +157,9 @@
         }
         if (!buttons) return '';
 
-        let html = '<div style="background:linear-gradient(135deg,rgba(37,211,102,0.12),rgba(0,212,255,0.08));border:1.5px dashed rgba(37,211,102,0.55);border-radius:13px;padding:13px;margin-bottom:12px;">';
-        html += '<div style="color:#25d366;font-weight:900;font-size:12px;letter-spacing:0.8px;text-align:center;margin-bottom:6px;">📢 SUMATE A LA COMUNIDAD</div>';
-        html += '<div style="color:#fff;font-size:12.5px;line-height:1.5;margin-bottom:10px;text-align:center;">Recibí <strong>novedades</strong>, problemas con la página, <strong>juegos de la semana</strong>, problemas con el banco y todo lo que necesites saber.</div>';
+        let html = '<div style="background:linear-gradient(135deg,rgba(34,160,217,0.14),rgba(0,136,204,0.08));border:1.5px dashed rgba(34,160,217,0.55);border-radius:13px;padding:13px;margin-bottom:12px;">';
+        html += '<div style="color:#22a0d9;font-weight:900;font-size:12px;letter-spacing:0.8px;text-align:center;margin-bottom:6px;">📢 UNITE A NUESTRA NUEVA COMUNIDAD</div>';
+        html += '<div style="color:#fff;font-size:12.5px;line-height:1.5;margin-bottom:10px;text-align:center;">Nos mudamos a <strong>Telegram</strong> — ya no usamos WhatsApp. Sumate al canal privado para enterarte de <strong>códigos, novedades, juegos de la semana</strong> y todo lo que liberamos.</div>';
         html += buttons;
         html += '<div style="background:rgba(255,170,102,0.10);border-left:3px solid #ffaa66;border-radius:0 7px 7px 0;padding:7px 10px;margin-top:6px;color:#ffd0a0;font-size:11.5px;line-height:1.4;">⚠️ Si nuestro <strong>WhatsApp principal</strong> no te funciona, revisá el número vigente abajo en el home.</div>';
         html += '</div>';

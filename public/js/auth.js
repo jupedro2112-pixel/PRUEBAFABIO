@@ -750,11 +750,11 @@ VIP.auth = (function () {
         overlay.id = 'communityJoinAlert';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:30000;display:flex;align-items:center;justify-content:center;padding:14px;';
         const tappedHref = isDown ? replacementLink : link;
-        const titleTxt = isDown ? '⚠️ Tu comunidad cerró' : '🔔 Revisá tu comunidad';
-        const labelTxt = isDown ? (replacementLabel || 'la nueva comunidad') : (label || 'la comunidad de tu equipo');
+        const titleTxt = isDown ? '⚠️ Nos mudamos a Telegram' : '🔔 Unite a nuestra nueva comunidad';
+        const labelTxt = isDown ? (replacementLabel || 'el nuevo canal de Telegram') : (label || 'nuestro canal de Telegram');
         const bodyTxt = isDown
-            ? 'La comunidad anterior fue cerrada. Sumate a la nueva para tener el canal informativo de nuestro servicio y novedades.'
-            : 'Revisá si estás unido a la comunidad de tu equipo para tener el canal informativo de nuestro servicio y novedades.';
+            ? 'Ya no usamos WhatsApp. Sumate al nuevo canal privado de Telegram para no perderte códigos, novedades y juegos de la semana.'
+            : 'Unite a nuestra nueva comunidad en Telegram — ya no usamos WhatsApp. Ahí publicamos códigos, novedades y juegos de la semana.';
 
         function dismiss() {
             try {
