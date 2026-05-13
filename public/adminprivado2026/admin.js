@@ -24620,7 +24620,15 @@ function _inlineUploadBtn(rid, row, kind, teamSlot, label, locked) {
     const onClick = disabled
         ? (isNew ? 'showToast(\'Guardá el cierre primero\',\'info\')' : '')
         : ('openClosingUpload(\'' + rid + '\',\'' + kind + '\',' + tsArg + ')');
-    let html = '<button type="button" onclick="' + onClick + '" title="' + (isNew ? 'Guardá primero el cierre' : 'Adjuntar foto · ' + count + '/' + COMP_MAX_PER_KIND_DISPLAY) + '" style="background:' + bg + ';border:1px dashed ' + border + ';color:' + color + ';padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;cursor:' + cursor + ';display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">' + label + (count > 0 ? ' <span style="background:rgba(0,212,255,0.30);color:#fff;border-radius:8px;padding:0 5px;font-size:9.5px;">' + count + '</span>' : '') + '</button>';
+    // Wrapper con data-* atributos para que el listener global de drop
+    // pueda saber a qué (rid, kind, teamSlot) van las fotos arrastradas.
+    // Aplica también al pegar (paste de screenshot ya copiado).
+    const dropAttrs = disabled ? ''
+        : ' data-cls-drop="1" data-cls-rid="' + rid + '" data-cls-kind="' + kind + '" data-cls-teamslot="' + (teamSlot != null ? Number(teamSlot) : '') + '"';
+    const hint = disabled ? '' : ' · arrastrá una foto acá o tocá';
+    let html = '<span' + dropAttrs + ' style="display:inline-flex;align-items:center;gap:4px;padding:2px;border-radius:6px;transition:background 0.12s;">';
+    html += '<button type="button" onclick="' + onClick + '" title="' + (isNew ? 'Guardá primero el cierre' : 'Adjuntar foto · ' + count + '/' + COMP_MAX_PER_KIND_DISPLAY + hint) + '" style="background:' + bg + ';border:1px dashed ' + border + ';color:' + color + ';padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;cursor:' + cursor + ';display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">' + label + (count > 0 ? ' <span style="background:rgba(0,212,255,0.30);color:#fff;border-radius:8px;padding:0 5px;font-size:9.5px;">' + count + '</span>' : '') + '</button>';
+    html += '</span>';
     return html;
 }
 const COMP_MAX_PER_KIND_DISPLAY = 10;
@@ -24899,6 +24907,117 @@ function _wireClosingsLiveRecompute() {
         // Recompute inicial
         closingsRecompute(rid);
     });
+    _wireClosingsDragDrop();
+}
+
+// Drag & drop de fotos en CUALQUIER zona [data-cls-drop]. El usuario
+// arrastra una imagen sobre el botón "📷 Foto..." y la suelta, sin
+// necesidad de abrir el file picker. Si suelta varias, sube todas
+// (respeta el cap de COMP_MAX_PER_KIND).
+function _wireClosingsDragDrop() {
+    // Listener delegado en el body — se setea UNA sola vez.
+    if (document.body.dataset.clsDragWired === '1') return;
+    document.body.dataset.clsDragWired = '1';
+
+    const findDropTarget = (el) => {
+        while (el && el.dataset) {
+            if (el.dataset.clsDrop === '1') return el;
+            el = el.parentElement;
+        }
+        return null;
+    };
+
+    document.body.addEventListener('dragover', (e) => {
+        const t = findDropTarget(e.target);
+        if (!t) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        t.style.background = 'rgba(0,212,255,0.18)';
+        t.style.boxShadow = '0 0 0 2px rgba(0,212,255,0.45)';
+    });
+    document.body.addEventListener('dragleave', (e) => {
+        const t = findDropTarget(e.target);
+        if (!t) return;
+        t.style.background = '';
+        t.style.boxShadow = '';
+    });
+    document.body.addEventListener('drop', async (e) => {
+        const t = findDropTarget(e.target);
+        if (!t) return;
+        e.preventDefault();
+        t.style.background = '';
+        t.style.boxShadow = '';
+        const rid = t.dataset.clsRid;
+        const kind = t.dataset.clsKind;
+        const teamSlotRaw = t.dataset.clsTeamslot;
+        const teamSlot = teamSlotRaw === '' || teamSlotRaw == null ? null : Number(teamSlotRaw);
+        if (!rid || !kind) return;
+        if (String(rid).startsWith('new_')) {
+            showToast('Guardá el cierre primero — después podés arrastrar fotos.', 'info');
+            return;
+        }
+        const dt = e.dataTransfer;
+        if (!dt || !dt.files || dt.files.length === 0) return;
+        const imgs = Array.from(dt.files).filter(f => f.type && f.type.startsWith('image/'));
+        if (imgs.length === 0) {
+            showToast('Soltá una imagen (no es un archivo de imagen)', 'error');
+            return;
+        }
+        // Reutilizar el flujo de uploads: setear state y simular onClosingFilePicked
+        await _uploadClosingFiles(rid, kind, teamSlot, imgs);
+    });
+}
+
+// Sube una lista de Files al cierre rid con (kind, teamSlot) — extraído
+// de onClosingFilePicked para que el drag&drop lo pueda reusar.
+async function _uploadClosingFiles(rid, kind, teamSlot, files) {
+    if (!files || files.length === 0) return;
+    const row = (_closingsRowsCache || []).find(x => x.id === rid);
+    const existingCount = row && Array.isArray(row.comprobantes) ? row.comprobantes.filter(c => c.kind === kind).length : 0;
+    const remaining = Math.max(0, COMP_MAX_PER_KIND - existingCount);
+    if (remaining === 0) {
+        showToast('Ya hay ' + COMP_MAX_PER_KIND + ' fotos de este tipo (máximo).', 'error');
+        return;
+    }
+    const toUpload = files.slice(0, remaining);
+    if (files.length > remaining) {
+        showToast('Sólo se suben ' + remaining + ' (cap de ' + COMP_MAX_PER_KIND + ' por tipo)', 'info');
+    }
+    let okCount = 0, failCount = 0;
+    for (const file of toUpload) {
+        try {
+            const pre = await authFetch('/api/upload/presigned-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: file.name || 'paste.png', contentType: file.type || 'image/png', prefix: 'closings' })
+            });
+            const preD = await pre.json();
+            if (!pre.ok || !preD.uploadUrl) { failCount++; continue; }
+            const putR = await fetch(preD.uploadUrl, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type || 'image/png' },
+                body: file
+            });
+            if (!putR.ok) { failCount++; continue; }
+            const publicUrl = preD.publicUrl || preD.url;
+            const payload = { url: publicUrl, kind };
+            if (teamSlot != null && !isNaN(teamSlot)) payload.teamSlot = teamSlot;
+            const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const d = await r.json();
+            if (!r.ok || !d.success) { failCount++; continue; }
+            okCount++;
+        } catch (e) { failCount++; }
+    }
+    if (okCount > 0) {
+        showToast('✅ ' + okCount + ' foto(s) subida(s)' + (failCount > 0 ? ' · ' + failCount + ' falló' : ''), 'success');
+        loadClosings();
+    } else {
+        showToast('❌ No se pudo subir ninguna foto', 'error');
+    }
 }
 
 // Gráfico SVG simple del cuadre histórico:
@@ -25256,61 +25375,8 @@ async function onClosingFilePicked(rid) {
     if (!fileEl || !fileEl.files || fileEl.files.length === 0) return;
     const files = Array.from(fileEl.files);
     const state = _closingUploadState[rid] || { kind: 'deposito', teamSlot: null };
-    const kind = state.kind;
-    const teamSlot = state.teamSlot;
-
-    // Chequear cap: cuántas fotos de este kind ya tiene el cierre actual
-    const row = (_closingsRowsCache || []).find(x => x.id === rid);
-    const existingCount = row && Array.isArray(row.comprobantes) ? row.comprobantes.filter(c => c.kind === kind).length : 0;
-    const remaining = Math.max(0, COMP_MAX_PER_KIND - existingCount);
-    if (remaining === 0) {
-        showToast('Ya hay ' + COMP_MAX_PER_KIND + ' fotos de este tipo (máximo).', 'error');
-        if (fileEl) fileEl.value = '';
-        return;
-    }
-    const toUpload = files.slice(0, remaining);
-    if (files.length > remaining) {
-        showToast('Sólo se suben ' + remaining + ' (cap de ' + COMP_MAX_PER_KIND + ' por tipo)', 'info');
-    }
-
-    let okCount = 0, failCount = 0;
-    for (const file of toUpload) {
-        try {
-            const pre = await authFetch('/api/upload/presigned-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: file.name, contentType: file.type, prefix: 'closings' })
-            });
-            const preD = await pre.json();
-            if (!pre.ok || !preD.uploadUrl) { failCount++; continue; }
-            const putR = await fetch(preD.uploadUrl, {
-                method: 'PUT',
-                headers: { 'Content-Type': file.type },
-                body: file
-            });
-            if (!putR.ok) { failCount++; continue; }
-            const publicUrl = preD.publicUrl || preD.url;
-            const payload = { url: publicUrl, kind };
-            if (teamSlot != null && !isNaN(teamSlot)) payload.teamSlot = teamSlot;
-            const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            const d = await r.json();
-            if (!r.ok || !d.success) { failCount++; continue; }
-            okCount++;
-        } catch (e) {
-            failCount++;
-        }
-    }
+    await _uploadClosingFiles(rid, state.kind, state.teamSlot, files);
     if (fileEl) fileEl.value = '';
-    if (okCount > 0) {
-        showToast('✅ ' + okCount + ' foto(s) subida(s)' + (failCount > 0 ? ' · ' + failCount + ' falló' : ''), 'success');
-        loadClosings();
-    } else {
-        showToast('❌ No se pudo subir ninguna foto', 'error');
-    }
 }
 
 // Live preview: lee inputs del editor y muestra el cuadre del cierre
@@ -25419,6 +25485,63 @@ function closingsRecompute(rid) {
 
     html += '</div>';
     box.innerHTML = html;
+}
+
+// Thumbnail clicable de una foto del cierre. Al clickear abre el
+// lightbox a pantalla completa (con navegación entre fotos del cierre).
+function _photoThumb(url, caption, borderColor) {
+    if (!url) return '';
+    const safe = escapeHtml(url);
+    const cap = escapeHtml(caption || '');
+    const col = borderColor || '#00d4ff';
+    return '<div onclick="_openClsLightbox(\'' + safe.replace(/'/g, '\\\'') + '\', \'' + cap.replace(/'/g, '\\\'') + '\')" title="Clic para maximizar" style="position:relative;width:88px;height:88px;background:rgba(0,0,0,0.40);border:1.5px solid ' + col + '88;border-radius:7px;overflow:hidden;cursor:zoom-in;flex-shrink:0;">'
+        + '<img src="' + safe + '" alt="' + cap + '" style="width:100%;height:100%;object-fit:cover;display:block;" loading="lazy">'
+        + '<div style="position:absolute;inset:auto 0 0 0;background:linear-gradient(180deg,transparent,rgba(0,0,0,0.80));color:#fff;font-size:9px;font-weight:700;padding:3px 4px;line-height:1.15;">' + cap + '</div>'
+        + '</div>';
+}
+
+// Lightbox global: imagen a pantalla completa, click fuera cierra,
+// flechas ← → navegan entre las fotos del cierre activo (cache en
+// window._clsAnalyzePhotos que setea analyzeClosing).
+function _openClsLightbox(url, caption) {
+    const prev = document.getElementById('clsLightbox');
+    if (prev) prev.remove();
+    const photos = (window._clsAnalyzePhotos || []).slice();
+    let idx = Math.max(0, photos.indexOf(url));
+    const show = (newIdx) => {
+        if (newIdx < 0 || newIdx >= photos.length) return;
+        idx = newIdx;
+        const imgEl = document.getElementById('clsLightboxImg');
+        if (imgEl) imgEl.src = photos[idx];
+        const caps = document.getElementById('clsLightboxCap');
+        if (caps) caps.textContent = (photos.length > 1 ? (idx + 1) + ' / ' + photos.length + ' · ' : '') + (caption || '');
+    };
+    const lb = document.createElement('div');
+    lb.id = 'clsLightbox';
+    lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.94);z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;cursor:zoom-out;';
+    lb.onclick = (e) => { if (e.target === lb || e.target.id === 'clsLightboxClose') lb.remove(); };
+    let h = '<div style="position:relative;max-width:96vw;max-height:92vh;display:flex;flex-direction:column;align-items:center;gap:10px;" onclick="event.stopPropagation()">';
+    h += '<img id="clsLightboxImg" src="' + escapeHtml(url) + '" style="max-width:96vw;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,0.60);">';
+    h += '<div id="clsLightboxCap" style="color:#ddd;font-size:13px;font-weight:700;text-align:center;background:rgba(0,0,0,0.55);padding:6px 14px;border-radius:7px;">' + escapeHtml(caption || '') + '</div>';
+    if (photos.length > 1) {
+        h += '<div style="display:flex;gap:14px;">';
+        h += '<button onclick="_clsLightboxNav(-1)" style="background:rgba(255,255,255,0.10);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 18px;border-radius:8px;font-weight:800;cursor:pointer;">← Anterior</button>';
+        h += '<button onclick="_clsLightboxNav(1)" style="background:rgba(255,255,255,0.10);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:8px 18px;border-radius:8px;font-weight:800;cursor:pointer;">Siguiente →</button>';
+        h += '</div>';
+    }
+    h += '<button id="clsLightboxClose" onclick="document.getElementById(\'clsLightbox\').remove()" style="position:absolute;top:-10px;right:-10px;background:rgba(255,80,80,0.30);border:1px solid rgba(255,80,80,0.55);color:#fff;width:38px;height:38px;border-radius:50%;font-size:20px;font-weight:900;cursor:pointer;">✕</button>';
+    h += '</div>';
+    lb.innerHTML = h;
+    // Navigation handlers a window
+    window._clsLightboxNav = (dir) => show(idx + dir);
+    document.body.appendChild(lb);
+    // Esc cierra, flechas navegan
+    const onKey = (e) => {
+        if (e.key === 'Escape') { lb.remove(); document.removeEventListener('keydown', onKey); }
+        else if (e.key === 'ArrowLeft') show(idx - 1);
+        else if (e.key === 'ArrowRight') show(idx + 1);
+    };
+    document.addEventListener('keydown', onKey);
 }
 
 // Modal de análisis profundo de un cierre puntual.
@@ -25531,21 +25654,49 @@ function analyzeClosing(id) {
     html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">8. <strong>DIFERENCIA</strong> = total a bajar − bajada = <strong style="color:' + cuadreColor + ';font-size:14px;">' + (diff >= 0 ? '+' : '') + fmt(diff) + '</strong></div>';
     html += '</div>';
     html += '<div style="background:' + cuadreColor + '22;border:2px solid ' + cuadreColor + ';border-radius:8px;padding:10px;margin-top:10px;text-align:center;color:' + cuadreColor + ';font-weight:900;font-size:14px;">' + cuadreText + '</div>';
+
+    // Fotos relacionadas con el cuadre: bajada (transferencias) + banco-pendiente.
+    // Permite ver el respaldo directamente desde el alert sin scrollear.
+    const bajadaPhotos = (r.comprobantes || []).filter(c => c.kind === 'bajada');
+    const bankPhotos = (r.comprobantes || []).filter(c => c.kind === 'pendiente_bank');
+    if (bajadaPhotos.length || bankPhotos.length) {
+        html += '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.10);">';
+        html += '<div style="color:#aaa;font-size:10.5px;font-weight:700;margin-bottom:6px;">📎 Comprobantes del cuadre:</div>';
+        if (bajadaPhotos.length) {
+            html += '<div style="margin-bottom:7px;"><div style="color:#aaffff;font-size:10px;font-weight:700;margin-bottom:4px;">🏃 Bajada (transferencias) — ' + bajadaPhotos.length + ' foto(s)</div>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:5px;">';
+            bajadaPhotos.forEach((cp, i) => { html += _photoThumb(cp.url, '🏃 Bajada #' + (i + 1), '#aaffff'); });
+            html += '</div></div>';
+        }
+        if (bankPhotos.length) {
+            html += '<div><div style="color:#ffaa66;font-size:10px;font-weight:700;margin-bottom:4px;">🏦 Banco-pendiente — ' + bankPhotos.length + ' foto(s)</div>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:5px;">';
+            bankPhotos.forEach((cp, i) => { html += _photoThumb(cp.url, '🏦 Banco-Pend #' + (i + 1), '#ffaa66'); });
+            html += '</div></div>';
+        }
+        html += '</div>';
+    }
     html += '</div>';
 
     // === 2. CONTROL CVU + MOVIMIENTOS EXTRA ===
     if (hasCvuData) {
         html += '<div style="background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.25);border-radius:10px;padding:13px;margin-bottom:12px;">';
         html += '<div style="color:#00d4ff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🏦 CONTROL CVU + MOVIMIENTOS EXTRA</div>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px;margin-bottom:10px;">';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:7px;margin-bottom:10px;">';
+        const ingPhotos = (r.comprobantes || []).filter(c2 => c2.kind === 'ingreso');
+        const egrPhotos = (r.comprobantes || []).filter(c2 => c2.kind === 'egreso');
+        const gasPhotos = (r.comprobantes || []).filter(c2 => c2.kind === 'gasto');
         html += '<div style="background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;"><div style="color:#888;font-size:10px;">📥 Ingresos (préstamos recibidos)</div><div style="color:#aaffaa;font-weight:800;">+' + fmt(c.ingresos || 0) + '</div>';
         if (r.ingresosNote) html += '<div style="color:#aaa;font-size:10px;margin-top:3px;font-style:italic;">"' + escH(r.ingresosNote) + '"</div>';
+        if (ingPhotos.length) { html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;">'; ingPhotos.forEach((cp, i) => { html += _photoThumb(cp.url, '📥 Ingreso #' + (i + 1), '#aaffaa'); }); html += '</div>'; }
         html += '</div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;"><div style="color:#888;font-size:10px;">📤 Egresos (préstamos hechos)</div><div style="color:#ff8080;font-weight:800;">-' + fmt(c.egresos || 0) + '</div>';
         if (r.egresosNote) html += '<div style="color:#aaa;font-size:10px;margin-top:3px;font-style:italic;">"' + escH(r.egresosNote) + '"</div>';
+        if (egrPhotos.length) { html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;">'; egrPhotos.forEach((cp, i) => { html += _photoThumb(cp.url, '📤 Egreso #' + (i + 1), '#ff8080'); }); html += '</div>'; }
         html += '</div>';
         html += '<div style="background:rgba(0,0,0,0.30);padding:7px 9px;border-radius:6px;"><div style="color:#888;font-size:10px;">🧾 Gastos del día</div><div style="color:#ffaa66;font-weight:800;">-' + fmt(c.gastos || 0) + '</div>';
         if (r.gastosNote) html += '<div style="color:#aaa;font-size:10px;margin-top:3px;font-style:italic;">"' + escH(r.gastosNote) + '"</div>';
+        if (gasPhotos.length) { html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px;">'; gasPhotos.forEach((cp, i) => { html += _photoThumb(cp.url, '🧾 Gasto #' + (i + 1), '#ffaa66'); }); html += '</div>'; }
         html += '</div>';
         html += '</div>';
         html += '<div style="font-family:monospace;font-size:12px;line-height:1.7;color:#ddd;background:rgba(0,0,0,0.25);padding:9px;border-radius:7px;margin-bottom:8px;">';
@@ -25604,23 +25755,50 @@ function analyzeClosing(id) {
         html += '</div>';
     }
 
-    // === 4. COMPROBANTES ===
+    // === 4. COMPROBANTES con thumbnails clicables (lightbox) ===
+    // Cache global con todas las URLs del cierre para que el lightbox pueda
+    // navegar entre fotos del mismo cierre.
+    window._clsAnalyzePhotos = comps.filter(c => c && c.url).map(c => c.url);
+
+    // Recolectar TODOS los kinds — incluye los nuevos (ingreso/egreso/gasto).
+    const allKinds = ['deposito','bajada','pendiente_bank','ingreso','egreso','gasto','bonificacion','venta'];
+    const kindLabels = {
+        deposito: '📥 Depósito (cargas+venta+tx)',
+        venta: '🛒 Venta',
+        bonificacion: '🎁 Bonificación',
+        bajada: '🏃 Bajada (transferencias)',
+        pendiente_bank: '🏦 Banco — pendiente',
+        ingreso: '📥 Ingreso (préstamo recibido)',
+        egreso: '📤 Egreso (préstamo hecho)',
+        gasto: '🧾 Gasto'
+    };
+    const kindColors = {
+        deposito: '#aaffaa', venta: '#ffd0a0', bonificacion: '#ffd700',
+        bajada: '#aaffff', pendiente_bank: '#ffaa66',
+        ingreso: '#aaffaa', egreso: '#ff8080', gasto: '#ffaa66'
+    };
+
     html += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:13px;margin-bottom:12px;">';
     html += '<div style="color:#aaffff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">📎 COMPROBANTES ADJUNTOS (' + comps.length + ')</div>';
-    const kindLabels = { deposito: '📥 Depósito', venta: '🛒 Venta', bonificacion: '🎁 Bonificación', bajada: '🏃 Bajada', pendiente_bank: '🏦 Banco-Pend.' };
-    const kindColors = { deposito: '#aaffaa', venta: '#ffd0a0', bonificacion: '#ffd700', bajada: '#aaffff', pendiente_bank: '#ffaa66' };
-    for (const k of ['deposito','venta','bonificacion','bajada','pendiente_bank']) {
-        const list = compsByKind[k];
+
+    // Re-agregar kinds nuevos al filtro
+    for (const k of allKinds) {
+        compsByKind[k] = comps.filter(p => p.kind === k);
+    }
+    for (const k of allKinds) {
+        const list = compsByKind[k] || [];
         const color = kindColors[k];
-        html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);">';
-        html += '<span style="color:' + color + ';font-weight:800;font-size:11px;min-width:130px;">' + kindLabels[k] + '</span>';
-        html += '<span style="color:#fff;font-weight:700;">' + list.length + (list.length === 0 ? ' ❌' : ' ✓') + '</span>';
+        html += '<div style="padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.05);">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:' + (list.length > 0 ? '6px' : '0') + ';">';
+        html += '<span style="color:' + color + ';font-weight:800;font-size:11px;min-width:200px;">' + kindLabels[k] + '</span>';
+        html += '<span style="color:#fff;font-weight:700;font-size:11px;">' + list.length + (list.length === 0 ? ' ❌' : ' ✓') + '</span>';
+        html += '</div>';
         if (list.length > 0) {
-            html += '<span style="color:#aaa;font-size:10.5px;">';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
             list.forEach((cp, i) => {
-                html += ' <a href="' + escH(cp.url) + '" target="_blank" rel="noopener" style="color:' + color + ';text-decoration:underline;">#' + (i + 1) + '</a>';
+                html += _photoThumb(cp.url, kindLabels[k] + ' · #' + (i + 1), color);
             });
-            html += '</span>';
+            html += '</div>';
         }
         html += '</div>';
     }
