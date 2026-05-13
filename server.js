@@ -19441,6 +19441,50 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/admin/roulette/budget — leer config del budget diario.
+app.get('/api/admin/roulette/budget', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const cfg = (await getConfig('rouletteBudget')) || {};
+    // Resumen del gasto de HOY para que el owner vea en vivo.
+    const dateKey = _rouletteDateKeyART();
+    const agg = await DailyRouletteSpin.aggregate([
+      { $match: { dateKey, status: { $in: ['credited', 'won'] }, prizeARS: { $gt: 0 } } },
+      { $group: { _id: null, total: { $sum: '$prizeARS' }, count: { $sum: 1 } } }
+    ]);
+    const spentToday = (agg && agg[0] && agg[0].total) || 0;
+    const winnersToday = (agg && agg[0] && agg[0].count) || 0;
+    res.json({
+      success: true,
+      enabled: cfg.enabled !== false,
+      dailyBudgetARS: Number(cfg.dailyBudgetARS) || 0,
+      spentToday,
+      winnersToday,
+      dateKey
+    });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/budget: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PUT /api/admin/roulette/budget — actualizar config del budget diario.
+app.put('/api/admin/roulette/budget', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { enabled, dailyBudgetARS } = req.body || {};
+    const budget = Math.max(0, Math.round(Number(dailyBudgetARS) || 0));
+    const value = {
+      enabled: enabled !== false,
+      dailyBudgetARS: budget,
+      updatedAt: new Date()
+    };
+    await setConfig('rouletteBudget', value);
+    res.json({ success: true, value });
+  } catch (err) {
+    logger.error(`PUT /api/admin/roulette/budget: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /api/admin/roulette/test-spin — simula un giro para un username
 // específico sin afectar su spin real del día. Pick weighted con la misma
 // tabla ROULETTE_PRIZES. Devuelve qué le habría salido. NO escribe nada
@@ -19510,8 +19554,47 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
     }
 
     // Pick + insert (status='won' o 'no_prize') con unique index protegiendo race.
-    const pick = _rouletteWeightedPick();
-    const prizeARS = Number(pick.value) || 0;
+    let pick = _rouletteWeightedPick();
+    let prizeARS = Number(pick.value) || 0;
+
+    // PACING DE BUDGET DIARIO: si la admin config tiene un budget, evitamos
+    // gastar más de lo que toca a esta hora. Distribuimos el budget bien
+    // repartido a lo largo del día (24h ART). Si dar este premio ahora
+    // pasaría el target acumulado para la hora actual, forzamos SIN PREMIO.
+    // Esto evita que se vacíe el budget en las primeras horas del día.
+    try {
+      const cfg = await getConfig('rouletteBudget').catch(() => null);
+      const budgetARS = Math.max(0, Number(cfg && cfg.dailyBudgetARS) || 0);
+      const budgetEnabled = !!(cfg && cfg.enabled !== false && budgetARS > 0);
+      if (budgetEnabled && prizeARS > 0) {
+        const agg = await DailyRouletteSpin.aggregate([
+          { $match: { dateKey, status: { $in: ['credited', 'won'] }, prizeARS: { $gt: 0 } } },
+          { $group: { _id: null, total: { $sum: '$prizeARS' } } }
+        ]);
+        const spentToday = (agg && agg[0] && agg[0].total) || 0;
+        // Hora actual ART (0-23) + fracción → progreso del día.
+        const nowART = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Argentina/Buenos_Aires',
+          hour: '2-digit', minute: '2-digit', hour12: false
+        }).formatToParts(new Date()).reduce((o, p) => (o[p.type] = p.value, o), {});
+        const h = parseInt(nowART.hour, 10) || 0;
+        const m = parseInt(nowART.minute, 10) || 0;
+        const dayProgress = Math.min(1, ((h * 60 + m) + 1) / (24 * 60));
+        const targetSpent = budgetARS * dayProgress;
+        if ((spentToday + prizeARS) > targetSpent) {
+          logger.info(`[ROULETTE] BUDGET PACING — forzando SIN PREMIO para ${username} (gastado $${spentToday}+$${prizeARS} > target $${Math.round(targetSpent)} a las ${h}:${m})`);
+          // Elegir el "SIN PREMIO" del pool — siempre es el value:0
+          const noPrize = ROULETTE_PRIZES.find(p => Number(p.value) === 0);
+          if (noPrize) {
+            pick = noPrize;
+            prizeARS = 0;
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn(`[ROULETTE] budget-pacing falló (silencioso): ${e.message}`);
+    }
+
     const initialStatus = prizeARS > 0 ? 'won' : 'no_prize';
     let spinDoc;
     try {

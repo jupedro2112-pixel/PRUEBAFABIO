@@ -2497,6 +2497,52 @@ async function viewNotifCheckConfirmers(checkId) {
 // =========================================================================
 // RULETA DIARIA — panel admin: stats + historial
 // =========================================================================
+// Cargar el budget diario de la ruleta cuando entra a la sección.
+async function loadRouletteBudget() {
+    try {
+        const r = await authFetch('/api/admin/roulette/budget');
+        const d = await r.json();
+        if (!r.ok || !d.success) return;
+        const enabledEl = document.getElementById('rouletteBudgetEnabled');
+        const amtEl = document.getElementById('rouletteBudgetARS');
+        const statusEl = document.getElementById('rouletteBudgetStatus');
+        if (enabledEl) enabledEl.checked = !!d.enabled;
+        if (amtEl) amtEl.value = d.dailyBudgetARS || '';
+        if (statusEl) {
+            const fmt = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+            const pct = d.dailyBudgetARS > 0 ? Math.round((d.spentToday / d.dailyBudgetARS) * 100) : 0;
+            const pctColor = pct >= 80 ? '#ff8080' : (pct >= 50 ? '#ffaa66' : '#aaffaa');
+            statusEl.innerHTML = '📅 Hoy (' + escapeHtml(d.dateKey) + '): <strong>' + fmt(d.spentToday) + '</strong> gastados · ' + d.winnersToday + ' ganadores' +
+                (d.dailyBudgetARS > 0 ? ' · <span style="color:' + pctColor + ';">' + pct + '%</span> del tope' : '');
+        }
+    } catch (_) {}
+}
+
+async function saveRouletteBudget() {
+    const enabled = document.getElementById('rouletteBudgetEnabled')?.checked;
+    const amt = parseInt(document.getElementById('rouletteBudgetARS')?.value || '0', 10) || 0;
+    if (enabled && amt <= 0) {
+        showToast('Si activás el tope, poné un monto > 0', 'error');
+        return;
+    }
+    try {
+        const r = await authFetch('/api/admin/roulette/budget', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled, dailyBudgetARS: amt })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al guardar', 'error');
+            return;
+        }
+        showToast('✅ Budget guardado', 'success');
+        loadRouletteBudget();
+    } catch (e) {
+        showToast('Error al guardar', 'error');
+    }
+}
+
 // Probar el giro de la ruleta a nombre de un user (simulación) — no
 // afecta el spin real ni acredita plata. Solo muestra qué premio le
 // habría salido con la tabla de probabilidades vigente.
@@ -2543,6 +2589,8 @@ async function loadRouletteAdmin() {
     const body = document.getElementById('rouletteAdminBody');
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    // Cargar budget en paralelo (no bloqueante).
+    loadRouletteBudget();
     try {
         const [statsResp, historyResp] = await Promise.all([
             authFetch('/api/admin/roulette/stats?days=' + days),
