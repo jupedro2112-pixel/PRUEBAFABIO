@@ -26875,6 +26875,68 @@ function _renderCotizaciones(scope) {
     h += '</div>';
     h += '</div>';
 
+    // === Historial de actividad: timeline de cotizaciones por equipo ===
+    // Recolecta cada evento individual (equipo cotizado) ordenado por fecha.
+    // Le da al dueño un log día por día de qué se fue cotizando.
+    const events = [];
+    for (const cot of items) {
+        const cotTeams = Array.isArray(cot.teams) ? cot.teams : [];
+        for (const t of cotTeams) {
+            if (!t.cotizado || !t.cotizedAt) continue;
+            events.push({
+                cotId: cot.id,
+                dateKey: cot.dateKey,
+                slot: t.slot,
+                name: t.name || ('Equipo ' + (Number(t.slot || 0) + 1)),
+                netARS: Number(t.netARS || t.totalARS || 0),
+                precioUSDT: Number(t.precioUSDT || 0),
+                cotizedAt: t.cotizedAt,
+                cotizedBy: t.cotizedBy || ''
+            });
+        }
+    }
+    events.sort((a, b) => new Date(b.cotizedAt) - new Date(a.cotizedAt));
+
+    if (events.length > 0) {
+        const histKey = scope === 'externa' ? '_cotExHistOpen' : '_cotHistOpen';
+        const histOpen = (scope === 'externa') ? _cotExHistOpen : _cotHistOpen;
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(0,255,102,0.20);border-radius:8px;margin-bottom:12px;overflow:hidden;">';
+        h += '<div onclick="toggleCotHistory(\'' + scope + '\')" style="cursor:pointer;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;user-select:none;">';
+        h += '<div style="color:#aaffaa;font-weight:900;font-size:12px;letter-spacing:0.5px;">📅 HISTORIAL DE COTIZACIONES (' + events.length + ' eventos) — día por día</div>';
+        h += '<div style="color:#aaa;font-size:11px;">' + (histOpen ? '▲ ocultar' : '▼ ver') + '</div>';
+        h += '</div>';
+        if (histOpen) {
+            // Agrupar por día de cotización (cuando se tildó, no la fecha del cierre).
+            const byDay = {};
+            for (const ev of events) {
+                const day = new Date(ev.cotizedAt).toISOString().slice(0, 10);
+                if (!byDay[day]) byDay[day] = [];
+                byDay[day].push(ev);
+            }
+            const days = Object.keys(byDay).sort().reverse();
+            h += '<div style="border-top:1px solid rgba(255,255,255,0.06);padding:8px 14px;max-height:340px;overflow-y:auto;">';
+            for (const day of days) {
+                const dayEvents = byDay[day];
+                const dayTotal = dayEvents.reduce((a, e) => a + e.netARS, 0);
+                const dayUSDT = dayEvents.reduce((a, e) => a + e.precioUSDT, 0);
+                h += '<div style="margin-bottom:9px;padding-bottom:7px;border-bottom:1px dashed rgba(255,255,255,0.08);">';
+                h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">';
+                h += '<strong style="color:#fff;font-size:12.5px;">📆 ' + escapeHtml(day) + '</strong>';
+                h += '<span style="color:#aaffaa;font-weight:800;font-size:11.5px;">' + dayEvents.length + ' ' + (dayEvents.length === 1 ? 'equipo' : 'equipos') + ' · ' + formatMoney(dayTotal) + ' · ' + dayUSDT.toFixed(2) + ' USDT</span>';
+                h += '</div>';
+                for (const ev of dayEvents) {
+                    h += '<div style="display:flex;justify-content:space-between;font-size:11.5px;padding:3px 6px;border-radius:4px;background:rgba(0,255,102,0.04);margin-bottom:3px;">';
+                    h += '<span style="color:#ddd;"><strong style="color:#fff;">' + escapeHtml(ev.name) + '</strong> · cierre del ' + escapeHtml(ev.dateKey) + (ev.cotizedBy ? ' · por ' + escapeHtml(ev.cotizedBy) : '') + '</span>';
+                    h += '<span style="color:#aaffaa;font-weight:700;">' + formatMoney(ev.netARS) + ' · ' + ev.precioUSDT.toFixed(2) + ' USDT</span>';
+                    h += '</div>';
+                }
+                h += '</div>';
+            }
+            h += '</div>';
+        }
+        h += '</div>';
+    }
+
     // Filtros: por estado + ir a una fecha específica
     h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;">';
     h += '<span style="color:#888;">Filtrar:</span>';
@@ -26919,12 +26981,35 @@ function _renderCotizaciones(scope) {
 
 let _cotFilter = 'all';
 let _cotExFilter = 'all';
-// Estado de expansión por id. Las cards cerradas vienen colapsadas — se
-// abren al tocar el botón Expandir y se cierran al tocar Colapsar.
+// Toggle del historial detallado de cotizaciones (por scope).
+let _cotHistOpen = false;
+let _cotExHistOpen = false;
+function toggleCotHistory(scope) {
+    scope = scope || 'interna';
+    if (scope === 'externa') _cotExHistOpen = !_cotExHistOpen;
+    else _cotHistOpen = !_cotHistOpen;
+    _renderCotizaciones(scope);
+}
+// Estado de expansión por id. _cotExpanded[id]:
+//   undefined → usa el default (drafts y cerradas con pendientes: abiertas;
+//               cerradas con todo cotizado: colapsadas).
+//   true/false → override manual del dueño.
 const _cotExpanded = {};
 function toggleCotExpand(id, scope) {
     scope = scope || 'interna';
-    _cotExpanded[id] = !_cotExpanded[id];
+    // Si es undefined, asumimos el default actual y lo flipeamos.
+    // Si es booleano, lo flipeamos.
+    const cur = _cotExpanded[id];
+    if (cur === undefined) {
+        // Necesitamos saber el default actual de esa card. Como toggleCotExpand
+        // siempre se llama desde un botón visible, asumimos que el dueño quiere
+        // lo opuesto al estado actualmente renderizado — invertir el default.
+        const item = (_cotCache(scope) || []).find(x => x.id === id);
+        const defaultExpanded = item ? (item.status !== 'closed' || !item.allCotizadas) : true;
+        _cotExpanded[id] = !defaultExpanded;
+    } else {
+        _cotExpanded[id] = !cur;
+    }
     _renderCotizaciones(scope);
     // Scroll back to the card after re-render (DOM was rebuilt).
     setTimeout(() => {
@@ -26968,10 +27053,16 @@ function _renderCotizacionCard(it, scope) {
     const ro = isClosed ? ' readonly tabindex="-1"' : '';
     const roCss = isClosed ? 'background:rgba(0,0,0,0.55);cursor:default;color:#bbb;' : '';
 
-    // Cerradas vienen colapsadas por default (sólo header con totales),
-    // se expanden al click. Drafts vienen expandidas porque hay que editar.
-    const expanded = !!_cotExpanded[it.id];
-    const showBody = !isClosed || expanded;
+    // Reglas de expansión por default:
+    //  - draft: siempre expandida (hay que editar).
+    //  - cerrada con equipos pendientes: expandida por default así el dueño
+    //    ve el botón ESTADO de cada equipo y puede tildar sin un click extra.
+    //  - cerrada con TODO cotizado: colapsada por default (sólo resumen).
+    // El estado manual (toggleCotExpand) overridea el default cuando existe.
+    const defaultExpanded = !isClosed || !allCotizadas;
+    const userOverride = _cotExpanded[it.id];
+    const expanded = (userOverride === undefined) ? defaultExpanded : !!userOverride;
+    const showBody = expanded;
 
     // Borde y color: el ESTADO de cierre define el marco.
     const frameBorder = isClosed ? 'rgba(0,212,255,0.45)' : 'rgba(255,255,255,0.10)';
