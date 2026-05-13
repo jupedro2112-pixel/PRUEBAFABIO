@@ -228,6 +228,15 @@
                     <span>Clientes activos sin app</span>
                 </a>
 
+                <!-- Cierres diarios: control financiero (depósitos, ventas,
+                     bajadas, comisiones banco). PIN protected porque hay
+                     plata real involucrada. Al fondo del menú. -->
+                <div class="nav-section-title" style="color:#ffd700;border-top:1px solid rgba(255,215,0,0.30);padding-top:10px;margin-top:12px;">💰 Cierres</div>
+                <a href="#" class="nav-item" data-section="closings" data-protected-pin="closings" style="background:rgba(255,215,0,0.06);border-left:3px solid #ffd700;">
+                    <span>📊</span>
+                    <span><strong>CIERRES GENERAL</strong> <span style="margin-left:auto;font-size:10px;opacity:0.7;" title="Esta sección requiere clave">🔑</span></span>
+                </a>
+
                 <!-- Ayuda y guía al fondo de todo (cada item tiene su propio ❓
                      en el sidebar, esta entrada lleva al overview completo). -->
                 <div class="nav-section-title">❓ Ayuda</div>
@@ -1678,6 +1687,29 @@
                 <h3 style="color:#fff;font-size:14px;margin:16px 0 8px;">📊 Vista en vivo (con filtros aplicados)</h3>
                 <div id="apTeamsList">
                     <div class="empty-state">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: CIERRES GENERAL (control financiero)
+                 Render dinámico desde admin.js loadClosings().
+                 PIN-protected via data-protected-pin="closings".
+                 ============================================ -->
+            <section id="closingsSection" class="section">
+                <div class="panel-header">
+                    <h2>💰 Cierres general</h2>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <input type="date" id="closingsDate" onchange="loadClosings()" style="background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.40);color:#fff;padding:6px 10px;border-radius:6px;font-weight:700;">
+                        <button class="refresh-btn" onclick="loadClosings()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div style="background:rgba(255,215,0,0.08);border-left:3px solid #ffd700;padding:10px 12px;margin-bottom:14px;border-radius:6px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.55;">
+                        Control financiero por sector: <strong>Ganamos</strong>, <strong>Publicidad</strong>, <strong>Buffalo</strong> (7 equipos). Cada entrada se confirma y queda bloqueada a las 24hs. Si quedó plata pendiente de bajar, hay que adjuntar foto del banco mostrando que la plata sigue ahí.
+                    </p>
+                </div>
+                <div id="closingsBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>
 

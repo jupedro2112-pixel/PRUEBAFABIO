@@ -414,6 +414,7 @@ function showSection(sectionKey) {
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
         activePlayers: 'activePlayersSection',
+        closings: 'closingsSection',
         help: 'helpSection'
     };
     const sectionId = map[sectionKey];
@@ -492,6 +493,8 @@ function showSection(sectionKey) {
         loadLineDownHistory();
     } else if (sectionKey === 'activePlayers') {
         loadActivePlayers();
+    } else if (sectionKey === 'closings') {
+        loadClosings();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -24547,5 +24550,383 @@ if (typeof window !== 'undefined') {
         document.addEventListener('DOMContentLoaded', _injectSectionHelpIcons);
     } else {
         setTimeout(_injectSectionHelpIcons, 50);
+    }
+}
+
+// ============================================
+// CIERRES DIARIOS — control financiero
+// ============================================
+// Sectores: ganamos | publicidad | buffalo (7 slots de equipo).
+// Cada entrada: depósitos + comisión banco + ventas + bajada + pendiente
+// + bonos + comprobantes (fotos). Confirm → 24h lock → no edit.
+// ============================================
+
+const CLOSING_SECTORS_UI = [
+    { key: 'ganamos',    label: '💼 GANAMOS',    color: '#25d366', individual: false },
+    { key: 'publicidad', label: '📢 PUBLICIDAD', color: '#00d4ff', individual: false },
+    { key: 'buffalo',    label: '🐃 BUFFALO',    color: '#ffd700', individual: true, slots: 7 }
+];
+
+let _closingsRowsCache = [];
+let _closingsTodayKey = null;
+
+function _closingFmt(n) {
+    return '$' + Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+}
+
+function _closingsCurrentDate() {
+    const el = document.getElementById('closingsDate');
+    if (el && el.value) return el.value;
+    return _closingsTodayKey || new Date().toISOString().slice(0, 10);
+}
+
+async function loadClosings() {
+    const body = document.getElementById('closingsBody');
+    if (!body) return;
+    body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+
+    const dateInput = document.getElementById('closingsDate');
+    let date = dateInput && dateInput.value;
+    if (!date) {
+        // Defaultear a hoy ART
+        const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }));
+        date = today.toISOString().slice(0, 10);
+        if (dateInput) dateInput.value = date;
+    }
+
+    try {
+        const params = new URLSearchParams({ from: date, to: date });
+        const r = await authFetch('/api/admin/closings?' + params.toString());
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            body.innerHTML = '<div style="color:#ff8080;padding:14px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
+            return;
+        }
+        _closingsRowsCache = d.rows || [];
+        _closingsTodayKey = d.today;
+        _renderClosings(date);
+        // Cargar summary del día también
+        loadClosingsSummary(date);
+    } catch (e) {
+        body.innerHTML = '<div style="color:#ff8080;padding:14px;">Error: ' + escapeHtml(e.message || '') + '</div>';
+    }
+}
+
+async function loadClosingsSummary(date) {
+    try {
+        const params = new URLSearchParams({ from: date, to: date });
+        const r = await authFetch('/api/admin/closings/summary?' + params.toString());
+        const d = await r.json();
+        if (!r.ok || !d.success) return;
+        const box = document.getElementById('closingsSummaryBox');
+        if (!box) return;
+        const t = d.totals;
+        const sectorEmoji = { ganamos: '💼', publicidad: '📢', buffalo: '🐃' };
+        let html = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px;">';
+        html += '<div style="background:rgba(102,255,102,0.10);border:1.5px solid #66ff66;border-radius:9px;padding:8px;text-align:center;">';
+        html += '<div style="color:#aaffaa;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">💰 ENTRÓ NETO</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.depositsNet) + '</div>';
+        html += '<div style="color:#888;font-size:10px;">' + _closingFmt(t.depositsARS) + ' bruto · -' + _closingFmt(t.commission) + ' comisión</div>';
+        html += '</div>';
+        html += '<div style="background:rgba(0,212,255,0.10);border:1.5px solid #00d4ff;border-radius:9px;padding:8px;text-align:center;">';
+        html += '<div style="color:#aaffff;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🏃 BAJÓ</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.bajadaARS) + '</div>';
+        html += '<div style="color:#888;font-size:10px;">de ' + _closingFmt(t.ventasARS) + ' a bajar</div>';
+        html += '</div>';
+        const pendColor = t.pendienteHoy > 0 ? '#ff8080' : '#aaffaa';
+        const pendBg = t.pendienteHoy > 0 ? 'rgba(255,128,128,0.10)' : 'rgba(102,255,102,0.06)';
+        html += '<div style="background:' + pendBg + ';border:1.5px solid ' + pendColor + ';border-radius:9px;padding:8px;text-align:center;">';
+        html += '<div style="color:' + pendColor + ';font-size:10.5px;font-weight:800;letter-spacing:0.4px;">⏳ PENDIENTE</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.pendienteHoy) + '</div>';
+        html += '<div style="color:#888;font-size:10px;">' + (t.pendienteHoy > 0 ? 'arrastre al día siguiente' : 'todo al día') + '</div>';
+        html += '</div>';
+        html += '<div style="background:rgba(255,215,0,0.10);border:1.5px solid #ffd700;border-radius:9px;padding:8px;text-align:center;">';
+        html += '<div style="color:#ffd700;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🎁 BONOS REGALADOS</div>';
+        html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(t.bonusARS) + '</div>';
+        html += '<div style="color:#888;font-size:10px;">total del día</div>';
+        html += '</div>';
+        html += '<div style="background:linear-gradient(135deg,rgba(155,48,255,0.15),rgba(255,215,0,0.10));border:2px solid #c89bff;border-radius:9px;padding:8px;text-align:center;">';
+        html += '<div style="color:#c89bff;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">📐 NETO DEL DÍA</div>';
+        html += '<div style="color:#fff;font-size:18px;font-weight:900;">' + _closingFmt(t.netoSector) + '</div>';
+        html += '<div style="color:#888;font-size:10px;">entró neto - bonos</div>';
+        html += '</div>';
+        html += '</div>';
+
+        // Breakdown por sector
+        if (d.bySector.length > 0) {
+            html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:6px;">';
+            for (const s of d.bySector) {
+                html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:7px;padding:7px 9px;font-size:11px;">';
+                html += '<div style="color:#fff;font-weight:800;margin-bottom:3px;">' + (sectorEmoji[s.sector] || '·') + ' ' + escapeHtml(s.sector.toUpperCase()) + ' <span style="color:#888;font-weight:600;">(' + s.entries + ')</span></div>';
+                html += '<div style="color:#aaffaa;">Neto: <strong>' + _closingFmt(s.netoSector) + '</strong></div>';
+                if (s.pendienteHoy > 0) {
+                    html += '<div style="color:#ff8080;">⏳ Pend: ' + _closingFmt(s.pendienteHoy) + '</div>';
+                }
+                if (s.bonusARS > 0) {
+                    html += '<div style="color:#ffd700;">🎁 Bonos: ' + _closingFmt(s.bonusARS) + '</div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        box.innerHTML = html;
+    } catch (_) {}
+}
+
+function _renderClosings(date) {
+    const body = document.getElementById('closingsBody');
+    if (!body) return;
+
+    let html = '';
+
+    // Summary container (relleno por loadClosingsSummary)
+    html += '<div id="closingsSummaryBox" style="margin-bottom:16px;"></div>';
+
+    // Cards por sector
+    for (const sec of CLOSING_SECTORS_UI) {
+        html += '<div style="background:rgba(0,0,0,0.30);border:1.5px solid ' + sec.color + '55;border-radius:11px;padding:14px;margin-bottom:14px;">';
+        html += '<div style="color:' + sec.color + ';font-weight:900;font-size:14px;letter-spacing:0.8px;margin-bottom:10px;">' + sec.label + '</div>';
+        if (sec.individual) {
+            // Buffalo: 7 slots
+            for (let i = 0; i < sec.slots; i++) {
+                const row = _closingsRowsCache.find(r => r.sector === sec.key && r.teamSlot === i);
+                html += _renderClosingEntry(sec, date, i, row);
+            }
+        } else {
+            // Ganamos / Publicidad: una entrada
+            const row = _closingsRowsCache.find(r => r.sector === sec.key && (r.teamSlot == null));
+            html += _renderClosingEntry(sec, date, null, row);
+        }
+        html += '</div>';
+    }
+
+    body.innerHTML = html;
+}
+
+function _renderClosingEntry(sec, date, teamSlot, row) {
+    const exists = !!row;
+    const locked = row && row.locked;
+    const confirmed = row && row.status === 'confirmed';
+    const c = row && row.computed || {};
+    const rid = row ? row.id : ('new_' + sec.key + '_' + (teamSlot == null ? 'main' : teamSlot));
+
+    let header = '';
+    if (sec.individual) {
+        const tname = (row && row.teamName) || '';
+        header = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+            '<div style="background:' + sec.color + ';color:#000;font-weight:900;font-size:11px;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + (teamSlot + 1) + '</div>' +
+            '<input type="text" id="cls_' + rid + '_teamName" value="' + escapeHtml(tname) + '" placeholder="Nombre del equipo (ej: ROYAL, TIGER)" style="flex:1;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:5px 9px;border-radius:6px;font-size:12.5px;font-weight:700;" ' + (locked ? 'disabled' : '') + '>' +
+            (locked ? '<span style="color:#ff8080;font-size:10px;font-weight:800;">🔒 BLOQUEADO 24h</span>' : (confirmed ? '<span style="color:#aaffaa;font-size:10px;font-weight:800;">✅ CONFIRMADO</span>' : '<span style="color:#888;font-size:10px;">📝 BORRADOR</span>')) +
+            '</div>';
+    } else {
+        header = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+            '<div style="color:#aaa;font-size:11px;letter-spacing:0.5px;">Cierre del ' + escapeHtml(date) + '</div>' +
+            (locked ? '<span style="color:#ff8080;font-size:10px;font-weight:800;">🔒 BLOQUEADO 24h</span>' : (confirmed ? '<span style="color:#aaffaa;font-size:10px;font-weight:800;">✅ CONFIRMADO</span>' : '<span style="color:#888;font-size:10px;">📝 BORRADOR</span>')) +
+            '</div>';
+    }
+
+    const inputStyle = 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;width:100%;box-sizing:border-box;';
+    const disabledAttr = locked ? 'disabled' : '';
+
+    let html = '<div style="background:rgba(0,0,0,0.22);border:1px solid rgba(255,255,255,0.08);border-radius:9px;padding:11px;margin-bottom:9px;" data-cls-id="' + rid + '">';
+    html += header;
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px;margin-bottom:8px;">';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos</label><input type="number" id="cls_' + rid + '_depositsARS" value="' + (row ? row.depositsARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Ventas a bajar</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">↩️ Pend. anterior</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + (row ? row.pendienteAnteriorARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
+    html += '</div>';
+
+    if (exists) {
+        const pendColor = c.pendienteHoy > 0 ? '#ff8080' : '#aaffaa';
+        html += '<div style="background:rgba(0,0,0,0.30);border-radius:6px;padding:7px 9px;margin-bottom:8px;display:flex;flex-wrap:wrap;gap:10px;font-size:11px;">';
+        html += '<span style="color:#aaa;">Comisión: <strong style="color:#ff8080;">-' + _closingFmt(c.commission) + '</strong></span>';
+        html += '<span style="color:#aaa;">Neto entró: <strong style="color:#aaffaa;">' + _closingFmt(c.depositsNet) + '</strong></span>';
+        html += '<span style="color:#aaa;">A bajar total: <strong>' + _closingFmt(c.totalABajar) + '</strong></span>';
+        html += '<span style="color:#aaa;">Pendiente hoy: <strong style="color:' + pendColor + ';">' + _closingFmt(c.pendienteHoy) + '</strong></span>';
+        html += '<span style="color:#aaa;">Neto sector: <strong style="color:#ffd700;">' + _closingFmt(c.netoSector) + '</strong></span>';
+        html += '</div>';
+        // Comprobantes
+        const comps = row.comprobantes || [];
+        const hasBajada = comps.some(p => p.kind === 'bajada');
+        const hasPendBank = comps.some(p => p.kind === 'pendiente_bank');
+        const needsPendBank = c.pendienteHoy > 0 && !hasPendBank;
+        html += '<div style="background:rgba(0,0,0,0.20);border-radius:6px;padding:7px 9px;margin-bottom:8px;font-size:11px;">';
+        html += '<div style="color:#aaa;font-weight:700;margin-bottom:4px;">📎 Comprobantes (' + comps.length + ')</div>';
+        if (comps.length > 0) {
+            html += '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:5px;">';
+            for (let i = 0; i < comps.length; i++) {
+                const cp = comps[i];
+                const kindColor = cp.kind === 'pendiente_bank' ? '#ffaa66' : '#aaffaa';
+                const kindLabel = cp.kind === 'pendiente_bank' ? '🏦 banco-pendiente' : '✅ bajada';
+                html += '<a href="' + escapeHtml(cp.url) + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);border:1px solid ' + kindColor + '55;color:' + kindColor + ';text-decoration:none;padding:3px 7px;border-radius:5px;font-size:10.5px;">' + kindLabel;
+                if (!locked) html += ' <span onclick="event.preventDefault();event.stopPropagation();removeClosingComprobante(\'' + rid + '\',' + i + ')" style="color:#ff8080;cursor:pointer;margin-left:3px;">✕</span>';
+                html += '</a>';
+            }
+            html += '</div>';
+        }
+        if (!locked) {
+            html += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
+            html += '<input type="file" accept="image/*" id="cls_' + rid + '_file" style="font-size:10.5px;color:#bbb;">';
+            html += '<select id="cls_' + rid + '_kind" style="background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.15);color:#fff;padding:3px 6px;border-radius:5px;font-size:10.5px;"><option value="bajada">✅ Bajada</option><option value="pendiente_bank">🏦 Banco-pendiente</option></select>';
+            html += '<button type="button" onclick="uploadClosingComprobante(\'' + rid + '\')" style="background:rgba(0,212,255,0.15);border:1px solid rgba(0,212,255,0.45);color:#00d4ff;padding:3px 9px;border-radius:5px;font-weight:700;font-size:10.5px;cursor:pointer;">📎 Subir</button>';
+            html += '</div>';
+            if (needsPendBank) {
+                html += '<div style="color:#ff8080;font-size:10.5px;margin-top:5px;">⚠️ Quedó pendiente — adjuntá foto del banco mostrando que la plata sigue ahí antes de confirmar.</div>';
+            }
+        }
+        html += '</div>';
+        if (row.editHistory && row.editHistory.length > 0) {
+            html += '<div style="font-size:10.5px;color:#888;margin-bottom:6px;">📝 Editado ' + row.editHistory.length + ' veces · último por <strong>' + escapeHtml(row.editHistory[row.editHistory.length - 1].editedBy || '?') + '</strong></div>';
+        }
+    }
+
+    // Action buttons
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+    if (!locked) {
+        html += '<button type="button" onclick="saveClosing(\'' + rid + '\', \'' + sec.key + '\', ' + (teamSlot == null ? 'null' : teamSlot) + ', \'' + date + '\')" style="background:rgba(102,255,102,0.15);border:1px solid rgba(102,255,102,0.45);color:#aaffaa;padding:6px 12px;border-radius:6px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (exists ? '💾 GUARDAR CAMBIOS' : '💾 CREAR CIERRE') + '</button>';
+        if (exists && !confirmed) {
+            html += '<button type="button" onclick="confirmClosing(\'' + rid + '\')" style="background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:6px 14px;border-radius:6px;font-weight:900;font-size:11.5px;cursor:pointer;">✅ CONFIRMAR (lock 24h)</button>';
+        }
+    } else {
+        html += '<span style="color:#888;font-size:11px;">Bloqueado · solo lectura</span>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+}
+
+async function saveClosing(rid, sector, teamSlot, date) {
+    const get = (suffix) => {
+        const el = document.getElementById('cls_' + rid + '_' + suffix);
+        return el ? el.value : '';
+    };
+    const payload = {
+        sector,
+        dateKey: date,
+        depositsARS: parseFloat(get('depositsARS')) || 0,
+        bankMarginPercent: parseFloat(get('bankMarginPercent')) || 0,
+        ventasARS: parseFloat(get('ventasARS')) || 0,
+        bajadaARS: parseFloat(get('bajadaARS')) || 0,
+        pendienteAnteriorARS: parseFloat(get('pendienteAnteriorARS')) || 0,
+        bonusARS: parseFloat(get('bonusARS')) || 0
+    };
+    if (sector === 'buffalo') {
+        payload.teamSlot = teamSlot;
+        payload.teamName = get('teamName') || '';
+    }
+
+    const isNew = rid.startsWith('new_');
+    try {
+        let r, d;
+        if (isNew) {
+            r = await authFetch('/api/admin/closings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        }
+        d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al guardar', 'error');
+            return;
+        }
+        showToast('✅ Guardado', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error al guardar', 'error');
+    }
+}
+
+async function confirmClosing(rid) {
+    if (!confirm('¿Confirmar este cierre? Después de 24hs queda bloqueado y no se va a poder editar.')) return;
+    try {
+        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/confirm', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            if (d.missingBankProof) {
+                alert('⚠️ ' + d.error + '\n\nAdjuntá la foto del banco (tipo "Banco-pendiente") y volvé a confirmar.');
+            } else {
+                showToast(d.error || 'Error', 'error');
+            }
+            return;
+        }
+        showToast('✅ Cierre confirmado', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error al confirmar', 'error');
+    }
+}
+
+async function uploadClosingComprobante(rid) {
+    const fileEl = document.getElementById('cls_' + rid + '_file');
+    const kindEl = document.getElementById('cls_' + rid + '_kind');
+    if (!fileEl || !fileEl.files || !fileEl.files[0]) {
+        showToast('Elegí una foto primero', 'error');
+        return;
+    }
+    const file = fileEl.files[0];
+    const kind = (kindEl && kindEl.value) || 'bajada';
+    try {
+        // 1. Pedir presigned URL
+        const pre = await authFetch('/api/upload/presigned-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: file.name, contentType: file.type, prefix: 'closings' })
+        });
+        const preD = await pre.json();
+        if (!pre.ok || !preD.uploadUrl) {
+            showToast('Error pidiendo URL de upload', 'error');
+            return;
+        }
+        // 2. PUT a S3/storage
+        const putR = await fetch(preD.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type },
+            body: file
+        });
+        if (!putR.ok) {
+            showToast('Falló la subida del archivo', 'error');
+            return;
+        }
+        const publicUrl = preD.publicUrl || preD.url;
+        // 3. POST al endpoint para asociar al cierre
+        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: publicUrl, kind })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error al asociar', 'error');
+            return;
+        }
+        showToast('✅ Comprobante subido', 'success');
+        loadClosings();
+    } catch (e) {
+        showToast('Error: ' + (e.message || ''), 'error');
+    }
+}
+
+async function removeClosingComprobante(rid, idx) {
+    if (!confirm('¿Sacar este comprobante?')) return;
+    try {
+        const r = await authFetch('/api/admin/closings/' + encodeURIComponent(rid) + '/comprobante/' + idx, { method: 'DELETE' });
+        const d = await r.json();
+        if (!r.ok || !d.success) {
+            showToast(d.error || 'Error', 'error');
+            return;
+        }
+        loadClosings();
+    } catch (e) {
+        showToast('Error', 'error');
     }
 }
