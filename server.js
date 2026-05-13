@@ -33944,7 +33944,8 @@ app.post('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async 
       createdBy: req.user.username || ''
     };
 
-    if (sector === 'buffalo' || sector === 'ganamos') {
+    // Los 3 sectores funcionan igual: 7 slots de equipo, totales = suma de teams.
+    {
       const teams = _normalizeBuffaloTeams(b.teams);
       const agg = _aggregateBuffaloTeams(teams);
       doc.teams = teams;
@@ -33953,12 +33954,6 @@ app.post('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async 
       doc.bonusARS = agg.bonusARS;
       doc.bonusCount = agg.bonusCount;
       doc.withdrawalsCount = agg.withdrawalsCount;
-    } else {
-      doc.depositsARS = Math.max(0, Number(b.depositsARS) || 0);
-      doc.ventasARS = Math.max(0, Number(b.ventasARS) || 0);
-      doc.bonusARS = Math.max(0, Number(b.bonusARS) || 0);
-      doc.bonusCount = Math.max(0, Math.round(Number(b.bonusCount) || 0));
-      doc.withdrawalsCount = Math.max(0, Math.round(Number(b.withdrawalsCount) || 0));
     }
 
     try {
@@ -33992,26 +33987,16 @@ app.put('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, asy
         locked: true
       });
     }
-    // Para buffalo: depositsARS/ventasARS/bonusARS/bonusCount/withdrawalsCount
-    // se calculan del teams[]; transactionsCount es GENERAL (input directo);
-    // bankMargin/bajada/pendienteAnt también generales (input directo).
-    // Para ganamos/publicidad: todos los campos son input directo (no teams).
-    const editableCommonBuffalo = [
+    // Los 3 sectores tienen teams[]: depositsARS/ventasARS/bonusARS/bonusCount/
+    // withdrawalsCount se calculan del teams[]; transactionsCount es GENERAL
+    // (input directo); bankMargin/bajada/pendienteAnt también generales.
+    const editable = [
       'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
       'ingresosARS','ingresosNote','egresosARS','egresosNote',
       'gastosARS','gastosNote','saldoInicialARS','saldoInicialNote','cvuMidnightARS',
-      'bonusNote','notes'
+      'transactionsCount','bonusNote','notes'
     ];
-    const editableNonBuffalo = [
-      'teamName','depositsARS','ventasARS','bonusARS','bonusCount',
-      'transactionsCount','withdrawalsCount',
-      'bankMarginPercent','bajadaARS','pendienteAnteriorARS',
-      'ingresosARS','ingresosNote','egresosARS','egresosNote',
-      'gastosARS','gastosNote','saldoInicialARS','saldoInicialNote','cvuMidnightARS',
-      'bonusNote','notes'
-    ];
-    const hasTeams = (c.sector === 'buffalo' || c.sector === 'ganamos');
-    const editable = hasTeams ? editableCommonBuffalo : editableNonBuffalo;
+    const hasTeams = true;
     const b = req.body || {};
     const username = req.user.username || '';
     const changes = [];

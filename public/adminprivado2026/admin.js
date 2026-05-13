@@ -24583,7 +24583,7 @@ if (typeof window !== 'undefined') {
 
 const CLOSING_SECTORS_UI = [
     { key: 'ganamos',    label: '💼 GANAMOS',    color: '#25d366', individual: true,  slots: 7 },
-    { key: 'publicidad', label: '📢 PUBLICIDAD', color: '#00d4ff', individual: false },
+    { key: 'publicidad', label: '📢 PUBLICIDAD', color: '#00d4ff', individual: true,  slots: 7 },
     { key: 'buffalo',    label: '🐃 BUFFALO',    color: '#ffd700', individual: true,  slots: 7 }
 ];
 
@@ -25961,8 +25961,8 @@ function analyzeClosing(id) {
         html += '</div>';
     }
 
-    // === 3. CONTRIBUCIÓN POR EQUIPO (Buffalo / Ganamos) ===
-    if ((r.sector === 'buffalo' || r.sector === 'ganamos') && Array.isArray(r.teams) && r.teams.length > 0) {
+    // === 3. CONTRIBUCIÓN POR EQUIPO (los 3 sectores con teams) ===
+    if (Array.isArray(r.teams) && r.teams.length > 0) {
         html += '<div style="background:rgba(255,215,0,0.04);border:1px solid rgba(255,215,0,0.25);border-radius:10px;padding:13px;margin-bottom:12px;">';
         html += '<div style="color:#ffd700;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🎯 CONTRIBUCIÓN POR EQUIPO</div>';
         html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
@@ -26148,9 +26148,27 @@ function _renderTeamSectorEntry(sec, date, row) {
     // Para cierres NUEVOS: buscamos el cierre más reciente del MISMO sector
     // que tenga nombres de equipo y los usamos como default. Editable después.
     const recentNames = _latestTeamNames(sec.key, row ? row.id : null);
-    const teams = (row && Array.isArray(row.teams) && row.teams.length === 7)
-        ? row.teams
-        : Array.from({ length: 7 }, (_, i) => ({ slot: i, name: recentNames[i] || '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 }));
+    let teams;
+    if (row && Array.isArray(row.teams) && row.teams.length === 7) {
+        teams = row.teams;
+    } else {
+        teams = Array.from({ length: 7 }, (_, i) => ({ slot: i, name: recentNames[i] || '', depositsARS: 0, depositsCount: 0, ventasARS: 0, bonusARS: 0, bonusCount: 0, withdrawalsCount: 0 }));
+        // Migración legacy: cierres viejos de publicidad/ganamos sin teams[]
+        // tenían los totales guardados en el row top-level. Los cargamos en
+        // el slot 1 para no perder data si el dueño abre y guarda sin tocar.
+        if (row && (Number(row.depositsARS) > 0 || Number(row.ventasARS) > 0 || Number(row.bonusARS) > 0)) {
+            teams[0] = {
+                slot: 0,
+                name: row.teamName || teams[0].name || '(legacy)',
+                depositsARS: Number(row.depositsARS || 0),
+                depositsCount: 0,
+                ventasARS: Number(row.ventasARS || 0),
+                bonusARS: Number(row.bonusARS || 0),
+                bonusCount: Number(row.bonusCount || 0),
+                withdrawalsCount: Number(row.withdrawalsCount || 0)
+            };
+        }
+    }
 
     const inputStyle = 'background:rgba(0,0,0,0.50);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;width:100%;box-sizing:border-box;';
     const disabledAttr = locked ? 'disabled' : '';
