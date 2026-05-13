@@ -24,7 +24,8 @@ const cotizacionSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
 
   // YYYY-MM-DD — típicamente un lunes, pero el owner elige libremente.
-  dateKey: { type: String, required: true, index: true },
+  // Index único declarado abajo con cotizacionSchema.index().
+  dateKey: { type: String, required: true },
 
   // Hasta 10 equipos
   teams: {
