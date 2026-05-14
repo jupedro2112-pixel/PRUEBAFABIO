@@ -2607,13 +2607,17 @@
         <!-- Card minimalista del código — input inline listo para tipear.
              El user no tiene que apretar nada para llegar al campo; ya está
              negro y visible. Enter o tap a → envía. ℹ abre modal con
-             instrucciones + link directo a Telegram. -->
+             explicación de dónde salen los códigos. -->
         <div id="redeemCodeHomeCard" style="margin:10px 12px 6px;padding:9px 12px;border-radius:11px;background:linear-gradient(135deg,rgba(0,200,150,0.14),rgba(0,143,108,0.06));border:1.5px solid rgba(0,200,150,0.50);box-shadow:0 0 12px rgba(0,200,150,0.18);display:flex;align-items:center;gap:8px;">
             <span style="color:#00c896;font-weight:900;font-size:12.5px;letter-spacing:0.4px;flex-shrink:0;">🎁 Código:</span>
             <input id="redeemCodeInlineInput" type="text" maxlength="32" placeholder="ESCRIBÍ ACÁ" autocomplete="off" inputmode="text" style="flex:1;min-width:0;background:#000;color:#00ff99;border:1.5px solid rgba(0,200,150,0.55);padding:8px 10px;border-radius:7px;font-size:14px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;text-align:center;box-sizing:border-box;outline:none;">
             <button id="redeemCodeInlineBtn" type="button" onclick="submitRedeemCodeInline()" title="Reclamar" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:8px 13px;border-radius:8px;font-weight:900;font-size:13px;line-height:1;cursor:pointer;flex-shrink:0;">→</button>
             <button id="redeemCodeInfoBtn" type="button" onclick="openRedeemCodeInfo()" title="¿De dónde salen los códigos?" style="background:rgba(0,200,150,0.10);color:#00c896;border:1px solid rgba(0,200,150,0.45);padding:7px 9px;border-radius:7px;font-weight:900;font-size:13px;line-height:1;cursor:pointer;flex-shrink:0;">ℹ</button>
         </div>
+        <!-- Botón directo a Telegram — abajo del input, fácil de tocar para
+             el que todavía no se sumó al canal. JS lo oculta cuando el
+             user tiene joinedTelegram=true (ya canjeó un código alguna vez). -->
+        <a id="telegramQuickJoinBtn" href="#" target="_blank" rel="noopener" style="display:none;margin:0 12px 8px;padding:10px 14px;border-radius:10px;background:linear-gradient(135deg,#22a0d9 0%,#0088cc 100%);color:#fff;text-decoration:none;text-align:center;font-weight:900;font-size:13px;letter-spacing:0.5px;box-shadow:0 3px 10px rgba(34,160,217,0.30);align-items:center;justify-content:center;gap:8px;">📲 Abrir canal de Telegram</a>
 
         <!-- Refunds-only: Bono por bajar la app — va ARRIBA del banner de
              sorteos para que sea lo primero que se ve despues de "Abrir
@@ -6495,6 +6499,11 @@
                         '</div>';
                     // Ocultar banner verde de "código activo" — este user ya reclamó
                     try { hideRedeemActiveBanner(); stopRedeemActivePolling(); } catch (_) {}
+                    // Ocultar botón "Abrir Telegram" — el user ya canjeó, está adentro
+                    try {
+                        if (window.VIP && window.VIP.state) window.VIP.state.joinedTelegram = true;
+                        if (typeof window.renderTelegramQuickJoinBtn === 'function') window.renderTelegramQuickJoinBtn();
+                    } catch (_) {}
                     document.getElementById('redeemCodeOk').onclick = () => { overlay.remove(); window.location.reload(); };
                 } catch (e) {
                     errBox.textContent = '❌ Error de conexión';
@@ -6549,6 +6558,11 @@
                 // Éxito → modal grande de "acreditado"
                 _showRedeemSuccessModal(d.amountARS || 0);
                 try { hideRedeemActiveBanner(); stopRedeemActivePolling(); } catch (_) {}
+                // Marcar joinedTelegram en memoria + ocultar botón celeste.
+                try {
+                    if (window.VIP && window.VIP.state) window.VIP.state.joinedTelegram = true;
+                    if (typeof window.renderTelegramQuickJoinBtn === 'function') window.renderTelegramQuickJoinBtn();
+                } catch (_) {}
                 inp.value = '';
             } catch (e) {
                 _showRedeemInlineError('Error de conexión');
@@ -6715,10 +6729,6 @@
         window.openRedeemCodeInfo = function () {
             const old = document.getElementById('redeemCodeInfoModal');
             if (old) old.remove();
-            let tgLink = '';
-            try {
-                tgLink = (window.VIP && window.VIP.state && (window.VIP.state.communityLink || window.VIP.state.communityLink2)) || '';
-            } catch (_) {}
             const overlay = document.createElement('div');
             overlay.id = 'redeemCodeInfoModal';
             overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99998;display:flex;align-items:center;justify-content:center;padding:18px;';
@@ -6726,11 +6736,8 @@
                 '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:1.5px solid rgba(34,160,217,0.50);border-radius:13px;padding:22px 20px;max-width:380px;width:100%;box-shadow:0 0 30px rgba(34,160,217,0.30);color:#fff;text-align:center;">' +
                   '<div style="font-size:38px;margin-bottom:4px;">📢</div>' +
                   '<div style="color:#22a0d9;font-weight:900;font-size:15px;letter-spacing:0.5px;margin-bottom:8px;">¿De dónde salen los códigos?</div>' +
-                  '<div style="color:#ddd;font-size:12.5px;line-height:1.55;margin-bottom:14px;">Los códigos los publicamos en nuestro <strong style="color:#22a0d9;">canal privado de Telegram</strong>. Sumate ahí para enterarte apenas sale uno nuevo — algunos tienen tiempo limitado.</div>' +
-                  (tgLink
-                    ? '<a href="' + tgLink.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="display:block;width:100%;box-sizing:border-box;background:linear-gradient(135deg,#22a0d9 0%,#0088cc 100%);color:#fff;text-decoration:none;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;margin-bottom:8px;">📲 Abrir canal de Telegram</a>'
-                    : '') +
-                  '<button type="button" id="redeemInfoOk" style="width:100%;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:10px;border-radius:9px;font-weight:800;letter-spacing:0.3px;cursor:pointer;">Cerrar</button>' +
+                  '<div style="color:#ddd;font-size:12.5px;line-height:1.55;margin-bottom:14px;">Los códigos los publicamos en nuestro <strong style="color:#22a0d9;">canal privado de Telegram</strong>. Sumate ahí desde el botón celeste para enterarte apenas sale uno nuevo — algunos tienen tiempo limitado.</div>' +
+                  '<button type="button" id="redeemInfoOk" style="width:100%;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:10px;border-radius:9px;font-weight:800;letter-spacing:0.3px;cursor:pointer;">Entendido</button>' +
                 '</div>';
             document.body.appendChild(overlay);
             document.getElementById('redeemInfoOk').onclick = () => overlay.remove();

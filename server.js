@@ -2682,7 +2682,11 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       communityReplacementLink: communityReplacementLink || null,
       communityReplacementLabel: communityReplacementLabel || null,
       communityAlertForceUntilMs: alertForceUntilMs || null,
-      communityForceBannerMsg: forceBannerMsg
+      communityForceBannerMsg: forceBannerMsg,
+      // Para que el frontend oculte el botón "Abrir Telegram" debajo del
+      // input del código si el user ya canjeó alguna vez (probó estar en
+      // el canal).
+      joinedTelegram: userJoinedTelegram
     });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);

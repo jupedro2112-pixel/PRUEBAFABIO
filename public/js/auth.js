@@ -624,6 +624,8 @@ VIP.auth = (function () {
                 VIP.state.communityReplacementLabel = d.communityReplacementLabel || null;
                 VIP.state.communityAlertForceUntilMs = d.communityAlertForceUntilMs || 0;
                 VIP.state.communityForceBannerMsg = d.communityForceBannerMsg || null;
+                VIP.state.joinedTelegram = !!d.joinedTelegram;
+                try { renderTelegramQuickJoinBtn(); } catch (_) {}
                 VIP.state.teamName = d.teamName || null;
                 try { renderCommunityForceBanner(); } catch (_) {}
                 renderRefundsHomeUI();
@@ -685,6 +687,27 @@ VIP.auth = (function () {
     // bloque "Unite a la comunidad". Visible durante la ventana de 24hs
     // activada cuando admin manda push de comunidad por equipo (o desde
     // el toggle manual).
+    // Botón "📲 Abrir canal de Telegram" debajo del input del código en
+    // la home. Visible cuando hay un link de Telegram configurado Y el
+    // user todavía no canjeó ningún código (joinedTelegram === false).
+    // Una vez que canjea, el flag se setea en el backend → al refrescar
+    // se oculta solo.
+    function renderTelegramQuickJoinBtn() {
+        const btn = document.getElementById('telegramQuickJoinBtn');
+        if (!btn) return;
+        const link = (VIP.state.communityLink || VIP.state.communityLink2 || '').trim();
+        const alreadyIn = !!VIP.state.joinedTelegram;
+        if (link && !alreadyIn) {
+            btn.href = link;
+            btn.style.display = 'flex';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+    // Exponemos al window para que el flow de canje pueda forzar el hide
+    // inmediatamente al reclamar OK (sin esperar el próximo /me).
+    window.renderTelegramQuickJoinBtn = renderTelegramQuickJoinBtn;
+
     function renderCommunityForceBanner() {
         const el = document.getElementById('communityForceReminderBanner');
         if (!el) return;
