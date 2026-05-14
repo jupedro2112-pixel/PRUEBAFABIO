@@ -35282,9 +35282,19 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
     // empuja a la gente a bajar la app y aceptar notifs, mismo criterio que
     // el bono de bienvenida. Anti-fraude + obliga a tener push activo para
     // recibir los próximos códigos en Telegram.
-    const userDoc = await User.findOne({
-      $or: [{ _id: userId }, { username: String(username || '').toLowerCase() }]
-    }).select('fcmToken fcmTokens username').lean();
+    // OJO: el userId del JWT es el campo CUSTOM `id`, no el `_id` de Mongo.
+    // No usamos `_id: userId` porque tira CastError si el id no es ObjectId.
+    let userDoc = null;
+    try {
+      userDoc = await User.findOne({ id: userId })
+        .select('fcmToken fcmTokens username id').lean();
+      if (!userDoc) {
+        userDoc = await User.findOne({ username: String(username || '').toLowerCase() })
+          .select('fcmToken fcmTokens username id').lean();
+      }
+    } catch (lookupErr) {
+      logger.warn(`[redeem-codes/claim] user lookup falló para ${username}: ${lookupErr.message}`);
+    }
 
     const tokenCount = (userDoc && Array.isArray(userDoc.fcmTokens))
       ? userDoc.fcmTokens.filter(t => t && t.token).length
@@ -35400,7 +35410,7 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
       amountARS: rc.amountARS
     });
   } catch (err) {
-    logger.error(`POST /api/redeem-codes/claim: ${err.message}`);
+    logger.error(`POST /api/redeem-codes/claim: ${err.message}\nstack: ${err.stack}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
