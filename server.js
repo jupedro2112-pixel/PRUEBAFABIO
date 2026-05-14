@@ -2700,13 +2700,20 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     let alertForceUntilMs = 0;
     let forceBannerMsg = null;
     let userJoinedTelegram = false;
-    try {
-      const meDoc = await User.findOne({ id: req.user.userId })
-        .select('joinedTelegram')
-        .lean()
-        .catch(() => null);
-      userJoinedTelegram = !!(meDoc && meDoc.joinedTelegram);
-    } catch (_) {}
+    // Defensivo: si por algún motivo falla la lectura del usuario para
+    // saber su joinedTelegram, NO rompemos el endpoint — solo dejamos el
+    // flag en false y seguimos. Este endpoint se pega mucho, no podemos
+    // permitir que tire 5xx por un detalle.
+    if (req.user && req.user.userId) {
+      try {
+        const meDoc = await User.findOne({ id: String(req.user.userId) })
+          .select('joinedTelegram')
+          .lean();
+        userJoinedTelegram = !!(meDoc && meDoc.joinedTelegram);
+      } catch (e) {
+        logger.warn(`[user-lines/me] lookup joinedTelegram falló: ${e.message}`);
+      }
+    }
     try {
       const raw = await getConfig('communityAlertForceUntil').catch(() => null);
       const n = Number(raw) || 0;
