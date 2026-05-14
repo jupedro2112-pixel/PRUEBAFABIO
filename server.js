@@ -35735,6 +35735,38 @@ app.post('/api/admin/redeem-codes/:id/close', authMiddleware, adminMiddleware, a
   }
 });
 
+// POST /api/admin/redeem-codes/:id/reopen — reabrir código cerrado.
+// Body opcional: { extendMinutes }. Default = 60 min extra desde ahora.
+// Si el código está expirado, se extiende; si está closed_manual o closed_max,
+// se vuelve a 'active'. La lista de claims se mantiene intacta — los users
+// que ya reclamaron siguen viendo "ya canjeaste". El resto puede reclamar.
+app.post('/api/admin/redeem-codes/:id/reopen', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const rc = await RedeemCode.findOne({ id: String(req.params.id || '') });
+    if (!rc) return res.status(404).json({ error: 'Código no encontrado' });
+    if (rc.status === 'active') {
+      return res.status(400).json({ error: 'El código ya está activo' });
+    }
+    const extendMinutes = Math.max(1, Math.min(60 * 24 * 7, parseInt((req.body && req.body.extendMinutes), 10) || 60));
+    const newExpiresAt = new Date(Date.now() + extendMinutes * 60 * 1000);
+    rc.status = 'active';
+    rc.expiresAt = newExpiresAt;
+    await rc.save();
+    logger.info(`[redeem-codes] code ${rc.code} (${rc.id}) reabierto por ${extendMinutes} min (claims previos preservados: ${rc.claims.length})`);
+    res.json({
+      success: true,
+      code: rc.code,
+      status: rc.status,
+      expiresAt: rc.expiresAt,
+      claimsKept: rc.claims.length,
+      extendMinutes
+    });
+  } catch (err) {
+    logger.error(`POST /api/admin/redeem-codes/:id/reopen: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // DELETE /api/admin/redeem-codes/:id — borrar (admin + PIN 1818)
 app.delete('/api/admin/redeem-codes/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {

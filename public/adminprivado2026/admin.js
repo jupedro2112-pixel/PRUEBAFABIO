@@ -28516,6 +28516,8 @@ function _renderRedeemCodeRow(it) {
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
     if (isActive) {
         h += '<button type="button" onclick="closeRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">⏸ Cerrar</button>';
+    } else {
+        h += '<button type="button" onclick="reopenRedeemCode(\'' + escapeHtml(it.id) + '\',\'' + escapeHtml(it.code) + '\')" style="background:rgba(37,211,102,0.12);color:#25d366;border:1px solid rgba(37,211,102,0.40);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">▶ Reabrir</button>';
     }
     h += '<button type="button" onclick="deleteRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">🗑</button>';
     h += '</div>';
@@ -28725,6 +28727,26 @@ async function closeRedeemCode(id) {
         showToast('Error de conexión', 'error');
     }
 }
+
+async function reopenRedeemCode(id, code) {
+    const minsRaw = prompt('Reabrir código ' + (code || '') + '\n\n¿Cuántos minutos extra le agregamos? (default 60)\n\nIMPORTANTE: los users que YA reclamaron este código no van a poder reclamar de nuevo (verán "Ya canjeaste este código"). Solo lo van a poder canjear los que NO reclamaron antes.', '60');
+    if (minsRaw == null) return;
+    const mins = parseInt(minsRaw, 10);
+    if (!mins || mins < 1) { showToast('Minutos inválidos', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/redeem-codes/' + encodeURIComponent(id) + '/reopen', {
+            method: 'POST',
+            body: JSON.stringify({ extendMinutes: mins })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error', 'error'); return; }
+        showToast('▶ Reabierto · ' + mins + ' min · ' + (d.claimsKept || 0) + ' canjes previos preservados', 'success');
+        loadRedeemCodes();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+window.reopenRedeemCode = reopenRedeemCode;
 
 async function deleteRedeemCode(id) {
     const pin = prompt('PIN para borrar:');
