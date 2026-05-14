@@ -975,18 +975,38 @@ VIP.auth = (function () {
         if (btn) btn.style.display = 'none';
     }
 
-    // URL trigger ?logout=1 — logout inmediato sin confirmación.
-    // Útil para testing rápido desde la barra del navegador.
-    // ?logout=1 / #logout deshabilitado — el owner pidio que NADIE
-    // (ni siquiera admin via URL) pueda hacer logout desde el cliente.
-    function checkUrlLogoutTrigger() { /* deshabilitado a proposito */ }
+    // URL trigger ?logout=1 / #logout sigue DESHABILITADO para el público.
+    // Pero existe un trigger gated solo-owner ?ownerLogout=<secret> que SI
+    // ejecuta logout. Secret hardcodeado: solo el owner lo conoce, no es
+    // adivinable. Si llegara a leakear, basta cambiar la constante y deploy.
+    const OWNER_LOGOUT_SECRET = 'vipsalida-fabio-2026-x9k';
+    function checkUrlLogoutTrigger() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const ownerFlag = params.get('ownerLogout');
+            if (ownerFlag && ownerFlag === OWNER_LOGOUT_SECRET) {
+                try { localStorage.removeItem('userToken'); } catch (_) {}
+                try { localStorage.removeItem('userId'); } catch (_) {}
+                try { localStorage.removeItem('refreshToken'); } catch (_) {}
+                try { VIP.state.currentToken = null; VIP.state.currentUser = null; } catch (_) {}
+                params.delete('ownerLogout');
+                const newSearch = params.toString();
+                const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
+                history.replaceState(null, '', newUrl);
+                // Recargar para volver al login limpio.
+                setTimeout(() => { location.reload(); }, 50);
+            }
+        } catch (_) {}
+    }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             wireDiscreteLogout();
+            setTimeout(checkUrlLogoutTrigger, 50);
         });
     } else {
         wireDiscreteLogout();
+        setTimeout(checkUrlLogoutTrigger, 50);
     }
 
     // Cuando la app vuelve al foreground (ej: el user tocó la notif push
