@@ -980,10 +980,23 @@ VIP.auth = (function () {
     // ejecuta logout. Secret hardcodeado: solo el owner lo conoce, no es
     // adivinable. Si llegara a leakear, basta cambiar la constante y deploy.
     const OWNER_LOGOUT_SECRET = 'vipsalida-fabio-2026-x9k';
+    const OWNER_MODE_FLAG_KEY = '__vipOwnerMode';
     function checkUrlLogoutTrigger() {
         try {
             const params = new URLSearchParams(window.location.search);
             const ownerFlag = params.get('ownerLogout');
+            // ?ownerMode=<secret> → activa modo owner persistente en ESTE
+            // dispositivo (localStorage flag). A partir de ahí aparece el
+            // botoncito "salir" rojo en el header al lado del username.
+            const ownerModeFlag = params.get('ownerMode');
+            if (ownerModeFlag && ownerModeFlag === OWNER_LOGOUT_SECRET) {
+                try { localStorage.setItem(OWNER_MODE_FLAG_KEY, '1'); } catch (_) {}
+                params.delete('ownerMode');
+                const newSearch = params.toString();
+                const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '');
+                history.replaceState(null, '', newUrl);
+                try { window.renderOwnerLogoutSmallBtn && window.renderOwnerLogoutSmallBtn(); } catch (_) {}
+            }
             if (ownerFlag && ownerFlag === OWNER_LOGOUT_SECRET) {
                 try { localStorage.removeItem('userToken'); } catch (_) {}
                 try { localStorage.removeItem('userId'); } catch (_) {}
@@ -999,14 +1012,37 @@ VIP.auth = (function () {
         } catch (_) {}
     }
 
+    // Muestra/oculta el botoncito "salir" en el header. Solo visible si el
+    // device tiene el flag de owner-mode guardado (activado vía
+    // ?ownerMode=<secret>).
+    window.renderOwnerLogoutSmallBtn = function renderOwnerLogoutSmallBtn() {
+        try {
+            const btn = document.getElementById('ownerLogoutSmallBtn');
+            if (!btn) return;
+            const isOwner = (function () { try { return localStorage.getItem(OWNER_MODE_FLAG_KEY) === '1'; } catch (_) { return false; } })();
+            btn.style.display = isOwner ? '' : 'none';
+        } catch (_) {}
+    };
+
+    // Handler del botoncito: logout local (clear tokens + reload).
+    window.ownerLogoutSmall = function ownerLogoutSmall() {
+        try { localStorage.removeItem('userToken'); } catch (_) {}
+        try { localStorage.removeItem('userId'); } catch (_) {}
+        try { localStorage.removeItem('refreshToken'); } catch (_) {}
+        try { VIP.state.currentToken = null; VIP.state.currentUser = null; } catch (_) {}
+        setTimeout(() => { location.reload(); }, 30);
+    };
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             wireDiscreteLogout();
             setTimeout(checkUrlLogoutTrigger, 50);
+            setTimeout(() => { try { window.renderOwnerLogoutSmallBtn(); } catch (_) {} }, 80);
         });
     } else {
         wireDiscreteLogout();
         setTimeout(checkUrlLogoutTrigger, 50);
+        setTimeout(() => { try { window.renderOwnerLogoutSmallBtn(); } catch (_) {} }, 80);
     }
 
     // Cuando la app vuelve al foreground (ej: el user tocó la notif push
