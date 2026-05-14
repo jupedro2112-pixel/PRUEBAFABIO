@@ -43,44 +43,87 @@
     function renderHomeCard() {
         const c = document.getElementById('rouletteHomeCard');
         if (!c) return;
-        if (!_state || !_state.eligible) { c.style.display = 'none'; c.innerHTML = ''; return; }
+        if (!_state || !_state.eligible) {
+            c.style.display = 'none';
+            c.innerHTML = '';
+            // Ocultar tambien el card separado por si quedo de antes.
+            const sep = document.getElementById('rouletteRecentWinnersCard');
+            if (sep) sep.style.display = 'none';
+            return;
+        }
 
         const spin = _state.spin;
-        // Render compacto: banda fina arriba del home con CTA en una sola
-        // línea. Tap → abre el modal con el detalle / giro real.
-        let html = '';
+        // Render unificado: banda de estado arriba + lista de ganadores
+        // embebida dentro del MISMO card (la pidio el owner para no
+        // ocupar toda la pantalla con dos cards separados).
+        let stripBg, stripBorder, stripContent;
         if (_state.alreadySpun && spin) {
             const won = Number(spin.prizeARS || 0) > 0;
             if (won && spin.status === 'credited') {
-                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(135deg,#0f4c00,#1a8200);border:1px solid #ffd700;border-radius:8px;padding:6px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
-                html += '<span style="font-size:16px;">🎰</span>';
-                html += '<span style="color:#fff;font-weight:800;flex:1;">Ganaste <strong style="color:#ffd700;">$' + _fmt(spin.prizeARS) + '</strong> hoy · acreditado</span>';
-                html += '<span style="color:#ffd700;font-size:11px;">›</span>';
-                html += '</div>';
+                stripBg = 'linear-gradient(135deg,#0f4c00,#1a8200)';
+                stripBorder = '#ffd700';
+                stripContent = '<span style="font-size:16px;">🎰</span>'
+                    + '<span style="color:#fff;font-weight:800;flex:1;">Ganaste <strong style="color:#ffd700;">$' + _fmt(spin.prizeARS) + '</strong> hoy · acreditado</span>'
+                    + '<span style="color:#ffd700;font-size:11px;">›</span>';
             } else if (won && spin.status === 'credit_failed') {
-                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:rgba(255,170,102,0.10);border:1px solid #ffaa66;border-radius:8px;padding:6px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
-                html += '<span style="font-size:16px;">⚠️</span>';
-                html += '<span style="color:#fff;font-weight:700;flex:1;">Ganaste $' + _fmt(spin.prizeARS) + ' — acreditación falló, escribinos</span>';
-                html += '<span style="color:#ffaa66;font-size:11px;">›</span>';
-                html += '</div>';
+                stripBg = 'rgba(255,170,102,0.10)';
+                stripBorder = '#ffaa66';
+                stripContent = '<span style="font-size:16px;">⚠️</span>'
+                    + '<span style="color:#fff;font-weight:700;flex:1;">Ganaste $' + _fmt(spin.prizeARS) + ' — acreditación falló, escribinos</span>'
+                    + '<span style="color:#ffaa66;font-size:11px;">›</span>';
             } else {
-                html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.18);border-radius:8px;padding:6px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
-                html += '<span style="font-size:16px;opacity:0.7;">🎰</span>';
-                html += '<span style="color:#ccc;flex:1;">Hoy no ganaste · volvé mañana</span>';
-                html += '<span style="color:#888;font-size:11px;">›</span>';
-                html += '</div>';
+                stripBg = 'rgba(0,0,0,0.30)';
+                stripBorder = 'rgba(255,255,255,0.18)';
+                stripContent = '<span style="font-size:16px;opacity:0.7;">🎰</span>'
+                    + '<span style="color:#ccc;flex:1;">Hoy no ganaste · volvé mañana</span>'
+                    + '<span style="color:#888;font-size:11px;">›</span>';
             }
         } else {
-            // No giró → banda fina con CTA + pulse sutil
-            html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:linear-gradient(90deg,#4a0080,#7c00cc);border:1.5px solid #ffd700;border-radius:8px;padding:7px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;box-shadow:0 0 10px rgba(255,215,0,0.30);animation:roulettePulseHome 2.2s ease-in-out infinite;">';
-            html += '<span style="font-size:16px;">🎰</span>';
-            html += '<span style="color:#fff;font-weight:800;flex:1;">Ruleta diaria · <span style="color:#ffd700;">girá y ganá hasta $10.000</span></span>';
-            html += '<span style="background:#ffd700;color:#000;font-weight:900;padding:3px 9px;border-radius:6px;font-size:11px;letter-spacing:0.5px;">GIRAR</span>';
-            html += '</div>';
-            html += '<style>@keyframes roulettePulseHome { 0%,100% { box-shadow: 0 0 10px rgba(255,215,0,0.30); } 50% { box-shadow: 0 0 16px rgba(255,215,0,0.55); } }</style>';
+            stripBg = 'linear-gradient(90deg,#4a0080,#7c00cc)';
+            stripBorder = '#ffd700';
+            stripContent = '<span style="font-size:16px;">🎰</span>'
+                + '<span style="color:#fff;font-weight:800;flex:1;">Ruleta diaria · <span style="color:#ffd700;">girá y ganá hasta $10.000</span></span>'
+                + '<span style="background:#ffd700;color:#000;font-weight:900;padding:3px 9px;border-radius:6px;font-size:11px;letter-spacing:0.5px;">GIRAR</span>';
         }
+
+        // Outer card: agrupa la banda de estado + la lista de ganadores
+        // colapsable. Click en la banda → abre modal.
+        let html = '';
+        html += '<div style="max-width:560px;margin:6px auto;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.22);border-radius:10px;overflow:hidden;">';
+        // Banda de estado (tap → modal).
+        html += '  <div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:' + stripBg + ';border-bottom:1px solid ' + stripBorder + ';padding:7px 10px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
+        html += stripContent;
+        html += '  </div>';
+        // Bloque embebido de ganadores del día.
+        html += '  <div style="padding:9px 11px;">';
+        html += '    <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">';
+        html += '      <span style="font-size:13px;">🏆</span>';
+        html += '      <span style="color:#ffd700;font-weight:900;font-size:10.5px;letter-spacing:0.8px;">GANADORES DE HOY</span>';
+        html += '      <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:#25d366;font-weight:700;">';
+        html += '        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#25d366;box-shadow:0 0 5px #25d366;animation:winners-pulse 1.4s ease-in-out infinite;"></span>';
+        html += '        LIVE';
+        html += '      </span>';
+        html += '    </div>';
+        html += '    <div id="rouletteWinnersList" style="max-height:180px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:11.5px;line-height:1.45;"></div>';
+        html += '    <div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:10.5px;padding:8px 6px;">Aún no hay ganadores hoy. Sé el primero.</div>';
+        html += '    <div style="text-align:center;font-size:9.5px;color:#777;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.10);">🔒 80% del nombre tapado · acreditación automática.</div>';
+        html += '  </div>';
+        html += '</div>';
+        html += '<style>@keyframes roulettePulseHome { 0%,100% { box-shadow: 0 0 10px rgba(255,215,0,0.30); } 50% { box-shadow: 0 0 16px rgba(255,215,0,0.55); } }</style>';
+
         c.innerHTML = html;
         c.style.display = '';
+
+        // Ocultamos el card SEPARADO (el de antes), ahora todo va embebido aca.
+        const sep = document.getElementById('rouletteRecentWinnersCard');
+        if (sep) sep.style.display = 'none';
+
+        // Pintamos con el cache actual al toque (sin esperar fetch).
+        _renderWinnersListInto(
+            document.getElementById('rouletteWinnersList'),
+            document.getElementById('rouletteWinnersEmpty'),
+            _recentWinnersCache
+        );
     }
 
     // Modal que se abre cuando el server rebota el giro porque al user

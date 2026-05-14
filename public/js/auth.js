@@ -2010,14 +2010,14 @@ window.applySupportPhoneToUI = async function applySupportPhoneToUI() {
     // Helper para asignar href si el elemento existe.
     function setHref(id, href) { var el = document.getElementById(id); if (el) el.href = href; }
 
-    // 1) Badges top-right post-login.
+    // 1) Barra top-center post-login (centrada, con label "Soporte").
     var topWrap = document.getElementById('supportTopWrap');
     setHref('supportTopBadge', waUrl);
     setHref('supportTopTgBadge', tgUrl);
     if (topWrap) {
         var chatScreen = document.getElementById('chatScreen');
         var loggedIn = chatScreen && !chatScreen.classList.contains('hidden');
-        topWrap.style.display = loggedIn ? 'flex' : 'none';
+        topWrap.style.display = loggedIn ? 'inline-flex' : 'none';
     }
     // 2) Botones dentro del modal "Buscar usuario".
     setHref('createUserHelpSupportBtn',  waUrl);
