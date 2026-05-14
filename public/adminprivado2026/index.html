@@ -1948,6 +1948,10 @@
                     <button class="btn-primary" onclick="loadFraudBlocked()" style="padding:8px 14px;font-size:12.5px;font-weight:700;">🔄 Refrescar lista</button>
                     <span id="fraudBlockedSummary" style="color:#aaa;font-size:11.5px;"></span>
                 </div>
+                <div style="margin-bottom:12px;position:relative;">
+                    <input type="text" id="fraudBlockedSearch" placeholder="🔎 Buscar usuario..." autocomplete="off" oninput="renderFraudBlockedFiltered()" style="width:100%;max-width:380px;padding:9px 12px 9px 36px;border-radius:8px;border:1px solid rgba(255,80,80,0.30);background:rgba(0,0,0,0.40);color:#fff;font-size:13px;box-sizing:border-box;">
+                    <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:14px;color:#ff8080;pointer-events:none;">🔎</span>
+                </div>
                 <div id="fraudBlockedList"></div>
             </section>
 

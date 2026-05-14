@@ -28346,6 +28346,9 @@ let _redeemCodesCache = [];
 // ============================================
 // BLOQUEOS POR FRAUDE — admin
 // ============================================
+// Cache de la lista de bloqueados para que el buscador filtre instantáneo.
+let _fraudBlockedCache = [];
+
 async function loadFraudBlocked() {
     const list = document.getElementById('fraudBlockedList');
     const sum  = document.getElementById('fraudBlockedSummary');
@@ -28355,51 +28358,72 @@ async function loadFraudBlocked() {
         const r = await authFetch('/api/admin/fraud-blocked');
         const d = await r.json();
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
-        const items = d.items || [];
-        if (sum) sum.textContent = items.length + ' usuario(s) bloqueados o restringidos';
-        if (items.length === 0) {
-            list.innerHTML = '<div style="background:rgba(0,255,102,0.06);border:1px dashed rgba(0,255,102,0.30);border-radius:9px;padding:20px;text-align:center;color:#aaffaa;font-size:13px;">🎉 ¡Sin bloqueos activos!</div>';
-            return;
-        }
-        let h = '';
-        for (const u of items) {
-            const isFraud = !!u.fraudBlocked;
-            const isBonus = !!u.bonusBlocked;
-            const stateBadge = isFraud
-                ? '<span style="background:rgba(255,80,80,0.15);color:#ff8080;border:1px solid rgba(255,80,80,0.50);padding:3px 9px;border-radius:5px;font-size:10.5px;font-weight:900;letter-spacing:0.5px;">🚫 BLOQUEADO TOTAL</span>'
-                : '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.50);padding:3px 9px;border-radius:5px;font-size:10.5px;font-weight:900;letter-spacing:0.5px;">⚠️ SIN BONO/CÓDIGOS</span>';
-            const reason = isFraud
-                ? (u.fraudReason || 'Sin razón registrada')
-                : (u.bonusBlockedReason || 'Sin razón registrada');
-            const when = isFraud
-                ? (u.fraudBlockedAt ? formatDate(u.fraudBlockedAt) : '—')
-                : (u.bonusBlockedAt ? formatDate(u.bonusBlockedAt) : '—');
-            const ipLine = u.fraudBlockedIp ? '<div style="color:#888;font-size:10.5px;">IP: <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;color:#fff;">' + escapeHtml(u.fraudBlockedIp) + '</code></div>' : '';
-            h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;margin-bottom:10px;">';
-            h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">';
-            h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
-            h += '<span style="color:#fff;font-weight:900;font-size:14px;">@' + escapeHtml(u.username) + '</span>';
-            h += stateBadge;
-            h += '<span style="color:#888;font-size:11px;">' + escapeHtml(when) + '</span>';
-            h += '</div>';
-            h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
-            if (isFraud || isBonus) {
-                h += '<button type="button" onclick="fraudUnblockUser(\'' + escapeHtml(u.id) + '\',\'' + escapeHtml(u.username) + '\')" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:6px 12px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;">✅ Desbloquear todo</button>';
-            }
-            if (isFraud) {
-                h += '<button type="button" onclick="fraudBonusRestrictUser(\'' + escapeHtml(u.id) + '\',\'' + escapeHtml(u.username) + '\')" style="background:rgba(255,170,102,0.18);color:#ffaa66;border:1.5px solid rgba(255,170,102,0.55);padding:6px 12px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;">⚠️ Solo bono/códigos OFF</button>';
-            }
-            h += '</div>';
-            h += '</div>';
-            h += '<div style="color:#aaa;font-size:12px;font-style:italic;margin-bottom:4px;">"' + escapeHtml(reason) + '"</div>';
-            h += ipLine;
-            h += '</div>';
-        }
-        list.innerHTML = h;
+        _fraudBlockedCache = d.items || [];
+        renderFraudBlockedFiltered();
     } catch (e) {
         list.innerHTML = '<div style="color:#f55;padding:20px;text-align:center;">Error: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
 }
+
+function renderFraudBlockedFiltered() {
+    const list = document.getElementById('fraudBlockedList');
+    const sum  = document.getElementById('fraudBlockedSummary');
+    const inp  = document.getElementById('fraudBlockedSearch');
+    if (!list) return;
+    const all = _fraudBlockedCache || [];
+    const q = (inp && inp.value || '').trim().toLowerCase();
+    const items = q
+        ? all.filter(u => String(u.username || '').toLowerCase().includes(q))
+        : all;
+    if (sum) {
+        if (q) sum.textContent = items.length + ' de ' + all.length + ' coinciden con "' + q + '"';
+        else   sum.textContent = all.length + ' usuario(s) bloqueados o restringidos';
+    }
+    if (all.length === 0) {
+        list.innerHTML = '<div style="background:rgba(0,255,102,0.06);border:1px dashed rgba(0,255,102,0.30);border-radius:9px;padding:20px;text-align:center;color:#aaffaa;font-size:13px;">🎉 ¡Sin bloqueos activos!</div>';
+        return;
+    }
+    if (items.length === 0) {
+        list.innerHTML = '<div style="background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.12);border-radius:9px;padding:18px;text-align:center;color:#aaa;font-size:12.5px;">🔎 Sin coincidencias para "' + escapeHtml(q) + '"</div>';
+        return;
+    }
+    let h = '';
+    for (const u of items) {
+        const isFraud = !!u.fraudBlocked;
+        const isBonus = !!u.bonusBlocked;
+        const stateBadge = isFraud
+            ? '<span style="background:rgba(255,80,80,0.15);color:#ff8080;border:1px solid rgba(255,80,80,0.50);padding:3px 9px;border-radius:5px;font-size:10.5px;font-weight:900;letter-spacing:0.5px;">🚫 BLOQUEADO TOTAL</span>'
+            : '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid rgba(255,170,102,0.50);padding:3px 9px;border-radius:5px;font-size:10.5px;font-weight:900;letter-spacing:0.5px;">⚠️ SIN BONO/CÓDIGOS</span>';
+        const reason = isFraud
+            ? (u.fraudReason || 'Sin razón registrada')
+            : (u.bonusBlockedReason || 'Sin razón registrada');
+        const when = isFraud
+            ? (u.fraudBlockedAt ? formatDate(u.fraudBlockedAt) : '—')
+            : (u.bonusBlockedAt ? formatDate(u.bonusBlockedAt) : '—');
+        const ipLine = u.fraudBlockedIp ? '<div style="color:#888;font-size:10.5px;">IP: <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;color:#fff;">' + escapeHtml(u.fraudBlockedIp) + '</code></div>' : '';
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px 14px;margin-bottom:10px;">';
+        h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">';
+        h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
+        h += '<span style="color:#fff;font-weight:900;font-size:14px;">@' + escapeHtml(u.username) + '</span>';
+        h += stateBadge;
+        h += '<span style="color:#888;font-size:11px;">' + escapeHtml(when) + '</span>';
+        h += '</div>';
+        h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+        if (isFraud || isBonus) {
+            h += '<button type="button" onclick="fraudUnblockUser(\'' + escapeHtml(u.id) + '\',\'' + escapeHtml(u.username) + '\')" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:6px 12px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;">✅ Desbloquear todo</button>';
+        }
+        if (isFraud) {
+            h += '<button type="button" onclick="fraudBonusRestrictUser(\'' + escapeHtml(u.id) + '\',\'' + escapeHtml(u.username) + '\')" style="background:rgba(255,170,102,0.18);color:#ffaa66;border:1.5px solid rgba(255,170,102,0.55);padding:6px 12px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;">⚠️ Solo bono/códigos OFF</button>';
+        }
+        h += '</div>';
+        h += '</div>';
+        h += '<div style="color:#aaa;font-size:12px;font-style:italic;margin-bottom:4px;">"' + escapeHtml(reason) + '"</div>';
+        h += ipLine;
+        h += '</div>';
+    }
+    list.innerHTML = h;
+}
+window.renderFraudBlockedFiltered = renderFraudBlockedFiltered;
 
 async function fraudUnblockUser(userId, username) {
     if (!confirm('Desbloquear COMPLETAMENTE a "' + username + '"?\n\nEl user va a poder loguear y reclamar todo de nuevo (bono + códigos).')) return;
