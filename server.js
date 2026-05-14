@@ -34333,7 +34333,7 @@ app.post('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async 
       throw e;
     }
   } catch (err) {
-    logger.error(`POST /api/admin/closings: ${err.message}`);
+    logger.error(`POST /api/admin/closings: ${err.message}\nstack: ${err.stack}\nbody keys: ${Object.keys(req.body || {}).join(',')}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -34414,7 +34414,7 @@ app.put('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, asy
       changesCount: changes.length
     });
   } catch (err) {
-    logger.error(`PUT /api/admin/closings/:id: ${err.message}`);
+    logger.error(`PUT /api/admin/closings/:id: ${err.message}\nstack: ${err.stack}\nbody keys: ${Object.keys(req.body || {}).join(',')}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

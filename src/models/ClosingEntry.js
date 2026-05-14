@@ -37,7 +37,9 @@ const buffaloTeamSchema = new mongoose.Schema({
   name: { type: String, default: '', trim: true },
   depositsARS: { type: Number, default: 0, min: 0 },       // cargas $
   depositsCount: { type: Number, default: 0, min: 0 },     // cargas # (count of deposits)
-  ventasARS: { type: Number, default: 0, min: 0 },
+  // VENTA acepta negativos — pedido del dueño 2026-05-14: si la operatoria
+  // del equipo cerró perdiendo (cash-out > depósitos), el monto es negativo.
+  ventasARS: { type: Number, default: 0 },
   bonusARS: { type: Number, default: 0, min: 0 },          // bonos $
   bonusCount: { type: Number, default: 0, min: 0 },        // bonificaciones #
   withdrawalsCount: { type: Number, default: 0, min: 0 }   // descargas # (count per team)
