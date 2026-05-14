@@ -1623,15 +1623,15 @@
         .welcome-bonus-card {
             text-align: center;
             width: 100%;
-            max-width: 360px;
-            margin: 0 auto 10px;
-            padding: 8px 10px;
+            max-width: 340px;
+            margin: 0 auto 8px;
+            padding: 7px 9px 8px;
             background: linear-gradient(135deg, rgba(255,200,0,0.18), rgba(212,175,55,0.08));
             border: 1.5px solid #ffcc00;
-            border-radius: 12px;
+            border-radius: 11px;
             color: #fff;
             box-sizing: border-box;
-            box-shadow: 0 4px 16px rgba(255,200,0,0.20);
+            box-shadow: 0 3px 12px rgba(255,200,0,0.18);
             order: 1.7;
             position: relative;
             flex: 0 0 auto !important;
@@ -1641,7 +1641,7 @@
                para usuarios que ya reclamaron pero perdieron localStorage
                (uninstall+reinstall). El render JS confirma con la API antes
                de mostrar. */
-            min-height: 110px;
+            min-height: 0;
             overflow: hidden;
         }
         .welcome-bonus-card::before {
@@ -2627,24 +2627,39 @@
              onclick inline como fallback: el render tambien lo enlaza,
              pero asi funciona aunque el render aun no haya corrido. -->
         <div class="welcome-bonus-card" id="welcomeBonusCard" style="display:none;">
-            <div class="welcome-bonus-icon" style="font-size:54px;">🎁</div>
-            <div class="welcome-bonus-title" style="font-size:18px;letter-spacing:0.8px;">BONO POR INSTALAR LA APP</div>
-            <div class="welcome-bonus-amount" id="welcomeBonusAmount" style="font-size:36px;text-shadow:0 0 14px rgba(255,215,0,0.55);">$5.000 GRATIS</div>
-            <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">Hacé los 3 pasos y desbloqueá tu bono.</div>
+            <!-- Botón ✕ para descartar el cartel. Persiste localmente; si
+                 el user toca por error, al reinstalar la app vuelve a verlo.
+                 Posición absoluta arriba a la derecha. -->
+            <button type="button" id="welcomeBonusDismissBtn" onclick="dismissWelcomeBonus(event)" aria-label="Descartar" style="position:absolute;top:5px;right:5px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.15);color:#fff;width:22px;height:22px;border-radius:50%;font-size:13px;font-weight:900;cursor:pointer;line-height:1;display:flex;align-items:center;justify-content:center;padding:0;z-index:2;">✕</button>
+            <div class="welcome-bonus-icon">🎁</div>
+            <div class="welcome-bonus-title">BONO POR BAJAR LA APP</div>
+            <div class="welcome-bonus-amount" id="welcomeBonusAmount">$5.000 GRATIS</div>
+            <div class="welcome-bonus-subtitle" id="welcomeBonusSubtitle">3 pasos cortos y lo cobrás.</div>
 
-            <!-- Stepper de los 3 pasos obligatorios. JS actualiza cada badge
-                 con ✅ o ⏳ según el estado real (isAppInstalled/isStandalone/
-                 isNotifGranted) en cada render del card. -->
-            <div id="welcomeBonusSteps" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,215,0,0.30);border-radius:9px;padding:11px;margin:10px 0 8px;text-align:left;font-size:12.5px;line-height:1.55;">
-                <div style="color:#ffd700;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;text-align:center;">⚠️ TENÉS QUE HACER LOS 3 PASOS EN ORDEN</div>
-                <div id="welcomeStep1" style="color:#fff;margin-bottom:6px;"><span id="welcomeStep1Badge">⏳</span> <strong>Paso 1 — Instalá la app.</strong> Tocá el botón de abajo: si tenés <em>Android</em>, te aparece el cartel de Chrome para instalar; si tenés <em>iPhone</em>, te mostramos un video paso a paso.</div>
-                <div id="welcomeStep2" style="color:#fff;margin-bottom:6px;"><span id="welcomeStep2Badge">⏳</span> <strong>Paso 2 — Andá a la app.</strong> Buscá el ícono nuevo en tu pantalla y abrila desde ahí. <span style="color:#ffaa44;">Importante: no la abras desde Chrome ni desde WhatsApp.</span></div>
-                <div id="welcomeStep3" style="color:#fff;"><span id="welcomeStep3Badge">⏳</span> <strong>Paso 3 — Activá las notificaciones dentro de la app.</strong> Cuando entres por primera vez, te va a pedir permiso. Tocá <strong>Permitir</strong> — sin esto el bono no se desbloquea.</div>
-                <div style="color:#ffaa44;font-size:11px;margin-top:9px;text-align:center;font-weight:700;">👇 Cuando los 3 estén ✅, te aparece el botón RECLAMAR</div>
+            <!-- Stepper compacto. JS actualiza cada badge con ✅ o ⏳ según
+                 estado real (isAppInstalled/isStandalone/isNotifGranted). -->
+            <div id="welcomeBonusSteps" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,215,0,0.25);border-radius:7px;padding:7px 9px;margin:6px 0 7px;text-align:left;font-size:11px;line-height:1.4;">
+                <div id="welcomeStep1" style="color:#fff;margin-bottom:3px;"><span id="welcomeStep1Badge">⏳</span> <strong>Instalá</strong> la app.</div>
+                <div id="welcomeStep2" style="color:#fff;margin-bottom:3px;"><span id="welcomeStep2Badge">⏳</span> <strong>Abrila</strong> desde el ícono nuevo (no Chrome).</div>
+                <div id="welcomeStep3" style="color:#fff;"><span id="welcomeStep3Badge">⏳</span> <strong>Permití</strong> notificaciones cuando lo pida.</div>
             </div>
 
             <button id="welcomeBonusBtn" type="button" class="welcome-bonus-btn" onclick="VIP.refunds.handleWelcomeBonusClick()">🎁 RECLAMAR $5.000</button>
         </div>
+        <script>
+            // Descarte local del cartel del bono — se persiste en localStorage
+            // por usuario. No anula el derecho al bono (puede reclamarlo desde
+            // el modal de install si lo necesita) — solo oculta el card.
+            window.dismissWelcomeBonus = function (e) {
+                if (e) { e.preventDefault(); e.stopPropagation(); }
+                try {
+                    const u = (window.VIP && window.VIP.state && window.VIP.state.currentUser && window.VIP.state.currentUser.username) || '_anon';
+                    localStorage.setItem('welcomeBonusDismissed:' + u, '1');
+                } catch (_) {}
+                const card = document.getElementById('welcomeBonusCard');
+                if (card) card.style.setProperty('display', 'none', 'important');
+            };
+        </script>
 
         <!-- Refunds-only: Banner de sorteos en home. Render dinamico desde
              /api/raffles/recent-winners. Prioridades:

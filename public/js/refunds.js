@@ -732,6 +732,17 @@ VIP.refunds = (function () {
             return;
         }
 
+        // Dismiss explícito del user (tocó la ✕ del card). Persiste por
+        // username en localStorage. No anula el derecho al bono — solo
+        // oculta el card. Si reinstala la app vuelve a aparecer.
+        try {
+            const u = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '_anon';
+            if (localStorage.getItem('welcomeBonusDismissed:' + u) === '1') {
+                hideCard();
+                return;
+            }
+        } catch (_) {}
+
         const s = _welcomeStatus || { amount: 5000, claimed: false };
         const amountNum = Number(s.amount || 5000);
 
