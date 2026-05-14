@@ -2552,7 +2552,7 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
 
     if (!best) {
       return res.status(404).json({
-        error: 'No encontramos tu equipo. Probá con otro nombre (ej: Atomic, Marshall, Argentum, Tribet, Tiger).',
+        error: 'No encontramos tu equipo. Revisá el nombre con tu agente.',
         query: rawQ,
         _debug
       });
