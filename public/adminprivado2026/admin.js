@@ -28289,15 +28289,15 @@ function _renderRedeemCodes() {
     h += '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;background:rgba(255,170,102,0.06);border:1px dashed rgba(255,170,102,0.30);border-radius:7px;padding:7px 10px;">';
     h += '<span style="color:#ffaa66;font-size:11px;font-weight:800;letter-spacing:0.3px;">🧪 TEST a un solo usuario:</span>';
     h += '<input id="rcTestUsername" type="text" placeholder="username exacto (vacío = todos)" maxlength="80" style="flex:1;min-width:160px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,170,102,0.30);color:#ffaa66;padding:5px 9px;border-radius:6px;font-size:12px;font-weight:700;">';
-    h += '<button onclick="testRedeemPush()" title="Manda un push de prueba a ese usuario SIN crear ningún código" style="background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.45);padding:5px 11px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;white-space:nowrap;">🔔 Probar push</button>';
+    h += '<button type="button" onclick="testRedeemPush()" title="Manda un push de prueba a ese usuario SIN crear ningún código" style="background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.45);padding:5px 11px;border-radius:6px;font-weight:900;font-size:11px;cursor:pointer;white-space:nowrap;">🔔 Probar push</button>';
     h += '<span style="color:#888;font-size:10.5px;flex-basis:100%;">Si ponés un username, la notif va sólo a esa persona. El código se crea igual. El botón "🔔 Probar push" verifica si la app del user recibe notifs, sin crear código.</span>';
     h += '</div>';
     h += '<div style="color:#888;font-size:10.5px;margin-top:5px;">⚠️ El código NO va en la notificación — eso lo publicás vos en el canal de Telegram. La notif sólo avisa que hay uno nuevo y reenvía al canal.</div>';
     h += '</div>';
 
     h += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
-    h += '<button onclick="createRedeemCode()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 CREAR Y AVISAR</button>';
-    h += '<button onclick="createRedeemCodeTest()" style="background:rgba(255,170,102,0.18);color:#ffaa66;border:1.5px solid rgba(255,170,102,0.50);padding:10px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🧪 SOLO AL TEST USER</button>';
+    h += '<button type="button" onclick="createRedeemCode()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 CREAR Y AVISAR</button>';
+    h += '<button type="button" onclick="createRedeemCodeTest()" style="background:rgba(255,170,102,0.18);color:#ffaa66;border:1.5px solid rgba(255,170,102,0.50);padding:10px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🧪 SOLO AL TEST USER</button>';
     h += '</div>';
     h += '</div>';
 
@@ -28345,9 +28345,9 @@ function _renderRedeemCodeRow(it) {
     h += '</div>';
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
     if (isActive) {
-        h += '<button onclick="closeRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">⏸ Cerrar</button>';
+        h += '<button type="button" onclick="closeRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">⏸ Cerrar</button>';
     }
-    h += '<button onclick="deleteRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">🗑</button>';
+    h += '<button type="button" onclick="deleteRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">🗑</button>';
     h += '</div>';
     h += '</div>';
 
@@ -28419,7 +28419,17 @@ function stopRedeemCodesAutoRefresh() {
 // Crea el código y opcionalmente dispara la notif. forceTest=true obliga
 // a usar el testUsername del input (modo prueba a un solo user); sin él
 // usa lo que esté tipeado en rcTestUsername (vacío = broadcast a todos).
-async function createRedeemCode(forceTest) {
+async function createRedeemCode(forceTest, _ev) {
+    // Defensa-en-profundidad: si por algún motivo el botón se llamó como
+    // submit (forceTest a veces puede llegar como un objeto Event si lo
+    // llamaron desde un form), preveniamos el default para no recargar la
+    // página. forceTest=true viene SOLO desde createRedeemCodeTest, así
+    // que si es un Event lo descartamos y tratamos como false.
+    if (forceTest && typeof forceTest === 'object' && forceTest.preventDefault) {
+        try { forceTest.preventDefault(); } catch (_) {}
+        forceTest = false;
+    }
+    if (_ev && _ev.preventDefault) { try { _ev.preventDefault(); } catch (_) {} }
     const code = (document.getElementById('rcCode').value || '').trim().toUpperCase();
     const amountARS = Number(document.getElementById('rcAmount').value) || 0;
     const durationMinutes = Number(document.getElementById('rcDuration').value) || 0;
