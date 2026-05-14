@@ -2381,18 +2381,21 @@ app.get('/api/auth/_probe', (req, res) => {
   res.json({ version: 'refunds-only-v3', endpoint: 'login-username-only', timestamp: new Date().toISOString() });
 });
 
-// Lookup público (sin auth) para el botón "Crea tu usuario" del login.
-// El usuario escribe el nombre de su equipo (ej: "atomic") y devolvemos:
+// Lookup público (sin auth) para el botón "Consultar o crear usuario" del login.
+// El usuario escribe el nombre de su equipo (ej: "atomic", "argentum", "mar")
+// y devolvemos:
 //   - linePhone:    número principal del equipo (WhatsApp wa.me)
-//   - communityLink, communityLink2: links de comunidad del equipo
+//   - communityLink, communityLink2: canal activo de la línea
 //   - teamName:     nombre canónico del equipo
 //   - prefix:       el prefijo que matcheó
-// Estrategia de match (case-insensitive sobre input limpio):
-//   1) input === slot.prefix
-//   2) input startsWith slot.prefix  (ej: "atomic" matchea "ato")
-//   3) slot.prefix startsWith input  (ej: "at" matchea "ato")
-//   4) slot.teamName contiene input o input contiene slot.teamName
-// Si hay varios matches, gana el de prefijo más largo.
+// Estrategia de match (case-insensitive, input limpio sin símbolos):
+//   PRIMARIO: tomamos los primeros 3 caracteres del input ("atomic"→"ato",
+//             "argentum"→"arg", "mar"→"mar") y buscamos el slot cuyo prefix
+//             coincide. Si hay varios slots, gana el prefijo más largo cuyo
+//             texto sea prefijo del input.
+//   FALLBACK: si el input tiene <3 chars o no matchea por 3-chars, probamos
+//             por prefix completo, por slot.prefix.startsWith(input), y por
+//             teamName.
 app.get('/api/teams/lookup', authLimiter, async (req, res) => {
   try {
     const rawQ = String(req.query.q || req.query.team || '').trim();
@@ -2408,6 +2411,9 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
       getConfig('userCommunitiesByPrefix').catch(() => null)
     ]);
     const lineSlots = (linesCfg && Array.isArray(linesCfg.slots)) ? linesCfg.slots : [];
+    // Tomamos las primeras 3 letras del input como "clave" preferida.
+    // "atomic" → "ato", "argentum" → "arg", "mar" → "mar".
+    const q3 = q.slice(0, 3);
     let best = null;
     for (const slot of lineSlots) {
       if (!slot || !slot.prefix) continue;
@@ -2415,8 +2421,13 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
       if (!prefix) continue;
       const teamName = (slot.teamName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       let score = 0;
-      if (q === prefix) score = 100 + prefix.length;
-      else if (q.startsWith(prefix)) score = 80 + prefix.length;
+      // PRIMARIO: primeras 3 letras del input vs prefix del slot.
+      if (q3.length === 3 && prefix === q3) score = 200 + prefix.length;
+      else if (q3.length === 3 && prefix.length >= 3 && prefix.slice(0, 3) === q3) score = 180 + prefix.length;
+      else if (q3.length === 3 && q3.startsWith(prefix) && prefix.length >= 2) score = 160 + prefix.length;
+      // FALLBACK: matches clásicos.
+      else if (q === prefix) score = 100 + prefix.length;
+      else if (q.length >= prefix.length && q.startsWith(prefix)) score = 80 + prefix.length;
       else if (prefix.startsWith(q) && q.length >= 2) score = 60 + q.length;
       else if (teamName && (teamName === q || teamName.startsWith(q) || q.startsWith(teamName))) score = 50 + Math.min(teamName.length, q.length);
       else if (teamName && (teamName.includes(q) || q.includes(teamName))) score = 30;

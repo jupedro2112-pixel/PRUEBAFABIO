@@ -2372,7 +2372,7 @@
             <div style="margin: 15px 0; text-align: center;">
                 <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
                 <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
-                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" style="margin-top: 6px; width: 100%; background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff;" onclick="showCreateUserHelp()">🆕 Crea tu usuario (consultá a tu equipo)</button>
+                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" style="margin-top: 6px; width: 100%; background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; font-weight: 700;" onclick="showCreateUserHelp()">🆕 Consultar o crear usuario</button>
             </div>
 
             <div style="margin: 10px 0; display: flex; gap: 8px;">
@@ -3561,15 +3561,15 @@
         <div class="modal-content" style="max-width: 420px; position: relative;" onclick="event.stopPropagation()">
             <button onclick="hideModal('createUserHelpModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
             <div class="modal-header">
-                <h2>🆕 Crea tu usuario</h2>
-                <p>Decinos en qué equipo jugás y te pasamos el contacto principal para que te creen tu usuario.</p>
+                <h2>🆕 Consultar o Crear Usuario</h2>
+                <p>Escribí el nombre de tu equipo y te pasamos el contacto principal + el canal activo de la línea.</p>
             </div>
             <!-- Paso 1: pedir nombre del equipo -->
             <div id="createUserHelpStep1">
                 <div class="input-group">
                     <label>¿En qué equipo jugás?</label>
-                    <input type="text" id="createUserHelpTeamInput" placeholder="Ej: Atomic, Megafire, etc." autocomplete="off" maxlength="40" style="text-transform: lowercase;">
-                    <span style="font-size: 11px; color: #888; margin-top: 6px; display: block;">Escribí el nombre tal como lo conocés. Si no te aparece, probá con las primeras letras.</span>
+                    <input type="text" id="createUserHelpTeamInput" placeholder="Ej: Atomic, Argentum, Mar, Megafire..." autocomplete="off" maxlength="40" style="text-transform: lowercase;">
+                    <span style="font-size: 11px; color: #888; margin-top: 6px; display: block;">Tomamos las primeras letras (ej: <b>atomic</b> → <b>ato</b>, <b>argentum</b> → <b>arg</b>) para buscar la línea principal y el canal de tu equipo.</span>
                 </div>
                 <div id="createUserHelpError" class="error-message"></div>
                 <div class="modal-actions">
