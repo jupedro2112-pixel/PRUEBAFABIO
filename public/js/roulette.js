@@ -235,8 +235,35 @@
             html += '</div>';
             html += '<style>@keyframes rouletteIcon { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }</style>';
         }
+
+        // Bloque de transparencia: ganadores del día (live), DENTRO del modal.
+        // Cuando el user gana, esto le da contexto + social proof. Cuando
+        // pierde, refuerza que la ruleta sí paga. Reusa el mismo cache que
+        // el card del home y se sincroniza con auto-refresh.
+        html += '<div style="margin-top:14px;background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.30);border-radius:11px;padding:11px 12px;">';
+        html += '  <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">';
+        html += '    <span style="font-size:14px;">🏆</span>';
+        html += '    <span style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1px;">GANADORES DE HOY · EN VIVO</span>';
+        html += '    <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#25d366;font-weight:700;">';
+        html += '      <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#25d366;box-shadow:0 0 5px #25d366;animation:winners-pulse 1.4s ease-in-out infinite;"></span>';
+        html += '      LIVE';
+        html += '    </span>';
+        html += '  </div>';
+        html += '  <div id="rouletteModalWinnersList" style="max-height:240px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:12px;line-height:1.5;"></div>';
+        html += '  <div id="rouletteModalWinnersEmpty" style="text-align:center;color:#888;font-size:11.5px;padding:12px 8px;">Todavía no hay ganadores hoy. Sé el primero — girá la ruleta.</div>';
+        html += '  <div style="text-align:center;font-size:10px;color:#777;margin-top:7px;padding-top:7px;border-top:1px dashed rgba(255,255,255,0.10);">🔒 Nombres parcialmente ocultos. Los premios son reales y se acreditan automáticamente.</div>';
+        html += '</div>';
+
         html += '</div>';
         modal.innerHTML = html;
+
+        // Pintar lista con el cache que tengamos y refrescar del server.
+        _renderWinnersListInto(
+            document.getElementById('rouletteModalWinnersList'),
+            document.getElementById('rouletteModalWinnersEmpty'),
+            _recentWinnersCache
+        );
+        loadRecentWinners();
     }
 
     async function spin() {
@@ -294,13 +321,35 @@
         }
     }
 
+    // Cache para reusar la lista en el modal sin re-fetch.
+    let _recentWinnersCache = [];
+
+    function _renderWinnersListInto(listEl, emptyEl, winners) {
+        if (!listEl) return;
+        if (!winners || winners.length === 0) {
+            listEl.innerHTML = '';
+            if (emptyEl) emptyEl.style.display = '';
+            return;
+        }
+        if (emptyEl) emptyEl.style.display = 'none';
+        let html = '';
+        for (const w of winners) {
+            const ago = w.minutesAgo < 1 ? 'recién' :
+                       w.minutesAgo < 60 ? (w.minutesAgo + ' min') :
+                       (Math.floor(w.minutesAgo / 60) + 'h');
+            html += '<div class="winner-row' + (w.isMe ? ' is-me' : '') + '">';
+            html += '<span class="winner-user">👤 ' + _esc(w.username) + '</span>';
+            html += '<span class="winner-prize">+$' + _fmt(w.prizeARS) + '</span>';
+            html += '<span class="winner-time">' + ago + '</span>';
+            html += '</div>';
+        }
+        listEl.innerHTML = html;
+    }
+
     // Lista de ganadores del día (transparencia). Aparece debajo del
-    // rouletteHomeCard. 80% del nombre tapado server-side.
+    // rouletteHomeCard. 80% del nombre tapado server-side. Tambien se
+    // pinta dentro del modal (cuando esta abierto).
     async function loadRecentWinners() {
-        const card = document.getElementById('rouletteRecentWinnersCard');
-        const list = document.getElementById('rouletteWinnersList');
-        const empty = document.getElementById('rouletteWinnersEmpty');
-        if (!card || !list || !empty) return;
         if (!VIP.state || !VIP.state.currentToken) return;
         try {
             const r = await fetch(`${VIP.config.API_URL}/api/roulette/recent-winners?limit=50`, {
@@ -309,25 +358,19 @@
             if (!r.ok) return;
             const d = await r.json();
             const winners = Array.isArray(d.winners) ? d.winners : [];
-            card.style.display = '';
-            if (winners.length === 0) {
-                list.innerHTML = '';
-                empty.style.display = '';
-                return;
-            }
-            empty.style.display = 'none';
-            let html = '';
-            for (const w of winners) {
-                const ago = w.minutesAgo < 1 ? 'recién' :
-                           w.minutesAgo < 60 ? (w.minutesAgo + ' min') :
-                           (Math.floor(w.minutesAgo / 60) + 'h');
-                html += '<div class="winner-row' + (w.isMe ? ' is-me' : '') + '">';
-                html += '<span class="winner-user">👤 ' + _esc(w.username) + '</span>';
-                html += '<span class="winner-prize">+$' + _fmt(w.prizeARS) + '</span>';
-                html += '<span class="winner-time">' + ago + '</span>';
-                html += '</div>';
-            }
-            list.innerHTML = html;
+            _recentWinnersCache = winners;
+            // 1) Home card.
+            _renderWinnersListInto(
+                document.getElementById('rouletteWinnersList'),
+                document.getElementById('rouletteWinnersEmpty'),
+                winners
+            );
+            // 2) Inside the modal (si está abierto).
+            _renderWinnersListInto(
+                document.getElementById('rouletteModalWinnersList'),
+                document.getElementById('rouletteModalWinnersEmpty'),
+                winners
+            );
         } catch (e) { /* best-effort */ }
     }
 
