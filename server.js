@@ -2440,10 +2440,50 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
         };
       }
     }
+    // Fallback al default si no matcheó ningún slot: la gente igual
+    // recibe la línea general configurada.
+    let usedFallback = false;
+    if (!best || !best.phone) {
+      const defaultPhone = (linesCfg && linesCfg.defaultPhone) ? String(linesCfg.defaultPhone).trim() : '';
+      const defaultTeamName = (linesCfg && linesCfg.defaultTeamName) ? String(linesCfg.defaultTeamName).trim() : '';
+      if (defaultPhone) {
+        best = {
+          score: 10,
+          prefix: '',
+          phone: defaultPhone,
+          teamName: defaultTeamName || 'Línea general'
+        };
+        usedFallback = true;
+      }
+    }
+    // Debug mode para el owner: ?_owner=<secret> agrega un payload con
+    // los prefijos cargados (sin exponer phones) para diagnosticar matches.
+    const OWNER_DEBUG_SECRET = 'vipsalida-fabio-2026-x9k';
+    let _debug = null;
+    if (String(req.query._owner || '') === OWNER_DEBUG_SECRET) {
+      _debug = {
+        configFound: !!(linesCfg && Array.isArray(linesCfg.slots)),
+        totalSlots: lineSlots.length,
+        configuredPrefixes: lineSlots
+          .filter(s => s && s.prefix)
+          .map(s => ({
+            prefix: String(s.prefix).toLowerCase().trim(),
+            teamName: (s.teamName || '').trim(),
+            hasPhone: !!s.phone
+          })),
+        defaultPhonePresent: !!(linesCfg && linesCfg.defaultPhone),
+        defaultTeamName: (linesCfg && linesCfg.defaultTeamName) || null,
+        inputQuery: rawQ,
+        normalized: q,
+        firstThreeChars: q3,
+        usedFallback
+      };
+    }
     if (!best || !best.phone) {
       return res.status(404).json({
-        error: 'No encontramos tu equipo. Probá con el nombre completo (ej: "Atomic", "Megafire").',
-        query: rawQ
+        error: 'No encontramos tu equipo y tampoco hay línea general configurada. Pedí ayuda a tu agente.',
+        query: rawQ,
+        _debug
       });
     }
     // Buscar links de comunidad del MISMO prefijo en userCommunitiesByPrefix.
@@ -2453,16 +2493,25 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
     let communityLabel2 = null;
     const commSlots = (communitiesCfg && Array.isArray(communitiesCfg.slots)) ? communitiesCfg.slots : [];
     const bestPrefixLower = best.prefix.toLowerCase();
-    for (const slot of commSlots) {
-      if (!slot || !slot.prefix) continue;
-      const p = String(slot.prefix).toLowerCase().trim();
-      if (p === bestPrefixLower) {
-        communityLink = slot.link ? String(slot.link).trim() : null;
-        communityLink2 = slot.link2 ? String(slot.link2).trim() : null;
-        communityLabel = slot.label ? String(slot.label).trim() : null;
-        communityLabel2 = slot.label2 ? String(slot.label2).trim() : null;
-        break;
+    if (bestPrefixLower) {
+      for (const slot of commSlots) {
+        if (!slot || !slot.prefix) continue;
+        const p = String(slot.prefix).toLowerCase().trim();
+        if (p === bestPrefixLower) {
+          communityLink = slot.link ? String(slot.link).trim() : null;
+          communityLink2 = slot.link2 ? String(slot.link2).trim() : null;
+          communityLabel = slot.label ? String(slot.label).trim() : null;
+          communityLabel2 = slot.label2 ? String(slot.label2).trim() : null;
+          break;
+        }
       }
+    }
+    // Si no hubo match de community (o estamos en fallback), usar el default link.
+    if (!communityLink && communitiesCfg && communitiesCfg.defaultLink) {
+      communityLink = String(communitiesCfg.defaultLink).trim();
+    }
+    if (!communityLink2 && communitiesCfg && communitiesCfg.defaultLink2) {
+      communityLink2 = String(communitiesCfg.defaultLink2).trim();
     }
     return res.json({
       prefix: best.prefix,
@@ -2471,7 +2520,9 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
       communityLink,
       communityLink2,
       communityLabel,
-      communityLabel2
+      communityLabel2,
+      usedFallback,
+      _debug
     });
   } catch (err) {
     logger.error(`[TeamsLookup] ${err.message}`);
