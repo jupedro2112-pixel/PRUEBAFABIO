@@ -25489,8 +25489,7 @@ function _renderClosings() {
         const thBig  = 'padding:9px 14px;font-weight:900;text-align:right;font-size:13px;';
         html += '<th style="padding:7px 10px;font-weight:800;text-align:right;">💰 Depósitos</th>';
         html += '<th style="' + thStd + '">🏦 Comisión</th>';
-        html += '<th style="' + thStd + '">📤 Descargas</th>';
-        html += '<th style="' + thBig + 'color:#ffd0a0;" title="Venta NETA = depósitos − descargas (auto)">🛒 VENTA</th>';
+        html += '<th style="' + thBig + 'color:#ffd0a0;" title="VENTA = total de descargas (cash-outs a clientes)">🛒 VENTA</th>';
         html += '<th style="' + thStd + '" title="Gastos del día (resta del neto)">🧾 Gastos</th>';
         html += '<th style="' + thStd + '" title="Egresos del día (préstamos hechos)">📤 Egresos</th>';
         html += '<th style="' + thStd + '" title="Ingresos del día (préstamos recibidos)">📥 Ingresos</th>';
@@ -25550,11 +25549,11 @@ function _renderClosings() {
             const gastosColor = gastosVal > 0 ? '#ffaa66' : '#888';
             const ingresosColor = ingresosVal > 0 ? '#aaffaa' : '#888';
             const egresosColor = egresosVal > 0 ? '#ff8080' : '#888';
-            // Neto del día = venta NETA − comisión − gastos − egresos + ingresos
-            // venta NETA = depósitos − descargas (lo trae c.ventas; fallback acá).
-            const ventaNeta = (c.ventas != null)
-                ? Number(c.ventas)
-                : Math.max(0, Number(r.depositsARS || 0) - Number(r.ventasARS || 0));
+            // VENTA = total de descargas (cash-outs). Es lo que cargás en
+            // el formulario como "ventasARS". Versión previa intentó
+            // hacer dep−desc pero estaba mal — el dueño confirmó que
+            // VENTA == ventasARS directo.
+            const ventaNeta = Number(r.ventasARS || 0);
             const netoFinal = (c.neto != null)
                 ? Number(c.neto)
                 : (ventaNeta - Number(c.commission || 0) - gastosVal - egresosVal + ingresosVal);
@@ -25588,9 +25587,7 @@ function _renderClosings() {
             html += '<td style="' + tdStd + 'color:#c89bff;font-weight:700;">' + Number(r.transactionsCount || 0).toLocaleString('es-AR') + '</td>';
             html += '<td style="' + tdStd + 'color:#aaffaa;">' + _closingFmt(r.depositsARS) + '</td>';
             html += '<td style="' + tdStd + 'color:#ff8080;">-' + _closingFmt(c.commission) + '</td>';
-            // Descargas (cash-outs a clientes) — pequeña
-            html += '<td style="' + tdStd + 'color:#ff8888;">' + _closingFmt(r.ventasARS) + '</td>';
-            // VENTA NETA (= depósitos − descargas) — agrandado
+            // VENTA = total descargas (cash-outs a clientes)
             html += '<td style="' + tdBig + 'color:#ffd0a0;font-weight:900;">' + _closingFmt(ventaNeta) + '</td>';
             html += '<td style="' + tdStd + 'color:' + gastosColor + ';" title="Resta del neto">' + _closingFmt(gastosVal) + '</td>';
             html += '<td style="' + tdStd + 'color:' + egresosColor + ';" title="Préstamos hechos · resta del neto">' + _closingFmt(egresosVal) + '</td>';
@@ -25729,11 +25726,10 @@ function closingsRecompute(rid) {
     const cvuActual = getV('cvuMidnightARS');
 
     // Datos por equipo (si los hay).
-    // `sumDescargas` = Σ cash-outs a clientes (lo que pagamos a ganadores)
-    // — guardado históricamente en el field `ventasARS` por team.
-    // `sumVentaNeta` = depósitos − descargas (la VENTA real, lo que quedó
-    // de ingreso para la casa antes de comisión y otros).
-    let sumDeposits = 0, sumDescargas = 0, sumBonus = 0;
+    // `sumVentas` = Σ cash-outs a clientes (lo que pagamos a ganadores)
+    // — guardado en el field `ventasARS` por team. El dueño llama a esto
+    // VENTA directo (sin restar a los depósitos).
+    let sumDeposits = 0, sumVentas = 0, sumBonus = 0;
     let sumCargasN = 0, sumDescN = 0, sumBonosN = 0;
     const teamInputs = document.querySelectorAll('[data-cls-id="' + rid + '"] [data-buffalo-team]');
     if (teamInputs.length > 0) {
@@ -25746,7 +25742,7 @@ function closingsRecompute(rid) {
         });
         Object.values(teams).forEach(t => {
             sumDeposits += t.depositsARS || 0;
-            sumDescargas += t.ventasARS || 0;
+            sumVentas += t.ventasARS || 0;
             sumBonus += t.bonusARS || 0;
             sumCargasN += t.depositsCount || 0;
             sumDescN += t.withdrawalsCount || 0;
@@ -25755,14 +25751,12 @@ function closingsRecompute(rid) {
     } else {
         // Sector simple (publicidad): inputs directos
         sumDeposits = getV('depositsARS');
-        sumDescargas = getV('ventasARS');
+        sumVentas = getV('ventasARS');
         sumBonus = getV('bonusARS');
         sumCargasN = getV('depositsCount');
         sumDescN = getV('withdrawalsCount');
         sumBonosN = getV('bonusCount');
     }
-    // VENTA NETA = depósitos − descargas (cap inferior 0)
-    const sumVentas = Math.max(0, sumDeposits - sumDescargas);
 
     // Mismo cálculo del backend (_closingComputeTotals)
     const commission = sumDeposits * (bankPct / 100);
@@ -25793,8 +25787,7 @@ function closingsRecompute(rid) {
     html += '<div style="color:#c89bff;font-size:10px;font-weight:900;letter-spacing:1px;margin-bottom:6px;">🧮 CÁLCULO EN VIVO (se actualiza al tipear)</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:5px;margin-bottom:6px;">';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DEPÓSITOS</div><div style="color:#aaffaa;font-weight:800;">' + _closingFmt(sumDeposits) + '</div></div>';
-    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">Σ DESCARGAS (cash-out)</div><div style="color:#ff8888;font-weight:800;">' + _closingFmt(sumDescargas) + '</div></div>';
-    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">VENTA NETA = dep − desc</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
+    html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">VENTA (cash-out)</div><div style="color:#ffd0a0;font-weight:800;">' + _closingFmt(sumVentas) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">COMISIÓN (' + bankPct + '% × depósitos)</div><div style="color:#ff8080;font-weight:800;">-' + _closingFmt(commission) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">NETO (venta − com − gas − eg + ing)</div><div style="color:#c89bff;font-weight:800;">' + _closingFmt(neto) + '</div></div>';
     html += '<div style="background:rgba(0,0,0,0.30);padding:5px 8px;border-radius:5px;"><div style="color:#888;font-size:9.5px;">TOTAL A BAJAR</div><div style="color:#fff;font-weight:800;">' + _closingFmt(totalABajar) + '</div><div style="color:#666;font-size:9px;">neto + pend ant</div></div>';
@@ -25989,27 +25982,27 @@ function analyzeClosing(id) {
     html += '<div style="background:rgba(0,0,0,0.30);border-radius:10px;padding:13px;margin-bottom:12px;">';
     html += '<div style="color:#c89bff;font-size:11px;font-weight:900;letter-spacing:1px;margin-bottom:9px;">🧮 CÁLCULO PASO A PASO</div>';
     html += '<div style="font-family:monospace;font-size:12.5px;line-height:1.8;color:#ddd;">';
-    const ventaNetaAn = (c.ventas != null) ? Number(c.ventas) : Math.max(0, Number(r.depositsARS||0) - Number(r.ventasARS||0));
+    // VENTA = lo que está en el campo ventasARS (cash-out, alias venta).
+    // El dueño definió que esta columna se llama VENTA y no se resta a
+    // los depósitos.
+    const ventaCalc = Number(r.ventasARS || 0);
     html += '<div>1. Σ Depósitos del día: <strong style="color:#aaffaa;">' + fmt(r.depositsARS) + '</strong> · base de la comisión</div>';
-    html += '<div>2. Σ Descargas (cash-out a clientes): <strong style="color:#ff8888;">-' + fmt(r.ventasARS) + '</strong></div>';
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">3. <strong>VENTA NETA</strong> = depósitos − descargas = <strong style="color:#ffd0a0;font-size:13.5px;">' + fmt(ventaNetaAn) + '</strong></div>';
-    html += '<div>4. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
-    html += '<div>5. Gastos del día: <strong style="color:#ffaa66;">-' + fmt(c.gastos || 0) + '</strong></div>';
-    html += '<div>6. Egresos (préstamos hechos): <strong style="color:#ff8080;">-' + fmt(c.egresos || 0) + '</strong></div>';
-    html += '<div>7. Ingresos (préstamos recibidos): <strong style="color:#aaffaa;">+' + fmt(c.ingresos || 0) + '</strong></div>';
-    const netoCalc = Number(c.neto != null ? c.neto : (ventaNetaAn - Number(c.commission||0) - Number(c.gastos||0) - Number(c.egresos||0) + Number(c.ingresos||0)));
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">8. <strong>NETO del día</strong> = venta neta − comisión − gastos − egresos + ingresos = <strong style="color:#c89bff;font-size:14px;">' + fmt(netoCalc) + '</strong></div>';
-    html += '<div>9. Pendiente del día anterior (CVU 00 hs): <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">10. <strong>TOTAL A BAJAR</strong> = neto + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
-    html += '<div>11. Bajada REAL del día: <strong style="color:#aaffff;">-' + fmt(r.bajadaARS) + '</strong></div>';
-    // Líneas 12 — el pendiente a bajar oficial es el CVU 00 hs real cargado
-    // por el dueño. Si no se cargó (=0), cae al valor calculado.
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">2. <strong>VENTA</strong> (cash-out a clientes): <strong style="color:#ffd0a0;font-size:13.5px;">' + fmt(ventaCalc) + '</strong></div>';
+    html += '<div>3. Comisión banco (depósitos × ' + Number(r.bankMarginPercent || 0) + '%): <strong style="color:#ff8080;">-' + fmt(c.commission) + '</strong></div>';
+    html += '<div>4. Gastos del día: <strong style="color:#ffaa66;">-' + fmt(c.gastos || 0) + '</strong></div>';
+    html += '<div>5. Egresos (préstamos hechos): <strong style="color:#ff8080;">-' + fmt(c.egresos || 0) + '</strong></div>';
+    html += '<div>6. Ingresos (préstamos recibidos): <strong style="color:#aaffaa;">+' + fmt(c.ingresos || 0) + '</strong></div>';
+    const netoCalc = Number(c.neto != null ? c.neto : (ventaCalc - Number(c.commission||0) - Number(c.gastos||0) - Number(c.egresos||0) + Number(c.ingresos||0)));
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">7. <strong>NETO del día</strong> = venta − comisión − gastos − egresos + ingresos = <strong style="color:#c89bff;font-size:14px;">' + fmt(netoCalc) + '</strong></div>';
+    html += '<div>8. Pendiente del día anterior (CVU 00 hs): <strong style="color:#ffaa66;">+' + fmt(r.pendienteAnteriorARS) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">9. <strong>TOTAL A BAJAR</strong> = neto + pend ant = <strong style="color:#fff;font-size:14px;">' + fmt(c.totalABajar) + '</strong></div>';
+    html += '<div>10. Bajada REAL del día: <strong style="color:#aaffff;">-' + fmt(r.bajadaARS) + '</strong></div>';
     const pendCalc = Number(c.pendienteCalculado != null ? c.pendienteCalculado : Math.max(0, diff));
     const pendReal = Number(c.pendienteHoy || 0);
     const usingCvu = Number(c.cvuActual || 0) > 0;
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">12a. <strong>según cálculo</strong> (total a bajar − bajada) = <strong style="color:#aaa;font-size:13px;">' + fmt(pendCalc) + '</strong></div>';
-    html += '<div>12b. <strong>CVU 00 hs real</strong> (lo que muestra el banco) = <strong style="color:#00d4ff;font-size:13px;">' + fmt(Number(c.cvuActual || 0)) + '</strong></div>';
-    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">13. <strong>PENDIENTE A BAJAR</strong> = <strong style="color:' + cuadreColor + ';font-size:14px;">' + fmt(pendReal) + '</strong> <span style="color:#888;font-size:10.5px;">' + (usingCvu ? '(tomado del CVU real)' : '(no se cargó CVU — se usa el calculado)') + '</span></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">11a. <strong>según cálculo</strong> (total a bajar − bajada) = <strong style="color:#aaa;font-size:13px;">' + fmt(pendCalc) + '</strong></div>';
+    html += '<div>11b. <strong>CVU 00 hs real</strong> (lo que muestra el banco) = <strong style="color:#00d4ff;font-size:13px;">' + fmt(Number(c.cvuActual || 0)) + '</strong></div>';
+    html += '<div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:5px;margin-top:5px;">12. <strong>PENDIENTE A BAJAR</strong> = <strong style="color:' + cuadreColor + ';font-size:14px;">' + fmt(pendReal) + '</strong> <span style="color:#888;font-size:10.5px;">' + (usingCvu ? '(tomado del CVU real)' : '(no se cargó CVU — se usa el calculado)') + '</span></div>';
     html += '<div style="color:#888;font-size:10.5px;margin-top:3px;">↪ Este monto arrastra al "CVU 00 hs día anterior" del próximo cierre.</div>';
     html += '</div>';
     html += '<div style="background:' + cuadreColor + '22;border:2px solid ' + cuadreColor + ';border-radius:8px;padding:10px;margin-top:10px;text-align:center;color:' + cuadreColor + ';font-weight:900;font-size:14px;">' + cuadreText + '</div>';
@@ -26295,12 +26288,11 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div id="cls_' + rid + '_preview" style="margin-bottom:11px;"></div>';
 
     // Computed (suma de los 7 equipos).
-    // `sumDescargas` = total cash-outs (lo que pagamos a los ganadores) —
-    //                  guardado históricamente en el field ventasARS.
-    // `sumVentas`    = depósitos − descargas (venta NETA, lo que ingresó).
+    // `sumVentas` = total cash-outs (lo que pagamos a los ganadores) —
+    //               guardado en el field ventasARS. El dueño llama a esto
+    //               VENTA en la UI.
     const sumDeposits = teams.reduce((a, t) => a + Number(t.depositsARS || 0), 0);
-    const sumDescargas = teams.reduce((a, t) => a + Number(t.ventasARS || 0), 0);
-    const sumVentas = Math.max(0, sumDeposits - sumDescargas);
+    const sumVentas = teams.reduce((a, t) => a + Number(t.ventasARS || 0), 0);
     const sumTransactions = teams.reduce((a, t) => a + Number(t.depositsCount || 0) + Number(t.withdrawalsCount || 0) + Number(t.bonusCount || 0), 0);
 
     // === GENERALES ===
@@ -26309,8 +26301,7 @@ function _renderTeamSectorEntry(sec, date, row) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;">';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco (sobre depósitos)</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos totales</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#aaffaa;cursor:not-allowed;">' + _closingFmt(sumDeposits) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ depósito$ de los 7 · base de la comisión</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📤 Σ Descargas (cash-out)</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ff8888;cursor:not-allowed;">' + _closingFmt(sumDescargas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ descargas$ de los 7 — lo que se pagó a clientes</div></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 Venta NETA (auto)</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;" title="Depósitos − Descargas · NO se edita">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">depósitos − descargas · lo que entró neto</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🛒 VENTA (cash-out)</label><div style="' + inputStyle + 'background:rgba(0,0,0,0.30);color:#ffd0a0;cursor:not-allowed;" title="Σ Ventas (descargas) de los 7 equipos — auto desde los inputs por equipo">' + _closingFmt(sumVentas) + '</div><div style="color:#666;font-size:9.5px;margin-top:2px;">∑ venta$ de los 7 — lo pagado a clientes</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real $</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="1000" style="' + inputStyle + '" ' + disabledAttr + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'bajada', null, '📷 Foto bajada', locked) + _inlineUploadList(rid, row, 'bajada', null, locked) + '</div>';
     html += '<div style="color:#666;font-size:9px;margin-top:2px;">hasta 10 fotos (varias transferencias)</div></div>';
