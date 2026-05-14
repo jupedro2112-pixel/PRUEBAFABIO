@@ -773,15 +773,16 @@ function renderUserCommunitiesSlots(slots) {
     const container = document.getElementById('userCommunitiesSlots');
     if (!container) return;
     const data = Array.isArray(slots) ? slots : [];
-    const items = data.length > 0 ? data : [{ prefix: '', link: '', link2: '', label: '', label2: '' }];
-    container.innerHTML = items.map((s, i) => communitySlotHtml(i, s.prefix || '', s.link || '', s.link2 || '', s.label || '', s.label2 || '')).join('');
+    const items = data.length > 0 ? data : [{ prefix: '', link: '', link2: '', label: '', label2: '', excludeFromCodes: false }];
+    container.innerHTML = items.map((s, i) => communitySlotHtml(i, s.prefix || '', s.link || '', s.link2 || '', s.label || '', s.label2 || '', !!s.excludeFromCodes)).join('');
     updateAddCommunityButton();
 }
 
-function communitySlotHtml(i, prefix, link, link2, label, label2) {
+function communitySlotHtml(i, prefix, link, link2, label, label2, excludeFromCodes) {
     link2 = link2 || '';
     label = label || '';
     label2 = label2 || '';
+    excludeFromCodes = !!excludeFromCodes;
     return `
         <div class="user-community-slot" data-slot-index="${i}" style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;position:relative;">
             <div style="display:flex;align-items:center;gap:8px;">
@@ -793,6 +794,13 @@ function communitySlotHtml(i, prefix, link, link2, label, label2) {
                 <label style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">Inicio de usuario</label>
                 <input type="text" class="user-community-prefix" placeholder="ej: ato (matchea atojoaquin, atomartin…)" value="${escapeHtml(prefix)}" style="padding:9px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.5);color:#fff;font-size:13px;width:100%;box-sizing:border-box;">
             </div>
+            <!-- Excluir del sistema de códigos Telegram: este equipo se
+                 queda con su comunidad original (WhatsApp), no recibe
+                 push de códigos ni notif de migración a Telegram. -->
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:rgba(255,170,102,0.07);border:1px dashed rgba(255,170,102,0.35);border-radius:7px;padding:7px 10px;">
+                <input type="checkbox" class="user-community-exclude-codes" ${excludeFromCodes ? 'checked' : ''} style="margin:0;">
+                <span style="color:#ffaa66;font-weight:800;font-size:11.5px;letter-spacing:0.3px;line-height:1.35;">🚫 Excluir del sistema de códigos Telegram <span style="color:#aaa;font-weight:600;font-size:10.5px;">(mantiene WhatsApp · no ve card del código · no recibe push)</span></span>
+            </label>
             <div style="background:rgba(37,211,102,0.05);border:1px dashed rgba(37,211,102,0.25);border-radius:8px;padding:9px;display:flex;flex-direction:column;gap:5px;">
                 <div style="color:#25d366;font-size:10px;font-weight:900;letter-spacing:0.8px;">📍 COMUNIDAD 1 (principal)</div>
                 <input type="text" class="user-community-link" placeholder="https://chat.whatsapp.com/..." value="${escapeHtml(link)}" style="padding:8px 10px;border-radius:7px;border:1px solid rgba(37,211,102,0.25);background:rgba(0,0,0,0.5);color:#25d366;font-size:12.5px;font-weight:600;font-family:monospace;width:100%;box-sizing:border-box;">
@@ -1385,6 +1393,7 @@ async function saveUserCommunities() {
         const link2 = (el.querySelector('.user-community-link2')?.value || '').trim();
         const label = (el.querySelector('.user-community-label')?.value || '').trim();
         const label2 = (el.querySelector('.user-community-label2')?.value || '').trim();
+        const excludeFromCodes = !!el.querySelector('.user-community-exclude-codes')?.checked;
         if (!prefix && !link && !link2) continue;
         if (prefix && !link) {
             showToast('El prefijo "' + prefix + '" no tiene link', 'error');
@@ -1398,7 +1407,7 @@ async function saveUserCommunities() {
             showToast('El segundo link "' + link2 + '" debe empezar con http:// o https://', 'error');
             return;
         }
-        slots.push({ prefix, link, link2, label, label2 });
+        slots.push({ prefix, link, link2, label, label2, excludeFromCodes });
     }
     const defaultLink = (document.getElementById('userCommunitiesDefaultLink').value || '').trim();
     const defaultLink2El = document.getElementById('userCommunitiesDefaultLink2');
@@ -3839,6 +3848,12 @@ async function sendBulkNotification() {
     const prefix = target === 'prefix'
         ? (document.getElementById('notifPrefix').value || '').trim()
         : '';
+    // Excluir prefijos — solo aplica cuando enviamos a TODOS.
+    // Parseamos lo que tipeó el admin: separado por coma, sin espacios.
+    const excludePrefixesRaw = (document.getElementById('notifExcludePrefixes')?.value || '').trim();
+    const excludePrefixes = (target === 'all' && excludePrefixesRaw)
+        ? excludePrefixesRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+        : [];
     const result = document.getElementById('notifResult');
 
     // Tipo de extra (none / promo WA / regalo de plata).
@@ -3938,6 +3953,7 @@ async function sendBulkNotification() {
                 title,
                 body,
                 prefix: prefix || null,
+                excludePrefixes: excludePrefixes.length > 0 ? excludePrefixes : null,
                 extraType: promoEnabled ? 'promo' : (giveawayEnabled ? 'giveaway' : 'none')
             };
             if (promoEnabled) {

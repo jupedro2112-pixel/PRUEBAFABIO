@@ -32,6 +32,10 @@ const scheduledNotificationSchema = new mongoose.Schema({
   title: { type: String, required: true },
   body:  { type: String, required: true },
   audiencePrefix: { type: String, default: null, trim: true },
+  // Lista de prefijos a EXCLUIR del broadcast. Solo aplica cuando NO hay
+  // audiencePrefix (es decir, broadcast a todos menos estos equipos). Útil
+  // para casos como "mandar a todos pero NO al equipo zz_crazy".
+  excludePrefixes: { type: [String], default: null },
 
   // Target por username EXACTO (case-insensitive). Si está seteado, gana
   // sobre audiencePrefix y manda solo a ese usuario. Pensado para notifs

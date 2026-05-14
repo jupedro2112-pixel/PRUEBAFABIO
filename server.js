@@ -2313,16 +2313,61 @@ function pickCommunityBundleForUsername(communitiesConfig, username) {
           link: String(slot.link).trim(),
           link2: slot.link2 ? String(slot.link2).trim() : null,
           label: slot.label ? String(slot.label).trim() : null,
-          label2: slot.label2 ? String(slot.label2).trim() : null
+          label2: slot.label2 ? String(slot.label2).trim() : null,
+          // Flag opt-out por equipo: si true, el equipo queda fuera del
+          // sistema de códigos canjeables y de las notifs de Telegram.
+          // Usa el link original (WhatsApp, etc.) sin la migración.
+          excludeFromCodes: !!slot.excludeFromCodes
         };
       }
     }
   }
   if (bestMatch) return bestMatch;
   if (defaultLink) {
-    return { prefix: '', link: defaultLink, link2: defaultLink2, label: null, label2: null };
+    return { prefix: '', link: defaultLink, link2: defaultLink2, label: null, label2: null, excludeFromCodes: false };
   }
   return null;
+}
+
+// Devuelve true si el username matchea un slot con excludeFromCodes=true.
+// Esos equipos quedan fuera del sistema de códigos: no ven el card en la
+// home, no reciben notifs de códigos ni avisos de Telegram, y se les
+// puede excluir de notifs generales también.
+async function _isUserExcludedFromCodes(username) {
+  if (!username) return false;
+  try {
+    const cfg = await getConfig('userCommunitiesByPrefix').catch(() => null);
+    const bundle = pickCommunityBundleForUsername(cfg, username);
+    return !!(bundle && bundle.excludeFromCodes);
+  } catch (_) {
+    return false;
+  }
+}
+
+// Construye el filtro mongo para excluir users de prefijos dados.
+// Devuelve null si no hay nada que excluir.
+function _buildExcludePrefixesFilter(prefixes) {
+  const arr = Array.isArray(prefixes)
+    ? prefixes.map(p => String(p || '').toLowerCase().trim()).filter(Boolean)
+    : [];
+  if (arr.length === 0) return null;
+  // Regex case-insensitive: ^(?!prefix1|prefix2|...).
+  const escaped = arr.map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return { username: { $not: new RegExp('^(' + escaped.join('|') + ')', 'i') } };
+}
+
+// Carga los prefijos con excludeFromCodes=true desde el config.
+async function _getExcludedFromCodesPrefixes() {
+  try {
+    const cfg = await getConfig('userCommunitiesByPrefix').catch(() => null);
+    if (!cfg || !Array.isArray(cfg.slots)) return [];
+    return cfg.slots
+      .filter(s => s && s.excludeFromCodes && s.prefix)
+      .map(s => String(s.prefix).toLowerCase().trim())
+      .filter(Boolean);
+  } catch (_) {
+    return [];
+  }
 }
 
 // Probe endpoint para verificar versión deployada (no requiere auth)
@@ -2633,6 +2678,7 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     } catch (e) { /* fall through to prefix */ }
     let communityLink2 = null;
     let communityLabel2 = null;
+    let excludedFromCodes = false;
     if (!communityLink) {
       const communitiesConfig = await getConfig('userCommunitiesByPrefix');
       const bundle = pickCommunityBundleForUsername(communitiesConfig, req.user.username);
@@ -2643,6 +2689,7 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
         // default a "Comunidad 1 oficial" / "Comunidad 2 oficial" cuando hay 2 links.
         communityLabel = bundle.label || (bundle.link && bundle.link2 ? 'Comunidad 1 oficial' : null);
         communityLabel2 = bundle.label2 || (bundle.link2 ? 'Comunidad 2 oficial' : null);
+        excludedFromCodes = !!bundle.excludeFromCodes;
       }
     }
     // Flag de "alerta forzada" — si el admin activó el reminder por N hs
@@ -2663,7 +2710,8 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     try {
       const raw = await getConfig('communityAlertForceUntil').catch(() => null);
       const n = Number(raw) || 0;
-      if (n > Date.now() && !userJoinedTelegram) {
+      // Equipos excluídos (zz_crazy etc.) no ven el cartel forzado tampoco.
+      if (n > Date.now() && !userJoinedTelegram && !excludedFromCodes) {
         alertForceUntilMs = n;
         // Mensaje custom del banner (lo setea PUT user-communities con
         // broadcastBody). Vive solo durante la ventana forzada.
@@ -2686,7 +2734,11 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       // Para que el frontend oculte el botón "Abrir Telegram" debajo del
       // input del código si el user ya canjeó alguna vez (probó estar en
       // el canal).
-      joinedTelegram: userJoinedTelegram
+      joinedTelegram: userJoinedTelegram,
+      // Equipo está fuera del sistema de códigos Telegram → la home no
+      // muestra el card del código, ni el botón celeste, ni cambia el
+      // ícono a Telegram. Sigue con WhatsApp como antes.
+      excludedFromCodes: excludedFromCodes
     });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
@@ -11855,7 +11907,8 @@ app.get('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
         link: s.link || '',
         link2: s.link2 || '',
         label: s.label || '',
-        label2: s.label2 || ''
+        label2: s.label2 || '',
+        excludeFromCodes: !!s.excludeFromCodes
       }));
     res.json({
       slots: cleaned,
@@ -11885,6 +11938,7 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
       const link2 = (s && s.link2 ? String(s.link2) : '').trim();
       const label = (s && s.label ? String(s.label) : '').trim().slice(0, 60);
       const label2 = (s && s.label2 ? String(s.label2) : '').trim().slice(0, 60);
+      const excludeFromCodes = !!(s && s.excludeFromCodes);
       if (!prefix && !link && !link2) continue;
       if (prefix && !link) {
         return res.status(400).json({ error: `El prefijo "${prefix}" no tiene link` });
@@ -11896,7 +11950,7 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
       if (link2 && !/^https?:\/\//i.test(link2)) {
         return res.status(400).json({ error: `El segundo link "${link2}" debe empezar con http:// o https://` });
       }
-      cleaned.push({ prefix, link, link2, label, label2 });
+      cleaned.push({ prefix, link, link2, label, label2, excludeFromCodes });
     }
     const newDefaultLink = (defaultLink ? String(defaultLink) : '').trim();
     if (newDefaultLink && !/^https?:\/\//i.test(newDefaultLink)) {
@@ -11955,10 +12009,17 @@ app.put('/api/admin/user-communities', authMiddleware, adminMiddleware, async (r
         const title = (broadcastTitle && String(broadcastTitle).trim()) || '🚀 Nuevo canal de Telegram';
         const body  = customMsg || 'Unite al nuevo canal — a las 23:00 hs publicamos un código para reclamar plata gratis 💸';
         try {
+          // Filtrar equipos con excludeFromCodes=true (zz_crazy, etc.) — esos
+          // se quedan con WhatsApp, no reciben el aviso de Telegram.
+          const excludedPrefixes = (cleaned || [])
+            .filter(s => s && s.excludeFromCodes && s.prefix)
+            .map(s => String(s.prefix).toLowerCase().trim())
+            .filter(Boolean);
+          const exclF = _buildExcludePrefixesFilter(excludedPrefixes) || {};
           pushResult = await sendNotificationToAllUsers(User, title.slice(0, 80), body.slice(0, 250), {
             source: 'community-link-changed'
-          });
-          logger.info(`[user-communities] link CAMBIO → push enviado success=${pushResult && pushResult.successCount} fail=${pushResult && pushResult.failureCount}`);
+          }, exclF);
+          logger.info(`[user-communities] link CAMBIO → push enviado success=${pushResult && pushResult.successCount} fail=${pushResult && pushResult.failureCount} excluyendo=[${excludedPrefixes.join(',')}]`);
         } catch (e) {
           logger.warn(`[user-communities] push falló: ${e.message}`);
         }
@@ -20056,6 +20117,14 @@ app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, b
     }
 
     const extraType = ['none', 'promo', 'giveaway'].includes(b.extraType) ? b.extraType : 'none';
+    // excludePrefixes: array de strings que el admin quiere EXCLUIR del
+    // broadcast (ej. zz_crazy). Solo aplica si no hay audiencePrefix.
+    const excludePrefixes = Array.isArray(b.excludePrefixes)
+      ? b.excludePrefixes
+          .map(p => String(p || '').trim().toLowerCase())
+          .filter(Boolean)
+          .slice(0, 20)
+      : [];
     const doc = {
       id: uuidv4(),
       scheduledFor,
@@ -20063,6 +20132,7 @@ app.post('/api/admin/notifications/schedule', authMiddleware, adminMiddleware, b
       title,
       body,
       audiencePrefix: b.prefix && typeof b.prefix === 'string' ? b.prefix.trim() : null,
+      excludePrefixes: excludePrefixes.length > 0 ? excludePrefixes : null,
       extraType,
       createdBy: req.user.username || null
     };
@@ -20220,6 +20290,7 @@ async function _executeScheduledNotification(sched) {
 
   // 1) Construir filter por target (single user) o prefix.
   // targetUsername gana sobre audiencePrefix — match EXACTO (no prefix).
+  // excludePrefixes: array de prefijos a EXCLUIR del broadcast (zz_crazy etc.)
   const filter = {};
   if (sched.targetUsername) {
     const safe = sched.targetUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -20227,6 +20298,11 @@ async function _executeScheduledNotification(sched) {
   } else if (sched.audiencePrefix) {
     const safe = sched.audiencePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.username = { $regex: '^' + safe, $options: 'i' };
+  } else if (Array.isArray(sched.excludePrefixes) && sched.excludePrefixes.length > 0) {
+    // Sin audiencePrefix (broadcast a TODOS) pero con excludePrefixes:
+    // armamos un $not con un regex que matchea cualquiera de los prefijos.
+    const exclF = _buildExcludePrefixesFilter(sched.excludePrefixes);
+    if (exclF) Object.assign(filter, exclF);
   }
 
   // 2) Construir body: si es giveaway, append automatico del monto.
@@ -35102,9 +35178,16 @@ app.post('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req,
           amount: String(amountARS)
         };
         // Filtro mongo: si hay testUsername, restringir a ese user (case-insensitive).
-        const filter = testUsername
-          ? { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } }
-          : {};
+        // Si NO hay testUsername (broadcast a todos), excluímos los users de
+        // equipos marcados con excludeFromCodes=true en Comunidades.
+        let filter;
+        if (testUsername) {
+          filter = { username: { $regex: '^' + testUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', $options: 'i' } };
+        } else {
+          const excludedPrefixes = await _getExcludedFromCodesPrefixes();
+          const exclF = _buildExcludePrefixesFilter(excludedPrefixes);
+          filter = exclF || {};
+        }
 
         // Diagnóstico previo: cuántos users matchean el filter y cuántos
         // de ellos tienen tokens FCM (para que el dueño entienda por qué
@@ -35243,6 +35326,13 @@ app.get('/api/redeem-codes/active', authMiddleware, async (req, res) => {
   try {
     const username = (req.user && req.user.username) || '';
     const userId = (req.user && req.user.userId) || '';
+
+    // Gate por equipo: los slots con excludeFromCodes=true quedan fuera
+    // del sistema. El user no ve banner, no recibe push, no puede canjear.
+    if (await _isUserExcludedFromCodes(username)) {
+      return res.json({ success: true, active: false, excludedTeam: true });
+    }
+
     const now = Date.now();
     // Buscar el código activo más reciente (status=active y no vencido).
     const rc = await RedeemCode.findOne({
@@ -35288,6 +35378,14 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const code = _redeemNormalize((req.body || {}).code);
     if (!code) return res.status(400).json({ error: 'Ingresá el código' });
+
+    // Gate por equipo. Equipos con excludeFromCodes=true no pueden canjear.
+    if (await _isUserExcludedFromCodes(username)) {
+      return res.status(403).json({
+        error: 'Este sistema de códigos todavía no está habilitado para tu equipo.',
+        excludedTeam: true
+      });
+    }
 
     // REQUISITO: PWA instalada + notifs activas (proxy = tener tokens FCM).
     // Si el user no tiene tokens registrados, no permitimos reclamar — esto

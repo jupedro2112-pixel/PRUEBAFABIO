@@ -374,6 +374,14 @@ VIP.auth = (function () {
         const communityLink2 = VIP.state.communityLink2 || null;
         const communityLabel = VIP.state.communityLabel || '';
         const communityLabel2 = VIP.state.communityLabel2 || '';
+        // Si el equipo está excluido del sistema de códigos, sigue con
+        // la presentación clásica de WhatsApp — ícono wa + label "Canal
+        // de WhatsApp" — sin la migración a Telegram.
+        const useWa = !!VIP.state.excludedFromCodes;
+        const icon = useWa ? waIcon : tgIcon;
+        const defaultLbl1 = useWa ? 'Canal de WhatsApp oficial' : 'Canal Telegram oficial';
+        const defaultLbl2 = useWa ? 'Canal de WhatsApp oficial 2' : 'Canal Telegram oficial 2';
+        const defaultLblTxt = useWa ? 'CANAL WHATSAPP' : 'CANAL TELEGRAM';
         const escAttr = (s) => String(s || '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
@@ -383,38 +391,38 @@ VIP.auth = (function () {
             if (communityLink && communityLink2) {
                 const safeLink = escAttr(communityLink);
                 const safeLink2 = escAttr(communityLink2);
-                const lbl1 = (communityLabel || 'Canal Telegram oficial').toUpperCase();
-                const lbl2 = (communityLabel2 || 'Canal Telegram oficial 2').toUpperCase();
+                const lbl1 = (communityLabel || defaultLbl1).toUpperCase();
+                const lbl2 = (communityLabel2 || defaultLbl2).toUpperCase();
                 communityEl.innerHTML =
                     '<a href="' + safeLink + '" target="_blank" rel="noopener noreferrer" ' +
                       'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + safeLink + '\')" ' +
                       'aria-label="Abrir ' + escAttr(lbl1) + '">' +
-                        tgIcon +
+                        icon +
                         '<span>' + escAttr(lbl1) + '</span>' +
                     '</a>' +
                     '<a href="' + safeLink2 + '" target="_blank" rel="noopener noreferrer" ' +
                       'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button_2\',\'' + safeLink2 + '\')" ' +
                       'aria-label="Abrir ' + escAttr(lbl2) + '" ' +
                       'style="margin-top:6px;">' +
-                        tgIcon +
+                        icon +
                         '<span>' + escAttr(lbl2) + '</span>' +
                     '</a>';
             } else if (communityLink) {
                 const safeLink = escAttr(communityLink);
-                const lblTxt = communityLabel ? communityLabel.toUpperCase() : 'CANAL TELEGRAM';
+                const lblTxt = communityLabel ? communityLabel.toUpperCase() : defaultLblTxt;
                 communityEl.innerHTML =
                     '<a href="' + safeLink + '" target="_blank" rel="noopener noreferrer" ' +
                       'onclick="window.VIP&&VIP.communityClick&&VIP.communityClick(\'home_button\',\'' + safeLink + '\')" ' +
-                      'aria-label="Abrir canal de Telegram">' +
-                        tgIcon +
+                      'aria-label="Abrir ' + (useWa ? 'canal de WhatsApp' : 'canal de Telegram') + '">' +
+                        icon +
                         '<span>' + escAttr(lblTxt) + '</span>' +
                     '</a>';
             } else {
                 communityEl.innerHTML =
                     '<a href="javascript:void(0)" role="button" aria-disabled="true" ' +
-                      'aria-label="Canal de Telegram no configurado">' +
-                        tgIcon +
-                        '<span>CANAL TELEGRAM</span>' +
+                      'aria-label="' + (useWa ? 'Canal de WhatsApp' : 'Canal de Telegram') + ' no configurado">' +
+                        icon +
+                        '<span>' + defaultLblTxt + '</span>' +
                     '</a>';
             }
         }
@@ -625,7 +633,9 @@ VIP.auth = (function () {
                 VIP.state.communityAlertForceUntilMs = d.communityAlertForceUntilMs || 0;
                 VIP.state.communityForceBannerMsg = d.communityForceBannerMsg || null;
                 VIP.state.joinedTelegram = !!d.joinedTelegram;
+                VIP.state.excludedFromCodes = !!d.excludedFromCodes;
                 try { renderTelegramQuickJoinBtn(); } catch (_) {}
+                try { renderRedeemCodeVisibility(); } catch (_) {}
                 VIP.state.teamName = d.teamName || null;
                 try { renderCommunityForceBanner(); } catch (_) {}
                 renderRefundsHomeUI();
@@ -697,7 +707,8 @@ VIP.auth = (function () {
         if (!btn) return;
         const link = (VIP.state.communityLink || VIP.state.communityLink2 || '').trim();
         const alreadyIn = !!VIP.state.joinedTelegram;
-        if (link && !alreadyIn) {
+        const excluded = !!VIP.state.excludedFromCodes;
+        if (link && !alreadyIn && !excluded) {
             btn.href = link;
             btn.style.display = 'flex';
         } else {
@@ -707,6 +718,22 @@ VIP.auth = (function () {
     // Exponemos al window para que el flow de canje pueda forzar el hide
     // inmediatamente al reclamar OK (sin esperar el próximo /me).
     window.renderTelegramQuickJoinBtn = renderTelegramQuickJoinBtn;
+
+    // Si el equipo del user está marcado como excluido del sistema de
+    // códigos (excludeFromCodes en el slot), ocultamos el card del código
+    // completo + el banner verde de "código activo ahora" + el botón
+    // celeste. Si está incluido, los volvemos a mostrar (toggle reversible
+    // por si el admin lo cambia mientras el user está abierto).
+    function renderRedeemCodeVisibility() {
+        const excluded = !!VIP.state.excludedFromCodes;
+        const card = document.getElementById('redeemCodeHomeCard');
+        const banner = document.getElementById('redeemActiveBanner');
+        const newsBanner = document.getElementById('telegramNewsBanner');
+        if (card) card.style.setProperty('display', excluded ? 'none' : 'flex', 'important');
+        if (banner && excluded) banner.style.display = 'none';
+        if (newsBanner) newsBanner.style.display = excluded ? 'none' : '';
+    }
+    window.renderRedeemCodeVisibility = renderRedeemCodeVisibility;
 
     function renderCommunityForceBanner() {
         const el = document.getElementById('communityForceReminderBanner');

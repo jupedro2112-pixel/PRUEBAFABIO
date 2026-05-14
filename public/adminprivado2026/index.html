@@ -564,6 +564,15 @@
                                    oninput="updateNotifPreview()">
                             <small style="color:#888;font-size:11px;display:block;margin-top:4px;">Sin distinguir mayúsculas/minúsculas. Si coincide con un prefijo del Número principal vigente, le llega solo a ese equipo.</small>
                         </div>
+                        <!-- Excluir equipos del broadcast a TODOS. Solo aplica
+                             cuando "Enviar a" = todos los usuarios. Lista de
+                             prefijos separados por coma (ej: zz_crazy, otro). -->
+                        <div id="notifExcludeGroup" style="margin-top:8px;background:rgba(255,170,102,0.06);border:1px dashed rgba(255,170,102,0.30);border-radius:8px;padding:8px 10px;">
+                            <label style="color:#ffaa66;font-size:10.5px;font-weight:800;letter-spacing:0.3px;display:block;margin-bottom:5px;">🚫 EXCLUIR equipos (opcional · solo aplica con "Todos")</label>
+                            <input type="text" id="notifExcludePrefixes" placeholder="ej: zz_crazy, otro_eq (separados por coma)"
+                                   style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid rgba(255,170,102,0.30);background:rgba(0,0,0,0.40);color:#ffaa66;font-size:12.5px;font-weight:700;font-family:monospace;letter-spacing:0.5px;box-sizing:border-box;">
+                            <small style="color:#888;font-size:10.5px;display:block;margin-top:4px;">Los users de estos prefijos NO reciben el push. Útil para dejar a zz_crazy o cualquier equipo afuera de una promo general.</small>
+                        </div>
                     </div>
 
                     <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
