@@ -6305,7 +6305,15 @@
     <script>
     (function () {
         function _getToken() {
-            try { return localStorage.getItem('authToken') || ''; } catch (_) { return ''; }
+            // El token JWT se guarda en localStorage con la key 'userToken'
+            // (ver auth.js líneas 172 y 274). VIP.state.currentToken es el
+            // mismo valor en memoria. Probamos ambos por las dudas.
+            try {
+                if (window.VIP && window.VIP.state && window.VIP.state.currentToken) {
+                    return window.VIP.state.currentToken;
+                }
+                return localStorage.getItem('userToken') || localStorage.getItem('authToken') || '';
+            } catch (_) { return ''; }
         }
         function _esc(s) {
             return String(s == null ? '' : s)
