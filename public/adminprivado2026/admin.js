@@ -529,6 +529,7 @@ function showSection(sectionKey) {
         loadEmpleados();
     } else if (sectionKey === 'redeemCodes') {
         loadRedeemCodes();
+        startRedeemCodesAutoRefresh();
     } else if (sectionKey === 'help') {
         loadHelp();
     } else if (sectionKey === 'notifs') {
@@ -28311,6 +28312,10 @@ function _renderRedeemCodeRow(it) {
     const isActive = !!it.isActive;
     const claims = it.claimsCount || 0;
     const remMin = Math.round((it.remainingMs || 0) / 60000);
+    const completedClaims = (it.claims || []).filter(c => c.status === 'completed').length;
+    const failedClaims = (it.claims || []).filter(c => c.status === 'pending_credit_failed').length;
+    const totalPaid = (it.claims || []).filter(c => c.status === 'completed').reduce((a, c) => a + Number(c.amount || 0), 0);
+
     let statusBadge;
     if (isActive) {
         statusBadge = '<span style="background:rgba(0,255,102,0.12);color:#0f0;padding:4px 10px;border-radius:6px;font-weight:900;font-size:10.5px;letter-spacing:0.8px;border:1px solid rgba(0,255,102,0.40);">✓ ACTIVO · ' + remMin + ' min</span>';
@@ -28318,14 +28323,18 @@ function _renderRedeemCodeRow(it) {
         const lbl = it.status === 'closed_expired' ? 'VENCIDO' : (it.status === 'closed_max' ? 'AGOTADO' : 'CERRADO');
         statusBadge = '<span style="background:rgba(255,80,80,0.10);color:#f55;padding:4px 10px;border-radius:6px;font-weight:900;font-size:10.5px;letter-spacing:0.8px;border:1px solid rgba(255,80,80,0.30);">' + lbl + '</span>';
     }
-    const totalPaid = (it.claims || []).filter(c => c.status === 'completed').reduce((a, c) => a + Number(c.amount || 0), 0);
-    let h = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:11px 14px;margin-bottom:10px;">';
-    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:7px;">';
+
+    // Borde verde más fuerte si está activo para llamar la atención.
+    const cardBorder = isActive ? '1.5px solid rgba(0,255,102,0.40)' : '1px solid rgba(255,255,255,0.08)';
+    const cardBg = isActive ? 'rgba(0,255,102,0.04)' : 'rgba(0,0,0,0.30)';
+    let h = '<div style="background:' + cardBg + ';border:' + cardBorder + ';border-radius:10px;padding:12px 14px;margin-bottom:12px;">';
+
+    // Header: código + monto + status + acciones
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">';
     h += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
     h += '<code style="background:rgba(0,200,150,0.12);color:#00c896;padding:5px 12px;border-radius:6px;font-weight:900;font-size:14px;letter-spacing:1.5px;border:1px solid rgba(0,200,150,0.40);">' + escapeHtml(it.code) + '</code>';
     h += '<span style="color:#00d4ff;font-weight:900;font-size:13.5px;">$' + Number(it.amountARS || 0).toLocaleString('es-AR') + '</span>';
     h += statusBadge;
-    h += '<span style="color:#aaa;font-size:11px;">Canjes: <strong style="color:#fff;">' + claims + '</strong>' + (it.maxClaims > 0 ? '/' + it.maxClaims : '') + ' · Pagado: <strong style="color:#aaffaa;">' + formatMoney(totalPaid) + '</strong></span>';
     h += '</div>';
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
     if (isActive) {
@@ -28334,23 +28343,70 @@ function _renderRedeemCodeRow(it) {
     h += '<button onclick="deleteRedeemCode(\'' + escapeHtml(it.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">🗑</button>';
     h += '</div>';
     h += '</div>';
-    if (it.notes) h += '<div style="color:#aaa;font-size:11px;font-style:italic;margin-bottom:5px;">"' + escapeHtml(it.notes) + '"</div>';
-    // Lista mini de canjes
-    if (claims > 0) {
-        h += '<details style="margin-top:6px;"><summary style="color:#888;font-size:10.5px;cursor:pointer;font-weight:700;">Ver canjes (' + claims + ')</summary>';
-        h += '<div style="margin-top:6px;font-size:11px;max-height:200px;overflow-y:auto;">';
-        for (const c of (it.claims || [])) {
-            const failed = c.status === 'pending_credit_failed';
-            h += '<div style="display:flex;justify-content:space-between;padding:3px 7px;border-radius:4px;background:' + (failed ? 'rgba(255,80,80,0.06)' : 'rgba(0,255,102,0.04)') + ';margin-bottom:2px;">';
-            h += '<span style="color:' + (failed ? '#f55' : '#aaffaa') + ';">' + (failed ? '⚠️ ' : '✓ ') + escapeHtml(c.username) + '</span>';
-            h += '<span style="color:#888;font-size:10.5px;">' + escapeHtml(formatDate(c.claimedAt)) + '</span>';
-            h += '</div>';
-            if (failed && c.creditError) h += '<div style="color:#f55;font-size:10px;padding:0 7px 5px;font-style:italic;">' + escapeHtml(c.creditError) + '</div>';
-        }
-        h += '</div></details>';
+
+    if (it.notes) h += '<div style="color:#aaa;font-size:11px;font-style:italic;margin-bottom:8px;">"' + escapeHtml(it.notes) + '"</div>';
+
+    // === ESTADÍSTICAS GRANDES — contador llamativo ===
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:7px;margin-bottom:10px;">';
+    // Reclamos totales
+    h += '<div style="background:rgba(0,200,150,0.10);border:1px solid rgba(0,200,150,0.35);border-radius:8px;padding:8px 10px;text-align:center;">';
+    h += '<div style="color:#aaa;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:2px;">Reclamos</div>';
+    h += '<div style="color:#00ff99;font-weight:900;font-size:22px;line-height:1;">' + claims + (it.maxClaims > 0 ? '<span style="font-size:13px;color:#888;font-weight:700;"> / ' + it.maxClaims + '</span>' : '') + '</div>';
+    h += '</div>';
+    // Pagado
+    h += '<div style="background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.30);border-radius:8px;padding:8px 10px;text-align:center;">';
+    h += '<div style="color:#aaa;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:2px;">Pagado</div>';
+    h += '<div style="color:#00d4ff;font-weight:900;font-size:18px;line-height:1;">' + formatMoney(totalPaid) + '</div>';
+    h += '</div>';
+    // Pendientes (acreditación fallida)
+    if (failedClaims > 0) {
+        h += '<div style="background:rgba(255,80,80,0.08);border:1px solid rgba(255,80,80,0.30);border-radius:8px;padding:8px 10px;text-align:center;">';
+        h += '<div style="color:#aaa;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:2px;">⚠ Pendiente</div>';
+        h += '<div style="color:#ff8080;font-weight:900;font-size:22px;line-height:1;">' + failedClaims + '</div>';
+        h += '</div>';
     }
     h += '</div>';
+
+    // === LISTA DE USUARIOS — siempre visible (no collapsed) ===
+    if (claims > 0) {
+        h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:8px 10px;">';
+        h += '<div style="color:#aaa;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">👥 Usuarios que canjearon</div>';
+        h += '<div style="font-size:11.5px;max-height:240px;overflow-y:auto;">';
+        for (const c of (it.claims || [])) {
+            const failed = c.status === 'pending_credit_failed';
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-radius:5px;background:' + (failed ? 'rgba(255,80,80,0.07)' : 'rgba(0,255,102,0.05)') + ';margin-bottom:3px;">';
+            h += '<span style="color:' + (failed ? '#ff8080' : '#aaffaa') + ';font-weight:700;">' + (failed ? '⚠️ ' : '✓ ') + escapeHtml(c.username) + '</span>';
+            h += '<span style="color:#888;font-size:10.5px;">' + escapeHtml(formatDate(c.claimedAt)) + '</span>';
+            h += '</div>';
+            if (failed && c.creditError) h += '<div style="color:#ff8080;font-size:10px;padding:0 8px 5px;font-style:italic;">' + escapeHtml(c.creditError) + '</div>';
+        }
+        h += '</div></div>';
+    } else {
+        h += '<div style="color:#666;font-size:11px;text-align:center;padding:8px;font-style:italic;">Todavía nadie canjeó este código.</div>';
+    }
+
+    h += '</div>';
     return h;
+}
+
+// Auto-refresh del listado de códigos cada 15s mientras el admin está en
+// la sección — para que vea los nuevos canjes aparecer en vivo sin tener
+// que recargar. Solo refresca si la sección está visible.
+let _redeemCodesAutoRefreshTimer = null;
+function startRedeemCodesAutoRefresh() {
+    if (_redeemCodesAutoRefreshTimer) return;
+    _redeemCodesAutoRefreshTimer = setInterval(() => {
+        const sec = document.getElementById('redeemCodesSection');
+        if (sec && sec.style.display !== 'none' && document.visibilityState === 'visible') {
+            loadRedeemCodes();
+        }
+    }, 15000);
+}
+function stopRedeemCodesAutoRefresh() {
+    if (_redeemCodesAutoRefreshTimer) {
+        clearInterval(_redeemCodesAutoRefreshTimer);
+        _redeemCodesAutoRefreshTimer = null;
+    }
 }
 
 // Crea el código y opcionalmente dispara la notif. forceTest=true obliga

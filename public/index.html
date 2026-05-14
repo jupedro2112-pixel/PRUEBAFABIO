@@ -2766,7 +2766,10 @@
                  regresiva y CTA grande para abrir el canal de Telegram. -->
             <div id="redeemActiveBanner" style="display:none;margin-bottom:10px;background:linear-gradient(135deg,rgba(0,200,150,0.20),rgba(34,160,217,0.10));border:2px solid #00c896;border-radius:11px;padding:12px 13px;text-align:center;box-shadow:0 0 18px rgba(0,200,150,0.45);animation:redeemActivePulse 1.8s ease-in-out infinite;">
                 <div style="color:#00c896;font-weight:900;font-size:11.5px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:3px;">🎁 Código activo ahora</div>
-                <div style="color:#fff;font-size:13.5px;font-weight:800;line-height:1.4;margin-bottom:6px;">Hay <strong id="redeemActiveAmount" style="color:#00ff99;">$0</strong> esperándote en Telegram.<br><span style="color:#aaa;font-size:11.5px;font-weight:700;">Quedan <strong id="redeemActiveCountdown" style="color:#ffd700;">--:--</strong> · Sumate al canal y reclamalo arriba ↗️</span></div>
+                <!-- OJO: NO mostramos el monto acá — el dueño quiere que sea
+                     SORPRESA hasta que el user canjee. Solo cuando reclama
+                     ve cuánto le acreditamos. -->
+                <div style="color:#fff;font-size:13.5px;font-weight:800;line-height:1.4;margin-bottom:6px;">¡Hay un código <strong style="color:#00ff99;">SORPRESA</strong> esperándote en Telegram!<br><span style="color:#aaa;font-size:11.5px;font-weight:700;">Quedan <strong id="redeemActiveCountdown" style="color:#ffd700;">--:--</strong> · Sumate al canal y reclamalo arriba ↗️</span></div>
                 <button type="button" id="redeemActiveOpenBtn" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:8px 14px;border-radius:8px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;cursor:pointer;">📲 Ver código en Telegram</button>
             </div>
             <style>
@@ -6525,8 +6528,7 @@
         function showRedeemActiveBanner(d) {
             const b = document.getElementById('redeemActiveBanner');
             if (!b) return;
-            const amt = document.getElementById('redeemActiveAmount');
-            if (amt) amt.textContent = '$' + Number(d.amountARS || 0).toLocaleString('es-AR');
+            // No pintamos el monto — es sorpresa.
             _redeemActiveExpiresAt = new Date(d.expiresAt).getTime();
             _updateRedeemCountdown();
             b.style.display = 'block';
