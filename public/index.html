@@ -2784,6 +2784,68 @@
         <!-- Ruleta diaria — 1 giro/día por user con PWA + notifs. Render
              dinámico desde js/roulette.js; oculto por default. -->
         <div id="rouletteHomeCard" style="display:none;"></div>
+        <!-- Transparencia: últimos ganadores de hoy en la ruleta diaria.
+             80% del nombre tapado. Render dinámico desde js/roulette.js. -->
+        <div id="rouletteRecentWinnersCard" style="display:none;max-width:560px;margin:8px auto 14px;background:rgba(0,0,0,0.45);border:1px solid rgba(255,215,0,0.25);border-radius:12px;padding:12px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span style="font-size:16px;">🏆</span>
+                <span style="color:#ffd700;font-weight:900;font-size:11.5px;letter-spacing:1px;">GANADORES DE HOY · RULETA DIARIA</span>
+                <span id="rouletteWinnersLive" style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:#25d366;font-weight:700;">
+                    <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#25d366;box-shadow:0 0 6px #25d366;animation:winners-pulse 1.4s ease-in-out infinite;"></span>
+                    EN VIVO
+                </span>
+            </div>
+            <div id="rouletteWinnersList" style="max-height:280px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:12px;line-height:1.55;"></div>
+            <div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:11.5px;padding:14px 8px;">Todavía no hay ganadores hoy. Sé el primero — girá la ruleta.</div>
+            <div style="text-align:center;font-size:10.5px;color:#777;margin-top:8px;padding-top:7px;border-top:1px dashed rgba(255,255,255,0.10);">
+                🔒 Los nombres están parcialmente ocultos por privacidad. Los premios son reales y se acreditan automáticamente.
+            </div>
+        </div>
+        <style>
+            @keyframes winners-pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50%      { opacity: 0.55; transform: scale(1.35); }
+            }
+            #rouletteWinnersList .winner-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 8px;
+                border-bottom: 1px solid rgba(255,255,255,0.06);
+            }
+            #rouletteWinnersList .winner-row:last-child { border-bottom: none; }
+            #rouletteWinnersList .winner-row.is-me {
+                background: rgba(255,215,0,0.08);
+                border-radius: 6px;
+            }
+            #rouletteWinnersList .winner-user {
+                color: #ccc;
+                font-family: monospace;
+                letter-spacing: 0.5px;
+                font-size: 12.5px;
+                flex: 1;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            #rouletteWinnersList .winner-row.is-me .winner-user {
+                color: #ffd700;
+                font-weight: 800;
+            }
+            #rouletteWinnersList .winner-prize {
+                color: #25d366;
+                font-weight: 800;
+                font-size: 12.5px;
+                flex-shrink: 0;
+            }
+            #rouletteWinnersList .winner-time {
+                color: #777;
+                font-size: 10.5px;
+                flex-shrink: 0;
+                min-width: 56px;
+                text-align: right;
+            }
+        </style>
         <div id="rouletteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:25500;align-items:flex-start;justify-content:center;padding:8px;overflow-y:auto;-webkit-overflow-scrolling:touch;" onclick="if(event.target===event.currentTarget)VIP.roulette && VIP.roulette.close()"></div>
 
         <!-- Card de notif-check activo. Render dinámico desde

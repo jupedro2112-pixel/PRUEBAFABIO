@@ -294,19 +294,71 @@
         }
     }
 
-    VIP.roulette = { loadStatus, open, close, spin };
+    // Lista de ganadores del día (transparencia). Aparece debajo del
+    // rouletteHomeCard. 80% del nombre tapado server-side.
+    async function loadRecentWinners() {
+        const card = document.getElementById('rouletteRecentWinnersCard');
+        const list = document.getElementById('rouletteWinnersList');
+        const empty = document.getElementById('rouletteWinnersEmpty');
+        if (!card || !list || !empty) return;
+        if (!VIP.state || !VIP.state.currentToken) return;
+        try {
+            const r = await fetch(`${VIP.config.API_URL}/api/roulette/recent-winners?limit=50`, {
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
+            });
+            if (!r.ok) return;
+            const d = await r.json();
+            const winners = Array.isArray(d.winners) ? d.winners : [];
+            card.style.display = '';
+            if (winners.length === 0) {
+                list.innerHTML = '';
+                empty.style.display = '';
+                return;
+            }
+            empty.style.display = 'none';
+            let html = '';
+            for (const w of winners) {
+                const ago = w.minutesAgo < 1 ? 'recién' :
+                           w.minutesAgo < 60 ? (w.minutesAgo + ' min') :
+                           (Math.floor(w.minutesAgo / 60) + 'h');
+                html += '<div class="winner-row' + (w.isMe ? ' is-me' : '') + '">';
+                html += '<span class="winner-user">👤 ' + _esc(w.username) + '</span>';
+                html += '<span class="winner-prize">+$' + _fmt(w.prizeARS) + '</span>';
+                html += '<span class="winner-time">' + ago + '</span>';
+                html += '</div>';
+            }
+            list.innerHTML = html;
+        } catch (e) { /* best-effort */ }
+    }
+
+    VIP.roulette = { loadStatus, open, close, spin, loadRecentWinners };
 
     // Boot: cargar status apenas el usuario esté autenticado.
     document.addEventListener('DOMContentLoaded', () => {
         const tryLoad = () => {
-            if (VIP.state && VIP.state.currentToken) loadStatus();
-            else setTimeout(tryLoad, 1500);
+            if (VIP.state && VIP.state.currentToken) {
+                loadStatus();
+                loadRecentWinners();
+            } else {
+                setTimeout(tryLoad, 1500);
+            }
         };
         setTimeout(tryLoad, 800);
     });
 
     // Refresh al volver visible.
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') loadStatus();
+        if (document.visibilityState === 'visible') {
+            loadStatus();
+            loadRecentWinners();
+        }
     });
+
+    // Auto-refresh cada 30s para mostrar nuevos ganadores en vivo. Solo
+    // mientras la página es visible, para no quemar batería en background.
+    setInterval(() => {
+        if (document.visibilityState === 'visible' && VIP.state && VIP.state.currentToken) {
+            loadRecentWinners();
+        }
+    }, 30000);
 })();

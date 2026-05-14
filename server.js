@@ -20056,6 +20056,55 @@ app.put('/api/admin/roulette/budget', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// GET /api/roulette/recent-winners — últimos N ganadores de HOY (dateKey ART).
+// Lista pública (requiere auth para evitar scraping pero no expone identidades).
+// Usado en el home para social-proof debajo del card de Ruleta Diaria. Tapa
+// 80% inicial del username. Default 50, máximo 100.
+app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const dateKey = _rouletteDateKeyART();
+    const winners = await DailyRouletteSpin.find({
+      dateKey,
+      prizeARS: { $gt: 0 }
+    })
+      .sort({ spunAt: -1 })
+      .limit(limit)
+      .select('username prizeARS spunAt')
+      .lean();
+    const _mask = (u) => {
+      const s = String(u || '').trim();
+      if (!s) return '—';
+      const len = s.length;
+      const maskN = Math.max(1, Math.floor(len * 0.8));
+      const visibleN = Math.max(2, len - maskN);
+      const startVisible = len - visibleN;
+      return '*'.repeat(startVisible) + s.slice(startVisible);
+    };
+    const me = String((req.user && req.user.username) || '').toLowerCase();
+    const items = winners.map(w => {
+      const isMe = String(w.username || '').toLowerCase() === me;
+      const ageMs = Date.now() - new Date(w.spunAt).getTime();
+      const minutesAgo = Math.max(0, Math.floor(ageMs / 60000));
+      return {
+        username: isMe ? w.username : _mask(w.username),
+        prizeARS: w.prizeARS,
+        spunAt: w.spunAt,
+        minutesAgo,
+        isMe
+      };
+    });
+    return res.json({
+      dateKey,
+      count: items.length,
+      winners: items
+    });
+  } catch (err) {
+    logger.error(`/api/roulette/recent-winners: ${err.message}`);
+    return res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /api/admin/roulette/test-spin — simula un giro para un username
 // específico sin afectar su spin real del día. Pick weighted con la misma
 // tabla ROULETTE_PRIZES. Devuelve qué le habría salido. NO escribe nada
