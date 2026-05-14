@@ -35277,6 +35277,26 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
     const code = _redeemNormalize((req.body || {}).code);
     if (!code) return res.status(400).json({ error: 'Ingresá el código' });
 
+    // REQUISITO: PWA instalada + notifs activas (proxy = tener tokens FCM).
+    // Si el user no tiene tokens registrados, no permitimos reclamar — esto
+    // empuja a la gente a bajar la app y aceptar notifs, mismo criterio que
+    // el bono de bienvenida. Anti-fraude + obliga a tener push activo para
+    // recibir los próximos códigos en Telegram.
+    const userDoc = await User.findOne({
+      $or: [{ _id: userId }, { username: String(username || '').toLowerCase() }]
+    }).select('fcmToken fcmTokens username').lean();
+
+    const tokenCount = (userDoc && Array.isArray(userDoc.fcmTokens))
+      ? userDoc.fcmTokens.filter(t => t && t.token).length
+      : 0;
+    const hasAnyToken = tokenCount > 0 || !!(userDoc && userDoc.fcmToken);
+    if (!hasAnyToken) {
+      return res.status(403).json({
+        error: 'Para reclamar el código necesitás instalar la app y activar las notificaciones.',
+        requirement: 'pwa_install_notif'
+      });
+    }
+
     const rc = await RedeemCode.findOne({ code });
     if (!rc) return res.status(404).json({ error: 'Código inválido o vencido' });
 

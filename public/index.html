@@ -6312,7 +6312,97 @@
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
+        // Verificaciones PWA + notifs (mismo criterio que welcome bonus).
+        // Si refunds.js ya las definió, las reusamos; si no, fallback inline.
+        function _redeemIsStandalone() {
+            try {
+                if (window.VIP && window.VIP.refunds && typeof window.VIP.refunds.isStandalone === 'function') {
+                    return !!window.VIP.refunds.isStandalone();
+                }
+                return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                    || window.navigator.standalone === true;
+            } catch (_) { return false; }
+        }
+        function _redeemNotifGranted() {
+            try {
+                if (window.VIP && window.VIP.refunds && typeof window.VIP.refunds.isNotifGranted === 'function') {
+                    return !!window.VIP.refunds.isNotifGranted();
+                }
+                return ('Notification' in window) && Notification.permission === 'granted';
+            } catch (_) { return false; }
+        }
+
+        // Modal "necesitás la app + notifs" para reclamar el código.
+        // Reusamos los handlers de refunds.js (installApp + enableNotifications)
+        // así el flujo es idéntico al del bono de bienvenida.
+        function _openRedeemRequirementsModal() {
+            const old = document.getElementById('redeemReqsModal');
+            if (old) old.remove();
+            const inApp = _redeemIsStandalone();
+            const notifOk = _redeemNotifGranted();
+            const overlay = document.createElement('div');
+            overlay.id = 'redeemReqsModal';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
+            overlay.innerHTML =
+                '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #ffaa44;border-radius:13px;padding:22px 20px;max-width:400px;width:100%;color:#fff;box-shadow:0 0 30px rgba(255,170,68,0.30);">' +
+                  '<div style="text-align:center;margin-bottom:14px;">' +
+                    '<div style="font-size:42px;margin-bottom:4px;">🔒</div>' +
+                    '<div style="color:#ffaa44;font-weight:900;font-size:16px;letter-spacing:0.5px;">Para reclamar el código</div>' +
+                    '<div style="color:#aaa;font-size:12px;margin-top:6px;line-height:1.5;">Necesitás <strong style="color:#fff;">instalar la app</strong> y <strong style="color:#fff;">activar las notificaciones</strong>. Es para que recibas el aviso de los próximos códigos y para confirmar que sos un usuario real.</div>' +
+                  '</div>' +
+                  '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,170,68,0.25);border-radius:9px;padding:11px 13px;margin-bottom:14px;font-size:12.5px;line-height:1.6;">' +
+                    '<div style="margin-bottom:6px;color:#fff;">' + (inApp ? '✅' : '⏳') + ' <strong>App instalada y abierta como app</strong></div>' +
+                    '<div style="color:#fff;">' + (notifOk ? '✅' : '⏳') + ' <strong>Notificaciones permitidas</strong></div>' +
+                  '</div>' +
+                  '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                    (!inApp
+                      ? '<button type="button" id="redeemReqInstall" style="background:linear-gradient(135deg,#ffd700 0%,#ffaa00 100%);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:13px;cursor:pointer;">📱 Instalar la app</button>'
+                      : '') +
+                    (inApp && !notifOk
+                      ? '<button type="button" id="redeemReqNotif" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:13px;cursor:pointer;">🔔 Activar notificaciones</button>'
+                      : '') +
+                    '<button type="button" id="redeemReqClose" style="background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:9px;font-weight:800;font-size:12.5px;cursor:pointer;">Después</button>' +
+                  '</div>' +
+                '</div>';
+            document.body.appendChild(overlay);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+            const closeBtn = document.getElementById('redeemReqClose');
+            if (closeBtn) closeBtn.onclick = () => overlay.remove();
+            const installBtn = document.getElementById('redeemReqInstall');
+            if (installBtn) installBtn.onclick = async () => {
+                try {
+                    if (window.VIP && window.VIP.refunds && typeof window.VIP.refunds.handleRequirementInstall === 'function') {
+                        await window.VIP.refunds.handleRequirementInstall();
+                    } else if (window.VIP && window.VIP.ui && typeof window.VIP.ui.installApp === 'function') {
+                        await window.VIP.ui.installApp();
+                    } else {
+                        alert('Buscá "Instalar app" en el menú de tu navegador.');
+                    }
+                } catch (_) {}
+                setTimeout(() => { overlay.remove(); window.openRedeemCodeModal(); }, 800);
+            };
+            const notifBtn = document.getElementById('redeemReqNotif');
+            if (notifBtn) notifBtn.onclick = async () => {
+                try {
+                    if (typeof window.enableNotifications === 'function') {
+                        await window.enableNotifications();
+                    } else if (window.VIP && window.VIP.notifications && typeof window.VIP.notifications.requestNotificationPermission === 'function') {
+                        await window.VIP.notifications.requestNotificationPermission();
+                    } else if ('Notification' in window) {
+                        await Notification.requestPermission();
+                    }
+                } catch (_) {}
+                setTimeout(() => { overlay.remove(); window.openRedeemCodeModal(); }, 600);
+            };
+        }
+
         window.openRedeemCodeModal = function () {
+            // Gate: PWA standalone + notifs granted. Si no se cumple,
+            // abrimos el modal de requisitos y NO el del código.
+            if (!_redeemIsStandalone() || !_redeemNotifGranted()) {
+                _openRedeemRequirementsModal();
+                return;
+            }
             const old = document.getElementById('redeemCodeModal');
             if (old) old.remove();
             const overlay = document.createElement('div');
@@ -6359,6 +6449,13 @@
                     });
                     const d = await r.json().catch(() => ({}));
                     if (!r.ok || !d.success) {
+                        // Caso especial: el backend rechazó por falta de PWA/notifs.
+                        // Cerrar el modal del input y abrir el de requisitos.
+                        if (d && d.requirement === 'pwa_install_notif') {
+                            overlay.remove();
+                            _openRedeemRequirementsModal();
+                            return;
+                        }
                         errBox.textContent = '❌ ' + (d.error || 'Error al canjear');
                         errBox.style.color = '#ff8080';
                         btn.disabled = false;
