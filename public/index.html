@@ -2436,10 +2436,20 @@
             <!-- Wrapper visible incluso en refunds-only mode (whitelisteado en CSS). -->
             <div class="team-lookup-wrapper">
                 <button id="createUserHelpBtn" type="button" class="btn btn-secondary" onclick="showCreateUserHelp()">🔎 Buscar usuario</button>
-                <!-- Soporte directo en el login (WhatsApp + Telegram). JS rellena los hrefs. -->
-                <div style="display: flex; gap: 8px; margin-top: 8px;">
-                    <a id="loginSupportWaBtn" href="#" target="_blank" rel="noopener" style="flex: 1; text-align: center; padding: 9px; background: rgba(37,211,102,0.10); border: 1px solid rgba(37,211,102,0.45); color: #25d366; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12px;">📞 Soporte WhatsApp</a>
-                    <a id="loginSupportTgBtn" href="#" target="_blank" rel="noopener" style="flex: 1; text-align: center; padding: 9px; background: rgba(34,160,217,0.10); border: 1px solid rgba(34,160,217,0.45); color: #66b6ee; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12px;">📣 Soporte Telegram</a>
+                <!-- Soporte directo en el login (WhatsApp + Telegram) — logos centrados, sin texto. -->
+                <div style="display: flex; gap: 10px; margin-top: 10px; justify-content: center;">
+                    <a id="loginSupportWaBtn" href="#" target="_blank" rel="noopener" title="Soporte WhatsApp"
+                       style="width: 56px; height: 56px; display: inline-flex; align-items: center; justify-content: center; background: #25d366; border: none; border-radius: 14px; box-shadow: 0 3px 12px rgba(37,211,102,0.40);">
+                        <svg width="30" height="30" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path fill="#fff" d="M16.003 3C9.376 3 4 8.376 4 15.001c0 2.39.703 4.616 1.913 6.498L4 28l6.681-1.872A11.945 11.945 0 0 0 16.003 27C22.629 27 28 21.629 28 15.001S22.629 3 16.003 3Zm6.835 16.7c-.286.808-1.677 1.534-2.358 1.62-.6.077-1.379.11-2.225-.139-.514-.158-1.174-.376-2.022-.745-3.557-1.536-5.881-5.116-6.057-5.352-.176-.235-1.445-1.918-1.445-3.658 0-1.74.911-2.595 1.234-2.946.323-.351.706-.439.94-.439s.47.003.675.013c.216.011.506-.082.793.605.286.687.97 2.376 1.055 2.546.085.17.142.37.027.605-.115.235-.171.379-.342.585-.171.205-.36.46-.515.615-.17.171-.347.357-.149.7.198.343.882 1.453 1.893 2.353 1.299 1.156 2.395 1.513 2.737 1.683.343.17.543.143.745-.086.205-.235.857-1.001 1.087-1.345.229-.343.46-.286.773-.171.314.115 2 .943 2.345 1.114.343.171.572.257.659.4.085.143.085.827-.201 1.634Z"/>
+                        </svg>
+                    </a>
+                    <a id="loginSupportTgBtn" href="#" target="_blank" rel="noopener" title="Soporte Telegram"
+                       style="width: 56px; height: 56px; display: inline-flex; align-items: center; justify-content: center; background: #22a0d9; border: none; border-radius: 14px; box-shadow: 0 3px 12px rgba(34,160,217,0.40);">
+                        <svg width="30" height="30" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path fill="#fff" d="M27.6 5.4 4.5 14.3c-1.6.6-1.6 1.5-.3 1.9l5.9 1.9 13.7-8.6c.6-.4 1.2-.2.8.2L13.4 19.7l-.4 6c.6 0 .9-.3 1.2-.6l2.9-2.8 5.9 4.4c1.1.6 1.9.3 2.2-1l4-18.8c.4-1.6-.6-2.4-1.6-1.9Z"/>
+                        </svg>
+                    </a>
                 </div>
             </div>
 
@@ -2461,13 +2471,21 @@
             <span class="logout-username" id="refundsLogoutUsername"></span>
             <button type="button" id="ownerLogoutSmallBtn" onclick="ownerLogoutSmall()" title="Cerrar sesión (solo owner)" style="display:none; background:rgba(255,80,80,0.10); border:1px solid rgba(255,100,100,0.45); color:#ff8585; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; cursor:pointer; margin-left:6px; letter-spacing:0.3px;">↪ salir</button>
         </div>
-        <!-- Badges de soporte top-right (post login): WhatsApp + Telegram.
-             JS llena los hrefs con wa.me/<supportPhone> y t.me/<handle>. -->
-        <div id="supportTopWrap" style="position: fixed; top: 12px; right: 12px; z-index: 25000; display: none; gap: 6px;">
-            <a id="supportTopBadge" href="#" target="_blank" rel="noopener" title="Hablá con soporte por WhatsApp"
-               style="background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; padding: 7px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 800; text-decoration: none; box-shadow: 0 3px 10px rgba(37,211,102,0.40);">📞 Soporte</a>
-            <a id="supportTopTgBadge" href="#" target="_blank" rel="noopener" title="Hablá con soporte por Telegram"
-               style="background: linear-gradient(135deg, #1e88e5, #22a0d9); color: #fff; padding: 7px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 800; text-decoration: none; box-shadow: 0 3px 10px rgba(34,160,217,0.40);">📣 TG</a>
+        <!-- Badges de soporte top-right (post login): WhatsApp + Telegram con
+             logos centrados, sin texto. JS llena los hrefs. -->
+        <div id="supportTopWrap" style="position: fixed; top: 12px; right: 12px; z-index: 25000; display: none; gap: 8px;">
+            <a id="supportTopBadge" href="#" target="_blank" rel="noopener" title="Soporte WhatsApp"
+               style="width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; background: #25d366; border-radius: 50%; box-shadow: 0 3px 10px rgba(37,211,102,0.45);">
+                <svg width="24" height="24" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <path fill="#fff" d="M16.003 3C9.376 3 4 8.376 4 15.001c0 2.39.703 4.616 1.913 6.498L4 28l6.681-1.872A11.945 11.945 0 0 0 16.003 27C22.629 27 28 21.629 28 15.001S22.629 3 16.003 3Zm6.835 16.7c-.286.808-1.677 1.534-2.358 1.62-.6.077-1.379.11-2.225-.139-.514-.158-1.174-.376-2.022-.745-3.557-1.536-5.881-5.116-6.057-5.352-.176-.235-1.445-1.918-1.445-3.658 0-1.74.911-2.595 1.234-2.946.323-.351.706-.439.94-.439s.47.003.675.013c.216.011.506-.082.793.605.286.687.97 2.376 1.055 2.546.085.17.142.37.027.605-.115.235-.171.379-.342.585-.171.205-.36.46-.515.615-.17.171-.347.357-.149.7.198.343.882 1.453 1.893 2.353 1.299 1.156 2.395 1.513 2.737 1.683.343.17.543.143.745-.086.205-.235.857-1.001 1.087-1.345.229-.343.46-.286.773-.171.314.115 2 .943 2.345 1.114.343.171.572.257.659.4.085.143.085.827-.201 1.634Z"/>
+                </svg>
+            </a>
+            <a id="supportTopTgBadge" href="#" target="_blank" rel="noopener" title="Soporte Telegram"
+               style="width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; background: #22a0d9; border-radius: 50%; box-shadow: 0 3px 10px rgba(34,160,217,0.45);">
+                <svg width="24" height="24" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                    <path fill="#fff" d="M27.6 5.4 4.5 14.3c-1.6.6-1.6 1.5-.3 1.9l5.9 1.9 13.7-8.6c.6-.4 1.2-.2.8.2L13.4 19.7l-.4 6c.6 0 .9-.3 1.2-.6l2.9-2.8 5.9 4.4c1.1.6 1.9.3 2.2-1l4-18.8c.4-1.6-.6-2.4-1.6-1.9Z"/>
+                </svg>
+            </a>
         </div>
 
         <!-- Refunds-only: bloque de bienvenida (solo texto, sin logo) -->
@@ -2779,7 +2797,9 @@
              vuelve a aparecer. Click → dispara VIP.ui.installApp() que
              abre el modal con instrucciones paso-a-paso por plataforma
              (iOS Safari, iOS Chrome, Android, Windows, Mac). -->
-        <div class="install-hero-card" id="installHeroCard" hidden>
+        <div class="install-hero-card" id="installHeroCard" hidden style="position:relative;">
+            <button type="button" id="installHeroDismissBtn" onclick="dismissInstallHero(event)" title="Cerrar"
+                    style="position:absolute; top:6px; right:6px; width:24px; height:24px; border-radius:50%; background:rgba(0,0,0,0.50); border:1px solid rgba(255,255,255,0.20); color:#fff; font-size:14px; font-weight:900; cursor:pointer; line-height:1; display:flex; align-items:center; justify-content:center; padding:0; z-index:3;">✕</button>
             <div class="install-hero-pulse">🎁</div>
             <div class="install-hero-title">BONO POR INSTALAR<span class="install-hero-title-amount">$5.000 GRATIS</span></div>
             <div class="install-hero-sub" id="installHeroSub">3 pasos cortos y lo cobrás.</div>
@@ -3653,10 +3673,20 @@
                      contacto general de soporte (WhatsApp + Telegram). JS rellena
                      los hrefs con wa.me/<supportPhone> y t.me/<handle>. -->
                 <div id="createUserHelpSupportRow" style="margin-top: 14px; padding: 11px 12px; background: rgba(37,211,102,0.08); border: 1px dashed rgba(37,211,102,0.45); border-radius: 10px; text-align: center;">
-                    <div style="font-size: 11.5px; color: #aaa; margin-bottom: 8px;">¿No sabés qué poner?</div>
-                    <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
-                        <a id="createUserHelpSupportBtn" href="#" target="_blank" rel="noopener" style="display: inline-block; padding: 8px 12px; background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12.5px;">📞 Soporte WhatsApp</a>
-                        <a id="createUserHelpSupportTgBtn" href="#" target="_blank" rel="noopener" style="display: inline-block; padding: 8px 12px; background: linear-gradient(135deg, #1e88e5, #22a0d9); color: #fff; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12.5px;">📣 Soporte Telegram</a>
+                    <div style="font-size: 11.5px; color: #aaa; margin-bottom: 8px;">¿No sabés qué poner? Soporte:</div>
+                    <div style="display: flex; gap: 10px; justify-content: center;">
+                        <a id="createUserHelpSupportBtn" href="#" target="_blank" rel="noopener" title="Soporte WhatsApp"
+                           style="width: 50px; height: 50px; display: inline-flex; align-items: center; justify-content: center; background: #25d366; border-radius: 12px; box-shadow: 0 3px 10px rgba(37,211,102,0.35);">
+                            <svg width="28" height="28" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                <path fill="#fff" d="M16.003 3C9.376 3 4 8.376 4 15.001c0 2.39.703 4.616 1.913 6.498L4 28l6.681-1.872A11.945 11.945 0 0 0 16.003 27C22.629 27 28 21.629 28 15.001S22.629 3 16.003 3Zm6.835 16.7c-.286.808-1.677 1.534-2.358 1.62-.6.077-1.379.11-2.225-.139-.514-.158-1.174-.376-2.022-.745-3.557-1.536-5.881-5.116-6.057-5.352-.176-.235-1.445-1.918-1.445-3.658 0-1.74.911-2.595 1.234-2.946.323-.351.706-.439.94-.439s.47.003.675.013c.216.011.506-.082.793.605.286.687.97 2.376 1.055 2.546.085.17.142.37.027.605-.115.235-.171.379-.342.585-.171.205-.36.46-.515.615-.17.171-.347.357-.149.7.198.343.882 1.453 1.893 2.353 1.299 1.156 2.395 1.513 2.737 1.683.343.17.543.143.745-.086.205-.235.857-1.001 1.087-1.345.229-.343.46-.286.773-.171.314.115 2 .943 2.345 1.114.343.171.572.257.659.4.085.143.085.827-.201 1.634Z"/>
+                            </svg>
+                        </a>
+                        <a id="createUserHelpSupportTgBtn" href="#" target="_blank" rel="noopener" title="Soporte Telegram"
+                           style="width: 50px; height: 50px; display: inline-flex; align-items: center; justify-content: center; background: #22a0d9; border-radius: 12px; box-shadow: 0 3px 10px rgba(34,160,217,0.35);">
+                            <svg width="28" height="28" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                <path fill="#fff" d="M27.6 5.4 4.5 14.3c-1.6.6-1.6 1.5-.3 1.9l5.9 1.9 13.7-8.6c.6-.4 1.2-.2.8.2L13.4 19.7l-.4 6c.6 0 .9-.3 1.2-.6l2.9-2.8 5.9 4.4c1.1.6 1.9.3 2.2-1l4-18.8c.4-1.6-.6-2.4-1.6-1.9Z"/>
+                            </svg>
+                        </a>
                     </div>
                 </div>
                 <div class="modal-actions">

@@ -1035,19 +1035,37 @@ if (VIP.ui.isAppStandalone()) {
         }
     }
 
+    // Dismiss persistente del card (X de cierre). Por username; si reinstala
+    // la app y entra de nuevo, vuelve a verlo (a menos que ya esté reclamado).
+    function _heroDismissKey() {
+        try {
+            const u = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '_anon';
+            return 'installHeroDismissed:' + u;
+        } catch (_) { return 'installHeroDismissed:_anon'; }
+    }
+    function _isHeroDismissed() {
+        try { return localStorage.getItem(_heroDismissKey()) === '1'; } catch (_) { return false; }
+    }
+
     function renderHero() {
         if (!card) return;
         const installed = isInstalled();
         const inApp     = isInApp();
         const notifOk   = isNotifOk();
 
-        // Si claimed locally, ocultar y dejar que welcomeBonusCard maneje el resto.
+        // Si ya reclamó el bono, ocultar definitivamente.
         try {
             if (VIP.refunds && typeof VIP.refunds._isLocallyMarkedClaimed === 'function' && VIP.refunds._isLocallyMarkedClaimed()) {
                 card.hidden = true;
                 return;
             }
         } catch (_) {}
+
+        // Si el user lo cerró con la X, respetar el dismiss.
+        if (_isHeroDismissed()) {
+            card.hidden = true;
+            return;
+        }
 
         card.hidden = false;
 
@@ -1162,6 +1180,13 @@ if (VIP.ui.isAppStandalone()) {
 
     // Exponer global para que otros módulos puedan refrescar.
     window.renderInstallHeroCard = renderHero;
+
+    // Handler de la X de cierre.
+    window.dismissInstallHero = function dismissInstallHero(e) {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        try { localStorage.setItem(_heroDismissKey(), '1'); } catch (_) {}
+        if (card) card.hidden = true;
+    };
 })();
 
 // Mobile drawer toggle
