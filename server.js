@@ -3996,6 +3996,59 @@ app.get('/api/config/canal-url', authMiddleware, async (req, res) => {
   }
 });
 
+// Contacto de SOPORTE — público (sin auth) porque se muestra antes y
+// después del login. Defaults si no están cargados.
+const SUPPORT_PHONE_DEFAULT = '5491155176883';
+const SUPPORT_TELEGRAM_DEFAULT = '@VIP_SOPORTE';
+app.get('/api/config/support-phone', async (req, res) => {
+  try {
+    const cfg = await getConfig('supportPhone').catch(() => null);
+    const phone    = (cfg && cfg.phone)    ? String(cfg.phone).trim()    : SUPPORT_PHONE_DEFAULT;
+    const label    = (cfg && cfg.label)    ? String(cfg.label).trim()    : 'Soporte';
+    const telegram = (cfg && cfg.telegram) ? String(cfg.telegram).trim() : SUPPORT_TELEGRAM_DEFAULT;
+    return res.json({ phone, label, telegram });
+  } catch (e) {
+    return res.json({ phone: SUPPORT_PHONE_DEFAULT, label: 'Soporte', telegram: SUPPORT_TELEGRAM_DEFAULT });
+  }
+});
+
+// Admin-only: setear/modificar el contacto de soporte (phone + telegram).
+app.put('/api/admin/config/support-phone', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const phoneRaw    = String((req.body && req.body.phone)    || '').trim();
+    const telegramRaw = String((req.body && req.body.telegram) || '').trim();
+    const label       = String((req.body && req.body.label)    || 'Soporte').trim().slice(0, 40);
+    if (!phoneRaw && !telegramRaw) return res.status(400).json({ error: 'Falta phone o telegram' });
+    let digits = '';
+    if (phoneRaw) {
+      digits = phoneRaw.replace(/[^0-9]/g, '');
+      if (digits.length < 8 || digits.length > 20) {
+        return res.status(400).json({ error: 'Teléfono inválido (entre 8 y 20 dígitos).' });
+      }
+    }
+    // Normalizar handle de Telegram: aceptamos "@VIP_SOPORTE", "VIP_SOPORTE"
+    // o "https://t.me/VIP_SOPORTE". Guardamos siempre con "@" al inicio.
+    let telegram = '';
+    if (telegramRaw) {
+      let cleaned = telegramRaw.replace(/^https?:\/\/t\.me\//i, '').replace(/^@?/, '').trim();
+      cleaned = cleaned.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
+      if (!cleaned) return res.status(400).json({ error: 'Handle de Telegram inválido' });
+      telegram = '@' + cleaned;
+    }
+    const current = (await getConfig('supportPhone').catch(() => null)) || {};
+    const next = {
+      phone:    digits   || current.phone    || SUPPORT_PHONE_DEFAULT,
+      telegram: telegram || current.telegram || SUPPORT_TELEGRAM_DEFAULT,
+      label
+    };
+    await setConfig('supportPhone', next);
+    return res.json({ ok: true, ...next });
+  } catch (err) {
+    logger.error(`[admin/support-phone PUT] ${err.message}`);
+    return res.status(500).json({ error: 'Error guardando' });
+  }
+});
+
 app.post('/api/cbu/request', authMiddleware, async (req, res) => {
   try {
     // Rate limiting por usuario: máximo 1 solicitud de CBU cada 10 segundos

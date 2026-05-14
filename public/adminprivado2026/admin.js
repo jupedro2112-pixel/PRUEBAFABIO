@@ -749,6 +749,8 @@ async function loadUserLines() {
         console.error('loadUserLines error:', err);
         renderUserLinesSlots([]);
     }
+    // En la misma sección está el contacto de soporte: lo cargamos en paralelo.
+    try { loadSupportPhone(); } catch (_) {}
 }
 
 // IMPORT POR SLOT y desde tab "Importar líneas": UI removida temporalmente
@@ -796,6 +798,55 @@ async function saveUserLines() {
         showToast('Error al guardar números', 'error');
     }
 }
+
+// ============================================
+// NÚMERO/HANDLE DE SOPORTE — config simple (phone + telegram + label)
+// ============================================
+async function loadSupportPhone() {
+    try {
+        const r = await fetch('/api/config/support-phone');
+        const data = await r.json().catch(() => ({}));
+        const phoneInp = document.getElementById('supportPhoneInput');
+        const tgInp    = document.getElementById('supportTelegramInput');
+        if (phoneInp && data.phone) phoneInp.value = data.phone;
+        if (tgInp && data.telegram) tgInp.value = data.telegram;
+    } catch (err) {
+        console.warn('loadSupportPhone error:', err);
+    }
+}
+window.loadSupportPhone = loadSupportPhone;
+
+async function saveSupportPhone() {
+    const phoneInp = document.getElementById('supportPhoneInput');
+    const tgInp    = document.getElementById('supportTelegramInput');
+    const status   = document.getElementById('supportPhoneStatus');
+    const phone    = (phoneInp && phoneInp.value || '').trim();
+    const telegram = (tgInp    && tgInp.value    || '').trim();
+    if (!phone && !telegram) {
+        if (status) { status.textContent = 'Cargá al menos un contacto.'; status.style.color = '#ff8080'; }
+        return;
+    }
+    if (status) { status.textContent = 'Guardando...'; status.style.color = '#aaa'; }
+    try {
+        const r = await authFetch('/api/admin/config/support-phone', {
+            method: 'PUT',
+            body: JSON.stringify({ phone, telegram, label: 'Soporte' })
+        });
+        const data = await r.json();
+        if (r.ok) {
+            if (status) { status.textContent = '✅ Guardado: ' + (data.phone || '') + (data.telegram ? ' · ' + data.telegram : ''); status.style.color = '#25d366'; }
+            // Refrescar inputs con valores normalizados.
+            if (phoneInp && data.phone)    phoneInp.value = data.phone;
+            if (tgInp    && data.telegram) tgInp.value    = data.telegram;
+        } else {
+            if (status) { status.textContent = data.error || 'Error al guardar.'; status.style.color = '#ff8080'; }
+        }
+    } catch (err) {
+        console.error('saveSupportPhone error:', err);
+        if (status) { status.textContent = 'Error de red.'; status.style.color = '#ff8080'; }
+    }
+}
+window.saveSupportPhone = saveSupportPhone;
 
 // ============================================
 // LINKS DE COMUNIDAD POR USUARIO — config (slots por prefijo + default)

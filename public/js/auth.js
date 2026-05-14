@@ -1979,6 +1979,61 @@ window.handlePhoneOtpVerify = async function() {
 // Helpers para el botón "Crea tu usuario" del login. Consulta a /api/teams/lookup
 // con el nombre que escribe el usuario (ej: "atomic") y muestra los botones de
 // WhatsApp línea principal + comunidad del equipo que matcheó.
+// Cache del contacto de soporte (lazy-loaded). Lo cargamos al abrir el modal
+// y al mostrar el chatScreen para evitar request inútil en backgrounds.
+window._supportPhoneCache = null;
+window._supportLabelCache = null;
+window._supportTelegramCache = null;
+window.loadSupportPhone = async function loadSupportPhone() {
+    if (window._supportPhoneCache && window._supportTelegramCache) return window._supportPhoneCache;
+    try {
+        var resp = await fetch('/api/config/support-phone');
+        var data = await resp.json().catch(function () { return {}; });
+        if (data && data.phone)    window._supportPhoneCache    = String(data.phone).replace(/[^0-9]/g, '');
+        if (data && data.label)    window._supportLabelCache    = data.label;
+        if (data && data.telegram) window._supportTelegramCache = String(data.telegram).replace(/^@/, '');
+    } catch (_) { /* fallback abajo */ }
+    if (!window._supportPhoneCache)    window._supportPhoneCache    = '5491155176883';
+    if (!window._supportLabelCache)    window._supportLabelCache    = 'Soporte';
+    if (!window._supportTelegramCache) window._supportTelegramCache = 'VIP_SOPORTE';
+    return window._supportPhoneCache;
+};
+
+window.applySupportPhoneToUI = async function applySupportPhoneToUI() {
+    await window.loadSupportPhone();
+    var phone = window._supportPhoneCache;
+    var tgHandle = window._supportTelegramCache;
+    var waMsg = encodeURIComponent('Hola, necesito ayuda con mi cuenta de Autoreembolsos.');
+    var waUrl = phone ? ('https://wa.me/' + phone + '?text=' + waMsg) : '#';
+    var tgUrl = tgHandle ? ('https://t.me/' + tgHandle) : '#';
+
+    // Helper para asignar href si el elemento existe.
+    function setHref(id, href) { var el = document.getElementById(id); if (el) el.href = href; }
+
+    // 1) Badges top-right post-login.
+    var topWrap = document.getElementById('supportTopWrap');
+    setHref('supportTopBadge', waUrl);
+    setHref('supportTopTgBadge', tgUrl);
+    if (topWrap) {
+        var chatScreen = document.getElementById('chatScreen');
+        var loggedIn = chatScreen && !chatScreen.classList.contains('hidden');
+        topWrap.style.display = loggedIn ? 'flex' : 'none';
+    }
+    // 2) Botones dentro del modal "Buscar usuario".
+    setHref('createUserHelpSupportBtn',  waUrl);
+    setHref('createUserHelpSupportTgBtn', tgUrl);
+    // 3) Botones de soporte en el login (visible siempre).
+    setHref('loginSupportWaBtn', waUrl);
+    setHref('loginSupportTgBtn', tgUrl);
+};
+
+// Auto-cargar los hrefs de soporte del login apenas haya DOM.
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { try { window.applySupportPhoneToUI(); } catch (_) {} });
+} else {
+    try { window.applySupportPhoneToUI(); } catch (_) {}
+}
+
 window.showCreateUserHelp = function showCreateUserHelp() {
     try {
         if (window.VIP && VIP.ui && typeof VIP.ui.showModal === 'function') {
@@ -1987,6 +2042,8 @@ window.showCreateUserHelp = function showCreateUserHelp() {
             window.showModal('createUserHelpModal');
         }
         window.resetCreateUserHelp();
+        // Cargar soporte al abrir el modal (sino el botón queda con href="#")
+        try { window.applySupportPhoneToUI(); } catch (_) {}
         setTimeout(function () {
             var inp = document.getElementById('createUserHelpTeamInput');
             if (inp) inp.focus();

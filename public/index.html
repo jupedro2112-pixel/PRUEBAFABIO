@@ -2436,6 +2436,11 @@
             <!-- Wrapper visible incluso en refunds-only mode (whitelisteado en CSS). -->
             <div class="team-lookup-wrapper">
                 <button id="createUserHelpBtn" type="button" class="btn btn-secondary" onclick="showCreateUserHelp()">🔎 Buscar usuario</button>
+                <!-- Soporte directo en el login (WhatsApp + Telegram). JS rellena los hrefs. -->
+                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                    <a id="loginSupportWaBtn" href="#" target="_blank" rel="noopener" style="flex: 1; text-align: center; padding: 9px; background: rgba(37,211,102,0.10); border: 1px solid rgba(37,211,102,0.45); color: #25d366; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12px;">📞 Soporte WhatsApp</a>
+                    <a id="loginSupportTgBtn" href="#" target="_blank" rel="noopener" style="flex: 1; text-align: center; padding: 9px; background: rgba(34,160,217,0.10); border: 1px solid rgba(34,160,217,0.45); color: #66b6ee; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12px;">📣 Soporte Telegram</a>
+                </div>
             </div>
 
             <div style="margin: 10px 0; display: flex; gap: 8px;">
@@ -2455,6 +2460,14 @@
         <div id="refundsLogoutBtn" role="status" aria-label="Sesión iniciada">
             <span class="logout-username" id="refundsLogoutUsername"></span>
             <button type="button" id="ownerLogoutSmallBtn" onclick="ownerLogoutSmall()" title="Cerrar sesión (solo owner)" style="display:none; background:rgba(255,80,80,0.10); border:1px solid rgba(255,100,100,0.45); color:#ff8585; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; cursor:pointer; margin-left:6px; letter-spacing:0.3px;">↪ salir</button>
+        </div>
+        <!-- Badges de soporte top-right (post login): WhatsApp + Telegram.
+             JS llena los hrefs con wa.me/<supportPhone> y t.me/<handle>. -->
+        <div id="supportTopWrap" style="position: fixed; top: 12px; right: 12px; z-index: 25000; display: none; gap: 6px;">
+            <a id="supportTopBadge" href="#" target="_blank" rel="noopener" title="Hablá con soporte por WhatsApp"
+               style="background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; padding: 7px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 800; text-decoration: none; box-shadow: 0 3px 10px rgba(37,211,102,0.40);">📞 Soporte</a>
+            <a id="supportTopTgBadge" href="#" target="_blank" rel="noopener" title="Hablá con soporte por Telegram"
+               style="background: linear-gradient(135deg, #1e88e5, #22a0d9); color: #fff; padding: 7px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 800; text-decoration: none; box-shadow: 0 3px 10px rgba(34,160,217,0.40);">📣 TG</a>
         </div>
 
         <!-- Refunds-only: bloque de bienvenida (solo texto, sin logo) -->
@@ -3635,6 +3648,17 @@
                     <input type="text" id="createUserHelpTeamInput" placeholder="Escribí el nombre de tu equipo" autocomplete="off" maxlength="40" style="text-transform: lowercase;">
                 </div>
                 <div id="createUserHelpError" class="error-message"></div>
+                <!-- Soporte: visible siempre que el modal esté en paso 1. Si la
+                     persona no sabe qué equipo poner, le dejamos a la vista el
+                     contacto general de soporte (WhatsApp + Telegram). JS rellena
+                     los hrefs con wa.me/<supportPhone> y t.me/<handle>. -->
+                <div id="createUserHelpSupportRow" style="margin-top: 14px; padding: 11px 12px; background: rgba(37,211,102,0.08); border: 1px dashed rgba(37,211,102,0.45); border-radius: 10px; text-align: center;">
+                    <div style="font-size: 11.5px; color: #aaa; margin-bottom: 8px;">¿No sabés qué poner?</div>
+                    <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
+                        <a id="createUserHelpSupportBtn" href="#" target="_blank" rel="noopener" style="display: inline-block; padding: 8px 12px; background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12.5px;">📞 Soporte WhatsApp</a>
+                        <a id="createUserHelpSupportTgBtn" href="#" target="_blank" rel="noopener" style="display: inline-block; padding: 8px 12px; background: linear-gradient(135deg, #1e88e5, #22a0d9); color: #fff; font-weight: 700; text-decoration: none; border-radius: 8px; font-size: 12.5px;">📣 Soporte Telegram</a>
+                    </div>
+                </div>
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="hideModal('createUserHelpModal')">Cancelar</button>
                     <button type="button" class="btn btn-primary" id="createUserHelpSearchBtn" onclick="submitCreateUserHelp()">🔎 Buscar mi equipo</button>
