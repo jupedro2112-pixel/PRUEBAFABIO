@@ -419,9 +419,24 @@
             display: none !important;
         }
         /* Ocultar wrappers de "registrate" y "recuperar contraseña"
-           sin tocar #errorMessage (que también es div hermano del form). */
-        #loginScreen .login-box > div:not(#errorMessage):not(.login-logo) {
+           sin tocar #errorMessage (que también es div hermano del form),
+           ni el wrapper del botón "Consultar o crear usuario". */
+        #loginScreen .login-box > div:not(#errorMessage):not(.login-logo):not(.team-lookup-wrapper) {
             display: none !important;
+        }
+        /* Botón "Consultar o crear usuario" debajo del form: visible siempre. */
+        #loginScreen .team-lookup-wrapper {
+            margin: 12px 0 4px;
+            display: block !important;
+        }
+        #loginScreen .team-lookup-wrapper #createUserHelpBtn {
+            width: 100%;
+            background: linear-gradient(135deg, #1a6b3a, #25d366) !important;
+            color: #fff !important;
+            font-weight: 700 !important;
+            border: 1px solid rgba(37, 211, 102, 0.5) !important;
+            padding: 11px 14px !important;
+            font-size: 14px !important;
         }
 
         /* Pantalla de chat: ocultar todo lo que no son reembolsos.
@@ -2372,7 +2387,11 @@
             <div style="margin: 15px 0; text-align: center;">
                 <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
                 <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
-                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" style="margin-top: 6px; width: 100%; background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; font-weight: 700;" onclick="showCreateUserHelp()">🆕 Consultar o crear usuario</button>
+            </div>
+
+            <!-- Wrapper visible incluso en refunds-only mode (whitelisteado en CSS). -->
+            <div class="team-lookup-wrapper">
+                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" onclick="showCreateUserHelp()">🆕 Consultar o crear usuario</button>
             </div>
 
             <div style="margin: 10px 0; display: flex; gap: 8px;">
