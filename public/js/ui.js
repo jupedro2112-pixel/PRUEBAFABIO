@@ -574,10 +574,32 @@ CBU activo: ${cbuNumber}`;
 
         if (outcome === 'accepted') {
             showToast('✅ Instalando app...', 'success');
-            // Recordatorio de notificaciones para Android (flujo directo via deferredPrompt)
+            // Detector post-install: si el user "aceptó" pero Chrome le ofreció
+            // un atajo/widget en vez de WebAPK real (Moto Launcher 1x1, etc),
+            // jamás vamos a ver el evento `appinstalled` y `isStandalone` va a
+            // seguir false. A los 6s sin instalación real, mostramos el modal
+            // con los pasos de limpieza (Configuración de Chrome → borrar datos
+            // del sitio → reinstalar via menú ⋮). El timer se cancela si el
+            // `appinstalled` real llega antes.
+            let installFlowDone = false;
+            const onAppInstalled = () => {
+                installFlowDone = true;
+                window.removeEventListener('appinstalled', onAppInstalled);
+            };
+            window.addEventListener('appinstalled', onAppInstalled);
+
             setTimeout(() => {
                 showInstallInstructions('android-notif');
             }, 2000);
+
+            setTimeout(() => {
+                window.removeEventListener('appinstalled', onAppInstalled);
+                const nowStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                                       || window.navigator.standalone === true;
+                if (installFlowDone || nowStandalone) return; // todo OK
+                // Probable caso "shortcut/widget" — mostramos el rescate
+                showInstallInstructions('android');
+            }, 6000);
         } else {
             showToast('❌ Instalación cancelada', 'error');
         }
@@ -795,13 +817,14 @@ CBU activo: ${cbuNumber}`;
 
         if (platform === 'android') {
             title = '📱 Instalar en Android';
-            note  = '⚠️ <strong>Si abriste el link desde WhatsApp/Instagram/Facebook, primero copialo y pegalo en Chrome</strong> — desde el navegador interno de esas apps no se puede instalar.';
+            note  = '⚠️ <strong>Si abriste el link desde WhatsApp/Instagram/Facebook, primero copialo y pegalo en Chrome</strong> — desde el navegador interno de esas apps no se puede instalar.<br><br>🛟 <strong>¿Te aparece un widget 1×1 en vez de instalarse?</strong> Es porque Chrome ya recuerda que dismisseaste el cartel antes. Andá a <strong>Configuración de Chrome → Configuración del sitio → Almacenamiento</strong>, buscá esta página y tocá <strong>Borrar datos</strong>. Después volvé acá y probá de nuevo desde el menú ⋮ → "Instalar app".';
             steps = [
                 'Abrí esta página en <strong>Google Chrome</strong> (NO en el navegador de WhatsApp/Instagram/Facebook)',
                 'Tocá el botón <strong>⋮</strong> (tres puntos) que está <strong>arriba a la derecha</strong> de Chrome',
-                'En el menú que se abre, tocá <strong>"Instalar app"</strong> o <strong>"Agregar a pantalla principal"</strong>',
-                'Confirmá tocando <strong>"Instalar"</strong> o <strong>"Agregar"</strong>',
-                'Te queda un ícono en la pantalla de tu celular — abrílo desde ahí, no desde Chrome'
+                'En el menú que se abre, tocá <strong>"Instalar app"</strong>. Si solo te aparece <strong>"Agregar a pantalla principal"</strong> con un widget chico de 1×1, NO lo aceptes — eso no es la app real. Cerrá ese cartel y seguí con los pasos del cuadrito naranja de arriba.',
+                'Confirmá tocando <strong>"Instalar"</strong>',
+                'Te queda un ícono nuevo en el cajón de apps — abrila desde ahí, NO desde Chrome',
+                'Cuando entres por primera vez te pide permiso de notificaciones → tocá <strong>PERMITIR</strong>'
             ];
         } else if (platform === 'windows') {
             title = '💻 Instalar en Windows (PC)';
