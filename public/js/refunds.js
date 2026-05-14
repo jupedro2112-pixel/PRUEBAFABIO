@@ -895,6 +895,9 @@ VIP.refunds = (function () {
                 _markLocallyClaimed();
                 _welcomeStatus = { ...(_welcomeStatus || {}), claimed: true, claimedAt: new Date().toISOString(), status: 'completed' };
                 renderWelcomeBonusCard();
+                // Ocultar tambien el installHeroCard apenas se reclama el bono.
+                // Una vez que ya cobro el regalo de $5000, el card pierde sentido.
+                try { if (typeof window.renderInstallHeroCard === 'function') window.renderInstallHeroCard(); } catch (_) {}
                 // Refrescar saldo en pantalla.
                 if (typeof loadRefundStatus === 'function') loadRefundStatus();
                 // Meta Pixel: Purchase con valor real. Esta es la metrica

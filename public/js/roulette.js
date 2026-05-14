@@ -86,27 +86,28 @@
                 + '<span style="background:#ffd700;color:#000;font-weight:900;padding:3px 9px;border-radius:6px;font-size:11px;letter-spacing:0.5px;">GIRAR</span>';
         }
 
-        // Outer card: agrupa la banda de estado + la lista de ganadores
-        // colapsable. Click en la banda → abre modal.
+        // Outer card: banda de estado + lista live de ganadores embebida
+        // (mismo formato que el overlay maximizado, scrollable, compacta).
+        // Tap en la banda → modal de spin. Tap en "Ver más" → maximizar.
         let html = '';
         html += '<div style="max-width:560px;margin:6px auto;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.22);border-radius:10px;overflow:hidden;">';
-        // Banda de estado (tap → modal).
+        // Banda de estado (tap → modal de spin).
         html += '  <div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:' + stripBg + ';border-bottom:1px solid ' + stripBorder + ';padding:7px 10px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
         html += stripContent;
         html += '  </div>';
-        // Bloque embebido de ganadores del día.
+        // Header de ganadores + lista embebida + "Ver más".
         html += '  <div style="padding:9px 11px;">';
-        html += '    <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;">';
+        html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">';
         html += '      <span style="font-size:13px;">🏆</span>';
         html += '      <span style="color:#ffd700;font-weight:900;font-size:10.5px;letter-spacing:0.8px;">GANADORES DE HOY</span>';
-        html += '      <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:#25d366;font-weight:700;">';
+        html += '      <span style="display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:#25d366;font-weight:700;">';
         html += '        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#25d366;box-shadow:0 0 5px #25d366;animation:winners-pulse 1.4s ease-in-out infinite;"></span>';
         html += '        LIVE';
         html += '      </span>';
+        html += '      <span onclick="VIP.roulette && VIP.roulette.openWinners()" style="margin-left:auto;cursor:pointer;background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.45);color:#ffd700;font-weight:800;font-size:10.5px;padding:3px 9px;border-radius:999px;letter-spacing:0.4px;">Ver más ›</span>';
         html += '    </div>';
-        html += '    <div id="rouletteWinnersList" style="max-height:180px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:11.5px;line-height:1.45;"></div>';
-        html += '    <div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:10.5px;padding:8px 6px;">Aún no hay ganadores hoy. Sé el primero.</div>';
-        html += '    <div style="text-align:center;font-size:9.5px;color:#777;margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.10);">🔒 80% del nombre tapado · acreditación automática.</div>';
+        html += '    <div id="rouletteWinnersList" style="max-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:11.5px;line-height:1.45;"></div>';
+        html += '    <div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:10.5px;padding:6px;">Aún no hay ganadores hoy.</div>';
         html += '  </div>';
         html += '</div>';
         html += '<style>@keyframes roulettePulseHome { 0%,100% { box-shadow: 0 0 10px rgba(255,215,0,0.30); } 50% { box-shadow: 0 0 16px rgba(255,215,0,0.55); } }</style>';
@@ -114,16 +115,52 @@
         c.innerHTML = html;
         c.style.display = '';
 
-        // Ocultamos el card SEPARADO (el de antes), ahora todo va embebido aca.
-        const sep = document.getElementById('rouletteRecentWinnersCard');
-        if (sep) sep.style.display = 'none';
-
-        // Pintamos con el cache actual al toque (sin esperar fetch).
+        // Pintar con el cache actual.
         _renderWinnersListInto(
             document.getElementById('rouletteWinnersList'),
             document.getElementById('rouletteWinnersEmpty'),
             _recentWinnersCache
         );
+
+        // Ocultamos el card SEPARADO (el de antes), ahora todo va embebido aca.
+        const sep = document.getElementById('rouletteRecentWinnersCard');
+        if (sep) sep.style.display = 'none';
+    }
+
+    // Overlay maximizado con todos los ganadores del día. Se abre con el
+    // botón "Ver más". Cierra al tocar el fondo o el X.
+    function openWinners() {
+        document.getElementById('rouletteWinnersOverlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'rouletteWinnersOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:25600;display:flex;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto;-webkit-overflow-scrolling:touch;';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #ffd700;border-radius:16px;padding:18px 16px;max-width:560px;width:100%;margin:14px auto;color:#fff;position:relative;">' +
+                '<button onclick="document.getElementById(\'rouletteWinnersOverlay\').remove();" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:18px;cursor:pointer;line-height:1;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">✕</button>' +
+                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-right:38px;">' +
+                    '<span style="font-size:22px;">🏆</span>' +
+                    '<h2 style="color:#ffd700;margin:0;font-size:18px;font-weight:900;letter-spacing:1px;">GANADORES DE HOY</h2>' +
+                    '<span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#25d366;font-weight:700;">' +
+                        '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#25d366;box-shadow:0 0 6px #25d366;animation:winners-pulse 1.4s ease-in-out infinite;"></span>' +
+                        'EN VIVO' +
+                    '</span>' +
+                '</div>' +
+                '<p style="color:#ddd;margin:0 0 12px;font-size:12px;line-height:1.45;">Últimos 50 ganadores de la ruleta diaria. La lista se actualiza sola.</p>' +
+                '<div id="rouletteWinnersList" style="max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:12.5px;line-height:1.5;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:6px 8px;"></div>' +
+                '<div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:12px;padding:18px 8px;">Aún no hay ganadores hoy. Sé el primero.</div>' +
+                '<div style="text-align:center;font-size:10.5px;color:#777;margin-top:10px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.10);">🔒 Mostramos las últimas 2 letras del nombre + los números finales. Los premios son reales y se acreditan automáticamente.</div>' +
+            '</div>';
+        document.body.appendChild(overlay);
+
+        // Pintar con el cache actual + refresh inmediato del server.
+        _renderWinnersListInto(
+            document.getElementById('rouletteWinnersList'),
+            document.getElementById('rouletteWinnersEmpty'),
+            _recentWinnersCache
+        );
+        loadRecentWinners();
     }
 
     // Modal que se abre cuando el server rebota el giro porque al user
@@ -377,13 +414,16 @@
         if (emptyEl) emptyEl.style.display = 'none';
         let html = '';
         for (const w of winners) {
-            const ago = w.minutesAgo < 1 ? 'recién' :
-                       w.minutesAgo < 60 ? (w.minutesAgo + ' min') :
-                       (Math.floor(w.minutesAgo / 60) + 'h');
+            // Horario hh:mm en hora local del browser (ART para la mayoría).
+            let hhmm = '';
+            try {
+                const d = new Date(w.spunAt);
+                hhmm = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+            } catch (_) { hhmm = ''; }
             html += '<div class="winner-row' + (w.isMe ? ' is-me' : '') + '">';
             html += '<span class="winner-user">👤 ' + _esc(w.username) + '</span>';
             html += '<span class="winner-prize">+$' + _fmt(w.prizeARS) + '</span>';
-            html += '<span class="winner-time">' + ago + '</span>';
+            html += '<span class="winner-time">' + hhmm + '</span>';
             html += '</div>';
         }
         listEl.innerHTML = html;
@@ -417,7 +457,7 @@
         } catch (e) { /* best-effort */ }
     }
 
-    VIP.roulette = { loadStatus, open, close, spin, loadRecentWinners };
+    VIP.roulette = { loadStatus, open, close, spin, loadRecentWinners, openWinners };
 
     // Boot: cargar status apenas el usuario esté autenticado.
     document.addEventListener('DOMContentLoaded', () => {
