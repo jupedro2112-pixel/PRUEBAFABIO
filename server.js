@@ -34225,7 +34225,9 @@ function _normalizeBuffaloTeams(input) {
       name: String(src.name || '').trim().slice(0, 60),
       depositsARS: Math.max(0, Number(src.depositsARS) || 0),
       depositsCount: Math.max(0, Math.round(Number(src.depositsCount) || 0)),
-      ventasARS: Math.max(0, Number(src.ventasARS) || 0),
+      // VENTA acepta NEGATIVOS — si la operatoria del día cerró perdiendo
+      // (cash-out > depósitos o devolvimos plata extra), el monto es negativo.
+      ventasARS: Number(src.ventasARS) || 0,
       bonusARS: Math.max(0, Number(src.bonusARS) || 0),
       bonusCount: Math.max(0, Math.round(Number(src.bonusCount) || 0)),
       withdrawalsCount: Math.max(0, Math.round(Number(src.withdrawalsCount) || 0))
@@ -34266,7 +34268,8 @@ app.post('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async 
     const teamSlot = null;
 
     // Auto-pull del pendiente del día anterior si no se mandó explícito.
-    let pendienteAnterior = Math.max(0, Number(b.pendienteAnteriorARS) || 0);
+    // Acepta el valor que mande el front (incluso negativo si el dueño lo edita).
+    let pendienteAnterior = Number(b.pendienteAnteriorARS) || 0;
     if (!b.pendienteAnteriorARS && b.pendienteAnteriorARS !== 0) {
       const prevDateKey = new Date(new Date(dateKey).getTime() - 24 * 3600 * 1000).toISOString().slice(0, 10);
       const prev = await ClosingEntry.findOne({ dateKey: prevDateKey, sector, teamSlot: null }).lean();
@@ -34369,6 +34372,9 @@ app.put('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, asy
         v = Number(v) || 0;
         if (f === 'bankMarginPercent') v = Math.max(0, Math.min(100, v));
         else if (f === 'transactionsCount' || f === 'withdrawalsCount' || f === 'bonusCount') v = Math.max(0, Math.round(v));
+        // pendienteAnteriorARS y ventasARS pueden ser NEGATIVOS — el dueño
+        // edita pendienteAnt manualmente y la venta puede cerrar perdiendo.
+        else if (f === 'pendienteAnteriorARS' || f === 'ventasARS') v = v; /* sin cap */
         else v = Math.max(0, v);
       } else if (typeof v === 'string') {
         // Cap a 300 chars para notes (ingresosNote, egresosNote, gastosNote, bonusNote, notes, teamName)

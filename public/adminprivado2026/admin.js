@@ -26368,16 +26368,15 @@ function _renderTeamSectorEntry(sec, date, row) {
     const pendAntAuto = row
         ? Number(row.pendienteAnteriorARS || 0)
         : _autoPendienteAnterior(date, sec.key);
-    const pendAntEditable = !row && !prevExists;
-    const pendAntStyle = pendAntEditable
-        ? inputStyle + 'border-color:rgba(0,212,255,0.40);'
-        : inputStyle + 'background:rgba(0,0,0,0.30);color:#00d4ff;cursor:not-allowed;';
-    const pendAntAttr = pendAntEditable ? '' : 'readonly tabindex="-1"';
-    const pendAntHint = pendAntEditable
+    // El dueño pidió que se pueda editar SIEMPRE (antes era readonly
+    // cuando había arrastre del día anterior). Si lo dejan como vino del
+    // auto, listo; si lo quieren pisar, también.
+    const pendAntStyle = inputStyle + 'border-color:rgba(0,212,255,0.40);';
+    const pendAntHint = (!row && !prevExists)
         ? 'PRIMER CIERRE · cargá manual el CVU al arrancar'
-        : 'arrastre del CVU 00 hs del día anterior · no editable';
-    const pendAntLabel = pendAntEditable ? '🏦 CVU 00 hs día anterior (1ª vez)' : '🏦 CVU 00 hs día anterior (auto)';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">' + pendAntLabel + '</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + pendAntAuto + '" min="0" step="1000" style="' + pendAntStyle + '" ' + pendAntAttr + ' ' + (locked ? 'disabled' : '') + '>';
+        : 'arrastre auto del día anterior · editable si querés corregir';
+    const pendAntLabel = '🏦 CVU 00 hs día anterior';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">' + pendAntLabel + '</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + pendAntAuto + '" step="1000" style="' + pendAntStyle + '" ' + (locked ? 'disabled' : '') + '>';
     html += '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;">' + _inlineUploadBtn(rid, row, 'pendiente_bank', null, '🏦 Foto banco', locked) + _inlineUploadList(rid, row, 'pendiente_bank', null, locked) + '</div>';
     html += '<div style="color:#666;font-size:9px;margin-top:2px;">' + pendAntHint + '</div></div>';
     // Saldo inicial — REMOVIDO del flujo. Se mantienen los campos en el
@@ -26410,7 +26409,7 @@ function _renderTeamSectorEntry(sec, date, row) {
         const moneyInputStyle = inputStyle + 'font-size:11.5px;padding:4px 8px;';
         html += '<div style="display:grid;grid-template-columns:1.6fr 1.6fr 1.6fr 1fr 1fr 1fr;gap:5px;align-items:end;">';
         html += '<div><label style="color:#aaffaa;font-size:9.5px;text-transform:uppercase;font-weight:700;">💰 Depósito $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(102,255,102,0.30);" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="VENTA del equipo (lo que se pagó a clientes — cash-out)">🛒 Venta $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="VENTA del equipo (cash-out a clientes). Puede ser NEGATIVA si la operatoria del día cerró perdiendo.">🛒 Venta $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#ffd700;font-size:9.5px;text-transform:uppercase;font-weight:700;">🎁 Bonif. $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + moneyInputStyle + 'border-color:rgba(255,215,0,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de depósitos (operaciones de carga)">📥 Depós#</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de descargas (operaciones de retiro)">📤 Desc#</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
@@ -26596,18 +26595,13 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px;margin-bottom:8px;">';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos</label><input type="number" id="cls_' + rid + '_depositsARS" value="' + (row ? row.depositsARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;" title="VENTA = lo que se pagó a clientes (cash-out)">🛒 Venta $</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '><div style="color:#666;font-size:9.5px;margin-top:2px;">cash-out a clientes del día</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;" title="VENTA = lo que se pagó a clientes (cash-out). Puede ser NEGATIVA.">🛒 Venta $</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" step="100" style="' + inputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '><div style="color:#666;font-size:9.5px;margin-top:2px;">cash-out (acepta negativos si cerró mal)</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     (function() {
-        const prevExistsP = !!(_closingsRowsCache || []).find(rr => rr.dateKey === _prevDateKey(date) && rr.sector === sec.key);
         const pAuto = row ? Number(row.pendienteAnteriorARS || 0) : _autoPendienteAnterior(date, sec.key);
-        const pEditable = !row && !prevExistsP;
-        const pStyle = pEditable
-            ? inputStyle + 'border-color:rgba(0,212,255,0.40);'
-            : inputStyle + 'background:rgba(0,0,0,0.30);color:#00d4ff;cursor:not-allowed;';
-        const pAttr = pEditable ? '' : 'readonly tabindex="-1"';
-        const pLabel = pEditable ? '🏦 CVU 00 hs anterior (1ª vez)' : '🏦 CVU 00 hs anterior (auto)';
-        html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">' + pLabel + '</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + pAuto + '" min="0" step="100" style="' + pStyle + '" ' + pAttr + ' ' + (locked ? 'disabled' : '') + '></div>';
+        // Siempre editable — el dueño puede corregirlo si la auto-fill es mala.
+        const pStyle = inputStyle + 'border-color:rgba(0,212,255,0.40);';
+        html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 CVU 00 hs anterior</label><input type="number" id="cls_' + rid + '_pendienteAnteriorARS" value="' + pAuto + '" step="100" style="' + pStyle + '" ' + (locked ? 'disabled' : '') + '></div>';
     })();
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🎁 Bonos ($)</label><input type="number" id="cls_' + rid + '_bonusARS" value="' + (row ? row.bonusARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔢 Transacc. totales</label><input type="number" id="cls_' + rid + '_transactionsCount" value="' + (row ? (row.transactionsCount || 0) : 0) + '" min="0" step="1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
