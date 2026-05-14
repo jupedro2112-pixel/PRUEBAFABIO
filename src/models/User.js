@@ -349,6 +349,12 @@ const userSchema = new mongoose.Schema({
   bonusBlocked: { type: Boolean, default: false, index: true },
   bonusBlockedAt: { type: Date, default: null },
   bonusBlockedReason: { type: String, default: null },
+  // Cuando admin desbloquea o restringe a un user, le activamos un cartel
+  // grande en la home avisándole que NO cambie de sesión en la app
+  // (porque notifs, bono y códigos van por user). El user lo dismissea
+  // y se apaga. Auto-vence a los 7 días por si no entra en mucho tiempo.
+  unblockNoticePending: { type: Boolean, default: false },
+  unblockNoticeAt: { type: Date, default: null },
   // Confirmación de que el user se sumó al canal de Telegram. Lo seteamos
   // a true cuando reclama un código canjeable (los códigos solo viven en
   // Telegram; reclamarlo prueba que el user vio el canal). Sirve para que

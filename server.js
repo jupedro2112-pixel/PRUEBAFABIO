@@ -2706,6 +2706,7 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     let alertForceUntilMs = 0;
     let forceBannerMsg = null;
     let userJoinedTelegram = false;
+    let showUnblockNotice = false;
     // Defensivo: si por algún motivo falla la lectura del usuario para
     // saber su joinedTelegram, NO rompemos el endpoint — solo dejamos el
     // flag en false y seguimos. Este endpoint se pega mucho, no podemos
@@ -2713,11 +2714,17 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     if (req.user && req.user.userId) {
       try {
         const meDoc = await User.findOne({ id: String(req.user.userId) })
-          .select('joinedTelegram')
+          .select('joinedTelegram unblockNoticePending unblockNoticeAt')
           .lean();
         userJoinedTelegram = !!(meDoc && meDoc.joinedTelegram);
+        // Mostrar el cartel "no cambies de sesión" SOLO si pending y aún
+        // dentro de los 7 días desde que se prendió. Pasado eso, se ignora.
+        if (meDoc && meDoc.unblockNoticePending && meDoc.unblockNoticeAt) {
+          const ageMs = Date.now() - new Date(meDoc.unblockNoticeAt).getTime();
+          if (ageMs < 7 * 24 * 3600 * 1000) showUnblockNotice = true;
+        }
       } catch (e) {
-        logger.warn(`[user-lines/me] lookup joinedTelegram falló: ${e.message}`);
+        logger.warn(`[user-lines/me] lookup user fields falló: ${e.message}`);
       }
     }
     try {
@@ -2751,7 +2758,10 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
       // Equipo está fuera del sistema de códigos Telegram → la home no
       // muestra el card del código, ni el botón celeste, ni cambia el
       // ícono a Telegram. Sigue con WhatsApp como antes.
-      excludedFromCodes: excludedFromCodes
+      excludedFromCodes: excludedFromCodes,
+      // Cartel grande "no cambies de sesión" — solo prendido si el admin
+      // desbloqueó o restringió a este user recientemente.
+      showUnblockNotice: showUnblockNotice
     });
   } catch (error) {
     logger.error(`user-lines/me error: ${error.message}`);
@@ -33412,6 +33422,20 @@ app.post('/api/admin/users/:id/unblock', authMiddleware, adminMiddleware, async 
   }
 });
 
+// POST /api/user/dismiss-unblock-notice — el user tocó "Entendido" en el
+// cartel de "no cambies de sesión". Lo apagamos.
+app.post('/api/user/dismiss-unblock-notice', authMiddleware, async (req, res) => {
+  try {
+    await User.updateOne(
+      { id: String(req.user.userId) },
+      { $set: { unblockNoticePending: false } }
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // ============================================
 // PANEL DE BLOQUEOS POR FRAUDE — listar / desbloquear / soft-restrict
 // ============================================
@@ -33445,6 +33469,9 @@ app.post('/api/admin/users/:id/fraud-unblock', authMiddleware, adminMiddleware, 
     user.bonusBlocked = false;
     user.bonusBlockedAt = null;
     user.bonusBlockedReason = null;
+    // Cartel grande en la home avisando "no cambies de sesión".
+    user.unblockNoticePending = true;
+    user.unblockNoticeAt = new Date();
     await user.save();
     logger.info(`Admin ${req.user.username} desbloqueó (FULL) a ${user.username}`);
     res.json({ success: true, message: `${user.username} desbloqueado totalmente.` });
@@ -33469,6 +33496,10 @@ app.post('/api/admin/users/:id/bonus-restrict', authMiddleware, adminMiddleware,
     user.bonusBlocked = true;
     user.bonusBlockedAt = new Date();
     user.bonusBlockedReason = reason;
+    // También le mostramos el cartel — el user va a poder usar la app y
+    // tenemos que asegurar que no cambie de sesión.
+    user.unblockNoticePending = true;
+    user.unblockNoticeAt = new Date();
     await user.save();
     logger.info(`Admin ${req.user.username} aplicó bonus-restrict a ${user.username}: ${reason}`);
     res.json({ success: true, message: `${user.username} con bono/códigos restringido.` });

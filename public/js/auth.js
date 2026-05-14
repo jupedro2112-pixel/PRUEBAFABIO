@@ -634,8 +634,10 @@ VIP.auth = (function () {
                 VIP.state.communityForceBannerMsg = d.communityForceBannerMsg || null;
                 VIP.state.joinedTelegram = !!d.joinedTelegram;
                 VIP.state.excludedFromCodes = !!d.excludedFromCodes;
+                VIP.state.showUnblockNotice = !!d.showUnblockNotice;
                 try { renderTelegramQuickJoinBtn(); } catch (_) {}
                 try { renderRedeemCodeVisibility(); } catch (_) {}
+                try { renderUnblockNotice(); } catch (_) {}
                 VIP.state.teamName = d.teamName || null;
                 try { renderCommunityForceBanner(); } catch (_) {}
                 renderRefundsHomeUI();
@@ -734,6 +736,46 @@ VIP.auth = (function () {
         if (newsBanner) newsBanner.style.display = excluded ? 'none' : '';
     }
     window.renderRedeemCodeVisibility = renderRedeemCodeVisibility;
+
+    // Cartel "no cambies de sesión" — visible solo si el admin recién
+    // desbloqueó/restringió al user. Modal grande estilo encuesta que el
+    // user tiene que tocar "ENTENDIDO" para cerrar (POST al backend).
+    function renderUnblockNotice() {
+        const should = !!VIP.state.showUnblockNotice;
+        const existing = document.getElementById('unblockNoticeOverlay');
+        if (!should) { if (existing) existing.remove(); return; }
+        // Si ya está mostrado, no spawneamos otro.
+        if (existing) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'unblockNoticeOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;';
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #ffd700;border-radius:14px;padding:24px 22px;max-width:420px;width:100%;box-shadow:0 0 40px rgba(255,215,0,0.40);color:#fff;text-align:center;">' +
+              '<div style="font-size:56px;margin-bottom:6px;line-height:1;">⚠️</div>' +
+              '<div style="color:#ffd700;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:6px;">AVISO IMPORTANTE</div>' +
+              '<div style="color:#fff;font-size:14px;line-height:1.55;margin-bottom:14px;">Tu cuenta fue verificada y desbloqueada. Para no perder tus beneficios:</div>' +
+              '<div style="background:rgba(255,215,0,0.08);border:1.5px solid rgba(255,215,0,0.45);border-radius:11px;padding:13px 14px;margin-bottom:14px;text-align:left;font-size:13px;line-height:1.55;">' +
+                '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🚫 NO cambies de sesión</strong> en esta app.</div>' +
+                '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🔔 Las notificaciones</strong>, los bonos y los códigos van sobre <strong style="color:#fff;">TU usuario</strong> — si entrás con otra cuenta desde este dispositivo, podés perder los regalos.</div>' +
+                '<div><strong style="color:#ffd700;">📱 Una app, un usuario.</strong> Usá siempre el mismo.</div>' +
+              '</div>' +
+              '<button type="button" id="unblockNoticeOk" style="width:100%;background:linear-gradient(135deg,#ffd700 0%,#ff8800 100%);border:none;color:#000;padding:13px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:0.5px;cursor:pointer;box-shadow:0 4px 14px rgba(255,215,0,0.40);">✅ ENTENDIDO</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
+        document.getElementById('unblockNoticeOk').onclick = async () => {
+            const token = (VIP.state && VIP.state.currentToken) || localStorage.getItem('userToken') || '';
+            try {
+                await fetch('/api/user/dismiss-unblock-notice', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+            } catch (_) {}
+            VIP.state.showUnblockNotice = false;
+            overlay.remove();
+        };
+    }
+    window.renderUnblockNotice = renderUnblockNotice;
 
     function renderCommunityForceBanner() {
         const el = document.getElementById('communityForceReminderBanner');
