@@ -2410,16 +2410,6 @@
                      admin > Número principal. Mismo tamaño que el username
                      del header-right. JS lo muestra/oculta segun la API. -->
                 <span class="team-name" id="teamName" style="display:none;"></span>
-                <!-- Canjear código: arriba a la izquierda, chiquito, no predominante.
-                     IMPORTANTE: va FUERA de .user-action-btns porque en mobile
-                     ese contenedor está hidden (display:none) por el media query
-                     de header.css. Como necesitamos que SIEMPRE se vea (es la
-                     entrada principal a los bonos por código de Telegram), lo
-                     dejamos como bloque suelto en header-left. -->
-                <div class="redeem-code-quick" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
-                    <button id="redeemCodeBtn" title="Reclamá tu código de bono" onclick="openRedeemCodeModal()" style="background:linear-gradient(135deg,rgba(0,200,150,0.18),rgba(0,143,108,0.10));border:1px solid rgba(0,200,150,0.50);color:#00c896;font-size:12px;padding:4px 9px;border-radius:6px;cursor:pointer;font-weight:800;letter-spacing:0.3px;white-space:nowrap;">🎁 Reclama aquí</button>
-                    <button id="redeemCodeInfoBtn" title="¿De dónde salen los códigos?" onclick="openRedeemCodeInfo()" style="background:rgba(0,200,150,0.06);border:1px solid rgba(0,200,150,0.30);color:#00c896;font-size:12px;padding:4px 7px;border-radius:6px;cursor:pointer;font-weight:800;line-height:1;">ℹ</button>
-                </div>
                 <div class="user-action-btns">
                     <!-- Refresh manual: full reload de la pagina. El owner pidio
                          poder forzar un actualizar chiquito desde el home cuando
@@ -2605,6 +2595,25 @@
             <button id="goToPlatformBtn" type="button" class="platform-btn-cta">
                 🎰 Abrir plataforma
             </button>
+        </div>
+
+        <!-- ============================================================
+             CARD "Reclama tu código" — va JUSTO ARRIBA del welcome-bonus
+             porque el dueño quiere que el user, antes de ver el "RECLAMAR
+             $5.000" del bono, vea claramente la entrada para los códigos
+             que se publican en Telegram. Pulsea cuando hay un código
+             activo (el banner verde de "redeemActiveBanner" sigue
+             apareciendo dentro del bloque comunidad mas abajo). -->
+        <div id="redeemCodeHomeCard" style="margin:10px 12px 6px;padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,rgba(0,200,150,0.16),rgba(0,143,108,0.08));border:1.5px solid rgba(0,200,150,0.55);box-shadow:0 0 14px rgba(0,200,150,0.20);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div style="font-size:34px;line-height:1;flex-shrink:0;">🎁</div>
+            <div style="flex:1;min-width:140px;">
+                <div style="color:#00c896;font-weight:900;font-size:14px;letter-spacing:0.4px;line-height:1.2;">¿Tenés un código?</div>
+                <div style="color:#aaffd9;font-size:11.5px;font-weight:700;margin-top:2px;line-height:1.35;">Los publicamos en nuestro <strong style="color:#22a0d9;">canal de Telegram</strong>. Reclamá el bono acá ↘</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <button id="redeemCodeBtn" type="button" onclick="openRedeemCodeModal()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 18px;border-radius:10px;font-weight:900;font-size:13px;letter-spacing:0.5px;cursor:pointer;white-space:nowrap;box-shadow:0 3px 10px rgba(0,200,150,0.40);">RECLAMA AQUÍ</button>
+                <button id="redeemCodeInfoBtn" type="button" onclick="openRedeemCodeInfo()" title="¿De dónde salen los códigos?" style="background:rgba(0,200,150,0.10);color:#00c896;border:1px solid rgba(0,200,150,0.45);padding:9px 11px;border-radius:9px;font-weight:900;font-size:13px;line-height:1;cursor:pointer;">ℹ</button>
+            </div>
         </div>
 
         <!-- Refunds-only: Bono por bajar la app — va ARRIBA del banner de
