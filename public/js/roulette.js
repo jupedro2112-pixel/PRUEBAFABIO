@@ -86,43 +86,19 @@
                 + '<span style="background:#ffd700;color:#000;font-weight:900;padding:3px 9px;border-radius:6px;font-size:11px;letter-spacing:0.5px;">GIRAR</span>';
         }
 
-        // Outer card: banda de estado + lista live de ganadores embebida
-        // (mismo formato que el overlay maximizado, scrollable, compacta).
-        // Tap en la banda → modal de spin. Tap en "Ver más" → maximizar.
+        // Home: SOLO la banda de estado (tap → modal de spin). La lista de
+        // ganadores live vive DENTRO del modal (no duplicamos en el home
+        // para mantener la pantalla limpia).
         let html = '';
-        html += '<div style="max-width:560px;margin:6px auto;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.22);border-radius:10px;overflow:hidden;">';
-        // Banda de estado (tap → modal de spin).
-        html += '  <div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:' + stripBg + ';border-bottom:1px solid ' + stripBorder + ';padding:7px 10px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
+        html += '<div onclick="VIP.roulette && VIP.roulette.open()" style="cursor:pointer;background:' + stripBg + ';border:1px solid ' + stripBorder + ';border-radius:8px;padding:7px 10px;margin:6px auto;max-width:560px;display:flex;align-items:center;gap:8px;font-size:12.5px;">';
         html += stripContent;
-        html += '  </div>';
-        // Header de ganadores + lista embebida + "Ver más".
-        html += '  <div style="padding:9px 11px;">';
-        html += '    <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">';
-        html += '      <span style="font-size:13px;">🏆</span>';
-        html += '      <span style="color:#ffd700;font-weight:900;font-size:10.5px;letter-spacing:0.8px;">GANADORES DE HOY</span>';
-        html += '      <span style="display:inline-flex;align-items:center;gap:5px;font-size:9.5px;color:#25d366;font-weight:700;">';
-        html += '        <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#25d366;box-shadow:0 0 5px #25d366;animation:winners-pulse 1.4s ease-in-out infinite;"></span>';
-        html += '        LIVE';
-        html += '      </span>';
-        html += '      <span onclick="VIP.roulette && VIP.roulette.openWinners()" style="margin-left:auto;cursor:pointer;background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.45);color:#ffd700;font-weight:800;font-size:10.5px;padding:3px 9px;border-radius:999px;letter-spacing:0.4px;">Ver más ›</span>';
-        html += '    </div>';
-        html += '    <div id="rouletteWinnersList" style="max-height:160px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:11.5px;line-height:1.45;"></div>';
-        html += '    <div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:10.5px;padding:6px;">Aún no hay ganadores hoy.</div>';
-        html += '  </div>';
         html += '</div>';
         html += '<style>@keyframes roulettePulseHome { 0%,100% { box-shadow: 0 0 10px rgba(255,215,0,0.30); } 50% { box-shadow: 0 0 16px rgba(255,215,0,0.55); } }</style>';
 
         c.innerHTML = html;
         c.style.display = '';
 
-        // Pintar con el cache actual.
-        _renderWinnersListInto(
-            document.getElementById('rouletteWinnersList'),
-            document.getElementById('rouletteWinnersEmpty'),
-            _recentWinnersCache
-        );
-
-        // Ocultamos el card SEPARADO (el de antes), ahora todo va embebido aca.
+        // Ocultamos el card SEPARADO (el viejo).
         const sep = document.getElementById('rouletteRecentWinnersCard');
         if (sep) sep.style.display = 'none';
     }
