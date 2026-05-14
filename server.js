@@ -124,9 +124,15 @@ const generalLimiter = rateLimit({
   message: { error: 'Demasiadas solicitudes. Intenta más tarde.' }
 });
 
+// Subido a 40/min porque varios users pueden compartir IP (NAT casero,
+// móvil 4G, oficinas). Antes era 10/min y bloqueaba a usuarios reales
+// cuando había una ola de re-logins (e.g. después de un deploy donde
+// algunos vieron 5xx y reintentaron). El login es username-only sin
+// password, así que no hay riesgo de brute-force de credenciales —
+// solo evita enumeración masiva.
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 40,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Demasiados intentos de autenticación. Intenta más tarde.' }
