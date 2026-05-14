@@ -20072,14 +20072,20 @@ app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
       .limit(limit)
       .select('username prizeARS spunAt')
       .lean();
+    // Tapa ~70% del username. Visible: últimas 2 letras del nombre + todos
+    // los números finales. Ej: "lalodj777" → "****dj777", "atojoaquin" → "********in",
+    // "tribetcb45" → "******cb45".
     const _mask = (u) => {
       const s = String(u || '').trim();
       if (!s) return '—';
-      const len = s.length;
-      const maskN = Math.max(1, Math.floor(len * 0.8));
-      const visibleN = Math.max(2, len - maskN);
-      const startVisible = len - visibleN;
-      return '*'.repeat(startVisible) + s.slice(startVisible);
+      // Separamos el sufijo numérico del resto.
+      const m = s.match(/^(.*?)(\d+)$/);
+      const letters = m ? m[1] : s;
+      const numbers = m ? m[2] : '';
+      // De la parte de letras, mostramos las últimas 2 (o todas si tiene <=2).
+      const visibleLetters = letters.length <= 2 ? letters : letters.slice(-2);
+      const maskedCount = Math.max(0, letters.length - visibleLetters.length);
+      return '*'.repeat(maskedCount) + visibleLetters + numbers;
     };
     const me = String((req.user && req.user.username) || '').toLowerCase();
     const items = winners.map(w => {
@@ -23308,17 +23314,19 @@ app.get('/api/raffles/recent-winners', authMiddleware, async (req, res) => {
       if (isMe && r.prizeClaimedAt) {
         secondsRemaining = Math.max(0, Math.floor((POSTCLAIM_TTL_MS - (Date.now() - new Date(r.prizeClaimedAt).getTime())) / 1000));
       }
-      // Para el publico general tapamos el 80% inicial del username del
-      // ganador (social proof sin exponer la identidad). Si soy YO el
-      // ganador, devuelvo mi nombre completo. Min 2 chars visibles al final.
+      // Para el publico general tapamos el username del ganador (social
+      // proof sin exponer identidad). Visible: últimas 2 letras del nombre
+      // + sufijo numérico completo (ej: "lalodj777" → "****dj777").
+      // Si soy YO el ganador, devuelvo mi nombre completo.
       const _maskWinner = (u) => {
         const s = String(u || '').trim();
         if (!s) return '—';
-        const len = s.length;
-        const maskN = Math.max(1, Math.floor(len * 0.8));
-        const visibleN = Math.max(2, len - maskN);
-        const startVisible = len - visibleN;
-        return '*'.repeat(startVisible) + s.slice(startVisible);
+        const m = s.match(/^(.*?)(\d+)$/);
+        const letters = m ? m[1] : s;
+        const numbers = m ? m[2] : '';
+        const visibleLetters = letters.length <= 2 ? letters : letters.slice(-2);
+        const maskedCount = Math.max(0, letters.length - visibleLetters.length);
+        return '*'.repeat(maskedCount) + visibleLetters + numbers;
       };
       const exposedUsername = isMe ? r.winnerUsername : _maskWinner(r.winnerUsername);
       winners.push({
