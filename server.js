@@ -34495,20 +34495,56 @@ app.get('/api/admin/closings', authMiddleware, closingsAccessMiddleware, async (
     const from = String(req.query.from || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.from : null;
     const to   = String(req.query.to   || '').match(/^\d{4}-\d{2}-\d{2}$/) ? req.query.to   : today;
     const sector = CLOSING_SECTORS.includes(String(req.query.sector)) ? req.query.sector : null;
+    // lite=1 → no enviamos el campo `url` de comprobantes (puede ser data:base64
+    // de varios MB cada uno). El listado solo necesita kind+note+teamSlot para
+    // contar y mostrar resumen. Las URLs se piden on-demand vía
+    // GET /api/admin/closings/:id (analyze view).
+    const lite = String(req.query.lite || '') === '1';
     const filter = {};
     if (from || to) filter.dateKey = {};
     if (from) filter.dateKey.$gte = from;
     if (to)   filter.dateKey.$lte = to;
     if (sector) filter.sector = sector;
     const rows = await ClosingEntry.find(filter).sort({ dateKey: -1, sector: 1, teamSlot: 1 }).lean();
-    const enriched = rows.map(r => ({
-      ...r,
-      computed: _closingComputeTotals(r),
-      locked: _closingIsLocked(r)
-    }));
-    res.json({ success: true, rows: enriched, today });
+    const enriched = rows.map(r => {
+      const comprobantes = lite && Array.isArray(r.comprobantes)
+        ? r.comprobantes.map(c => ({
+            kind: c.kind,
+            teamSlot: c.teamSlot != null ? c.teamSlot : null,
+            note: c.note || '',
+            uploadedBy: c.uploadedBy || '',
+            uploadedAt: c.uploadedAt || null
+            // url omitido a propósito (lite mode)
+          }))
+        : r.comprobantes;
+      return {
+        ...r,
+        comprobantes,
+        computed: _closingComputeTotals(r),
+        locked: _closingIsLocked(r)
+      };
+    });
+    res.json({ success: true, rows: enriched, today, lite });
   } catch (err) {
     logger.error(`/api/admin/closings: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/closings/:id — fetch full closing row WITH comprobante URLs.
+// Usado por el modal Analizar para mostrar las fotos. La lista general usa
+// lite=1 (sin urls) para no chocar el browser con MB de base64.
+app.get('/api/admin/closings/:id', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const id = String(req.params.id || '');
+    const r = await ClosingEntry.findOne({ id }).lean();
+    if (!r) return res.status(404).json({ error: 'Cierre no encontrado' });
+    res.json({
+      success: true,
+      row: { ...r, computed: _closingComputeTotals(r), locked: _closingIsLocked(r) }
+    });
+  } catch (err) {
+    logger.error(`GET /api/admin/closings/:id: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

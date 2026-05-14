@@ -24922,7 +24922,11 @@ async function loadClosings() {
         const params = new URLSearchParams({
             from: fromKey,
             to: today,
-            sector: _closingsView.sector
+            sector: _closingsView.sector,
+            // lite=1 → el server NO manda las urls base64 de comprobantes
+            // (puede ser MB cada uno). Las pedimos on-demand al abrir
+            // "Analizar". Si no, el browser se freezea al cargar la lista.
+            lite: '1'
         });
         const r = await authFetch('/api/admin/closings?' + params.toString());
         const d = await r.json();
@@ -25986,11 +25990,30 @@ function _openClsLightbox(url, caption) {
 // Modal de análisis profundo de un cierre puntual.
 // Muestra cálculo paso a paso, contribución por equipo (Buffalo/Ganamos),
 // chequeo CVU, comprobantes adjuntos y diagnóstico de qué falta.
-function analyzeClosing(id) {
-    const r = (_closingsRowsCache || []).find(x => x.id === id);
-    if (!r) {
+async function analyzeClosing(id) {
+    const rLite = (_closingsRowsCache || []).find(x => x.id === id);
+    if (!rLite) {
         showToast('Cierre no encontrado', 'error');
         return;
+    }
+    // El listado viene en modo lite (sin urls de fotos). Si todavía no
+    // pedimos el row completo con fotos, lo buscamos ahora on-demand.
+    let r = rLite;
+    const hasUrls = Array.isArray(r.comprobantes) && r.comprobantes.some(c => c && c.url);
+    const hasComps = Array.isArray(r.comprobantes) && r.comprobantes.length > 0;
+    if (hasComps && !hasUrls) {
+        try {
+            const resp = await authFetch('/api/admin/closings/' + encodeURIComponent(id));
+            const d = await resp.json();
+            if (resp.ok && d.success && d.row) {
+                r = d.row;
+                // Actualizamos el cache para que el lightbox no re-fetchee.
+                const idx = (_closingsRowsCache || []).findIndex(x => x.id === id);
+                if (idx >= 0) _closingsRowsCache[idx] = r;
+            }
+        } catch (e) {
+            console.warn('analyzeClosing fetch full failed:', e);
+        }
     }
     const c = r.computed || {};
     const fmt = _closingFmt;
