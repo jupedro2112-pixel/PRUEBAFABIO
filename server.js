@@ -2382,141 +2382,185 @@ app.get('/api/auth/_probe', (req, res) => {
 });
 
 // Lookup público (sin auth) para el botón "Consultar o crear usuario" del login.
-// El usuario escribe el nombre de su equipo (ej: "atomic", "argentum", "mar")
+// El usuario escribe el nombre de su equipo (ej: "atomic", "marshall", "argentum")
 // y devolvemos:
 //   - linePhone:    número principal del equipo (WhatsApp wa.me)
-//   - communityLink, communityLink2: canal activo de la línea
+//   - communityLink, communityLink2: canal activo de la comunidad
 //   - teamName:     nombre canónico del equipo
-//   - prefix:       el prefijo que matcheó
-// Estrategia de match (case-insensitive, input limpio sin símbolos):
-//   PRIMARIO: tomamos los primeros 3 caracteres del input ("atomic"→"ato",
-//             "argentum"→"arg", "mar"→"mar") y buscamos el slot cuyo prefix
-//             coincide. Si hay varios slots, gana el prefijo más largo cuyo
-//             texto sea prefijo del input.
-//   FALLBACK: si el input tiene <3 chars o no matchea por 3-chars, probamos
-//             por prefix completo, por slot.prefix.startsWith(input), y por
-//             teamName.
+//
+// FUENTES DE DATOS:
+//   - Líneas: agregación del modelo User (lineTeamName + linePhone). Es la
+//     misma data que ve el admin en "📊 Equipos". Por cada equipo elige el
+//     linePhone con más users (la línea vigente).
+//   - Comunidad: config 'userCommunitiesByPrefix' (slots con prefix + link).
+//
+// MATCH:
+//   Sobre el input normalizado (lowercase, solo a-z0-9), buscamos el TEAM
+//   cuyo nombre coincide best-effort:
+//     - igual                              → score 200
+//     - input startsWith teamName          → 150 + teamName.length
+//     - teamName startsWith input (≥3 ch)  → 100 + input.length
+//     - primeras 3 letras coinciden        → 50
+//   Si hay empate, gana el equipo con más users.
+let _teamsLookupCache = { ts: 0, teams: null };
+const _TEAMS_LOOKUP_TTL_MS = 60 * 1000; // 1 min
+
+async function _loadTeamsForLookup() {
+  const now = Date.now();
+  if (_teamsLookupCache.teams && (now - _teamsLookupCache.ts) < _TEAMS_LOOKUP_TTL_MS) {
+    return _teamsLookupCache.teams;
+  }
+  const groups = await User.aggregate([
+    { $match: {
+        linePhone: { $ne: null, $exists: true },
+        lineTeamName: { $ne: null, $exists: true }
+      }
+    },
+    {
+      $group: {
+        _id: { teamName: '$lineTeamName', linePhone: '$linePhone' },
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+  // Por cada teamName quedarse con el linePhone que más users tiene.
+  const byTeam = new Map();
+  for (const g of groups) {
+    const teamName = (g._id.teamName || '').trim();
+    const linePhone = (g._id.linePhone || '').trim();
+    if (!teamName || !linePhone) continue;
+    const norm = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!norm) continue;
+    const existing = byTeam.get(norm);
+    if (!existing || g.count > existing.count) {
+      byTeam.set(norm, { teamName, teamNameNorm: norm, linePhone, count: g.count });
+    }
+  }
+  const teams = Array.from(byTeam.values());
+  _teamsLookupCache = { ts: now, teams };
+  return teams;
+}
+
 app.get('/api/teams/lookup', authLimiter, async (req, res) => {
   try {
     const rawQ = String(req.query.q || req.query.team || '').trim();
-    if (!rawQ) {
-      return res.status(400).json({ error: 'Falta parámetro q' });
-    }
+    if (!rawQ) return res.status(400).json({ error: 'Falta parámetro q' });
     const q = rawQ.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (!q) {
-      return res.status(400).json({ error: 'Equipo inválido' });
-    }
-    const [linesCfg, communitiesCfg] = await Promise.all([
-      getConfig('userLinesByPrefix').catch(() => null),
+    if (!q) return res.status(400).json({ error: 'Equipo inválido' });
+
+    const [teams, communitiesCfg] = await Promise.all([
+      _loadTeamsForLookup().catch(() => []),
       getConfig('userCommunitiesByPrefix').catch(() => null)
     ]);
-    const lineSlots = (linesCfg && Array.isArray(linesCfg.slots)) ? linesCfg.slots : [];
-    // Tomamos las primeras 3 letras del input como "clave" preferida.
-    // "atomic" → "ato", "argentum" → "arg", "mar" → "mar".
-    const q3 = q.slice(0, 3);
+
+    // 1) Match contra teamName de usuarios reales.
     let best = null;
-    for (const slot of lineSlots) {
-      if (!slot || !slot.prefix) continue;
-      const prefix = String(slot.prefix).toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (!prefix) continue;
-      const teamName = (slot.teamName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const q3 = q.slice(0, 3);
+    for (const t of teams) {
       let score = 0;
-      // PRIMARIO: primeras 3 letras del input vs prefix del slot.
-      if (q3.length === 3 && prefix === q3) score = 200 + prefix.length;
-      else if (q3.length === 3 && prefix.length >= 3 && prefix.slice(0, 3) === q3) score = 180 + prefix.length;
-      else if (q3.length === 3 && q3.startsWith(prefix) && prefix.length >= 2) score = 160 + prefix.length;
-      // FALLBACK: matches clásicos.
-      else if (q === prefix) score = 100 + prefix.length;
-      else if (q.length >= prefix.length && q.startsWith(prefix)) score = 80 + prefix.length;
-      else if (prefix.startsWith(q) && q.length >= 2) score = 60 + q.length;
-      else if (teamName && (teamName === q || teamName.startsWith(q) || q.startsWith(teamName))) score = 50 + Math.min(teamName.length, q.length);
-      else if (teamName && (teamName.includes(q) || q.includes(teamName))) score = 30;
-      if (score > 0 && (!best || score > best.score)) {
-        best = {
-          score,
-          prefix: String(slot.prefix).trim(),
-          phone: String(slot.phone || '').trim(),
-          teamName: (slot.teamName || '').trim()
-        };
+      if (q === t.teamNameNorm) score = 200;
+      else if (t.teamNameNorm.length >= 2 && q.startsWith(t.teamNameNorm)) score = 150 + t.teamNameNorm.length;
+      else if (q.length >= 3 && t.teamNameNorm.startsWith(q)) score = 100 + q.length;
+      else if (q3.length === 3 && t.teamNameNorm.slice(0, 3) === q3) score = 50;
+      if (score > 0 && (!best || score > best.score || (score === best.score && t.count > best.count))) {
+        best = { ...t, score };
       }
     }
-    // Fallback al default si no matcheó ningún slot: la gente igual
-    // recibe la línea general configurada.
+
+    // 2) Si no matcheó, probar el config viejo userLinesByPrefix (compat).
     let usedFallback = false;
-    if (!best || !best.phone) {
-      const defaultPhone = (linesCfg && linesCfg.defaultPhone) ? String(linesCfg.defaultPhone).trim() : '';
-      const defaultTeamName = (linesCfg && linesCfg.defaultTeamName) ? String(linesCfg.defaultTeamName).trim() : '';
-      if (defaultPhone) {
+    if (!best) {
+      const linesCfg = await getConfig('userLinesByPrefix').catch(() => null);
+      const lineSlots = (linesCfg && Array.isArray(linesCfg.slots)) ? linesCfg.slots : [];
+      for (const slot of lineSlots) {
+        if (!slot || !slot.prefix || !slot.phone) continue;
+        const prefix = String(slot.prefix).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!prefix) continue;
+        if (q.startsWith(prefix) || prefix.startsWith(q)) {
+          best = {
+            teamName: (slot.teamName || '').trim(),
+            teamNameNorm: (slot.teamName || '').toLowerCase().replace(/[^a-z0-9]/g, '') || prefix,
+            linePhone: String(slot.phone).trim(),
+            count: 0,
+            score: 5
+          };
+          usedFallback = true;
+          break;
+        }
+      }
+      // Default phone como último recurso.
+      if (!best && linesCfg && linesCfg.defaultPhone) {
         best = {
-          score: 10,
-          prefix: '',
-          phone: defaultPhone,
-          teamName: defaultTeamName || 'Línea general'
+          teamName: linesCfg.defaultTeamName || 'Línea general',
+          teamNameNorm: '',
+          linePhone: String(linesCfg.defaultPhone).trim(),
+          count: 0,
+          score: 1
         };
         usedFallback = true;
       }
     }
-    // Debug mode para el owner: ?_owner=<secret> agrega un payload con
-    // los prefijos cargados (sin exponer phones) para diagnosticar matches.
-    const OWNER_DEBUG_SECRET = 'vipsalida-fabio-2026-x9k';
-    let _debug = null;
-    if (String(req.query._owner || '') === OWNER_DEBUG_SECRET) {
-      _debug = {
-        configFound: !!(linesCfg && Array.isArray(linesCfg.slots)),
-        totalSlots: lineSlots.length,
-        configuredPrefixes: lineSlots
-          .filter(s => s && s.prefix)
-          .map(s => ({
-            prefix: String(s.prefix).toLowerCase().trim(),
-            teamName: (s.teamName || '').trim(),
-            hasPhone: !!s.phone
-          })),
-        defaultPhonePresent: !!(linesCfg && linesCfg.defaultPhone),
-        defaultTeamName: (linesCfg && linesCfg.defaultTeamName) || null,
-        inputQuery: rawQ,
-        normalized: q,
-        firstThreeChars: q3,
-        usedFallback
-      };
-    }
-    if (!best || !best.phone) {
-      return res.status(404).json({
-        error: 'No encontramos tu equipo y tampoco hay línea general configurada. Pedí ayuda a tu agente.',
-        query: rawQ,
-        _debug
-      });
-    }
-    // Buscar links de comunidad del MISMO prefijo en userCommunitiesByPrefix.
-    let communityLink = null;
-    let communityLink2 = null;
-    let communityLabel = null;
-    let communityLabel2 = null;
-    const commSlots = (communitiesCfg && Array.isArray(communitiesCfg.slots)) ? communitiesCfg.slots : [];
-    const bestPrefixLower = best.prefix.toLowerCase();
-    if (bestPrefixLower) {
+
+    // 3) Buscar comunidad: match del prefijo del community-config contra el
+    //    teamName del best match (ej: teamName="Atomic" → prefix "ato").
+    let communityLink = null, communityLink2 = null, communityLabel = null, communityLabel2 = null;
+    let communityMatchedPrefix = null;
+    if (best && best.teamNameNorm) {
+      const commSlots = (communitiesCfg && Array.isArray(communitiesCfg.slots)) ? communitiesCfg.slots : [];
+      let commBest = null;
       for (const slot of commSlots) {
-        if (!slot || !slot.prefix) continue;
-        const p = String(slot.prefix).toLowerCase().trim();
-        if (p === bestPrefixLower) {
-          communityLink = slot.link ? String(slot.link).trim() : null;
-          communityLink2 = slot.link2 ? String(slot.link2).trim() : null;
-          communityLabel = slot.label ? String(slot.label).trim() : null;
-          communityLabel2 = slot.label2 ? String(slot.label2).trim() : null;
-          break;
+        if (!slot || !slot.prefix || !slot.link) continue;
+        const slotPrefix = String(slot.prefix).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!slotPrefix) continue;
+        let score = 0;
+        if (best.teamNameNorm === slotPrefix) score = 200;
+        else if (best.teamNameNorm.startsWith(slotPrefix)) score = 150 + slotPrefix.length;
+        else if (slotPrefix.startsWith(best.teamNameNorm)) score = 100 + best.teamNameNorm.length;
+        if (score > 0 && (!commBest || score > commBest.score)) {
+          commBest = { score, slot, prefix: slotPrefix };
         }
       }
+      if (commBest) {
+        communityLink = commBest.slot.link ? String(commBest.slot.link).trim() : null;
+        communityLink2 = commBest.slot.link2 ? String(commBest.slot.link2).trim() : null;
+        communityLabel = commBest.slot.label ? String(commBest.slot.label).trim() : null;
+        communityLabel2 = commBest.slot.label2 ? String(commBest.slot.label2).trim() : null;
+        communityMatchedPrefix = commBest.prefix;
+      }
     }
-    // Si no hubo match de community (o estamos en fallback), usar el default link.
     if (!communityLink && communitiesCfg && communitiesCfg.defaultLink) {
       communityLink = String(communitiesCfg.defaultLink).trim();
     }
     if (!communityLink2 && communitiesCfg && communitiesCfg.defaultLink2) {
       communityLink2 = String(communitiesCfg.defaultLink2).trim();
     }
+
+    // Debug owner-only.
+    const OWNER_DEBUG_SECRET = 'vipsalida-fabio-2026-x9k';
+    let _debug = null;
+    if (String(req.query._owner || '') === OWNER_DEBUG_SECRET) {
+      _debug = {
+        inputQuery: rawQ,
+        normalized: q,
+        firstThreeChars: q3,
+        totalTeamsFound: teams.length,
+        sampleTeams: teams.slice(0, 30).map(t => ({ teamName: t.teamName, teamNameNorm: t.teamNameNorm, users: t.count })),
+        communityMatchedPrefix,
+        usedFallback
+      };
+    }
+
+    if (!best) {
+      return res.status(404).json({
+        error: 'No encontramos tu equipo. Probá con otro nombre (ej: Atomic, Marshall, Argentum, Tribet, Tiger).',
+        query: rawQ,
+        _debug
+      });
+    }
+
     return res.json({
-      prefix: best.prefix,
       teamName: best.teamName || null,
-      linePhone: best.phone,
+      linePhone: best.linePhone,
       communityLink,
       communityLink2,
       communityLabel,
