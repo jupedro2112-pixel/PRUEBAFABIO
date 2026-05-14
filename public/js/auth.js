@@ -2031,7 +2031,7 @@ window.submitCreateUserHelp = async function submitCreateUserHelp() {
         }
         var teamLabel = data.teamName || ('Prefijo ' + (data.prefix || '').toUpperCase());
         var phoneRaw = String(data.linePhone || '').replace(/[^0-9]/g, '');
-        var waMsg = encodeURIComponent('Hola! Quiero crear mi usuario para ' + (data.teamName || 'el equipo') + '.');
+        var waMsg = encodeURIComponent('buenas perdi mi usuario, jugaba con ustedes me podrian buscar cual es mi usuario?');
         var waUrl = phoneRaw ? ('https://wa.me/' + phoneRaw + '?text=' + waMsg) : '#';
 
         var nameEl = document.getElementById('createUserHelpTeamName');

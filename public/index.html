@@ -2435,7 +2435,7 @@
 
             <!-- Wrapper visible incluso en refunds-only mode (whitelisteado en CSS). -->
             <div class="team-lookup-wrapper">
-                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" onclick="showCreateUserHelp()">🆕 Consultar o crear usuario</button>
+                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" onclick="showCreateUserHelp()">🔎 Buscar usuario</button>
             </div>
 
             <div style="margin: 10px 0; display: flex; gap: 8px;">
@@ -3625,15 +3625,14 @@
         <div class="modal-content" style="max-width: 420px; position: relative;" onclick="event.stopPropagation()">
             <button onclick="hideModal('createUserHelpModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
             <div class="modal-header">
-                <h2>🆕 Consultar o Crear Usuario</h2>
+                <h2>🔎 Buscar Usuario</h2>
                 <p>Escribí el nombre de tu equipo y te pasamos el contacto principal + el canal activo de la línea.</p>
             </div>
             <!-- Paso 1: pedir nombre del equipo -->
             <div id="createUserHelpStep1">
                 <div class="input-group">
                     <label>¿En qué equipo jugás?</label>
-                    <input type="text" id="createUserHelpTeamInput" placeholder="Ej: Atomic, Argentum, Mar, Megafire..." autocomplete="off" maxlength="40" style="text-transform: lowercase;">
-                    <span style="font-size: 11px; color: #888; margin-top: 6px; display: block;">Tomamos las primeras letras (ej: <b>atomic</b> → <b>ato</b>, <b>argentum</b> → <b>arg</b>) para buscar la línea principal y el canal de tu equipo.</span>
+                    <input type="text" id="createUserHelpTeamInput" placeholder="Escribí el nombre de tu equipo" autocomplete="off" maxlength="40" style="text-transform: lowercase;">
                 </div>
                 <div id="createUserHelpError" class="error-message"></div>
                 <div class="modal-actions">
@@ -3647,7 +3646,7 @@
                     <div style="font-size: 13px; color: #aaa; margin-bottom: 4px;">Equipo encontrado:</div>
                     <div id="createUserHelpTeamName" style="font-size: 20px; font-weight: 700; color: #25d366;"></div>
                 </div>
-                <p style="font-size: 13px; color: #ccc; margin: 10px 0 12px;">Tocá el botón de abajo para escribirle a la línea principal y pedir que te creen tu usuario. Después podés sumarte a la comunidad para enterarte de bonos, códigos y reembolsos.</p>
+                <p style="font-size: 13px; color: #ccc; margin: 10px 0 12px;">Tocá el botón de abajo para escribirle a la línea principal y que te busquen tu usuario. También podés sumarte a la comunidad para bonos, códigos y reembolsos.</p>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                     <a id="createUserHelpLineBtn" href="#" target="_blank" rel="noopener" class="btn btn-primary" style="background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; font-size: 15px; padding: 14px; text-decoration: none; text-align: center;">📞 Línea principal (WhatsApp)</a>
                     <a id="createUserHelpCommunityBtn" href="#" target="_blank" rel="noopener" class="btn btn-secondary" style="font-size: 14px; padding: 12px; text-decoration: none; text-align: center; display: none;">💬 Sumate a la comunidad</a>
