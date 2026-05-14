@@ -102,7 +102,7 @@ messaging.onBackgroundMessage(function(payload) {
   const notif = payload.notification || {};
   const webNotif = (payload.webpush && payload.webpush.notification) || {};
 
-  const title = notif.title || webNotif.title || 'VIPCARGASANTINO';
+  const title = notif.title || webNotif.title || 'AUTOREEMBOLSOS';
   const body  = notif.body  || webNotif.body  || 'Tenés una notificación nueva';
   const icon  = notif.icon  || webNotif.icon  || '/icons/bag-silver-v2.svg';
   const badge = notif.badge || webNotif.badge || '/icons/bag-silver-v2.svg';
