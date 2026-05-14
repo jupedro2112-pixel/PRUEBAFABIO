@@ -123,6 +123,10 @@
                         'EN VIVO' +
                     '</span>' +
                 '</div>' +
+                '<div style="text-align:center;background:linear-gradient(135deg,rgba(37,211,102,0.18),rgba(255,215,0,0.12));border:1px solid rgba(37,211,102,0.45);border-radius:10px;padding:10px 12px;margin:0 0 12px;">' +
+                    '<div style="color:#25d366;font-weight:900;font-size:11.5px;letter-spacing:1.5px;margin-bottom:2px;">✨ TRANSPARENCIA ABSOLUTA</div>' +
+                    '<div style="color:#ffd700;font-weight:800;font-size:13px;letter-spacing:0.5px;">TODO PARA USTEDES</div>' +
+                '</div>' +
                 '<p style="color:#ddd;margin:0 0 12px;font-size:12px;line-height:1.45;">Últimos 50 ganadores de la ruleta diaria. La lista se actualiza sola.</p>' +
                 '<div id="rouletteWinnersList" style="max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:12.5px;line-height:1.5;background:rgba(0,0,0,0.45);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:6px 8px;"></div>' +
                 '<div id="rouletteWinnersEmpty" style="text-align:center;color:#888;font-size:12px;padding:18px 8px;">Aún no hay ganadores hoy. Sé el primero.</div>' +
@@ -297,6 +301,10 @@
         // pierde, refuerza que la ruleta sí paga. Reusa el mismo cache que
         // el card del home y se sincroniza con auto-refresh.
         html += '<div style="margin-top:14px;background:rgba(0,0,0,0.50);border:1px solid rgba(255,215,0,0.30);border-radius:11px;padding:11px 12px;">';
+        html += '  <div style="text-align:center;background:linear-gradient(135deg,rgba(37,211,102,0.18),rgba(255,215,0,0.12));border:1px solid rgba(37,211,102,0.45);border-radius:9px;padding:7px 10px;margin:0 0 9px;">';
+        html += '    <div style="color:#25d366;font-weight:900;font-size:10.5px;letter-spacing:1.4px;line-height:1.25;">✨ TRANSPARENCIA ABSOLUTA</div>';
+        html += '    <div style="color:#ffd700;font-weight:800;font-size:11.5px;letter-spacing:0.4px;line-height:1.25;">TODO PARA USTEDES</div>';
+        html += '  </div>';
         html += '  <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">';
         html += '    <span style="font-size:14px;">🏆</span>';
         html += '    <span style="color:#ffd700;font-weight:900;font-size:11px;letter-spacing:1px;">GANADORES DE HOY · EN VIVO</span>';
