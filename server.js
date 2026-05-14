@@ -2381,6 +2381,93 @@ app.get('/api/auth/_probe', (req, res) => {
   res.json({ version: 'refunds-only-v3', endpoint: 'login-username-only', timestamp: new Date().toISOString() });
 });
 
+// Lookup público (sin auth) para el botón "Crea tu usuario" del login.
+// El usuario escribe el nombre de su equipo (ej: "atomic") y devolvemos:
+//   - linePhone:    número principal del equipo (WhatsApp wa.me)
+//   - communityLink, communityLink2: links de comunidad del equipo
+//   - teamName:     nombre canónico del equipo
+//   - prefix:       el prefijo que matcheó
+// Estrategia de match (case-insensitive sobre input limpio):
+//   1) input === slot.prefix
+//   2) input startsWith slot.prefix  (ej: "atomic" matchea "ato")
+//   3) slot.prefix startsWith input  (ej: "at" matchea "ato")
+//   4) slot.teamName contiene input o input contiene slot.teamName
+// Si hay varios matches, gana el de prefijo más largo.
+app.get('/api/teams/lookup', authLimiter, async (req, res) => {
+  try {
+    const rawQ = String(req.query.q || req.query.team || '').trim();
+    if (!rawQ) {
+      return res.status(400).json({ error: 'Falta parámetro q' });
+    }
+    const q = rawQ.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!q) {
+      return res.status(400).json({ error: 'Equipo inválido' });
+    }
+    const [linesCfg, communitiesCfg] = await Promise.all([
+      getConfig('userLinesByPrefix').catch(() => null),
+      getConfig('userCommunitiesByPrefix').catch(() => null)
+    ]);
+    const lineSlots = (linesCfg && Array.isArray(linesCfg.slots)) ? linesCfg.slots : [];
+    let best = null;
+    for (const slot of lineSlots) {
+      if (!slot || !slot.prefix) continue;
+      const prefix = String(slot.prefix).toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!prefix) continue;
+      const teamName = (slot.teamName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      let score = 0;
+      if (q === prefix) score = 100 + prefix.length;
+      else if (q.startsWith(prefix)) score = 80 + prefix.length;
+      else if (prefix.startsWith(q) && q.length >= 2) score = 60 + q.length;
+      else if (teamName && (teamName === q || teamName.startsWith(q) || q.startsWith(teamName))) score = 50 + Math.min(teamName.length, q.length);
+      else if (teamName && (teamName.includes(q) || q.includes(teamName))) score = 30;
+      if (score > 0 && (!best || score > best.score)) {
+        best = {
+          score,
+          prefix: String(slot.prefix).trim(),
+          phone: String(slot.phone || '').trim(),
+          teamName: (slot.teamName || '').trim()
+        };
+      }
+    }
+    if (!best || !best.phone) {
+      return res.status(404).json({
+        error: 'No encontramos tu equipo. Probá con el nombre completo (ej: "Atomic", "Megafire").',
+        query: rawQ
+      });
+    }
+    // Buscar links de comunidad del MISMO prefijo en userCommunitiesByPrefix.
+    let communityLink = null;
+    let communityLink2 = null;
+    let communityLabel = null;
+    let communityLabel2 = null;
+    const commSlots = (communitiesCfg && Array.isArray(communitiesCfg.slots)) ? communitiesCfg.slots : [];
+    const bestPrefixLower = best.prefix.toLowerCase();
+    for (const slot of commSlots) {
+      if (!slot || !slot.prefix) continue;
+      const p = String(slot.prefix).toLowerCase().trim();
+      if (p === bestPrefixLower) {
+        communityLink = slot.link ? String(slot.link).trim() : null;
+        communityLink2 = slot.link2 ? String(slot.link2).trim() : null;
+        communityLabel = slot.label ? String(slot.label).trim() : null;
+        communityLabel2 = slot.label2 ? String(slot.label2).trim() : null;
+        break;
+      }
+    }
+    return res.json({
+      prefix: best.prefix,
+      teamName: best.teamName || null,
+      linePhone: best.phone,
+      communityLink,
+      communityLink2,
+      communityLabel,
+      communityLabel2
+    });
+  } catch (err) {
+    logger.error(`[TeamsLookup] ${err.message}`);
+    return res.status(500).json({ error: 'Error interno' });
+  }
+});
+
 app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) => {
   console.log('[LoginUsernameOnly] HIT', { body: req.body, ip: req.ip });
   try {

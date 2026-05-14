@@ -1919,3 +1919,99 @@ window.handlePhoneOtpVerify = async function() {
         return response;
     };
 })();
+
+// Helpers para el botón "Crea tu usuario" del login. Consulta a /api/teams/lookup
+// con el nombre que escribe el usuario (ej: "atomic") y muestra los botones de
+// WhatsApp línea principal + comunidad del equipo que matcheó.
+window.showCreateUserHelp = function showCreateUserHelp() {
+    try {
+        if (window.VIP && VIP.ui && typeof VIP.ui.showModal === 'function') {
+            VIP.ui.showModal('createUserHelpModal');
+        } else if (typeof window.showModal === 'function') {
+            window.showModal('createUserHelpModal');
+        }
+        window.resetCreateUserHelp();
+        setTimeout(function () {
+            var inp = document.getElementById('createUserHelpTeamInput');
+            if (inp) inp.focus();
+        }, 80);
+    } catch (e) { /* ignore */ }
+};
+
+window.resetCreateUserHelp = function resetCreateUserHelp() {
+    try {
+        var step1 = document.getElementById('createUserHelpStep1');
+        var step2 = document.getElementById('createUserHelpStep2');
+        var err = document.getElementById('createUserHelpError');
+        var inp = document.getElementById('createUserHelpTeamInput');
+        if (step1) step1.style.display = '';
+        if (step2) step2.style.display = 'none';
+        if (err) { err.textContent = ''; err.style.display = 'none'; }
+        if (inp) inp.value = '';
+    } catch (e) { /* ignore */ }
+};
+
+window.submitCreateUserHelp = async function submitCreateUserHelp() {
+    var inp = document.getElementById('createUserHelpTeamInput');
+    var err = document.getElementById('createUserHelpError');
+    var btn = document.getElementById('createUserHelpSearchBtn');
+    if (!inp) return;
+    var q = (inp.value || '').trim();
+    if (err) { err.textContent = ''; err.style.display = 'none'; }
+    if (!q) {
+        if (err) { err.textContent = 'Escribí el nombre de tu equipo.'; err.style.display = 'block'; }
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Buscando...'; }
+    try {
+        var resp = await fetch('/api/teams/lookup?q=' + encodeURIComponent(q));
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok || !data || !data.linePhone) {
+            if (err) {
+                err.textContent = (data && data.error) || 'No encontramos tu equipo. Probá con el nombre completo.';
+                err.style.display = 'block';
+            }
+            return;
+        }
+        var teamLabel = data.teamName || ('Prefijo ' + (data.prefix || '').toUpperCase());
+        var phoneRaw = String(data.linePhone || '').replace(/[^0-9]/g, '');
+        var waMsg = encodeURIComponent('Hola! Quiero crear mi usuario para ' + (data.teamName || 'el equipo') + '.');
+        var waUrl = phoneRaw ? ('https://wa.me/' + phoneRaw + '?text=' + waMsg) : '#';
+
+        var nameEl = document.getElementById('createUserHelpTeamName');
+        var lineBtn = document.getElementById('createUserHelpLineBtn');
+        var commBtn = document.getElementById('createUserHelpCommunityBtn');
+        var commBtn2 = document.getElementById('createUserHelpCommunityBtn2');
+        if (nameEl) nameEl.textContent = teamLabel;
+        if (lineBtn) lineBtn.href = waUrl;
+        if (commBtn) {
+            if (data.communityLink) {
+                commBtn.href = data.communityLink;
+                commBtn.textContent = '💬 ' + (data.communityLabel || 'Sumate a la comunidad');
+                commBtn.style.display = '';
+            } else {
+                commBtn.style.display = 'none';
+            }
+        }
+        if (commBtn2) {
+            if (data.communityLink2) {
+                commBtn2.href = data.communityLink2;
+                commBtn2.textContent = '💬 ' + (data.communityLabel2 || 'Segunda comunidad');
+                commBtn2.style.display = '';
+            } else {
+                commBtn2.style.display = 'none';
+            }
+        }
+        var step1 = document.getElementById('createUserHelpStep1');
+        var step2 = document.getElementById('createUserHelpStep2');
+        if (step1) step1.style.display = 'none';
+        if (step2) step2.style.display = '';
+    } catch (e) {
+        if (err) {
+            err.textContent = 'Error de conexión. Revisá tu internet e intentá de nuevo.';
+            err.style.display = 'block';
+        }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔎 Buscar mi equipo'; }
+    }
+};

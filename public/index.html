@@ -2372,8 +2372,9 @@
             <div style="margin: 15px 0; text-align: center;">
                 <span style="color: #888; font-size: 14px;">¿No tienes cuenta?</span>
                 <button id="registerBtn" class="btn btn-secondary" style="margin-top: 8px; width: 100%;">📝 Registrarse</button>
+                <button id="createUserHelpBtn" type="button" class="btn btn-secondary" style="margin-top: 6px; width: 100%; background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff;" onclick="showCreateUserHelp()">🆕 Crea tu usuario (consultá a tu equipo)</button>
             </div>
-            
+
             <div style="margin: 10px 0; display: flex; gap: 8px;">
                 <button id="findUserBtn" class="btn btn-secondary" style="flex: 1; font-size: 12px;" onclick="showModal('resetPassModal')">🔑 Recuperar Contraseña</button>
             </div>
@@ -3555,6 +3556,47 @@
     </script>
 
     <!-- Modal Registro -->
+    <!-- Modal: Crea tu usuario (consulta a tu equipo) -->
+    <div id="createUserHelpModal" class="modal hidden" onclick="if(event.target===this)hideModal('createUserHelpModal')">
+        <div class="modal-content" style="max-width: 420px; position: relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('createUserHelpModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
+            <div class="modal-header">
+                <h2>🆕 Crea tu usuario</h2>
+                <p>Decinos en qué equipo jugás y te pasamos el contacto principal para que te creen tu usuario.</p>
+            </div>
+            <!-- Paso 1: pedir nombre del equipo -->
+            <div id="createUserHelpStep1">
+                <div class="input-group">
+                    <label>¿En qué equipo jugás?</label>
+                    <input type="text" id="createUserHelpTeamInput" placeholder="Ej: Atomic, Megafire, etc." autocomplete="off" maxlength="40" style="text-transform: lowercase;">
+                    <span style="font-size: 11px; color: #888; margin-top: 6px; display: block;">Escribí el nombre tal como lo conocés. Si no te aparece, probá con las primeras letras.</span>
+                </div>
+                <div id="createUserHelpError" class="error-message"></div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('createUserHelpModal')">Cancelar</button>
+                    <button type="button" class="btn btn-primary" id="createUserHelpSearchBtn" onclick="submitCreateUserHelp()">🔎 Buscar mi equipo</button>
+                </div>
+            </div>
+            <!-- Paso 2: mostrar resultado -->
+            <div id="createUserHelpStep2" style="display:none;">
+                <div style="background: rgba(37,211,102,0.08); border: 1px solid rgba(37,211,102,0.35); border-radius: 12px; padding: 14px; margin-bottom: 14px;">
+                    <div style="font-size: 13px; color: #aaa; margin-bottom: 4px;">Equipo encontrado:</div>
+                    <div id="createUserHelpTeamName" style="font-size: 20px; font-weight: 700; color: #25d366;"></div>
+                </div>
+                <p style="font-size: 13px; color: #ccc; margin: 10px 0 12px;">Tocá el botón de abajo para escribirle a la línea principal y pedir que te creen tu usuario. Después podés sumarte a la comunidad para enterarte de bonos, códigos y reembolsos.</p>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <a id="createUserHelpLineBtn" href="#" target="_blank" rel="noopener" class="btn btn-primary" style="background: linear-gradient(135deg, #1a6b3a, #25d366); color: #fff; font-size: 15px; padding: 14px; text-decoration: none; text-align: center;">📞 Línea principal (WhatsApp)</a>
+                    <a id="createUserHelpCommunityBtn" href="#" target="_blank" rel="noopener" class="btn btn-secondary" style="font-size: 14px; padding: 12px; text-decoration: none; text-align: center; display: none;">💬 Sumate a la comunidad</a>
+                    <a id="createUserHelpCommunityBtn2" href="#" target="_blank" rel="noopener" class="btn btn-secondary" style="font-size: 14px; padding: 12px; text-decoration: none; text-align: center; display: none;">💬 Segunda comunidad</a>
+                </div>
+                <div class="modal-actions" style="margin-top: 14px;">
+                    <button type="button" class="btn btn-secondary" onclick="resetCreateUserHelp()">← Buscar otro equipo</button>
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('createUserHelpModal')">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="registerModal" class="modal hidden">
         <div class="modal-content" style="position: relative;">
             <button onclick="hideModal('registerModal')" style="position: absolute; top: 15px; right: 15px; background: none; border: none; color: #888; font-size: 24px; cursor: pointer; z-index: 10;">✕</button>
