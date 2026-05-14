@@ -342,6 +342,13 @@ const userSchema = new mongoose.Schema({
   fraudReason: { type: String, default: null },
   fraudBlockedAt: { type: Date, default: null },
   fraudBlockedIp: { type: String, default: null },
+  // Bloqueo "soft" — el user puede LOGUEARSE y usar la app, pero NO
+  // puede reclamar bono de bienvenida ni códigos canjeables. Se usa
+  // cuando el admin levanta el fraudBlocked pero sospecha que hay
+  // duplicación de IP/cuenta — le deja jugar pero sin regalos.
+  bonusBlocked: { type: Boolean, default: false, index: true },
+  bonusBlockedAt: { type: Date, default: null },
+  bonusBlockedReason: { type: String, default: null },
   // Confirmación de que el user se sumó al canal de Telegram. Lo seteamos
   // a true cuando reclama un código canjeable (los códigos solo viven en
   // Telegram; reclamarlo prueba que el user vio el canal). Sirve para que

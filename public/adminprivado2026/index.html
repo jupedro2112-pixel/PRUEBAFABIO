@@ -263,6 +263,12 @@
 
                 <!-- Ayuda y guía al fondo de todo (cada item tiene su propio ❓
                      en el sidebar, esta entrada lleva al overview completo). -->
+                <!-- Nuevo: panel de bloqueos por fraude -->
+                <a href="#" class="nav-item" data-section="fraudBlocks" style="background:rgba(255,80,80,0.06);border-left:3px solid #ff5050;">
+                    <span>🚫</span>
+                    <span><strong>Bloqueos</strong></span>
+                </a>
+
                 <div class="nav-section-title">❓ Ayuda</div>
                 <a href="#" class="nav-item" data-section="help" style="background:rgba(255,200,80,0.06);border-left:3px solid #ffc850;">
                     <span>❓</span>
@@ -1895,6 +1901,32 @@
                 <div id="redeemCodesBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
+            </section>
+
+            <!-- ============================================
+                 SECCIÓN: BLOQUEOS POR FRAUDE
+                 Lista de users con fraudBlocked=true (auto-bloqueados por
+                 intento de doble bono) y bonusBlocked=true (restricción
+                 manual por IP duplicada). Cada uno con 2 acciones:
+                   - 🟢 Desbloquear todo (deja al user normal)
+                   - 🟡 Solo restringir bono/códigos (deja entrar, sin regalos)
+                 ============================================ -->
+            <section id="fraudBlocksSection" class="section">
+                <div class="panel-header">
+                    <h2>🚫 Bloqueos por fraude / IP duplicada</h2>
+                </div>
+                <div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.30);border-radius:10px;padding:12px 14px;margin-bottom:14px;color:#ddd;font-size:12.5px;line-height:1.55;">
+                    <strong style="color:#ff8080;">¿Qué es esto?</strong> Lista de usuarios que el sistema detectó intentando reclamar el bono $5K una segunda vez desde la misma IP/dispositivo, o que vos restringiste manualmente. Podés:
+                    <ul style="margin:6px 0 0 18px;padding:0;">
+                        <li><strong style="color:#aaffaa;">✅ Desbloquear total:</strong> el user vuelve a la normalidad — puede loguear, reclamar bono y códigos.</li>
+                        <li><strong style="color:#ffaa66;">⚠️ Solo bono/códigos OFF:</strong> el user puede loguear y jugar, pero NO puede reclamar el bono ni códigos. Le aparece un mensaje: "bono y códigos no disponibles desde tu conexión".</li>
+                    </ul>
+                </div>
+                <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
+                    <button class="btn-primary" onclick="loadFraudBlocked()" style="padding:8px 14px;font-size:12.5px;font-weight:700;">🔄 Refrescar lista</button>
+                    <span id="fraudBlockedSummary" style="color:#aaa;font-size:11.5px;"></span>
+                </div>
+                <div id="fraudBlockedList"></div>
             </section>
 
             <!-- ============================================

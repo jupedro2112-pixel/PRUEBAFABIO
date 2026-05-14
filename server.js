@@ -16759,6 +16759,19 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
 
+    // Gate bonusBlocked — admin marcó al user como "sin derecho al bono"
+    // (IP duplicada u otro). Mensaje claro, no acusatorio.
+    try {
+      const u = await User.findOne({ id: userId }).select('bonusBlocked bonusBlockedReason').lean();
+      if (u && u.bonusBlocked) {
+        return res.status(403).json({
+          success: false,
+          message: u.bonusBlockedReason || 'Bono no disponible desde tu conexión. Si creés que es un error, contactá al soporte.',
+          bonusBlocked: true
+        });
+      }
+    } catch (_) {}
+
     if (!await acquireRefundLock(userId, 'welcome_install')) {
       return res.json({
         success: false,
@@ -33399,6 +33412,72 @@ app.post('/api/admin/users/:id/unblock', authMiddleware, adminMiddleware, async 
   }
 });
 
+// ============================================
+// PANEL DE BLOQUEOS POR FRAUDE — listar / desbloquear / soft-restrict
+// ============================================
+// Lista todos los users con fraudBlocked=true. Trae los últimos 200,
+// ordenados por fecha de bloqueo (más recientes arriba).
+app.get('/api/admin/fraud-blocked', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const list = await User.find({
+      $or: [{ fraudBlocked: true }, { bonusBlocked: true }]
+    })
+      .select('id username fraudBlocked fraudReason fraudBlockedAt fraudBlockedIp bonusBlocked bonusBlockedAt bonusBlockedReason createdAt')
+      .sort({ fraudBlockedAt: -1, bonusBlockedAt: -1 })
+      .limit(200)
+      .lean();
+    res.json({ success: true, count: list.length, items: list });
+  } catch (e) {
+    logger.error(`GET /api/admin/fraud-blocked: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+// Desbloqueo COMPLETO: el user puede loguearse y reclamar todo de nuevo.
+app.post('/api/admin/users/:id/fraud-unblock', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const user = await User.findOne({ id: req.params.id });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+    user.fraudBlocked = false;
+    user.fraudReason = null;
+    user.fraudBlockedAt = null;
+    user.fraudBlockedIp = null;
+    user.bonusBlocked = false;
+    user.bonusBlockedAt = null;
+    user.bonusBlockedReason = null;
+    await user.save();
+    logger.info(`Admin ${req.user.username} desbloqueó (FULL) a ${user.username}`);
+    res.json({ success: true, message: `${user.username} desbloqueado totalmente.` });
+  } catch (e) {
+    logger.error(`POST /fraud-unblock: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+// Soft-block: el user puede LOGUEARSE pero NO puede reclamar bono de
+// bienvenida ni códigos canjeables. Se usa cuando el admin desbloquea
+// un fraudBlocked pero sospecha IP duplicada — lo deja jugar pero sin
+// regalos hasta que confirme.
+app.post('/api/admin/users/:id/bonus-restrict', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const user = await User.findOne({ id: req.params.id });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado.' });
+    const reason = String((req.body && req.body.reason) || 'IP duplicada — bono ya reclamado bajo otra cuenta').slice(0, 250);
+    // Saca el fraudBlocked (puede usar la app) pero mantiene bonusBlocked.
+    user.fraudBlocked = false;
+    user.fraudReason = null;
+    user.bonusBlocked = true;
+    user.bonusBlockedAt = new Date();
+    user.bonusBlockedReason = reason;
+    await user.save();
+    logger.info(`Admin ${req.user.username} aplicó bonus-restrict a ${user.username}: ${reason}`);
+    res.json({ success: true, message: `${user.username} con bono/códigos restringido.` });
+  } catch (e) {
+    logger.error(`POST /bonus-restrict: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
 // Enviar chat a cargas (antes "pagos")
 app.post('/api/admin/send-to-payments', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -35399,6 +35478,19 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
         excludedTeam: true
       });
     }
+
+    // Gate por bonusBlocked: admin lo restringió manualmente (IP duplicada
+    // u otro motivo). Mensaje claro para el user — no acusa de fraude pero
+    // explica que ya se reclamó desde su conexión.
+    try {
+      const u = await User.findOne({ id: userId }).select('bonusBlocked bonusBlockedReason').lean();
+      if (u && u.bonusBlocked) {
+        return res.status(403).json({
+          error: u.bonusBlockedReason || 'Bono y códigos no disponibles desde tu conexión. Si creés que es un error, contactá al soporte.',
+          bonusBlocked: true
+        });
+      }
+    } catch (_) {}
 
     // REQUISITO: PWA instalada + notifs activas (proxy = tener tokens FCM).
     // Si el user no tiene tokens registrados, no permitimos reclamar — esto
