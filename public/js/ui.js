@@ -1003,34 +1003,163 @@ if (VIP.ui.isAppStandalone()) {
     if (appInstallBtn)    { appInstallBtn.classList.add('hidden'); }
 }
 
-// Cartel GRANDE de instalación — solo cuando NO está en standalone (no
-// instalado). En cuanto el user instala, queda en standalone y este card
-// nunca más se muestra. El botón llama a la misma función installApp()
-// que ya tiene los flujos paso-a-paso por plataforma.
+// Card compacto del bono $5.000 con stepper de 3 pasos.
+// Estados:
+//   - !installed                -> "Instalá la app" (paso 1 activo, btn=INSTALAR)
+//   - installed && !inApp       -> "Abrí desde el ícono" (paso 2 activo)
+//   - inApp && !notifOk         -> auto-prompt notifs (paso 3 activo)
+//   - inApp && notifOk          -> "RECLAMAR $5.000" (todos done, btn verde)
+// El render se ejecuta al cargar, cada vez que la app vuelve al foreground
+// (visibilitychange) y cuando llega el evento appinstalled.
 (function setupInstallHeroCard() {
     const card = document.getElementById('installHeroCard');
     if (!card) return;
-    // Solo ocultar el card si CURRENTLY estamos en standalone. NO usar el
-    // flag vipAppInstalled localStorage porque persiste aunque el user
-    // desinstale la app — y nos quedábamos sin mostrar el hook del $5.000
-    // a usuarios que claramente NO tienen la app instalada ahora.
-    if (VIP.ui.isAppStandalone()) {
-        card.hidden = true;
-        return;
+
+    const isInApp     = () => VIP.ui.isAppStandalone();
+    const isInstalled = () => (typeof VIP.ui.isAppInstalled === 'function') ? VIP.ui.isAppInstalled() : VIP.ui.isAppStandalone();
+    const isNotifOk   = () => (typeof Notification !== 'undefined' && Notification.permission === 'granted');
+
+    function setStep(stepEl, badgeEl, state, badgeChar) {
+        if (!stepEl || !badgeEl) return;
+        stepEl.classList.remove('done', 'active');
+        if (state === 'done') {
+            stepEl.classList.add('done');
+            badgeEl.textContent = '✓';
+        } else if (state === 'active') {
+            stepEl.classList.add('active');
+            badgeEl.textContent = badgeChar;
+        } else {
+            badgeEl.textContent = badgeChar;
+        }
     }
-    card.hidden = false;
+
+    function renderHero() {
+        if (!card) return;
+        const installed = isInstalled();
+        const inApp     = isInApp();
+        const notifOk   = isNotifOk();
+
+        // Si claimed locally, ocultar y dejar que welcomeBonusCard maneje el resto.
+        try {
+            if (VIP.refunds && typeof VIP.refunds._isLocallyMarkedClaimed === 'function' && VIP.refunds._isLocallyMarkedClaimed()) {
+                card.hidden = true;
+                return;
+            }
+        } catch (_) {}
+
+        card.hidden = false;
+
+        const step1State = installed ? 'done' : 'active';
+        const step2State = installed ? (inApp ? 'done' : 'active') : 'pending';
+        const step3State = (installed && inApp) ? (notifOk ? 'done' : 'active') : 'pending';
+        setStep(document.getElementById('heroStep1'), document.getElementById('heroStep1Badge'), step1State, '1');
+        setStep(document.getElementById('heroStep2'), document.getElementById('heroStep2Badge'), step2State, '2');
+        setStep(document.getElementById('heroStep3'), document.getElementById('heroStep3Badge'), step3State, '3');
+
+        const sub     = document.getElementById('installHeroSub');
+        const nextEl  = document.getElementById('installHeroNext');
+        const btn     = document.getElementById('installHeroBtn');
+
+        if (!installed) {
+            if (sub) sub.textContent = 'Tarda 30 segundos. Tocá el botón para empezar.';
+            if (nextEl) { nextEl.style.display = 'none'; nextEl.textContent = ''; }
+            if (btn) { btn.textContent = '📲 INSTALAR APP'; btn.classList.remove('is-claim'); btn.disabled = false; }
+        } else if (!inApp) {
+            if (sub) sub.textContent = 'La app ya está en tu celular. Ahora abrila desde el ícono.';
+            if (nextEl) { nextEl.style.display = ''; nextEl.textContent = '➡ PRÓXIMO PASO: ABRIR LA APP DEL INICIO'; }
+            if (btn) { btn.textContent = '📱 ABRIR DESDE EL ÍCONO'; btn.classList.remove('is-claim'); btn.disabled = false; }
+        } else if (!notifOk) {
+            if (sub) sub.textContent = 'Aceptá las notificaciones para acreditarte el bono.';
+            if (nextEl) { nextEl.style.display = ''; nextEl.textContent = '➡ PRÓXIMO PASO: ACEPTAR NOTIFICACIONES'; }
+            if (btn) { btn.textContent = '🔔 ACTIVAR NOTIFICACIONES'; btn.classList.remove('is-claim'); btn.disabled = false; }
+        } else {
+            if (sub) sub.textContent = '🎉 ¡Listo! Reclamá tu bono de bienvenida.';
+            if (nextEl) { nextEl.style.display = 'none'; }
+            if (btn) { btn.textContent = '🎁 RECLAMAR $5.000'; btn.classList.add('is-claim'); btn.disabled = false; }
+        }
+    }
+
+    // Auto-prompt de notificaciones cuando entra a la app (standalone) y
+    // todavía no aceptó. Una sola vez por sesión para no ser invasivo.
+    let _notifAutoPromptDone = false;
+    function maybeAutoPromptNotifs() {
+        if (_notifAutoPromptDone) return;
+        if (typeof Notification === 'undefined') return;
+        if (!isInApp()) return;
+        if (Notification.permission !== 'default') return; // ya granted o denied
+        _notifAutoPromptDone = true;
+        setTimeout(() => {
+            try {
+                Notification.requestPermission().then((perm) => {
+                    if (perm === 'granted' && VIP.ui && typeof VIP.ui.showToast === 'function') {
+                        VIP.ui.showToast('✅ Notificaciones activadas. Ya podés reclamar tu bono.', 'success');
+                    }
+                    renderHero();
+                }).catch(() => {});
+            } catch (_) {}
+        }, 700);
+    }
+
+    // Click del botón único: dispatch según el estado actual.
     const btn = document.getElementById('installHeroBtn');
     if (btn) {
         btn.addEventListener('click', () => {
+            const installed = isInstalled();
+            const inApp     = isInApp();
+            const notifOk   = isNotifOk();
+            if (!installed) {
+                try { if (typeof VIP.ui.installApp === 'function') VIP.ui.installApp(); } catch (e) {}
+                return;
+            }
+            if (!inApp) {
+                if (VIP.ui && typeof VIP.ui.showToast === 'function') {
+                    VIP.ui.showToast('📱 Abrí la app desde el ícono que quedó en tu pantalla', 'info', 5000);
+                }
+                return;
+            }
+            if (!notifOk) {
+                if (typeof Notification === 'undefined') {
+                    if (VIP.ui && typeof VIP.ui.showToast === 'function') VIP.ui.showToast('Tu navegador no soporta notificaciones.', 'error');
+                    return;
+                }
+                Notification.requestPermission().then((perm) => {
+                    if (perm === 'granted' && VIP.ui && typeof VIP.ui.showToast === 'function') {
+                        VIP.ui.showToast('✅ Notificaciones activadas. Tocá RECLAMAR.', 'success');
+                    }
+                    renderHero();
+                }).catch(() => {});
+                return;
+            }
+            // Todos los pasos hechos: reclamar bono.
             try {
-                if (typeof VIP.ui.installApp === 'function') VIP.ui.installApp();
-            } catch (e) { console.warn('installApp error:', e); }
+                if (VIP.refunds && typeof VIP.refunds.handleWelcomeBonusClick === 'function') {
+                    VIP.refunds.handleWelcomeBonusClick();
+                }
+            } catch (e) { console.warn('claim error:', e); }
         });
     }
-    // Si después se dispara el evento appinstalled, ocultar el card al toque.
-    window.addEventListener('appinstalled', () => {
-        card.hidden = true;
+
+    // Eventos que pueden cambiar el estado.
+    window.addEventListener('appinstalled', () => { renderHero(); });
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            renderHero();
+            maybeAutoPromptNotifs();
+        }
     });
+    // Cuando la app vuelve a foreground el media query también puede cambiar.
+    if (window.matchMedia) {
+        try {
+            window.matchMedia('(display-mode: standalone)').addEventListener('change', () => renderHero());
+        } catch (_) {}
+    }
+
+    // Primer render + auto-prompt si corresponde.
+    renderHero();
+    maybeAutoPromptNotifs();
+
+    // Exponer global para que otros módulos puedan refrescar.
+    window.renderInstallHeroCard = renderHero;
 })();
 
 // Mobile drawer toggle
