@@ -100,6 +100,8 @@ VIP.ui = (function () {
         startBalancePolling();
         // Backup phone chip: chequear estado y mostrar si todavía no lo dejó.
         try { setupBackupPhoneChip(); } catch (_) {}
+        // Soporte: pintar el badge top-right con el número actual.
+        try { if (typeof window.applySupportPhoneToUI === 'function') window.applySupportPhoneToUI(); } catch (_) {}
         // sendWelcomeMessages() removido — esta version no tiene chat,
         // los "mensajes de bienvenida" iban al chat in-app que sacamos.
     }
