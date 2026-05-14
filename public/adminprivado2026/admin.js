@@ -24842,7 +24842,7 @@ function _inlineUploadBtn(rid, row, kind, teamSlot, label, locked) {
     html += '</span>';
     return html;
 }
-const COMP_MAX_PER_KIND_DISPLAY = 10;
+const COMP_MAX_PER_KIND_DISPLAY = 50;
 
 // Lista mini de fotos ya adjuntadas para un kind+teamSlot — muestra
 // thumbnails clicables (abren en otra tab) con botón ✕ para eliminar.
@@ -25781,7 +25781,7 @@ function _renderComprobantesPanel(row, rid, locked, computed) {
 const _closingUploadState = {};
 
 // Cap por tipo de comprobante para evitar spam (10 fotos por kind)
-const COMP_MAX_PER_KIND = 10;
+const COMP_MAX_PER_KIND = 50;
 
 function openClosingUpload(rid, kind, teamSlot) {
     // No se puede subir foto a un cierre que todavía no existe.
