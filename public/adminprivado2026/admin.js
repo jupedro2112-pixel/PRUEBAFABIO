@@ -202,11 +202,42 @@ function handleLogout() {
     document.getElementById('loginScreen').classList.remove('hidden');
 }
 
+// Badge verde con count de usuarios activos al lado del adminName.
+// Pollea /api/admin/active-users-count cada 10s mientras la pestaña está
+// visible. Cuando la pestaña se oculta, pausa el polling para no gastar
+// requests. Vuelve a arrancar cuando se vuelve a enfocar.
+let _activeUsersTimer = null;
+async function _fetchActiveUsersCount() {
+    try {
+        const r = await authFetch('/api/admin/active-users-count');
+        if (!r.ok) return;
+        const d = await r.json().catch(() => null);
+        if (!d || !d.success) return;
+        const badge = document.getElementById('activeUsersBadge');
+        const counter = document.getElementById('activeUsersCount');
+        if (badge && counter) {
+            counter.textContent = String(d.count || 0);
+            badge.style.display = 'inline-flex';
+            badge.title = 'Usuarios activos ahora: ' + (d.count || 0) + ' · Admins: ' + (d.admins || 0);
+        }
+    } catch (_) { /* silent — no rompemos nada por esto */ }
+}
+function startActiveUsersBadge() {
+    if (_activeUsersTimer) return;
+    _fetchActiveUsersCount();
+    _activeUsersTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') _fetchActiveUsersCount();
+    }, 10000);
+}
+
 function showApp() {
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('app').classList.remove('hidden');
     const nameEl = document.getElementById('adminName');
     if (nameEl) nameEl.textContent = (currentAdmin && currentAdmin.username) || 'Admin';
+
+    // Arranca el polling del badge "users activos" al lado del adminName.
+    try { startActiveUsersBadge(); } catch (_) {}
 
     // Modo "vista reducida" (?only=<sectionKey>): saltar a esa sección y nada más.
     const onlySection = document.documentElement.dataset.onlySection;

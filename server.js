@@ -35548,6 +35548,22 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/admin/active-users-count — count de users conectados por socket
+// AHORA. Para el badge verde pulsante en el sidebar del admin. Pollea cada
+// 10s desde el frontend. Súper liviano — solo retorna .size del Map.
+app.get('/api/admin/active-users-count', authMiddleware, adminMiddleware, (req, res) => {
+  try {
+    res.json({
+      success: true,
+      count: connectedUsers ? connectedUsers.size : 0,
+      admins: connectedAdmins ? connectedAdmins.size : 0,
+      ts: Date.now()
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor', count: 0 });
+  }
+});
+
 // ============================================
 // EMPLEADOS POR ESTRUCTURA
 // ============================================

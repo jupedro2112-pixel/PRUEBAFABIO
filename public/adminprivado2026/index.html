@@ -272,12 +272,20 @@
             </nav>
             <div class="sidebar-footer">
                 <span id="adminName">Admin</span>
+                <!-- Indicador "users activos AHORA" — círculo verde pulsante
+                     con número. Pollea /api/admin/active-users-count cada 10s
+                     y muestra count de sockets conectados. -->
+                <span id="activeUsersBadge" title="Usuarios activos ahora (con la app abierta)" style="display:none;align-items:center;gap:5px;background:rgba(0,255,102,0.10);border:1px solid rgba(0,255,102,0.45);border-radius:11px;padding:2px 8px;margin-left:6px;font-size:11px;font-weight:900;color:#0f0;">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#0f0;box-shadow:0 0 6px #0f0;animation:activeUsersPulse 1.6s ease-in-out infinite;"></span>
+                    <span id="activeUsersCount">0</span>
+                </span>
                 <div class="sidebar-footer-actions">
                     <button id="logoutBtn" class="logout-btn">
                         <span class="icon icon-sign-out"></span> Salir
                     </button>
                 </div>
             </div>
+            <style>@keyframes activeUsersPulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.55; transform:scale(0.78); } }</style>
         </aside>
 
         <!-- Main Content -->
