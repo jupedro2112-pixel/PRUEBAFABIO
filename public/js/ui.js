@@ -1161,7 +1161,7 @@ VIP.ui.goToPlatform = function() {
 };
 
 VIP.ui.showPlatformPasswordInfo = function() {
-  VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a VipCargas', 'info');
+  VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a VIPCARGASANTINO', 'info');
 };
 // Alias kept for backward compatibility with the onclick handler
 VIP.ui.copyPlatformPassword = VIP.ui.showPlatformPasswordInfo;

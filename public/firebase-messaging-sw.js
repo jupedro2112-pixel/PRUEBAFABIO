@@ -102,11 +102,11 @@ messaging.onBackgroundMessage(function(payload) {
   const notif = payload.notification || {};
   const webNotif = (payload.webpush && payload.webpush.notification) || {};
 
-  const title = notif.title || webNotif.title || 'REEMBOLSOSVIP';
+  const title = notif.title || webNotif.title || 'VIPCARGASANTINO';
   const body  = notif.body  || webNotif.body  || 'Tenés una notificación nueva';
   const icon  = notif.icon  || webNotif.icon  || '/icons/bag-silver-v2.svg';
   const badge = notif.badge || webNotif.badge || '/icons/bag-silver-v2.svg';
-  const tag   = (payload.data && payload.data.tag) || 'reembolsosvip';
+  const tag   = (payload.data && payload.data.tag) || 'vipcargasantino';
 
   // Confirmación de entrega: si el envío vino con batchId+userId, avisar al
   // backend que el push llegó realmente (cubre el falso "enviado" cuando
