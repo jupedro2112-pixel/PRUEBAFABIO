@@ -2043,7 +2043,7 @@ window.submitCreateUserHelp = async function submitCreateUserHelp() {
         if (commBtn) {
             if (data.communityLink) {
                 commBtn.href = data.communityLink;
-                commBtn.textContent = '💬 ' + (data.communityLabel || 'Sumate a la comunidad');
+                commBtn.textContent = '📣 ' + (data.communityLabel || 'Sumate al canal de Telegram');
                 commBtn.style.display = '';
             } else {
                 commBtn.style.display = 'none';
@@ -2052,7 +2052,7 @@ window.submitCreateUserHelp = async function submitCreateUserHelp() {
         if (commBtn2) {
             if (data.communityLink2) {
                 commBtn2.href = data.communityLink2;
-                commBtn2.textContent = '💬 ' + (data.communityLabel2 || 'Segunda comunidad');
+                commBtn2.textContent = '📣 ' + (data.communityLabel2 || 'Segundo canal de Telegram');
                 commBtn2.style.display = '';
             } else {
                 commBtn2.style.display = 'none';
