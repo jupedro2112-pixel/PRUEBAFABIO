@@ -2648,12 +2648,22 @@ app.get('/api/user-lines/me', authMiddleware, async (req, res) => {
     // Flag de "alerta forzada" — si el admin activó el reminder por N hs
     // (vía /api/admin/community-alert/force o automáticamente al apretar
     // 📢 Avisar push), la PWA ignora el cooldown de 5 días.
+    // OJO: si el user ya canjeó un código (probó que está dentro del canal
+    // de Telegram), no le mandamos más este recordatorio — está dentro.
     let alertForceUntilMs = 0;
     let forceBannerMsg = null;
+    let userJoinedTelegram = false;
+    try {
+      const meDoc = await User.findOne({ id: req.user.userId })
+        .select('joinedTelegram')
+        .lean()
+        .catch(() => null);
+      userJoinedTelegram = !!(meDoc && meDoc.joinedTelegram);
+    } catch (_) {}
     try {
       const raw = await getConfig('communityAlertForceUntil').catch(() => null);
       const n = Number(raw) || 0;
-      if (n > Date.now()) {
+      if (n > Date.now() && !userJoinedTelegram) {
         alertForceUntilMs = n;
         // Mensaje custom del banner (lo setea PUT user-communities con
         // broadcastBody). Vive solo durante la ventana forzada.
@@ -35401,6 +35411,16 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
         { $set: { 'claims.$.transactionId': transactionId } }
       ).catch(() => {});
     }
+
+    // Confirmación implícita: si reclamó un código (que solo viaja por
+    // Telegram), está adentro del canal. Marcamos joinedTelegram=true para
+    // dejar de mostrarle alertas de "sumate a la comunidad".
+    try {
+      await User.updateOne(
+        { id: userId },
+        { $set: { joinedTelegram: true, joinedTelegramAt: new Date() } }
+      );
+    } catch (_) { /* silent */ }
 
     res.json({
       success: true,

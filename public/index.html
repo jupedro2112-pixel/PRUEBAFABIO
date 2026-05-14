@@ -2604,16 +2604,15 @@
              que se publican en Telegram. Pulsea cuando hay un código
              activo (el banner verde de "redeemActiveBanner" sigue
              apareciendo dentro del bloque comunidad mas abajo). -->
-        <div id="redeemCodeHomeCard" style="margin:10px 12px 6px;padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,rgba(0,200,150,0.16),rgba(0,143,108,0.08));border:1.5px solid rgba(0,200,150,0.55);box-shadow:0 0 14px rgba(0,200,150,0.20);display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <div style="font-size:34px;line-height:1;flex-shrink:0;">🎁</div>
-            <div style="flex:1;min-width:140px;">
-                <div style="color:#00c896;font-weight:900;font-size:14px;letter-spacing:0.4px;line-height:1.2;">¿Tenés un código?</div>
-                <div style="color:#aaffd9;font-size:11.5px;font-weight:700;margin-top:2px;line-height:1.35;">Los publicamos en nuestro <strong style="color:#22a0d9;">canal de Telegram</strong>. Reclamá el bono acá ↘</div>
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                <button id="redeemCodeBtn" type="button" onclick="openRedeemCodeModal()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 18px;border-radius:10px;font-weight:900;font-size:13px;letter-spacing:0.5px;cursor:pointer;white-space:nowrap;box-shadow:0 3px 10px rgba(0,200,150,0.40);">RECLAMA AQUÍ</button>
-                <button id="redeemCodeInfoBtn" type="button" onclick="openRedeemCodeInfo()" title="¿De dónde salen los códigos?" style="background:rgba(0,200,150,0.10);color:#00c896;border:1px solid rgba(0,200,150,0.45);padding:9px 11px;border-radius:9px;font-weight:900;font-size:13px;line-height:1;cursor:pointer;">ℹ</button>
-            </div>
+        <!-- Card minimalista del código — input inline listo para tipear.
+             El user no tiene que apretar nada para llegar al campo; ya está
+             negro y visible. Enter o tap a → envía. ℹ abre modal con
+             instrucciones + link directo a Telegram. -->
+        <div id="redeemCodeHomeCard" style="margin:10px 12px 6px;padding:9px 12px;border-radius:11px;background:linear-gradient(135deg,rgba(0,200,150,0.14),rgba(0,143,108,0.06));border:1.5px solid rgba(0,200,150,0.50);box-shadow:0 0 12px rgba(0,200,150,0.18);display:flex;align-items:center;gap:8px;">
+            <span style="color:#00c896;font-weight:900;font-size:12.5px;letter-spacing:0.4px;flex-shrink:0;">🎁 Código:</span>
+            <input id="redeemCodeInlineInput" type="text" maxlength="32" placeholder="ESCRIBÍ ACÁ" autocomplete="off" inputmode="text" style="flex:1;min-width:0;background:#000;color:#00ff99;border:1.5px solid rgba(0,200,150,0.55);padding:8px 10px;border-radius:7px;font-size:14px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;text-align:center;box-sizing:border-box;outline:none;">
+            <button id="redeemCodeInlineBtn" type="button" onclick="submitRedeemCodeInline()" title="Reclamar" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:8px 13px;border-radius:8px;font-weight:900;font-size:13px;line-height:1;cursor:pointer;flex-shrink:0;">→</button>
+            <button id="redeemCodeInfoBtn" type="button" onclick="openRedeemCodeInfo()" title="¿De dónde salen los códigos?" style="background:rgba(0,200,150,0.10);color:#00c896;border:1px solid rgba(0,200,150,0.45);padding:7px 9px;border-radius:7px;font-weight:900;font-size:13px;line-height:1;cursor:pointer;flex-shrink:0;">ℹ</button>
         </div>
 
         <!-- Refunds-only: Bono por bajar la app — va ARRIBA del banner de
@@ -6351,6 +6350,11 @@
             if (old) old.remove();
             const inApp = _redeemIsStandalone();
             const notifOk = _redeemNotifGranted();
+            // Link directo al canal de Telegram (lo guarda auth.js en VIP.state).
+            let tgLink = '';
+            try {
+                tgLink = (window.VIP && window.VIP.state && (window.VIP.state.communityLink || window.VIP.state.communityLink2)) || '';
+            } catch (_) {}
             const overlay = document.createElement('div');
             overlay.id = 'redeemReqsModal';
             overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
@@ -6359,12 +6363,20 @@
                   '<div style="text-align:center;margin-bottom:14px;">' +
                     '<div style="font-size:42px;margin-bottom:4px;">🔒</div>' +
                     '<div style="color:#ffaa44;font-weight:900;font-size:16px;letter-spacing:0.5px;">Para reclamar el código</div>' +
-                    '<div style="color:#aaa;font-size:12px;margin-top:6px;line-height:1.5;">Necesitás <strong style="color:#fff;">instalar la app</strong> y <strong style="color:#fff;">activar las notificaciones</strong>. Es para que recibas el aviso de los próximos códigos y para confirmar que sos un usuario real.</div>' +
+                    '<div style="color:#aaa;font-size:12px;margin-top:6px;line-height:1.5;">Necesitás <strong style="color:#fff;">instalar la app</strong> y <strong style="color:#fff;">activar las notificaciones</strong>. Sin esto no podemos confirmarte como usuario real.</div>' +
                   '</div>' +
                   '<div style="background:rgba(0,0,0,0.35);border:1px solid rgba(255,170,68,0.25);border-radius:9px;padding:11px 13px;margin-bottom:14px;font-size:12.5px;line-height:1.6;">' +
                     '<div style="margin-bottom:6px;color:#fff;">' + (inApp ? '✅' : '⏳') + ' <strong>App instalada y abierta como app</strong></div>' +
                     '<div style="color:#fff;">' + (notifOk ? '✅' : '⏳') + ' <strong>Notificaciones permitidas</strong></div>' +
                   '</div>' +
+                  // Bloque "¿No tenés código?" — link directo a Telegram para sumarse al canal.
+                  (tgLink ? (
+                    '<div style="background:rgba(34,160,217,0.10);border:1.5px solid rgba(34,160,217,0.45);border-radius:9px;padding:11px 13px;margin-bottom:14px;text-align:center;">' +
+                      '<div style="color:#22a0d9;font-weight:900;font-size:12px;letter-spacing:0.5px;margin-bottom:5px;">¿No tenés código todavía?</div>' +
+                      '<div style="color:#aaa;font-size:11.5px;margin-bottom:8px;line-height:1.4;">Sumate al canal de Telegram — ahí publicamos los códigos.</div>' +
+                      '<a href="' + tgLink.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="display:inline-block;background:linear-gradient(135deg,#22a0d9 0%,#0088cc 100%);color:#fff;text-decoration:none;padding:9px 16px;border-radius:8px;font-weight:900;font-size:12.5px;letter-spacing:0.4px;">📲 Abrir canal de Telegram</a>' +
+                    '</div>'
+                  ) : '') +
                   '<div style="display:flex;flex-direction:column;gap:8px;">' +
                     (!inApp
                       ? '<button type="button" id="redeemReqInstall" style="background:linear-gradient(135deg,#ffd700 0%,#ffaa00 100%);color:#000;border:none;padding:11px;border-radius:9px;font-weight:900;font-size:13px;cursor:pointer;">📱 Instalar la app</button>'
@@ -6493,6 +6505,107 @@
         };
 
         // ============================================
+        // SUBMIT DEL INPUT INLINE de la home (sin abrir modal).
+        // El user ya tiene el código tipeado en el campo de la home;
+        // acá lo enviamos directo. Si hay error → mostramos un toast
+        // chiquito debajo del card. Si falta PWA/notifs → abrimos el
+        // modal de requisitos (con link directo a Telegram dentro).
+        // ============================================
+        window.submitRedeemCodeInline = async function () {
+            const inp = document.getElementById('redeemCodeInlineInput');
+            if (!inp) return;
+            const code = (inp.value || '').trim();
+            if (!code) {
+                inp.focus();
+                inp.style.borderColor = '#ff8080';
+                setTimeout(() => { inp.style.borderColor = 'rgba(0,200,150,0.55)'; }, 1200);
+                return;
+            }
+            // Gate: PWA + notifs
+            if (!_redeemIsStandalone() || !_redeemNotifGranted()) {
+                _openRedeemRequirementsModal();
+                return;
+            }
+            const btn = document.getElementById('redeemCodeInlineBtn');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+            try {
+                const r = await fetch('/api/redeem-codes/claim', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + _getToken()
+                    },
+                    body: JSON.stringify({ code })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || !d.success) {
+                    if (d && d.requirement === 'pwa_install_notif') {
+                        _openRedeemRequirementsModal();
+                        return;
+                    }
+                    _showRedeemInlineError(d.error || 'Error al canjear');
+                    return;
+                }
+                // Éxito → modal grande de "acreditado"
+                _showRedeemSuccessModal(d.amountARS || 0);
+                try { hideRedeemActiveBanner(); stopRedeemActivePolling(); } catch (_) {}
+                inp.value = '';
+            } catch (e) {
+                _showRedeemInlineError('Error de conexión');
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '→'; }
+            }
+        };
+
+        function _showRedeemInlineError(msg) {
+            const card = document.getElementById('redeemCodeHomeCard');
+            if (!card) return;
+            let tip = document.getElementById('redeemInlineErrTip');
+            if (!tip) {
+                tip = document.createElement('div');
+                tip.id = 'redeemInlineErrTip';
+                tip.style.cssText = 'margin:0 12px 6px;padding:7px 11px;border-radius:8px;background:rgba(255,80,80,0.10);border:1px solid rgba(255,80,80,0.45);color:#ff8080;font-size:11.5px;font-weight:800;text-align:center;';
+                card.parentNode.insertBefore(tip, card.nextSibling);
+            }
+            tip.textContent = '❌ ' + msg;
+            clearTimeout(window._redeemInlineErrTipTo);
+            window._redeemInlineErrTipTo = setTimeout(() => { tip && tip.remove(); }, 5000);
+        }
+
+        function _showRedeemSuccessModal(amount) {
+            const old = document.getElementById('redeemCodeSuccessModal');
+            if (old) old.remove();
+            const overlay = document.createElement('div');
+            overlay.id = 'redeemCodeSuccessModal';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
+            overlay.innerHTML =
+                '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #00c896;border-radius:13px;padding:30px 22px;max-width:380px;width:100%;box-shadow:0 0 40px rgba(0,200,150,0.45);color:#fff;text-align:center;">' +
+                  '<div style="font-size:48px;margin-bottom:6px;">✅</div>' +
+                  '<div style="color:#00c896;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:5px;">¡Canjeado!</div>' +
+                  '<div style="color:#aaffaa;font-size:14px;font-weight:700;margin-bottom:14px;">Se acreditaron <strong style="font-size:18px;">$' + Number(amount || 0).toLocaleString('es-AR') + '</strong> a tu cuenta.</div>' +
+                  '<div style="color:#aaa;font-size:11.5px;margin-bottom:14px;">¡Buenísimo! Seguí atento al canal privado de Telegram para los próximos códigos.</div>' +
+                  '<button type="button" id="redeemSuccessOk" style="width:100%;background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);border:none;color:#000;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;cursor:pointer;">LISTO</button>' +
+                '</div>';
+            document.body.appendChild(overlay);
+            document.getElementById('redeemSuccessOk').onclick = () => { overlay.remove(); window.location.reload(); };
+        }
+
+        // Enter en el input dispara el submit (UX rápida tipeo + Enter)
+        document.addEventListener('DOMContentLoaded', () => {
+            const inp = document.getElementById('redeemCodeInlineInput');
+            if (!inp) return;
+            inp.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    window.submitRedeemCodeInline();
+                }
+            });
+            inp.addEventListener('input', () => {
+                inp.value = (inp.value || '').toUpperCase();
+            });
+        });
+
+        // ============================================
         // Detector "código activo ahora". Pinta el banner verde pulsante
         // dentro de la sección Comunidad y hace destellar el botón
         // "🎁 Reclama aquí" arriba a la izquierda. También arma cuenta
@@ -6602,6 +6715,10 @@
         window.openRedeemCodeInfo = function () {
             const old = document.getElementById('redeemCodeInfoModal');
             if (old) old.remove();
+            let tgLink = '';
+            try {
+                tgLink = (window.VIP && window.VIP.state && (window.VIP.state.communityLink || window.VIP.state.communityLink2)) || '';
+            } catch (_) {}
             const overlay = document.createElement('div');
             overlay.id = 'redeemCodeInfoModal';
             overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:99998;display:flex;align-items:center;justify-content:center;padding:18px;';
@@ -6610,7 +6727,10 @@
                   '<div style="font-size:38px;margin-bottom:4px;">📢</div>' +
                   '<div style="color:#22a0d9;font-weight:900;font-size:15px;letter-spacing:0.5px;margin-bottom:8px;">¿De dónde salen los códigos?</div>' +
                   '<div style="color:#ddd;font-size:12.5px;line-height:1.55;margin-bottom:14px;">Los códigos los publicamos en nuestro <strong style="color:#22a0d9;">canal privado de Telegram</strong>. Sumate ahí para enterarte apenas sale uno nuevo — algunos tienen tiempo limitado.</div>' +
-                  '<button type="button" id="redeemInfoOk" style="width:100%;background:linear-gradient(135deg,#22a0d9 0%,#0088cc 100%);border:none;color:#fff;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;cursor:pointer;">Entendido</button>' +
+                  (tgLink
+                    ? '<a href="' + tgLink.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="display:block;width:100%;box-sizing:border-box;background:linear-gradient(135deg,#22a0d9 0%,#0088cc 100%);color:#fff;text-decoration:none;padding:11px;border-radius:9px;font-weight:900;letter-spacing:0.5px;margin-bottom:8px;">📲 Abrir canal de Telegram</a>'
+                    : '') +
+                  '<button type="button" id="redeemInfoOk" style="width:100%;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.20);color:#fff;padding:10px;border-radius:9px;font-weight:800;letter-spacing:0.3px;cursor:pointer;">Cerrar</button>' +
                 '</div>';
             document.body.appendChild(overlay);
             document.getElementById('redeemInfoOk').onclick = () => overlay.remove();

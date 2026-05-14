@@ -25016,13 +25016,13 @@ async function loadClosingsSummary(date) {
         html += '</div>';
         html += '</div>';
 
-        // VENTA — descargas + pendiente del día anterior (lo que TIENE que bajarse en total)
+        // VENTA — venta del día + pendiente del día anterior (lo que TIENE que bajarse en total)
         const pendAntTotal = Number(t.pendienteAnteriorARS || 0);
         const ventaConPend = Number(t.ventasARS || 0) + pendAntTotal;
         html += '<div style="background:rgba(255,208,160,0.10);border:1.5px solid #ffd0a0;border-radius:9px;padding:9px;text-align:center;">';
         html += '<div style="color:#ffd0a0;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🛒 VENTA + PEND. ANT.</div>';
         html += '<div style="color:#fff;font-size:17px;font-weight:900;">' + _closingFmt(ventaConPend) + '</div>';
-        html += '<div style="color:#888;font-size:9.5px;">' + _closingFmt(t.ventasARS) + ' descargas + ' + _closingFmt(pendAntTotal) + ' pend.ant</div>';
+        html += '<div style="color:#888;font-size:9.5px;">' + _closingFmt(t.ventasARS) + ' venta + ' + _closingFmt(pendAntTotal) + ' pend.ant</div>';
         html += '</div>';
 
         // BAJÓ
@@ -26072,7 +26072,7 @@ function analyzeClosing(id) {
         html += '<thead><tr style="color:#888;text-align:left;border-bottom:1px solid rgba(255,255,255,0.15);">';
         html += '<th style="padding:5px 8px;">#</th><th style="padding:5px 8px;">Equipo</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Depósito $</th><th style="padding:5px 8px;text-align:right;">Depós #</th>';
-        html += '<th style="padding:5px 8px;text-align:right;" title="Descargas$ del equipo (= venta)">Descargas $</th>';
+        html += '<th style="padding:5px 8px;text-align:right;" title="Venta $ del equipo (cash-out a clientes)">Venta $</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Bon $</th><th style="padding:5px 8px;text-align:right;">Bon #</th>';
         html += '<th style="padding:5px 8px;text-align:right;">Desc #</th>';
         html += '</tr></thead><tbody>';
@@ -26360,7 +26360,7 @@ function _renderTeamSectorEntry(sec, date, row) {
         const moneyInputStyle = inputStyle + 'font-size:11.5px;padding:4px 8px;';
         html += '<div style="display:grid;grid-template-columns:1.6fr 1.6fr 1.6fr 1fr 1fr 1fr;gap:5px;align-items:end;">';
         html += '<div><label style="color:#aaffaa;font-size:9.5px;text-transform:uppercase;font-weight:700;">💰 Depósito $</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsARS" value="' + (t.depositsARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(102,255,102,0.30);" ' + disabledAttr + '></div>';
-        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Lo que el equipo retiró (cash-outs). La venta se calcula sola = descargas$.">📤 Descargas $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
+        html += '<div><label style="color:#ffd0a0;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="VENTA del equipo (lo que se pagó a clientes — cash-out)">🛒 Venta $</label><input type="number" data-buffalo-team="' + i + '" data-field="ventasARS" value="' + (t.ventasARS || 0) + '" min="0" step="1000" style="' + moneyInputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#ffd700;font-size:9.5px;text-transform:uppercase;font-weight:700;">🎁 Bonif. $</label><input type="number" data-buffalo-team="' + i + '" data-field="bonusARS" value="' + (t.bonusARS || 0) + '" min="0" step="100" style="' + moneyInputStyle + 'border-color:rgba(255,215,0,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de depósitos (operaciones de carga)">📥 Depós#</label><input type="number" data-buffalo-team="' + i + '" data-field="depositsCount" value="' + (t.depositsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
         html += '<div><label style="color:#c89bff;font-size:9.5px;text-transform:uppercase;font-weight:700;" title="Cantidad de descargas (operaciones de retiro)">📤 Desc#</label><input type="number" data-buffalo-team="' + i + '" data-field="withdrawalsCount" value="' + (t.withdrawalsCount || 0) + '" min="0" max="9999" step="1" maxlength="4" style="' + countInputStyle + 'border-color:rgba(155,48,255,0.30);" ' + disabledAttr + '></div>';
@@ -26546,7 +26546,7 @@ function _renderClosingEntry(sec, date, teamSlot, row) {
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px;margin-bottom:8px;">';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">💰 Depósitos</label><input type="number" id="cls_' + rid + '_depositsARS" value="' + (row ? row.depositsARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏦 % Banco</label><input type="number" id="cls_' + rid + '_bankMarginPercent" value="' + (row ? row.bankMarginPercent : 0) + '" min="0" max="100" step="0.1" style="' + inputStyle + '" ' + disabledAttr + '></div>';
-    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;" title="Cash-outs (lo que se pagó a clientes). Venta = depósitos − descargas (auto).">📤 Descargas $</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + 'border-color:rgba(255,136,136,0.30);" ' + disabledAttr + '><div style="color:#666;font-size:9.5px;margin-top:2px;">🛒 venta auto = depósitos − descargas</div></div>';
+    html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;" title="VENTA = lo que se pagó a clientes (cash-out)">🛒 Venta $</label><input type="number" id="cls_' + rid + '_ventasARS" value="' + (row ? row.ventasARS : 0) + '" min="0" step="100" style="' + inputStyle + 'border-color:rgba(255,208,160,0.30);" ' + disabledAttr + '><div style="color:#666;font-size:9.5px;margin-top:2px;">cash-out a clientes del día</div></div>';
     html += '<div><label style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🏃 Bajada real</label><input type="number" id="cls_' + rid + '_bajadaARS" value="' + (row ? row.bajadaARS : 0) + '" min="0" step="100" style="' + inputStyle + '" ' + disabledAttr + '></div>';
     (function() {
         const prevExistsP = !!(_closingsRowsCache || []).find(rr => rr.dateKey === _prevDateKey(date) && rr.sector === sec.key);

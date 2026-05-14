@@ -342,6 +342,13 @@ const userSchema = new mongoose.Schema({
   fraudReason: { type: String, default: null },
   fraudBlockedAt: { type: Date, default: null },
   fraudBlockedIp: { type: String, default: null },
+  // Confirmación de que el user se sumó al canal de Telegram. Lo seteamos
+  // a true cuando reclama un código canjeable (los códigos solo viven en
+  // Telegram; reclamarlo prueba que el user vio el canal). Sirve para que
+  // las campañas de "Unite a Telegram" / "Activá comunidad 24h" no le
+  // sigan apareciendo a quien ya está adentro.
+  joinedTelegram: { type: Boolean, default: false },
+  joinedTelegramAt: { type: Date, default: null },
   // Huella del dispositivo del último login del usuario (hash SHA-256 de
   // userAgent + pantalla + idioma + timezone + canvas hash). Permite
   // detectar el mismo dispositivo aunque el user borre caché/cookies y
