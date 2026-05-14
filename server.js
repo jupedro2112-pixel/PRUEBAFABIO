@@ -33761,6 +33761,63 @@ app.get('/api/admin/fraud-blocked', authMiddleware, adminMiddleware, async (req,
 });
 
 // Desbloqueo COMPLETO: el user puede loguearse y reclamar todo de nuevo.
+// Desbloqueo MASIVO: levanta fraudBlocked + bonusBlocked de TODOS los users,
+// les setea unblockNoticePending=true, y manda push de aviso a cada uno
+// recordando que si vuelven a cambiar de accesos van a perder la cuenta.
+app.post('/api/admin/fraud-blocked/unblock-all', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const filter = { $or: [{ fraudBlocked: true }, { bonusBlocked: true }] };
+    const users = await User.find(filter).select('id username fcmToken fcmTokens').lean();
+    if (users.length === 0) {
+      return res.json({ success: true, count: 0, pushed: 0, message: 'No había usuarios bloqueados.' });
+    }
+    // Update masivo de flags (sin tocar la lista de claims ni nada más).
+    await User.updateMany(filter, {
+      $set: {
+        fraudBlocked: false,
+        fraudReason: null,
+        fraudBlockedAt: null,
+        fraudBlockedIp: null,
+        bonusBlocked: false,
+        bonusBlockedAt: null,
+        bonusBlockedReason: null,
+        unblockNoticePending: true,
+        unblockNoticeAt: new Date()
+      }
+    });
+    logger.info(`Admin ${req.user.username} desbloqueó MASIVO a ${users.length} users`);
+
+    // Push de aviso a cada user que tenga tokens. Best-effort, no bloqueante.
+    const pushTitle = '✅ Te desbloqueamos';
+    const pushBody  = '⚠️ Importante: NO cambies de accesos ni de usuario. Si lo repetís, el bloqueo va a ser PERMANENTE. Las notificaciones llegan al usuario con el que instalaste la app.';
+    let pushed = 0;
+    for (const u of users) {
+      try {
+        const r = await _sendPushToUser(u.id, {
+          notification: { title: pushTitle, body: pushBody },
+          data: {
+            type: 'unblock_notice',
+            source: 'unblock_all',
+            timestamp: String(Date.now())
+          }
+        });
+        if (r && r.success) pushed++;
+      } catch (e) {
+        logger.warn(`[unblock-all] push falló para ${u.username}: ${e.message}`);
+      }
+    }
+    res.json({
+      success: true,
+      count: users.length,
+      pushed,
+      message: `${users.length} usuarios desbloqueados · ${pushed} recibieron el push de aviso.`
+    });
+  } catch (e) {
+    logger.error(`POST /fraud-blocked/unblock-all: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
 app.post('/api/admin/users/:id/fraud-unblock', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const user = await User.findOne({ id: req.params.id });

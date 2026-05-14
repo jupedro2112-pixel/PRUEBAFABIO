@@ -28425,6 +28425,26 @@ function renderFraudBlockedFiltered() {
 }
 window.renderFraudBlockedFiltered = renderFraudBlockedFiltered;
 
+async function unblockAllFraud() {
+    const n = (_fraudBlockedCache || []).length;
+    const txt = n > 0
+        ? `Vas a desbloquear a ${n} usuario(s) y mandarles un push de aviso:\n\n` +
+          `"⚠️ Importante: NO cambies de accesos ni de usuario. Si lo repetís, el bloqueo va a ser PERMANENTE. Las notificaciones llegan al usuario con el que instalaste la app."\n\n` +
+          `¿Confirmás?`
+        : `No hay usuarios bloqueados en el cache. ¿Querés correr el desbloqueo masivo igual (el server chequea de nuevo)?`;
+    if (!confirm(txt)) return;
+    try {
+        const r = await authFetch('/api/admin/fraud-blocked/unblock-all', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al desbloquear', 'error'); return; }
+        showToast('✅ ' + (d.message || 'Desbloqueado'), 'success');
+        loadFraudBlocked();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+window.unblockAllFraud = unblockAllFraud;
+
 async function fraudUnblockUser(userId, username) {
     if (!confirm('Desbloquear COMPLETAMENTE a "' + username + '"?\n\nEl user va a poder loguear y reclamar todo de nuevo (bono + códigos).')) return;
     try {
