@@ -2066,6 +2066,9 @@ window.applySupportPhoneToUI = async function applySupportPhoneToUI() {
         // Botón de info importante: se muestra/oculta junto con la barra.
         var infoBtn = document.getElementById('infoImportantBtn');
         if (infoBtn) infoBtn.style.display = loggedIn ? 'inline-flex' : 'none';
+        // Fondo negro detrás de la barra fija (misma visibilidad).
+        var topBackdrop = document.getElementById('topFixedBackdrop');
+        if (topBackdrop) topBackdrop.style.display = loggedIn ? 'block' : 'none';
     }
     // 2) Botones dentro del modal "Buscar usuario".
     setHref('createUserHelpSupportBtn',  waUrl);
