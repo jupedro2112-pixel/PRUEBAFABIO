@@ -1346,8 +1346,9 @@ const authMiddleware = async (req, res, next) => {
     }
 
     // Bloqueo por fraude: rechazar token de cuenta flaggeada por intento
-    // de estafa (ver _isWelcomeBlockedByIp). Excluimos roles staff por
-    // las dudas, mismo criterio que VIP block.
+    // de estafa (huella de dispositivo duplicada o multi-cuenta por
+    // dispositivo). Excluimos roles staff por las dudas, mismo criterio
+    // que VIP block.
     if (user.fraudBlocked && !_vipExemptRoles.includes(user.role)) {
       return res.status(403).json({
         error: 'Usuario bloqueado por intento de estafa de bono.',
@@ -16944,32 +16945,6 @@ function _getClientIp(req) {
   return ip.slice(0, 60);
 }
 
-// Si esta IP ya cobró el welcome bonus desde otra cuenta, bloquear.
-async function _isWelcomeBlockedByIp(userId, username, req) {
-  // DESHABILITADO: detrás de Cloudflare, req.ip resuelve a IPs del proxy de
-  // Cloudflare (rangos como 198.41.128.0/17), no a la IP real del visitante.
-  // Eso marcaba como "IP duplicada" a usuarios distintos que comparten el
-  // mismo edge de Cloudflare. El bloqueo por huella de dispositivo
-  // (_isWelcomeBlockedByFingerprint) sigue activo.
-  return { blocked: false };
-  try {
-    const ip = _getClientIp(req);
-    if (!ip) return { blocked: false };
-    const prior = await RefundClaim.findOne({
-      type: 'welcome_install',
-      clientIp: ip,
-      userId: { $ne: userId },
-      username: { $ne: username }
-    }).lean();
-    if (!prior) return { blocked: false };
-    logger.warn(`[BONUS] welcome bloqueado por IP duplicada. ${username} (${ip}) — ya cobró ${prior.username}`);
-    return { blocked: true, otherUsername: prior.username, claimedAt: prior.claimedAt, ip };
-  } catch (e) {
-    logger.warn(`[BONUS] _isWelcomeBlockedByIp error: ${e.message}`);
-    return { blocked: false };
-  }
-}
-
 // Si este dispositivo (huella) ya cobró el welcome bonus desde otra cuenta,
 // bloquear. Detecta el escenario "el user cobró, borró caché/desinstaló,
 // creó otra cuenta JUGAYGANA y volvió a instalar la PWA en el mismo
@@ -17024,19 +16999,17 @@ app.get('/api/refunds/welcome/status', authMiddleware, async (req, res) => {
       });
     }
 
-    // Bloqueo por IP duplicada — cuenta JUGAYGANA nueva pero mismo router.
-    // También chequeamos huella del dispositivo si el front la pasó por query.
+    // Bloqueo por huella del dispositivo si el front la pasó por query.
     const fingerprintQ = String((req.query && req.query.deviceFingerprint) || '').trim().slice(0, 128);
     const fpBlock = fingerprintQ
       ? await _isWelcomeBlockedByFingerprint(userId, username, fingerprintQ)
       : { blocked: false };
-    const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
-    if (ipBlock.blocked || fpBlock.blocked) {
-      const reason = fpBlock.blocked ? 'duplicate_device' : 'duplicate_ip';
+    if (fpBlock.blocked) {
+      const reason = 'duplicate_device';
       return res.json({
         amount: WELCOME_BONUS_AMOUNT,
         claimed: true,
-        claimedAt: (fpBlock.claimedAt || ipBlock.claimedAt) || null,
+        claimedAt: fpBlock.claimedAt || null,
         status: 'blocked_' + reason,
         blockedReason: reason,
         eligible: false,
@@ -17131,12 +17104,6 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
         });
       }
 
-      // Anti-fraude por IP: si otra cuenta ya cobró desde la misma IP,
-      // FLAGGEAR la cuenta como fraud_blocked y rechazar. El próximo login
-      // de este user queda rechazado con el motivo, y cualquier claim
-      // futuro también. El acto de intentar reclamar desde una IP donde
-      // ya cobraron es la evidencia del intento de estafa.
-      const ipBlock = await _isWelcomeBlockedByIp(userId, username, req);
       const fingerprint = String((req.body && req.body.deviceFingerprint) || '').trim().slice(0, 128);
       // Anti-fraude por DISPOSITIVO: misma lógica que IP, con la huella del
       // navegador. Detecta el caso "borró caché + creó cuenta nueva + volvió
@@ -17145,17 +17112,15 @@ app.post('/api/refunds/claim/welcome', authMiddleware, async (req, res) => {
       const fpBlock = fingerprint
         ? await _isWelcomeBlockedByFingerprint(userId, username, fingerprint)
         : { blocked: false };
-      if (ipBlock.blocked || fpBlock.blocked) {
-        const reasons = [];
-        if (ipBlock.blocked) reasons.push('IP duplicada (' + ipBlock.otherUsername + ')');
-        if (fpBlock.blocked) reasons.push('dispositivo duplicado (' + fpBlock.otherUsername + ')');
+      if (fpBlock.blocked) {
+        const reasons = ['dispositivo duplicado (' + fpBlock.otherUsername + ')'];
         const fraudReason = 'Intento de reclamo de bono desde ' + reasons.join(' + ') + '.';
         try {
           const setFields = {
             fraudBlocked: true,
             fraudReason,
             fraudBlockedAt: new Date(),
-            fraudBlockedIp: ipBlock.ip || _getClientIp(req)
+            fraudBlockedIp: _getClientIp(req)
           };
           if (fingerprint) setFields.deviceFingerprint = fingerprint;
           await User.updateOne({ id: userId }, { $set: setFields });
