@@ -552,7 +552,10 @@ function showSection(sectionKey) {
         loadEmpleados();
     } else if (sectionKey === 'redeemCodes') {
         loadRedeemCodes();
-        startRedeemCodesAutoRefresh();
+        // Auto-refresh DESACTIVADO 2026-05-15: recargaba la sección entera
+        // cada 15s — incluido el formulario de crear código — borrando lo
+        // que el admin estaba tipeando ("se actualiza sola, no me deja
+        // quedarme"). La sección se refresca al volver a entrar.
     } else if (sectionKey === 'fraudBlocks') {
         loadFraudBlocked();
     } else if (sectionKey === 'help') {

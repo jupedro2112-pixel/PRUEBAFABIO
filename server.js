@@ -36085,6 +36085,8 @@ app.get('/api/redeem-codes/active', authMiddleware, async (req, res) => {
       (c.userId && c.userId === userId)
     );
 
+    // No exponemos cuánta gente reclamó — el dueño no quiere que ese dato
+    // llegue nunca al cliente.
     res.json({
       success: true,
       active: true,
@@ -36092,8 +36094,6 @@ app.get('/api/redeem-codes/active', authMiddleware, async (req, res) => {
       amountARS: rc.amountARS,
       expiresAt: rc.expiresAt,
       remainingMs: Math.max(0, new Date(rc.expiresAt).getTime() - now),
-      claimsCount: (rc.claims || []).length,
-      maxClaims: rc.maxClaims || 0,
       alreadyClaimed
     });
   } catch (err) {
@@ -36171,16 +36171,19 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
       rc.status = 'closed_expired';
       await rc.save().catch(() => {});
     }
+    // tooLate = el código existía pero ya se cerró/venció/agotó. El front
+    // usa este flag para mostrar el modal de consuelo (50% por WhatsApp)
+    // en vez del error rojo.
     if (rc.status !== 'active') {
       const msg = rc.status === 'closed_expired'
         ? 'El código ya venció'
         : (rc.status === 'closed_max' ? 'Se agotaron los canjes' : 'Código cerrado');
-      return res.status(403).json({ error: msg });
+      return res.status(403).json({ error: msg, tooLate: true });
     }
     if (rc.maxClaims > 0 && rc.claims.length >= rc.maxClaims) {
       rc.status = 'closed_max';
       await rc.save().catch(() => {});
-      return res.status(403).json({ error: 'Se agotaron los canjes' });
+      return res.status(403).json({ error: 'Se agotaron los canjes', tooLate: true });
     }
 
     // Anti-doble-canje (mismo user)
