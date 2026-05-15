@@ -28445,6 +28445,41 @@ async function unblockAllFraud() {
 }
 window.unblockAllFraud = unblockAllFraud;
 
+async function unblockAllFraudBonusOff() {
+    const n = (_fraudBlockedCache || []).length;
+    const txt = n > 0
+        ? `Vas a desbloquear a ${n} usuario(s) dejándolos LOGUEAR y JUGAR, pero con el BONO y los CÓDIGOS deshabilitados.\n\n` +
+          `Reciben un push de aviso.\n\n¿Confirmás?`
+        : `No hay usuarios bloqueados en el cache. ¿Querés correr el desbloqueo masivo (bono/códigos OFF) igual (el server chequea de nuevo)?`;
+    if (!confirm(txt)) return;
+    try {
+        const r = await authFetch('/api/admin/fraud-blocked/unblock-all-bonus-off', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al desbloquear', 'error'); return; }
+        showToast('✅ ' + (d.message || 'Desbloqueado'), 'success');
+        loadFraudBlocked();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+window.unblockAllFraudBonusOff = unblockAllFraudBonusOff;
+
+async function unblockIpFraud() {
+    const txt = `Vas a desbloquear a los usuarios que quedaron bloqueados por el viejo detector de "IP duplicada" (falsos positivos de Cloudflare).\n\n` +
+                `Los marcados también por dispositivo duplicado NO se tocan.\n\n¿Confirmás?`;
+    if (!confirm(txt)) return;
+    try {
+        const r = await authFetch('/api/admin/fraud-blocked/unblock-ip', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al desbloquear', 'error'); return; }
+        showToast('✅ ' + (d.message || 'Desbloqueado'), 'success');
+        loadFraudBlocked();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+window.unblockIpFraud = unblockIpFraud;
+
 async function fraudUnblockUser(userId, username) {
     if (!confirm('Desbloquear COMPLETAMENTE a "' + username + '"?\n\nEl user va a poder loguear y reclamar todo de nuevo (bono + códigos).')) return;
     try {

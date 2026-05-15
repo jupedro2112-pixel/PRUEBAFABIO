@@ -16897,6 +16897,12 @@ function _getClientIp(req) {
 
 // Si esta IP ya cobró el welcome bonus desde otra cuenta, bloquear.
 async function _isWelcomeBlockedByIp(userId, username, req) {
+  // DESHABILITADO: detrás de Cloudflare, req.ip resuelve a IPs del proxy de
+  // Cloudflare (rangos como 198.41.128.0/17), no a la IP real del visitante.
+  // Eso marcaba como "IP duplicada" a usuarios distintos que comparten el
+  // mismo edge de Cloudflare. El bloqueo por huella de dispositivo
+  // (_isWelcomeBlockedByFingerprint) sigue activo.
+  return { blocked: false };
   try {
     const ip = _getClientIp(req);
     if (!ip) return { blocked: false };
@@ -33814,6 +33820,118 @@ app.post('/api/admin/fraud-blocked/unblock-all', authMiddleware, adminMiddleware
     });
   } catch (e) {
     logger.error(`POST /fraud-blocked/unblock-all: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+// Desbloqueo MASIVO SOFT: levanta SOLO el fraudBlocked (el user puede
+// loguear y jugar) pero deja bonusBlocked=true — no puede reclamar bono
+// de bienvenida ni códigos canjeables. Manda push de aviso.
+app.post('/api/admin/fraud-blocked/unblock-all-bonus-off', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const filter = { $or: [{ fraudBlocked: true }, { bonusBlocked: true }] };
+    const users = await User.find(filter).select('id username fcmToken fcmTokens').lean();
+    if (users.length === 0) {
+      return res.json({ success: true, count: 0, pushed: 0, message: 'No había usuarios bloqueados.' });
+    }
+    await User.updateMany(filter, {
+      $set: {
+        fraudBlocked: false,
+        fraudReason: null,
+        fraudBlockedAt: null,
+        fraudBlockedIp: null,
+        bonusBlocked: true,
+        bonusBlockedAt: new Date(),
+        bonusBlockedReason: 'Desbloqueo masivo — bono y códigos deshabilitados por seguridad',
+        unblockNoticePending: true,
+        unblockNoticeAt: new Date()
+      }
+    });
+    logger.info(`Admin ${req.user.username} desbloqueó MASIVO (bono/códigos OFF) a ${users.length} users`);
+
+    const pushTitle = '✅ Te desbloqueamos';
+    const pushBody  = '⚠️ Ya podés usar la app. El bono y los códigos siguen deshabilitados desde tu conexión. NO cambies de accesos ni de usuario o el bloqueo será PERMANENTE.';
+    let pushed = 0;
+    for (const u of users) {
+      try {
+        const r = await _sendPushToUser(u.id, {
+          notification: { title: pushTitle, body: pushBody },
+          data: {
+            type: 'unblock_notice',
+            source: 'unblock_all_bonus_off',
+            timestamp: String(Date.now())
+          }
+        });
+        if (r && r.success) pushed++;
+      } catch (e) {
+        logger.warn(`[unblock-all-bonus-off] push falló para ${u.username}: ${e.message}`);
+      }
+    }
+    res.json({
+      success: true,
+      count: users.length,
+      pushed,
+      message: `${users.length} usuarios desbloqueados (bono/códigos OFF) · ${pushed} recibieron el push.`
+    });
+  } catch (e) {
+    logger.error(`POST /fraud-blocked/unblock-all-bonus-off: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+// Desbloqueo de los que quedaron fraudBlocked por el viejo detector de IP
+// duplicada (ya deshabilitado). Son falsos positivos: detrás de Cloudflare
+// usuarios distintos compartían la misma "IP". Excluye a los que además
+// fueron marcados por dispositivo duplicado — esos siguen bloqueados.
+app.post('/api/admin/fraud-blocked/unblock-ip', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const filter = {
+      fraudBlocked: true,
+      fraudReason: { $regex: 'IP duplicada' },
+      $nor: [{ fraudReason: { $regex: 'dispositivo duplicado' } }]
+    };
+    const users = await User.find(filter).select('id username fcmToken fcmTokens').lean();
+    if (users.length === 0) {
+      return res.json({ success: true, count: 0, pushed: 0, message: 'No hay usuarios bloqueados solo por IP.' });
+    }
+    await User.updateMany(filter, {
+      $set: {
+        fraudBlocked: false,
+        fraudReason: null,
+        fraudBlockedAt: null,
+        fraudBlockedIp: null,
+        unblockNoticePending: true,
+        unblockNoticeAt: new Date()
+      }
+    });
+    logger.info(`Admin ${req.user.username} desbloqueó por IP a ${users.length} users`);
+
+    const pushTitle = '✅ Te desbloqueamos';
+    const pushBody  = '⚠️ Ya podés usar la app con normalidad. NO cambies de accesos ni de usuario o el bloqueo será PERMANENTE.';
+    let pushed = 0;
+    for (const u of users) {
+      try {
+        const r = await _sendPushToUser(u.id, {
+          notification: { title: pushTitle, body: pushBody },
+          data: {
+            type: 'unblock_notice',
+            source: 'unblock_ip',
+            timestamp: String(Date.now())
+          }
+        });
+        if (r && r.success) pushed++;
+      } catch (e) {
+        logger.warn(`[unblock-ip] push falló para ${u.username}: ${e.message}`);
+      }
+    }
+    res.json({
+      success: true,
+      count: users.length,
+      pushed,
+      message: `${users.length} usuarios desbloqueados (bloqueo por IP) · ${pushed} recibieron el push.`
+    });
+  } catch (e) {
+    logger.error(`POST /fraud-blocked/unblock-ip: ${e.message}`);
     res.status(500).json({ error: 'Error del servidor.' });
   }
 });
