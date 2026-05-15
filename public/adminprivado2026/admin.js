@@ -447,8 +447,6 @@ function showSection(sectionKey) {
         reviews: 'reviewsSection',
         notifs: 'notifsSection',
         notifsHistory: 'notifsHistorySection',
-        automations: 'automationsSection',
-        automation: 'automationSection',
         refundReminders: 'refundRemindersSection',
         raffles: 'rafflesSection',
         rafflesFree: 'rafflesFreeSection',
@@ -457,7 +455,6 @@ function showSection(sectionKey) {
         notifCheck: 'notifCheckSection',
         quiniela: 'quinielaSection',
         campaigns: 'campaignsSection',
-        recovery: 'recoverySection',
         teams: 'teamsSection',
         lineDown: 'lineDownSection',
         activePlayers: 'activePlayersSection',
@@ -522,10 +519,6 @@ function showSection(sectionKey) {
         loadWinback();
     } else if (sectionKey === 'reviews') {
         loadAdminReviews();
-    } else if (sectionKey === 'automations') {
-        loadAutomations();
-    } else if (sectionKey === 'automation') {
-        loadAutomationSection();
     } else if (sectionKey === 'refundReminders') {
         loadRefundRemindersSection();
     } else if (sectionKey === 'raffles') {
@@ -538,8 +531,6 @@ function showSection(sectionKey) {
         loadQuinielaAdmin();
     } else if (sectionKey === 'campaigns') {
         loadCampaignsAdmin();
-    } else if (sectionKey === 'recovery') {
-        loadRecovery();
     } else if (sectionKey === 'teams') {
         loadTeams();
     } else if (sectionKey === 'lineDown') {
