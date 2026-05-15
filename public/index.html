@@ -2474,7 +2474,7 @@
         <!-- Barra de soporte top-CENTRO (post login). No tapa el badge del
              username (que vive arriba a la derecha). Tiene el label "Soporte"
              + dos iconos WhatsApp/Telegram. JS llena los hrefs. -->
-        <div id="supportTopWrap" style="position: fixed; top: max(env(safe-area-inset-top), 12px); left: 50%; transform: translateX(-50%); z-index: 9998; display: none; align-items: center; gap: 8px; background: rgba(0,0,0,0.78); border: 1px solid rgba(255,215,0,0.22); padding: 5px 12px 5px 14px; border-radius: 999px; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
+        <div id="supportTopWrap" style="position: fixed; top: max(env(safe-area-inset-top), 12px); left: max(env(safe-area-inset-left), 10px); z-index: 9998; display: none; align-items: center; gap: 8px; background: rgba(0,0,0,0.78); border: 1px solid rgba(255,215,0,0.22); padding: 5px 12px 5px 14px; border-radius: 999px; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
             <span style="color: #ffd700; font-weight: 800; font-size: 11.5px; letter-spacing: 0.8px; text-transform: uppercase;">Soporte</span>
             <a id="supportTopBadge" href="#" target="_blank" rel="noopener" title="Soporte WhatsApp"
                style="width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; background: #25d366; border-radius: 50%; box-shadow: 0 2px 6px rgba(37,211,102,0.45);">
@@ -2581,10 +2581,67 @@
                     </svg>
                     SOPORTE
                 </a>
+                <button type="button" id="infoImportantBtn" title="Información importante" onclick="openInfoImportant()" style="background:linear-gradient(135deg,#ffd700,#f7931e);border:none;font-size:13px;width:26px;height:26px;min-width:26px;border-radius:50%;cursor:pointer;flex-shrink:0;box-shadow:0 2px 8px rgba(255,215,0,0.45);padding:0;line-height:1;">ℹ️</button>
                 <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
         </header>
+
+        <!-- Modal: Información importante (bonos/regalos + verificación de app) -->
+        <div id="infoImportantModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:26000;align-items:center;justify-content:center;padding:14px;overflow-y:auto;-webkit-overflow-scrolling:touch;" onclick="if(event.target===event.currentTarget)closeInfoImportant()">
+            <div style="background:#14141c;border:1.5px solid rgba(255,215,0,0.40);border-radius:16px;max-width:460px;width:100%;padding:20px;box-shadow:0 12px 44px rgba(0,0,0,0.65);max-height:90vh;overflow-y:auto;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:13px;">
+                    <h3 style="margin:0;color:#ffd700;font-size:17px;font-weight:900;line-height:1.3;">ℹ️ Información importante</h3>
+                    <button type="button" onclick="closeInfoImportant()" aria-label="Cerrar" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;padding:0;">×</button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🎁 Los <strong style="color:#ffd700;">bonos y regalos</strong> que damos son para clientes <strong>100% activos</strong>.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">💳 Necesitás <strong style="color:#25d366;">mínimo 5 cargas en la semana</strong> con nosotros para poder activar un retiro.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🛡️ Lo pedimos para <strong>evitar estafas</strong> y cuidar a los jugadores reales.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">📲 Los bonos se envían <strong style="color:#22a0d9;">100% por nuestro canal de Telegram</strong>. Sumate y recibí los avisos todas las semanas.</div>
+                </div>
+                <div style="margin-top:15px;color:#ffd700;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:0.6px;">Verificá tu app</div>
+                <div id="infoImportantChecks" style="margin-top:2px;"></div>
+                <button type="button" onclick="closeInfoImportant()" style="margin-top:16px;width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#1a1a1a;border:none;padding:11px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;">Entendido</button>
+            </div>
+        </div>
+        <script>
+        (function(){
+            function infoCheckRow(label, ok, helpTitle, helpText){
+                var icon = ok ? '✅' : '❌';
+                var col = ok ? '#25d366' : '#ff5555';
+                var bd = ok ? 'rgba(37,211,102,0.30)' : 'rgba(255,80,80,0.40)';
+                var h = '<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:rgba(255,255,255,0.04);border:1px solid '+bd+';border-radius:9px;margin-top:7px;">';
+                h += '<span style="font-size:16px;">'+icon+'</span>';
+                h += '<span style="color:'+col+';font-weight:800;font-size:13px;">'+label+'</span></div>';
+                if(!ok){
+                    h += '<details style="margin-top:4px;background:rgba(255,80,80,0.07);border:1px solid rgba(255,80,80,0.25);border-radius:9px;padding:8px 11px;">';
+                    h += '<summary style="cursor:pointer;color:#ff8888;font-weight:800;font-size:12px;">'+helpTitle+'</summary>';
+                    h += '<p style="margin:8px 0 0;color:#ccc;font-size:12px;line-height:1.55;">'+helpText+'</p></details>';
+                }
+                return h;
+            }
+            window.openInfoImportant = function(){
+                var m = document.getElementById('infoImportantModal');
+                if(!m) return;
+                var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+                var notifOk = ('Notification' in window) && Notification.permission === 'granted';
+                var box = document.getElementById('infoImportantChecks');
+                if(box){
+                    box.innerHTML =
+                        infoCheckRow('App instalada', standalone, '¿Cómo instalo la app?',
+                            'Tocá el botón <strong>📱 APP</strong> del menú y seguí los pasos para agregarla a tu pantalla de inicio. Con la app instalada accedés a regalos, bonos y mucho más.') +
+                        infoCheckRow('Notificaciones activadas', notifOk, '¿Cómo activo las notificaciones?',
+                            'Abrí la app ya instalada y tocá <strong>🔔 NOTIS</strong> para activar los avisos. Así te enterás de los bonos y regalos todas las semanas.');
+                }
+                m.style.display = 'flex';
+            };
+            window.closeInfoImportant = function(){
+                var m = document.getElementById('infoImportantModal');
+                if(m) m.style.display = 'none';
+            };
+        })();
+        </script>
 
         <!-- Banner QUINIELA — resultado oficial del sorteo. Arriba de todo,
              centrado, muy visible. JS lo muestra solo si hay un resultado
