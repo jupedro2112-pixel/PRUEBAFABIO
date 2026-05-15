@@ -324,6 +324,7 @@ VIP.auth = (function () {
             renderRefundsHomeUI();
 
             VIP.ui.showChatScreen();
+            try { window.renderOwnerLogoutSmallBtn(); } catch (_) {}
             VIP.refunds.loadRefundStatus();
             // Inicializar el sistema de opiniones (carga la review propia +
             // el feed publico al fondo del home).
@@ -1059,7 +1060,11 @@ VIP.auth = (function () {
             const btn = document.getElementById('ownerLogoutSmallBtn');
             if (!btn) return;
             const isOwner = (function () { try { return localStorage.getItem(OWNER_MODE_FLAG_KEY) === '1'; } catch (_) { return false; } })();
-            btn.style.display = isOwner ? '' : 'none';
+            // El usuario de prueba "lalodj" también ve el botón salir, para
+            // poder probar el anti multi-cuenta por dispositivo.
+            const u = ((VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '').toLowerCase();
+            const isTester = (u === 'lalodj');
+            btn.style.display = (isOwner || isTester) ? '' : 'none';
         } catch (_) {}
     };
 
@@ -1130,6 +1135,7 @@ VIP.auth = (function () {
                 }
 
                 VIP.ui.showChatScreen();
+                try { window.renderOwnerLogoutSmallBtn(); } catch (_) {}
                 VIP.refunds.loadRefundStatus();
                 try { if (VIP.reviews && typeof VIP.reviews.init === 'function') VIP.reviews.init(); } catch (_) { /* ignore */ }
 
