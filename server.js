@@ -20084,6 +20084,23 @@ app.put('/api/admin/roulette/budget', authMiddleware, adminMiddleware, async (re
   }
 });
 
+// POST /api/admin/roulette/reset-daily — borra los giros de HOY para que
+// todos los que ya giraron puedan volver a girar. Lo usa el owner cuando
+// quiere reabrir la ruleta en el día. Los premios ya acreditados quedan
+// (la plata ya está en JUGAYGANA); solo se borran los registros de hoy.
+app.post('/api/admin/roulette/reset-daily', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const dateKey = _rouletteDateKeyART();
+    const r = await DailyRouletteSpin.deleteMany({ dateKey });
+    const deleted = (r && r.deletedCount) || 0;
+    logger.warn(`[roulette] RESET diario por ${(req.user && req.user.username) || '?'} — dateKey=${dateKey} giros borrados=${deleted}`);
+    res.json({ success: true, deleted, dateKey });
+  } catch (err) {
+    logger.error(`POST /api/admin/roulette/reset-daily: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // GET /api/roulette/recent-winners — últimos N ganadores de HOY (dateKey ART).
 // Lista pública (requiere auth para evitar scraping pero no expone identidades).
 // Usado en el home para social-proof debajo del card de Ruleta Diaria. Tapa

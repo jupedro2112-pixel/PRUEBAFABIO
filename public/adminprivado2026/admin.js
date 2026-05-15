@@ -2695,6 +2695,23 @@ async function saveRouletteBudget() {
     }
 }
 
+// Reinicia la ruleta del día: borra los giros de HOY para que todos puedan
+// volver a girar. Confirmación obligatoria — es una acción destructiva.
+async function resetRouletteDaily() {
+    if (!confirm('¿Reiniciar la ruleta de HOY?\n\nTodos los que ya giraron hoy van a poder girar de nuevo. Los premios ya acreditados NO se tocan.')) return;
+    const box = document.getElementById('rouletteResetStatus');
+    if (box) { box.style.color = '#aaa'; box.textContent = '⏳ Reiniciando…'; }
+    try {
+        const r = await authFetch('/api/admin/roulette/reset-daily', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo reiniciar');
+        if (box) { box.style.color = '#66ff99'; box.textContent = '✅ Ruleta reiniciada — ' + (d.deleted || 0) + ' giro(s) borrado(s). Todos pueden girar de nuevo.'; }
+        if (typeof loadRouletteAdmin === 'function') loadRouletteAdmin();
+    } catch (e) {
+        if (box) { box.style.color = '#ff8080'; box.textContent = '❌ ' + (e.message || e); }
+    }
+}
+
 // Probar el giro de la ruleta a nombre de un user (simulación) — no
 // afecta el spin real ni acredita plata. Solo muestra qué premio le
 // habría salido con la tabla de probabilidades vigente.
