@@ -2699,13 +2699,20 @@ async function saveRouletteBudget() {
 // volver a girar. Confirmación obligatoria — es una acción destructiva.
 async function resetRouletteDaily() {
     if (!confirm('¿Reiniciar la ruleta de HOY?\n\nTodos los que ya giraron hoy van a poder girar de nuevo. Los premios ya acreditados NO se tocan.')) return;
+    const notify = !!(document.getElementById('rouletteResetNotify') || {}).checked;
     const box = document.getElementById('rouletteResetStatus');
     if (box) { box.style.color = '#aaa'; box.textContent = '⏳ Reiniciando…'; }
     try {
-        const r = await authFetch('/api/admin/roulette/reset-daily', { method: 'POST' });
+        const r = await authFetch('/api/admin/roulette/reset-daily', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notify: notify })
+        });
         const d = await r.json();
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo reiniciar');
-        if (box) { box.style.color = '#66ff99'; box.textContent = '✅ Ruleta reiniciada — ' + (d.deleted || 0) + ' giro(s) borrado(s). Todos pueden girar de nuevo.'; }
+        let msg = '✅ Ruleta reiniciada — ' + (d.deleted || 0) + ' giro(s) borrado(s). Todos pueden girar de nuevo.';
+        if (d.notified != null) msg += ' 📲 Notif enviada a ' + d.notified + ' usuarios.';
+        if (box) { box.style.color = '#66ff99'; box.textContent = msg; }
         if (typeof loadRouletteAdmin === 'function') loadRouletteAdmin();
     } catch (e) {
         if (box) { box.style.color = '#ff8080'; box.textContent = '❌ ' + (e.message || e); }

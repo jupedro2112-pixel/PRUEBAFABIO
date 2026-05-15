@@ -20094,7 +20094,26 @@ app.post('/api/admin/roulette/reset-daily', authMiddleware, adminMiddleware, asy
     const r = await DailyRouletteSpin.deleteMany({ dateKey });
     const deleted = (r && r.deletedCount) || 0;
     logger.warn(`[roulette] RESET diario por ${(req.user && req.user.username) || '?'} — dateKey=${dateKey} giros borrados=${deleted}`);
-    res.json({ success: true, deleted, dateKey });
+
+    // Aviso opcional por push a todos: "ruleta actualizada, volvé a girar".
+    let notified = null;
+    if (req.body && req.body.notify) {
+      try {
+        const bc = await sendNotificationToAllUsers(
+          User,
+          '🎰 Ruleta diaria actualizada',
+          'Podés volver a probar tu suerte. ¡Girá de nuevo!',
+          { source: 'roulette' },
+          {}
+        );
+        notified = (bc && bc.successCount) || 0;
+        logger.info(`[roulette] RESET notif enviada → success=${notified}`);
+      } catch (notifErr) {
+        logger.warn(`[roulette] RESET notif falló: ${notifErr.message}`);
+      }
+    }
+
+    res.json({ success: true, deleted, dateKey, notified });
   } catch (err) {
     logger.error(`POST /api/admin/roulette/reset-daily: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
