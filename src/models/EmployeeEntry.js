@@ -66,6 +66,10 @@ const employeeSchema = new mongoose.Schema({
   faltantes: { type: [faltanteSchema], default: [] },
   descuentos: { type: [descuentoSchema], default: [] },
 
+  // IDs de feriados generales del sector que este empleado NO cobra.
+  // Por defecto vacío = cobra todos los feriados generales del sector.
+  feriadosGeneralesExcluidos: { type: [String], default: [] },
+
   // Francos: cuántos por semana y qué días (lunes..domingo).
   francosPerWeek: { type: Number, default: 0, min: 0, max: 7 },
   francoDays: { type: [String], default: [] },

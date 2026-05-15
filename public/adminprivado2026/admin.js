@@ -28048,6 +28048,7 @@ const EMP_DEFAULT_ROLES = [
 
 let _empCache = [];
 let _empSector = 'ganamos';
+let _empSectorConfigs = {}; // { sector: { feriadosGenerales:[], usdRate } }
 
 function _empRoleLabel(role) {
     const def = EMP_DEFAULT_ROLES.find(r => r.key === role);
@@ -28078,14 +28079,25 @@ function _empComputeLocal(e) {
         const a = Number(f.amountARS || 0);
         return s + (a > 0 ? a : valorDia);
     }, 0);
+    // Feriados generales del sector que el empleado cobra (no excluidos).
+    const excl = new Set(Array.isArray(e.feriadosGeneralesExcluidos) ? e.feriadosGeneralesExcluidos : []);
+    const generales = ((_empSectorConfigs[e.sector] || {}).feriadosGenerales) || [];
+    let feriadosGeneralesTotal = 0, feriadosGeneralesCount = 0;
+    for (const g of generales) {
+        if (excl.has(g.id)) continue;
+        const a = Number(g.amountARS || 0);
+        feriadosGeneralesTotal += (a > 0 ? a : valorDia);
+        feriadosGeneralesCount++;
+    }
     const faltantesTotal = faltantes.length * valorDia;
     const descuentosTotal = descuentos.reduce((s, d) => s + Number(d.amountARS || 0), 0);
     return {
         sueldoARS: sueldo, valorDia,
         feriadosTotal, feriadosCount: feriados.length,
+        feriadosGeneralesTotal, feriadosGeneralesCount,
         faltantesTotal, faltantesCount: faltantes.length,
         descuentosTotal, descuentosCount: descuentos.length,
-        totalMensual: sueldo + feriadosTotal - faltantesTotal - descuentosTotal
+        totalMensual: sueldo + feriadosTotal + feriadosGeneralesTotal - faltantesTotal - descuentosTotal
     };
 }
 
@@ -28095,6 +28107,8 @@ function _empSyncFromDom(id) {
     const emp = (_empCache || []).find(e => e.id === id);
     const payload = _collectEmpPayload(id);
     if (emp && payload) Object.assign(emp, payload);
+    // También preservar lo cargado en la config del sector sin guardar.
+    _empSyncSectorCfgFromDom();
     return emp;
 }
 
@@ -28112,6 +28126,7 @@ async function loadEmpleados() {
         const d = await r.json();
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
         _empCache = d.items || [];
+        _empSectorConfigs = d.sectorConfigs || {};
         _renderEmpleados();
     } catch (e) {
         console.error('[empleados] load fail:', e);
@@ -28141,7 +28156,7 @@ function _renderEmpleados() {
     const _cs = items.map(e => _empComputeLocal(e));
     const sectorTotal = _cs.reduce((a, c) => a + c.totalMensual, 0);
     const sectorSueldo = _cs.reduce((a, c) => a + c.sueldoARS, 0);
-    const sectorFeriados = _cs.reduce((a, c) => a + c.feriadosTotal, 0);
+    const sectorFeriados = _cs.reduce((a, c) => a + c.feriadosTotal + (c.feriadosGeneralesTotal || 0), 0);
     const sectorFaltantes = _cs.reduce((a, c) => a + c.faltantesTotal, 0);
     const sectorDescuentos = _cs.reduce((a, c) => a + c.descuentosTotal, 0);
     const sectorActivos = items.filter(e => e.active !== false).length;
@@ -28168,6 +28183,76 @@ function _renderEmpleados() {
     h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">➖ Descuentos</div>';
     h += '<div style="color:#f55;font-weight:900;font-size:17px;margin-top:3px;">-' + formatMoney(Math.round(sectorDescuentos)) + '</div>';
     h += '</div>';
+    h += '</div>';
+
+    // === Config del sector: feriados generales + valor USD ===
+    const _cfg = _empSectorConfigs[_empSector] || { feriadosGenerales: [], usdRate: 0 };
+    const _genFer = Array.isArray(_cfg.feriadosGenerales) ? _cfg.feriadosGenerales : [];
+    const _usdRate = Number(_cfg.usdRate || 0);
+    h += '<div style="background:rgba(255,170,102,0.05);border:1px solid rgba(255,170,102,0.30);border-radius:10px;padding:12px 14px;margin-bottom:14px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">';
+    h += '<div style="color:#ffaa66;font-weight:900;font-size:12.5px;letter-spacing:0.4px;">🎌 FERIADOS GENERALES DEL SECTOR</div>';
+    h += '<button onclick="addEmpGeneralFeriado()" style="background:rgba(255,170,102,0.14);color:#ffaa66;border:1px solid rgba(255,170,102,0.45);padding:5px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">➕ Feriado general</button>';
+    h += '</div>';
+    h += '<div style="color:#888;font-size:10.5px;margin-bottom:8px;">Aplican a todos los empleados del sector. En cada empleado podés tildar ✓/✗ si lo cobra o no.</div>';
+    if (_genFer.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin feriados generales cargados.</div>';
+    } else {
+        for (let i = 0; i < _genFer.length; i++) {
+            const g = _genFer[i] || {};
+            h += '<div data-emp-genfer="' + i + '" style="display:grid;grid-template-columns:140px 130px 1fr auto;gap:6px;margin-bottom:4px;align-items:center;">';
+            h += '<input data-emp-genfer-field="dateKey" type="date" value="' + escapeHtml(g.dateKey || '') + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#ffaa66;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;">';
+            h += '<input data-emp-genfer-field="amountARS" type="number" min="0" step="1000" value="' + Number(g.amountARS || 0) + '" placeholder="0 = valor/día" title="0 = cada empleado lo cobra a su valor/día" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#fff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;text-align:right;">';
+            h += '<input data-emp-genfer-field="note" type="text" value="' + escapeHtml(g.note || '') + '" placeholder="Detalle (ej: Día del trabajador)" maxlength="200" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:4px 8px;border-radius:5px;font-size:11px;">';
+            h += '<button onclick="removeEmpGeneralFeriado(' + i + ')" title="Sacar feriado general" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
+            h += '</div>';
+        }
+    }
+    h += '<div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:9px;border-top:1px dashed rgba(255,255,255,0.10);">';
+    h += '<label style="color:#25d366;font-size:11px;font-weight:800;">💵 Valor del dólar (ARS = 1 USD):</label>';
+    h += '<input id="empUsdRate" type="number" min="0" step="1" value="' + _usdRate + '" placeholder="ej: 1200" style="width:110px;background:rgba(0,0,0,0.40);border:1px solid rgba(37,211,102,0.35);color:#25d366;padding:5px 9px;border-radius:6px;font-size:12.5px;font-weight:800;text-align:right;">';
+    h += '<button onclick="saveEmpSectorConfig()" style="background:rgba(37,211,102,0.16);color:#25d366;border:1px solid rgba(37,211,102,0.45);padding:6px 13px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">💾 Guardar config del sector</button>';
+    h += '</div>';
+    h += '</div>';
+
+    // === Resumen general del sector (se ve completo una vez guardado) ===
+    h += '<div style="background:rgba(155,48,255,0.06);border:1px solid rgba(155,48,255,0.30);border-radius:10px;padding:12px 14px;margin-bottom:14px;">';
+    h += '<div style="color:#c89bff;font-weight:900;font-size:12.5px;letter-spacing:0.5px;margin-bottom:8px;">📊 RESUMEN GENERAL · ' + escapeHtml(_empSector.toUpperCase()) + '</div>';
+    if (items.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin empleados en este sector.</div>';
+    } else {
+        h += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11.5px;">';
+        h += '<thead><tr style="color:#999;text-align:left;border-bottom:1px solid rgba(255,255,255,0.12);">';
+        h += '<th style="padding:6px;">Empleado</th><th style="padding:6px;">Días que trabaja</th><th style="padding:6px;">Francos</th><th style="padding:6px;">Feriados generales</th><th style="padding:6px;text-align:right;">Cobró ARS</th><th style="padding:6px;text-align:right;">Cobró USD</th>';
+        h += '</tr></thead><tbody>';
+        let _tA = 0, _tU = 0;
+        for (const e of items) {
+            const rc = _empComputeLocal(e);
+            const fd = Array.isArray(e.francoDays) ? e.francoDays : [];
+            const trabaja = EMP_FRANCO_DAYS_UI.filter(d => fd.indexOf(d.key) < 0).map(d => d.short);
+            const francos = EMP_FRANCO_DAYS_UI.filter(d => fd.indexOf(d.key) >= 0).map(d => d.short);
+            const usd = _usdRate > 0 ? (rc.totalMensual / _usdRate) : 0;
+            _tA += rc.totalMensual; _tU += usd;
+            const inact = e.active === false;
+            h += '<tr style="border-bottom:1px solid rgba(255,255,255,0.05);' + (inact ? 'opacity:0.5;' : '') + '">';
+            h += '<td style="padding:6px;color:#fff;font-weight:700;">' + escapeHtml(e.name || '(sin nombre)') + (inact ? ' <span style="color:#ffaa66;font-size:9px;">INACTIVO</span>' : '') + '<br><span style="color:#888;font-size:10px;font-weight:600;">' + escapeHtml(_empRoleLabel(e.role || '')) + '</span></td>';
+            h += '<td style="padding:6px;color:#25d366;font-weight:700;">' + (trabaja.length ? escapeHtml(trabaja.join(' ')) + ' <span style="color:#888;">(' + trabaja.length + ')</span>' : '—') + '</td>';
+            h += '<td style="padding:6px;color:#0f0;font-weight:700;">' + (francos.length ? escapeHtml(francos.join(' ')) : '—') + '</td>';
+            h += '<td style="padding:6px;">' + _empGeneralFeriadoChips(e) + '</td>';
+            h += '<td style="padding:6px;text-align:right;color:#c89bff;font-weight:900;">' + formatMoney(Math.round(rc.totalMensual)) + '</td>';
+            h += '<td style="padding:6px;text-align:right;color:#25d366;font-weight:900;">' + (_usdRate > 0 ? ('US$ ' + (Math.round(usd * 100) / 100).toLocaleString('es-AR')) : '—') + '</td>';
+            h += '</tr>';
+        }
+        h += '<tr style="border-top:2px solid rgba(255,255,255,0.15);color:#fff;font-weight:900;">';
+        h += '<td style="padding:7px 6px;" colspan="4">TOTAL SECTOR</td>';
+        h += '<td style="padding:7px 6px;text-align:right;color:#c89bff;">' + formatMoney(Math.round(_tA)) + '</td>';
+        h += '<td style="padding:7px 6px;text-align:right;color:#25d366;">' + (_usdRate > 0 ? ('US$ ' + (Math.round(_tU * 100) / 100).toLocaleString('es-AR')) : '—') + '</td>';
+        h += '</tr>';
+        h += '</tbody></table></div>';
+        if (_usdRate <= 0) {
+            h += '<div style="color:#ffaa66;font-size:10.5px;margin-top:6px;">💡 Cargá el valor del dólar arriba y guardá para ver los totales en USD.</div>';
+        }
+    }
     h += '</div>';
 
     // === Crear empleado / agregar puesto nuevo ===
@@ -28279,6 +28364,12 @@ function _renderEmpleadoRow(e) {
     }
     h += '</div>';
 
+    // === Feriados generales del sector (tildá si lo cobra o no) ===
+    h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
+    h += '<div style="color:#ffd700;font-size:10.5px;font-weight:800;letter-spacing:0.4px;margin-bottom:6px;">🎌 FERIADOS GENERALES DEL SECTOR (' + c.feriadosGeneralesCount + ') · suma: +' + formatMoney(Math.round(c.feriadosGeneralesTotal)) + '</div>';
+    h += _empGeneralFeriadoChips(e);
+    h += '</div>';
+
     // === Faltas (descuentan un día) ===
     h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
@@ -28329,6 +28420,7 @@ function _renderEmpleadoRow(e) {
     h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;font-size:11.5px;">';
     h += '<div style="color:#aaa;">Sueldo base<br><span style="color:#fff;font-weight:800;">' + formatMoney(Math.round(c.sueldoARS)) + '</span></div>';
     h += '<div style="color:#aaa;">+ Feriados (' + c.feriadosCount + ')<br><span style="color:#ffaa66;font-weight:800;">+' + formatMoney(Math.round(c.feriadosTotal)) + '</span></div>';
+    h += '<div style="color:#aaa;">+ Feriados grales (' + c.feriadosGeneralesCount + ')<br><span style="color:#ffd700;font-weight:800;">+' + formatMoney(Math.round(c.feriadosGeneralesTotal)) + '</span></div>';
     h += '<div style="color:#aaa;">− Faltas (' + c.faltantesCount + ')<br><span style="color:#f55;font-weight:800;">-' + formatMoney(Math.round(c.faltantesTotal)) + '</span></div>';
     h += '<div style="color:#aaa;">− Descuentos (' + c.descuentosCount + ')<br><span style="color:#f55;font-weight:800;">-' + formatMoney(Math.round(c.descuentosTotal)) + '</span></div>';
     h += '<div style="color:#aaa;">= TOTAL MENSUAL<br><span style="color:#c89bff;font-weight:900;font-size:14px;">' + formatMoney(Math.round(c.totalMensual)) + '</span></div>';
@@ -28378,9 +28470,10 @@ function _collectEmpPayload(id) {
             note: (row.querySelector('[data-emp-descuento-field="note"]') || {}).value || ''
         });
     });
-    // francoDays se togglea en el cache (botones), no hay input en el DOM.
+    // francoDays y feriadosGeneralesExcluidos se togglean en el cache.
     const emp = (_empCache || []).find(x => x.id === id);
     const francoDays = (emp && Array.isArray(emp.francoDays)) ? emp.francoDays.slice() : [];
+    const feriadosGeneralesExcluidos = (emp && Array.isArray(emp.feriadosGeneralesExcluidos)) ? emp.feriadosGeneralesExcluidos.slice() : [];
     return {
         name: get('name'),
         schedule: get('schedule'),
@@ -28391,7 +28484,8 @@ function _collectEmpPayload(id) {
         feriados,
         faltantes,
         descuentos,
-        francoDays
+        francoDays,
+        feriadosGeneralesExcluidos
     };
 }
 
@@ -28488,6 +28582,116 @@ function toggleEmpFrancoDay(id, day) {
     const i = emp.francoDays.indexOf(day);
     if (i >= 0) emp.francoDays.splice(i, 1);
     else emp.francoDays.push(day);
+    _renderEmpleados();
+}
+
+// === Feriados generales del sector ===
+
+// Chips ✓/✗ de los feriados generales del sector para un empleado.
+// Se usan tanto en la tarjeta del empleado como en el resumen general.
+function _empGeneralFeriadoChips(e) {
+    const generales = ((_empSectorConfigs[e.sector] || {}).feriadosGenerales) || [];
+    if (generales.length === 0) {
+        return '<span style="color:#666;font-size:10.5px;font-style:italic;">Sin feriados generales</span>';
+    }
+    const excl = new Set(Array.isArray(e.feriadosGeneralesExcluidos) ? e.feriadosGeneralesExcluidos : []);
+    let h = '<div style="display:flex;gap:4px;flex-wrap:wrap;">';
+    for (const g of generales) {
+        const cobra = !excl.has(g.id);
+        const label = g.dateKey || g.note || 'feriado';
+        const st = cobra
+            ? 'background:rgba(37,211,102,0.15);color:#25d366;border:1px solid rgba(37,211,102,0.45);'
+            : 'background:rgba(255,80,80,0.10);color:#f77;border:1px solid rgba(255,80,80,0.40);text-decoration:line-through;';
+        h += '<button type="button" onclick="toggleEmpGeneralFeriado(\'' + escapeHtml(e.id) + '\',\'' + escapeHtml(g.id) + '\')" title="' + escapeHtml(g.note || '') + '" style="' + st + 'padding:2px 7px;border-radius:5px;font-weight:800;font-size:10px;cursor:pointer;">' + (cobra ? '✓' : '✗') + ' ' + escapeHtml(label) + '</button>';
+    }
+    h += '</div>';
+    return h;
+}
+
+// Vuelca al cache los inputs de TODOS los empleados visibles, para no
+// perder ediciones sin guardar al re-renderizar por un cambio de config.
+function _empSyncAllFromDom() {
+    for (const e of (_empCache || [])) {
+        if (document.getElementById('emp_' + e.id)) {
+            const p = _collectEmpPayload(e.id);
+            if (p) Object.assign(e, p);
+        }
+    }
+}
+
+// Vuelca al cache los feriados generales y el valor USD del DOM.
+function _empSyncSectorCfgFromDom() {
+    const cfg = _empSectorConfigs[_empSector] || { feriadosGenerales: [], usdRate: 0 };
+    const prev = Array.isArray(cfg.feriadosGenerales) ? cfg.feriadosGenerales : [];
+    const list = [];
+    document.querySelectorAll('[data-emp-genfer]').forEach((row, i) => {
+        const ex = prev[i] || {};
+        list.push({
+            id: ex.id || ('fg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)),
+            dateKey: (row.querySelector('[data-emp-genfer-field="dateKey"]') || {}).value || '',
+            amountARS: Number((row.querySelector('[data-emp-genfer-field="amountARS"]') || {}).value || 0),
+            note: (row.querySelector('[data-emp-genfer-field="note"]') || {}).value || ''
+        });
+    });
+    const usdEl = document.getElementById('empUsdRate');
+    cfg.feriadosGenerales = list;
+    cfg.usdRate = usdEl ? (Number(usdEl.value) || 0) : (cfg.usdRate || 0);
+    _empSectorConfigs[_empSector] = cfg;
+}
+
+function addEmpGeneralFeriado() {
+    _empSyncAllFromDom();
+    _empSyncSectorCfgFromDom();
+    const cfg = _empSectorConfigs[_empSector] || { feriadosGenerales: [], usdRate: 0 };
+    if (!Array.isArray(cfg.feriadosGenerales)) cfg.feriadosGenerales = [];
+    cfg.feriadosGenerales.push({
+        id: 'fg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        dateKey: '', amountARS: 0, note: ''
+    });
+    _empSectorConfigs[_empSector] = cfg;
+    _renderEmpleados();
+    showToast('Cargá la fecha y después 💾 Guardar config del sector', 'info');
+}
+
+function removeEmpGeneralFeriado(idx) {
+    _empSyncAllFromDom();
+    _empSyncSectorCfgFromDom();
+    const cfg = _empSectorConfigs[_empSector];
+    if (cfg && Array.isArray(cfg.feriadosGenerales)) cfg.feriadosGenerales.splice(idx, 1);
+    _renderEmpleados();
+}
+
+async function saveEmpSectorConfig() {
+    _empSyncSectorCfgFromDom();
+    const cfg = _empSectorConfigs[_empSector] || { feriadosGenerales: [], usdRate: 0 };
+    try {
+        const r = await authFetch('/api/admin/empleados/sector-config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                sector: _empSector,
+                feriadosGenerales: cfg.feriadosGenerales || [],
+                usdRate: cfg.usdRate || 0
+            })
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al guardar', 'error'); return; }
+        showToast('💾 Config del sector guardada', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
+function toggleEmpGeneralFeriado(empId, feriadoId) {
+    _empSyncSectorCfgFromDom();
+    _empSyncAllFromDom();
+    const emp = (_empCache || []).find(e => e.id === empId);
+    if (!emp) return;
+    if (!Array.isArray(emp.feriadosGeneralesExcluidos)) emp.feriadosGeneralesExcluidos = [];
+    const i = emp.feriadosGeneralesExcluidos.indexOf(feriadoId);
+    if (i >= 0) emp.feriadosGeneralesExcluidos.splice(i, 1);
+    else emp.feriadosGeneralesExcluidos.push(feriadoId);
     _renderEmpleados();
 }
 

@@ -36269,12 +36269,15 @@ app.get('/api/admin/active-users-count', authMiddleware, adminMiddleware, (req, 
 // cotizaciones, porque comparte rol financiero.
 
 const EmployeeEntry = require('./src/models/EmployeeEntry');
+const EmployeeSectorConfig = require('./src/models/EmployeeSectorConfig');
 const EMP_DELETE_PIN = '1818';
 const EMP_SECTORS = ['ganamos', 'publicidad', 'buffalo'];
 const EMP_DIAS_MES = 30;
 const EMP_FRANCO_DAYS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
 
-function _empCompute(e) {
+// Calcula el pago de un empleado. `sectorCfg` trae los feriados generales
+// del sector — se suman salvo los que el empleado tenga excluidos.
+function _empCompute(e, sectorCfg) {
   const sueldo = Number(e.sueldoARS || 0);
   const valorDia = sueldo / EMP_DIAS_MES;
   const feriados = Array.isArray(e.feriados) ? e.feriados : [];
@@ -36285,6 +36288,17 @@ function _empCompute(e) {
     const a = Number(f.amountARS || 0);
     return s + (a > 0 ? a : valorDia);
   }, 0);
+  // Feriados generales del sector que el empleado SÍ cobra (no excluidos).
+  const excluidos = new Set(Array.isArray(e.feriadosGeneralesExcluidos) ? e.feriadosGeneralesExcluidos : []);
+  const generales = (sectorCfg && Array.isArray(sectorCfg.feriadosGenerales)) ? sectorCfg.feriadosGenerales : [];
+  let feriadosGeneralesTotal = 0;
+  let feriadosGeneralesCount = 0;
+  for (const g of generales) {
+    if (excluidos.has(g.id)) continue;
+    const a = Number(g.amountARS || 0);
+    feriadosGeneralesTotal += (a > 0 ? a : valorDia);
+    feriadosGeneralesCount++;
+  }
   const faltantesTotal = faltantes.length * valorDia;
   const descuentosTotal = descuentos.reduce((s, d) => s + Number(d.amountARS || 0), 0);
   return {
@@ -36292,12 +36306,25 @@ function _empCompute(e) {
     valorDia,
     feriadosTotal,
     feriadosCount: feriados.length,
+    feriadosGeneralesTotal,
+    feriadosGeneralesCount,
     faltantesTotal,
     faltantesCount: faltantes.length,
     descuentosTotal,
     descuentosCount: descuentos.length,
-    totalMensual: sueldo + feriadosTotal - faltantesTotal - descuentosTotal
+    totalMensual: sueldo + feriadosTotal + feriadosGeneralesTotal - faltantesTotal - descuentosTotal
   };
+}
+
+// Trae las 3 configs de sector. Si una no existe todavía la devuelve
+// vacía en memoria (no persiste hasta que el owner la guarde).
+async function _empLoadSectorConfigs() {
+  const docs = await EmployeeSectorConfig.find({}).lean();
+  const map = {};
+  for (const s of EMP_SECTORS) {
+    map[s] = docs.find(d => d.sector === s) || { sector: s, feriadosGenerales: [], usdRate: 0 };
+  }
+  return map;
 }
 
 // GET /api/admin/empleados[?sector=…]
@@ -36305,9 +36332,12 @@ app.get('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async 
   try {
     const filter = {};
     if (EMP_SECTORS.includes(req.query.sector)) filter.sector = req.query.sector;
-    const rows = await EmployeeEntry.find(filter).sort({ sector: 1, role: 1, name: 1 }).lean();
-    const items = rows.map(r => ({ ...r, computed: _empCompute(r) }));
-    res.json({ success: true, items });
+    const [rows, sectorConfigs] = await Promise.all([
+      EmployeeEntry.find(filter).sort({ sector: 1, role: 1, name: 1 }).lean(),
+      _empLoadSectorConfigs()
+    ]);
+    const items = rows.map(r => ({ ...r, computed: _empCompute(r, sectorConfigs[r.sector]) }));
+    res.json({ success: true, items, sectorConfigs });
   } catch (err) {
     logger.error(`GET /api/admin/empleados: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
@@ -36332,6 +36362,7 @@ app.post('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async
       feriados: [],
       faltantes: [],
       descuentos: [],
+      feriadosGeneralesExcluidos: [],
       francosPerWeek: 0,
       francoDays: [],
       workedUntil: '',
@@ -36343,6 +36374,43 @@ app.post('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async
     res.json({ success: true, item: { id: saved.id } });
   } catch (err) {
     logger.error(`POST /api/admin/empleados: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// GET /api/admin/empleados/sector-config — feriados generales + USD por sector.
+// Registrado ANTES de /:id para que no lo capture la ruta con parámetro.
+app.get('/api/admin/empleados/sector-config', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const configs = await _empLoadSectorConfigs();
+    res.json({ success: true, configs });
+  } catch (err) {
+    logger.error(`GET /api/admin/empleados/sector-config: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// PUT /api/admin/empleados/sector-config — guardar config de un sector.
+app.put('/api/admin/empleados/sector-config', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sector = String(b.sector || '');
+    if (!EMP_SECTORS.includes(sector)) return res.status(400).json({ error: 'Sector inválido' });
+    const feriadosGenerales = Array.isArray(b.feriadosGenerales) ? b.feriadosGenerales.map(f => ({
+      id: String((f && f.id) || `fg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`).slice(0, 60),
+      dateKey: String((f && f.dateKey) || '').slice(0, 10),
+      amountARS: Math.max(0, Number((f && f.amountARS) || 0)),
+      note: String((f && f.note) || '').slice(0, 200)
+    })) : [];
+    const usdRate = Math.max(0, Number(b.usdRate) || 0);
+    await EmployeeSectorConfig.findOneAndUpdate(
+      { sector },
+      { $set: { feriadosGenerales, usdRate } },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`PUT /api/admin/empleados/sector-config: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -36398,6 +36466,11 @@ app.put('/api/admin/empleados/:id', authMiddleware, closingsAccessMiddleware, as
     }
     if (b.workedUntil !== undefined) {
       e.workedUntil = String(b.workedUntil || '').slice(0, 10);
+    }
+    if (Array.isArray(b.feriadosGeneralesExcluidos)) {
+      e.feriadosGeneralesExcluidos = b.feriadosGeneralesExcluidos
+        .map(x => String(x || '').slice(0, 60))
+        .filter(Boolean);
     }
     await e.save();
     res.json({ success: true });
