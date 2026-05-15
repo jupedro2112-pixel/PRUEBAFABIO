@@ -28737,6 +28737,7 @@ async function deleteEmpleado(id) {
 // CÓDIGOS CANJEABLES (Admin)
 // ============================================================
 let _redeemCodesCache = [];
+let _redeemConsolationCache = {};
 
 // ============================================
 // BLOQUEOS POR FRAUDE — admin
@@ -28917,6 +28918,7 @@ async function loadRedeemCodes() {
         const d = await r.json();
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
         _redeemCodesCache = d.items || [];
+        _redeemConsolationCache = d.consolation || {};
         _renderRedeemCodes();
     } catch (e) {
         console.error('[redeem-codes] load fail:', e);
@@ -28966,6 +28968,24 @@ function _renderRedeemCodes() {
     h += '<button type="button" onclick="createRedeemCode()" style="background:linear-gradient(135deg,#00c896 0%,#008f6c 100%);color:#000;border:none;padding:10px 22px;border-radius:8px;font-weight:900;font-size:13px;cursor:pointer;letter-spacing:0.5px;">🚀 CREAR Y AVISAR</button>';
     h += '<button type="button" onclick="createRedeemCodeTest()" style="background:rgba(255,170,102,0.18);color:#ffaa66;border:1.5px solid rgba(255,170,102,0.50);padding:10px 18px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.4px;">🧪 SOLO AL TEST USER</button>';
     h += '</div>';
+    h += '</div>';
+
+    // === Bono de consuelo — lo que ve quien NO llegó a tiempo a un código ===
+    const co = _redeemConsolationCache || {};
+    const _coLbl = 'color:#aaa;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;display:block;margin-bottom:4px;';
+    const _coInp = 'width:100%;background:rgba(0,0,0,0.45);border:1px solid rgba(255,80,80,0.35);color:#fff;padding:8px 11px;border-radius:7px;font-size:13px;font-weight:700;box-sizing:border-box;';
+    h += '<div style="background:rgba(255,60,60,0.06);border:1.5px solid rgba(255,60,60,0.35);border-radius:11px;padding:14px;margin-bottom:18px;">';
+    h += '<div style="color:#ff5555;font-weight:900;font-size:13px;letter-spacing:0.5px;margin-bottom:4px;">🎁 BONO DE CONSUELO</div>';
+    h += '<div style="color:#888;font-size:10.5px;margin-bottom:10px;">Lo que ve quien NO llegó a tiempo a canjear un código. Se muestra en rojo con un botón "QUIERO CARGAR" que abre WhatsApp.</div>';
+    h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:10px;"><input id="rcoEnabled" type="checkbox"' + (co.enabled ? ' checked' : '') + '> <span style="color:#ff8080;font-weight:800;font-size:12px;">Mostrar el bono de consuelo</span></label>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:10px;">';
+    h += '<div><label style="' + _coLbl + '">Código del bono</label><input id="rcoCodeName" type="text" maxlength="40" value="' + escapeHtml(co.codeName || '') + '" placeholder="TELEGRAM50" style="' + _coInp + 'text-transform:uppercase;"></div>';
+    h += '<div><label style="' + _coLbl + '">Porcentaje %</label><input id="rcoPercent" type="number" min="0" max="100" value="' + (co.percent ? escapeHtml(String(co.percent)) : '') + '" placeholder="50" style="' + _coInp + 'text-align:right;"></div>';
+    h += '<div><label style="' + _coLbl + '">Válido hasta</label><input id="rcoValidUntil" type="text" maxlength="40" value="' + escapeHtml(co.validUntil || '') + '" placeholder="18:00" style="' + _coInp + '"></div>';
+    h += '</div>';
+    h += '<label style="' + _coLbl + '">Link de WhatsApp (botón "QUIERO CARGAR")</label>';
+    h += '<input id="rcoWhatsapp" type="text" maxlength="300" value="' + escapeHtml(co.whatsappLink || '') + '" placeholder="https://wa.link/tucodigo" style="' + _coInp + 'margin-bottom:10px;">';
+    h += '<button type="button" onclick="saveRedeemConsolation()" style="background:linear-gradient(135deg,#ff4040,#c20000);color:#fff;border:none;padding:9px 20px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR BONO DE CONSUELO</button>';
     h += '</div>';
 
     // === Lista de códigos ===
@@ -29063,6 +29083,34 @@ function _renderRedeemCodeRow(it) {
 
     h += '</div>';
     return h;
+}
+
+// Guarda la config del bono de consuelo (lo ve quien no llegó a tiempo).
+async function saveRedeemConsolation() {
+    const payload = {
+        enabled: !!document.getElementById('rcoEnabled').checked,
+        codeName: (document.getElementById('rcoCodeName').value || '').trim(),
+        percent: parseInt(document.getElementById('rcoPercent').value, 10) || 0,
+        validUntil: (document.getElementById('rcoValidUntil').value || '').trim(),
+        whatsappLink: (document.getElementById('rcoWhatsapp').value || '').trim()
+    };
+    if (payload.enabled && !payload.whatsappLink) {
+        showToast('Falta el link de WhatsApp para el bono de consuelo', 'error');
+        return;
+    }
+    try {
+        const r = await authFetch('/api/admin/redeem-codes/consolation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'Error al guardar', 'error'); return; }
+        _redeemConsolationCache = d.consolation || payload;
+        showToast('✅ Bono de consuelo guardado', 'success');
+    } catch (e) {
+        showToast('Error: ' + (e.message || e), 'error');
+    }
 }
 
 // Auto-refresh del listado de códigos cada 15s mientras el admin está en

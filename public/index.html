@@ -6845,6 +6845,13 @@
                             _openRedeemRequirementsModal();
                             return;
                         }
+                        // Llegó tarde: el código ya se cerró/agotó. Modal de
+                        // consuelo con el 50% por WhatsApp.
+                        if (d && d.tooLate) {
+                            overlay.remove();
+                            _showRedeemTooLateModal(d.consolation);
+                            return;
+                        }
                         errBox.textContent = '❌ ' + (d.error || 'Error al canjear');
                         errBox.style.color = '#ff8080';
                         btn.disabled = false;
@@ -6914,6 +6921,11 @@
                         _openRedeemRequirementsModal();
                         return;
                     }
+                    // Llegó tarde: código cerrado/agotado → modal de consuelo.
+                    if (d && d.tooLate) {
+                        _showRedeemTooLateModal(d.consolation);
+                        return;
+                    }
                     _showRedeemInlineError(d.error || 'Error al canjear');
                     return;
                 }
@@ -6965,6 +6977,51 @@
             document.body.appendChild(overlay);
             document.getElementById('redeemSuccessOk').onclick = () => { overlay.remove(); window.location.reload(); };
         }
+
+        // Modal "no llegaste a tiempo" — se muestra cuando el código ya se
+        // cerró/venció/agotó. Si el admin configuró un bono de consuelo, lo
+        // muestra en rojo con el botón "QUIERO CARGAR" → WhatsApp. Toda la
+        // info (código, %, horario, link) viene de la config del panel.
+        function _redeemEsc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+            });
+        }
+        function _showRedeemTooLateModal(consolation) {
+            const old = document.getElementById('redeemTooLateModal');
+            if (old) old.remove();
+            const c = consolation || {};
+            const link = /^https?:\/\//i.test(c.whatsappLink || '') ? c.whatsappLink : '';
+            const hasBonus = !!(c.enabled && link);
+            let body;
+            if (hasBonus) {
+                const pct = Number(c.percent || 0);
+                body =
+                    '<div style="color:#fff;font-size:13.5px;line-height:1.5;margin-bottom:13px;">Pero todavía estás a tiempo de aprovechar esto 👇</div>' +
+                    '<div style="background:rgba(255,40,40,0.12);border:2px solid #ff3030;border-radius:12px;padding:14px;margin-bottom:13px;box-shadow:0 0 22px rgba(255,40,40,0.35);">' +
+                      '<div style="color:#ff4040;font-weight:900;font-size:23px;letter-spacing:0.5px;line-height:1.1;margin-bottom:7px;">🔴 BONO ' + pct + '% VIGENTE</div>' +
+                      (c.codeName ? '<div style="color:#fff;font-size:14px;font-weight:800;margin-bottom:3px;">Código: <span style="color:#00ff99;font-weight:900;letter-spacing:1px;">' + _redeemEsc(c.codeName) + '</span></div>' : '') +
+                      (c.validUntil ? '<div style="color:#ffd2d2;font-size:12.5px;font-weight:700;">Válido hasta las ' + _redeemEsc(c.validUntil) + '</div>' : '') +
+                    '</div>' +
+                    '<a href="' + _redeemEsc(link) + '" target="_blank" rel="noopener noreferrer" style="display:block;width:100%;background:linear-gradient(135deg,#ff3030,#c20000);color:#fff;text-decoration:none;padding:15px;border-radius:11px;font-weight:900;font-size:17px;letter-spacing:0.5px;box-sizing:border-box;margin-bottom:9px;box-shadow:0 4px 16px rgba(255,40,40,0.45);">💳 QUIERO CARGAR</a>';
+            } else {
+                body = '<div style="color:#fff;font-size:13.5px;line-height:1.5;margin-bottom:14px;">El código ya se cerró. Estate atento al canal de Telegram para el próximo.</div>';
+            }
+            const overlay = document.createElement('div');
+            overlay.id = 'redeemTooLateModal';
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:99999;display:flex;align-items:center;justify-content:center;padding:18px;';
+            overlay.innerHTML =
+                '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid ' + (hasBonus ? '#ff3030' : '#ffd700') + ';border-radius:14px;padding:26px 22px;max-width:390px;width:100%;box-shadow:0 0 40px rgba(0,0,0,0.6);color:#fff;text-align:center;">' +
+                  '<div style="font-size:48px;margin-bottom:6px;line-height:1;">⏰</div>' +
+                  '<div style="color:#ffd700;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:8px;">No llegaste a tiempo</div>' +
+                  body +
+                  '<button type="button" id="redeemTooLateClose" style="width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.18);color:#fff;padding:10px;border-radius:9px;font-weight:800;font-size:13px;cursor:pointer;">Cerrar</button>' +
+                '</div>';
+            document.body.appendChild(overlay);
+            document.getElementById('redeemTooLateClose').onclick = () => overlay.remove();
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+        }
+        window._showRedeemTooLateModal = _showRedeemTooLateModal;
 
         // Enter en el input dispara el submit (UX rápida tipeo + Enter)
         document.addEventListener('DOMContentLoaded', () => {

@@ -35813,6 +35813,20 @@ function _redeemIsActive(rc, now) {
 }
 
 // GET /api/admin/redeem-codes — listar (admin)
+// Bono de consuelo: lo que ve quien NO llegó a tiempo a canjear un código.
+// Editable desde el panel admin. Se guarda en Config bajo 'redeemConsolation'.
+async function _getRedeemConsolation() {
+  let c = null;
+  try { c = await getConfig('redeemConsolation', null); } catch (_) {}
+  return {
+    enabled: !!(c && c.enabled),
+    codeName: (c && c.codeName) || '',
+    percent: Number((c && c.percent) || 0),
+    validUntil: (c && c.validUntil) || '',
+    whatsappLink: (c && c.whatsappLink) || ''
+  };
+}
+
 app.get('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const rows = await RedeemCode.find({}).sort({ createdAt: -1 }).limit(100).lean();
@@ -35822,9 +35836,28 @@ app.get('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, 
       isActive: _redeemIsActive(r),
       remainingMs: Math.max(0, new Date(r.expiresAt).getTime() - Date.now())
     }));
-    res.json({ success: true, items: enriched });
+    res.json({ success: true, items: enriched, consolation: await _getRedeemConsolation() });
   } catch (err) {
     logger.error(`GET /api/admin/redeem-codes: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/redeem-codes/consolation — guardar el bono de consuelo.
+app.post('/api/admin/redeem-codes/consolation', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const cfg = {
+      enabled: !!b.enabled,
+      codeName: String(b.codeName || '').trim().slice(0, 40),
+      percent: Math.max(0, Math.min(100, parseInt(b.percent, 10) || 0)),
+      validUntil: String(b.validUntil || '').trim().slice(0, 40),
+      whatsappLink: String(b.whatsappLink || '').trim().slice(0, 300)
+    };
+    await setConfig('redeemConsolation', cfg);
+    res.json({ success: true, consolation: cfg });
+  } catch (err) {
+    logger.error(`POST /api/admin/redeem-codes/consolation: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -36172,18 +36205,18 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
       await rc.save().catch(() => {});
     }
     // tooLate = el código existía pero ya se cerró/venció/agotó. El front
-    // usa este flag para mostrar el modal de consuelo (50% por WhatsApp)
-    // en vez del error rojo.
+    // usa este flag + la config del bono de consuelo para mostrar el modal
+    // configurable en vez del error rojo.
     if (rc.status !== 'active') {
       const msg = rc.status === 'closed_expired'
         ? 'El código ya venció'
         : (rc.status === 'closed_max' ? 'Se agotaron los canjes' : 'Código cerrado');
-      return res.status(403).json({ error: msg, tooLate: true });
+      return res.status(403).json({ error: msg, tooLate: true, consolation: await _getRedeemConsolation() });
     }
     if (rc.maxClaims > 0 && rc.claims.length >= rc.maxClaims) {
       rc.status = 'closed_max';
       await rc.save().catch(() => {});
-      return res.status(403).json({ error: 'Se agotaron los canjes', tooLate: true });
+      return res.status(403).json({ error: 'Se agotaron los canjes', tooLate: true, consolation: await _getRedeemConsolation() });
     }
 
     // Anti-doble-canje (mismo user)
