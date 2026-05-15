@@ -1,8 +1,8 @@
 /**
  * Review: opinión que deja un usuario sobre el servicio.
  *
- * 1 review por user (upsert). El user puede editar su propia review
- * cuando quiera; la última versión es la que se muestra.
+ * 1 review por user — una vez enviada NO se puede editar ni volver a
+ * votar: el endpoint POST /api/reviews rechaza si ya existe una.
  *
  * stars: 1-5 entero. Bucket de categoría se calcula al leer:
  *   1-2 = malo · 3 = regular · 4-5 = bueno

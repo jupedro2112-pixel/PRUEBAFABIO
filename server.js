@@ -16221,6 +16221,15 @@ app.get('/api/admin/reviews', authMiddleware, adminMiddleware, async (req, res) 
     else if (bucket === 'regular')  filter.stars = 3;
     else if (bucket === 'malo')     filter.stars = { $lte: 2 };
 
+    // Sacar de la VISTA las 5★ de hace +3 días sin comentario — no aportan
+    // al análisis. Siguen contando en el total/promedio (query `all` de abajo).
+    const _reviewCutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    filter.$nor = [{
+      stars: 5,
+      comment: { $in: ['', null] },
+      createdAt: { $lt: _reviewCutoff }
+    }];
+
     const all = await Review.find({}, { stars: 1, _id: 0 }).lean();
     const total = all.length;
     const sumStars = all.reduce((acc, r) => acc + (r.stars || 0), 0);
