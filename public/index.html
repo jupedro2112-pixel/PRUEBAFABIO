@@ -2493,7 +2493,7 @@
              de soporte (izquierda) y el nombre (derecha). JS lo muestra
              post-login junto con la barra de soporte. -->
         <button type="button" id="infoImportantBtn" onclick="openInfoImportant()" title="Información importante"
-            style="position: fixed; top: max(env(safe-area-inset-top), 12px); left: 50%; transform: translateX(-50%); z-index: 9998; display: none; align-items: center; gap: 5px; background: linear-gradient(135deg,#ffd700,#f7931e); color: #1a1a1a; border: none; padding: 6px 15px; border-radius: 999px; font-weight: 900; font-size: 12px; letter-spacing: 0.6px; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
+            style="position: fixed; top: calc(max(env(safe-area-inset-top), 12px) + 9px); left: 50%; transform: translateX(-50%); z-index: 9998; display: none; align-items: center; gap: 5px; background: linear-gradient(135deg,#ffd700,#f7931e); color: #1a1a1a; border: none; padding: 6px 15px; border-radius: 999px; font-weight: 900; font-size: 12px; letter-spacing: 0.6px; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
             ℹ️ INFO
         </button>
 
@@ -2601,10 +2601,11 @@
                     <button type="button" onclick="closeInfoImportant()" aria-label="Cerrar" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;padding:0;">×</button>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:8px;">
-                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🎁 Los <strong style="color:#ffd700;">bonos y regalos</strong> que damos son para clientes <strong>100% activos</strong>.</div>
-                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">💳 Necesitás <strong style="color:#25d366;">mínimo 5 cargas en la semana</strong> con nosotros para poder activar un retiro.</div>
-                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🛡️ Lo pedimos para <strong>evitar estafas</strong> y cuidar a los jugadores reales.</div>
-                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">📲 Los bonos se envían <strong style="color:#22a0d9;">100% por nuestro canal de Telegram</strong>. Sumate y recibí los avisos todas las semanas.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🛡️ Los requisitos para retirar los <strong>regalos</strong> los pedimos para <strong>evitar estafas</strong>.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">💳 Si cargás, <strong style="color:#25d366;">podés retirar desde tu primera carga</strong>.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">⚠️ El <strong>mínimo de 5 cargas</strong> aplica solo a quien <strong>reclama un bono sin tener cargas</strong> con nosotros.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🎟️ Los <strong style="color:#22a0d9;">códigos</strong> se envían 100% por nuestro <strong style="color:#22a0d9;">canal de Telegram</strong>.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">📲 <strong style="color:#ffd700;">Instalá la app y activá las notificaciones</strong> para recibir bonos y avisos.</div>
                 </div>
                 <div style="margin-top:15px;color:#ffd700;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:0.6px;">Verificá tu app</div>
                 <div id="infoImportantChecks" style="margin-top:2px;"></div>
