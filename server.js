@@ -22991,13 +22991,21 @@ async function _runWeeklyRaffleRotation(triggeredBy = 'cron') {
       { $set: { status: 'archived' } }
     );
 
-    // 2) Cancelar active no-llenos cuya drawDate ya paso. Reembolsar.
-    // Aplica para paid Y free (los free no reembolsan plata pero sí se cierran).
-    const allTypes = [...RAFFLE_TYPES.map(t => t.type), ...FREE_RAFFLE_TYPES.map(t => t.type)];
+    // 2) Cancelar SOLO sorteos PAGOS abandonados — y solo tras un margen de
+    // gracia. Razones:
+    //   - Los GRATIS NUNCA se auto-cancelan: no hay plata que reembolsar y
+    //     cancelarlos destruiría la posibilidad de cargar el número ganador.
+    //     Un free vencido pasa a 'closed' (sigue sorteable) vía el reseed.
+    //   - El margen de 3 días evita cancelar el martes a la mañana un sorteo
+    //     que se corrió el lunes: el admin tiene que poder cargar el ganador
+    //     después del sorteo. Recién cancelamos+reembolsamos un PAGO si su
+    //     drawDate venció hace más de 3 días y el admin nunca lo sorteó.
+    const paidTypes = RAFFLE_TYPES.map(t => t.type);
+    const CANCEL_GRACE_MS = 3 * 24 * 3600 * 1000;
     const stale = await Raffle.find({
-      raffleType: { $in: allTypes },
+      raffleType: { $in: paidTypes },
       status: 'active',
-      drawDate: { $lt: new Date() }
+      drawDate: { $lt: new Date(Date.now() - CANCEL_GRACE_MS) }
     }).lean();
     let cancelled = 0, refundedCount = 0, refundedAmount = 0;
     for (const r of stale) {
@@ -23512,14 +23520,25 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         let weeklyNetLoss = 0;
         let weeklyDeposits = 0;
         let weeklyWithdrawals = 0;
+        let netLossSource = '';
         try {
           const m = await getRealMovementsTotals(username, 'current_week');
           weeklyDeposits = Number(m && m.deposits) || 0;
           weeklyWithdrawals = Number(m && m.withdrawals) || 0;
           weeklyNetLoss = Math.max(0, weeklyDeposits - weeklyWithdrawals);
+          netLossSource = (m && m.source) || '';
         } catch (e) {
           logger.warn(`[raffles] FREE buy netloss check fail ${username}: ${e.message}`);
-          return res.status(503).json({ error: 'No pudimos verificar tu actividad. Probá en un minuto.' });
+          return res.status(503).json({ error: 'No pudimos verificar tu actividad. Probá en un minuto.', retry: true });
+        }
+        // getRealMovementsTotals NO lanza cuando JUGAYGANA falla: devuelve
+        // {deposits:0, source:'none'|'error'}. Sin este chequeo, un usuario
+        // que SÍ perdió quedaba rechazado con "te faltan $X" por una caída
+        // transitoria de la API. La tratamos como 503 reintentable, no como
+        // "no calificás" (un cero REAL devuelve source 'AgentTransfers'/'ShowUserMovements').
+        if (netLossSource === 'none' || netLossSource === 'error' || netLossSource === 'invalid') {
+          logger.warn(`[raffles] FREE buy netloss INDETERMINADO ${username} source=${netLossSource} — 503 retry`);
+          return res.status(503).json({ error: 'No pudimos verificar tu actividad en este momento. Probá de nuevo en unos segundos.', retry: true });
         }
         if (weeklyNetLoss < minNetLoss) {
           const falta = minNetLoss - weeklyNetLoss;
@@ -23537,12 +23556,21 @@ app.post('/api/raffles/:id/buy', authMiddleware, async (req, res) => {
         // Filtro por cargas. Usamos 'current_week' (lunes actual hasta hoy)
         // para que el gate se actualice en tiempo real con cada carga.
         let weeklyDeposits = 0;
+        let cargasSource = '';
         try {
           const m = await getRealMovementsTotals(username, 'current_week');
           weeklyDeposits = Number(m && m.deposits) || 0;
+          cargasSource = (m && m.source) || '';
         } catch (e) {
           logger.warn(`[raffles] FREE buy threshold check fail ${username}: ${e.message}`);
-          return res.status(503).json({ error: 'No pudimos verificar tus cargas. Probá en un minuto.' });
+          return res.status(503).json({ error: 'No pudimos verificar tus cargas. Probá en un minuto.', retry: true });
+        }
+        // Igual que en netwin: una caída de JUGAYGANA devuelve deposits:0 sin
+        // lanzar. Sin esto, un usuario que SÍ cargó quedaba rechazado con
+        // "te faltan $X de cargas". La tratamos como 503 reintentable.
+        if (cargasSource === 'none' || cargasSource === 'error' || cargasSource === 'invalid') {
+          logger.warn(`[raffles] FREE buy cargas INDETERMINADO ${username} source=${cargasSource} — 503 retry`);
+          return res.status(503).json({ error: 'No pudimos verificar tus cargas en este momento. Probá de nuevo en unos segundos.', retry: true });
         }
         if (weeklyDeposits < minCargas) {
           const falta = minCargas - weeklyDeposits;

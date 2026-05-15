@@ -723,12 +723,20 @@ VIP.refunds = (function () {
         // setProperty con flag 'important' para que la JS gane.
         const hideCard = () => card.style.setProperty('display', 'none', 'important');
         const showCard = () => card.style.setProperty('display', 'block', 'important');
+        // Cuando el bono ya está reclamado hay que sacar del inicio TAMBIÉN el
+        // hero de instalación (ui.js). Su renderHero solo mira el flag local,
+        // así que si corrió antes de cargar el estado del server podía quedar
+        // visible mostrando "RECLAMAR $5.000" a alguien que ya cobró.
+        const hideInstallHero = () => {
+            try { const h = document.getElementById('installHeroCard'); if (h) h.hidden = true; } catch (_) {}
+        };
 
         // Defensa-en-profundidad: si el flag local dice reclamado, ocultamos
         // de entrada (cubre el caso donde el render corre antes de que el
         // fetch de status termine).
         if (_isLocallyMarkedClaimed()) {
             hideCard();
+            hideInstallHero();
             return;
         }
 
@@ -753,6 +761,7 @@ VIP.refunds = (function () {
         if (s.claimed) {
             _markLocallyClaimed();
             hideCard();
+            hideInstallHero();
             return;
         }
 

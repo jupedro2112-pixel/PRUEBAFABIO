@@ -684,6 +684,7 @@ VIP.auth = (function () {
                 renderTeamName();
                 checkLineChange(newPhone);
                 try { showCommunityJoinAlert(); } catch (_) {}
+                try { showStartupAvisoOnce(); } catch (_) {}
             }
         } catch (_) { /* ignore */ }
     }
@@ -816,6 +817,43 @@ VIP.auth = (function () {
         };
     }
     window.renderUnblockNotice = renderUnblockNotice;
+
+    // Aviso de inicio "una app, un usuario" — se muestra UNA sola vez por
+    // usuario a TODOS los que entran (no solo a los recién desbloqueados).
+    // Mismo contenido que el modal de desbloqueo. Flag en localStorage por
+    // username. Si el modal de desbloqueo ya va a aparecer, se omite (mismo
+    // mensaje, no duplicar).
+    function showStartupAvisoOnce() {
+        const username = (VIP.state && VIP.state.currentUser && VIP.state.currentUser.username) || '';
+        if (!username) return;
+        if (VIP.state && VIP.state.showUnblockNotice) return;
+        if (document.getElementById('unblockNoticeOverlay')) return;
+        if (document.getElementById('startupAvisoOverlay')) return;
+        const key = 'avisoImportanteSeen:' + username.toLowerCase();
+        try { if (localStorage.getItem(key) === '1') return; } catch (_) {}
+
+        const overlay = document.createElement('div');
+        overlay.id = 'startupAvisoOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:100000;display:flex;align-items:center;justify-content:center;padding:18px;';
+        overlay.innerHTML =
+            '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #ffd700;border-radius:14px;padding:24px 22px;max-width:420px;width:100%;box-shadow:0 0 40px rgba(255,215,0,0.40);color:#fff;text-align:center;">' +
+              '<div style="font-size:56px;margin-bottom:6px;line-height:1;">⚠️</div>' +
+              '<div style="color:#ffd700;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:6px;">AVISO IMPORTANTE</div>' +
+              '<div style="color:#fff;font-size:14px;line-height:1.55;margin-bottom:14px;">Tu cuenta fue verificada y desbloqueada. Para no perder tus beneficios:</div>' +
+              '<div style="background:rgba(255,215,0,0.08);border:1.5px solid rgba(255,215,0,0.45);border-radius:11px;padding:13px 14px;margin-bottom:14px;text-align:left;font-size:13px;line-height:1.55;">' +
+                '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🚫 NO cambies de sesión</strong> en esta app.</div>' +
+                '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🔔 Las notificaciones</strong>, los bonos y los códigos van sobre <strong style="color:#fff;">TU usuario</strong> — si entrás con otra cuenta desde este dispositivo, podés perder los regalos.</div>' +
+                '<div><strong style="color:#ffd700;">📱 Una app, un usuario.</strong> Usá siempre el mismo.</div>' +
+              '</div>' +
+              '<button type="button" id="startupAvisoOk" style="width:100%;background:linear-gradient(135deg,#ffd700 0%,#ff8800 100%);border:none;color:#000;padding:13px;border-radius:10px;font-weight:900;font-size:14px;letter-spacing:0.5px;cursor:pointer;box-shadow:0 4px 14px rgba(255,215,0,0.40);">✅ ENTENDIDO</button>' +
+            '</div>';
+        document.body.appendChild(overlay);
+        document.getElementById('startupAvisoOk').onclick = () => {
+            try { localStorage.setItem(key, '1'); } catch (_) {}
+            overlay.remove();
+        };
+    }
+    window.showStartupAvisoOnce = showStartupAvisoOnce;
 
     function renderCommunityForceBanner() {
         const el = document.getElementById('communityForceReminderBanner');
