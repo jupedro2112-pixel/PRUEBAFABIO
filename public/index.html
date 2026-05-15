@@ -2489,6 +2489,13 @@
                 </svg>
             </a>
         </div>
+        <!-- Botón de info importante: fijo arriba al CENTRO, entre la barra
+             de soporte (izquierda) y el nombre (derecha). JS lo muestra
+             post-login junto con la barra de soporte. -->
+        <button type="button" id="infoImportantBtn" onclick="openInfoImportant()" title="Información importante"
+            style="position: fixed; top: max(env(safe-area-inset-top), 12px); left: 50%; transform: translateX(-50%); z-index: 9998; display: none; align-items: center; gap: 5px; background: linear-gradient(135deg,#ffd700,#f7931e); color: #1a1a1a; border: none; padding: 6px 15px; border-radius: 999px; font-weight: 900; font-size: 12px; letter-spacing: 0.6px; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
+            ℹ️ INFO
+        </button>
 
         <!-- Refunds-only: bloque de bienvenida (solo texto, sin logo) -->
         <div class="refunds-welcome">
@@ -2581,10 +2588,7 @@
                     </svg>
                     SOPORTE
                 </a>
-                <span style="display:inline-flex;align-items:center;gap:5px;flex-shrink:0;">
-                    <span class="user-name" id="currentUser">Usuario</span>
-                    <button type="button" id="infoImportantBtn" title="Información importante" onclick="openInfoImportant()" style="display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#ffd700,#f7931e);border:none;font-size:11px;width:22px;height:22px;min-width:22px;border-radius:50%;cursor:pointer;padding:0;line-height:1;">ℹ️</button>
-                </span>
+                <span class="user-name" id="currentUser">Usuario</span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
         </header>

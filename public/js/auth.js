@@ -2018,6 +2018,9 @@ window.applySupportPhoneToUI = async function applySupportPhoneToUI() {
         var chatScreen = document.getElementById('chatScreen');
         var loggedIn = chatScreen && !chatScreen.classList.contains('hidden');
         topWrap.style.display = loggedIn ? 'inline-flex' : 'none';
+        // Botón de info importante: se muestra/oculta junto con la barra.
+        var infoBtn = document.getElementById('infoImportantBtn');
+        if (infoBtn) infoBtn.style.display = loggedIn ? 'inline-flex' : 'none';
     }
     // 2) Botones dentro del modal "Buscar usuario".
     setHref('createUserHelpSupportBtn',  waUrl);
