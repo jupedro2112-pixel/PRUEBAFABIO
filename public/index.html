@@ -2581,8 +2581,10 @@
                     </svg>
                     SOPORTE
                 </a>
-                <button type="button" id="infoImportantBtn" title="Información importante" onclick="openInfoImportant()" style="background:linear-gradient(135deg,#ffd700,#f7931e);border:none;font-size:13px;width:26px;height:26px;min-width:26px;border-radius:50%;cursor:pointer;flex-shrink:0;box-shadow:0 2px 8px rgba(255,215,0,0.45);padding:0;line-height:1;">ℹ️</button>
-                <span class="user-name" id="currentUser">Usuario</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;flex-shrink:0;">
+                    <span class="user-name" id="currentUser">Usuario</span>
+                    <button type="button" id="infoImportantBtn" title="Información importante" onclick="openInfoImportant()" style="display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#ffd700,#f7931e);border:none;font-size:11px;width:22px;height:22px;min-width:22px;border-radius:50%;cursor:pointer;padding:0;line-height:1;">ℹ️</button>
+                </span>
                 <button class="mobile-menu-btn" onclick="VIP.ui.toggleDrawer()" aria-label="Menú">☰</button>
             </div>
         </header>
