@@ -3781,6 +3781,10 @@ function _startGiveawayTicker() {
     _stopGiveawayTicker();
     _giveawayTickerInterval = setInterval(() => {
         if (!_activeGiveawayCache) { _stopGiveawayTicker(); return; }
+        // Si la pestaña no está visible (panel en segundo plano), no
+        // gastamos render ni red — este tick de 1s corría siempre y
+        // contribuía a que el panel se sintiera trabado.
+        if (document.visibilityState !== 'visible') return;
         // Si ya venció, refrescar desde el server (probablemente cerró)
         if (Date.now() >= _activeGiveawayCache.expiresMs) {
             loadGiveawayStatusAdmin();
@@ -20445,7 +20449,7 @@ async function loadEncuesta() {
         // tienen que matchear.
         const [statsR, timelineR, strategyR] = await Promise.all([
             authFetch('/api/admin/users/notif-preference-stats'),
-            authFetch('/api/admin/encuesta/timeline?limit=10000'),
+            authFetch('/api/admin/encuesta/timeline?limit=300'),
             authFetch('/api/admin/notif-strategy')
         ]);
         const stats = statsR.ok ? await statsR.json() : null;
@@ -20486,7 +20490,7 @@ async function _refreshEncuestaSilent() {
     try {
         const [statsR, timelineR] = await Promise.all([
             authFetch('/api/admin/users/notif-preference-stats'),
-            authFetch('/api/admin/encuesta/timeline?limit=10000')
+            authFetch('/api/admin/encuesta/timeline?limit=300')
         ]);
         if (statsR.ok && timelineR.ok) {
             const stats = await statsR.json();
