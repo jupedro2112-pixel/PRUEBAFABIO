@@ -1317,7 +1317,7 @@ VIP.ui.goToPlatform = function() {
 };
 
 VIP.ui.showPlatformPasswordInfo = function() {
-  VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a AUTOREEMBOLSOS', 'info');
+  VIP.ui.showToast('Tu contraseña es la misma que usás para entrar a Reembolsos', 'info');
 };
 // Alias kept for backward compatibility with the onclick handler
 VIP.ui.copyPlatformPassword = VIP.ui.showPlatformPasswordInfo;

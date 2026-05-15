@@ -1,7 +1,7 @@
 {
-  "name": "AUTOREEMBOLSOS",
-  "short_name": "AUTOREEMBOLSOS",
-  "description": "AUTOREEMBOLSOS - Reembolsos, bonos y códigos. Reclamá lo tuyo cada día.",
+  "name": "Reembolsos",
+  "short_name": "Reembolsos",
+  "description": "Reembolsos, bonos y códigos. Reclamá lo tuyo cada día.",
   "id": "/",
   "start_url": "/?source=pwa",
   "display": "standalone",

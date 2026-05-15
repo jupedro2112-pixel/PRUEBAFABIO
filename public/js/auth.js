@@ -2048,7 +2048,7 @@ window.applySupportPhoneToUI = async function applySupportPhoneToUI() {
     await window.loadSupportPhone();
     var phone = window._supportPhoneCache;
     var tgHandle = window._supportTelegramCache;
-    var waMsg = encodeURIComponent('Hola, necesito ayuda con mi cuenta de Autoreembolsos.');
+    var waMsg = encodeURIComponent('Hola, necesito ayuda con mi cuenta de Reembolsos.');
     var waUrl = phone ? ('https://wa.me/' + phone + '?text=' + waMsg) : '#';
     var tgUrl = tgHandle ? ('https://t.me/' + tgHandle) : '#';
 
