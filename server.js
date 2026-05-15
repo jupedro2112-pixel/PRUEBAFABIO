@@ -2678,6 +2678,7 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     // que intenta entrar ahora. Si la verificación falla, NO bloquea
     // (fail-open: no dejamos afuera a nadie por un error de DB).
     const deviceId = String((req.body && req.body.deviceId) || '').trim().slice(0, 80);
+    logger.info(`[device-check] login user=${userObj.username} deviceId=${deviceId || 'NINGUNO (front no lo mandó)'}`);
     if (deviceId) {
       try {
         const dev = await DeviceAccount.findOne({ deviceId }).lean();
@@ -2687,6 +2688,7 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
             { $setOnInsert: { deviceId, username: userObj.username, createdAt: new Date() } },
             { upsert: true }
           );
+          logger.info(`[device-check] dispositivo NUEVO — reclamado por ${userObj.username}`);
         } else if (String(dev.username || '').toLowerCase() !== String(userObj.username || '').toLowerCase()) {
           const reason = `Multi-cuenta: inició con ${userObj.username} en un dispositivo registrado a ${dev.username}.`;
           try {
@@ -2703,6 +2705,8 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
             error: 'Tu cuenta fue bloqueada: iniciaste sesión con un usuario distinto al registrado en este dispositivo. Contactá a soporte.',
             code: 'DEVICE_MISMATCH'
           });
+        } else {
+          logger.info(`[device-check] OK — el dispositivo ya pertenece a ${userObj.username}`);
         }
       } catch (devErr) {
         logger.warn(`[device-check] error, el login continúa: ${devErr.message}`);
