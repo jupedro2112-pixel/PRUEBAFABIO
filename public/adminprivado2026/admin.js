@@ -28738,6 +28738,7 @@ async function deleteEmpleado(id) {
 // ============================================================
 let _redeemCodesCache = [];
 let _redeemConsolationCache = {};
+let _redeemTeamsCache = [];
 
 // ============================================
 // BLOQUEOS POR FRAUDE — admin
@@ -28919,6 +28920,7 @@ async function loadRedeemCodes() {
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
         _redeemCodesCache = d.items || [];
         _redeemConsolationCache = d.consolation || {};
+        _redeemTeamsCache = d.teams || [];
         _renderRedeemCodes();
     } catch (e) {
         console.error('[redeem-codes] load fail:', e);
@@ -28983,9 +28985,22 @@ function _renderRedeemCodes() {
     h += '<div><label style="' + _coLbl + '">Porcentaje %</label><input id="rcoPercent" type="number" min="0" max="100" value="' + (co.percent ? escapeHtml(String(co.percent)) : '') + '" placeholder="50" style="' + _coInp + 'text-align:right;"></div>';
     h += '<div><label style="' + _coLbl + '">Válido hasta</label><input id="rcoValidUntil" type="text" maxlength="40" value="' + escapeHtml(co.validUntil || '') + '" placeholder="18:00" style="' + _coInp + '"></div>';
     h += '</div>';
-    h += '<label style="' + _coLbl + '">Link de WhatsApp (botón "QUIERO CARGAR")</label>';
-    h += '<input id="rcoWhatsapp" type="text" maxlength="300" value="' + escapeHtml(co.whatsappLink || '') + '" placeholder="https://wa.link/tucodigo" style="' + _coInp + 'margin-bottom:10px;">';
-    h += '<button type="button" onclick="saveRedeemConsolation()" style="background:linear-gradient(135deg,#ff4040,#c20000);color:#fff;border:none;padding:9px 20px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;">💾 GUARDAR BONO DE CONSUELO</button>';
+    h += '<label style="' + _coLbl + '">Link de WhatsApp por defecto (para equipos sin link propio)</label>';
+    h += '<input id="rcoWhatsapp" type="text" maxlength="300" value="' + escapeHtml(co.whatsappLink || '') + '" placeholder="https://wa.link/general" style="' + _coInp + 'margin-bottom:10px;">';
+    const _coByTeam = co.byTeam || {};
+    const _coTeams = _redeemTeamsCache || [];
+    if (_coTeams.length > 0) {
+        h += '<div style="color:#ff8080;font-size:11px;font-weight:800;margin:2px 0 7px;">📱 wa.link por equipo — el botón "QUIERO CARGAR" usa el del equipo del usuario:</div>';
+        for (const tm of _coTeams) {
+            h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">';
+            h += '<span style="color:#ddd;font-size:11.5px;font-weight:700;min-width:90px;flex-shrink:0;word-break:break-word;">' + escapeHtml(tm) + '</span>';
+            h += '<input type="text" class="rcoTeamWalink" data-team="' + escapeHtml(tm) + '" maxlength="300" value="' + escapeHtml(_coByTeam[tm] || '') + '" placeholder="https://wa.link/..." style="' + _coInp + '">';
+            h += '</div>';
+        }
+    } else {
+        h += '<div style="color:#888;font-size:10.5px;margin-bottom:8px;">No hay equipos configurados en líneas — se usa el link por defecto para todos.</div>';
+    }
+    h += '<button type="button" onclick="saveRedeemConsolation()" style="background:linear-gradient(135deg,#ff4040,#c20000);color:#fff;border:none;padding:9px 20px;border-radius:8px;font-weight:900;font-size:12.5px;cursor:pointer;letter-spacing:0.5px;margin-top:6px;">💾 GUARDAR BONO DE CONSUELO</button>';
     h += '</div>';
 
     // === Lista de códigos ===
@@ -29087,15 +29102,22 @@ function _renderRedeemCodeRow(it) {
 
 // Guarda la config del bono de consuelo (lo ve quien no llegó a tiempo).
 async function saveRedeemConsolation() {
+    const byTeam = {};
+    document.querySelectorAll('.rcoTeamWalink').forEach(function (el) {
+        const team = el.getAttribute('data-team') || '';
+        const v = (el.value || '').trim();
+        if (team && v) byTeam[team] = v;
+    });
     const payload = {
         enabled: !!document.getElementById('rcoEnabled').checked,
         codeName: (document.getElementById('rcoCodeName').value || '').trim(),
         percent: parseInt(document.getElementById('rcoPercent').value, 10) || 0,
         validUntil: (document.getElementById('rcoValidUntil').value || '').trim(),
-        whatsappLink: (document.getElementById('rcoWhatsapp').value || '').trim()
+        whatsappLink: (document.getElementById('rcoWhatsapp').value || '').trim(),
+        byTeam: byTeam
     };
-    if (payload.enabled && !payload.whatsappLink) {
-        showToast('Falta el link de WhatsApp para el bono de consuelo', 'error');
+    if (payload.enabled && !payload.whatsappLink && Object.keys(byTeam).length === 0) {
+        showToast('Cargá al menos un link de WhatsApp (por defecto o por equipo)', 'error');
         return;
     }
     try {

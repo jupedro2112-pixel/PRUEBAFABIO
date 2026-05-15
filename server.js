@@ -35815,16 +35815,55 @@ function _redeemIsActive(rc, now) {
 // GET /api/admin/redeem-codes — listar (admin)
 // Bono de consuelo: lo que ve quien NO llegó a tiempo a canjear un código.
 // Editable desde el panel admin. Se guarda en Config bajo 'redeemConsolation'.
+// whatsappLink = link por defecto; byTeam{} = un wa.link por equipo.
 async function _getRedeemConsolation() {
   let c = null;
   try { c = await getConfig('redeemConsolation', null); } catch (_) {}
+  const byTeam = {};
+  if (c && c.byTeam && typeof c.byTeam === 'object') {
+    for (const k of Object.keys(c.byTeam)) {
+      const v = String(c.byTeam[k] || '').trim();
+      if (v) byTeam[k] = v;
+    }
+  }
   return {
     enabled: !!(c && c.enabled),
     codeName: (c && c.codeName) || '',
     percent: Number((c && c.percent) || 0),
     validUntil: (c && c.validUntil) || '',
-    whatsappLink: (c && c.whatsappLink) || ''
+    whatsappLink: (c && c.whatsappLink) || '',
+    byTeam
   };
+}
+
+// Lista de nombres de equipo (de userLinesByPrefix) — para que el panel
+// muestre un campo wa.link por equipo.
+async function _getRedeemTeamNames() {
+  try {
+    const cfg = await getConfig('userLinesByPrefix', null);
+    const out = [];
+    const seen = new Set();
+    const add = (t) => {
+      const name = (t ? String(t) : '').trim();
+      if (name && !seen.has(name.toLowerCase())) { seen.add(name.toLowerCase()); out.push(name); }
+    };
+    if (cfg && Array.isArray(cfg.slots)) for (const s of cfg.slots) add(s && s.teamName);
+    if (cfg) add(cfg.defaultTeamName);
+    return out;
+  } catch (_) { return []; }
+}
+
+// Config del bono de consuelo resuelta para UN usuario: usa el wa.link del
+// equipo del user (si tiene) o el link por defecto. No expone el mapa byTeam.
+async function _getRedeemConsolationForUser(username) {
+  const c = await _getRedeemConsolation();
+  try {
+    const linesCfg = await getConfig('userLinesByPrefix', null);
+    const team = pickTeamNameForUsername(linesCfg, username);
+    if (team && c.byTeam && c.byTeam[team]) c.whatsappLink = c.byTeam[team];
+  } catch (_) {}
+  delete c.byTeam;
+  return c;
 }
 
 app.get('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, res) => {
@@ -35836,7 +35875,7 @@ app.get('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, 
       isActive: _redeemIsActive(r),
       remainingMs: Math.max(0, new Date(r.expiresAt).getTime() - Date.now())
     }));
-    res.json({ success: true, items: enriched, consolation: await _getRedeemConsolation() });
+    res.json({ success: true, items: enriched, consolation: await _getRedeemConsolation(), teams: await _getRedeemTeamNames() });
   } catch (err) {
     logger.error(`GET /api/admin/redeem-codes: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
@@ -35847,12 +35886,21 @@ app.get('/api/admin/redeem-codes', authMiddleware, adminMiddleware, async (req, 
 app.post('/api/admin/redeem-codes/consolation', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const b = req.body || {};
+    const byTeam = {};
+    if (b.byTeam && typeof b.byTeam === 'object') {
+      for (const k of Object.keys(b.byTeam)) {
+        const team = String(k || '').trim().slice(0, 60);
+        const v = String(b.byTeam[k] || '').trim().slice(0, 300);
+        if (team && v) byTeam[team] = v;
+      }
+    }
     const cfg = {
       enabled: !!b.enabled,
       codeName: String(b.codeName || '').trim().slice(0, 40),
       percent: Math.max(0, Math.min(100, parseInt(b.percent, 10) || 0)),
       validUntil: String(b.validUntil || '').trim().slice(0, 40),
-      whatsappLink: String(b.whatsappLink || '').trim().slice(0, 300)
+      whatsappLink: String(b.whatsappLink || '').trim().slice(0, 300),
+      byTeam
     };
     await setConfig('redeemConsolation', cfg);
     res.json({ success: true, consolation: cfg });
@@ -36211,12 +36259,12 @@ app.post('/api/redeem-codes/claim', authMiddleware, async (req, res) => {
       const msg = rc.status === 'closed_expired'
         ? 'El código ya venció'
         : (rc.status === 'closed_max' ? 'Se agotaron los canjes' : 'Código cerrado');
-      return res.status(403).json({ error: msg, tooLate: true, consolation: await _getRedeemConsolation() });
+      return res.status(403).json({ error: msg, tooLate: true, consolation: await _getRedeemConsolationForUser(username) });
     }
     if (rc.maxClaims > 0 && rc.claims.length >= rc.maxClaims) {
       rc.status = 'closed_max';
       await rc.save().catch(() => {});
-      return res.status(403).json({ error: 'Se agotaron los canjes', tooLate: true, consolation: await _getRedeemConsolation() });
+      return res.status(403).json({ error: 'Se agotaron los canjes', tooLate: true, consolation: await _getRedeemConsolationForUser(username) });
     }
 
     // Anti-doble-canje (mismo user)
