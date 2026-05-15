@@ -795,7 +795,7 @@ VIP.auth = (function () {
             '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #ffd700;border-radius:14px;padding:24px 22px;max-width:420px;width:100%;box-shadow:0 0 40px rgba(255,215,0,0.40);color:#fff;text-align:center;">' +
               '<div style="font-size:56px;margin-bottom:6px;line-height:1;">⚠️</div>' +
               '<div style="color:#ffd700;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:6px;">AVISO IMPORTANTE</div>' +
-              '<div style="color:#fff;font-size:14px;line-height:1.55;margin-bottom:14px;">Tu cuenta fue verificada y desbloqueada. Para no perder tus beneficios:</div>' +
+              '<div style="color:#fff;font-size:14px;line-height:1.55;margin-bottom:14px;">Para no perder tus beneficios:</div>' +
               '<div style="background:rgba(255,215,0,0.08);border:1.5px solid rgba(255,215,0,0.45);border-radius:11px;padding:13px 14px;margin-bottom:14px;text-align:left;font-size:13px;line-height:1.55;">' +
                 '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🚫 NO cambies de sesión</strong> en esta app.</div>' +
                 '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🔔 Las notificaciones</strong>, los bonos y los códigos van sobre <strong style="color:#fff;">TU usuario</strong> — si entrás con otra cuenta desde este dispositivo, podés perder los regalos.</div>' +
@@ -839,7 +839,7 @@ VIP.auth = (function () {
             '<div style="background:linear-gradient(180deg,#0a0a16 0%,#14142a 100%);border:2px solid #ffd700;border-radius:14px;padding:24px 22px;max-width:420px;width:100%;box-shadow:0 0 40px rgba(255,215,0,0.40);color:#fff;text-align:center;">' +
               '<div style="font-size:56px;margin-bottom:6px;line-height:1;">⚠️</div>' +
               '<div style="color:#ffd700;font-weight:900;font-size:18px;letter-spacing:0.5px;margin-bottom:6px;">AVISO IMPORTANTE</div>' +
-              '<div style="color:#fff;font-size:14px;line-height:1.55;margin-bottom:14px;">Tu cuenta fue verificada y desbloqueada. Para no perder tus beneficios:</div>' +
+              '<div style="color:#fff;font-size:14px;line-height:1.55;margin-bottom:14px;">Para no perder tus beneficios:</div>' +
               '<div style="background:rgba(255,215,0,0.08);border:1.5px solid rgba(255,215,0,0.45);border-radius:11px;padding:13px 14px;margin-bottom:14px;text-align:left;font-size:13px;line-height:1.55;">' +
                 '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🚫 NO cambies de sesión</strong> en esta app.</div>' +
                 '<div style="margin-bottom:7px;"><strong style="color:#ffd700;">🔔 Las notificaciones</strong>, los bonos y los códigos van sobre <strong style="color:#fff;">TU usuario</strong> — si entrás con otra cuenta desde este dispositivo, podés perder los regalos.</div>' +
