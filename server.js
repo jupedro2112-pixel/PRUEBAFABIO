@@ -18083,7 +18083,11 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         totalAmountGivenARS,
         byAmount: byAmountArr
       },
-      claims: enriched
+      // Tabla liviana: solo los 100 reclamos más recientes. Los totales de
+      // arriba se calculan sobre TODOS los claims, así el análisis queda
+      // completo. Los RefundClaim no se tocan — nadie recupera el bono.
+      claimsShown: Math.min(enriched.length, 100),
+      claims: enriched.slice(0, 100)
     });
   } catch (error) {
     logger.error(`/api/admin/reports/welcome-bonus error: ${error.message}`);

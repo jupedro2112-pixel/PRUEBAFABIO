@@ -3409,7 +3409,10 @@ function renderWelcomeBonusReport(container, data) {
 
     // Encabezado de detalle + buscador + selector de orden
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0 10px;">';
-    html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle por usuario</h3>';
+    const _shownNote = (total > claims.length)
+        ? ' <small style="color:#888;font-size:10px;text-transform:none;letter-spacing:0;font-weight:600;">(mostrando los ' + claims.length + ' más recientes de ' + total + ' — los totales de arriba son completos)</small>'
+        : '';
+    html += '  <h3 style="color:#d4af37;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin:0;">Detalle por usuario' + _shownNote + '</h3>';
     html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
     html += '    <select id="welcomeBonusSortSelect" onchange="changeWelcomeBonusSort(this.value)" style="padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.45);color:#fff;font-size:13px;cursor:pointer;">';
     html += '      <option value="appLastSeenDesc"' + (_welcomeBonusSortKey === 'appLastSeenDesc' ? ' selected' : '') + '>↓ Actividad (más reciente)</option>';
