@@ -205,6 +205,36 @@ VIP.auth = (function () {
     }
 
     // Refunds-only login: solo username, sin contraseña.
+    // ID propio del dispositivo, guardado en el navegador. Identifica esta
+    // instalación para detectar multi-cuenta sin depender de la IP.
+    function _getDeviceId() {
+        try {
+            var id = localStorage.getItem('vip_device_id');
+            if (!id) {
+                id = (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : ('dev-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 14));
+                localStorage.setItem('vip_device_id', id);
+            }
+            return id;
+        } catch (_) { return null; }
+    }
+
+    // Aviso en el login: si en este dispositivo ya se inició con un
+    // usuario, lo muestra y precarga ese usuario en el campo.
+    function _showDeviceLoginNotice() {
+        try {
+            var u = localStorage.getItem('vip_device_username');
+            if (!u) return;
+            var notice = document.getElementById('deviceLoginNotice');
+            var span = document.getElementById('deviceLoginNoticeUser');
+            var input = document.getElementById('username');
+            if (span) span.textContent = u;
+            if (notice) notice.style.display = 'block';
+            if (input && !input.value) input.value = u;
+        } catch (_) {}
+    }
+
     async function handleLogin(e) {
         if (e) e.preventDefault();
 
@@ -230,7 +260,7 @@ VIP.auth = (function () {
             const response = await fetch(`${VIP.config.API_URL}/api/auth/login-username-only`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username }),
+                body: JSON.stringify({ username, deviceId: _getDeviceId() }),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -259,6 +289,13 @@ VIP.auth = (function () {
                 }
                 return;
             }
+            // Bloqueo por multi-cuenta en el dispositivo: mensaje claro,
+            // sin el prefijo "Error 403:".
+            if (response.status === 403 && data.code === 'DEVICE_MISMATCH') {
+                errorDiv.textContent = data.error || 'Cuenta bloqueada: iniciaste con otro usuario en este dispositivo.';
+                errorDiv.classList.add('show');
+                return;
+            }
             if (!response.ok) {
                 const detail = data.error
                     ? data.error
@@ -272,6 +309,8 @@ VIP.auth = (function () {
             VIP.state.currentUser = { ...data.user, id: data.user.id, userId: data.user.id };
             VIP.state.linePhone = data.linePhone || null;
             localStorage.setItem('userToken', VIP.state.currentToken);
+            // Recordar el usuario de este dispositivo (para el aviso del login).
+            try { localStorage.setItem('vip_device_username', (data.user && data.user.username) || username); } catch (_) {}
 
             // Si en el celular hay un FCM token de un user anterior (ej: el
             // dueño cambió de cuenta sin logout), reasignarlo al user
@@ -2032,9 +2071,13 @@ window.applySupportPhoneToUI = async function applySupportPhoneToUI() {
 
 // Auto-cargar los hrefs de soporte del login apenas haya DOM.
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { try { window.applySupportPhoneToUI(); } catch (_) {} });
+    document.addEventListener('DOMContentLoaded', function () {
+        try { window.applySupportPhoneToUI(); } catch (_) {}
+        try { _showDeviceLoginNotice(); } catch (_) {}
+    });
 } else {
     try { window.applySupportPhoneToUI(); } catch (_) {}
+    try { _showDeviceLoginNotice(); } catch (_) {}
 }
 
 window.showCreateUserHelp = function showCreateUserHelp() {

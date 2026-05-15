@@ -2378,6 +2378,10 @@
                     <button type="button" id="loginByUsernameBtn" onclick="switchLoginMode('username')" style="flex:1;padding:8px 4px;font-size:12px;background:rgba(212,175,55,0.2);color:#d4af37;border:none;cursor:pointer;font-weight:600;-webkit-tap-highlight-color:rgba(212,175,55,0.3);touch-action:manipulation;-webkit-appearance:none;appearance:none;">👤 Usuario</button>
                     <button type="button" id="loginByPhoneBtn" onclick="switchLoginMode('phone')" style="flex:1;padding:8px 4px;font-size:12px;background:transparent;color:#888;border:none;cursor:pointer;-webkit-tap-highlight-color:rgba(212,175,55,0.3);touch-action:manipulation;-webkit-appearance:none;appearance:none;">📱 Celular</button>
                 </div>
+                <div id="deviceLoginNotice" style="display:none;background:rgba(255,170,0,0.10);border:1.5px solid rgba(255,170,0,0.55);border-radius:10px;padding:10px 12px;margin-bottom:10px;">
+                    <div style="color:#ffaa00;font-weight:900;font-size:12.5px;margin-bottom:3px;">📱 Entrá con tu usuario de siempre</div>
+                    <div style="color:#ddd;font-size:11.5px;line-height:1.45;">En este dispositivo ya iniciaste sesión con <strong id="deviceLoginNoticeUser" style="color:#ffd700;">—</strong>. Entrá con ese mismo usuario. <strong style="color:#ff7777;">Si entrás con otro, se bloqueará la cuenta.</strong></div>
+                </div>
                 <div class="input-group" id="loginUsernameGroup">
                     <label>Usuario</label>
                     <input type="text" id="username" name="username" placeholder="Ingresa tu usuario" required autocomplete="username">

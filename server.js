@@ -2574,6 +2574,8 @@ app.get('/api/teams/lookup', authLimiter, async (req, res) => {
   }
 });
 
+const DeviceAccount = require('./src/models/DeviceAccount');
+
 app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) => {
   console.log('[LoginUsernameOnly] HIT', { body: req.body, ip: req.ip });
   try {
@@ -2667,6 +2669,43 @@ app.post('/api/auth/login-username-only', authLimiter, async (req, res, next) =>
     }
     if (isAdminRole(userObj.role)) {
       return res.status(403).json({ error: 'Usuario no disponible' });
+    }
+
+    // === Anti multi-cuenta por dispositivo ===
+    // El front manda un ID propio guardado en el navegador. Si este
+    // dispositivo ya inició con OTRO usuario, se bloquea la cuenta con la
+    // que intenta entrar ahora. Si la verificación falla, NO bloquea
+    // (fail-open: no dejamos afuera a nadie por un error de DB).
+    const deviceId = String((req.body && req.body.deviceId) || '').trim().slice(0, 80);
+    if (deviceId) {
+      try {
+        const dev = await DeviceAccount.findOne({ deviceId }).lean();
+        if (!dev) {
+          await DeviceAccount.updateOne(
+            { deviceId },
+            { $setOnInsert: { deviceId, username: userObj.username, createdAt: new Date() } },
+            { upsert: true }
+          );
+        } else if (String(dev.username || '').toLowerCase() !== String(userObj.username || '').toLowerCase()) {
+          const reason = `Multi-cuenta: inició con ${userObj.username} en un dispositivo registrado a ${dev.username}.`;
+          try {
+            await User.updateOne({ id: userId }, { $set: {
+              fraudBlocked: true,
+              fraudReason: reason,
+              fraudBlockedAt: new Date()
+            } });
+          } catch (e) {
+            logger.warn(`[device-check] no se pudo flaggear ${userObj.username}: ${e.message}`);
+          }
+          logger.warn(`[device-check] ${userObj.username} bloqueado — dispositivo de ${dev.username}`);
+          return res.status(403).json({
+            error: 'Tu cuenta fue bloqueada: iniciaste sesión con un usuario distinto al registrado en este dispositivo. Contactá a soporte.',
+            code: 'DEVICE_MISMATCH'
+          });
+        }
+      } catch (devErr) {
+        logger.warn(`[device-check] error, el login continúa: ${devErr.message}`);
+      }
     }
 
     // Best-effort: actualizar lastLogin sin romper si el doc viejo falla validación.
