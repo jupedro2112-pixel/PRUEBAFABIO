@@ -2493,7 +2493,7 @@
              de soporte (izquierda) y el nombre (derecha). JS lo muestra
              post-login junto con la barra de soporte. -->
         <button type="button" id="infoImportantBtn" onclick="openInfoImportant()" title="Información importante"
-            style="position: fixed; top: calc(max(env(safe-area-inset-top), 12px) + 9px); left: 50%; transform: translateX(-50%); z-index: 9998; display: none; align-items: center; gap: 5px; background: linear-gradient(135deg,#ffd700,#f7931e); color: #1a1a1a; border: none; padding: 6px 15px; border-radius: 999px; font-weight: 900; font-size: 12px; letter-spacing: 0.6px; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
+            style="position: fixed; top: calc(max(env(safe-area-inset-top), 12px) + 9px); left: 50%; transform: translateX(calc(-50% + 26px)); z-index: 9998; display: none; align-items: center; gap: 5px; background: linear-gradient(135deg,#ffd700,#f7931e); color: #1a1a1a; border: none; padding: 6px 15px; border-radius: 999px; font-weight: 900; font-size: 12px; letter-spacing: 0.6px; cursor: pointer; box-shadow: 0 3px 12px rgba(0,0,0,0.45);">
             ℹ️ INFO
         </button>
 
@@ -2601,15 +2601,27 @@
                     <button type="button" onclick="closeInfoImportant()" aria-label="Cerrar" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;padding:0;">×</button>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:8px;">
-                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🛡️ Los requisitos para retirar los <strong>regalos</strong> los pedimos para <strong>evitar estafas</strong>.</div>
-                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">💳 Si cargás, <strong style="color:#25d366;">podés retirar desde tu primera carga</strong>.</div>
                     <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">⚠️ El <strong>mínimo de 5 cargas</strong> aplica solo a quien <strong>reclama un bono sin tener cargas</strong> con nosotros.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">💳 Si cargás, <strong style="color:#25d366;">podés retirar desde tu primera carga</strong>.</div>
+                    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🛡️ Los requisitos para retirar los <strong>regalos</strong> los pedimos para <strong>evitar estafas</strong>.</div>
                     <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">🎟️ Los <strong style="color:#22a0d9;">códigos</strong> se envían 100% por nuestro <strong style="color:#22a0d9;">canal de Telegram</strong>.</div>
                     <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:10px 12px;color:#ddd;font-size:13px;line-height:1.5;">📲 <strong style="color:#ffd700;">Instalá la app y activá las notificaciones</strong> para recibir bonos y avisos.</div>
                 </div>
                 <div style="margin-top:15px;color:#ffd700;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:0.6px;">Verificá tu app</div>
+                <div style="margin-top:7px;background:rgba(255,80,80,0.13);border:1.5px solid rgba(255,80,80,0.60);border-radius:10px;padding:11px 12px;">
+                    <div style="color:#ff5555;font-weight:900;font-size:14px;line-height:1.3;margin-bottom:4px;">🚫 NO CAMBIES DE USUARIO EN TU APP</div>
+                    <div style="color:#ffd2d2;font-size:12px;line-height:1.5;">Las notificaciones llegan al usuario con el que <strong>iniciaste la primera vez</strong>. Si cambiás de inicio, dejás de recibir los avisos de bonos y regalos.</div>
+                </div>
                 <div id="infoImportantChecks" style="margin-top:2px;"></div>
                 <button type="button" onclick="closeInfoImportant()" style="margin-top:16px;width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#1a1a1a;border:none;padding:11px;border-radius:10px;font-weight:900;font-size:14px;cursor:pointer;">Entendido</button>
+                <div style="margin-top:14px;padding-top:13px;border-top:1px dashed rgba(255,255,255,0.12);">
+                    <div style="color:#ddd;font-size:12px;line-height:1.5;margin-bottom:8px;">📞 Te recomendamos <strong style="color:#ffd700;">completar tu número</strong> para no perder tu contacto si llegamos a tener algún problema con la página.</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <input type="tel" id="infoModalPhoneInput" placeholder="Tu número (con código de área)" maxlength="25" style="flex:1;min-width:150px;background:rgba(0,0,0,0.40);border:1px solid rgba(255,215,0,0.35);color:#fff;padding:9px 11px;border-radius:9px;font-size:13px;box-sizing:border-box;">
+                        <button type="button" id="infoModalPhoneSave" onclick="saveInfoModalPhone()" style="background:linear-gradient(135deg,#25d366,#1a9e4b);color:#fff;border:none;padding:9px 16px;border-radius:9px;font-weight:900;font-size:13px;cursor:pointer;">Guardar</button>
+                    </div>
+                    <div id="infoModalPhoneStatus" style="font-size:11px;margin-top:6px;display:none;"></div>
+                </div>
             </div>
         </div>
         <script>
@@ -2642,10 +2654,50 @@
                             'Abrí la app ya instalada y tocá <strong>🔔 NOTIS</strong> para activar los avisos. Así te enterás de los bonos y regalos todas las semanas.');
                 }
                 m.style.display = 'flex';
+                // Prefill del número de contacto si el usuario ya lo guardó.
+                try {
+                    var pin = document.getElementById('infoModalPhoneInput');
+                    if(pin && window.VIP && VIP.config && VIP.state && VIP.state.currentToken){
+                        fetch(VIP.config.API_URL + '/api/user/backup-phone', { headers: { 'Authorization': 'Bearer ' + VIP.state.currentToken } })
+                            .then(function(r){ return r.ok ? r.json() : null; })
+                            .then(function(d){
+                                if(d && d.hasSubmitted && d.phone){
+                                    pin.value = d.phone;
+                                    var b = document.getElementById('infoModalPhoneSave');
+                                    if(b) b.textContent = 'Actualizar';
+                                }
+                            }).catch(function(){});
+                    }
+                } catch(_){}
             };
             window.closeInfoImportant = function(){
                 var m = document.getElementById('infoImportantModal');
                 if(m) m.style.display = 'none';
+            };
+            window.saveInfoModalPhone = function(){
+                var inp = document.getElementById('infoModalPhoneInput');
+                var btn = document.getElementById('infoModalPhoneSave');
+                var st  = document.getElementById('infoModalPhoneStatus');
+                if(!inp || !btn) return;
+                function show(txt, ok){ if(st){ st.textContent = txt; st.style.color = ok ? '#25d366' : '#ff7777'; st.style.display = 'block'; } }
+                var val = (inp.value || '').trim();
+                if(val.replace(/\D/g,'').length < 6){ show('Número muy corto. Ingresá al menos 6 dígitos.', false); return; }
+                if(!(window.VIP && VIP.config && VIP.state && VIP.state.currentToken)){ show('Iniciá sesión para guardar tu número.', false); return; }
+                btn.disabled = true; btn.textContent = '⏳';
+                fetch(VIP.config.API_URL + '/api/user/backup-phone', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + VIP.state.currentToken },
+                    body: JSON.stringify({ phone: val })
+                }).then(function(r){
+                    return r.json().catch(function(){ return {}; }).then(function(d){ return { ok: r.ok, d: d }; });
+                }).then(function(res){
+                    btn.disabled = false;
+                    if(!res.ok){ btn.textContent = 'Guardar'; show((res.d && res.d.error) || 'No se pudo guardar.', false); return; }
+                    btn.textContent = 'Actualizar';
+                    show('✓ Número guardado. ¡Gracias!', true);
+                }).catch(function(){
+                    btn.disabled = false; btn.textContent = 'Guardar'; show('Error de conexión. Probá de nuevo.', false);
+                });
             };
         })();
         </script>
