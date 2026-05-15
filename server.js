@@ -13919,7 +13919,8 @@ app.get('/api/admin/team-campaigns/teams', authMiddleware, adminMiddleware, asyn
 // GET list — todas las campañas con count de users impactados estimado.
 app.get('/api/admin/team-campaigns', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const list = await TeamCampaign.find({}).sort({ isActive: -1, createdAt: -1 }).lean();
+    // Cap defensivo: activas primero, así nunca se ocultan campañas vivas.
+    const list = await TeamCampaign.find({}).sort({ isActive: -1, createdAt: -1 }).limit(200).lean();
     res.json({ campaigns: list });
   } catch (err) {
     logger.error(`/api/admin/team-campaigns GET: ${err.message}`);
@@ -32758,7 +32759,14 @@ app.get('/api/admin/reports/top-engagement', authMiddleware, adminMiddleware, as
 app.get('/api/admin/notifications/history', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50));
-    const filter = {};
+    // Solo notificaciones MANUALES (compuestas desde el panel de
+    // notificaciones). Se excluyen las del motor de estrategia automática
+    // (strategyType), los avisos de línea caída y las campañas por lista.
+    const filter = {
+      strategyType: null,
+      type: { $ne: 'line_down' },
+      audienceType: { $ne: 'list' }
+    };
     if (req.query.type && ['plain', 'whatsapp_promo', 'money_giveaway'].includes(req.query.type)) {
       filter.type = req.query.type;
     }
