@@ -1,9 +1,16 @@
 /**
  * Empleados por sector (ganamos / publicidad / buffalo) y por puesto.
  *
- * Cada empleado tiene un sueldo base mensual y opcionalmente pagos extra
- * por feriados trabajados. El total mensual se calcula como:
- *   totalMensual = sueldoARS + Σ feriados[i].amountARS
+ * El pago mensual se calcula proporcional a los días trabajados:
+ *   valorDia        = sueldoARS / 30
+ *   feriadosTotal   = Σ (feriado.amountARS > 0 ? feriado.amountARS : valorDia)
+ *   faltantesTotal  = faltantes.length × valorDia
+ *   descuentosTotal = Σ descuento.amountARS
+ *   totalMensual    = sueldoARS + feriadosTotal − faltantesTotal − descuentosTotal
+ *
+ * Feriados trabajados suman (al valor/día, o a un monto manual si se carga).
+ * Faltantes descuentan un día. Los descuentos sueltos restan cualquier
+ * concepto puntual dejando su detalle.
  *
  * Los puestos (roles) son strings libres — los defaults son encargados,
  * pagos, comunidad, cargas, recontactacion, revision_chat, pero el owner
@@ -11,8 +18,22 @@
  */
 const mongoose = require('mongoose');
 
+// Feriado trabajado. amountARS = 0 → se paga el valor/día proporcional.
 const feriadoSchema = new mongoose.Schema({
   dateKey: { type: String, default: '' }, // YYYY-MM-DD del feriado
+  amountARS: { type: Number, default: 0, min: 0 },
+  note: { type: String, default: '', maxlength: 200 }
+}, { _id: false });
+
+// Falta: descuenta un valor/día proporcional.
+const faltanteSchema = new mongoose.Schema({
+  dateKey: { type: String, default: '' }, // YYYY-MM-DD de la falta
+  note: { type: String, default: '', maxlength: 200 }
+}, { _id: false });
+
+// Descuento puntual de cualquier concepto que no se le pague.
+const descuentoSchema = new mongoose.Schema({
+  dateKey: { type: String, default: '' }, // YYYY-MM-DD (opcional)
   amountARS: { type: Number, default: 0, min: 0 },
   note: { type: String, default: '', maxlength: 200 }
 }, { _id: false });
@@ -39,8 +60,18 @@ const employeeSchema = new mongoose.Schema({
   schedule: { type: String, default: '', trim: true, maxlength: 200 },
   sueldoARS: { type: Number, default: 0, min: 0 },
 
-  // Pagos extra por feriados trabajados en el mes
+  // Movimientos del mes: feriados trabajados (suman), faltas (descuentan),
+  // descuentos puntuales (restan con detalle).
   feriados: { type: [feriadoSchema], default: [] },
+  faltantes: { type: [faltanteSchema], default: [] },
+  descuentos: { type: [descuentoSchema], default: [] },
+
+  // Francos: cuántos por semana y qué días (lunes..domingo).
+  francosPerWeek: { type: Number, default: 0, min: 0, max: 7 },
+  francoDays: { type: [String], default: [] },
+
+  // Fecha hasta la que trabajó (último día / fin de relación). Vacío = sigue.
+  workedUntil: { type: String, default: '' }, // YYYY-MM-DD
 
   notes: { type: String, default: '', maxlength: 500 },
   active: { type: Boolean, default: true, index: true },

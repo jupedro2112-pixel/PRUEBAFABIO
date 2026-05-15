@@ -36250,16 +36250,32 @@ app.get('/api/admin/active-users-count', authMiddleware, adminMiddleware, (req, 
 const EmployeeEntry = require('./src/models/EmployeeEntry');
 const EMP_DELETE_PIN = '1818';
 const EMP_SECTORS = ['ganamos', 'publicidad', 'buffalo'];
+const EMP_DIAS_MES = 30;
+const EMP_FRANCO_DAYS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
 
 function _empCompute(e) {
   const sueldo = Number(e.sueldoARS || 0);
+  const valorDia = sueldo / EMP_DIAS_MES;
   const feriados = Array.isArray(e.feriados) ? e.feriados : [];
-  const feriadosTotal = feriados.reduce((s, f) => s + Number(f.amountARS || 0), 0);
+  const faltantes = Array.isArray(e.faltantes) ? e.faltantes : [];
+  const descuentos = Array.isArray(e.descuentos) ? e.descuentos : [];
+  // Feriado trabajado: monto manual si se cargó, si no el valor/día.
+  const feriadosTotal = feriados.reduce((s, f) => {
+    const a = Number(f.amountARS || 0);
+    return s + (a > 0 ? a : valorDia);
+  }, 0);
+  const faltantesTotal = faltantes.length * valorDia;
+  const descuentosTotal = descuentos.reduce((s, d) => s + Number(d.amountARS || 0), 0);
   return {
     sueldoARS: sueldo,
+    valorDia,
     feriadosTotal,
     feriadosCount: feriados.length,
-    totalMensual: sueldo + feriadosTotal
+    faltantesTotal,
+    faltantesCount: faltantes.length,
+    descuentosTotal,
+    descuentosCount: descuentos.length,
+    totalMensual: sueldo + feriadosTotal - faltantesTotal - descuentosTotal
   };
 }
 
@@ -36293,6 +36309,11 @@ app.post('/api/admin/empleados', authMiddleware, closingsAccessMiddleware, async
       schedule: String(b.schedule || '').trim().slice(0, 200),
       sueldoARS: Math.max(0, Number(b.sueldoARS) || 0),
       feriados: [],
+      faltantes: [],
+      descuentos: [],
+      francosPerWeek: 0,
+      francoDays: [],
+      workedUntil: '',
       notes: String(b.notes || '').slice(0, 500),
       active: b.active !== false,
       createdBy: (req.user && req.user.username) || ''
@@ -36332,6 +36353,30 @@ app.put('/api/admin/empleados/:id', authMiddleware, closingsAccessMiddleware, as
         amountARS: Math.max(0, Number((f && f.amountARS) || 0)),
         note: String((f && f.note) || '').slice(0, 200)
       }));
+    }
+    if (Array.isArray(b.faltantes)) {
+      e.faltantes = b.faltantes.map(f => ({
+        dateKey: String((f && f.dateKey) || '').slice(0, 10),
+        note: String((f && f.note) || '').slice(0, 200)
+      }));
+    }
+    if (Array.isArray(b.descuentos)) {
+      e.descuentos = b.descuentos.map(d => ({
+        dateKey: String((d && d.dateKey) || '').slice(0, 10),
+        amountARS: Math.max(0, Number((d && d.amountARS) || 0)),
+        note: String((d && d.note) || '').slice(0, 200)
+      }));
+    }
+    if (b.francosPerWeek !== undefined) {
+      e.francosPerWeek = Math.min(7, Math.max(0, Math.round(Number(b.francosPerWeek) || 0)));
+    }
+    if (Array.isArray(b.francoDays)) {
+      e.francoDays = b.francoDays
+        .map(d => String(d || '').toLowerCase().trim())
+        .filter(d => EMP_FRANCO_DAYS.includes(d));
+    }
+    if (b.workedUntil !== undefined) {
+      e.workedUntil = String(b.workedUntil || '').slice(0, 10);
     }
     await e.save();
     res.json({ success: true });

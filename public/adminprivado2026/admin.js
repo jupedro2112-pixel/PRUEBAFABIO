@@ -28062,6 +28062,48 @@ function _empRoleLabel(role) {
     return String(role || '').replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
 }
 
+const EMP_FRANCO_DAYS_UI = [
+    { key: 'lunes',     short: 'Lun' },
+    { key: 'martes',    short: 'Mar' },
+    { key: 'miercoles', short: 'Mié' },
+    { key: 'jueves',    short: 'Jue' },
+    { key: 'viernes',   short: 'Vie' },
+    { key: 'sabado',    short: 'Sáb' },
+    { key: 'domingo',   short: 'Dom' }
+];
+
+// Cálculo local del pago — espeja _empCompute del server para que el
+// resumen refleje al instante lo cargado antes de guardar.
+function _empComputeLocal(e) {
+    const sueldo = Number(e.sueldoARS || 0);
+    const valorDia = sueldo / 30;
+    const feriados = Array.isArray(e.feriados) ? e.feriados : [];
+    const faltantes = Array.isArray(e.faltantes) ? e.faltantes : [];
+    const descuentos = Array.isArray(e.descuentos) ? e.descuentos : [];
+    const feriadosTotal = feriados.reduce((s, f) => {
+        const a = Number(f.amountARS || 0);
+        return s + (a > 0 ? a : valorDia);
+    }, 0);
+    const faltantesTotal = faltantes.length * valorDia;
+    const descuentosTotal = descuentos.reduce((s, d) => s + Number(d.amountARS || 0), 0);
+    return {
+        sueldoARS: sueldo, valorDia,
+        feriadosTotal, feriadosCount: feriados.length,
+        faltantesTotal, faltantesCount: faltantes.length,
+        descuentosTotal, descuentosCount: descuentos.length,
+        totalMensual: sueldo + feriadosTotal - faltantesTotal - descuentosTotal
+    };
+}
+
+// Vuelca los inputs del DOM de un empleado al cache, para no perder
+// ediciones sin guardar cuando se re-renderiza (al sumar/sacar items).
+function _empSyncFromDom(id) {
+    const emp = (_empCache || []).find(e => e.id === id);
+    const payload = _collectEmpPayload(id);
+    if (emp && payload) Object.assign(emp, payload);
+    return emp;
+}
+
 function setEmpSector(s) {
     _empSector = s;
     _renderEmpleados();
@@ -28102,9 +28144,12 @@ function _renderEmpleados() {
     h += '</div>';
 
     // === Resumen de totales del sector ===
-    const sectorTotal = items.reduce((a, e) => a + ((e.computed && e.computed.totalMensual) || 0), 0);
-    const sectorSueldo = items.reduce((a, e) => a + Number(e.sueldoARS || 0), 0);
-    const sectorFeriados = items.reduce((a, e) => a + ((e.computed && e.computed.feriadosTotal) || 0), 0);
+    const _cs = items.map(e => _empComputeLocal(e));
+    const sectorTotal = _cs.reduce((a, c) => a + c.totalMensual, 0);
+    const sectorSueldo = _cs.reduce((a, c) => a + c.sueldoARS, 0);
+    const sectorFeriados = _cs.reduce((a, c) => a + c.feriadosTotal, 0);
+    const sectorFaltantes = _cs.reduce((a, c) => a + c.faltantesTotal, 0);
+    const sectorDescuentos = _cs.reduce((a, c) => a + c.descuentosTotal, 0);
     const sectorActivos = items.filter(e => e.active !== false).length;
 
     h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:14px;">';
@@ -28119,7 +28164,15 @@ function _renderEmpleados() {
     h += '</div>';
     h += '<div style="background:rgba(255,170,102,0.06);border:1px solid rgba(255,170,102,0.25);border-radius:8px;padding:10px 14px;">';
     h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">🎉 Feriados</div>';
-    h += '<div style="color:#ffaa66;font-weight:900;font-size:17px;margin-top:3px;">' + formatMoney(Math.round(sectorFeriados)) + '</div>';
+    h += '<div style="color:#ffaa66;font-weight:900;font-size:17px;margin-top:3px;">+' + formatMoney(Math.round(sectorFeriados)) + '</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.25);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">🚫 Faltas</div>';
+    h += '<div style="color:#f55;font-weight:900;font-size:17px;margin-top:3px;">-' + formatMoney(Math.round(sectorFaltantes)) + '</div>';
+    h += '</div>';
+    h += '<div style="background:rgba(255,80,80,0.06);border:1px solid rgba(255,80,80,0.25);border-radius:8px;padding:10px 14px;">';
+    h += '<div style="color:#aaa;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;">➖ Descuentos</div>';
+    h += '<div style="color:#f55;font-weight:900;font-size:17px;margin-top:3px;">-' + formatMoney(Math.round(sectorDescuentos)) + '</div>';
     h += '</div>';
     h += '</div>';
 
@@ -28154,7 +28207,7 @@ function _renderEmpleados() {
 
     for (const role of sortedRoles) {
         const arr = byRole[role];
-        const roleTotal = arr.reduce((a, e) => a + ((e.computed && e.computed.totalMensual) || 0), 0);
+        const roleTotal = arr.reduce((a, e) => a + _empComputeLocal(e).totalMensual, 0);
         const roleSueldo = arr.reduce((a, e) => a + Number(e.sueldoARS || 0), 0);
         h += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.08);border-radius:10px;margin-bottom:12px;overflow:hidden;">';
         h += '<div style="padding:10px 14px;background:rgba(155,48,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
@@ -28173,27 +28226,49 @@ function _renderEmpleados() {
 }
 
 function _renderEmpleadoRow(e) {
-    const c = e.computed || {};
-    const totMes = Number(c.totalMensual || 0);
-    const ferTot = Number(c.feriadosTotal || 0);
-    const ferCount = Number(c.feriadosCount || 0);
+    const c = _empComputeLocal(e);
+    const valorDia = c.valorDia;
     const isActive = e.active !== false;
     const bg = isActive ? 'rgba(0,0,0,0.20)' : 'rgba(255,80,80,0.05)';
-    let h = '<div id="emp_' + escapeHtml(e.id) + '" style="padding:11px 14px;background:' + bg + ';border-bottom:1px solid rgba(255,255,255,0.04);">';
-    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:9px;align-items:end;">';
-    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Nombre</label><input data-emp-field="name" type="text" value="' + escapeHtml(e.name || '') + '" placeholder="Nombre y apellido" maxlength="100" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;font-weight:700;"></div>';
-    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Horario</label><input data-emp-field="schedule" type="text" value="' + escapeHtml(e.schedule || '') + '" placeholder="Ej: lun-vie 10-18hs" maxlength="200" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;"></div>';
-    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Puesto</label><input data-emp-field="role" type="text" value="' + escapeHtml(e.role || '') + '" maxlength="60" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(155,48,255,0.30);color:#c89bff;padding:6px 9px;border-radius:6px;font-size:12px;font-weight:700;"></div>';
-    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Sueldo $</label><input data-emp-field="sueldoARS" type="number" min="0" step="1000" value="' + Number(e.sueldoARS || 0) + '" style="width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(0,212,255,0.30);color:#00d4ff;padding:6px 9px;border-radius:6px;font-size:13px;font-weight:800;text-align:right;"></div>';
-    h += '<div><label style="color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;">Total mes</label><div style="background:rgba(155,48,255,0.10);border:1px solid rgba(155,48,255,0.35);color:#c89bff;padding:6px 9px;border-radius:6px;font-size:13.5px;font-weight:900;text-align:right;">' + formatMoney(Math.round(totMes)) + '</div></div>';
+    const eid = escapeHtml(e.id);
+    const feriados = Array.isArray(e.feriados) ? e.feriados : [];
+    const faltantes = Array.isArray(e.faltantes) ? e.faltantes : [];
+    const descuentos = Array.isArray(e.descuentos) ? e.descuentos : [];
+    const francoDays = Array.isArray(e.francoDays) ? e.francoDays : [];
+    const lbl = 'color:#888;font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;';
+    const inp = 'width:100%;background:rgba(0,0,0,0.40);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 9px;border-radius:6px;font-size:12.5px;box-sizing:border-box;';
+
+    let h = '<div id="emp_' + eid + '" style="padding:11px 14px;background:' + bg + ';border-bottom:1px solid rgba(255,255,255,0.04);">';
+
+    // === Datos base ===
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;align-items:end;">';
+    h += '<div><label style="' + lbl + '">Nombre</label><input data-emp-field="name" type="text" value="' + escapeHtml(e.name || '') + '" placeholder="Nombre y apellido" maxlength="100" style="' + inp + 'font-weight:700;"></div>';
+    h += '<div><label style="' + lbl + '">Horario</label><input data-emp-field="schedule" type="text" value="' + escapeHtml(e.schedule || '') + '" placeholder="Ej: lun-vie 10-18hs" maxlength="200" style="' + inp + '"></div>';
+    h += '<div><label style="' + lbl + '">Puesto</label><input data-emp-field="role" type="text" value="' + escapeHtml(e.role || '') + '" maxlength="60" style="' + inp + 'border-color:rgba(155,48,255,0.30);color:#c89bff;font-weight:700;"></div>';
+    h += '<div><label style="' + lbl + '">Sueldo base $</label><input data-emp-field="sueldoARS" type="number" min="0" step="1000" value="' + Number(e.sueldoARS || 0) + '" style="' + inp + 'border-color:rgba(0,212,255,0.30);color:#00d4ff;font-weight:800;text-align:right;"></div>';
     h += '</div>';
 
-    // === Feriados ===
-    const feriados = Array.isArray(e.feriados) ? e.feriados : [];
+    // === Francos + Trabajó hasta ===
+    h += '<div style="margin-top:9px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;align-items:end;">';
+    h += '<div><label style="' + lbl + '">Francos / semana</label><input data-emp-field="francosPerWeek" type="number" min="0" max="7" step="1" value="' + Number(e.francosPerWeek || 0) + '" style="' + inp + 'border-color:rgba(0,255,102,0.25);color:#0f0;font-weight:800;text-align:right;"></div>';
+    h += '<div><label style="' + lbl + '">Trabajó hasta</label><input data-emp-field="workedUntil" type="date" value="' + escapeHtml(e.workedUntil || '') + '" style="' + inp + 'border-color:rgba(255,170,102,0.25);color:#ffaa66;font-weight:700;"></div>';
+    h += '</div>';
+    // chips de días de franco
+    h += '<div style="margin-top:7px;"><label style="' + lbl + '">Días de franco</label><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;">';
+    for (const d of EMP_FRANCO_DAYS_UI) {
+        const on = francoDays.indexOf(d.key) >= 0;
+        const st = on
+            ? 'background:#0f0;color:#000;border:1.5px solid #0f0;'
+            : 'background:rgba(255,255,255,0.04);color:#888;border:1.5px solid rgba(255,255,255,0.12);';
+        h += '<button type="button" onclick="toggleEmpFrancoDay(\'' + eid + '\',\'' + d.key + '\')" style="' + st + 'padding:4px 10px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">' + d.short + '</button>';
+    }
+    h += '</div></div>';
+
+    // === Feriados (suman) ===
     h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
-    h += '<div style="color:#ffaa66;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🎉 FERIADOS DEL MES (' + ferCount + ') · pago extra: ' + formatMoney(Math.round(ferTot)) + '</div>';
-    h += '<button onclick="addEmpFeriado(\'' + escapeHtml(e.id) + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:4px 10px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;">➕ Feriado</button>';
+    h += '<div style="color:#ffaa66;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🎉 FERIADOS TRABAJADOS (' + c.feriadosCount + ') · suma: +' + formatMoney(Math.round(c.feriadosTotal)) + '</div>';
+    h += '<button onclick="addEmpFeriado(\'' + eid + '\')" style="background:rgba(255,170,102,0.12);color:#ffaa66;border:1px solid rgba(255,170,102,0.40);padding:4px 10px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;">➕ Feriado</button>';
     h += '</div>';
     if (feriados.length === 0) {
         h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin feriados cargados este mes.</div>';
@@ -28202,19 +28277,74 @@ function _renderEmpleadoRow(e) {
             const f = feriados[i] || {};
             h += '<div data-emp-feriado="' + i + '" style="display:grid;grid-template-columns:140px 130px 1fr auto;gap:6px;margin-bottom:4px;align-items:center;">';
             h += '<input data-emp-feriado-field="dateKey" type="date" value="' + escapeHtml(f.dateKey || '') + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#ffaa66;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;">';
-            h += '<input data-emp-feriado-field="amountARS" type="number" min="0" step="1000" value="' + Number(f.amountARS || 0) + '" placeholder="Monto $" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#fff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;text-align:right;">';
+            h += '<input data-emp-feriado-field="amountARS" type="number" min="0" step="1000" value="' + Number(f.amountARS || 0) + '" placeholder="auto $' + Math.round(valorDia) + '" title="0 = paga el valor/día proporcional" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,170,102,0.25);color:#fff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;text-align:right;">';
             h += '<input data-emp-feriado-field="note" type="text" value="' + escapeHtml(f.note || '') + '" placeholder="Detalle (opcional)" maxlength="200" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:4px 8px;border-radius:5px;font-size:11px;">';
-            h += '<button onclick="removeEmpFeriado(\'' + escapeHtml(e.id) + '\',' + i + ')" title="Sacar feriado" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
+            h += '<button onclick="removeEmpFeriado(\'' + eid + '\',' + i + ')" title="Sacar feriado" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
             h += '</div>';
         }
     }
     h += '</div>';
 
+    // === Faltas (descuentan un día) ===
+    h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    h += '<div style="color:#f55;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">🚫 FALTAS DEL MES (' + c.faltantesCount + ') · descuenta: -' + formatMoney(Math.round(c.faltantesTotal)) + '</div>';
+    h += '<button onclick="addEmpFaltante(\'' + eid + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.35);padding:4px 10px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;">➕ Falta</button>';
+    h += '</div>';
+    if (faltantes.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin faltas este mes.</div>';
+    } else {
+        for (let i = 0; i < faltantes.length; i++) {
+            const f = faltantes[i] || {};
+            h += '<div data-emp-faltante="' + i + '" style="display:grid;grid-template-columns:140px 1fr auto;gap:6px;margin-bottom:4px;align-items:center;">';
+            h += '<input data-emp-faltante-field="dateKey" type="date" value="' + escapeHtml(f.dateKey || '') + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,80,80,0.25);color:#f99;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;">';
+            h += '<input data-emp-faltante-field="note" type="text" value="' + escapeHtml(f.note || '') + '" placeholder="Motivo (opcional) · descuenta $' + Math.round(valorDia) + '" maxlength="200" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:4px 8px;border-radius:5px;font-size:11px;">';
+            h += '<button onclick="removeEmpFaltante(\'' + eid + '\',' + i + ')" title="Sacar falta" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
+            h += '</div>';
+        }
+    }
+    h += '</div>';
+
+    // === Descuentos puntuales ===
+    h += '<div style="margin-top:9px;padding-top:8px;border-top:1px dashed rgba(255,255,255,0.08);">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:6px;">';
+    h += '<div style="color:#f55;font-size:10.5px;font-weight:800;letter-spacing:0.4px;">➖ DESCUENTOS (' + c.descuentosCount + ') · total: -' + formatMoney(Math.round(c.descuentosTotal)) + '</div>';
+    h += '<button onclick="addEmpDescuento(\'' + eid + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.35);padding:4px 10px;border-radius:6px;font-weight:800;font-size:10.5px;cursor:pointer;">➕ Descuento</button>';
+    h += '</div>';
+    if (descuentos.length === 0) {
+        h += '<div style="color:#666;font-size:11px;font-style:italic;">Sin descuentos puntuales.</div>';
+    } else {
+        for (let i = 0; i < descuentos.length; i++) {
+            const d = descuentos[i] || {};
+            h += '<div data-emp-descuento="' + i + '" style="display:grid;grid-template-columns:140px 130px 1fr auto;gap:6px;margin-bottom:4px;align-items:center;">';
+            h += '<input data-emp-descuento-field="dateKey" type="date" value="' + escapeHtml(d.dateKey || '') + '" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,80,80,0.25);color:#f99;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;">';
+            h += '<input data-emp-descuento-field="amountARS" type="number" min="0" step="500" value="' + Number(d.amountARS || 0) + '" placeholder="Monto $" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,80,80,0.25);color:#fff;padding:4px 8px;border-radius:5px;font-size:11.5px;font-weight:700;text-align:right;">';
+            h += '<input data-emp-descuento-field="note" type="text" value="' + escapeHtml(d.note || '') + '" placeholder="Detalle del descuento" maxlength="200" style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);color:#ddd;padding:4px 8px;border-radius:5px;font-size:11px;">';
+            h += '<button onclick="removeEmpDescuento(\'' + eid + '\',' + i + ')" title="Sacar descuento" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:4px 8px;border-radius:5px;font-weight:800;font-size:11px;cursor:pointer;">✕</button>';
+            h += '</div>';
+        }
+    }
+    h += '</div>';
+
+    // === Resumen general ===
+    const francoTxt = francoDays.length
+        ? francoDays.map(k => (EMP_FRANCO_DAYS_UI.find(x => x.key === k) || {}).short || k).join(', ')
+        : '—';
+    h += '<div style="margin-top:10px;background:rgba(155,48,255,0.07);border:1px solid rgba(155,48,255,0.30);border-radius:9px;padding:10px 13px;">';
+    h += '<div style="color:#c89bff;font-size:10.5px;font-weight:900;letter-spacing:0.6px;margin-bottom:6px;">📊 RESUMEN — valor/día: ' + formatMoney(Math.round(valorDia)) + ' · francos: ' + Number(e.francosPerWeek || 0) + '/sem (' + escapeHtml(francoTxt) + ')' + (e.workedUntil ? ' · trabajó hasta ' + escapeHtml(e.workedUntil) : '') + '</div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;font-size:11.5px;">';
+    h += '<div style="color:#aaa;">Sueldo base<br><span style="color:#fff;font-weight:800;">' + formatMoney(Math.round(c.sueldoARS)) + '</span></div>';
+    h += '<div style="color:#aaa;">+ Feriados (' + c.feriadosCount + ')<br><span style="color:#ffaa66;font-weight:800;">+' + formatMoney(Math.round(c.feriadosTotal)) + '</span></div>';
+    h += '<div style="color:#aaa;">− Faltas (' + c.faltantesCount + ')<br><span style="color:#f55;font-weight:800;">-' + formatMoney(Math.round(c.faltantesTotal)) + '</span></div>';
+    h += '<div style="color:#aaa;">− Descuentos (' + c.descuentosCount + ')<br><span style="color:#f55;font-weight:800;">-' + formatMoney(Math.round(c.descuentosTotal)) + '</span></div>';
+    h += '<div style="color:#aaa;">= TOTAL MENSUAL<br><span style="color:#c89bff;font-weight:900;font-size:14px;">' + formatMoney(Math.round(c.totalMensual)) + '</span></div>';
+    h += '</div></div>';
+
     // === Botones ===
     h += '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">';
-    h += '<button onclick="saveEmpleado(\'' + escapeHtml(e.id) + '\')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 12px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">💾 Guardar</button>';
-    h += '<button onclick="toggleEmpActive(\'' + escapeHtml(e.id) + '\')" style="background:' + (isActive ? 'rgba(255,170,102,0.10)' : 'rgba(0,255,102,0.10)') + ';color:' + (isActive ? '#ffaa66' : '#0f0') + ';border:1px solid ' + (isActive ? 'rgba(255,170,102,0.35)' : 'rgba(0,255,102,0.35)') + ';padding:6px 12px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (isActive ? '⏸ Inactivar' : '▶ Activar') + '</button>';
-    h += '<button onclick="deleteEmpleado(\'' + escapeHtml(e.id) + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:6px 10px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
+    h += '<button onclick="saveEmpleado(\'' + eid + '\')" style="background:rgba(0,212,255,0.18);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:6px 12px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">💾 Guardar</button>';
+    h += '<button onclick="toggleEmpActive(\'' + eid + '\')" style="background:' + (isActive ? 'rgba(255,170,102,0.10)' : 'rgba(0,255,102,0.10)') + ';color:' + (isActive ? '#ffaa66' : '#0f0') + ';border:1px solid ' + (isActive ? 'rgba(255,170,102,0.35)' : 'rgba(0,255,102,0.35)') + ';padding:6px 12px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">' + (isActive ? '⏸ Inactivar' : '▶ Activar') + '</button>';
+    h += '<button onclick="deleteEmpleado(\'' + eid + '\')" style="background:rgba(255,80,80,0.10);color:#f55;border:1px solid rgba(255,80,80,0.30);padding:6px 10px;border-radius:7px;font-weight:800;font-size:11.5px;cursor:pointer;">🗑</button>';
     if (!isActive) {
         h += '<span style="color:#ffaa66;font-size:11px;font-weight:700;align-self:center;">INACTIVO</span>';
     }
@@ -28232,19 +28362,42 @@ function _collectEmpPayload(id) {
         return el ? el.value : '';
     };
     const feriados = [];
-    const ferRows = card.querySelectorAll('[data-emp-feriado]');
-    ferRows.forEach(row => {
-        const dk = (row.querySelector('[data-emp-feriado-field="dateKey"]') || {}).value || '';
-        const am = Number((row.querySelector('[data-emp-feriado-field="amountARS"]') || {}).value || 0);
-        const nt = (row.querySelector('[data-emp-feriado-field="note"]') || {}).value || '';
-        feriados.push({ dateKey: dk, amountARS: am, note: nt });
+    card.querySelectorAll('[data-emp-feriado]').forEach(row => {
+        feriados.push({
+            dateKey: (row.querySelector('[data-emp-feriado-field="dateKey"]') || {}).value || '',
+            amountARS: Number((row.querySelector('[data-emp-feriado-field="amountARS"]') || {}).value || 0),
+            note: (row.querySelector('[data-emp-feriado-field="note"]') || {}).value || ''
+        });
     });
+    const faltantes = [];
+    card.querySelectorAll('[data-emp-faltante]').forEach(row => {
+        faltantes.push({
+            dateKey: (row.querySelector('[data-emp-faltante-field="dateKey"]') || {}).value || '',
+            note: (row.querySelector('[data-emp-faltante-field="note"]') || {}).value || ''
+        });
+    });
+    const descuentos = [];
+    card.querySelectorAll('[data-emp-descuento]').forEach(row => {
+        descuentos.push({
+            dateKey: (row.querySelector('[data-emp-descuento-field="dateKey"]') || {}).value || '',
+            amountARS: Number((row.querySelector('[data-emp-descuento-field="amountARS"]') || {}).value || 0),
+            note: (row.querySelector('[data-emp-descuento-field="note"]') || {}).value || ''
+        });
+    });
+    // francoDays se togglea en el cache (botones), no hay input en el DOM.
+    const emp = (_empCache || []).find(x => x.id === id);
+    const francoDays = (emp && Array.isArray(emp.francoDays)) ? emp.francoDays.slice() : [];
     return {
         name: get('name'),
         schedule: get('schedule'),
         role: (get('role') || '').toLowerCase().trim(),
         sueldoARS: Number(get('sueldoARS')) || 0,
-        feriados
+        francosPerWeek: Number(get('francosPerWeek')) || 0,
+        workedUntil: get('workedUntil') || '',
+        feriados,
+        faltantes,
+        descuentos,
+        francoDays
     };
 }
 
@@ -28287,19 +28440,60 @@ async function saveEmpleado(id) {
 }
 
 function addEmpFeriado(id) {
-    const emp = (_empCache || []).find(e => e.id === id);
+    const emp = _empSyncFromDom(id);
     if (!emp) return;
-    // Mutamos el cache local + re-renderizamos. El owner después guarda.
     if (!Array.isArray(emp.feriados)) emp.feriados = [];
     emp.feriados.push({ dateKey: '', amountARS: 0, note: '' });
     _renderEmpleados();
-    showToast('Cargá la fecha y el monto, después tocá 💾 Guardar', 'info');
+    showToast('Cargá la fecha (monto 0 = valor/día), después 💾 Guardar', 'info');
 }
 
 function removeEmpFeriado(id, idx) {
-    const emp = (_empCache || []).find(e => e.id === id);
+    const emp = _empSyncFromDom(id);
     if (!emp || !Array.isArray(emp.feriados)) return;
     emp.feriados.splice(idx, 1);
+    _renderEmpleados();
+}
+
+function addEmpFaltante(id) {
+    const emp = _empSyncFromDom(id);
+    if (!emp) return;
+    if (!Array.isArray(emp.faltantes)) emp.faltantes = [];
+    emp.faltantes.push({ dateKey: '', note: '' });
+    _renderEmpleados();
+    showToast('Cada falta descuenta un valor/día. Después 💾 Guardar', 'info');
+}
+
+function removeEmpFaltante(id, idx) {
+    const emp = _empSyncFromDom(id);
+    if (!emp || !Array.isArray(emp.faltantes)) return;
+    emp.faltantes.splice(idx, 1);
+    _renderEmpleados();
+}
+
+function addEmpDescuento(id) {
+    const emp = _empSyncFromDom(id);
+    if (!emp) return;
+    if (!Array.isArray(emp.descuentos)) emp.descuentos = [];
+    emp.descuentos.push({ dateKey: '', amountARS: 0, note: '' });
+    _renderEmpleados();
+    showToast('Cargá el monto y el detalle, después 💾 Guardar', 'info');
+}
+
+function removeEmpDescuento(id, idx) {
+    const emp = _empSyncFromDom(id);
+    if (!emp || !Array.isArray(emp.descuentos)) return;
+    emp.descuentos.splice(idx, 1);
+    _renderEmpleados();
+}
+
+function toggleEmpFrancoDay(id, day) {
+    const emp = _empSyncFromDom(id);
+    if (!emp) return;
+    if (!Array.isArray(emp.francoDays)) emp.francoDays = [];
+    const i = emp.francoDays.indexOf(day);
+    if (i >= 0) emp.francoDays.splice(i, 1);
+    else emp.francoDays.push(day);
     _renderEmpleados();
 }
 
