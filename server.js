@@ -5995,13 +5995,22 @@ app.get('/api/movements', authMiddleware, async (req, res) => {
 app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, res) => {
   try {
     const { userId, username, amount, bonus = 0, description } = req.body;
-    
+
+    // Rechazar userId/username que no sean string primitivo — previene
+    // inyección NoSQL (ej. {"username":{"$ne":null}} resolvía un user
+    // arbitrario). Mismo criterio que /api/admin/bonus.
+    const safeUserId = (typeof userId === 'string') ? userId.trim() : null;
+    const safeUsername = (typeof username === 'string') ? username.trim() : null;
+    if ((userId && !safeUserId) || (username && !safeUsername)) {
+      return res.status(400).json({ error: 'userId/username inválido' });
+    }
+
     // Buscar usuario por ID o username
     let user;
-    if (userId) {
-      user = await User.findOne({ id: userId });
-    } else if (username) {
-      user = await User.findOne({ username });
+    if (safeUserId) {
+      user = await User.findOne({ id: safeUserId });
+    } else if (safeUsername) {
+      user = await User.findOne({ username: safeUsername });
     }
     
     if (!user) {
