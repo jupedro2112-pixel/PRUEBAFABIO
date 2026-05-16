@@ -26,7 +26,11 @@ const closingSchema = new mongoose.Schema({
   employeeCount: { type: Number, default: 0 },
 
   grandTotalARS: { type: Number, default: 0 },
-  bySector: { type: mongoose.Schema.Types.Mixed, default: {} }
+  bySector: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+  // Configs de sector al momento del cierre (feriados generales) — para
+  // poder reabrir el período y restaurar la hoja tal cual estaba.
+  sectorConfigs: { type: mongoose.Schema.Types.Mixed, default: {} }
 }, { timestamps: true });
 
 module.exports = mongoose.models['EmployeeClosing'] ||

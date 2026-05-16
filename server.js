@@ -36702,7 +36702,8 @@ app.post('/api/admin/empleados/cierre', authMiddleware, closingsAccessMiddleware
       employees,
       employeeCount: employees.length,
       grandTotalARS,
-      bySector
+      bySector,
+      sectorConfigs
     });
 
     // Hoja nueva: se conservan empleados, sueldos, francos y roles; se
@@ -36761,6 +36762,52 @@ app.post('/api/admin/empleados/cierres/:id/paid', authMiddleware, closingsAccess
     res.json({ success: true, paid: c.paid, paidAt: c.paidAt });
   } catch (err) {
     logger.error(`POST /api/admin/empleados/cierres/:id/paid: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// POST /api/admin/empleados/cierres/:id/reabrir — deshace un cierre: vuelve
+// a poner en la hoja viva los movimientos de ese período y lo saca del
+// historial. Para usar si se cerró con un error.
+app.post('/api/admin/empleados/cierres/:id/reabrir', authMiddleware, closingsAccessMiddleware, async (req, res) => {
+  try {
+    const c = await EmployeeClosing.findOne({ id: String(req.params.id || '') }).lean();
+    if (!c) return res.status(404).json({ error: 'Cierre no encontrado' });
+
+    // Restaurar en cada empleado los movimientos que el cierre había
+    // limpiado. Si un empleado fue borrado desde entonces, se saltea.
+    let restored = 0;
+    for (const e of (c.employees || [])) {
+      if (!e || !e.empId) continue;
+      const r = await EmployeeEntry.updateOne(
+        { id: e.empId },
+        { $set: {
+          feriados: e.feriados || [],
+          faltantes: e.faltantes || [],
+          descuentos: e.descuentos || [],
+          feriadosGeneralesExcluidos: e.feriadosGeneralesExcluidos || []
+        } }
+      );
+      if (r && (r.matchedCount || r.n)) restored++;
+    }
+    // Restaurar feriados generales por sector.
+    const scfg = c.sectorConfigs || {};
+    for (const sector of Object.keys(scfg)) {
+      const fg = (scfg[sector] && Array.isArray(scfg[sector].feriadosGenerales))
+        ? scfg[sector].feriadosGenerales : [];
+      await EmployeeSectorConfig.findOneAndUpdate(
+        { sector },
+        { $set: { feriadosGenerales: fg } },
+        { upsert: true }
+      ).catch(() => {});
+    }
+    // El período vuelve a estar abierto — se quita del historial.
+    await EmployeeClosing.deleteOne({ id: c.id });
+
+    logger.info(`[empleados] cierre ${c.id} REABIERTO por ${(req.user && req.user.username) || '?'} — ${restored} empleados restaurados`);
+    res.json({ success: true, restored });
+  } catch (err) {
+    logger.error(`POST /api/admin/empleados/cierres/:id/reabrir: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

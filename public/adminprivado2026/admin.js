@@ -28220,6 +28220,21 @@ async function viewEmpClosing(id) {
     }
 }
 
+// Reabre un cierre: si se cerró con un error, vuelve los movimientos de
+// ese período a la hoja viva y saca el cierre del historial.
+async function reopenEmpClosing(id) {
+    if (!confirm('¿Reabrir este cierre?\n\nLos feriados, faltas y descuentos de ese período vuelven a la hoja viva (pisan lo que tengas cargado ahora) y el cierre se saca del historial. Después corregís y volvés a cerrar.')) return;
+    try {
+        const r = await authFetch('/api/admin/empleados/cierres/' + encodeURIComponent(id) + '/reabrir', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.success) { showToast(d.error || 'No se pudo reabrir', 'error'); return; }
+        showToast('↩ Cierre reabierto — ' + (d.restored || 0) + ' empleados restaurados', 'success');
+        loadEmpleados();
+    } catch (e) {
+        showToast('Error al reabrir', 'error');
+    }
+}
+
 function _showEmpClosingModal(c) {
     const old = document.getElementById('empClosingModal');
     if (old) old.remove();
@@ -28297,6 +28312,7 @@ function _renderEmpleados() {
             h += '<div style="display:flex;gap:5px;flex-wrap:wrap;">';
             h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#fff;cursor:pointer;background:rgba(255,255,255,0.04);padding:4px 9px;border-radius:6px;"><input type="checkbox" ' + (c.paid ? 'checked' : '') + ' onchange="toggleEmpClosingPaid(\'' + escapeHtml(c.id) + '\', this.checked)"> Pagado</label>';
             h += '<button onclick="viewEmpClosing(\'' + escapeHtml(c.id) + '\')" style="background:rgba(212,175,55,0.12);color:#d4af37;border:1px solid rgba(212,175,55,0.40);padding:4px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">👁 Ver</button>';
+            h += '<button onclick="reopenEmpClosing(\'' + escapeHtml(c.id) + '\')" style="background:rgba(0,212,255,0.12);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:4px 11px;border-radius:6px;font-weight:800;font-size:11px;cursor:pointer;">↩ Reabrir</button>';
             h += '</div>';
             h += '</div>';
         }
