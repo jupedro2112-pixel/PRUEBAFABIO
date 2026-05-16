@@ -4542,9 +4542,15 @@ app.get('/api/admin/chats/:status', authMiddleware, adminMiddleware, async (req,
 
 app.get('/api/admin/all-chats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const messages = await Message.find().lean();
-    const users = await User.find().lean();
-    const chatStatuses = await ChatStatus.find().lean();
+    // Volumen acotado: los 500 mensajes más recientes (recent-first) en lugar
+    // de toda la colección. El armado de chats agrupa estos mensajes igual
+    // que antes; users/chatStatuses sólo con los campos que se leen.
+    const messages = await Message.find()
+      .sort({ timestamp: -1 })
+      .limit(500)
+      .lean();
+    const users = await User.find({}, { id: 1, username: 1, _id: 0 }).lean();
+    const chatStatuses = await ChatStatus.find({}, { userId: 1, status: 1, assignedTo: 1, _id: 0 }).lean();
     
     const userMessages = {};
     messages.forEach(msg => {
@@ -4774,8 +4780,14 @@ app.get('/api/messages/:userId', authMiddleware, async (req, res) => {
 
 app.get('/api/conversations', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const messages = await Message.find().sort({ timestamp: -1 }).lean();
-    const users = await User.find().lean();
+    // Volumen acotado: los 500 mensajes más recientes (recent-first). El
+    // lastMessage por conversación sigue siendo el más nuevo (primer match);
+    // unreadCount se cuenta sobre esta ventana reciente.
+    const messages = await Message.find()
+      .sort({ timestamp: -1 })
+      .limit(500)
+      .lean();
+    const users = await User.find({}, { id: 1, username: 1, accountNumber: 1, _id: 0 }).lean();
     
     const conversations = {};
     
@@ -11416,49 +11428,104 @@ app.get('/api/admin/teams/names', authMiddleware, adminMiddleware, async (req, r
 // bajar el detalle completo de cada equipo.
 app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, requireSectionPin('teams'), async (req, res) => {
   try {
-    // Una sola query trae todo lo necesario para construir el agregado.
-    // role='user' para excluir admins. Solo campos requeridos para no
-    // saturar memoria en bases grandes.
-    const users = await User.find(
-      { role: 'user' },
-      {
-        username: 1,
-        lineTeamName: 1,
-        linePhone: 1,
-        lastLogin: 1,
-        fcmTokens: 1,
-        fcmTokenContext: 1,
-        notifPermission: 1,
-        _id: 0
-      }
-    ).lean();
-
     const oneWeekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+
+    // Agregación por línea (lineTeamName trim()) DENTRO de Mongo: en vez de
+    // bajar TODOS los users a Node, el pipeline deriva por-user hasChannel
+    // (igual que APP_NOTIFS_FILTER: AMBAS condiciones en el MISMO token, o
+    // legacy single-token con ambos) y isActiveThisWeek, y suma por línea.
+    // El re-agrupado teamPrefix (split " · ") se hace después con ~N líneas
+    // (muchos menos docs que usuarios).
+    const lineAgg = await User.aggregate([
+      { $match: { role: 'user' } },
+      {
+        $project: {
+          _id: 0,
+          fullLabel: { $trim: { input: { $ifNull: ['$lineTeamName', ''] } } },
+          linePhone: 1,
+          // legacy single-token: context standalone + notifPermission granted
+          legacyMatch: {
+            $and: [
+              { $eq: ['$fcmTokenContext', 'standalone'] },
+              { $eq: ['$notifPermission', 'granted'] }
+            ]
+          },
+          // array: algún token con context standalone + notifPermission granted
+          arrayMatch: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$fcmTokens', []] },
+                    as: 't',
+                    cond: {
+                      $and: [
+                        { $eq: ['$$t.context', 'standalone'] },
+                        { $eq: ['$$t.notifPermission', 'granted'] }
+                      ]
+                    }
+                  }
+                }
+              },
+              0
+            ]
+          },
+          isActiveThisWeek: {
+            $and: [
+              { $ne: ['$lastLogin', null] },
+              {
+                $gte: [
+                  {
+                    $convert: {
+                      input: '$lastLogin',
+                      to: 'date',
+                      onError: new Date(0),
+                      onNull: new Date(0)
+                    }
+                  },
+                  new Date(oneWeekAgo)
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          fullLabel: 1,
+          linePhone: 1,
+          isActiveThisWeek: 1,
+          hasChannel: { $or: ['$legacyMatch', '$arrayMatch'] }
+        }
+      },
+      {
+        $group: {
+          _id: '$fullLabel',
+          count: { $sum: 1 },
+          withChannel: { $sum: { $cond: ['$hasChannel', 1, 0] } },
+          activeThisWeek: { $sum: { $cond: ['$isActiveThisWeek', 1, 0] } },
+          // linePhone representativo de la línea (igual que antes: el primero
+          // visto). $first sobre el grupo.
+          linePhone: { $first: '$linePhone' }
+        }
+      }
+    ]);
+
     const teams = new Map(); // teamPrefix -> { totalUsers, withChannel, activeThisWeek, lines: Map }
 
     let totalWithTeam = 0;
     let totalWithoutTeam = 0;
+    let totalUsers = 0;
 
-    for (const u of users) {
-      // Calcular si tiene canal abierto. AMBAS condiciones tienen que
-      // estar en el MISMO token (igual que APP_NOTIFS_FILTER con $elemMatch).
-      const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
-      const hasApp = u.fcmTokenContext === 'standalone'
-        || tokens.some(t => t && t.context === 'standalone');
-      const hasNotifs = u.notifPermission === 'granted'
-        || tokens.some(t => t && t.notifPermission === 'granted');
-      const legacyMatch = u.fcmTokenContext === 'standalone' && u.notifPermission === 'granted';
-      const arrayMatch = tokens.some(t => t && t.context === 'standalone' && t.notifPermission === 'granted');
-      const hasChannel = legacyMatch || arrayMatch;
-      const isActiveThisWeek = u.lastLogin
-        && new Date(u.lastLogin).getTime() >= oneWeekAgo;
-
-      const fullLabel = (u.lineTeamName || '').trim();
+    for (const lg of lineAgg) {
+      const fullLabel = String(lg._id || '').trim();
+      const cnt = lg.count || 0;
+      totalUsers += cnt;
       if (!fullLabel) {
-        totalWithoutTeam++;
+        totalWithoutTeam += cnt;
         continue;
       }
-      totalWithTeam++;
+      totalWithTeam += cnt;
 
       // Equipo = parte antes del primer " · " (si existe). Si no hay " · ",
       // el label completo ES el equipo (sin sub-línea).
@@ -11476,25 +11543,25 @@ app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, requireSectio
         };
         teams.set(teamPrefix, team);
       }
-      team.totalUsers++;
-      if (hasChannel) team.withChannel++;
-      if (isActiveThisWeek) team.activeThisWeek++;
+      team.totalUsers += cnt;
+      team.withChannel += (lg.withChannel || 0);
+      team.activeThisWeek += (lg.activeThisWeek || 0);
 
       // Sub-grupo por línea exacta (incluye la etiqueta opcional).
       let line = team.lines.get(fullLabel);
       if (!line) {
         line = {
           fullLabel,
-          linePhone: u.linePhone || null,
+          linePhone: lg.linePhone || null,
           count: 0,
           withChannel: 0,
           activeThisWeek: 0
         };
         team.lines.set(fullLabel, line);
       }
-      line.count++;
-      if (hasChannel) line.withChannel++;
-      if (isActiveThisWeek) line.activeThisWeek++;
+      line.count += cnt;
+      line.withChannel += (lg.withChannel || 0);
+      line.activeThisWeek += (lg.activeThisWeek || 0);
     }
 
     // Pre-asignaciones pendientes (UserLineLookup): cuenta por equipo de los
@@ -11547,7 +11614,7 @@ app.get('/api/admin/teams/stats', authMiddleware, adminMiddleware, requireSectio
 
     res.json({
       success: true,
-      totalUsers: users.length,
+      totalUsers: totalUsers,
       totalWithTeam,
       totalWithoutTeam,
       teams: teamsArr
@@ -17962,7 +18029,13 @@ app.get('/api/admin/landings/:code/stats', authMiddleware, adminMiddleware, asyn
 // ============================================
 app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    // 1) Todos los claims del bono.
+    // 0) Total real de claims — countDocuments para no derivar el número
+    // de un .find() limitado (el panel muestra este total).
+    const totalClaimedCount = await RefundClaim.countDocuments({ type: 'welcome_install' });
+
+    // 1) Claims del bono — los 1000 más recientes. Los totales agregados
+    // (chargedAfterClaim, byAmount, etc.) se calculan sobre este subconjunto;
+    // totalClaimed usa el countDocuments de arriba para quedar exacto.
     const claims = await RefundClaim.find(
       { type: 'welcome_install' },
       {
@@ -17973,7 +18046,7 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
         lastChargeAfterClaimAt: 1, chargesAfterClaimCheckedAt: 1,
         _id: 0
       }
-    ).sort({ claimedAt: -1 }).lean();
+    ).sort({ claimedAt: -1 }).limit(1000).lean();
 
     if (claims.length === 0) {
       return res.json({
@@ -18090,7 +18163,7 @@ app.get('/api/admin/reports/welcome-bonus', authMiddleware, adminMiddleware, asy
 
     res.json({
       totals: {
-        totalClaimed: claims.length,
+        totalClaimed: totalClaimedCount,
         stillHasApp,
         stillHasNotifs,
         stillBoth,
@@ -28597,10 +28670,16 @@ async function _computeActivePlayers({ windowDays, minDepositCount, minDepositAR
   //      mostrar la flag correcta. Sin esto, todos aparecían como "no
   //      reclamado" siempre (el campo welcomeBonusClaimed no existe en
   //      el schema de User).
-  const welcomeClaimedDocs = await RefundClaim.find(
-    { type: 'welcome_install' },
-    { username: 1, _id: 0 }
-  ).lean();
+  // Narrow: sólo los claims de los users que realmente vamos a enriquecer
+  // (los que están en `users`). El flag welcomeBonusClaimed se setea por
+  // username, así que claims de users fuera de scope no aportan nada.
+  const _scopeUsernames = users.map(u => u.username).filter(Boolean);
+  const welcomeClaimedDocs = _scopeUsernames.length > 0
+    ? await RefundClaim.find(
+        { type: 'welcome_install', username: { $in: _scopeUsernames } },
+        { username: 1, _id: 0 }
+      ).lean()
+    : [];
   const welcomeClaimedSet = new Set(welcomeClaimedDocs.map(r => String(r.username).toLowerCase()));
 
   // Helper para chequear app+notifs en el MISMO token (evita el bug de
@@ -28788,7 +28867,11 @@ app.get('/api/admin/active-players', authMiddleware, adminMiddleware, async (req
       t.totalDepositsARS += p.totalDepositsARS;
       t.totalWithdrawsARS += p.totalWithdrawsARS;
       t.totalDepositCount += p.depositCount;
-      t.users.push(p);
+      // Cap del array users a 200 por equipo: los totales/count de arriba
+      // se siguen sumando sobre TODOS los jugadores; sólo se acota la lista
+      // detallada que viaja en el payload. r.players viene ordenado por
+      // depósitos desc, así que se quedan los 200 de mayor depósito.
+      if (t.users.length < 200) t.users.push(p);
     }
     const teams = Array.from(byTeam.values()).sort((a, b) => b.totalDepositsARS - a.totalDepositsARS);
     res.json({
